@@ -80,11 +80,11 @@ export function createBrainArrayVectorStore(
       const query = parseBrainInput(BrainVectorNearestSchema, { vector: [...vector], limit, providerId });
       const unit = brainUnitVector(query.vector);
       if (unit === null) return [];
-      type Row = { document_id: string; chunk_index: number; distance: number };
+      type Row = { document_id: string; incarnation: string; revision: number; chunk_index: number; distance: number };
       const rows = await withSearchRead(db, async (trx) => {
         await sql`SET LOCAL jit = off`.execute(trx);
         return sql<Row>`
-          SELECT v.document_id, v.chunk_index,
+          SELECT v.document_id, v.incarnation, v.revision, v.chunk_index,
             1 - (SELECT sum(a * b) FROM unnest(v.embedding, ${arrayText(unit)}::float8[]) t(a, b)) AS distance
           FROM brain_search_vectors v
           JOIN brain_documents d ON d.owner_id = v.owner_id AND d.scope_id = v.scope_id
@@ -96,7 +96,8 @@ export function createBrainArrayVectorStore(
           LIMIT ${query.limit}`.execute(trx);
       });
       return rows.rows.map((row) => ({
-        documentId: row.document_id, chunkIndex: row.chunk_index, distance: Number(row.distance),
+        documentId: row.document_id, incarnation: row.incarnation, revision: row.revision, chunkIndex: row.chunk_index,
+        distance: Number(row.distance),
       }));
     },
 

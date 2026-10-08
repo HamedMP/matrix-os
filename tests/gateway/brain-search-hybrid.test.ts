@@ -9,7 +9,7 @@ import type {
 import { createBrainSearch } from "../../packages/gateway/src/brain/search/index.js";
 import { brainDocumentId } from "./helpers/brain-store-helpers.js";
 import {
-  OWNER, PROJECT_ID, createSearchHarness, createSeeder, fakeProvider, fakeVectorStore, resolver, seedClaims,
+  OWNER, PROJECT_ID, SCOPE, createSearchHarness, createSeeder, fakeProvider, fakeVectorStore, resolver, seedClaims,
   type FakeProvider, type SearchHarness,
 } from "./helpers/brain-search-fakes.js";
 
@@ -92,6 +92,19 @@ describe("brain search hybrid", { timeout: 60_000 }, () => {
       .toBe(true);
   });
 
+  it("drops a meaning match whose document changed after its vectors were read", async () => {
+    // A sync lands between the vector read and the search snapshot.
+    const changing: BrainVectorStore = { replaceChunks: vectors.replaceChunks, async nearest(scope, vector, limit, id) {
+      const matches = await vectors.nearest(scope, vector, limit, id);
+      await seeder.sync([{ seed: "other", title: "Unrelated", body: "now about something else" }]);
+      return matches;
+    } };
+    const view = await search({ q: "zebra", mode: "hybrid", types: ["document"] }, { vectors: changing });
+    expect(view.items.map((item) => [item.hitId, item.matchedBy]).sort()).toEqual([
+      [brainDocumentId("alpha"), ["vector"]], [brainDocumentId("ledger"), ["vector"]]].sort());
+    expect(view.items.map((item) => item.snippet.text).join(" ")).not.toContain("something else");
+  });
+
   it("falls back to text in auto mode on a provider failure, keeps each cursor's mode, lets store errors through", async () => {
     const hybrid = await search({ q: "money ledger", limit: 1 });
     provider.fail = true;
@@ -128,8 +141,9 @@ describe("brain search hybrid", { timeout: 60_000 }, () => {
   });
 
   it("reports candidates_capped when a retriever fills its window and pages at most 200 fused hits", async () => {
+    const { documentId, incarnation, revision } = (await h.repository.getDocument(SCOPE, brainDocumentId("other")))!;
     const stub: BrainVectorStore = { replaceChunks: vectors.replaceChunks, nearest: async () =>
-      Array.from({ length: 200 }, (_, index) => ({ documentId: brainDocumentId("other"), chunkIndex: index % 40, distance: 0.1 })) };
+      Array.from({ length: 200 }, (_, index) => ({ documentId, incarnation, revision, chunkIndex: index % 40, distance: 0.1 })) };
     expect((await search({ q: "kittens" }, { vectors: stub })).notices).toEqual(["candidates_capped"]);
     const statements = Array.from({ length: 50 }, (_, index) => `money rule ${index}`);
     const seeds = ["x1", "x2", "x3", "x4", "x5"];
