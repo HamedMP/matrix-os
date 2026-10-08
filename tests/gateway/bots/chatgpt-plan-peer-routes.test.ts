@@ -18,7 +18,7 @@ function fixture(owner = 'owner', source = 'jwt') {
   const app = new Hono();
   app.use('*', async (c, next) => { markVerifiedRuntimeBearer(c); await next(); });
   app.route('/', createChatGptPlanPeerRoutes({ getPrincipal: () => ({ userId: owner, source }) as never,
-    peers: { challenge } as never }));
+    peers: { challenge, rebindChallenge: challenge } as never }));
   return { app, challenge };
 }
 describe('native device enrollment boundary', () => {
@@ -48,7 +48,7 @@ function authenticatedFixture(token?: string) {
   const challenge = vi.fn(() => ({ version: 1, challenge: 'a'.repeat(64), ownerId: 'owner', computerId: 'computer' }));
   const app = new Hono();
   app.use('*', authMiddleware(token));
-  app.route('/', createChatGptPlanPeerRoutes({ peers: { challenge } as never,
+  app.route('/', createChatGptPlanPeerRoutes({ peers: { challenge, rebindChallenge: challenge } as never,
     getPrincipal: c => requireRequestPrincipal(c, { configuredUserId: 'owner', isTrustedSingleUserGateway: true }) }));
   return { app, challenge };
 }
@@ -100,4 +100,12 @@ it('admits escaping-heavy near-limit SSE replies and rejects encoded/decoded ove
   expect(reply).toHaveBeenCalledTimes(1);
   expect((await app.request(`${root}/reply`, post({ ...envelope, body: 'é'.repeat(600000) }))).status).toBe(400);
   expect((await app.request(`${root}/reply`, post({ ...envelope, body: '\u0001'.repeat(1024 * 1024 + 1000) }))).status).toBe(413);
+});
+
+it('recovery challenge retains native bearer owner, body validation and no-store boundaries',async()=>{
+ for(const f of [fixture('other'),fixture('owner','dev-default')])expect((await f.app.request(`${root}/rebind-challenge`,post({}))).status).toBe(403);
+ const f=fixture();expect((await f.app.request(`${root}/rebind-challenge`,post({},false))).status).toBe(403);
+ expect((await f.app.request(`${root}/rebind-challenge`,post({expectedDeviceId:'forged'}))).status).toBe(400);
+ expect(f.challenge).not.toHaveBeenCalled();
+ const result=await f.app.request(`${root}/rebind-challenge`,post({}));expect(result.status).toBe(200);expect(result.headers.get('cache-control')).toBe('private, no-store');
 });

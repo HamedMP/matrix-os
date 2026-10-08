@@ -7,7 +7,7 @@ interface Main {
 /** This capability is main-frame only; apps/embeds never receive subscription authority. */
 export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (event: unknown) => boolean) {
     const required = [
-        'status', 'connect', 'cancel', 'disconnect', 'refreshModels', 'setGrant'
+        'status', 'connect', 'rebind', 'cancel', 'disconnect', 'refreshModels', 'setGrant'
     ] as const;
     if (!service || required.some(method => typeof service[method] !== 'function') || typeof isTrusted !== 'function')
         throw new Error('ChatGPT connection unavailable');
@@ -20,6 +20,7 @@ export function registerChatgptPlanIpc(ipc: Main, service: Service, isTrusted: (
                 throw new Error('invalid request');
             try {
                 const value = channel === 'chatgpt-plan:connect' ? await service.connect(CHATGPT_PLAN_INVOKE['chatgpt-plan:connect'].request.parse(parsed.data))
+                    : channel === 'chatgpt-plan:rebind' ? await service.rebind(CHATGPT_PLAN_INVOKE['chatgpt-plan:rebind'].request.parse(parsed.data))
                     : channel === 'chatgpt-plan:set-grant' ? await service.setGrant(CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant'].request.parse(parsed.data))
                         : channel === 'chatgpt-plan:cancel' ? await service.cancel(parsed.data)
                             : channel === 'chatgpt-plan:disconnect' ? await service.disconnect(parsed.data)

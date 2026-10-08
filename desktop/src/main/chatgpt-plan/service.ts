@@ -1,6 +1,6 @@
 import { createPlanCatalogRefresh } from './catalog-refresh';
 import { rejectedPlanCredential } from './credential-failure';
-import { logPlanFailure } from './diagnostics';
+import { logPlanFailure, PlanFailure } from './diagnostics';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
 import type { ChatGptPlanPeerRequest } from '@matrix-os/contracts';
@@ -39,6 +39,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     let state: ChatgptPlanStatus['state'] = 'disconnected';
     let revocation: ChatgptPlanStatus['revocation'] = 'none';
     let bridgeConnected = false;
+    let bridgeFailure: 'device_conflict' | undefined;
+    let rebindTask: Promise<ChatgptPlanStatus> | null = null;
     let peerSignature: string | null = null;
     let peerSyncTask: Promise<void> | null = null;
     let pending: {
@@ -94,7 +96,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                     id: account.id, label: account.label
                 } } : {}), models: account?.tokens && !disconnecting ? models : [], grant: {
                 revision: permission.revision, enabled: !!account?.tokens && !disconnecting && permission.enabled, background: !!account?.tokens && !disconnecting && permission.enabled && permission.background
-            }, bridgeConnected, revocation
+            }, bridgeConnected, ...(bridgeFailure ? { bridgeFailure } : {}), revocation
         };
     }
     async function ensure(value: Bound): Promise<void> {
@@ -115,6 +117,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             loadedOwner = null;
             loadedScope = null;
             revocation = 'none';
+            bridgeFailure = undefined;
             const loaded = await deps.vault.load(value.ownerId);
             if (!current(value))
                 throw new Error('connection changed');
@@ -215,7 +218,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         if (epoch !== generation || active()?.id !== accountId || !current(value))
             throw new Error('connection changed');
     }
-    async function restartPeer(value: Bound): Promise<void> {
+    async function restartPeer(value: Bound, replaceDevice = false, authorized = () => true): Promise<void> {
+        if (!authorized()) throw new Error('source changed');
         if (peerSyncTask) {
             try {
                 await peerSyncTask;
@@ -227,7 +231,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             }
             if (!current(value))
                 throw new Error('connection changed');
-            return restartPeer(value);
+            return restartPeer(value, replaceDevice, authorized);
         }
         const task = (async () => {
             if (!record || !current(value))
@@ -242,7 +246,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const next = {
                 deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
             };
-            const qualified = () => current(value) && epoch === generation && active()?.id === account.id
+            const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
                 && models === next.models && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
@@ -253,9 +257,16 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             await peer.stop();
             if (!qualified())
                 throw new Error('source changed');
-            await peer.start({
-                ...value, ...keys
-            }, next, qualified);
+            try {
+                await peer.start({ ...value, ...keys }, next, qualified, replaceDevice);
+                bridgeFailure = undefined;
+            } catch (error: unknown) {
+                if (qualified() && error instanceof PlanFailure && error.stage === 'peer_connect' && error.httpStatus === 409) {
+                    bridgeFailure = 'device_conflict';
+                    return;
+                }
+                throw error;
+            }
             if (!qualified()) {
                 await peer.stop();
                 throw new Error('source changed');
@@ -437,6 +448,24 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         }
         return snapshot(value);
     }
+    async function rebind(input: z.infer<typeof CHATGPT_PLAN_INVOKE['chatgpt-plan:rebind']['request']>) {
+        const parsed = CHATGPT_PLAN_INVOKE['chatgpt-plan:rebind'].request.parse(input);
+        const value = bound(parsed);
+        // Main-process admission, not only a disabled renderer button.
+        if (rebindTask) throw new Error('recovery in progress');
+        const task = (async () => {
+            await ensure(value);
+            if (disconnecting || pending || !active()?.tokens || !grant(value.computerId).enabled || bridgeFailure !== 'device_conflict')
+                throw new Error('recovery unavailable');
+            const epoch = generation, accountId = active()!.id;
+            const authorized = () => current(value) && epoch === generation && active()?.id === accountId;
+            await readCatalog(value, AbortSignal.timeout(15000));
+            await restartPeer(value, true, authorized);
+            return snapshot(value);
+        })();
+        rebindTask = task;
+        try { return await task; } finally { if (rebindTask === task) rebindTask = null; }
+    }
     async function cancel(input: ChatgptPlanSession) { const value = bound(input); await ensure(value); const previous = pending; cancelAll(); await previous?.close?.(); return snapshot(value); }
     async function setGrant(input: z.infer<typeof CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant']['request']>, expected?: { accountId: string; generation: number }) {
         const parsed = CHATGPT_PLAN_INVOKE['chatgpt-plan:set-grant'].request.parse(input);
@@ -512,7 +541,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     const timer = setInterval(() => {
         void deps.vault.cleanup().catch((error: unknown) => console.warn('[chatgpt-plan] temporary credential cleanup failed', error instanceof Error ? error.name : 'UnknownError'));
         const live = deps.auth.getStatus();
-        if (disposed || disconnecting || pending || lifecycleTask || !live.signedIn || !record)
+        if (disposed || disconnecting || pending || rebindTask || bridgeFailure === 'device_conflict' || lifecycleTask || !live.signedIn || !record)
             return;
         let value: Bound;
         try {
@@ -542,7 +571,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         void status(live).catch((error: unknown) => logPlanFailure('source_restore', error));
     }
     return {
-        status, connect, cancel, disconnect, setGrant, refreshModels, cancelAll, resume, async dispose() {
+        status, connect, rebind, cancel, disconnect, setGrant, refreshModels, cancelAll, resume, async dispose() {
             const attempt = pending;
             disposed = true;
             clearInterval(timer);
@@ -550,7 +579,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             await attempt?.close?.();
             await peer.stop();
             await Promise.allSettled([
-                mutationTail, refreshTask, lifecycleTask, loadTask?.task, peerSyncTask
+                mutationTail, refreshTask, lifecycleTask, loadTask?.task, peerSyncTask, rebindTask
             ].filter((task): task is Promise<unknown> => !!task));
         }
     };

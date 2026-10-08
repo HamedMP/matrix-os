@@ -24,6 +24,7 @@ async function fixture(runtimeSlot='primary') {
  let jwksGate:Promise<void>|null=null;let releaseJwks:()=>void=()=>{};let jwksHeld=false;
  let catalogOverride:{gate:Promise<void>;fail:boolean|401;model:string}|null=null;let responseGate:Promise<void>|null=null;let releaseResponse:()=>void=()=>{};let responseAborted=false;
  let disconnectGate:Promise<void>|null=null;
+ let deviceConflict=false;let rebinds=0;
  let catalogStatus:number|null=null;let refreshError:string|null=null;
  let rejectCatalog=false;let visibleModel='fixture-visible';let catalogGate:Promise<void>|null=null;let releaseCatalog:()=>void=()=>{};let refreshGate:Promise<void>|null=null;let releaseRefresh:()=>void=()=>{};let lateFailure=false;
  const snapshots:unknown[]=[];const replies:Array<Record<string,unknown>>=[];const providerBodies:unknown[]=[];
@@ -52,12 +53,15 @@ async function fixture(runtimeSlot='primary') {
   }
   if(url.pathname==='/.well-known/openid-configuration')return json({revocation_endpoint:'https://auth.openai.com/api/accounts/oauth/revoke'});
   if(url.pathname==='/api/accounts/oauth/revoke'){revoked=true;return new Response(null,{status:200});}
+  if(url.pathname==='/api/chatgpt-plan/device/rebind-challenge'){rebinds++;return json({version:1,challenge:'b'.repeat(64),ownerId:authState.userId,computerId:authState.handle,expiresAt:new Date(Date.now()+60000).toISOString(),replacement:{expectedDeviceId:'f'.repeat(64)}});}
   if(url.pathname==='/api/chatgpt-plan/device/challenge')return json({version:1,challenge:'a'.repeat(64),ownerId:authState.userId,computerId:authState.handle,expiresAt:new Date(Date.now()+60000).toISOString()});
   if(url.pathname==='/api/chatgpt-plan/device/connect'){
    const body=JSON.parse(String(init?.body));snapshots.push(body.snapshot);
-   const proof=chatGptPlanPeerProof({challenge:body.challenge,ownerId:authState.userId,computerId:authState.handle,snapshot:body.snapshot});
+   const proof=chatGptPlanPeerProof({challenge:body.challenge,ownerId:authState.userId,computerId:authState.handle,snapshot:body.snapshot,...(body.replacement?{replacement:body.replacement}:{})});
    expect(verify(null,Buffer.from(proof),createPublicKey({key:Buffer.from(body.publicKey,'base64url'),type:'spki',format:'der'}),Buffer.from(body.signature,'base64url'))).toBe(true);
    expect(JSON.stringify(body)).not.toContain('accessToken');expect(JSON.stringify(body)).not.toContain('refreshToken');
+   if(deviceConflict&&!body.replacement)return Response.json({code:'conflict'},{status:409});
+   if(body.replacement)deviceConflict=false;
    return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001'});
   }
   if(url.pathname==='/api/chatgpt-plan/device/poll'){
@@ -72,7 +76,7 @@ async function fixture(runtimeSlot='primary') {
  const service=createNativeChatgptPlanService({vault,auth:{getStatus:()=>authState,getToken:()=> 'fixture-matrix-bearer',getGatewayOrigin:()=> 'https://matrix.test'},openBrowser:async url=>{browserOpens++;authUrl=new URL(url);},fetchFn});
  async function finish(){const callback=new URL(authUrl!.searchParams.get('redirect_uri')!);callback.searchParams.set('state',authUrl!.searchParams.get('state')!);callback.searchParams.set('code','fixture-code');callback.searchParams.set('client_id','oaiapp_matrix_fixture');expect((await fetch(callback)).status).toBe(200);}
  async function signedIn(){await service.connect({...localSession,purpose:'personal_local'});await finish();await vi.waitFor(async()=>expect((await service.status(localSession)).bridgeConnected).toBe(true));}
- return {service,vault,authState,snapshots,catalogStatus:(value:number|null)=>{catalogStatus=value;},refreshError:(value:string|null)=>{refreshError=value;},holdDisconnect:()=>{let release:()=>void=()=>{};disconnectGate=new Promise<void>(resolve=>{release=resolve;});return release;},clearRequests:()=>{queued=[];},allowCatalog:()=>{rejectCatalog=false;},holdOneCatalog:(fail:boolean|401=false,model=visibleModel)=>{let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});catalogOverride={gate,fail,model};return release;},holdResponse:()=>{responseGate=new Promise<void>(resolve=>{releaseResponse=()=>{responseGate=null;resolve();};});return ()=>releaseResponse();},get responseAborted(){return responseAborted;},replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
+ return {service,vault,authState,conflict:()=>{deviceConflict=true;},get rebinds(){return rebinds;},snapshots,catalogStatus:(value:number|null)=>{catalogStatus=value;},refreshError:(value:string|null)=>{refreshError=value;},holdDisconnect:()=>{let release:()=>void=()=>{};disconnectGate=new Promise<void>(resolve=>{release=resolve;});return release;},clearRequests:()=>{queued=[];},allowCatalog:()=>{rejectCatalog=false;},holdOneCatalog:(fail:boolean|401=false,model=visibleModel)=>{let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});catalogOverride={gate,fail,model};return release;},holdResponse:()=>{responseGate=new Promise<void>(resolve=>{releaseResponse=()=>{responseGate=null;resolve();};});return ()=>releaseResponse();},get responseAborted(){return responseAborted;},replies,providerBodies,fetchFn,finish,signedIn,queue:(items:ChatGptPlanPeerRequest[])=>{queued.push(...items);},changeModel:(model:string)=>{visibleModel=model;},holdCatalog:()=>{catalogGate=new Promise(resolve=>{releaseCatalog=()=>{catalogGate=null;resolve();};});return ()=>releaseCatalog();},holdRefresh:()=>{refreshGate=new Promise(resolve=>{releaseRefresh=()=>{refreshGate=null;resolve();};});return ()=>releaseRefresh();},lateFailure:()=>{lateFailure=true;},rejectNonce:()=>{rejectNonce=true;},expireSoon:()=>{expiresIn=1;},holdJwks:()=>{jwksHeld=false;jwksGate=new Promise(resolve=>{releaseJwks=()=>{jwksGate=null;resolve();};});return ()=>releaseJwks();},rejectCatalog:()=>{rejectCatalog=true;},get browserOpens(){return browserOpens;},get jwksHeld(){return jwksHeld;},get refreshes(){return refreshes;},get polls(){return polls;},get revoked(){return revoked;},cleanup:async()=>{await service.dispose();await rm(dir,{recursive:true,force:true});}};
 }
 function request(id:string,accountId:string,grantRevision:number):ChatGptPlanPeerRequest {
  const sequence=Number.parseInt(id.slice(-12),16);
@@ -410,4 +414,29 @@ it('a qualified saved-account read during fresh OAuth cannot pretend the pending
   x.catalogStatus(null);expect(await x.service.refreshModels(session)).toMatchObject({state:'connecting',models:[{id:'fixture-visible'}],bridgeConnected:true});expect(x.browserOpens).toBe(2);expect(await x.vault.load('owner')).toEqual(before);
   expect(await x.service.cancel(session)).toMatchObject({state:'connected',grant:{revision:before.grants[0]!.revision},bridgeConnected:false});expect(await x.vault.load('owner')).toEqual(before);
  }finally{await x.cleanup();}
+});
+
+it('explicit recovery signs replacement intent, preserves local account/grant and rejects concurrent or stale IPC', async()=>{
+ const x=await fixture();try{
+  await x.signedIn();const before=await x.service.status(session);x.conflict();x.service.cancelAll();
+  const conflict=await x.service.refreshModels(session);
+  expect(conflict).toMatchObject({state:'connected',bridgeConnected:false,bridgeFailure:'device_conflict'});
+  await x.service.status(session);await x.service.refreshModels(session);expect(x.rebinds).toBe(0);
+  await expect(x.service.rebind({...session,authGeneration:0,purpose:'replace_device'})).rejects.toThrow();
+  const recovery=x.service.rebind({...session,purpose:'replace_device'});
+  await expect(x.service.rebind({...session,purpose:'replace_device'})).rejects.toThrow('recovery in progress');
+  const after=await recovery;
+  expect(after).toMatchObject({state:'connected',bridgeConnected:true,account:before.account,grant:before.grant,models:before.models});
+  expect(after.bridgeFailure).toBeUndefined();expect(x.rebinds).toBe(1);expect(x.browserOpens).toBe(1);
+ }finally{await x.cleanup();}
+});
+
+it('canceled or switched recovery cannot send replacement intent after delayed discovery',async()=>{
+ const x=await fixture();let release=()=>{};try{
+  await x.signedIn();x.conflict();x.service.cancelAll();await x.service.refreshModels(session);
+  release=x.holdCatalog();const pending=x.service.rebind({...session,purpose:'replace_device'});
+  const rejected=expect(pending).rejects.toThrow();
+  await vi.waitFor(()=>expect(x.fetchFn.mock.calls.filter(call=>String(call[0]).endsWith('/v1/models')).length).toBeGreaterThan(2));
+  x.service.cancelAll();release();await rejected;expect(x.rebinds).toBe(0);
+ }finally{release();await x.cleanup();}
 });
