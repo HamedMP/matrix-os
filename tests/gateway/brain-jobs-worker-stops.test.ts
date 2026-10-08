@@ -101,6 +101,29 @@ describe("brain job worker stops", () => {
     expect(w.cancel(scopeA, `job_${"0".repeat(32)}`)).toBe(false);
   });
 
+  it("never starts the step of a run cancelled between its claim and its launch", async () => {
+    const job = (await store.enqueue(scopeA, "proj_a", { kind: "extract", extractor: "model" })).job.jobId;
+    // An unserialized store on the same database: the claim below already holds this file's one-at-a-time slot.
+    const raw = new BrainJobStore(harness.db, { now: harness.now });
+    let told: boolean | null = null;
+    vi.spyOn(store, "claim").mockImplementation(async (ownerId, workerId, leaseMs) => {
+      const claimed = await raw.claim(ownerId, workerId, leaseMs);
+      if (claimed !== null) {
+        // The cancel commits after the claim and reaches the worker before launch registers the run.
+        await raw.cancel(claimed.scope, claimed.jobId);
+        told = worker!.cancel(claimed.scope, claimed.jobId);
+      }
+      return claimed;
+    });
+    const extract = vi.fn(blocking);
+    start({ extract }, { heartbeatMs: 300_000 });
+    expect(await settled(job, "cancelled")).toMatchObject({
+      cancelRequested: true, errorCode: null, attempts: 1, steps: 0,
+    });
+    expect(told).toBe(false);
+    expect(extract).not.toHaveBeenCalled();
+  });
+
   it("stops its old run of a job it claims again after the lease expired, and cancels only the new run", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const job = await queue("sync");
