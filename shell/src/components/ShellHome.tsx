@@ -18,6 +18,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
@@ -97,7 +98,7 @@ function ShellHomeBody({
   const chat = useCanonicalChatState({
     initialDraft: recipePrompt,
     initialCollaborationView: chatCollaborationView,
-    navigationScope: sessionId && cacheScope ? `${cacheScope.userId}/runtime/${cacheScope.runtimeScope}` : undefined,
+    navigationScope: createShellChatNavigationScope(cacheScope, sessionId),
     navigationGeneration: sessionId ?? "self-hosted",
   });
   const [paletteOpen, setPaletteOpen] = useState(false);

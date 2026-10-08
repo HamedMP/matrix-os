@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const clerk = vi.hoisted(() => ({
@@ -9,6 +9,8 @@ const clerk = vi.hoisted(() => ({
     throw new Error("Clerk useAuth should not run in self-host mode");
   }),
 }));
+
+const canonical = vi.hoisted(() => ({ useCanonicalChatState: vi.fn((_options?: { navigationScope?: string }) => ({ newChat: vi.fn() })) }));
 
 const commands = vi.hoisted(() => ({
   register: vi.fn(),
@@ -20,7 +22,7 @@ vi.mock("@/hooks/useMobileViewport", () => ({ useMobileViewport: () => false }))
 vi.mock("@/hooks/useTheme", () => ({ useTheme: vi.fn() }));
 vi.mock("@/hooks/useDesktopConfig", () => ({ useDesktopConfig: vi.fn() }));
 vi.mock("@/hooks/useCanonicalChatState", () => ({
-  useCanonicalChatState: () => ({ newChat: vi.fn() }),
+  useCanonicalChatState: canonical.useCanonicalChatState,
 }));
 vi.mock("@/hooks/useGlobalShortcuts", () => ({ useGlobalShortcuts: vi.fn() }));
 vi.mock("@/stores/commands", () => ({
@@ -45,12 +47,15 @@ describe("ShellHome self-host mode", () => {
   beforeEach(() => {
     process.env.MATRIX_SELF_HOSTED = "1";
     clerk.useAuth.mockClear();
+    canonical.useCanonicalChatState.mockClear();
     commands.register.mockClear();
     commands.unregister.mockClear();
   });
 
   afterEach(() => {
     delete process.env.MATRIX_SELF_HOSTED;
+    window.history.replaceState({}, "", "/");
+    cleanup();
   });
 
   it("renders the standalone shell without invoking Clerk", () => {
@@ -72,4 +77,27 @@ describe("ShellHome self-host mode", () => {
     expect(screen.getByTestId("desktop")).toBeTruthy();
     expect(clerk.useAuth).toHaveBeenCalled();
   });
+  it("isolates Chat navigation by the gateway's effective runtime route", () => {
+    delete process.env.MATRIX_SELF_HOSTED;
+    clerk.useAuth.mockImplementation(() => ({ userId: "user_1", sessionId: "sess_1" }));
+    const scopeAt = (url: string) => {
+      window.history.replaceState({}, "", url);
+      const view = render(<ShellHome />);
+      const scope = (canonical.useCanonicalChatState.mock.lastCall?.[0] as { navigationScope?: string }).navigationScope;
+      view.unmount();
+      return scope;
+    };
+    const primary = scopeAt("/vm/alice");
+    const review = scopeAt("/vm/alice?runtime=review");
+    expect(primary).not.toBe(review);
+    expect(scopeAt("/vm/alice?runtime=main")).not.toBe(review);
+    expect(scopeAt("/vm/alice?runtime=../review")).toBe(primary);
+    expect(scopeAt("/vm/alice?runtime=")).toBe(primary);
+    expect(scopeAt("/vm/alice?runtime=review%2Fother")).toBe(primary);
+    expect(scopeAt("/vm/alice?runtime=review&launch=__chat__")).toBe(review);
+    expect(scopeAt("/vm/alice/canvas?runtime=review")).toBe(review);
+    expect(scopeAt("/vm/alice-review")).not.toBe(review);
+    expect(scopeAt("/?runtime=review")).toBe(scopeAt("/"));
+  });
+
 });
