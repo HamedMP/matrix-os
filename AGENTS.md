@@ -20,6 +20,7 @@ Applies to every LLM model, agent harness, and project chat, including new or re
 
 - **Check first**: before implementation, check the conversation, branch, and PR for a Linear ticket ID/link. Verify that it covers the task; if none is recorded, search Linear for an existing matching ticket before proposing a new one. Reuse the ticket instead of creating duplicates.
 - **Ask when missing**: ask the user/developer once: "Is there an existing Linear ticket, or should I create a short one?" Create only when authorized; prior authorization in the conversation counts. Preserve the answer and ticket ID/link across handoffs and compaction.
+- **Engineering tickets use ENG**: create engineering work in the Linear **Engineering (`ENG`) team**. Assign it to the person who initiated the request when their Linear identity is verified; otherwise ask which user to assign before creating it. Do not assume the connected account or agent is the requester. Reuse relevant existing tickets even if they belong to another team; do not duplicate or move them solely to change the prefix.
 - **If Linear is unavailable**: report that verification is blocked and ask for the ticket link or developer help. Do not treat an unavailable search as proof that no ticket exists. Read-only investigation and a local draft may continue while waiting; PR creation and merge require a verified ticket.
 - **Every PR needs a ticket**: before opening or merging any PR (including docs-only, stacked, and automated PRs), verify a relevant Linear ticket and put its ID and URL in the PR body. Link the PR back from the ticket. One ticket may cover several related PRs; each PR must link it.
 - **Recheck before merge**: inspect the conversation and PR body again, including when using `worktree-pr-monitor`, `land`, or another merge workflow. If no ticket is linked, reuse a verified ticket already in the conversation; otherwise ask the user/developer whether to create one or use an existing one. Wait for a verified, linked ticket before merging or enabling auto-merge. A merge request alone does not authorize ticket creation; do not repeat the question when authorization is already recorded.
@@ -318,6 +319,8 @@ A Web Desktop screenshot is not Electron Desktop evidence, and Web Mobile browse
 
 ## Spec Quality Gates
 
+**Specs for substantial changes**: before implementing a larger PR, a functionality change, or a change to a user journey, create or update `specs/{NNN}-{feature-name}/spec.md`. Keep the goal, affected surfaces, intended behavior/journey, acceptance checks, and risks concise. Link the spec from the Linear ticket and PR body. Suggest that the developer ask affected users or stakeholders to review and approve the spec before implementation; record any requested approval and wait when the developer makes it a gate. Suggestion is required; stakeholder approval is not automatically mandatory for every PR.
+
 Every spec with endpoints/WebSockets/IPC/file I/O must include: security architecture (auth matrix, input validation, error policy), integration wiring (startup sequence, cross-package comms), failure modes (timeouts, concurrent access, crash recovery), resource management (buffer limits, file cleanup). Full checklist: `specs/quality-gates.md`
 
 ## Code Review Pipeline
@@ -350,16 +353,12 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 **Agent CLI matrix changes need cross-surface sync**: if you add, remove, or rename a supported coding agent, keep `packages/platform/src/developer-tools.ts`, `shell/src/components/terminal/terminal-agent-options.ts`, `shell/src/components/terminal/TerminalApp.tsx`, `distro/customer-vps/host-bin/matrix-install-tool-pack`, `tests/platform/agent-install-matrix.ts`, `.github/workflows/agent-install-smoke.yml`, and the user docs aligned. The scheduled smoke path currently exercises `npm,pnpm,bun,yarn`.
 
-**Screenshot evidence (mandatory for frontend-facing changes)**: every PR that changes
-user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include
-a current screenshot or short screen recording of the changed state. Prefer capturing it directly
-from the coding-agent environment with Playwright/browser tooling after running the relevant
-stack. If the agent cannot run the surface locally, it must ask the developer to run the stack and
-provide the screenshot before treating the frontend work as review-ready. For auth-gated shell UI,
-a bypassed local shell run such as `E2E_TEST_BYPASS=1 NEXT_PUBLIC_E2E_TEST_BYPASS=1 ...` can help
-capture routes like `http://localhost:3002/?launch=__terminal__`, but missing current Canvas/Desktop/mobile
-evidence still blocks review-readiness. Do not rely on verbal descriptions for visual changes when
-a screenshot is practical.
+**Live visual evidence (mandatory for frontend-facing changes)**: every PR that changes user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include **screenshots and a short screen recording** of the changed state/journey from the live platform running that PR's current changes. Use a deployed PR preview or reviewed test/staging runtime; never deploy unreviewed changes to production just to collect evidence. Put the preview link, evidence, tested commit/version, and exact surface names in the PR body. Mockups, stale captures, or local-only captures do not satisfy this gate.
+
+- Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
+- Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
+- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
+- If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
 
