@@ -5,10 +5,12 @@ import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
+import { OS_VIEW_FIXED_APP_ICON_COMPONENTS } from "@/lib/os-view-app-icons";
 import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
+  osViewFixedAppAppearanceForPath,
 } from "@matrix-os/contracts";
 import {
   Blocks,
@@ -59,7 +61,18 @@ const DEFAULT_APPEARANCE: DesktopIconAppearance = {
   icon: LayoutGrid,
 };
 
+/** Apps whose Web Desktop tile is read from the shared fixed app table, so it matches Electron Desktop. */
+const SHARED_TILE_APP_PATHS: ReadonlySet<string> = new Set(["__brain__"]);
+
 export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
+  const shared = SHARED_TILE_APP_PATHS.has(app.path) ? osViewFixedAppAppearanceForPath(app.path) : undefined;
+  if (shared) {
+    return {
+      color: shared.background,
+      iconColor: shared.foreground,
+      icon: OS_VIEW_FIXED_APP_ICON_COMPONENTS[shared.icon],
+    };
+  }
   const name = app.name.toLowerCase();
   if (name === "browser") {
     return { color: "var(--surface-info-emphasis, #3B85BA)", iconColor: "white", icon: Globe2 };
