@@ -125,6 +125,17 @@ describe("brain job worker stops", () => {
     expect(warn).toHaveBeenCalledWith("[brain-jobs] Expired leases: 1 queued again, 0 closed");
   });
 
+  it("ends a run cancelled when the cancel lands while its last step completes", async () => {
+    const job = await queue("graph_refresh");
+    start({ graph_refresh: async () => {
+      await store.cancel(scopeA, job);
+      return { caughtUp: true, stopCode: null, summary: { processed: 3 } };
+    } });
+    expect(await settled(job, "cancelled")).toMatchObject({
+      cancelRequested: true, errorCode: null, steps: 1, result: { processed: 3 },
+    });
+  });
+
   it("ends a busy run whose wait note finds it cancelled or gone, without retrying", async () => {
     const cancelled = await queue("graph_refresh");
     let calls = 0;
