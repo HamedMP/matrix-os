@@ -99,3 +99,112 @@ Web Launchpad and the Web Desktop icon, dock and window icons. The Windows-style
 every built-in app from the gateway's shipped icon images, not tiles, and there is no brain image, so Company Brain
 shows the `search` image there. No environment variables and no new dependencies.
 
+## Failure modes
+
+- Timeouts: reads 15 s; sync, rules extract, refresh, brief and impact 45 s (one bounded 20 s server run), on every
+  surface. Every request ends at 30 s in a proxy in front of the gateway today (Next's default `proxyTimeout` on Web,
+  the platform's `PROXY_TIMEOUT_MS` on every surface, Electron Desktop included), so
+  the repository's sync, find claims and model run, and every other source's sync, start a background job
+  (`POST .../jobs`, 202, spec 566) and poll
+  `GET .../jobs/:jobId`: after 1 s, then doubling to 10 s, at most 90 polls (about 15 minutes, then "Check again").
+  Stop is `POST .../jobs/:jobId/cancel`. When the gateway has no jobs route (a 404 without a known code) or answers
+  `job_kind_unavailable` (no step of that kind, or its worker runs another owner's jobs), the action runs directly
+  as before. A failed job is worded by its code when the screens know it, else by the next action its last pass
+  reported (`connect_account`, `raise_budget`, ...). A direct model run (it may take 190 s) cut short on
+  its way back (too slow, or a 500 without a known code from a proxy) says it may still be finishing and its claims
+  will appear. A failed job start, or an answer with a code (brain off included), is shown as that error: no run began.
+- Concurrent access: each request gets a new number per key change or reload and an answer for an older number is
+  dropped, so a slow answer never overwrites a newer one; a brief built again also drops a still-running load of the
+  same request. One action at a time per card: its buttons, the model confirm included, are disabled while one runs.
+  Pause, resume and remove send the loaded revision (`revision_conflict`: "Reload and try again").
+- Polling: three failed polls in a row (offline, too slow, brain off), or one refused poll (no access, gone), stop
+  with the error and "Try again". A new job, "Check again" or leaving the screen drops every answer meant for the
+  older one; a job's end reloads the receipts once, whether a poll or the cancel answer brought it.
+- Crash recovery: no durable state in the view; a job keeps running in the gateway when the window closes. When
+  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of its
+  slot (the repository's sync, rules and model runs; each source's sync), so after a reload the run shows and its
+  buttons stay off until it ends. A gateway without the jobs route resumes nothing. Inactive Electron Desktop tabs
+  stay mounted, so a followed job keeps polling there, with the same cap.
+- Not connected: Electron Desktop without a gateway session shows "Connect to your Matrix computer to open the
+  Company Brain." instead of the view.
+- Error propagation: every failure is a visible state on its screen.
+
+## Resource management
+
+Lists keep at most 500 items (then Load more stops); pages are 20 (search, timeline, path history), 50 (claims,
+conflicts) and 10 (people, merge suggestions); 200 projects; 5 receipts; the first page of connect options (at most
+100); 5 reasons per suggestion. One poll timer per followed job, cleared on unmount; no sockets or caches; every
+request ends with its timeout. The view sends nothing to a third party; a confirmed model run makes the gateway
+send project text to Anthropic (see Security architecture).
+
+## Invariants
+
+- **Source of truth**: the gateway routes; the view keeps only what is on screen and refetches on every open. The
+  only thing kept is the id of the project this surface picked last (`localStorage`, kept apart for Web and
+  Electron Desktop), so the app opens on it while the gateway still lists it.
+- **Lock/transaction scope**: none in the view; writes carry the loaded source revision and the gateway decides.
+- **Acceptable orphan states**: none; an answer for a request the view has moved past is dropped.
+- **Auth source of truth**: the gateway request principal, reached through each renderer's gateway session; the view
+  never decides access.
+- **Deferred scope**: listed below.
+
+## OS-view surface matrix
+
+| Surface | Covered | Notes |
+| --- | --- | --- |
+| Web Desktop | yes | window branch; the title bar names the app, so the in-app heading is hidden |
+| Web Canvas | yes | window branch; heading hidden as on Web Desktop |
+| Electron Desktop | yes | tab kind `brain` in the standard window frame; heading hidden; the desktop's shared window minimum |
+| Web Mobile | yes | mobile shell list and render branch; the heading shows, as the app frame has no title bar |
+| Native Mobile | no | deferred: the Expo app has no brain screen yet |
+
+Every covered surface renders the same view: the screen list is a side column from 42rem and a scrolling row below
+it, down to 360 px.
+
+## Accessibility
+
+A tab list with arrow keys (both axes, wrapping), Home and End, a roving tab stop and a labelled panel. Every control
+has a name; progress uses `role="status"`, errors `role="alert"`; the period buttons carry `aria-pressed`, the syncs
+toggle `aria-expanded`; the model confirm is a labelled group; an invalid typed value sets `aria-invalid`. A running
+job shows a labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose
+problem text describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
+
+## Integration test checkpoint
+
+`pnpm exec vitest run tests/ui/brain-*.test.ts tests/ui/brain-*.test.tsx` (jsdom, fake client, no network) covers
+every route mapping, error reading by shape, request ordering, and all seven screens with their states and buttons;
+`brain-jobs` polls with fake timers (backoff, failures, cap, stop, stale answers) and words a model run as still
+finishing only when a direct run was cut short, `brain-ask-path`, `brain-merges` and `brain-source-settings` cover
+the path history, duplicates and per-kind settings. `tests/shell/brain-shell.test.tsx` covers the Web binding (the
+Web client by default, its errors read by the shared reader, a delete with no body, the heading).
+`tests/desktop/brain-desktop-view.test.tsx` covers the Electron Desktop transport (empty delete body, the two
+desktop-only categories) and view (connect message, runtime pinning, remount on a runtime switch or new sign-in); the
+launcher, palette, tab, persistence and analytics suites cover its registration, and
+`tests/e2e/desktop/company-brain.e2e.test.ts` opens it in a built Electron Desktop. The type half of
+`tests/ui/brain-types-compat.test.ts` (client and error shapes against the gateway contracts, the job and merge routes
+included) runs in the root `typecheck` script (`tsc --noEmit -p tests/ui/tsconfig.brain-compat.json`).
+Manual (dev Docker setup, project `matrix-os`): Decisions lists quoted, cited claims; Sources shows recent syncs and
+runs syncs and claim reading as jobs through the gateway's `/jobs` routes.
+
+## Code review checklist
+
+Every error shown is a known code or a fixed state, never the server's text; every list, page, poll and timer is
+capped and cleared on unmount; an answer for an older request is dropped; one action per card at a time; long text
+wraps or truncates inside a 390 px screen; no new dependency.
+
+## Delivery and evidence
+
+- [ ] The view, its adapters, tests and this spec come to about 5,900 lines, over the one-PR budget of about 2,900,
+      so they land as three PRs, each with checks green: (1) the shared client, view shapes, controls and the Ask and
+      Timeline screens with their tests; (2) the other screens, the app and the Web registration; (3) the Electron
+      Desktop registration.
+- [x] The CI type check of `brain-types-compat.test.ts` (the root `typecheck` script) is part of this change.
+- [ ] Screenshots of Web Desktop, Web Canvas, Web Mobile and Electron Desktop in the PR bodies.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): the Company Brain app.
+
+## Deferred
+
+Native Mobile screen; filtering and paging connect options; editing source settings after connect; background jobs
+for the index refreshes; a screen listing past jobs (Sources only resumes the running ones); impact and stale
+screens (their answers stay untyped);
+opening a cited Matrix note or file inside Matrix OS; brief history by date.
