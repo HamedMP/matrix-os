@@ -21,6 +21,8 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
   return (
     <span
       className="matrix-ap-agent-logo"
+      // White upstream marks retain the canonical artwork background in both appearances.
+      style={harness === "opencode" || harness === "pi" ? { background: CODING_AGENT_ARTWORK[harness].background } : undefined}
       aria-hidden="true"
     >
       <img
