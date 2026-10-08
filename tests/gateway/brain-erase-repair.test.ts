@@ -1,15 +1,17 @@
 /**
  * The project erase and the removed source purge over PGlite with the graph: a refresh already running when the
  * project is erased writes nothing back, and a purge drops the derived rows of every tombstoned document of the
- * removed source, whenever it was tombstoned, and leaves no person only that source named readable.
+ * removed source, whenever it was tombstoned, and leaves no person only that source named readable; the start's
+ * catch-up finishes a sweep a shutdown cut short.
  */
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eraseBrainScopeRows } from "../../packages/gateway/src/brain/api/erase.js";
-import { purgeBrainRemovedSource } from "../../packages/gateway/src/brain/api/index-repair.js";
+import { purgeBrainRemovedSource, runBrainIndexCatchUp } from "../../packages/gateway/src/brain/api/index-repair.js";
 import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
 import type { BrainGraphTables } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
+import { deriveGraphDocument, withGraphLock } from "../../packages/gateway/src/brain/graph/store.js";
 import {
   OWNER, PROJECT, SCOPE, createGraphHarness, id, rejectsWith, seedProject, type GraphHarness,
 } from "./helpers/brain-graph-fixtures.js";
@@ -69,5 +71,19 @@ describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
     // People other sources still name stay.
     expect(await harness.graph.service.getEntity(OWNER, PROJECT, "person:github:carol"))
       .toMatchObject({ kind: "person" });
+  });
+
+  it("catches up a graph whose sweep a shutdown cut short, with no document left pending", async () => {
+    await seedProject(harness);
+    await harness.sync("linear", [], [id("comment")]);
+    // A hook removed the comment's rows, then the shutdown aborted it before its sweep.
+    await withGraphLock(harness.db.withTables<BrainGraphTables>(), SCOPE,
+      (trx) => deriveGraphDocument(trx, SCOPE, id("comment"), harness.now(), 1_000));
+    expect(await harness.graph.service.getEntity(OWNER, PROJECT, DANA)).toMatchObject({ kind: "person" });
+    expect((await harness.graph.index.freshness(SCOPE)).pendingDocuments).toBe(0);
+    const signal = new AbortController().signal;
+    expect(await runBrainIndexCatchUp(harness.db, [harness.graph.index], signal))
+      .toEqual({ scopes: 1, refreshed: 1, failed: 0 });
+    await rejectsWith(harness.graph.service.getEntity(OWNER, PROJECT, DANA), BrainFeatureError, "entity_not_found");
   });
 });
