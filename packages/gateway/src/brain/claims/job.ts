@@ -142,9 +142,9 @@ function rulesOutcome(state: Extraction, document: BrainDocument): BrainDocument
 }
 
 /**
- * A call that was sent but never answered (it timed out, or the caller aborted it) may still be billed, and no usage
- * comes back: its worst case is added to the run's cost, so the run row, the per-run budget and the 30-day cap count
- * it.
+ * A call that was sent but never answered (it timed out, or the caller aborted it) or answered without valid usage may
+ * still be billed, and no usable usage comes back: its worst case is added to the run's cost, so the run row, the
+ * per-run budget and the 30-day cap count it.
  */
 function chargeUnanswered(state: Extraction, inputBytes: number): void {
   state.usage.costMicroUsd += brainModelCallWorstCostMicroUsd(inputBytes);
@@ -153,7 +153,7 @@ function chargeUnanswered(state: Extraction, inputBytes: number): void {
 /**
  * Null when the caller aborted during the call: the run stops and the document keeps its state. A BrainModelError
  * either fails the document (model_timeout, model_rejected) or stops the run (model_auth_failed, model_unavailable).
- * A timeout or an abort after the call started is charged at its worst case (chargeUnanswered).
+ * A timeout, an abort after the call started or invalid usage is charged at its worst case (chargeUnanswered).
  */
 async function modelOutcome(
   state: Extraction, model: BrainClaimModel, document: BrainDocument,
@@ -204,9 +204,12 @@ async function modelOutcome(
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
-  // Cost unknown: fail the run closed rather than keep spending.
+  // Cost unknown: charge the call's worst case, since it may still be billed, and fail the run closed.
   const usage = BrainExtractionUsageSchema.safeParse(output?.usage);
-  if (!usage.success) throw new ExtractionStop("model_usage_invalid", { cause: usage.error });
+  if (!usage.success) {
+    chargeUnanswered(state, inputBytes);
+    throw new ExtractionStop("model_usage_invalid", { cause: usage.error });
+  }
   for (const key of USAGE_KEYS) state.usage[key] += usage.data[key];
   // After the usage, so a billed refusal or unusable response is still counted.
   const outcome = BrainClaimModelOutcomeSchema.optional().safeParse(output?.outcome);

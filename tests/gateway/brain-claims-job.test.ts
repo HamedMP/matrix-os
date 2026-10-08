@@ -4,6 +4,7 @@ import {
   BRAIN_RULES_EXTRACTOR_ID as RULES, runBrainExtraction, type BrainClaimModel, type BrainClaimModelOutput,
   type BrainExtractionOptions, type BrainExtractionStore,
 } from "../../packages/gateway/src/brain/claims/index.js";
+import { brainModelCallWorstCostMicroUsd } from "../../packages/gateway/src/brain/claims/spend.js";
 import { BrainStoreError } from "../../packages/gateway/src/brain/index.js";
 import { brainDocumentId, createBrainHarness, manualDocument, scopeA, scopeB, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
@@ -122,19 +123,29 @@ describe("brain claim extraction job", { timeout: 60_000 }, () => {
     expect(await states()).toEqual([{ status: "failed", attempts: 4, error_code: "model_failed" }]);
   });
 
-  it("stops at the token and cost budgets and fails the run closed on invalid usage", async () => {
+  it("stops at the token and cost budgets and fails the run closed on invalid usage, charged at worst case", async () => {
     await seed(3);
     const model = fakeModel(async () => ({ usage: USAGE, claims: [] }));
     expect(await extract({ extractor: MODEL, model, limits: { tokensPerRun: 15 } }))
       .toMatchObject({ nextAction: "run_again", usage: USAGE, counts: { documentsProcessed: 1 } });
     expect(await extract({ extractor: MODEL, model, limits: { costMicroUsdPerRun: 3 } }))
       .toMatchObject({ nextAction: "run_again", counts: { documentsProcessed: 1 } });
+    // The call may still be billed, so its worst case is saved on the run and counted by the next spend check.
+    const worst = brainModelCallWorstCostMicroUsd(Buffer.byteLength(`Title d0${BODY}`, "utf8"));
+    const before = (await h.repository.readModelSpend(scopeA)).costMicroUsd;
     for (const output of [{ usage: { ...USAGE, inputTokens: -1 }, claims: [] }, null]) {
       expect(await extract({ extractor: MODEL, model: fakeModel(async () => output) })).toMatchObject({
         status: "failed", errorCode: "model_usage_invalid", nextAction: "contact_support",
-        run: { status: "failed", errorCode: "model_usage_invalid" }, counts: { documentsProcessed: 0 },
+        usage: { costMicroUsd: worst }, counts: { documentsProcessed: 0 },
+        run: { status: "failed", errorCode: "model_usage_invalid", usage: { costMicroUsd: worst } },
       });
     }
+    expect((await h.repository.readModelSpend(scopeA)).costMicroUsd).toBe(before + 2 * worst);
+    // This cap would still cover one more call had those charges been dropped.
+    const unused = fakeModel(async () => ({ usage: USAGE, claims: [] }));
+    expect(await extract({ extractor: MODEL, model: unused, limits: { spendMicroUsdPer30d: before + worst } }))
+      .toMatchObject({ status: "failed", errorCode: "spend_cap_reached", counts: { documentsProcessed: 0 } });
+    expect(unused.extract).not.toHaveBeenCalled();
   });
 
   it("stops on an abort during a model call, skips empty bodies and records malformed output", async () => {

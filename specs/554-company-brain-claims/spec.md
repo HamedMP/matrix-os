@@ -108,7 +108,7 @@ trailers, and `---` ends every section (squash bodies). Each quote gives at most
   statement must be whole words of the stored quote (normalized; else `claimsRejected`) and a label that is not is
   dropped, so `safe` is never read out of `unsafe`. Search work per document is capped (text units x quote units per
   search, 2^32, about 0.3 s worst case on a 64 KiB body); later candidates are `claimsRejected`. Usage outside its
-  schema stops the run (`model_usage_invalid`).
+  schema charges that call's worst case to the run, as a timeout does, and stops the run (`model_usage_invalid`).
 - `finalizeBrainClaims` (both extractors) drops drafts whose span does not slice to the quote or that break a store
   bound (lone surrogates included), computes ids, keeps one claim per quote span, orders by span then id, drops
   duplicate ids and keeps at most 50. A quote given under several kinds keeps one by a fixed precedence
