@@ -1,79 +1,62 @@
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
-import { ChatToolActivity } from "@/components/ChatToolActivity";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FlatList,
-  InteractionManager,
-  KeyboardAvoidingView,
-  Linking,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-  type ListRenderItemInfo,
-} from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth, useUser } from "@clerk/clerk-expo";
-import { Image } from "expo-image";
-import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
-import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
-import ArrowUp01Icon from "@hugeicons/core-free-icons/ArrowUp01Icon";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { Linking, type TextInput } from "react-native";
+import { useAuth } from "@clerk/clerk-expo";
+import { useRouter } from "expo-router";
 
+import { BotChatControls } from "@/components/BotChatControls";
+import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
+import { ChatScreenView } from "@/components/chat/ChatScreenView";
+import {
+  activeChatRun,
+  allowsHomeRelativeAppPaths,
+  chatScreenTitle,
+  composerPlaceholder,
+} from "@/components/chat/chat-screen-state";
+import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
+import { ModelTrigger } from "@/components/chat/ModelTrigger";
+import { ReplyResultApps } from "@/components/chat/ReplyResultApps";
+import type { ChatResultApp } from "@/components/chat/types";
+import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
-import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
-import { useProjects } from "@/lib/queries/use-projects";
+import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import {
   buildTranscript,
   optimisticTranscriptMessage,
-  transcriptWorkLabel,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
-import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
-import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
-import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
-import { useChatComposer } from "@/lib/use-chat-composer";
-import { ModelPicker } from "@/components/ModelPicker";
-import { ProjectPicker } from "@/components/ProjectPicker";
-import { Icon, IconButton, SidePanelIcon, TopBar, TopBarButton } from "@/components/ui";
-import { AnalyticsMask } from "@/lib/analytics";
-import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
-import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
-import { BotChatControls } from "@/components/BotChatControls";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
-import { ChatContextMenu } from "@/components/ChatContextMenu";
+import { useCancelRun } from "@/lib/queries/use-cancel-run";
+import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
+import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
+import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { useOpenSidePanel } from "@/lib/use-shell-navigation";
 
-const rabbitArtwork = require("../../../../assets/app.icon/Assets/rabbit.svg");
-
 export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
-  const { user } = useUser();
-  const { theme } = useUnistyles();
+  const router = useRouter();
   const warmSessionToken = useSessionTokenWarmup();
   const openSidePanel = useOpenSidePanel();
   const {
     activeChatId,
+    startDraftChat,
+    draftChatRequests,
     selectionOverride,
     setSelectionOverride,
     selectedProjectId,
-    setSelectedProjectId,
   } = useCanonicalChatSession();
-  const firstName = user?.firstName
-    ?? user?.fullName?.trim().split(/\s+/)[0]
-    ?? user?.username
-    ?? "there";
 
   const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
+  const { chats } = useCanonicalChats();
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
-  const { projects } = useProjects();
+  const cancelRun = useCancelRun();
 
   const directBot = Boolean(botChat.snapshot);
   // The picker marks the catalog as being checked whenever it is fetched.
@@ -104,473 +87,139 @@ export default function ChatScreen() {
     // Newest-first, matching the inverted transcript FlatList.
     return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
   }, [detail, optimisticMessages]);
-  const busy = isSending || (detail?.runs.some(
-    (run) => !["completed", "failed", "aborted"].includes(run.status),
-  ) ?? false);
 
-  const [inputFocused, setInputFocused] = useState(false);
-  // Tapping the model picker itself blurs the TextInput a beat before its
-  // native menu opens — delay hiding on blur, and cancel the hide entirely
-  // if that blur was caused by touching the picker.
-  const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pickerTouchedRef = useRef(false);
+  const activeRun = activeChatRun(detail);
+  const activeRunId = activeRun?.id;
+  const busy = isSending || Boolean(activeRun);
+  const isConnected = Boolean(isSignedIn);
+  const canSend = !providerCatalogLoading && draft.trim().length > 0 && isConnected
+    && Boolean(selection) && Boolean(turnModes) && !busy;
 
-  const handleInputFocus = useCallback(() => {
-    if (hidePickerTimer.current) {
-      clearTimeout(hidePickerTimer.current);
-      hidePickerTimer.current = null;
-    }
-    setInputFocused(true);
-    warmSessionToken();
-  }, [warmSessionToken]);
+  const inputRef = useRef<TextInput>(null);
+  // The composer takes the cursor, and with it the keyboard, only when the
+  // person asks for a new chat. Opening the screen or a chat leaves the
+  // keyboard closed, so the tabs stay in view.
+  const answeredDraftRequest = useRef(draftChatRequests);
+  useEffect(() => {
+    if (answeredDraftRequest.current === draftChatRequests) return;
+    answeredDraftRequest.current = draftChatRequests;
+    // A turn later: the side panel puts the keyboard away as it starts to
+    // close, which would otherwise undo this.
+    const timer = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(timer);
+  }, [draftChatRequests]);
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text);
     warmSessionToken();
   }, [setDraft, warmSessionToken]);
 
-  const handleInputBlur = useCallback(() => {
-    hidePickerTimer.current = setTimeout(() => {
-      hidePickerTimer.current = null;
-      if (pickerTouchedRef.current) {
-        pickerTouchedRef.current = false;
-        return;
-      }
-      setInputFocused(false);
-    }, 250);
-  }, []);
+  // Web and desktop put a starter in the composer rather than sending it.
+  const handleSuggestionPress = useCallback((suggestion: string) => {
+    setDraft(suggestion);
+    warmSessionToken();
+    inputRef.current?.focus();
+  }, [setDraft, warmSessionToken]);
 
-  const handlePickerTouchStart = useCallback(() => {
-    pickerTouchedRef.current = true;
-  }, []);
+  const handleNewChat = useCallback(() => startDraftChat(), [startDraftChat]);
 
-  const isConnected = Boolean(isSignedIn);
-  const hasDraftText = draft.trim().length > 0;
-  const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
+  const { mutate: requestCancel, isPending: cancelPending } = cancelRun;
+  // A failed request changes nothing here: the run is still listed as active,
+  // so the button is simply there to be pressed again.
+  const handleStop = useMemo(() => (
+    activeChatId && activeRunId && !cancelPending
+      ? () => requestCancel({ chatId: activeChatId, runId: activeRunId })
+      : undefined
+  ), [activeChatId, activeRunId, cancelPending, requestCancel]);
 
-  const insets = useSafeAreaInsets();
+  const renderRequest = useCallback((item: TranscriptMessage) => {
+    if (!activeChatId || !gatewayUrl) return null;
+    if (item.input) {
+      return (
+        <CanonicalInputMessage
+          key={`${activeChatId}:${item.input.runId}:${item.input.requestId}`}
+          request={item.input}
+          chatId={activeChatId}
+          gatewayUrl={gatewayUrl}
+          onSettled={refresh}
+        />
+      );
+    }
+    if (item.approval) {
+      return (
+        <CanonicalApprovalMessage
+          key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
+          approval={item.approval}
+          chatId={activeChatId}
+          gatewayUrl={gatewayUrl}
+          onSettled={refresh}
+        />
+      );
+    }
+    return null;
+  }, [activeChatId, gatewayUrl, refresh]);
 
-  // Keep the composer focused and the keyboard open while there's no active
-  // chat (a fresh draft) -- `autoFocus` alone doesn't reliably refire across
-  // Drawer navigation (it only fires once, on initial mount, and can lose
-  // the race against the drawer's close animation), so this focuses
-  // imperatively via a ref whenever activeChatId transitions to null, once
-  // the navigation transition has settled.
-  const inputRef = useRef<TextInput>(null);
-  useEffect(() => {
-    if (activeChatId !== null) return;
-    const task = InteractionManager.runAfterInteractions(() => {
-      inputRef.current?.focus();
-    });
-    return () => task.cancel();
-  }, [activeChatId]);
+  const openApp = useCallback((app: ChatResultApp) => {
+    router.push({ pathname: "/app-preview/[app]", params: { app: app.slug, name: app.name } } as never);
+  }, [router]);
 
-  const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
-    <ChatContextMenu chatId={detail?.record.chat.id}>
-      <Pressable accessible={false}>
-        <AnalyticsMask>
-          {item.input && activeChatId && computer ? <CanonicalInputMessage
-            key={`${activeChatId}:${item.input.runId}:${item.input.requestId}`}
-            request={item.input} chatId={activeChatId}
-            gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}
-          /> : item.approval && activeChatId && computer ? <CanonicalApprovalMessage
-            key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
-            approval={item.approval} chatId={activeChatId}
-            gatewayUrl={`${HOSTED_GATEWAY_URL}${computer.gatewayPath}`} onSettled={refresh}
-          /> : <MessageBubble message={item} />}
-        </AnalyticsMask>
-      </Pressable>
-    </ChatContextMenu>
-  ), [activeChatId, computer, detail?.record.chat.id, refresh]);
-
-  const keyExtractor = useCallback((item: TranscriptMessage) => item.id, []);
-
-  return (
-    // The screen starts at the top of the window and ends at the tab bar, so
-    // the keyboard's overlap with it needs no offset: the part of the keyboard
-    // that covers the tab bar is already outside this view.
-    <KeyboardAvoidingView
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <TopBar
-        leading={
-          <TopBarButton
-            icon={SidePanelIcon}
-            accessibilityLabel="Open chats and projects"
-            onPress={openSidePanel}
-          />
-        }
-      />
-      {botChat.snapshot ? <BotChatControls catalog={catalog} snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
-        onSelectionChange={botChat.updateModel} onResolve={botChat.resolve}
-        onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
-        onConnectUrl={async (url) => {
-          if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
-          await Linking.openURL(url);
-        }} /> : null}
-      {botChat.isError && activeChatId ? <Text accessibilityRole="alert" style={styles.systemText}>
-        Bot status could not be loaded. Try again.
-      </Text> : null}
-      <FlatList
-        style={styles.hero}
-        data={messages}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        inverted
-        // FlatList (built on ScrollView) defaults to "never" -- any tap on the
-        // list area dismisses the keyboard. On a fresh draft there's nothing
-        // to tap yet but the empty-state hero, so that default just closes
-        // the keyboard we're trying to keep open (see the auto-focus effect
-        // above); once a real chat exists, restore the normal dismiss-on-tap
-        // behavior.
-        keyboardShouldPersistTaps={activeChatId === null ? "always" : "never"}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <View style={styles.orb} testID="home-rabbit-container">
-              <Image
-                source={rabbitArtwork}
-                style={styles.rabbit}
-                contentFit="contain"
-                accessibilityLabel="Matrix OS"
-                testID="home-rabbit-mark"
-              />
-            </View>
-            <Text style={styles.title}>Welcome back {firstName}</Text>
-          </View>
-        }
-      />
-
-      <View style={[styles.composerWrap, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-        {inputFocused && activeChatId === null && projects.length > 0 ? (
-          <View style={styles.projectPickerRow} onTouchStart={handlePickerTouchStart}>
-            <ProjectPicker
-              projects={projects}
-              selectedProjectId={selectedProjectId}
-              onSelectionChange={setSelectedProjectId}
-            />
-          </View>
-        ) : null}
-        <View style={inputFocused ? styles.composerActive : styles.composer}>
-          {inputFocused ? null : (
-            <IconButton
-              accessibilityLabel="Attach"
-              icon={Add01Icon}
-              iconSize={23}
-              iconColor={theme.v2.appColors.ink}
-            />
-          )}
-          <TextInput
-            ref={inputRef}
-            accessibilityLabel="Message Matrix"
-            value={draft}
-            onChangeText={handleDraftChange}
-            onSubmitEditing={send}
-            onFocus={handleInputFocus}
-            onBlur={handleInputBlur}
-            placeholder={isConnected ? "Message Matrix" : "Signing in…"}
-            placeholderTextColor={theme.v2.appColors.muted}
-            editable={isConnected}
-            returnKeyType="send"
-            style={inputFocused ? styles.inputActive : styles.input}
-          />
-          {inputFocused ? (
-            <View style={styles.composerControlsRow}>
-              <IconButton
-                accessibilityLabel="Attach"
-                icon={Add01Icon}
-                iconSize={23}
-                iconColor={theme.v2.appColors.ink}
-              />
-              <View style={styles.composerControlsRight}>
-                <View style={styles.composerPickers} onTouchStart={handlePickerTouchStart}>
-                  {!directBot ? <ModelPicker
-                    catalog={catalog}
-                    catalogLoading={providerCatalogChecking}
-                    selection={selection}
-                    onSelectionChange={setSelectionOverride}
-                  /> : <Text style={styles.systemText}>Bot model</Text>}
-                </View>
-                <IconButton
-                  accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
-                  icon={ArrowUp01Icon}
-                  iconSize={19}
-                  iconColor={theme.v2.appColors.surface}
-                  backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
-                  loading={busy}
-                  disabled={!canSend}
-                  onPress={send}
-                />
-              </View>
-            </View>
-          ) : (
-            <IconButton
-              accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
-              icon={ArrowUp01Icon}
-              iconSize={19}
-              iconColor={theme.v2.appColors.surface}
-              backgroundColor={canSend || busy ? theme.v2.appColors.blue : theme.v2.appColors.disabledSurface}
-              loading={busy}
-              disabled={!canSend}
-              onPress={send}
-            />
-          )}
-        </View>
-      </View>
-    </KeyboardAvoidingView>
-  );
-}
-
-function MessageBubble({ message }: { message: TranscriptMessage }) {
-  if (message.role === "user") {
-    return (
-      <View style={styles.userBubble}>
-        <Text style={styles.userText}>{message.text}</Text>
-      </View>
-    );
-  }
-  if (message.role === "tool") {
-    return (
-      <View style={styles.toolRow}>
-        <Text style={styles.toolText}>{message.text}</Text>
-      </View>
-    );
-  }
-  if (message.role === "system") {
-    return (
-      <View style={styles.systemRow}>
-        <Text style={styles.systemText}>{message.text}</Text>
-      </View>
-    );
-  }
-  return <AssistantMessage message={message} />;
-}
-
-function AssistantMessage({ message }: { message: TranscriptMessage }) {
-  // Auto-expanded while the turn is running (so reasoning/tool activity is
-  // visible live, matching desktop), until the user manually toggles it.
-  const [manualExpanded, setManualExpanded] = useState<boolean | null>(null);
-  const { theme } = useUnistyles();
-  const expanded = manualExpanded ?? message.isRunning;
-  const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
-  const workedLabel = transcriptWorkLabel(message);
-  // While the reply streams, show it at a steady pace with each new chunk
-  // fading in, rather than in the uneven bursts the network delivers.
-  const reveal = useStreamedTextReveal(message.text, message.isRunning);
-  // Re-parses on every text change, which is exactly what a growing streamed
-  // string needs -- markdown applies as the text arrives, not once at the end.
-  const markdownNodes = useMemo(() => {
-    const markdownTheme: ChatMarkdownTheme = {
-      textStyle: { fontFamily: theme.v2.fonts.body, fontSize: 15, lineHeight: 22, color: theme.v2.appColors.ink },
-      mutedColor: theme.v2.appColors.muted,
-      linkColor: theme.v2.appColors.blue,
-      codeBackground: theme.v2.appColors.surface,
-      codeBorderColor: theme.v2.appColors.line,
-      monoFontFamily: theme.v2.fonts.mono,
-      boldFontFamily: theme.v2.fonts.semibold,
-      headingFontFamily: theme.v2.fonts.semibold,
-    };
-    return renderChatMarkdown(reveal.text, markdownTheme, reveal.fades);
-  }, [reveal.text, reveal.fades, theme]);
+  const renderResults = useCallback((item: TranscriptMessage) => (
+    <ReplyResultApps
+      text={item.text}
+      allowRelative={allowsHomeRelativeAppPaths(detail, item.id)}
+      onOpen={openApp}
+    />
+  ), [detail, openApp]);
 
   return (
-    <View style={styles.matrixBubble}>
-      {workedLabel ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={hasWork ? (expanded ? "Hide work" : "Show work") : workedLabel}
-          disabled={!hasWork}
-          onPress={() => setManualExpanded(!expanded)}
-          style={({ pressed }) => [styles.workedRow, pressed && hasWork && styles.pressed]}
-        >
-          <Text style={styles.workedText}>{workedLabel}</Text>
-          {hasWork ? (
-            <Icon
-              icon={expanded ? ArrowUp01Icon : ArrowDown01Icon}
-              size={14}
-              color={theme.v2.appColors.muted}
-            />
-          ) : null}
-        </Pressable>
+    <ChatScreenView
+      title={chatScreenTitle(activeChatId, detail, chats)}
+      onOpenSidePanel={openSidePanel}
+      onNewChat={activeChatId ? handleNewChat : undefined}
+      header={botChat.snapshot ? (
+        <BotChatControls
+          catalog={catalog}
+          snapshot={botChat.snapshot}
+          actionsAvailable={!botChat.isError}
+          onSelectionChange={botChat.updateModel}
+          onResolve={botChat.resolve}
+          onRevoke={botChat.revoke}
+          onMemory={botChat.memory}
+          onRefresh={botChat.refresh}
+          onConnectUrl={async (url) => {
+            if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
+            await Linking.openURL(url);
+          }}
+        />
       ) : null}
-      {expanded && hasWork ? (
-        <View style={styles.toolCallsList}>
-          {message.activities.map((activity) => <ChatToolActivity key={activity.id} activity={activity} />)}
-          {message.toolCalls.map((call) => (
-            <Text key={call.id} style={styles.toolText}>{call.label}</Text>
-          ))}
-        </View>
-      ) : null}
-      {workedLabel ? <View style={styles.divider} /> : null}
-      <View style={styles.matrixTextBlock}>{markdownNodes}</View>
-    </View>
+      notice={botChat.isError && activeChatId ? "Bot status could not be loaded. Try again." : null}
+      showHome={activeChatId === null && messages.length === 0}
+      suggestions={CHAT_SUGGESTIONS}
+      onSuggestionPress={handleSuggestionPress}
+      messages={messages}
+      chatId={activeChatId}
+      renderRequest={renderRequest}
+      renderResults={renderResults}
+      composer={{
+        inputRef,
+        draft,
+        onChangeDraft: handleDraftChange,
+        placeholder: composerPlaceholder({ connected: isConnected, chatOpen: activeChatId !== null }),
+        editable: isConnected,
+        onFocus: warmSessionToken,
+        canSend,
+        onSend: send,
+        running: busy,
+        onStop: handleStop,
+        modelControl: directBot ? <ModelTrigger label="Bot model" fixed /> : (
+          <ModelPicker
+            catalog={catalog}
+            catalogLoading={providerCatalogChecking}
+            selection={selection}
+            onSelectionChange={setSelectionOverride}
+          />
+        ),
+      }}
+    />
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  screen: {
-    flex: 1,
-    backgroundColor: theme.v2.appColors.canvas,
-  },
-  hero: {
-    flex: 1,
-  },
-  listContent: {
-    flexGrow: 1,
-    justifyContent: "flex-end",
-    paddingHorizontal: 24,
-    paddingVertical: 18,
-    gap: 18,
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 42,
-  },
-  orb: {
-    width: 68,
-    height: 68,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 20,
-  },
-  rabbit: {
-    width: 68,
-    height: 68,
-  },
-  title: {
-    fontFamily: theme.v2.fonts.display,
-    fontSize: 28,
-    letterSpacing: -0.7,
-    color: theme.v2.appColors.ink,
-  },
-  pressed: {
-    opacity: 0.6,
-  },
-  userBubble: {
-    maxWidth: "84%",
-    alignSelf: "flex-end",
-    borderRadius: 20,
-    borderBottomRightRadius: 7,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: theme.v2.appColors.ink,
-  },
-  userText: {
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    lineHeight: 21,
-    color: theme.v2.appColors.surface,
-  },
-  matrixBubble: {
-    width: "100%",
-    alignSelf: "stretch",
-  },
-  workedRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 6,
-    paddingVertical: 4,
-  },
-  workedText: {
-    fontFamily: theme.v2.fonts.medium,
-    fontSize: 13,
-    color: theme.v2.appColors.muted,
-  },
-  toolCallsList: {
-    gap: 4,
-    paddingBottom: 8,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.v2.appColors.line,
-    marginVertical: 10,
-  },
-  matrixTextBlock: {
-    gap: 2,
-  },
-  toolRow: {
-    alignSelf: "flex-start",
-  },
-  toolText: {
-    fontFamily: theme.v2.fonts.medium,
-    fontSize: 13,
-    color: theme.v2.appColors.muted,
-  },
-  systemRow: {
-    alignSelf: "center",
-  },
-  systemText: {
-    fontFamily: theme.v2.fonts.medium,
-    fontSize: 13,
-    color: theme.v2.appColors.muted,
-    textAlign: "center",
-  },
-  composerWrap: {
-    paddingHorizontal: 14,
-    paddingTop: 10,
-  },
-  projectPickerRow: {
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    paddingBottom: 6,
-  },
-  composer: {
-    minHeight: 58,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
-    borderRadius: 22,
-    paddingHorizontal: 8,
-    backgroundColor: theme.v2.appColors.surface,
-    boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
-  },
-  input: {
-    flex: 1,
-    minHeight: 46,
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    color: theme.v2.appColors.ink,
-  },
-  composerActive: {
-    flexDirection: "column",
-    gap: 6,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
-    borderRadius: 22,
-    paddingHorizontal: 8,
-    paddingTop: 8,
-    paddingBottom: 6,
-    backgroundColor: theme.v2.appColors.surface,
-    boxShadow: "0 8px 24px rgba(23, 25, 24, 0.08)",
-  },
-  inputActive: {
-    alignSelf: "stretch",
-    minHeight: 40,
-    paddingHorizontal: 4,
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    color: theme.v2.appColors.ink,
-  },
-  composerControlsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  // Both shrink so wide pickers wrap inside the row and the send button, which
-  // keeps its size, always stays in view.
-  composerControlsRight: {
-    flexShrink: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  composerPickers: {
-    flexShrink: 1,
-  },
-}));

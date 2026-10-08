@@ -1,8 +1,18 @@
+import type { ReactNode } from "react";
+import React from "react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import { Image } from "expo-image";
+
+import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import { Icon } from "../components/ui/Icon";
+import { SidePanelIcon } from "../components/ui/icons";
+
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
-import type { ReactNode } from "react";
 
 const mockSendMessage = jest.fn();
 const mockOpenSidePanel = jest.fn();
@@ -17,10 +27,6 @@ let mockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isSignedIn: true }),
-  useUser: () => ({
-    isLoaded: true,
-    user: { firstName: "Shubham", fullName: "Shubham Zanwar", username: "shubham" },
-  }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -35,6 +41,8 @@ jest.mock("@/lib/canonical-chat-session-context", () => ({
     selectedProjectId: null,
     setSelectedProjectId: jest.fn(),
     bindDraftChatId: jest.fn(),
+    startDraftChat: jest.fn(),
+    draftChatRequests: 0,
   }),
 }));
 
@@ -46,31 +54,30 @@ jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
   useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: mockCatalogLoading, isFetching: mockCatalogLoading }),
 }));
 
-jest.mock("@/lib/queries/use-projects", () => ({
-  useProjects: () => ({ projects: [], isPending: false, isError: false }),
-}));
-
 jest.mock("@/lib/queries/use-send-chat-message", () => ({
   useSendChatMessage: () => ({ mutate: mockSendMessage, isPending: mockSendPending }),
 }));
 
-jest.mock("@expo/ui", () => {
+jest.mock("@/lib/queries/use-cancel-run", () => ({
+  useCancelRun: () => ({ mutate: jest.fn(), isPending: false }),
+}));
+
+jest.mock("@/lib/queries/use-canonical-chats", () => ({
+  useCanonicalChats: () => ({ chats: [] }),
+}));
+
+jest.mock("@/lib/queries/use-computer-apps", () => ({
+  useComputerApps: () => ({ apps: [] }),
+  installedAppSlug: (app: { slug: string }) => app.slug,
+}));
+
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+
+jest.mock("@expo/ui/community/menu", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
-  return {
-    Host: ({ children }: { children: ReactNode }) => React.createElement(View, null, children),
-    Picker: () => null,
-  };
+  return { MenuView: (props: { children?: ReactNode }) => React.createElement(View, props, props.children) };
 });
-
-import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
-import * as Clipboard from "expo-clipboard";
-
-import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
-import { Icon } from "../components/ui/Icon";
-import { SidePanelIcon } from "../components/ui/icons";
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRealTimers(); });
@@ -78,7 +85,7 @@ afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRea
 describe("drawer home screen", () => {
   it("expands the exact tool command and bounded result", () => {
     mockActiveChatId = "chat_tools";
-    mockDetail = { record: { chat: { id: mockActiveChatId } }, turns: [],
+    mockDetail = { record: { chat: { id: mockActiveChatId, title: "Tools" } }, turns: [],
       runs: [{ id: "run_tools", turnId: "cturn_tools", status: "running", selection: { model: "test" }, createdAt: "2026-09-20T00:00:00.000Z" }],
       messages: [], activities: [
         { id: "activity_tools", runId: "run_tools", type: "agent.activity", activityId: "tool_tests", kind: "command", label: "Run command", status: "running", preview: "bun run test", previewKind: "command", detail: "Working directory: projects/demo" },
@@ -104,7 +111,7 @@ describe("drawer home screen", () => {
   });
   it("copies the displayed Native Mobile conversation ID by long-pressing its content", () => {
     mockActiveChatId = "chat_native_content";
-    mockDetail = { record: { chat: { id: mockActiveChatId } }, runs: [], turns: [], activities: [],
+    mockDetail = { record: { chat: { id: mockActiveChatId, title: "Native failure" } }, runs: [], turns: [], activities: [],
       messages: [{ id: "msg_native_copy", chatId: mockActiveChatId, role: "user", state: "committed", seq: 1,
         parts: [{ type: "text", text: "Inspect native failure" }], createdAt: "2026-09-09T00:00:00.000Z" }] };
     const alert = jest.spyOn(Alert, "alert");
@@ -116,14 +123,14 @@ describe("drawer home screen", () => {
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith("chat_native_content");
   });
 
-  it("uses the Matrix rabbit artwork for its empty-state mark", () => {
+  it("greets a new chat with the Matrix mark, 40pt high, and the heading in place of a welcome by name", () => {
     render(<ChatScreen />);
 
-    expect(screen.getByText("Welcome back Shubham")).toBeTruthy();
-    const rabbitStyle = NativeStyleSheet.flatten(screen.getByTestId("home-rabbit-mark").props.style);
-    expect(rabbitStyle).toMatchObject({ width: 68, height: 68 });
-    const containerStyle = NativeStyleSheet.flatten(screen.getByTestId("home-rabbit-container").props.style);
-    expect(containerStyle).toMatchObject({ width: 68, height: 68 });
+    expect(screen.getByRole("header", { name: "What should we work on?" })).toBeTruthy();
+    expect(screen.queryByText(/Welcome back/)).toBeNull();
+    const mark = NativeStyleSheet.flatten(screen.UNSAFE_getByType(Image).props.style) as Record<string, number>;
+    expect(mark.height).toBe(40);
+    expect(mark.width).toBeCloseTo(30.9, 5);
   });
   it("opens the side panel from the button in its top bar", () => {
     render(<ChatScreen />);
@@ -183,7 +190,7 @@ describe("drawer home screen", () => {
       messages: ReturnType<typeof sentMessage>[],
       turns: ReturnType<typeof admittedTurn>[] = [],
     ) {
-      return { record: { chat: { id: chatId, revision: 4 } }, runs: [], turns, activities: [], messages };
+      return { record: { chat: { id: chatId, title: "Release", revision: 4 } }, runs: [], turns, activities: [], messages };
     }
 
     function sendDraft(text: string) {
@@ -201,7 +208,7 @@ describe("drawer home screen", () => {
       expect(mockSendMessage.mock.calls[0][0]).toMatchObject({ chatId: null, text: "Ship it" });
       expect(screen.getByText("Ship it")).toBeTruthy();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("");
-      expect(screen.queryByText("Welcome back Shubham")).toBeNull();
+      expect(screen.queryByText("What should we work on?")).toBeNull();
     });
 
     it("puts the text back in the composer when the send fails", () => {
@@ -212,7 +219,7 @@ describe("drawer home screen", () => {
 
       expect(screen.queryByText("Ship it")).toBeNull();
       expect(screen.getByLabelText("Message Matrix").props.value).toBe("Ship it");
-      expect(screen.getByText("Welcome back Shubham")).toBeTruthy();
+      expect(screen.getByText("What should we work on?")).toBeTruthy();
     });
 
     it("keeps text typed while a failed send was in flight", () => {
@@ -383,12 +390,12 @@ describe("drawer home screen", () => {
 
 it("sends an owner-verified Native bot Chat with its private route while the general model catalog is unavailable", () => {
   mockActiveChatId = "chat_bot";
-  mockDetail = { record: { chat: { id: mockActiveChatId, revision: 3 } }, runs: [], turns: [], activities: [], messages: [] };
+  mockDetail = { record: { chat: { id: mockActiveChatId, title: "Writer", revision: 3 } }, runs: [], turns: [], activities: [], messages: [] };
   mockBotSnapshot = { agentId: "bot_abcdefgh", name: "Writer", revision: 2,
     selection: { instanceId: "matrix_pi_default", model: "cloudflare:@cf/zai-org/glm-5.3-flash" }, interactions: [], tasks: [],
     authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
   render(<ChatScreen />);
-  const input = screen.getByPlaceholderText("Message Matrix");
+  const input = screen.getByPlaceholderText("Reply…");
   fireEvent.changeText(input, "Write a brief");
   fireEvent(input, "focus");
   fireEvent.press(screen.getByRole("button", { name: "Send message" }));
