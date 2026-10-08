@@ -123,7 +123,9 @@ export function parseChatConfig(raw: unknown): BrainMatrixChatSourceConfig {
 
 function label(prefix: string, items: readonly string[]): string {
   const text = items.length === 0 ? prefix : `${prefix}: ${items.join(", ")}`;
-  return text.length <= 300 ? text : `${text.slice(0, 297)}...`;
+  if (text.length <= 300) return text;
+  const head = text.slice(0, 297);
+  return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}...`;
 }
 
 export function identifyNotes(config: BrainMatrixNotesSourceConfig): { externalRef: string; label: string } {
