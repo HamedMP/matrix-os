@@ -97,6 +97,13 @@ export const size = {
   topBar: 52,
   control: 44,
   controlLarge: 48,
+  chip: 36,
+  field: 54,
+  searchField: 45,
+  grabberWidth: 36,
+  grabberHeight: 5,
+  statusDot: 8,
+  badge: 16,
 } as const;
 
 export const borderWidth = {

@@ -1,13 +1,22 @@
 import { Children, Fragment, useState, type ReactNode } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
-import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
-import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
 import { Pressable, Text, TextInput, View, type ColorValue } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { Icon, IconButton, Skeleton, Spacer, type IconData } from "@/components/ui";
-import type { SpacingSize } from "@/lib/theme-v2";
+import {
+  CloseIcon,
+  Icon,
+  IconButton,
+  SearchIcon,
+  Skeleton,
+  Spacer,
+  type IconData,
+} from "@/components/ui";
+import { size, type SpacingSize } from "@/lib/theme-v2";
+
+const CLEAR_BUTTON_SIZE = 32;
+const CLEAR_SLOP = (size.tapTarget - CLEAR_BUTTON_SIZE) / 2;
 
 interface SearchFieldProps {
   placeholder?: string;
@@ -30,11 +39,11 @@ export function SearchField({
 
   return (
     <View style={styles.search}>
-      <Icon icon={Search01Icon} size={17} color={theme.v2.appColors.muted} />
+      <Icon icon={SearchIcon} size={16} color={theme.v2.colors.textSubtle} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
-        placeholderTextColor={theme.v2.appColors.muted}
+        placeholderTextColor={theme.v2.colors.textTertiary}
         value={currentValue}
         onChangeText={updateValue}
         style={styles.searchInput}
@@ -42,11 +51,10 @@ export function SearchField({
       {currentValue ? (
         <IconButton
           accessibilityLabel={`Clear ${placeholder}`}
-          icon={Cancel01Icon}
-          iconColor={theme.v2.appColors.ink}
+          icon={CloseIcon}
           iconSize={18}
-          buttonSize={32}
-          pressedOpacity={0.65}
+          buttonSize={CLEAR_BUTTON_SIZE}
+          hitSlop={CLEAR_SLOP}
           onPress={() => updateValue("")}
         />
       ) : null}
@@ -269,21 +277,21 @@ export function ListRow({
 
 const styles = StyleSheet.create((theme) => ({
   search: {
-    minHeight: 46,
+    height: theme.v2.size.searchField,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    backgroundColor: theme.v2.appColors.surface,
+    gap: theme.v2.space[8],
+    borderRadius: theme.v2.radius.field,
+    paddingHorizontal: theme.v2.space[14],
+    backgroundColor: theme.v2.colors.card,
   },
+  // A one-line input centres its own text, so it takes no line height.
   searchInput: {
     flex: 1,
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    color: theme.v2.appColors.ink,
+    alignSelf: "stretch",
+    fontFamily: theme.v2.text.callout.fontFamily,
+    fontSize: theme.v2.text.callout.fontSize,
+    color: theme.v2.colors.textDefault,
   },
   tile: {
     width: "31.5%",
