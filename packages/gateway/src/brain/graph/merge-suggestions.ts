@@ -269,8 +269,13 @@ async function readInput(db: BrainGraphExecutor, scope: BrainScopeKey, limits: B
     .where("e.owner_id", "=", scope.ownerId).where("e.scope_id", "=", scope.scopeId).where("e.kind", "=", "person")
     .where(LIVE_ENTITY).orderBy("e.last_seen_at", "desc").orderBy("e.entity_id").limit(limits.personsScanned + 1)
     .execute();
-  const splits = await db.selectFrom("brain_graph_aliases").select(["alias_entity_id", "entity_id"])
+  const scanned = persons.slice(0, limits.personsScanned);
+  // Split rows of the scanned persons only (the alias is the key, so one each at most), by alias id. Past the cap, a
+  // person at or after the first unread row may have a split that was not read: unsureFrom is that row's alias id.
+  const splits = scanned.length === 0 ? [] : await db.selectFrom("brain_graph_aliases")
+    .select(["alias_entity_id", "entity_id"])
     .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("state", "=", "split")
+    .where("alias_entity_id", "in", scanned.map((row) => row.entity_id))
     .orderBy("alias_entity_id").limit(limits.splitsScanned + 1).execute();
   const pairs = await sql<{ n: string; e: string; documents: number }>`
     SELECT pair->>'n' AS n, pair->>'e' AS e, count(*)::int AS documents FROM brain_graph_state s
@@ -281,13 +286,13 @@ async function readInput(db: BrainGraphExecutor, scope: BrainScopeKey, limits: B
   const truncated = persons.length > limits.personsScanned || splits.length > limits.splitsScanned
     || pairs.rows.length > limits.pairsScanned;
   const input: BrainMergeInput = {
-    persons: persons.slice(0, limits.personsScanned).map((row) => ({
+    persons: scanned.map((row) => ({
       entityId: row.entity_id, key: row.key, displayName: row.display_name, root: row.root ?? row.entity_id,
     })),
     splits: splits.slice(0, limits.splitsScanned).map((row) => ({ aliasId: row.alias_entity_id, entityId: row.entity_id })),
     pairs: pairs.rows.slice(0, limits.pairsScanned),
   };
-  return { input, truncated };
+  return { input, truncated, unsureFrom: splits[limits.splitsScanned]?.alias_entity_id ?? null };
 }
 
 /** Stored links of live documents per entity id (persons only author, review or are mentioned). */
@@ -314,13 +319,17 @@ export async function listMergeSuggestions(
   limits: BrainMergeScanLimits = BRAIN_MERGE_SUGGESTION_LIMITS,
 ): Promise<BrainMergeSuggestionsView> {
   const after = query.cursor === undefined ? null : decodeCursor(query.cursor);
-  const { input, truncated: scanTruncated } = await readInput(db, scope, limits);
-  const candidates = findMergeCandidates(input)
+  const { input, truncated: scanTruncated, unsureFrom } = await readInput(db, scope, limits);
+  const members = new Map<string, string[]>();
+  for (const person of input.persons) members.set(person.root, [...members.get(person.root) ?? [], person.entityId]);
+  // A pair the owner may have split (a split row left unread) is left out, never suggested again: the answer is
+  // truncated instead.
+  const sure = (root: string) => unsureFrom === null || members.get(root)!.every((id) => id < unsureFrom);
+  const candidates = findMergeCandidates(input).filter((candidate) => sure(candidate.a.entityId)
+    && sure(candidate.b.entityId))
     .sort((x, y) => y.score - x.score || x.a.entityId.localeCompare(y.a.entityId)
       || x.b.entityId.localeCompare(y.b.entityId));
   const ranked = candidates.slice(0, limits.suggestionsMax);
-  const members = new Map<string, string[]>();
-  for (const person of input.persons) members.set(person.root, [...members.get(person.root) ?? [], person.entityId]);
   const roots = new Set(ranked.flatMap((candidate) => [candidate.a.entityId, candidate.b.entityId]));
   const links = await linkCounts(db, scope, [...roots].flatMap((root) => members.get(root)!));
   const linksOf = (root: string) => members.get(root)!.reduce((sum, id) => sum + links.get(id)!, 0);
