@@ -374,4 +374,28 @@ describe("runner", () => {
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "BrainApiError");
     expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-10-01", "day")).toBeNull();
   });
+
+  it("shares the build cap with requests, so a pass never starts a third build", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const summarize = vi.fn<BrainBriefSummaryModel["summarize"]>(async () => {
+      await gate;
+      return { text: "Quiet day.", modelId: "m", usage: { inputTokens: 0, outputTokens: 0, costMicroUsd: 0 } };
+    });
+    const feature = fx.rebuild(async () => ({ summarize }));
+    const held = [0, 1].map(() => feature.service.generateBrief(BRIEF_OWNER, "proj_a", { summary: true }));
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledTimes(2));
+    const scopes = { listActiveScopes: async () => [BRIEF_SCOPE] };
+    const pass = () => feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: new AbortController().signal });
+    expect(await pass()).toEqual({ scopes: 1, built: 0, failed: 1, skipped: 0 });
+    expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "BrainApiError");
+    release();
+    expect((await Promise.all(held)).map((view) => view.summary?.text)).toEqual(["Quiet day.", "Quiet day."]);
+    await sql`DELETE FROM brain_brief_briefs`.execute(fx.harness.db);
+    expect(await pass()).toEqual({ scopes: 1, built: 1, failed: 0, skipped: 0 });
+  });
 });

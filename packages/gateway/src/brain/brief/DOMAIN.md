@@ -58,7 +58,8 @@ The daily brief of one project scope, plus its conflicts and stale data. Spec:
   lock for that delete). A document tombstoned between two reads drops the line that cites it.
 - Two requests may build the same brief at once; both are valid and the newer one stays.
 - The scheduler pass is bounded by `BRAIN_BRIEF_SCHEDULE.passBudgetMs` and an abort signal;
-  a failed scope is counted and logged by error name, and the next pass retries it.
+  a failed scope is counted and logged by error name, and the next pass retries it. Its builds
+  share the request build cap (two at once), so a pass never adds a third.
 - `scope_erased` deletes every stored brief of the scope; nothing else is scope-level. A write
   first checks under the brief lock that every cited document is live and every named source still
   has a row, so a build that outlives a tombstone, an erase or the listener stores nothing. Each

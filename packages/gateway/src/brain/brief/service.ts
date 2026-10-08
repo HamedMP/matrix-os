@@ -151,7 +151,8 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
           ...(current === null || needsRebuild(current, now) ? [today] : []),
           ...(previous !== null && needsRebuild(previous, now) ? [yesterday] : []),
         ];
-        for (const date of todo) await build(scope, date, "day", now, null);
+        // The same cap as requests: a pass never adds a third build while two are running.
+        for (const date of todo) await capped(() => build(scope, date, "day", now, null));
         if (todo.length > 0) built += 1;
         else skipped += 1;
       } catch (error: unknown) {
