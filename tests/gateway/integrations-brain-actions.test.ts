@@ -161,3 +161,176 @@ describe("GitHub brain actions", () => {
     expect(() => url("list_issues_since", { repo: "octo/../x" })).toThrow("owner/name");
   });
 });
+
+describe("Linear brain actions", () => {
+  const params = { teamKeys: ["ENG", "OPS2"], updatedSince: "2026-01-02T03:04:05.000Z", first: 40, after: "cursor_1" };
+
+  it.each([
+    ["brain_issues", "MatrixBrainIssues", "issues", "filter: { team: { key: { in: $teamKeys } }, updatedAt: { gte: $since } }"],
+    ["brain_comments", "MatrixBrainComments", "comments",
+      "filter: { issue: { team: { key: { in: $teamKeys } } }, updatedAt: { gte: $since } }"],
+    ["brain_project_updates", "MatrixBrainProjectUpdates", "projectUpdates",
+      "filter: { project: { accessibleTeams: { some: { key: { in: $teamKeys } } } }, updatedAt: { gte: $since } }"],
+  ])("%s posts one bounded GraphQL page with variables only", async (actionId, operation, field, filter) => {
+    expect(valid("linear", actionId, params)).toBe(true);
+    const { proxyPost } = await proxied("linear", actionId, params);
+    const call = proxyPost.mock.calls[0]![0] as { url: string; body: { query: string; variables: Params } };
+    expect(call.url).toBe("https://api.linear.app/graphql");
+    const query = call.body.query.replace(/\s+/g, " ");
+    expect(query).toContain(
+      `query ${operation}($teamKeys: [String!]!, $since: DateTimeOrDuration!, $first: Int!, $after: String)`,
+    );
+    expect(query).toContain(`${field}(first: $first, after: $after, includeArchived: true, orderBy: updatedAt, ${filter}`);
+    expect(query).toContain("pageInfo { hasNextPage endCursor }");
+    expect(query).not.toContain("ENG");
+    expect(query).not.toContain("cursor_1");
+    expect(call.body.variables).toEqual({
+      teamKeys: ["ENG", "OPS2"], since: "2026-01-02T03:04:05.000Z", first: 40, after: "cursor_1",
+    });
+  });
+
+  it("asks for the fields the brain reads", () => {
+    const query = (actionId: string) => (getAction("linear", actionId)!.directApi!.mapBody!(params) as { query: string })
+      .query.replace(/\s+/g, " ");
+    expect(query("brain_issues")).toContain(
+      "nodes { id identifier title description url updatedAt dueDate priority archivedAt trashed creator { id } "
+        + "assignee { id } state { name type } labels(first: 20) { nodes { name } } project { name } }",
+    );
+    expect(query("brain_comments")).toContain(
+      "nodes { id body url updatedAt archivedAt user { id } issue { id identifier title } }",
+    );
+    expect(query("brain_project_updates")).toContain(
+      "nodes { id body url updatedAt archivedAt health user { id } project { id name } }",
+    );
+  });
+
+  it("starts at the first page and defaults the page size", async () => {
+    const first = { teamKeys: ["ENG"], updatedSince: "2026-01-02T03:04:05+05:30", after: null };
+    expect(valid("linear", "brain_issues", first)).toBe(true);
+    const { proxyPost } = await proxied("linear", "brain_issues", first);
+    expect(proxyPost.mock.calls[0]![0].body.variables).toEqual({
+      teamKeys: ["ENG"], since: "2026-01-02T03:04:05+05:30", first: 50, after: null,
+    });
+  });
+
+  it.each([
+    { updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: [], updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: "ENG", updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: ["eng"], updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: ["ENG\" } }"], updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: ["ABCDEFGHIJK"], updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: Array.from({ length: 21 }, (_, i) => `T${i}`), updatedSince: "2026-01-02T03:04:05Z" },
+    { teamKeys: ["ENG"], updatedSince: "P2W" },
+    { teamKeys: ["ENG"], updatedSince: "2026-01-02T03:04:05Z", first: 101 },
+    { teamKeys: ["ENG"], updatedSince: "2026-01-02T03:04:05Z", after: "" },
+    { teamKeys: ["ENG"], updatedSince: "2026-01-02T03:04:05Z", after: "x".repeat(513) },
+    { teamKeys: ["ENG"], updatedSince: "2026-01-02T03:04:05Z", filter: { id: { eq: "x" } } },
+  ] as Params[])("refuses brain_issues params %j", (bad) => {
+    expect(valid("linear", "brain_issues", bad)).toBe(false);
+  });
+});
+
+describe("Google Drive brain actions", () => {
+  it("lists one folder's children that are not trashed, shared drives included", async () => {
+    const { proxyGet } = await proxied("google_drive", "brain_list_folder", {
+      folderId: "folder_A-1", pageSize: 200, pageToken: "next+/=",
+    });
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://www.googleapis.com/drive/v3/files",
+      params: {
+        q: "'folder_A-1' in parents and trashed = false",
+        fields: "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,webViewLink,"
+          + "lastModifyingUser(emailAddress),capabilities(canDownload))",
+        pageSize: "200", supportsAllDrives: "true", includeItemsFromAllDrives: "true", pageToken: "next+/=",
+      },
+    }));
+    const first = await proxied("google_drive", "brain_list_folder", { folderId: "root" });
+    expect(first.proxyGet.mock.calls[0]![0].params).toMatchObject({ pageSize: "1000" });
+    expect(first.proxyGet.mock.calls[0]![0].params).not.toHaveProperty("pageToken");
+  });
+
+  it("exports a Google Doc as plain text", async () => {
+    const { proxyGet } = await proxied("google_drive", "brain_export_text", { fileId: "doc_1-x" });
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://www.googleapis.com/drive/v3/files/doc_1-x/export", params: { mimeType: "text/plain" },
+    }));
+  });
+
+  it.each([
+    ["brain_list_folder", { folderId: "a' or name contains 'x" }],
+    ["brain_list_folder", { folderId: "a\\b" }],
+    ["brain_list_folder", { folderId: "" }],
+    ["brain_list_folder", { folderId: "x".repeat(257) }],
+    ["brain_list_folder", { folderId: "f", pageSize: 1001 }],
+    ["brain_list_folder", { folderId: "f", pageToken: "a b" }],
+    ["brain_list_folder", { folderId: "f", query: "x" }],
+    ["brain_export_text", { fileId: "../about" }],
+    ["brain_export_text", { fileId: "d", mimeType: "application/pdf" }],
+    ["brain_export_text", {}],
+  ] as [string, Params][])("refuses %s params %j", (actionId, params) => {
+    expect(valid("google_drive", actionId, params)).toBe(false);
+  });
+
+  it("refuses an unchecked id where it is built into the query or the URL", () => {
+    const drive = (actionId: string) => getAction("google_drive", actionId)!.directApi!;
+    expect(() => drive("brain_list_folder").mapParams!({ folderId: "a' or 'b" })).toThrow("Drive id");
+    const url = drive("brain_export_text").url;
+    expect(() => (typeof url === "function" ? url({ fileId: "../x" }) : url)).toThrow("Drive id");
+  });
+});
+
+describe("Google Calendar brain action", () => {
+  const window = { timeMin: "2026-01-01T00:00:00.000Z", timeMax: "2026-03-01T00:00:00.000Z" };
+
+  it("lists one calendar's event instances in a window, cancelled included", async () => {
+    const { proxyGet } = await proxied("google_calendar", "brain_list_events", {
+      calendarId: "team@group.calendar.google.com", ...window, maxResults: 100, pageToken: "p2",
+    });
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://www.googleapis.com/calendar/v3/calendars/team%40group.calendar.google.com/events",
+      params: {
+        singleEvents: "true", showDeleted: "true", orderBy: "startTime", maxAttendees: "50", ...window,
+        maxResults: "100",
+        fields: "nextPageToken,items(id,status,htmlLink,summary,description,location,visibility,start,end,updated,"
+          + "organizer(email),attendees(email,responseStatus,resource))",
+        pageToken: "p2",
+      },
+    }));
+  });
+
+  it("narrows by updatedMin when given and defaults the page size", async () => {
+    const { proxyGet } = await proxied("google_calendar", "brain_list_events", {
+      calendarId: "primary", ...window, updatedMin: "2026-01-15T10:00:00+01:00",
+    });
+    expect(proxyGet.mock.calls[0]![0].params).toMatchObject({ updatedMin: "2026-01-15T10:00:00+01:00", maxResults: "250" });
+    const plain = await proxied("google_calendar", "brain_list_events", { calendarId: "primary", ...window });
+    expect(plain.proxyGet.mock.calls[0]![0].params).not.toHaveProperty("updatedMin");
+    expect(plain.proxyGet.mock.calls[0]![0].params).not.toHaveProperty("pageToken");
+  });
+
+  it.each([
+    { calendarId: ".", ...window },
+    { calendarId: "..", ...window },
+    { calendarId: "a b", ...window },
+    { calendarId: "a\u0085b", ...window },
+    { calendarId: "x".repeat(257), ...window },
+    { calendarId: "primary", timeMin: window.timeMin },
+    { calendarId: "primary", timeMin: "2026-01-01", timeMax: window.timeMax },
+    { calendarId: "primary", timeMin: window.timeMax, timeMax: window.timeMin },
+    { calendarId: "primary", ...window, updatedMin: "today" },
+    { calendarId: "primary", ...window, maxResults: 251 },
+    { calendarId: "primary", ...window, pageToken: "" },
+    { calendarId: "primary", ...window, q: "secret" },
+  ] as Params[])("refuses params %j", (params) => {
+    expect(valid("google_calendar", "brain_list_events", params)).toBe(false);
+  });
+
+  it("refuses dot path ids where the URL is built", () => {
+    const url = getAction("google_calendar", "brain_list_events")!.directApi!.url;
+    const build = (calendarId: unknown) => (typeof url === "function" ? url({ calendarId }) : url);
+    expect(() => build("..")).toThrow("calendar id");
+    expect(() => build(42)).toThrow("calendar id");
+    expect(build("a/b")).toBe("https://www.googleapis.com/calendar/v3/calendars/a%2Fb/events");
+  });
+});
