@@ -31,8 +31,9 @@ export interface BrainJobWorker extends BrainBackgroundJob {
   wake(): void;
   /**
    * Stops the job now when this worker is running it (after a cancel was recorded), instead of at its next heartbeat;
-   * false when it runs elsewhere or not at all (then the heartbeat or the next step sees the cancel). Uses no `this`,
-   * so it can be passed on as a plain function.
+   * false when it runs elsewhere or not at all (then the heartbeat or the next step sees the cancel; a run whose
+   * claim was still in flight reads the cancel before its first step). Uses no `this`, so it can be passed on as a
+   * plain function.
    */
   cancel(scope: BrainScopeKey, jobId: string): boolean;
 }
@@ -172,6 +173,11 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
   async function runSteps(job: BrainClaimedJob, signal: AbortSignal, progress: Progress): Promise<RunEnd> {
     const step = deps.steps[job.request.kind];
     if (step === undefined) return { status: "failed", errorCode: "job_kind_unavailable", ...progress };
+    // A cancel recorded after the claim but before launch registered this run found no run to stop here, so the
+    // stored flag is read once before the first step: a cancelled run never starts (paid) work.
+    const first = await deps.store.heartbeat(job, workerId, limits.leaseMs);
+    if (!first.owned) return { status: "lost" };
+    if (first.cancelRequested) return { status: "cancelled", errorCode: null, ...progress };
     // The busy code of the last answer while waiting to try again; the time cap then fails the run with it.
     let busy: string | null = null;
     for (;;) {
