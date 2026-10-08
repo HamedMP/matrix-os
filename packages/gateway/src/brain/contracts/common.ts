@@ -165,3 +165,123 @@ export const BRAIN_REFS_PER_KIND_MAX = {
   handle: 1, issue: 16, commit: 100, parent: 1, author: 8, reviewer: 16, assignee: 8, attendee: 50,
   participant: 50, label: 20, status: 1, due: 1, starts_at: 1, file: 1, chat: 1, channel: 1,
 } as const;
+
+// Citations.
+
+/**
+ * The cite of one live document. label, decided in this order: git_pr and git_commit use the git footer
+ * (parseBrainGitFooter in why.ts): "#N" or "!N" when it names a pull or merge request, else the first 12 hex of its
+ * sha (a git_pr whose footer has no number too); "PR" / "commit" only when there is no footer. Then the document's
+ * `handle` ref; then git_spec uses its first `spec` ref; else the title. Cut to BRAIN_CITE_LABEL_MAX_CHARS.
+ * brain/cite.ts (brainCiteLabel, loadBrainCites) is the one implementation; brain_why uses it too.
+ * permalink: canonical https link or "". date: ISO-8601 source_updated_at. revision: the live revision.
+ */
+export interface BrainCiteView {
+  readonly documentId: string; readonly kind: BrainCiteKind; readonly provenance: string;
+  readonly sourceId: string | null; readonly label: string; readonly title: string; readonly permalink: string;
+  readonly date: string; readonly revision: number;
+}
+export const BRAIN_CITE_LABEL_MAX_CHARS = 120;
+
+// Projects.
+
+/** A project id or slug, as the agent tools and every route accept (`:projectId` takes either). */
+export const BRAIN_PROJECT_REF_PATTERN = /^(?:proj_[A-Za-z0-9_-]{1,128}|[a-z0-9][a-z0-9-]{0,62})$/;
+
+export interface BrainResolvedProject {
+  readonly projectId: string; readonly slug: string; readonly name: string; readonly scope: BrainScopeKey;
+}
+
+/**
+ * Owner-scoped project lookup shared by every feature service (api/project-resolver.ts, the same rules as
+ * api/service.ts resolveProject).
+ * resolve: missing, foreign, archived and malformed projects all throw BrainApiError("project_not_found"); a lookup
+ * outage throws BrainApiError("brain_unavailable"). checkoutPath: absolute repo checkout inside homePath, or null.
+ */
+export interface BrainProjectResolver {
+  readonly homePath: string;
+  resolve(ownerId: string, projectRef: string): Promise<BrainResolvedProject>;
+  checkoutPath(ownerId: string, project: BrainResolvedProject): Promise<string | null>;
+}
+
+// Paging and time.
+
+/** Every feature cursor is opaque base64url JSON with a version field, at most this long; a bad one is invalid_request. */
+export const BRAIN_FEATURE_CURSOR_MAX_CHARS = 512;
+export interface BrainCursorPage<T> { readonly items: readonly T[]; readonly nextCursor: string | null }
+/** Query dates: "YYYY-MM-DD" (UTC midnight) or an ISO-8601 instant with an offset. Ranges are [from, to). */
+export const BRAIN_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export interface BrainTimeRange { readonly from: string | null; readonly to: string | null }
+/** Lists of filter values travel as one comma-separated query value (exactQuery refuses repeated keys). */
+export const BRAIN_QUERY_LIST_MAX_ITEMS = 8;
+
+/** Bounded counters: `count` stops at `cap` and `capped` says there were more. */
+export interface BrainCappedCount { readonly count: number; readonly capped: boolean }
+
+// Routes.
+
+/**
+ * Every feature exports `createBrain<Feature>Routes(deps)`: a Hono app whose paths start with
+ * `/projects/:projectId/`, mounted with `app.route("/api/brain", ...)`. Rules: never `app.use("*", ...)` (middleware
+ * of a mounted app leaks to every /api/brain route); set `Cache-Control: private, no-store` per handler; principal
+ * first, then service null -> brain_unavailable, then `:projectId` against BRAIN_PROJECT_REF_PATTERN (else
+ * project_not_found); query through exactQuery + a strict zod/v4 schema; bodyLimit on every POST, PATCH and DELETE.
+ */
+export interface BrainFeatureRoutesDeps<TService> {
+  /** Null when the brain is off (owner database unavailable or bootstrap deferred): every route answers 503. */
+  readonly service: TService | null;
+  readonly getPrincipal: (c: Context) => RequestPrincipal;
+}
+
+// Errors.
+
+export type BrainFeatureErrorCode =
+  | "source_not_found" | "source_conflict" | "source_not_connected" | "source_auth_failed" | "source_config_invalid"
+  | "source_kind_unsupported" | "revision_conflict" | "entity_not_found" | "alias_conflict" | "git_ref_not_found"
+  | "vector_search_unavailable" | "summary_not_configured" | "job_not_found" | "job_kind_unavailable" | "jobs_full";
+
+/** The only client-facing text for feature errors; never a path, provider message or Postgres detail. */
+export const BRAIN_FEATURE_ERRORS: {
+  readonly [Code in BrainFeatureErrorCode]: { readonly status: BrainApiErrorStatus; readonly message: string };
+} = {
+  source_not_found: { status: 404, message: "Source not found" },
+  source_conflict: { status: 409, message: "This project already has a different source of that kind" },
+  source_not_connected: { status: 409, message: "Connect the account for this source in Settings first" },
+  source_auth_failed: { status: 409, message: "The account for this source needs to be reconnected" },
+  source_config_invalid: { status: 400, message: "Invalid source settings" },
+  source_kind_unsupported: { status: 400, message: "This source kind is not available" },
+  revision_conflict: { status: 409, message: "This changed since it was loaded; reload and try again" },
+  entity_not_found: { status: 404, message: "Entity not found" },
+  alias_conflict: { status: 409, message: "That alias belongs to another entity" },
+  git_ref_not_found: { status: 404, message: "Branch or commit not found" },
+  vector_search_unavailable: { status: 409, message: "Meaning search is not available" },
+  summary_not_configured: { status: 409, message: "Brief summaries are turned off" },
+  job_not_found: { status: 404, message: "Run not found" },
+  job_kind_unavailable: { status: 409, message: "This kind of run is not available" },
+  jobs_full: { status: 409, message: "Too many runs are waiting; try again later" },
+};
+
+/** Every code a /api/brain route can answer with; the body is always `{ error: { code, message } }`. */
+export type BrainAnyErrorCode = BrainApiErrorCode | BrainFeatureErrorCode;
+export interface BrainFeatureErrorBody {
+  readonly error: { readonly code: BrainAnyErrorCode; readonly message: string };
+}
+
+/** Store errors inside feature services (BRAIN_STORE_ERROR_API_CODES is git-specific; features use this). */
+export const BRAIN_FEATURE_STORE_ERROR_CODES: { readonly [Code in BrainStoreErrorCode]: BrainAnyErrorCode } = {
+  invalid: "invalid_request", not_found: "source_not_found", forbidden: "revision_conflict",
+  conflict: "revision_conflict", capacity: "brain_capacity",
+};
+
+/**
+ * Thrown by feature services for feature codes (existing codes keep BrainApiError). Route mapping order: principal
+ * errors, BodyLimitError -> body_too_large, BrainFeatureError, BrainApiError, BrainStoreError (via
+ * BRAIN_FEATURE_STORE_ERROR_CODES), ZodError / SyntaxError -> invalid_request, anything else -> logged by name,
+ * brain_unavailable. The message never varies; the code is the only detail that leaves the gateway.
+ */
+export class BrainFeatureError extends Error {
+  constructor(readonly code: BrainFeatureErrorCode, options?: ErrorOptions) {
+    super("Company brain request failed", options);
+    this.name = "BrainFeatureError";
+  }
+}
