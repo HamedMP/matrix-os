@@ -121,4 +121,5 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 
 - `tests/ui/brain-*.test.ts(x)` (fake client, jsdom, no network; `brain-chat`, `brain-company-bot` and the static
   `brain-chat-boundary` cover the Chat tab) and the type check of `tests/ui/tsconfig.brain-compat.json`; the adapters
-  have `tests/shell/brain-shell.test.tsx` and `tests/desktop/brain-desktop-view.test.tsx`.
+  have `tests/shell/brain-shell.test.tsx`, `tests/shell/canonical-chat-thread.test.tsx`,
+  `tests/desktop/brain-desktop-view.test.tsx` and `tests/desktop/brain-chat-tab.test.tsx`.
