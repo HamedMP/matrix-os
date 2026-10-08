@@ -4,6 +4,7 @@ import { computeConflicts } from "../../packages/gateway/src/brain/brief/conflic
 import { buildSections } from "../../packages/gateway/src/brain/brief/sections.js";
 import { briefWindow } from "../../packages/gateway/src/brain/brief/time.js";
 import { computeStale, openCommitments } from "../../packages/gateway/src/brain/brief/stale.js";
+import { BRIEF_SCANS } from "../../packages/gateway/src/brain/brief/types.js";
 import {
   BRIEF_OWNER, BRIEF_SCOPE, createBriefFixture, prBody, type BriefFixture,
 } from "./helpers/brain-brief-fixture.js";
@@ -101,6 +102,12 @@ describe("conflicts", () => {
       sides: [{ claimId: null, statement: null, quote: "feat: ship X", cite: { label: "#3" } },
         { quote: "**Status:** Draft (v2)", cite: { label: "specs/100-x", kind: "spec" } }],
     });
+    // Pull requests dated before their Draft spec never fill the scan: here #1 (day 4) predates specs/100-x.
+    (BRIEF_SCANS as { shippedPullRequests: number }).shippedPullRequests = 2;
+    expect((await conflicts({ rules: ["draft_spec_shipped"] })).items.map((item) => item.summary)).toEqual([
+      "specs/100-x still reads Draft, but #3 shipped work for it", "specs/300-w still reads Draft, but #4 shipped work for it",
+    ]);
+    (BRIEF_SCANS as { shippedPullRequests: number }).shippedPullRequests = 5_000;
   });
 
   it("finds commitments marked done after being deferred, and the reverse", async () => {

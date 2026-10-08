@@ -140,12 +140,15 @@ async function draftSpecsShipped(db: Kysely<BrainDatabase>, scope: BrainScopeKey
     return line === null ? [] : [{ spec, dir: spec.spec!, line, at: new Date(spec.source_updated_at).getTime() }];
   });
   if (drafts.length === 0) return [];
+  // Only pull requests dated after a Draft spec of their dir fill the scan; drafts run newest first, so the map keeps
+  // each dir's oldest Draft date.
+  const dirs = [...new Map(drafts.map((draft) => [draft.dir, draft.at]))];
   const { rows: shipped } = await sql<ShippedRow>`
     SELECT r.value AS spec, d.document_id, d.title, d.source_updated_at AS at
-    FROM brain_document_refs r JOIN brain_documents d ON d.owner_id = r.owner_id AND d.scope_id = r.scope_id
-      AND d.document_id = r.document_id
-    WHERE r.owner_id = ${scope.ownerId} AND r.scope_id = ${scope.scopeId} AND r.kind = 'spec'
-      AND r.value IN (${sql.join(drafts.map((draft) => draft.dir))}) AND d.deleted_at IS NULL
+    FROM (VALUES ${sql.join(dirs.map(([dir, at]) => sql`(${dir}, ${new Date(at)}::timestamptz)`))}) v (spec, draft_at)
+    JOIN brain_document_refs r ON r.value = v.spec JOIN brain_documents d ON d.owner_id = r.owner_id
+      AND d.scope_id = r.scope_id AND d.document_id = r.document_id AND d.source_updated_at > v.draft_at
+    WHERE r.owner_id = ${scope.ownerId} AND r.scope_id = ${scope.scopeId} AND r.kind = 'spec' AND d.deleted_at IS NULL
       AND (d.provenance = 'git_pr' OR (d.provenance = 'github_pr' AND EXISTS (SELECT 1 FROM brain_document_refs s
         WHERE s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id
           AND s.kind = 'status' AND s.value = 'merged')))
