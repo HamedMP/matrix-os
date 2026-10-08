@@ -28,6 +28,17 @@ describe("built-in app helpers", () => {
     expect(isBuiltInAppPath("apps/notes/index.html")).toBe(false);
   });
 
+  it("opens the Company Brain from its aliases", () => {
+    for (const alias of ["brain", "company-brain", "apps/brain/index.html", "/files/apps/brain/index.html"]) {
+      expect(normalizeBuiltInAppPath(alias)).toBe("__brain__");
+    }
+    expect(isBuiltInAppPath("__brain__")).toBe(true);
+    expect(isRestorableBuiltInAppPath("__brain__")).toBe(true);
+    expect(normalizeBuiltInLayoutWindow({
+      path: "brain", title: "brain", x: 0, y: 0, width: 1100, height: 720, state: "open",
+    })).toMatchObject({ path: "__brain__", title: "Company Brain" });
+  });
+
   it("normalizes legacy terminal instance paths to the singleton Terminal app", () => {
     expect(normalizeBuiltInAppPath("__terminal__:1712345678-a3bc")).toBe("__terminal__");
     expect(normalizeBuiltInLayoutWindow({
