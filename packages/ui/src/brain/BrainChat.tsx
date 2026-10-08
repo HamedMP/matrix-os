@@ -250,7 +250,7 @@ function BrainChatThreads({
     threads.reload();
   };
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] @2xl:grid-cols-[15rem_minmax(0,1fr)] @2xl:grid-rows-1">
+    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] @2xl:grid-cols-[15rem_minmax(0,1fr)] @2xl:grid-rows-1">
       <BrainChatList id={listId} shown={listOpen} threads={threads} items={items} chatId={chatId} projectName={projectName}
         actions={host.rows ?? null} onClose={closeList}
         onOpen={(record) => {

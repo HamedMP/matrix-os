@@ -96,10 +96,11 @@ export function BrainApp({
               );
             }
             const props: BrainScreenProps = { api, projectId: project.id, onOpenSources: () => setScreen("sources") };
+            // One column that may be narrower than the tab row, so on a phone the tabs scroll and nothing is cut off.
             return (
-              <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
+              <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]">
                 <nav aria-label="Company Brain"
-                  className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
+                  className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-5 py-2 ${BRAIN_TONE.border}`}>
                   <label className={`flex min-w-0 items-center gap-2 font-medium ${BRAIN_TYPE.label} ${BRAIN_TONE.secondary}`}>
                     Project
                     <BrainSelect
