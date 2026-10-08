@@ -157,3 +157,71 @@ export function createMatrixFilesAdapter(homePath: string): BrainSourceAdapter<B
     }),
   };
 }
+
+/**
+ * Sub-folders of a home-relative folder that could be roots, sorted; at most dirEntriesMax directory entries are read.
+ * A folder behind a symlink, a file or a missing home is bad input here (source_config_invalid), not an outage; a
+ * folder that is gone or unreadable has no sub-folders.
+ */
+async function subfolders(homePath: string, folder: string): Promise<string[]> {
+  try {
+    const realHome = await realHomeDirectory(homePath);
+    const directory = folder === "" ? realHome : await rootDirectory(realHome, folder);
+    if (directory === null) return [];
+    const paths: string[] = [];
+    let examined = 0;
+    // The async iterator closes the directory when the loop ends, breaks or throws.
+    for await (const entry of await opendir(directory, { bufferSize: 64 })) {
+      if (examined >= BRAIN_MATRIX_LIMITS.dirEntriesMax) break;
+      examined += 1;
+      const path = folder === "" ? entry.name : `${folder}/${entry.name}`;
+      if (entry.isDirectory() && normalizeMatrixRoot(path) === path) paths.push(path);
+    }
+    return paths.sort();
+  } catch (error: unknown) {
+    if (error instanceof BrainMatrixPathError) throw new BrainFeatureError("source_config_invalid", { cause: error });
+    if (isGoneError(error)) return [];
+    throw error;
+  }
+}
+
+/** Sub-folders of a home-relative folder (home itself when q is empty), for picking roots; paged by offset. */
+async function folderOptions(homePath: string, q: string | undefined, cursor: string | undefined) {
+  const folder = q === undefined || q === "" ? "" : normalizeMatrixRoot(q);
+  const page = cursor === undefined ? { v: 1 as const, offset: 0 } : decodeMatrixCursor(OPTIONS_PREFIX, OptionsCursorSchema, cursor);
+  if (folder === null || page === null) throw new BrainFeatureError("source_config_invalid");
+  const names = await subfolders(homePath, folder);
+  const items = names.slice(page.offset, page.offset + BRAIN_SOURCE_OPTIONS_MAX)
+    .map((path) => ({ id: path, label: path.slice(path.lastIndexOf("/") + 1), detail: path }));
+  const offset = page.offset + items.length;
+  return { items, nextCursor: offset < names.length ? encodeMatrixCursor(OPTIONS_PREFIX, { v: 1, offset }) : null };
+}
+
+export function createBrainMatrixFilesHandler(
+  deps: BrainMatrixFilesHandlerDeps,
+): BrainSourceKindHandler<BrainMatrixFilesSourceConfig> {
+  const now = deps.now ?? (() => new Date());
+  return {
+    kind: KIND,
+    parseConfig: parseFilesConfig,
+    identify: (_project, config) => identifyFiles(config),
+    saveConfig: (scope, sourceId, config) => saveMatrixConfig(deps.kysely, KIND, scope, sourceId, config, now()),
+    async loadConfig(scope, sourceId) {
+      const raw = await loadMatrixConfig(deps.kysely, KIND, scope, sourceId);
+      return raw === null ? null : parseFilesConfig(raw);
+    },
+    async createAdapter() {
+      return { ok: true, adapter: createMatrixFilesAdapter(deps.homePath) };
+    },
+    viewConfig: (config) => ({
+      roots: [...config.roots], extensions: [...config.extensions], maxFileBytes: config.maxFileBytes,
+    }),
+    async availability() {
+      return deps.homePath === "" ? { available: false, reason: "not_configured" } : { available: true };
+    },
+    async listOptions(_ownerId, _project, query) {
+      const page = await folderOptions(deps.homePath, query.q, query.cursor);
+      return { kind: KIND, ...page };
+    },
+  };
+}
