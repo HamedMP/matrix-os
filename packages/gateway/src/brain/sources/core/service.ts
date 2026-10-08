@@ -53,7 +53,7 @@ const ADAPTER_ERRORS = {
   not_connected: "source_not_connected", auth_failed: "source_auth_failed", config_invalid: "source_config_invalid",
 } as const;
 const LIMITS = BRAIN_SOURCES_SERVICE_LIMITS;
-/** What the runner answers for a source that is not active; a paused git source answers the same. */
+/** What the runner answers for a source that is not active; sync answers it for a paused source of any kind. */
 const INACTIVE: BrainSourceSyncResult = {
   status: "failed", errorCode: "source_inactive", nextAction: BRAIN_SOURCE_NEXT_ACTIONS.source_inactive, receipt: null,
   counts: { read: 0, written: 0, unchanged: 0, deleted: 0, failed: 0 }, caughtUp: false, pages: 0, skipped: 0,
@@ -408,6 +408,8 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
       const scope = project.scope;
       const source = await liveSource(scope, sourceId);
       if (source.kind === "git") return gitSyncView(ownerId, projectRef, scope, source);
+      // Before the config and the account are read, so neither can turn the paused answer into an error.
+      if (source.status !== "active") return syncView(sourceId, INACTIVE);
       const handler = handlerOf(source.kind);
       const config: unknown = await handler.loadConfig(scope, sourceId);
       if (config === null) throw new BrainFeatureError("source_config_invalid");
