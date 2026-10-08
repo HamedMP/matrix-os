@@ -108,10 +108,7 @@ export interface BrainTypedSourceInput {
   /** How one typed value is written before the pattern check (a tag lowercased, a team key uppercased). */
   readonly normalize?: (value: string) => string;
 }
-/**
- * Kinds whose handler may list no options: the owner types the value instead, and the gateway checks it again.
- * Linear, Google Drive and Google Calendar list none yet, so they are always typed.
- */
+/** Kinds typed when they list no options (Linear, Drive and Calendar list none yet); the gateway checks them again. */
 export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKind, BrainTypedSourceInput>> = {
   github: {
     label: "Repository (owner/name)", example: "owner/name", hint: "The GitHub repository of this project.",
@@ -143,9 +140,8 @@ export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKin
 };
 
 /**
- * What the owner typed for a kind: one value, or for a kind that takes several, values split on commas or spaces.
- * Each is normalized (a tag's leading "#" dropped and lowercased, a team key uppercased) and de-duplicated. Empty
- * when nothing was typed; null when a value is not valid.
+ * What the owner typed for a kind: one value, or for a kind that takes several, values split on commas or spaces,
+ * each normalized and de-duplicated. Empty when nothing was typed; null when a value is not valid.
  */
 export function brainTypedValues(kind: BrainConnectableSourceKind, text: string): readonly string[] | null {
   const input = BRAIN_TYPED_SOURCE_INPUTS[kind];

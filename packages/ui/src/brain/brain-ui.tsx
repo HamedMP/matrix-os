@@ -54,10 +54,8 @@ export function BrainEmpty({ title, children }: { readonly title: string; readon
 }
 
 /**
- * A confirm that floats over the content below its trigger, so opening it moves nothing: it spans the nearest
- * positioned ancestor, just under it, and paints over the view's unpositioned content without a z-index of its own.
- * The trigger toggles `open` (the caller's state); a click outside the trigger and the panel, or Escape, closes it
- * through `onClose`.
+ * A confirm spanning the nearest positioned ancestor just under it, over unpositioned content without a z-index, so
+ * opening it moves nothing. The trigger toggles `open`; a click outside trigger and panel, or Escape, calls `onClose`.
  */
 export function BrainConfirm({ open, onClose, label, trigger, children }: {
   readonly open: boolean; readonly onClose: () => void; readonly label: string; readonly trigger: ReactNode;
