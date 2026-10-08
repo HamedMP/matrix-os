@@ -122,7 +122,6 @@ export default function SettingsView({
 }: {
   section?: SettingsSectionId;
   onSectionChange?: (section: SettingsSectionId) => void;
-  visible?: boolean;
 } = {}) {
   const [localSection, setLocalSection] = useState<SettingsSectionId>("account");
   const requestedSection = useUi((s) => s.requestedSettingsSection);
