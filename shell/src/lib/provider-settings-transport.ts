@@ -112,7 +112,8 @@ export function createProviderSettingsTransport(
       const value = await fetchJson(fetcher, providerSettingsSnapshotPath(options.refresh), {
         cache: "no-store",
         headers: { Accept: "application/json" },
-        signal: requestSignal(signal, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
+        // Includes repeated inventory, native startup and fresh principal verification.
+        signal: requestSignal(signal, 90_000),
       });
       const parsed = ProviderSettingsSnapshotSchema.safeParse(value);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");

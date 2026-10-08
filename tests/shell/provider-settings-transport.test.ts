@@ -104,7 +104,7 @@ describe("provider settings shell transport", () => {
       `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
-    expect(timeout).toHaveBeenCalledWith(15_000);
+    expect(timeout).toHaveBeenCalledWith(90_000);
   });
 
   it("invalidates the shared Provider catalog only after a successful mutation", async () => {

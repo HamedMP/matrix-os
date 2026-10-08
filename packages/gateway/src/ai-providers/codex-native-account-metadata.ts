@@ -1,5 +1,5 @@
 import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
-import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
+import { bindNativeAccountMetadata, NATIVE_ACCOUNT_OBSERVATION_TIMEOUT_MS } from "./native-account-metadata-binding.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { z } from "zod/v4";
 import type { ProviderAccessSource, ProviderAccount } from "@matrix-os/contracts";
@@ -102,6 +102,7 @@ export function createCodexNativeAccountMetadataReader(input: {
       let finishing = false;
       let settled = false;
       let termination: NodeJS.Timeout | undefined;
+      let phase = "initialize";
       const grace = Math.max(1, Math.min(input.terminateGraceMs ?? 250, 1000));
       const settle = () => { if (settled) return; settled = true; clearTimeout(timeout); clearTimeout(termination); resolve(outcome); };
       const finish = (result: CodexNativeAccountMetadata | null = null) => {
@@ -119,8 +120,14 @@ export function createCodexNativeAccountMetadataReader(input: {
           termination.unref();
         }, grace); termination.unref();
       };
-      const timeout = setTimeout(() => finish(), Math.max(1, Math.min(input.timeoutMs ?? 4000, 5000))); timeout.unref();
-      const send = (id: number, method: string, params: unknown) => { if (!finishing) child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); };
+      const timeoutMs = Math.max(1, Math.min(input.timeoutMs ?? NATIVE_ACCOUNT_OBSERVATION_TIMEOUT_MS, NATIVE_ACCOUNT_OBSERVATION_TIMEOUT_MS));
+      const timeout = setTimeout(() => {
+        console.warn("[provider-settings] Codex account read timed out:", { phase, timeoutMs });
+        finish();
+      }, timeoutMs); timeout.unref();
+      const send = (id: number, method: string, params: unknown) => {
+        if (!finishing) { phase = method; child.stdin.write(JSON.stringify({ id, method, params }) + "\n"); }
+      };
       child.once("error", () => finish());
       const onExit = () => { blockedUntilExit = false; settle(); };
       child.once("close", onExit);

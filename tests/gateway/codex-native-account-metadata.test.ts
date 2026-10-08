@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { bindNativeAccountMetadata, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
@@ -176,6 +176,52 @@ describe("native Codex account metadata", () => {
     const f = fixture(false, false, account, undefined, undefined, omitId);
     const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, timeoutMs: 10, now: () => now, spawnProcess: f.spawnProcess });
     expect(await reader()).toBeNull();
+  });
+  it("allows slow native startup and revalidates the saved principal beyond eight seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const native = { account: { ...account.account, id: "slow-private-principal" } };
+      const first = fixture(false, false, native, undefined, undefined, undefined, undefined, limits, 2200);
+      const current = fixture(false, false, native, undefined, undefined, undefined, undefined, limits, 2200);
+      const spawnProcess = vi.fn().mockImplementationOnce(first.spawnProcess).mockImplementationOnce(current.spawnProcess);
+      const startedAt = Date.now();
+      const reader = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, now: () => new Date(now.getTime() + Date.now() - startedAt), spawnProcess });
+      const pending = reader();
+      await vi.advanceTimersByTimeAsync(11_100);
+      const value = await pending;
+      expect(value).toMatchObject({ accountLabel: "owner@example.test", usage: { usedBasisPoints: 2500 } });
+      const verified = verifyNativeAccountMetadata(value);
+      await vi.advanceTimersByTimeAsync(8900);
+      expect(await verified).toBe(value);
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(current.methods).not.toContainEqual(expect.objectContaining({ method: "account/rateLimits/read" }));
+    } finally { vi.useRealTimers(); }
+  });
+  it("leaves margin for native preflight and process cleanup after a near-deadline observation", async () => {
+    vi.useFakeTimers();
+    try {
+      const value = normalizeCodexNativeAccountMetadata(account, limits, now)!;
+      bindNativeAccountMetadata(value, () => new Promise(resolve => setTimeout(() => resolve(true), 21_500)));
+      const verified = verifyNativeAccountMetadata(value);
+      await vi.advanceTimersByTimeAsync(21_500);
+      expect(await verified).toBe(value);
+    } finally { vi.useRealTimers(); }
+  });
+  it("bounds an unresponsive native process and logs only its timed-out phase", async () => {
+    vi.useFakeTimers();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const f = fixture(false, false, account, undefined, undefined, 2);
+      const pending = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, spawnProcess: f.spawnProcess,
+        readCredentialFileProof: async () => null })();
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(f.child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toBeNull();
+      expect(f.child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(warning).toHaveBeenCalledWith("[provider-settings] Codex account read timed out:", { phase: "account/read", timeoutMs: 20_000 });
+      expect(JSON.stringify(warning.mock.calls)).not.toMatch(/owner@example|never-return/);
+    } finally { warning.mockRestore(); vi.useRealTimers(); }
   });
   it("keeps rapid disable/enable reads coherent via fresh private identity-only verification", async () => {
     const children = Array.from({ length: 4 }, () => fixture(false, false, account, undefined, undefined, undefined, "file"));
