@@ -7,8 +7,8 @@
  * through BrainJobStore. A missing table, or an older one without owner_id and scope_id, holds nothing of the scope.
  * Any other failure throws, so the project deletion fails and is retried. The core rows go first, so work already
  * running for the scope (a hook, a job, a refresh) that writes after its feature's erase finds nothing to write from:
- * per-document rows need their document (a foreign key or a live check under the feature lock) and the graph's
- * project entity needs a source row of the scope.
+ * per-document rows need their document (a foreign key or a live check under the feature lock), the graph's project
+ * entity needs a source row of the scope and a stored brief, even one that cites nothing, a source or document row.
  */
 import { sql, type Kysely } from "kysely";
 import { BRAIN_FEATURE_SCOPE_LOCK_PREFIXES } from "../contracts.js";
