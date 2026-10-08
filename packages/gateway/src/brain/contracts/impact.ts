@@ -68,9 +68,14 @@ export interface BrainImpactSpec {
   readonly spec: string; readonly changedPaths: readonly string[]; readonly cite: BrainCiteView | null;
 }
 
+/**
+ * Every list cut at its cap says so: prior_capped (earlier pull requests not looked up for every changed file, or more
+ * files have them than are listed), claims_capped (more invariants or decisions, or more changed paths per claim),
+ * untested_capped and specs_capped (more folders, or more changed paths per folder).
+ */
 export type BrainImpactNotice =
   | "changed_files_capped" | "dependents_capped" | "scan_capped" | "read_budget_exhausted" | "run_budget_exhausted"
-  | "no_git_source" | "brain_behind_head";
+  | "prior_capped" | "claims_capped" | "untested_capped" | "specs_capped" | "no_git_source" | "brain_behind_head";
 
 /** approximate: always true for dependents; stated so every consumer shows it. */
 export interface BrainImpactView {
