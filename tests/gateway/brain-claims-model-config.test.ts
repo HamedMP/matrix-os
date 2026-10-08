@@ -97,3 +97,142 @@ describe("brain model configuration", () => {
       .toEqual({ ok: false, variable: "MATRIX_BRAIN_MODEL_EFFORT" });
   });
 });
+
+describe("brain model credential and provider", () => {
+  let home: string;
+  let logs: MockInstance[];
+  const ownerConfig = async (value: string) => {
+    await mkdir(join(home, "system"), { recursive: true });
+    await writeFile(join(home, "system/config.json"), value);
+  };
+  const withOwnerKey = (key = OWNER_KEY) => ownerConfig(JSON.stringify({ kernel: { anthropicApiKey: key } }));
+  const resolve = (env: Record<string, string | undefined>) => resolveBrainAnthropicCredential(home, env);
+  const fromEnv = { apiKey: SYNTHETIC_KEY, source: "environment" };
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "brain-model-config-"));
+    logs = (["warn", "error", "log", "info", "debug"] as const)
+      .map((level) => vi.spyOn(console, level).mockImplementation(() => undefined));
+  });
+  afterEach(async () => {
+    for (const log of logs) {
+      const printed = inspect(log.mock.calls, { depth: 8 });
+      expect(printed).not.toContain(SYNTHETIC_KEY);
+      expect(printed).not.toContain(OWNER_KEY);
+      log.mockRestore();
+    }
+    await chmod(join(home, "system/config.json"), 0o600).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it("prefers the owner key to the environment, even with a base URL set", async () => {
+    await withOwnerKey();
+    const env = { ANTHROPIC_API_KEY: SYNTHETIC_KEY, ANTHROPIC_BASE_URL: "https://relay.example" };
+    expect(await resolve(env)).toEqual({ apiKey: OWNER_KEY, source: "owner_key" });
+  });
+
+  it("uses a trimmed direct environment key only with no base URL", async () => {
+    expect(await resolve({ ANTHROPIC_API_KEY: ` ${SYNTHETIC_KEY}\n` })).toEqual(fromEnv);
+    expect(await resolve({ ANTHROPIC_API_KEY: SYNTHETIC_KEY, ANTHROPIC_BASE_URL: " " })).toEqual(fromEnv);
+    expect(await resolve({ ANTHROPIC_API_KEY: SYNTHETIC_KEY, ANTHROPIC_BASE_URL: "https://relay.example" }))
+      .toBeNull();
+    expect(await resolve({})).toBeNull();
+  });
+
+  it.each([
+    ["a Matrix proxy key", "sk-proxy-synthetic"], ["an OAuth token", "sk-ant-oat01-synthetic"],
+    ["a key with spaces", "sk-ant-api03 synthetic"], ["an over-long key", `sk-ant-api03-${"a".repeat(4_090)}`],
+  ])("refuses %s", async (_name, key) => {
+    expect(await resolve({ ANTHROPIC_API_KEY: key })).toBeNull();
+  });
+
+  it("judges an environment key exactly as an owner key, so the two rules cannot drift apart", async () => {
+    const keys = [SYNTHETIC_KEY, ` ${SYNTHETIC_KEY}\t`, "sk-proxy-synthetic", "sk-ant-oat01-synthetic", "sk-ant-api",
+      "", `sk-ant-api03-${"a".repeat(4_083)}`, `sk-ant-api03-${"a".repeat(4_084)}`, "sk-ant-api03-\u00e9"];
+    for (const key of keys) {
+      const owner = OwnerAnthropicKeyConfig.safeParse({ kernel: { anthropicApiKey: key } }).success;
+      expect([key.length, (await resolve({ ANTHROPIC_API_KEY: key })) !== null]).toEqual([key.length, owner]);
+    }
+    expect(OwnerAnthropicKeyConfig.safeParse({ kernel: { anthropicApiKey: `sk-ant-api03-${"a".repeat(4_083)}` } }).success)
+      .toBe(true);
+  });
+
+  it("falls through to the environment on a malformed, invalid or symlinked owner config", async () => {
+    const env = { ANTHROPIC_API_KEY: SYNTHETIC_KEY };
+    await ownerConfig("{not json");
+    expect(await resolve(env)).toEqual(fromEnv);
+    await withOwnerKey("sk-proxy-synthetic");
+    expect(await resolve(env)).toEqual(fromEnv);
+    await rm(join(home, "system/config.json"));
+    const elsewhere = join(home, "elsewhere.json");
+    await writeFile(elsewhere, JSON.stringify({ kernel: { anthropicApiKey: OWNER_KEY } }));
+    await symlink(elsewhere, join(home, "system/config.json"));
+    expect(await resolve(env)).toEqual(fromEnv);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("rejects when the owner config cannot be read", async () => {
+    await withOwnerKey();
+    await chmod(join(home, "system/config.json"), 0o000);
+    await expect(resolve({ ANTHROPIC_API_KEY: SYNTHETIC_KEY })).rejects.toMatchObject({ code: "EACCES" });
+  });
+
+  it("disables the provider on an invalid setting and warns once with the variable name only", async () => {
+    const provider = createBrainClaimModelProvider({ homePath: home,
+      env: { ANTHROPIC_API_KEY: SYNTHETIC_KEY, MATRIX_BRAIN_MODEL_EFFORT: "turbo-secret-value" } });
+    expect(await provider()).toBeNull();
+    expect(await provider()).toBeNull();
+    const warn = logs[0]!;
+    expect(warn.mock.calls).toEqual([["[brain-claims] model extractor disabled by an invalid setting",
+      { variable: "MATRIX_BRAIN_MODEL_EFFORT" }]]);
+    expect(inspect(warn.mock.calls)).not.toContain("turbo-secret-value");
+  });
+
+  it("resolves null without a credential", async () => {
+    expect(await createBrainClaimModelProvider({ homePath: home, env: {} })()).toBeNull();
+  });
+
+  it("resolves the model, its extractor identity and the run limits", async () => {
+    const fake = fakeAnthropic(() => jsonResponse(200, messageBody()));
+    const provider = createBrainClaimModelProvider({ homePath: home,
+      env: { ANTHROPIC_API_KEY: SYNTHETIC_KEY, MATRIX_BRAIN_MODEL_DOCUMENTS_PER_RUN: "7",
+        MATRIX_BRAIN_MODEL_EFFORT: "medium" }, fetch: fake.fetch });
+    const resolved = await provider();
+    expect(resolved).toMatchObject({ modelId: "claude-opus-5-5", promptVersion: "claims-v2" });
+    expect(resolved?.limits).toEqual({ runBudgetMs: 120_000, modelCallTimeoutMs: 60_000, tokensPerRun: 1_000_000,
+      documentsPerRun: 7, costMicroUsdPerRun: 500_000, spendMicroUsdPer30d: 5_000_000 });
+    expect(inspect(resolved, { depth: 8 })).not.toContain(SYNTHETIC_KEY);
+    await resolved?.model.extract(INPUT, new AbortController().signal);
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]!.headers.get("x-api-key") === SYNTHETIC_KEY).toBe(true);
+    expect(fake.requests[0]!.body.output_config.effort).toBe("medium");
+  });
+
+  it("builds the default client without a fetch override and makes no call for a skipped body", async () => {
+    const fetch = vi.fn(async () => { throw new Error("no network in tests"); });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const provider = createBrainClaimModelProvider({ homePath: home, env: { ANTHROPIC_API_KEY: SYNTHETIC_KEY } });
+      const resolved = await provider();
+      expect(await resolved?.model.extract({ ...INPUT, body: "short" }, new AbortController().signal))
+        .toMatchObject({ claims: [], outcome: { status: "skipped", code: "body_too_short" } });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads the credential on every call", async () => {
+    const fake = fakeAnthropic(() => jsonResponse(200, messageBody()));
+    const provider = createBrainClaimModelProvider({ homePath: home, env: { ANTHROPIC_API_KEY: SYNTHETIC_KEY },
+      fetch: fake.fetch });
+    await (await provider())?.model.extract(INPUT, new AbortController().signal);
+    await withOwnerKey();
+    await (await provider())?.model.extract(INPUT, new AbortController().signal);
+    await rm(join(home, "system/config.json"));
+    expect(await createBrainClaimModelProvider({ homePath: home, env: {}, fetch: fake.fetch })()).toBeNull();
+    const keys = fake.requests.map((request) => request.headers.get("x-api-key"));
+    expect(keys[0] === SYNTHETIC_KEY && keys[1] === OWNER_KEY && keys.length === 2).toBe(true);
+  });
+});
