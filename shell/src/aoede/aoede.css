@@ -13,8 +13,19 @@
   color-scheme: dark; animation: none;
 }
 .aoede-live :is(h2, h3, p) { margin: 0; }
-.aoede-live button { min-height: 44px; cursor: pointer; box-shadow: none; }
-.aoede-live button:disabled { cursor: default; }
+.aoede-live button { min-height: 44px; cursor: pointer; box-shadow: none;
+  transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease; }
+.aoede-live button:disabled { cursor: default; opacity: .4; pointer-events: none; }
+@media (hover: hover) {
+  .aoede-live button:is([data-variant="ghost"], [data-variant="secondary"], .aoede-task-trigger):enabled:hover {
+    background-color: color-mix(in srgb, var(--foreground) 12%, transparent); color: var(--foreground);
+  }
+}
+.aoede-live button:is([data-variant="ghost"], [data-variant="secondary"], .aoede-task-trigger):enabled:active {
+  background-color: color-mix(in srgb, var(--foreground) 18%, transparent);
+}
+.aoede-live button[data-variant="default"]:enabled:active { filter: brightness(1.15); }
+.aoede-live button[aria-pressed="true"] { background-color: color-mix(in srgb, var(--foreground) 16%, transparent); }
 .aoede-live :is(button, summary, [tabindex]):focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 .aoede-surface { position: absolute; inset: 0; z-index: -1; pointer-events: none; border-radius: inherit; overflow: hidden;
   background: radial-gradient(ellipse at 30% 40%, #19314330, #0e342218 45%, #44211815 65%, transparent 78%); }
@@ -51,7 +62,7 @@
 .aoede-task-attention > p, .aoede-notice p { color: var(--muted-foreground); margin-top: 6px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
 .aoede-task-attention .aoede-task-status { margin-top: 0; font-size: 12px; }
 .aoede-live .aoede-task-trigger { display: flex; align-items: center; justify-content: center; gap: 8px;
-  width: 100%; padding: 0 8px; min-height: 44px; border: 0; background: transparent;
+  width: 100%; padding: 0 8px; min-height: 44px; border: 0; border-radius: 12px; background: transparent;
   color: var(--muted-foreground); font: inherit; font-size: 13px; }
 .aoede-task-trigger svg { width: 14px; height: 14px; flex-shrink: 0; }
 .aoede-task-trigger svg:last-child { transition: transform 120ms ease; }
