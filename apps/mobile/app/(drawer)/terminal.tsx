@@ -100,13 +100,17 @@ export default function TerminalScreen() {
       setActionError(TERMINAL_NAME_RULE);
       return;
     }
-    if (trimmedName === terminalAction.session.name) {
+    // The list may have reloaded since the popup opened, most likely because
+    // a rename was just refused; the retry has to carry the revision it shows now.
+    const session = sessions.find((candidate) => candidate.id === terminalAction.session.id)
+      ?? terminalAction.session;
+    if (trimmedName === session.name) {
       closeAction();
       return;
     }
     setActionError(null);
     try {
-      await renameSession(terminalAction.session, trimmedName);
+      await renameSession(session, trimmedName);
       setTerminalAction(null);
     } catch {
       setActionError("Could not rename terminal. Try again.");

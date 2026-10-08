@@ -217,6 +217,38 @@ describe("drawer terminal screen", () => {
     expect(screen.getByLabelText("Terminal session name")).toBeTruthy();
   });
 
+  it("retries a refused rename with the revision the reloaded list shows", async () => {
+    mockRenameSession.mockRejectedValueOnce(new Error("Could not rename terminal. Try again."));
+    mockRenameSession.mockResolvedValueOnce(undefined);
+    const rendered = render(<TerminalScreen />);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Save terminal name"));
+    });
+    expect(mockRenameSession).toHaveBeenLastCalledWith(mainSession, "renamed-session");
+
+    // The refused rename reloaded the list: the tab is now at a newer revision.
+    const reloaded = { ...mainSession, revision: 7 };
+    mockUseComputerTerminals.mockReturnValue({
+      sessions: [reloaded, reviewSession, notesSession],
+      isPending: false,
+      isError: false,
+      renameSession: mockRenameSession,
+      deleteSession: mockDeleteSession,
+      createSession: mockCreateSession,
+      refresh: mockRefreshTerminals,
+    });
+    rendered.rerender(<TerminalScreen />);
+    await React.act(async () => {
+      fireEvent.press(screen.getByLabelText("Save terminal name"));
+    });
+
+    expect(mockRenameSession).toHaveBeenLastCalledWith(reloaded, "renamed-session");
+    expect(screen.queryByLabelText("Terminal session name")).toBeNull();
+  });
+
   it("requires popup confirmation before deleting a swiped terminal", () => {
     mockDeleteSession.mockResolvedValue(undefined);
     render(<TerminalScreen />);
