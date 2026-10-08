@@ -312,3 +312,138 @@ export interface OpenGitRepositoryInput {
   readonly runner: GitRunner;
   readonly limits: GitSyncLimits;
 }
+
+// Pure mapping (parse.ts, permalinks.ts, documents.ts, specs.ts).
+
+export type GitHostFlavor = "github" | "gitlab";
+
+/** `href` is `https://host/path`: no trailing slash, equal to new URL(href).href. */
+export interface GitWebBase { readonly href: string; readonly flavor: GitHostFlavor }
+
+export interface GitSpecMatcher {
+  readonly globs: readonly string[];
+  matches(path: string): boolean;
+  /** `specs/544-x` for any path under a glob's directory part; null otherwise. */
+  specDirOf(path: string): string | null;
+}
+
+export type GitPullRequestForm = "squash" | "merge_titled" | "merge_branch" | "gitlab_merge";
+
+export interface GitClassifiedMessage {
+  /** Raw, unclamped; may be empty (documents.ts supplies the fallback title). */
+  readonly title: string;
+  /** Message text for the document body before the footer; may be empty. */
+  readonly body: string;
+  /** Other `#N` in the subject (github flavor), deduplicated, own number excluded. */
+  readonly mentions: readonly number[];
+}
+
+export type GitCommitClassification =
+  | (GitClassifiedMessage & {
+    readonly kind: "pull_request";
+    readonly number: number;
+    readonly form: GitPullRequestForm;
+    /** `owner/branch` of a `Merge pull request #N from owner/branch` subject. */
+    readonly branch: string | null;
+  })
+  | (GitClassifiedMessage & { readonly kind: "commit" });
+
+export type GitRefKind = "path" | "pr" | "spec";
+
+/** Structurally a BrainDocumentRef. */
+export interface GitDocumentRef { readonly kind: GitRefKind; readonly value: string }
+
+/** Structurally a BrainSyncUpsertInput (content fields plus its complete ref set). */
+export interface GitUpsertDraft {
+  readonly documentId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly permalink: string;
+  readonly sourceUpdatedAt: string;
+  readonly provenance: GitProvenance;
+  readonly refs: readonly GitDocumentRef[];
+}
+
+export interface GitDocumentContext {
+  /** brain_sources.external_ref, verbatim; the repo identity in every document id tuple. */
+  readonly identity: string;
+  readonly webBase: GitWebBase;
+  readonly matcher: GitSpecMatcher;
+}
+
+export interface GitCommitDocument { readonly draft: GitUpsertDraft; readonly notices: readonly GitSyncNotice[] }
+
+/** One touched spec path at a window end. */
+export interface GitSpecFile {
+  readonly path: string;
+  /** Newest first-parent commit in the window whose diff listed the path. */
+  readonly touchSha: string;
+  readonly touchCommittedAt: string;
+  /** Null when the path is absent (or not a regular file) at the window end. */
+  readonly blob: GitSpecBlob | null;
+}
+
+/** `content` is null when size > GIT_SPEC_FILE_MAX_BYTES (the blob is never read). */
+export interface GitSpecBlob { readonly oid: string; readonly size: number; readonly content: Uint8Array | null }
+
+export interface GitSpecDocuments {
+  readonly upserts: readonly GitUpsertDraft[];
+  /** Part ids to tombstone (parts beyond the new count, or all parts of a removed file). */
+  readonly deletions: readonly string[];
+  readonly notices: readonly GitSyncNotice[];
+}
+
+/** Only the `final` batch of a window advances the cursor to the window end. */
+export interface GitBatchPlan { readonly upserts: readonly GitUpsertDraft[]; readonly deletions: readonly string[]; readonly final: boolean }
+
+// Public entry point (sync.ts).
+
+export interface GitSourceConfig {
+  /** Short branch name; null/omitted: origin/HEAD, then main, then master. */
+  readonly branch?: string | null;
+  /** Default GIT_DEFAULT_SPEC_GLOBS. Must be the same on every run of a source. */
+  readonly specGlobs?: readonly string[];
+}
+
+export interface GitSyncOptions {
+  readonly repository: BrainRepository;
+  readonly scope: BrainScopeKey;
+  readonly sourceId: string;
+  /** Absolute path of the checkout's top level, already resolved by the caller. */
+  readonly repoPath: string;
+  /** Absolute Matrix home path; repoPath must resolve strictly inside it. */
+  readonly homePath: string;
+  readonly config?: GitSourceConfig;
+  /** Default: reader.ts defaultGitRunner. */
+  readonly runner?: GitRunner;
+  readonly limits?: Partial<GitSyncLimits>;
+  /** Milliseconds clock for the run budget. Default Date.now. */
+  readonly now?: () => number;
+}
+
+export type GitSyncStatus = "succeeded" | "partial" | "failed";
+
+export interface GitSyncResult {
+  readonly status: GitSyncStatus;
+  /** failed: the failure. Otherwise "documents_rejected", "history_rewritten" or null. */
+  readonly errorCode: GitSyncErrorCode | GitSyncInfoCode | null;
+  readonly nextAction: GitSyncNextAction;
+  /** The closed receipt; null when none could be opened or closing failed. */
+  readonly receipt: BrainSyncReceipt | null;
+  readonly counts: BrainSyncCounts;
+  /** The stored cursor, verbatim (see cursor.ts for its forms). */
+  readonly cursorBefore: string | null;
+  /** The last cursor the store committed, verbatim. */
+  readonly cursorAfter: string | null;
+  readonly commitsProcessed: number;
+  /** First-parent commits left after this run; 0 when caught up, and also after a failure (unknown). */
+  readonly commitsRemaining: number;
+  readonly caughtUp: boolean;
+  readonly historyRewritten: boolean;
+  /** applySyncBatch calls that committed. */
+  readonly batches: number;
+  /** At most GIT_MAX_REJECTED_IDS_IN_RESULT. */
+  readonly rejectedDocumentIds: readonly string[];
+  /** Unique, in first-seen order. */
+  readonly notices: readonly GitSyncNotice[];
+}
