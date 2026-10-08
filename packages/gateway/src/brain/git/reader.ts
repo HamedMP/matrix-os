@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { assertGitDirectoriesAllowed, assertInputPath, homeBounds, isStrictlyInside, realDirectory } from "./containment.js";
 import {
+  GIT_COMMIT_METADATA_FORMAT,
   isIndexablePath,
   isSafeBranchName,
   isSupportedGitVersion,
@@ -65,7 +66,7 @@ const LOG_STDERR_MAX_CHARS = 500;
 const FALLBACK_PATH = "/usr/local/bin:/usr/bin:/bin";
 const FALLBACK_HOME = "/nonexistent";
 const ORIGIN_REMOTE_PREFIX = "refs/remotes/origin/";
-const METADATA_FORMAT = "--format=%H%x1f%P%x1f%cI%x1f%aI%x1f%an%x1f%B";
+const METADATA_FORMAT = `--format=${GIT_COMMIT_METADATA_FORMAT}`;
 const NAME_STATUS_FLAGS: readonly string[] = [
   "--diff-merges=first-parent", "--root", "--no-renames", "--no-ext-diff", "--no-textconv",
   "--no-relative", "--no-color", "--no-show-signature", "-z", "--name-status", "--format=%H",

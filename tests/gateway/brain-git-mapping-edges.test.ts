@@ -20,7 +20,7 @@ import { A, B, GITHUB, GITHUB_CTX as ctx, US, bytes, expectGitCode, meta } from 
 
 const DATE = "2026-09-01T00:01:00Z";
 
-const header = (sha = A, author = "Fixture Author"): string => `${sha}${US}${US}${DATE}${US}${DATE}${US}${author}${US}`;
+const header = (sha = A, author = "Fixture Author"): string => `${sha}${US}${US}${DATE}${US}${DATE}${US}${author}\n`;
 
 function specFile(path: string, content: Uint8Array): GitSpecFile {
   return { path, touchSha: A, touchCommittedAt: DATE, blob: { oid: B, size: content.length, content } };
