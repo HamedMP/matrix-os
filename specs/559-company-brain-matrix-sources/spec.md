@@ -45,7 +45,8 @@ Every run continues one pass: a scan, then a sweep over the source's live docume
 `caughtUp`, and the cursor then starts the next pass. The store skips unchanged content, so a pass rewrites nothing
 that did not change.
 
-- Notes: notes in id order (at most 5,000 per pass), tag filter applied; the sweep keeps documents of selected notes.
+- Notes: notes in id order (at most 5,000 per pass), tag filter applied in SQL to every tag of the column (only the
+  label refs come from the first 2,000 characters); the sweep keeps documents of selected notes.
   A page ends before a note whose label refs would pass `maxRefs`; page limits below 20 refs or 1 upsert answer
   `invalid_options`, so the first note of a page always fits.
 - Files: each root walked depth first in name order, resumable after any path; hidden names, `node_modules`, folders
