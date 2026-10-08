@@ -102,6 +102,22 @@ describe("resolution", () => {
     expect(resolve("x.ts", "root-main")).toBe("src/a.ts");
     expect(resolve("x.ts", "react")).toBeNull();
   });
+
+  it("picks the most specific export pattern, whatever the key order", () => {
+    const files = new Set(["p/src/util/x.ts", "p/src/utils/x.ts", "p/src/b.ts", "p/js/y.ts", "p/src/internal/z.ts"]);
+    const packages = [pkg("p", {
+      name: "p",
+      exports: {
+        "./*": "./src/*.ts", "./util/*": "./src/utils/*.ts", "./internal/*": null, "./x/*": "./src/*.ts",
+        "./x/*.js": "./js/*.ts",
+      },
+    })];
+    const resolve = (specifier: string) => resolveSpecifier("x.ts", specifier, files, packages);
+    expect(resolve("p/util/x")).toBe("p/src/utils/x.ts");
+    expect(resolve("p/b")).toBe("p/src/b.ts");
+    expect(resolve("p/internal/z")).toBeNull();
+    expect(resolve("p/x/y.js")).toBe("p/js/y.ts");
+  });
 });
 
 describe("dependents", () => {

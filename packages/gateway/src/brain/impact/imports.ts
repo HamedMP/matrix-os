@@ -2,8 +2,8 @@
  * Impact brief: the approximate TypeScript / JavaScript import graph. Pure. A specifier is read from one grep match
  * and resolved against the head tree: relative paths, extensionless paths and index files, .js -> .ts / .tsx (and
  * .mjs -> .mts, .cjs -> .cts), and workspace package names from package.json "name" with "exports" (strings,
- * condition objects, fallback arrays and one-star subpath patterns), else "main" or deep paths. tsconfig "paths",
- * re-exports through barrels and template-literal imports are not followed.
+ * condition objects, fallback arrays and one-star subpath patterns, the most specific first), else "main" or deep
+ * paths. tsconfig "paths", re-exports through barrels and template-literal imports are not followed.
  */
 import { posix } from "node:path";
 import type { BrainImpactDependent, BrainImpactDependentTotals } from "../contracts.js";
@@ -102,20 +102,27 @@ function firstExisting(base: string, files: ReadonlySet<string>): string | null 
   return candidates.find((candidate) => files.has(candidate)) ?? null;
 }
 
+/**
+ * Node's subpath pattern match: an exact key first, else the most specific one-star key that matches (longest part
+ * before the star, then longest key; package.json order never matters), its star standing for a non-empty middle.
+ */
 function exportTargets(pkg: WorkspacePackage, subpath: string): readonly string[] {
   const exports = pkg.exports!;
-  const exact = exports.get(subpath);
+  const exact = subpath.includes("*") ? undefined : exports.get(subpath);
   if (exact !== undefined) return exact;
+  let best: { readonly key: string; readonly star: number; readonly targets: readonly string[] } | null = null;
   for (const [key, targets] of exports) {
     const star = key.indexOf("*");
-    if (star === -1) continue;
-    const prefix = key.slice(0, star);
-    const suffix = key.slice(star + 1);
-    if (subpath.length < key.length - 1 || !subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
-    const middle = subpath.slice(prefix.length, subpath.length - suffix.length);
-    return targets.map((target) => target.replace("*", middle));
+    if (star === -1 || key.includes("*", star + 1)) continue;
+    if (subpath.length < key.length || !subpath.startsWith(key.slice(0, star))) continue;
+    if (!subpath.endsWith(key.slice(star + 1))) continue;
+    if (best === null || star > best.star || (star === best.star && key.length > best.key.length)) {
+      best = { key, star, targets };
+    }
   }
-  return [];
+  if (best === null) return [];
+  const middle = subpath.slice(best.star, subpath.length - (best.key.length - best.star - 1));
+  return best.targets.map((target) => target.replace("*", middle));
 }
 
 function resolvePackage(
