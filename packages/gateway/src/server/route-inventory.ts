@@ -63,8 +63,8 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
   },
   {
     id: "data-features",
-    label: "Conversations, canvas, messaging, sync, social, cron, plugins, and games",
-    paths: ["/api/conversations", "/api/canvases", "/api/messages", "/api/sync", "/api/social", "/api/cron", "/api/plugins", "/api/games"],
+    label: "Conversations, canvas, messaging, sync, social, cron, plugins, games, and the Company Brain",
+    paths: ["/api/conversations", "/api/canvases", "/api/messages", "/api/sync", "/api/social", "/api/cron", "/api/plugins", "/api/games", "/api/brain"],
     plannedModule: "server/routes/data-features.ts",
   },
 ];

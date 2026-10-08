@@ -66,6 +66,7 @@ import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adap
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
 import { createProjectChatCleanup } from "./chat/project-deletion.js";
+import type { ProjectBrainCleanup } from "./project-deletion-cleanup.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
@@ -149,6 +150,11 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
+import { createBrainAgentReadTools } from "./brain/agent/index.js";
+import {
+  createBrainAgentTools, createBrainApiRoutes, createBrainProjectCleanup, resolveBrainAgentOwnerId, stopBrainServices,
+} from "./brain/api/index.js";
+import { createBrainLateBoundIntegrations } from "./brain/sources/integration/index.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
@@ -818,9 +824,17 @@ export async function createGateway(config: GatewayConfig) {
   let collaborationFailClosedReason: GatewayCollaborationConfigurationFailure | null = collaborationHealth.configured
     ? null
     : collaborationHealth.reason;
+  // The owner database (and the brain) starts before platform integrations; these seams are bound once they exist.
+  const brainIntegrations = createBrainLateBoundIntegrations();
+  // Only the gateway's configured owner may spend its credentials in the brain: MATRIX_BRAIN_GITHUB_TOKEN, the
+  // Anthropic key of model claims and the OpenAI key of meaning search (dev: the "default" principal).
+  const brainOwnerIds = codingAgentOwnerIds.length > 0
+    ? codingAgentOwnerIds : process.env.NODE_ENV === "production" ? [] : ["default"];
   const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
     databaseUrl,
     homePath,
+    brainIntegrations,
+    brainOwnerIds,
     collaborationConfig,
     initialFailureReason: collaborationFailClosedReason,
     providerSnapshotReader: collaborationProviderSnapshots.reader,
@@ -878,6 +892,15 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
+    brainTools: createBrainAgentTools(ownerDatabaseServices?.brainService ?? null),
+    brainReadTools: createBrainAgentReadTools({
+      ownerId: resolveBrainAgentOwnerId(),
+      project: ownerDatabaseServices?.brainServices?.project ?? null,
+      search: ownerDatabaseServices?.brainServices?.search ?? null,
+      graph: ownerDatabaseServices?.brainServices?.graph ?? null,
+      brief: ownerDatabaseServices?.brainServices?.brief ?? null,
+      impact: ownerDatabaseServices?.brainServices?.impact ?? null,
+    }),
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -934,6 +957,10 @@ export async function createGateway(config: GatewayConfig) {
   });
   platformDb = platformIntegrations.db;
   const pipedreamClient = platformIntegrations.client;
+  brainIntegrations.bind({
+    internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,
+    env: process.env,
+  });
   const integrationRoutes = platformIntegrations.routes;
   const resolveIntegrationUserId = platformIntegrations.resolveUserId;
 
@@ -1292,6 +1319,7 @@ export async function createGateway(config: GatewayConfig) {
   }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
+  app.route("/api/brain", createBrainApiRoutes(ownerDatabaseServices?.brainServices ?? null, (c) => requireRequestPrincipal(c)));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
   const { shellRouteDeps, terminalWorkspaceProjectAdmission,
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
@@ -1684,6 +1712,15 @@ export async function createGateway(config: GatewayConfig) {
   const deleteProjectChats = chatRepository && canonicalChatOrchestrator
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
     : async () => { throw new Error("Project chat cleanup unavailable"); };
+  // A deferred or off brain still holds the project's rows: the erase runs on the owner database whatever the brain's
+  // state, and a failed erase (or an owner database that is down) fails the deletion so it is retried.
+  const eraseBrainForCleanup = createBrainProjectCleanup({
+    databaseConfigured: Boolean(databaseUrl), db: ownerDatabaseServices?.kyselyInstance ?? null,
+    services: ownerDatabaseServices?.brainServices ?? null,
+  });
+  const eraseProjectBrain: ProjectBrainCleanup = async (project, principal) => {
+    await eraseBrainForCleanup(principal.userId, project.id);
+  };
   app.route("/", createWorkspaceRoutes({
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
@@ -1695,6 +1732,7 @@ export async function createGateway(config: GatewayConfig) {
     reviewStore,
     codingAgentThreadStore,
     deleteProjectChats,
+    eraseProjectBrain,
     getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
     ...(gatewayCollaboration ? {
       projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
@@ -1704,6 +1742,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api", createShellRoutes(shellRouteDeps));
   const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
     deleteProjectChats,
+    eraseProjectBrain,
     homePath,
     backgroundRuntime: backgroundAgentRuntime,
     eventPublisher: workspaceEventPublisher,
@@ -1854,6 +1893,7 @@ export async function createGateway(config: GatewayConfig) {
 
   const server = serve({ fetch: app.fetch, port });
   injectWebSocket(server);
+  for (const job of ownerDatabaseServices?.brainServices?.jobs ?? []) job.start();
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
     onError: (error) => logBestEffortFailure("Temporary Chat attachment cleanup failed", error),
@@ -1879,6 +1919,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await stopBrainServices(ownerDatabaseServices?.brainServices ?? null);
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
