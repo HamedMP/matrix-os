@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -31,14 +31,15 @@ function request(path: string, action = 'apply') {
 }
 
 // Exercise real file descriptors/rename/fsync/flock with test-only directory and ownership injection.
-function run(root: string, input: unknown, setup = '', activity = 'lambda: None') {
+function run(root: string, input: unknown, setup = '', activity = 'lambda: None', anchored = false) {
   const result = spawnSync('/usr/bin/python3', ['-I', '-c', `
 import importlib.util,json,os,sys
 s=importlib.util.spec_from_file_location('repair',sys.argv[1]); m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
 root=sys.argv[2]
 ${setup}
 try:
- print(json.dumps(m.execute(json.load(sys.stdin),root,os.getuid(),os.getgid(),${activity})))
+ target=m.open_environment(root,os.getuid(),os.getgid()) if ${anchored ? 'True' : 'False'} else root
+ print(json.dumps(m.execute(json.load(sys.stdin),target,os.getuid(),os.getgid(),${activity})))
 except m.RepairError as e:
  print(json.dumps({'error':e.code}));sys.exit(1)
 `, helper, root], { input: JSON.stringify(input), encoding: 'utf8', timeout: 10_000 });
@@ -50,6 +51,62 @@ except m.RepairError as e:
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe('operator funded Chat configuration repair', () => {
+  function supported() {
+    const base = fixture();
+    const matrix = join(base.root, 'opt', 'matrix');
+    const env = join(matrix, 'env');
+    mkdirSync(join(base.root, 'opt'), { mode: 0o755 });
+    mkdirSync(matrix, { mode: 0o770 });
+    chmodSync(matrix, 0o770);
+    mkdirSync(env, { mode: 0o750 });
+    const path = join(env, 'host.env'); writeFileSync(path, original, { mode: 0o640 });
+    return { root: base.root, matrix, env, path };
+  }
+
+  it('applies and rolls back through anchored provisioned 0770 matrix / 0750 env ancestors', () => {
+    const { root, path } = supported();
+    expect(run(root, request(path), '', 'lambda: None', true).status).toBe(0);
+    expect(run(root, request(path, 'rollback'), '', 'lambda: None', true).status).toBe(0);
+    expect(readFileSync(path, 'utf8')).toBe(original);
+  });
+
+  it('rejects symlink ancestors and a group-writable target journal directory', () => {
+    const a = supported(); chmodSync(a.env, 0o770);
+    expect(run(a.root, request(a.path), '', 'lambda: None', true).status).toBe(1);
+    const b = supported(); rmSync(b.env, { recursive: true }); symlinkSync(b.root, b.env);
+    expect(run(b.root, request(join(b.root, 'host.env')), '', 'lambda: None', true).status).toBe(1);
+  });
+
+  it.each(['apply', 'rollback'])('refuses %s after an env ancestor is rebound without writing the replacement', action => {
+    const { root, path } = supported();
+    if (action === 'rollback') expect(run(root, request(path), '', 'lambda: None', true).status).toBe(0);
+    const input = request(path, action);
+    const before = readFileSync(path);
+    const setup = `calls=0
+def activity():
+ global calls
+ calls+=1
+ if calls==2:
+  os.rename(root+'/opt/matrix/env',root+'/opt/matrix/original-env')
+  os.symlink(root,root+'/opt/matrix/env')`;
+    expect(run(root, input, setup, 'activity', true).status).toBe(1);
+    expect(readFileSync(join(root, 'host.env'), 'utf8')).toBe(original);
+    expect(readFileSync(join(root, 'opt/matrix/original-env/host.env'))).toEqual(before);
+  });
+
+  it('detects a late rebind after the final check and confines a possibly committed write to the held protected directory', () => {
+    const { root, path } = supported();
+    const setup = `replace=m.os.replace
+def rebound(*a,**kw):
+ os.rename(root+'/opt/matrix/env',root+'/opt/matrix/original-env')
+ os.symlink(root,root+'/opt/matrix/env')
+ replace(*a,**kw)
+m.os.replace=rebound`;
+    expect(run(root, request(path), setup, 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(join(root, 'host.env'), 'utf8')).toBe(original);
+    expect(readFileSync(join(root, 'opt/matrix/original-env/host.env'), 'utf8')).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+  });
+
   it('patches only funded keys with a private durable backup and redacted receipt', () => {
     const { root, path } = fixture();
     const result = run(root, request(path));

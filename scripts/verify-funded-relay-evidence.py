@@ -199,6 +199,8 @@ def load_evidence(stage):
     run_id = os.environ["MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID"]
     require(matches(r"[1-9]\d{0,19}", run_id), "Reviewed acceptance run required")
     run = github_api("/actions/runs/" + run_id)
+    require(run.get("status") == "completed", "Completed acceptance run required")
+    require(run.get("conclusion") == "success", "Successful acceptance run required")
     artifacts = github_api("/actions/runs/" + run_id + "/artifacts?per_page=100")
     require(artifacts["total_count"] <= 100, "Too many acceptance artifacts")
     selected = [item for item in artifacts["artifacts"] if item["name"] == ARTIFACT]

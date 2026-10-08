@@ -13,7 +13,7 @@ The existing PR, exact-head CI and Greptile 5/5 requirements govern the workflow
 change. A repository administrator sets these production environment variables
 only after reviewing the actual acceptance packet:
 
-- `MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID`: successful same-repository run of
+- `MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID`: completed, successful same-repository run of
   `.github/workflows/funded-ai-acceptance-evidence.yml` on the exact deployed main SHA.
 - `MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256`: SHA-256 of the exact `receipt.json`
   bytes in that run's `funded-ai-production-acceptance` artifact.
@@ -24,6 +24,9 @@ introduced. The administrator and operator remain responsible for checking
 that the evidence describes real acceptance; structurally valid JSON or a
 successful import is not that evidence. Do not use an importer receipt as proof
 of metering. Raw private operator receipts remain in the private support system.
+The loader requires GitHub run `status=completed` and `conclusion=success`
+before requesting its artifacts; a queued, in-progress or missing status fails
+closed even if the response contains a successful conclusion.
 
 The production Relay must be a dedicated `matrix-ai-relay` or
 `matrix-ai-relay-production` service, using its dedicated service account and the

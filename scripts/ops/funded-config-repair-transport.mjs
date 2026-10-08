@@ -1,5 +1,6 @@
 import { createCipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -47,22 +48,30 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   const uid = options.uid ?? 0;
   const envPath = options.envPath ?? '/opt/matrix/env/host.env';
   requireCondition(process.getuid() === uid && Buffer.byteLength(JSON.stringify(transport)) <= 16_384);
-  if (options.checkAncestors !== false) {
-    for (const path of ['/opt', '/opt/matrix', '/opt/matrix/env']) {
-      const fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-      try {
-        const stat = fs.fstatSync(fd);
-        requireCondition(stat.isDirectory() && stat.uid === 0 && !(stat.mode & 0o022));
-      } finally { fs.closeSync(fd); }
-    }
-  }
   let gid = options.gid;
   if (gid === undefined) {
     const group = spawnSync('/usr/bin/getent', ['group', 'matrix'], { encoding: 'utf8', timeout: 2000, maxBuffer: 1024 });
     requireCondition(group.status === 0 && /^matrix:[^:\n]*:\d+:[^\n]*\n?$/.test(group.stdout));
     gid = Number(group.stdout.split(':')[2]);
   }
-  const fd = fs.openSync(envPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const anchored = options.checkAncestors !== false;
+  const descriptors = options.descriptors ?? { env: 3, host: 4, opt: 5, matrix: 6 };
+  const paths = options.ancestorPaths ?? { opt: '/opt', matrix: '/opt/matrix', env: '/opt/matrix/env' };
+  const verifyPath = () => {
+    if (!anchored) return;
+    for (const name of ['opt', 'matrix', 'env']) {
+      const held = fs.fstatSync(descriptors[name]);
+      const current = fs.lstatSync(paths[name]);
+      const writableParent = name === 'matrix' && held.gid === gid && (held.mode & 0o7777) === 0o770;
+      requireCondition(held.isDirectory() && held.uid === uid && (!(held.mode & 0o022) || writableParent)
+        && (name !== 'env' || (held.gid === gid && (held.mode & 0o7777) === 0o750))
+        && current.isDirectory() && current.dev === held.dev && current.ino === held.ino);
+    }
+  };
+  verifyPath();
+  // Production fds are inherited from the trusted stdlib launcher. Never reopen
+  // host.env through writable ancestors after validation.
+  const fd = anchored ? descriptors.host : fs.openSync(envPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
   let bytes;
   try {
     const stat = fs.fstatSync(fd);
@@ -121,10 +130,13 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
     && JSON.stringify(request.expectedFile) === JSON.stringify(aad.expectedFile));
   const helper = zlib.inflateSync(decode(transport.helper, 65_536), { maxOutputLength: 65_536 });
   requireCondition(hash(helper) === aad.helperSha256);
+  verifyPath();
   const result = spawnSync(options.pythonPath ?? '/usr/bin/python3', ['-I', '-c', helper.toString('utf8')], {
     input: plaintext, encoding: 'utf8', timeout: 10_000, maxBuffer: 4096,
-    env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, shell: false,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8', ...(anchored ? { MATRIX_FUNDED_REPAIR_ENV_FD: '3' } : {}) }, shell: false,
+    ...(anchored ? { stdio: ['pipe', 'pipe', 'pipe', descriptors.env] } : {}),
   });
+  verifyPath();
   requireCondition(result.status === 0);
   const receipt = JSON.parse(result.stdout);
   const rendered = JSON.stringify(receipt);
@@ -139,14 +151,23 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
 }
 
 /** Argument-vector request for the existing owner-authenticated terminal runner. */
-export function buildFundedConfigRepairCommand(request, helperSource, authToken, now = Date.now()) {
+export function buildFundedConfigRepairCommand(request, helperSource, authToken, nodeSha256, now = Date.now()) {
+  if (typeof nodeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(nodeSha256)) throw new Error('Independently verified Node digest is required');
   const transport = sealFundedConfigRepair(request, helperSource, authToken, now);
-  const bootstrap = `const nodeRequire=require;${executeFundedConfigRepairBridge.toString()};try{process.stdout.write(JSON.stringify(executeFundedConfigRepairBridge(JSON.parse(Buffer.from(process.argv.slice(2).join(''),'base64').toString('utf8'))))+'\\n')}catch{process.stderr.write('{"error":"transport_failed"}\\n');process.exit(1)}`;
+  const bootstrap = `const nodeRequire=require;${executeFundedConfigRepairBridge.toString()};try{process.stdout.write(JSON.stringify(executeFundedConfigRepairBridge(JSON.parse(require('node:zlib').inflateSync(Buffer.from(process.argv.slice(2).join(''),'base64'),{maxOutputLength:16384}).toString('utf8'))))+'\\n')}catch{process.stderr.write('{"error":"transport_failed"}\\n');process.exit(1)}`;
   const compressedBootstrap = deflateSync(Buffer.from(bootstrap)).toString('base64');
-  const loader = "require('node:vm').runInThisContext(require('node:zlib').inflateSync(Buffer.from(process.argv[1],'base64'),{maxOutputLength:32768}).toString('utf8'))";
-  const encoded = Buffer.from(JSON.stringify(transport)).toString('base64');
+  const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url))).toString('base64');
+  const loader = `import sys,zlib,base64
+try:
+ d=zlib.decompressobj();s=d.decompress(base64.b64decode(sys.argv.pop(1),validate=True),16385)
+ assert len(s)<=16384 and d.eof and not d.unused_data
+ exec(s)
+except Exception:
+ print('{"error":"transport_failed"}',file=sys.stderr);sys.exit(1)
+`;
+  const encoded = deflateSync(Buffer.from(JSON.stringify(transport))).toString('base64');
   const chunks = encoded.match(/.{1,4096}/g) ?? [];
-  const command = ['/usr/bin/sudo', '-n', '/opt/matrix/runtime/node/bin/node', '-e', loader, '--', compressedBootstrap, ...chunks];
+  const command = ['/usr/bin/sudo', '-n', '/usr/bin/python3', '-I', '-c', loader, launcher, nodeSha256, compressedBootstrap, ...chunks];
   if (command.length > 64 || command.some(arg => arg.length > 4096)
     || Buffer.byteLength(JSON.stringify({ command, timeoutMs: 15_000 })) > 16_384) {
     throw new Error('Repair transport exceeds terminal limits');

@@ -36,6 +36,43 @@ def require(condition, code="invalid_request"):
         raise RepairError(code)
 
 
+class Environment:
+    """Pinned protected directory; the provisioned matrix parent may be 0770."""
+    def __init__(self, base, uid, gid):
+        self.uid, self.gid, self.fds = uid, gid, []
+        try:
+            self.fds.append(os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+            for part in ("opt", "matrix", "env"):
+                self.fds.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self.fds[-1]))
+            self.verify()
+        except BaseException:
+            self.close()
+            raise
+
+    def verify(self):
+        for index, part in enumerate((None, "opt", "matrix", "env")):
+            info = os.fstat(self.fds[index])
+            supported_parent = part == "matrix" and info.st_gid == self.gid and stat.S_IMODE(info.st_mode) == 0o770
+            require(info.st_uid == self.uid and (not info.st_mode & 0o022 or supported_parent), "unsafe_directory")
+            if part == "env":
+                require(info.st_gid == self.gid and stat.S_IMODE(info.st_mode) == 0o750, "unsafe_directory")
+            if index:
+                current = os.stat(part, dir_fd=self.fds[index - 1], follow_symlinks=False)
+                require(stat.S_ISDIR(current.st_mode) and (current.st_dev, current.st_ino) == (info.st_dev, info.st_ino), "path_conflict")
+
+    def close(self):
+        for fd in self.fds:
+            os.close(fd)
+        self.fds = []
+
+
+def open_environment(base, uid, gid):
+    try:
+        return Environment(base, uid, gid)
+    except OSError:
+        raise RepairError("path_conflict") from None
+
+
 def sha(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -234,7 +271,9 @@ def rollback_image(directory, name, data, values, identity, uid, private_gid, ho
 def _execute(request, root, uid, gid, activity):
     patch = validate(request)
     private_gid = 0 if uid == 0 else gid  # Root CLI artifacts remain root:root.
-    directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    anchor = root if isinstance(root, Environment) else None
+    directory = os.dup(anchor.fds[-1]) if anchor else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    verify_path = anchor.verify if anchor else lambda: None
     lock = None
     try:
         info = os.fstat(directory)
@@ -247,6 +286,7 @@ def _execute(request, root, uid, gid, activity):
         except BlockingIOError:
             raise RepairError("repair_busy")
         activity()
+        verify_path()
         data, info = read_file(directory, "host.env", uid, gid)
         verify_expected(data, info, request["expectedFile"])
         _, values, _ = parse(data)
@@ -264,6 +304,7 @@ def _execute(request, root, uid, gid, activity):
         require(len(new) <= LIMIT, "unsafe_file")
         changed = new != data
         if changed:
+            verify_path()
             if request["action"] == "apply":
                 backup(directory, name, data, new, patch, request["identity"], info, uid, private_gid)
             temporary = ".host.env.funded.tmp-" + secrets.token_hex(12)
@@ -272,16 +313,19 @@ def _execute(request, root, uid, gid, activity):
                 create_file(directory, temporary, new, uid, gid, 0o640, cleanup=True)
                 created = True
                 activity()
+                verify_path()
                 current, current_info = read_file(directory, "host.env", uid, gid)
                 require(current == data and fingerprint(current_info) == fingerprint(info), "file_conflict")
                 os.replace(temporary, "host.env", src_dir_fd=directory, dst_dir_fd=directory)
                 os.fsync(directory)
+                verify_path()  # Failure now is an unknown commit, confined to the pinned directory.
             finally:
                 if created:
                     try:
                         os.unlink(temporary, dir_fd=directory)
                     except FileNotFoundError:
                         pass  # Successful rename consumed this name.
+        verify_path()
         return {"action": request["action"], "changed": changed, "restartRequired": changed,
                 "beforeSha256": sha(data), "afterSha256": sha(new), "backup": name if changed else None}
     finally:
@@ -297,6 +341,9 @@ def execute(request, root, uid, gid, activity):
         raise
     except (OSError, ValueError, TypeError, KeyError, UnicodeError):
         raise RepairError("repair_failed") from None
+    finally:
+        if isinstance(root, Environment):
+            root.close()
 
 
 def known_activity():
@@ -323,19 +370,6 @@ def known_activity():
                                  b"matrix-update", b"cloud-init"}, "writer_busy")
 
 
-def secure_ancestors():
-    descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for part in ("opt", "matrix", "env"):
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = child
-            info = os.fstat(descriptor)
-            require(info.st_uid == 0 and not info.st_mode & 0o022, "unsafe_directory")
-    finally:
-        os.close(descriptor)
-
-
 def unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -350,8 +384,17 @@ def main():
     data = sys.stdin.buffer.read(INPUT_LIMIT + 1)
     require(len(data) <= INPUT_LIMIT)
     request = json.loads(data, object_pairs_hook=unique_object)
-    secure_ancestors()
-    receipt = execute(request, "/opt/matrix/env", 0, grp.getgrnam("matrix").gr_gid, known_activity)
+    gid = grp.getgrnam("matrix").gr_gid
+    anchor = open_environment("/", 0, gid)
+    try:
+        if "MATRIX_FUNDED_REPAIR_ENV_FD" in os.environ:
+            require(os.environ["MATRIX_FUNDED_REPAIR_ENV_FD"] == "3", "path_conflict")
+            source, target = os.fstat(3), os.fstat(anchor.fds[-1])
+            require((source.st_dev, source.st_ino) == (target.st_dev, target.st_ino), "path_conflict")
+    except BaseException:
+        anchor.close()
+        raise
+    receipt = execute(request, anchor, 0, gid, known_activity)
     print(json.dumps(receipt, separators=(",", ":")))
 
 
