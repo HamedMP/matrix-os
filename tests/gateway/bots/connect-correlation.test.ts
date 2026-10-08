@@ -1,3 +1,4 @@
+import type { BotEffect } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBotConnections } from "../../../packages/gateway/src/bots/connections.js";
@@ -40,7 +41,7 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function setup() {
+function setup(effects: BotEffect[] = ["read"]) {
   const client = {
     inventory: vi.fn(async () => connected),
     call: vi.fn(),
@@ -50,7 +51,7 @@ function setup() {
   const connections = createBotConnections({
     client: client as never,
     transact: createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>)),
-    tools: { declaredEffects: async () => ["read"] },
+    tools: { declaredEffects: async () => effects },
     now: () => new Date(clock),
   });
   return { connections, client };
@@ -110,12 +111,20 @@ describe("bot connection requests", () => {
     expect(await grants()).toEqual([expect.objectContaining({ connectionId: "conn_work", accountLabel: "Work", effects: ["read"] })]);
   });
 
+  it("does not expand a saved connect consent when recipe effects change", async () => {
+    connected = [WORK];
+    await expect(setup(["read", "write"]).connections.startConnect(OWNER, CHAT, interactionId, 1))
+      .rejects.toEqual(new BotInteractionError("invalid_request"));
+    expect(await grants()).toEqual([]);
+    expect((await interaction()).status).toBe("pending");
+  });
+
   it("asks which account when several are already connected", async () => {
     connected = [WORK, HOME];
     const result = await setup().connections.startConnect(OWNER, CHAT, interactionId, 1);
     expect(result.continuation).toBeUndefined();
     const [choice] = await db.selectFrom("bot_interactions").select(["kind", "status", "payload"]).where("kind", "=", "account_choice").execute();
-    expect(choice).toMatchObject({ status: "pending", payload: expect.objectContaining({ options: [{ connectionId: "conn_work", label: "Work" }, { connectionId: "conn_home", label: "Home" }] }) });
+    expect(choice).toMatchObject({ status: "pending", payload: expect.objectContaining({ access: ["read"], options: [{ connectionId: "conn_work", label: "Work" }, { connectionId: "conn_home", label: "Home" }] }) });
     expect(await grants()).toEqual([]);
   });
 
@@ -177,7 +186,7 @@ describe("bot connection requests", () => {
     await connections.startConnect(OWNER, CHAT, interactionId, 1);
     connected = [WORK, HOME];
     await expect(connections.reconcile(OWNER)).resolves.toEqual([]);
-    expect(await db.selectFrom("bot_interactions").select("kind").where("status", "=", "pending").execute()).toEqual([{ kind: "account_choice" }]);
+    expect(await db.selectFrom("bot_interactions").select(["kind", "payload"]).where("status", "=", "pending").execute()).toEqual([expect.objectContaining({ kind: "account_choice", payload: expect.objectContaining({ access: ["read"] }) })]);
     expect((await db.selectFrom("bot_connect_requests").select("status").executeTakeFirstOrThrow()).status).toBe("ambiguous");
   });
 

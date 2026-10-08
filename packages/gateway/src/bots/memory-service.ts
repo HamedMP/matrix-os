@@ -36,7 +36,7 @@ export const BOT_MEMORY_TOKEN_BUDGET = 2_000;
 type BotMemoryMutationResponse = z.infer<typeof BotMemoryMutationResponseSchema>;
 const KIND_ORDER = ["preference", "fact", "episode"] as const;
 /** Tools whose results can carry someone else's words into the run. */
-const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read"];
+const OUTSIDE_CONTENT: readonly string[] = ["integration.call", "artifact.read", "jev.inbox"];
 /** Answer continuations are admitted under this request prefix with gateway-built text. */
 const CONTINUATION_REQUEST_PREFIX = "req_answer_";
 const WORD = /[\p{L}\p{N}]+/gu;
