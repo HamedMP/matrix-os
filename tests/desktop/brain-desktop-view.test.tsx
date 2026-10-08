@@ -22,6 +22,8 @@ function fakeApi(answers: Readonly<Record<string, () => Promise<unknown>>> = {})
     const client = {
       get: vi.fn(answer), post: vi.fn(async () => ({})), patch: vi.fn(async () => ({})),
       delete: vi.fn(async () => ({})), forRuntime: vi.fn(forSlot),
+      // The brain chat's event stream stays open and silent here.
+      openStream: vi.fn(() => new Promise(() => undefined)),
     } as unknown as ApiClient;
     slots.set(slot, client);
     return client;
@@ -93,7 +95,8 @@ describe("DesktopBrainView", () => {
     expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("proj_matrix_os");
     expect(api.root.forRuntime).toHaveBeenCalledWith("pr-12");
     expect(api.slot("pr-12").get).toHaveBeenCalledWith("/api/workspace/projects", { timeoutMs: 15_000 });
-    expect(api.root.get).not.toHaveBeenCalled();
+    // Only the chat runs on the shared chat client; the brain routes go through the pinned runtime.
+    expect(api.root.get).not.toHaveBeenCalledWith("/api/workspace/projects", expect.anything());
     const tabs = within(screen.getByRole("tablist", { name: "Screens" })).getAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
@@ -123,10 +126,12 @@ describe("DesktopBrainView", () => {
     expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("proj_preview");
     expect(screen.queryByRole("option", { name: "Matrix OS" })).toBeNull();
 
+    // The Chat tab also reads the project's sources on the same runtime; only the project list is counted here.
     const preview = api.slot("pr-12");
-    expect(preview.get).toHaveBeenCalledTimes(1);
+    const projectLoads = () => vi.mocked(preview.get).mock.calls.filter(([path]) => path === "/api/workspace/projects").length;
+    expect(projectLoads()).toBe(1);
     act(() => useConnection.setState({ authGeneration: 2 }));
-    await waitFor(() => expect(preview.get).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(projectLoads()).toBe(2));
     expect(await screen.findByRole("combobox", { name: "Project" })).toHaveValue("proj_preview");
   });
 });
