@@ -127,3 +127,22 @@ it("shows the built-in Jev recipe to a fresh user without connections or model c
   expect(screen.getByRole("dialog")).toBeTruthy();
   expect(create).not.toHaveBeenCalled();
 });
+
+it("instantiates the upgraded Inbox recipe with its existing identity and current Jev version", async () => {
+  const create = vi.fn(async () => "chat_0123456789abcdef");
+  const open = vi.fn();
+  render(<AgentRecipesPanel botRecipes={createBotRecipeCatalog().list()} connections={[]} matrixModels={[]}
+    onInstantiateBot={create} onOpenBotChat={open} />);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "inbox triage" } });
+  expect(screen.getAllByRole("button", { name: "Use Jev Inbox Triage" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Use Inbox Triage" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_0123456789abcdef"));
+  expect(create).toHaveBeenCalledOnce();
+  expect(create).toHaveBeenCalledWith(
+    { recipeId: "jev-inbox-triage", version: "2026-10-06.1" },
+    expect.stringMatching(/^req_/), MATRIX_BOT_SELECTION,
+  );
+});
