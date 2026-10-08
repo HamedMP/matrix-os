@@ -3,6 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { clearChatNavigationScopes, createBrowserChatNavigationPersistence } from "@matrix-os/ui";
+import { getGatewayUrl } from "../../shell/src/lib/gateway";
 import { createShellChatNavigationScope } from "../../shell/src/lib/chat-navigation-scope";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
 
@@ -15,7 +16,7 @@ const snapshot: CanonicalChatNavigationResponse = { version: 1, truncated: false
 }] };
 function mount() {
   return renderHook(() => useCanonicalChatState({
-    navigationScope: createShellChatNavigationScope({ userId: "user_1" }, "session_1"),
+    navigationScope: createShellChatNavigationScope({ userId: "user_1" }, "session_1", getGatewayUrl()),
     navigationGeneration: "session_1",
   }));
 }
@@ -35,7 +36,7 @@ it.each(["memory", "disk"])("does not restore another runtime's %s Chat list or 
   });
   vi.stubGlobal("fetch", fetcher);
   window.history.replaceState({}, "", "/vm/alice");
-  const mainScope = createShellChatNavigationScope({ userId: "user_1" }, "session_1")!;
+  const mainScope = createShellChatNavigationScope({ userId: "user_1" }, "session_1", getGatewayUrl())!;
   if (source === "disk") {
     await createBrowserChatNavigationPersistence(localStorage, mainScope).save(snapshot);
   } else {
@@ -55,6 +56,6 @@ it.each(["memory", "disk"])("does not restore another runtime's %s Chat list or 
 });
 
 it("keeps unverified and self-hosted viewers memory-only", () => {
-  expect(createShellChatNavigationScope(null, "session_1")).toBeUndefined();
-  expect(createShellChatNavigationScope({ userId: "user_1" }, null)).toBeUndefined();
+  expect(createShellChatNavigationScope(null, "session_1", getGatewayUrl())).toBeUndefined();
+  expect(createShellChatNavigationScope({ userId: "user_1" }, null, getGatewayUrl())).toBeUndefined();
 });

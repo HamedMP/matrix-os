@@ -16,7 +16,11 @@ export function useUnreadChatNavigation(client: CanonicalShellChatClient, naviga
   const authorityEpoch = scope?.getAuthorityEpoch() ?? 0;
   const scoped = unreadOnly && navigation.truncated && Boolean(scope);
   // Legacy identity caches must not outlive the verified navigation authority.
-  const agents = useMemo(() => scope && client.agents ? { ...client.agents } : undefined, [client, scope, authorityEpoch]);
+  const botAuthority = useMemo(() => ({
+    epoch: authorityEpoch,
+    client: scope && client.agents ? { ...client.agents } : undefined,
+  }), [client, scope, authorityEpoch]);
+  const agents = botAuthority.client;
   const [snapshot, setSnapshot] = useState<{
     client: CanonicalShellChatClient;
     scope: typeof scope;
@@ -24,11 +28,11 @@ export function useUnreadChatNavigation(client: CanonicalShellChatClient, naviga
     items: CanonicalChatNavigationItem[];
     error: string | null;
   } | null>(null);
-  useEffect(() => {
-    // Drop revoked metadata, even if no authorized replacement read completes.
-    setSnapshot(previous => previous?.client === client && previous.scope === scope
-      && previous.authorityEpoch === authorityEpoch ? previous : null);
-  }, [client, scope, authorityEpoch]);
+  // Discard old authority before children can retain revoked metadata.
+  if (snapshot && (snapshot.client !== client || snapshot.scope !== scope
+    || snapshot.authorityEpoch !== authorityEpoch)) {
+    setSnapshot(null);
+  }
   const requestFence = useRef(0);
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => {

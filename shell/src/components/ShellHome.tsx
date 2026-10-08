@@ -19,6 +19,7 @@ import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
 import { createShellChatNavigationScope } from "@/lib/chat-navigation-scope";
+import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
@@ -86,6 +87,9 @@ function ShellHomeBody({
   initialCollaborationView,
 }: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
   const isMobile = useMobileViewport();
+  // Canonical Chat captures this transport on mount. Shared navigation rewrites
+  // history without replacing it; actual Computer switches reload the document.
+  const [chatGatewayUrl] = useState(getGatewayUrl);
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
   const cacheScope = createShellSnapshotScope({ userId, pathname: cachePathname });
   useTheme({ cacheScope });
@@ -98,7 +102,7 @@ function ShellHomeBody({
   const chat = useCanonicalChatState({
     initialDraft: recipePrompt,
     initialCollaborationView: chatCollaborationView,
-    navigationScope: createShellChatNavigationScope(cacheScope, sessionId),
+    navigationScope: createShellChatNavigationScope(cacheScope, sessionId, chatGatewayUrl),
     navigationGeneration: sessionId ?? "self-hosted",
   });
   const [paletteOpen, setPaletteOpen] = useState(false);

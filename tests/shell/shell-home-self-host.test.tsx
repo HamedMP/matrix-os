@@ -100,4 +100,22 @@ describe("ShellHome self-host mode", () => {
     expect(scopeAt("/?runtime=review")).toBe(scopeAt("/"));
   });
 
+  it.each(["/shared/chat/scope_1", "/shared/project/scope_1"])("keeps mounted Chat transport scope when navigating to %s", pathname => {
+    delete process.env.MATRIX_SELF_HOSTED;
+    clerk.useAuth.mockImplementation(() => ({ userId: "user_1", sessionId: "sess_1" }));
+    window.history.replaceState({}, "", "/vm/alice?runtime=review");
+    const view = render(<ShellHome />);
+    const before = canonical.useCanonicalChatState.mock.lastCall?.[0]?.navigationScope;
+    expect(before).toContain(encodeURIComponent("/vm/alice/~runtime/review"));
+    // Shared navigation changes only history; the canonical client remains mounted.
+    window.history.pushState({}, "", pathname);
+    view.rerender(<ShellHome />);
+    expect(canonical.useCanonicalChatState.mock.lastCall?.[0]?.navigationScope).toBe(before);
+    clerk.useAuth.mockImplementation(() => ({ userId: "user_2", sessionId: "sess_2" }));
+    view.rerender(<ShellHome />);
+    const nextViewer = canonical.useCanonicalChatState.mock.lastCall?.[0]?.navigationScope;
+    expect(nextViewer).not.toBe(before);
+    expect(nextViewer).toContain(encodeURIComponent("/vm/alice/~runtime/review"));
+  });
+
 });
