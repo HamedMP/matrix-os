@@ -68,12 +68,15 @@ export function finalizeBrainClaims(input: {
   return { claims: unique.slice(0, cap), claimsRejected, quotesRejected: 0 };
 }
 
+/** A line closing the fence with run group 1 of character group 2: only spaces or tabs after the run (closesFence). */
+const FENCE_CLOSE = String.raw` {0,3}\1\2*[ \t]*\r?(?![^\n])`;
 /**
  * The text a reader never sees rendered, masked as NUL, whichever opens first: an HTML comment (to `-->`, else the end)
- * or fenced code by why.ts fenceOf's rule (up to 3 spaces, 3 or more backticks or tildes, closed by a run of the same
- * character at least as long, else the end).
+ * or fenced code by why.ts fenceOf and closesFence (up to 3 spaces, 3 or more backticks or tildes, closed by a run of
+ * the same character at least as long with only spaces or tabs after it, else the end).
  */
-const HIDDEN = /<!--[\s\S]*?(?:-->|(?![\s\S]))|^ {0,3}(([`~])\2{2,})[^\n]*(?:\n(?! {0,3}\1)[^\n]*)*(?:\n {0,3}\1[^\n]*)?/gm;
+const HIDDEN = new RegExp(/<!--[\s\S]*?(?:-->|(?![\s\S]))|^ {0,3}(([`~])\2{2,})[^\n]*/.source
+  + String.raw`(?:\n(?!${FENCE_CLOSE})[^\n]*)*(?:\n${FENCE_CLOSE})?`, "gm");
 const mask = (hidden: string): string => "\u0000".repeat(hidden.length);
 /** Occurrences of a statement or label tried in its stored quote (at most 2,000 units): a few searches per claim. */
 const GROUNDING_TRIES = 8;

@@ -45,9 +45,10 @@ Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (no UI; a JSO
 
 Grounded in 1,993 first-parent PR and commit bodies of this repository (582 yield 2,925 invariants, 295 commitments,
 8 decisions, 5 risks; at most 23 per body, cap 50) and the 135 specs on `origin/main` (69 yield 394 invariants, 68
-decisions, 58 commitments, 11 risks). `claims/rules.ts` is pure and never throws; it skips code fences, HTML comments
-(from `<!--` anywhere on a line to `-->`; one ends the open item, so no quote reaches into it), tables, images and
-trailers, and `---` ends every section (squash bodies). Each quote gives at most one claim.
+decisions, 58 commitments, 11 risks). `claims/rules.ts` is pure and never throws; it skips code fences (closed, as in
+`why.ts`, by a run of the fence character at least as long with only spaces or tabs after it), HTML comments (from
+`<!--` anywhere on a line to `-->`; one ends the open item, so no quote reaches into it), tables, images and trailers,
+and `---` ends every section (squash bodies). Each quote gives at most one claim.
 
 - Sections: ATX and bare headings (`Invariants`, `Deferred scope:`), first match: `open decision(s)/question(s)`
   (undecided: none); `invariant` or a canonical label (not a bare `Auth`/`Authentication`/`Authorization` feature
