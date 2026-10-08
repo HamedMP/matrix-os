@@ -104,7 +104,8 @@ function firstExisting(base: string, files: ReadonlySet<string>): string | null 
 
 /**
  * Node's subpath pattern match: an exact key first, else the most specific one-star key that matches (longest part
- * before the star, then longest key; package.json order never matters), its star standing for a non-empty middle.
+ * before the star, then longest key; package.json order never matters), its star standing for a non-empty middle
+ * that fills every star of the targets.
  */
 function exportTargets(pkg: WorkspacePackage, subpath: string): readonly string[] {
   const exports = pkg.exports!;
@@ -122,7 +123,7 @@ function exportTargets(pkg: WorkspacePackage, subpath: string): readonly string[
   }
   if (best === null) return [];
   const middle = subpath.slice(best.star, subpath.length - (best.key.length - best.star - 1));
-  return best.targets.map((target) => target.replace("*", middle));
+  return best.targets.map((target) => target.replaceAll("*", middle));
 }
 
 function resolvePackage(

@@ -118,6 +118,12 @@ describe("resolution", () => {
     expect(resolve("p/internal/z")).toBeNull();
     expect(resolve("p/x/y.js")).toBe("p/js/y.ts");
   });
+
+  it("fills every star of an export target", () => {
+    const files = new Set(["p/src/feat/index.feat.ts"]);
+    const packages = [pkg("p", { name: "p", exports: { "./*": "./src/*/index.*.js" } })];
+    expect(resolveSpecifier("x.ts", "p/feat", files, packages)).toBe("p/src/feat/index.feat.ts");
+  });
 });
 
 describe("dependents", () => {
