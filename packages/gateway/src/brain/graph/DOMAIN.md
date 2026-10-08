@@ -39,9 +39,10 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   the `mergeSuggestions` service method are part of `../contracts/graph.ts`.
 - Alias actions (`aliases.ts`): merge; split ("not the same person": the row stays, the pair is never merged or
   suggested again); unmerge (the app's Undo of a manual merge: the manual row is deleted and carried aliases go
-  back, so the pair can be suggested again and a `name:` key is decided by derivation again). An entity holds at most
-  `aliasesPerEntity` (50) merged aliases, automatic name merges included: past it a name stays its own person, so
-  every alias of an entity is read with it.
+  back, so the pair can be suggested again and a `name:` key is decided by derivation again). An automatic name merge
+  carries the name's own aliases along like a manual one, and sends them back when it goes. An entity holds at most
+  `aliasesPerEntity` (50) merged aliases, automatic and carried ones included: past it a name stays its own person,
+  so every alias of an entity is read with it.
 - Each document checks the entity limit under the graph lock, counting every entity it would add (its own document
   entity included); one that adds none derives at the limit. A refresh that stops at the entity limit says so in
   `stopReason: "graph_capacity"`; an abort or a spent budget is no stop reason.
