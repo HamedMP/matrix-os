@@ -200,9 +200,12 @@ async function writeEntities(
     document_id: entity.kind === "document" ? documentId : null, first_seen_at: at, last_seen_at: at,
   }));
   const document = rows.find((row) => row.kind === "document")!;
+  // Its title follows the document; its seen range only widens, as for every other entity.
   await trx.insertInto("brain_graph_entities").values(document)
     .onConflict((conflict) => conflict.columns(["owner_id", "scope_id", "entity_id"]).doUpdateSet({
-      display_name: document.display_name, first_seen_at: at, last_seen_at: at,
+      display_name: document.display_name,
+      first_seen_at: sql`LEAST(brain_graph_entities.first_seen_at, excluded.first_seen_at)`,
+      last_seen_at: sql`GREATEST(brain_graph_entities.last_seen_at, excluded.last_seen_at)`,
     })).execute();
   const others = rows.filter((row) => row !== document);
   if (others.length === 0) return;
