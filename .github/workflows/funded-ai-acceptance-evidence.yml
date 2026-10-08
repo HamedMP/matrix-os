@@ -1,0 +1,36 @@
+name: Funded AI Acceptance Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_asset_id:
+        description: Same-repository metadata ZIP asset ID (no credentials or customer data)
+        required: true
+        type: string
+      archive_sha256:
+        description: Reviewed SHA-256 of the exact evidence ZIP bytes
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  import:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Import bounded metadata evidence without executing it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ASSET_ID: ${{ inputs.release_asset_id }}
+          EVIDENCE_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
+        run: python3 scripts/verify-funded-relay-evidence.py import
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: funded-ai-production-acceptance
+          path: funded-ai-evidence/*
+          if-no-files-found: error
+          retention-days: 7
