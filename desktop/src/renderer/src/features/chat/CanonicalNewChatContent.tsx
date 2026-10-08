@@ -6,12 +6,14 @@ import { ChatProviderOnboarding } from "./ChatProviderOnboarding";
 import { PROJECT_LANDING_CONTENT_CLASS } from "../project/ProjectLanding";
 
 /** Keeps the empty-state presentation separate from transcript and route orchestration. */
-export function CanonicalNewChatContent({ projectId, showWelcome = projectId === null, workspaceLayout, composer, onSelect }: {
+export function CanonicalNewChatContent({ projectId, showWelcome = projectId === null, workspaceLayout, composer, onSelect, welcome }: {
   projectId: string | null;
   showWelcome?: boolean;
   workspaceLayout: "narrow" | "wide";
   composer: ReactNode;
   onSelect: (prompt: string) => void;
+  /** A host's own heading and line (the Company Brain chat), with no starter cards. */
+  welcome?: { title: string; detail: string };
 }) {
   return showWelcome ? (
     <div
@@ -33,15 +35,15 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
                 <BrandLogo size={28} color="currentColor" className="block" testId="chat-welcome-matrix-logo" />
               </span>
               <h1 className="text-[26px] font-medium leading-[31px]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>
-                What should we build today?
+                {welcome?.title ?? "What should we build today?"}
               </h1>
-              <p className="text-[15px] leading-[22px]" style={{ color: "var(--text-tertiary)" }}>I’m Matrix. What should I start on?</p>
+              <p className="text-[15px] leading-[22px]" style={{ color: "var(--text-tertiary)" }}>{welcome?.detail ?? "I\u2019m Matrix. What should I start on?"}</p>
             </div>
-            <ChatStarterCards
+            {welcome ? null : <ChatStarterCards
               layout="two-by-two"
               density={workspaceLayout === "narrow" ? "compact" : "regular"}
               onSelect={onSelect}
-            />
+            />}
           </ChatProviderOnboarding>
         </div>
       </div>
