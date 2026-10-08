@@ -10,6 +10,12 @@ import type {
   ProviderLifecycleAccount,
 } from "../../packages/gateway/src/ai-providers/provider-settings-coordinators.js";
 
+// Native executable discovery has its own tests. Keep this lifecycle fixture
+// independent of whichever CLI happens to be installed on the test host.
+vi.mock("../../packages/gateway/src/ai-providers/claude-native-executable.js", () => ({
+  resolveClaudeNativeExecutable: () => "/fixture/bin/claude",
+}));
+
 describe("provider CLI account lifecycle", () => {
   let homePath: string;
   const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
@@ -77,7 +83,7 @@ describe("provider CLI account lifecycle", () => {
     });
 
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith("claude", ["auth", "logout"], expect.objectContaining({
+    expect(run).toHaveBeenCalledWith("/fixture/bin/claude", ["auth", "logout"], expect.objectContaining({
       cwd: homePath,
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,

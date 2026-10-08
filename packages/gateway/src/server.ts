@@ -1,4 +1,4 @@
-import { createAppCapabilityRoutes } from "./app-capabilities/routes.js";
+import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
 import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
@@ -45,7 +45,6 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
-import { createRuntimeAppAiRoutes, isAppAiAllowed } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -179,7 +178,7 @@ import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
-import { createBotIntegrationClient, createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
@@ -1366,23 +1365,12 @@ export async function createGateway(config: GatewayConfig) {
     logUnexpectedJsonParseFailure,
   });
 
-  const appIntegrationTransport = internalIntegrationBaseUrl && internalPlatformToken
-    ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
-    : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null;
-  app.route("/api/bridge/capabilities", createAppCapabilityRoutes({
-    homePath,
-    ownerIds: codingAgentOwnerIds,
-    resolveOwner: c => requireRequestPrincipal(c).userId,
-    integrations: appIntegrationTransport ? createBotIntegrationClient(appIntegrationTransport) : null,
-    aiAllowed: appIdentity => isAppAiAllowed(homePath, appIdentity),
-  }));
-
-  app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
-    homePath,
-    ownerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
-      .filter((id): id is string => Boolean(id)),
-    fundedCredentialProvider,
-  }));
+  registerAppIntegrationCapabilities(app, {
+    homePath, ownerIds: codingAgentOwnerIds,
+    integrationTransport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  });
 
   app.route("/api/bridge/service", createIntegrationBridgeRoutes({
     platformDb,
@@ -1439,7 +1427,11 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
+  const appSubscriptionSource = () => terminalRuntimeOwnerId && botServices?.chatgptPlanPeers
+    ? { ownerId: terminalRuntimeOwnerId, authority: botServices.chatgptPlanPeers }
+    : undefined;
   const aiProviderService = new AiProviderService({
+    chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
     matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
     exposeClaudeProfileAccount: true,
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
@@ -1501,6 +1493,15 @@ export async function createGateway(config: GatewayConfig) {
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
+  });
+  const appAiRuntime = registerAppAiCapabilities(app, {
+    homePath, ownerIds: codingAgentOwnerIds,
+    fundedCredentialProvider, fundedAdmission,
+    providerSnapshotReader: aiProviderService,
+    providerSettingsReader: providerSettingsStore,
+    nativeProfileGuard: nativeProviderProfileGuard,
+    hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
+    chatGptPlanSource: appSubscriptionSource,
   });
   const canonicalExecutableDriverKinds: import("@matrix-os/contracts").CanonicalProviderDriverKind[] = [
     "kernel" as const,
@@ -1928,6 +1929,9 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
+      await closeAppAiCapabilities(appAiRuntime, (error) => {
+        logBestEffortFailure("App AI adapter shutdown failed", error);
+      });
       await matrixAnthropicRuntime.close();
       await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
