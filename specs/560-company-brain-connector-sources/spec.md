@@ -50,7 +50,7 @@ registry action code, scheduled syncs and UI (see Deferred). No routes; OS-view 
   pages until caught up, `pagesPerRun` or the run budget (checked only between pages, so a started page finishes),
   close receipt. Each page is one `applySyncBatch` with `expectedCursor`; provenances outside the kind's list, too
   many upserts or refs, or a bad skip count are `document_invalid` before any write. `documents_changed` is emitted
-  after each page that wrote or deleted something, with that page's ids.
+  after each page that wrote, deleted or replaced a document's refs (`refsChanged`), with that page's ids.
 - Linear (cursor `lin1:`): three phases (issues, comments, updates), each a pass over `updatedAt >= since` with
   GraphQL cursor paging; the watermark moves to the newest `updatedAt` seen only when a pass ends. The first pass reads
   365 days back (`history_window_limited`). Archived or trashed items become deletions. A config change starts over.

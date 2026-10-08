@@ -47,7 +47,7 @@ describe("brain store sync", () => {
     const first = await repository.applySyncBatch(scopeA, batch(sourceId, { upserts: [one, two] }));
     expect(first).toEqual({
       cursor: { scopeId: "scope_a", sourceId, cursor: "c1", updatedAt: harness.iso() },
-      created: 2, updated: 0, unchanged: 0, deleted: 0, rejected: [],
+      created: 2, updated: 0, unchanged: 0, refsChanged: 0, deleted: 0, rejected: [],
     });
     expect(await repository.getSyncCursor(scopeA, sourceId)).toEqual(first.cursor);
     expect(await repository.getDocument(scopeA, one.documentId)).toMatchObject({
