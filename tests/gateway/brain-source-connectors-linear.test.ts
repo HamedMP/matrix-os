@@ -153,6 +153,8 @@ describe("Linear source", () => {
     }
     const { run } = setup({ "linear.brain_issues": () => new Promise<never>(() => undefined) }, 10); // ignores its signal
     expect((await run()).errorCode).toBe("provider_timeout");
+    // The provider timeout is the handler's; the runner refuses a per-run one rather than ignore it.
+    expect((await run(config, { providerTimeoutMs: 1 })).errorCode).toBe("invalid_options");
     const thrown = setup({ "linear.brain_issues": () => { throw new TypeError("transport bug"); } });
     expect((await thrown.run()).errorCode).toBe("internal_error");
   });

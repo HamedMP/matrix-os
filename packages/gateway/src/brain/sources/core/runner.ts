@@ -19,7 +19,7 @@ import {
   BRAIN_SYNC_BATCH_MAX_ITEMS, BRAIN_SYNC_BATCH_MAX_REFS, BrainStoreError, type BrainSyncCounts, type BrainSyncReceipt,
 } from "../../types.js";
 
-const LIMIT_KEYS = ["pagesPerRun", "upsertsPerPage", "refsPerPage", "runBudgetMs", "providerTimeoutMs"] as const;
+const LIMIT_KEYS = ["pagesPerRun", "upsertsPerPage", "refsPerPage", "runBudgetMs"] as const;
 const limitValue = z.number().int().min(1).optional();
 const OptionsSchema = z.object({
   scope: BrainScopeKeySchema,
