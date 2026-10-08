@@ -1,5 +1,6 @@
 import { collectPipedreamPages } from "./pipedream-pagination.js";
 import { createBoundedPipedreamGet } from "./pipedream-bounded-get.js";
+import { createBoundedPipedreamProxy, type BoundedPipedreamProxy } from "./pipedream-bounded-proxy.js";
 import { createBoundedPipedreamLabels } from "./pipedream-bounded-labels.js";
 import { createDriveContentReader } from "./drive-content.js";
 import { createReadCoalescer, proxyReadKey } from "./read-coalescer.js";
@@ -27,6 +28,8 @@ export interface PipedreamConnectClient {
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
   boundedGmailLabels?: ReturnType<typeof createBoundedPipedreamLabels>;
+  /** Byte-capped, cancellable raw read of a registry directApi action (Company Brain sources). */
+  boundedProxy?: BoundedPipedreamProxy;
   createConnectToken(
     externalUserId: string,
     redirects?: {
@@ -51,6 +54,7 @@ export interface PipedreamConnectClient {
     externalUserId: string;
     componentKey: string;
     configuredProps: Record<string, unknown>;
+    signal?: AbortSignal;
   }): Promise<RunActionResult>;
 
   proxyGet(opts: {
@@ -59,6 +63,7 @@ export interface PipedreamConnectClient {
     url: string;
     params?: Record<string, string>;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 
   proxyPost(opts: {
@@ -67,6 +72,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 
   proxyPut(opts: {
@@ -75,6 +81,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 
   proxyPatch(opts: {
@@ -83,6 +90,7 @@ export interface PipedreamConnectClient {
     url: string;
     body?: Record<string, unknown>;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 
   proxyDelete(opts: {
@@ -91,6 +99,7 @@ export interface PipedreamConnectClient {
     url: string;
     params?: Record<string, string>;
     headers?: Record<string, string>;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 
   revokeAccount(accountId: string): Promise<void>;
@@ -106,8 +115,12 @@ export interface PipedreamConnectClient {
 
 const API_TIMEOUT_SECONDS = 10;
 const ACTION_TIMEOUT_SECONDS = 30;
-// Billable executions must not be repeated invisibly, especially writes.
-const executionOptions = (seconds: number) => ({ timeoutInSeconds: seconds, maxRetries: 0, abortSignal: AbortSignal.timeout(seconds * 1000) });
+// Billable executions must not be repeated invisibly, especially writes. A caller's signal also stops the request, so
+// a dropped call does not keep running.
+const executionOptions = (seconds: number, signal?: AbortSignal) => {
+  const timeout = AbortSignal.timeout(seconds * 1000);
+  return { timeoutInSeconds: seconds, maxRetries: 0, abortSignal: signal ? AbortSignal.any([signal, timeout]) : timeout };
+};
 
 type PipedreamProjectEnvironment = "development" | "production";
 
@@ -144,6 +157,11 @@ export async function createPipedreamClient(
     boundedGmailLabels: createBoundedPipedreamLabels({ projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment), getAccessToken: () => sdk.rawAccessToken }),
     boundedGmailGet: createBoundedPipedreamGet({
+      projectId: config.projectId,
+      environment: normalizePipedreamProjectEnvironment(config.environment),
+      getAccessToken: () => sdk.rawAccessToken,
+    }),
+    boundedProxy: createBoundedPipedreamProxy({
       projectId: config.projectId,
       environment: normalizePipedreamProjectEnvironment(config.environment),
       getAccessToken: () => sdk.rawAccessToken,
@@ -224,7 +242,7 @@ export async function createPipedreamClient(
           externalUserId: opts.externalUserId,
           configuredProps: opts.configuredProps,
         },
-        executionOptions(ACTION_TIMEOUT_SECONDS),
+        executionOptions(ACTION_TIMEOUT_SECONDS, opts.signal),
       );
       const body = (response as any).body ?? response;
       return {
@@ -234,7 +252,7 @@ export async function createPipedreamClient(
     },
 
     async proxyGet(opts) {
-      return coalesceRead(proxyReadKey(opts), () => (sdk.proxy as any).get(
+      const read = () => (sdk.proxy as any).get(
         {
           url: opts.url,
           externalUserId: opts.externalUserId,
@@ -242,8 +260,10 @@ export async function createPipedreamClient(
           params: opts.params,
           headers: opts.headers,
         },
-        executionOptions(API_TIMEOUT_SECONDS),
-      ));
+        executionOptions(API_TIMEOUT_SECONDS, opts.signal),
+      );
+      // A read with its own signal is not shared: its abort would fail every caller waiting on the same request.
+      return opts.signal ? read() : coalesceRead(proxyReadKey(opts), read);
     },
 
     async proxyPost(opts) {
@@ -255,7 +275,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        executionOptions(API_TIMEOUT_SECONDS),
+        executionOptions(API_TIMEOUT_SECONDS, opts.signal),
       );
       return result;
     },
@@ -269,7 +289,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        executionOptions(API_TIMEOUT_SECONDS),
+        executionOptions(API_TIMEOUT_SECONDS, opts.signal),
       );
       return result;
     },
@@ -283,7 +303,7 @@ export async function createPipedreamClient(
           body: opts.body ?? {},
           headers: opts.headers,
         },
-        executionOptions(API_TIMEOUT_SECONDS),
+        executionOptions(API_TIMEOUT_SECONDS, opts.signal),
       );
       return result;
     },
@@ -302,7 +322,7 @@ export async function createPipedreamClient(
           params: opts.params,
           headers: opts.headers,
         },
-        executionOptions(API_TIMEOUT_SECONDS),
+        executionOptions(API_TIMEOUT_SECONDS, opts.signal),
       );
       return result;
     },
