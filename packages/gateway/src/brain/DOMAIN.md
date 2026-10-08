@@ -307,7 +307,7 @@ indexes or triggers them; core writes go through `BrainRepository`. Each owns ta
   default with `dependentTotals` per depth; `/impact` and `/impact/comment`; no tables.
 - Agent tools (`agent/`, spec 562): the owner-bound adapter behind the kernel's read-only `brain_search`,
   `brain_timeline`, `brain_claims`, `brain_brief`, `brain_conflicts` and `brain_impact` tools; the same six tools are
-  offered over HTTP by `packages/integrations-mcp/src/brain-tools.ts`. The app is `shell/src/components/brain/`
+  offered over HTTP by `packages/integrations-mcp/src/brain-tools.ts`. The app is `packages/ui/src/brain/`
   (spec 563).
 - Wiring: `api/project-resolver.ts` (the one project lookup every service uses), `hooks.ts` (the change bus:
   per-scope queues capped at `BRAIN_HOOK_QUEUE_MAX_SCOPES`, coalesced events, listeners after the request, each bounded
