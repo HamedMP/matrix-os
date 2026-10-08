@@ -335,6 +335,8 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       ["a body over the byte cap", "\u00e9".repeat(600), 1_024, "document_too_large"],
     ] as const)("skips %s without a call", async (_name, body, bodyMaxBytes, code) => {
       const { model, requests } = setup(ok(), { bodyMaxBytes });
+      // The job asks first, before its spend cap; extract skips the same bodies for any other caller.
+      expect(model.skip({ ...INPUT, body })).toBe(code);
       expect(await run(model, body)).toEqual({ claims: [], usage: NO_USAGE, outcome: { status: "skipped", code } });
       expect(requests).toHaveLength(0);
     });
@@ -343,6 +345,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       const bullets = Array.from({ length: 7 }, (_, index) => `- Point ${index}: the store keeps one row per claim.`);
       const { model, requests } = setup(ok());
       expect(bullets.join("\n").length).toBeGreaterThanOrEqual(300);
+      expect(model.skip({ ...INPUT, body: bullets.join("\n") })).toBeNull();
       expect(await run(model, bullets.join("\n"))).toEqual({ claims: [], usage: DEFAULT_USAGE });
       expect(requests).toHaveLength(1);
     });
