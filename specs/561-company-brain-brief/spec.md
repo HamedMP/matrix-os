@@ -37,7 +37,8 @@ tests. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (a JSO
     a document whose `status` ref is done, completed, closed, merged, resolved, shipped or canceled. Planned wording
     is not stated done: a done word after a future, need, intent or condition word of its clause (`will be
     shipped`, `ensure it is completed`, `once merged`), before a deadline (`completed by Friday`) or an imperative
-    `Complete ...`. The due date and
+    `Complete ...`. Closed documents are filtered in SQL before the limit; commitments stated done are skipped by
+    reading on in pages of the limit, at most 10 pages, so finished work does not hide open work. The due date and
     assignee come from the claim's fields, else from the document's `due` ref (only a `YYYY-MM-DD` of a real
     calendar day; `2025-13-01` or `2026-02-30` count as no date) and `assignee` ref (a person key); trackers such
     as Linear put them in refs, and rules/v1 never sets the fields. A past window (ended before now) sees
@@ -156,7 +157,7 @@ its filters, so a cursor from another query is `invalid_request`. `summary: true
 | claims scanned per conflict rule / per label group / pairs compared / conflicts per claim / per rule | 2,000 / 200 / 20,000 / 3 / 500 | `conflicts.ts` |
 | clauses compared per statement | 8 | `text.ts` |
 | spec documents / shipped pull requests scanned | 500 / 5,000 | `conflicts.ts` |
-| stale items per kind / commitments scanned / sources per scope | 500 / 500 / 100 | `stale.ts`, `reads.ts` |
+| stale items per kind / open commitments (pages of rows read) / sources per scope | 500 / 500 (10) / 100 | `stale.ts`, `reads.ts` |
 | scopes per pass / pass time / summary input | 200 / 120 s / 200 lines and 40,000 chars | `service.ts`, `summary.ts` |
 
 - Buffers: every list is capped by a scan limit before it is held in memory; maps and sets live for one call.

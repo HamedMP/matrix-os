@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { computeConflicts } from "../../packages/gateway/src/brain/brief/conflicts.js";
 import { buildSections } from "../../packages/gateway/src/brain/brief/sections.js";
 import { briefWindow } from "../../packages/gateway/src/brain/brief/time.js";
-import { computeStale } from "../../packages/gateway/src/brain/brief/stale.js";
+import { computeStale, openCommitments } from "../../packages/gateway/src/brain/brief/stale.js";
 import {
   BRIEF_OWNER, BRIEF_SCOPE, createBriefFixture, prBody, type BriefFixture,
 } from "./helpers/brain-brief-fixture.js";
@@ -254,5 +254,44 @@ describe("stale", () => {
     expect((await stale({ kinds: ["claim_outdated"] })).items.map((item) => item.kind)).toEqual(["claim_outdated"]);
     const page = await stale({ limit: 2 });
     expect((await stale({ limit: 2, cursor: page.nextCursor! })).items).toHaveLength(2);
+  });
+
+  it("finds open commitments behind closed and finished ones that are due earlier", async () => {
+    const linear = await fx.source("linear", "Linear ENG");
+    const task = (seed: string, statement: string, due: string, status?: string) => ({
+      seed, body: `Next steps: ${statement}`, statement,
+      refs: [{ kind: "due", value: due }, ...(status === undefined ? [] : [{ kind: "status", value: status }])],
+    });
+    const tasks = [
+      task("closed1", "rotate keys.", "2026-09-01", "done"), task("closed2", "write runbook.", "2026-09-01", "canceled"),
+      task("closed3", "plan offsite.", "2026-09-01", "cancelled"), task("said1", "export shipped.", "2026-09-02"),
+      task("said2", "import merged.", "2026-09-02"), task("said3", "login fixed.", "2026-09-02"),
+      task("open1", "Ensure the migration is completed by Friday.", "2026-09-03"),
+      task("open2", "write the guide.", "2026-09-04", "started"),
+    ];
+    await fx.sync(linear, tasks);
+    for (const { seed, statement } of tasks) await fx.extract(seed, [{ kind: "commitment", statement }]);
+    const read = async (limit: number) =>
+      (await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit })).map((row) => row.statement);
+    expect(await read(2)).toEqual(["Ensure the migration is completed by Friday.", "write the guide."]);
+    expect(await read(1)).toEqual(["Ensure the migration is completed by Friday."]);
+    const overdue = await computeStale(fx.harness.db, BRIEF_SCOPE, {
+      kinds: ["commitment_overdue"], now: fx.harness.now(), overdueBefore: "2026-10-01",
+    });
+    expect(overdue.map((item) => item.text)).toEqual([
+      "Overdue (due 2026-09-04): write the guide.", "Overdue (due 2026-09-03): Ensure the migration is completed by Friday.",
+    ]);
+  });
+
+  it("stops reading commitments after a bounded number of pages", async () => {
+    const git = await fx.source();
+    const statements = Array.from({ length: 11 }, (_, index) => `task ${index} shipped.`);
+    await fx.sync(git, [{ seed: "many", body: statements.map((text) => `Next steps: ${text}`).join("\n") },
+      { seed: "late", body: "Next steps: write the guide.", at: day(1) }]);
+    await fx.extract("many", statements.map((statement) => ({ kind: "commitment" as const, statement })));
+    await fx.extract("late", [{ kind: "commitment", statement: "write the guide." }]);
+    expect(await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 1 })).toEqual([]);
+    expect((await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 2 })).map((row) => row.statement))
+      .toEqual(["write the guide."]);
   });
 });

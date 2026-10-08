@@ -16,6 +16,11 @@ function documentRef(kind: "status" | "due" | "assignee") {
     AND r.scope_id = d.scope_id AND r.document_id = d.document_id AND r.kind = ${kind} AND ${only})`;
 }
 
+/** The document's status ref in SQL (its smallest value), as `currentClaims` selects it. */
+export function documentStatus() {
+  return documentRef("status");
+}
+
 /** A commitment's due date in SQL: the claim's own field, else the document's due ref (trackers put it there). */
 export function commitmentDue() {
   const own = sql`c.fields->>'due'`;

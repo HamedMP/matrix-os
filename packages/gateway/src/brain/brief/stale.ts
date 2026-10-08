@@ -10,8 +10,10 @@ import {
 } from "../contracts.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
 import { loadBrainCites as loadCites } from "../cite.js";
-import { commitmentDue, commitmentTerms, currentClaims, sourceStates, uniqueClaims } from "./reads.js";
-import { closedStatus, commitmentState, lineText } from "./text.js";
+import {
+  commitmentDue, commitmentTerms, currentClaims, documentStatus, sourceStates, uniqueClaims,
+} from "./reads.js";
+import { CLOSED_STATUSES, commitmentState, lineText } from "./text.js";
 import { DAY_MS, iso, parseUtcDate, utcDate } from "./time.js";
 import { BRIEF_SCANS, type BriefClaimRow } from "./types.js";
 
@@ -23,24 +25,38 @@ export interface StaleItem extends BrainStaleItemView {
 }
 
 /**
- * Open commitments: current, not stated done and not on a done or canceled document; due first, then newest.
- * `before`: only documents dated before it (a past brief).
+ * The first `limit` open commitments: current, not stated done and not on a done or canceled document; due first,
+ * then newest. `before`: only documents dated before it (a past brief). Closed documents are filtered in SQL; a
+ * statement that says done is only known once read, so pages of `limit` rows are read until `limit` open ones are
+ * found, at most BRIEF_SCANS.commitmentPages pages.
  */
 export async function openCommitments(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey,
   options: { readonly dueBefore?: string; readonly before?: Date | null; readonly limit: number },
 ): Promise<BriefClaimRow[]> {
   const due = commitmentDue();
-  let query = currentClaims(db, scope).where("c.kind", "=", "commitment");
+  const status = documentStatus();
+  let query = currentClaims(db, scope).where("c.kind", "=", "commitment")
+    .where((eb) => eb.or([eb(status, "is", null), eb(status, "not in", CLOSED_STATUSES)]));
   if (options.dueBefore !== undefined) query = query.where(due, "<", options.dueBefore);
   if (options.before !== undefined && options.before !== null) {
     query = query.where("d.source_updated_at", "<", options.before);
   }
-  const rows = await query.orderBy(due, (order) => order.asc().nullsLast())
-    .orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id")
-    .limit(options.limit).execute();
-  return uniqueClaims(rows).filter((row) => commitmentState(row.statement, row.status) !== "done"
-    && !closedStatus(row.status));
+  const ordered = query.orderBy(due, (order) => order.asc().nullsLast())
+    .orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id");
+  const open: BriefClaimRow[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < BRIEF_SCANS.commitmentPages && open.length < options.limit; page += 1) {
+    const rows = await ordered.limit(options.limit).offset(page * options.limit).execute();
+    // Rules and model extractors can both hold a claim id; the first row of each id wins.
+    for (const row of rows) {
+      if (seen.has(row.claim_id)) continue;
+      seen.add(row.claim_id);
+      if (commitmentState(row.statement, row.status) !== "done") open.push(row);
+    }
+    if (rows.length < options.limit) break;
+  }
+  return open.slice(0, options.limit);
 }
 
 interface OutdatedRow {

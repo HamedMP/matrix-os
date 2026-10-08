@@ -6,7 +6,7 @@ import {
 } from "../../packages/gateway/src/brain/brief/index.js";
 import { summarizeBrief, summaryLines } from "../../packages/gateway/src/brain/brief/summary.js";
 import {
-  closedStatus, commitmentState, commitmentWords, contradiction, cutUnits, draftStatusLine, lineText, overlap,
+  CLOSED_STATUSES, commitmentState, commitmentWords, contradiction, cutUnits, draftStatusLine, lineText, overlap,
   shapeOf, statementClauses,
 } from "../../packages/gateway/src/brain/brief/text.js";
 import { CALENDAR_DATE, briefWindow, parseUtcDate } from "../../packages/gateway/src/brain/brief/time.js";
@@ -52,8 +52,8 @@ describe("text rules", () => {
     expect(commitmentState("Export API", "started")).toBeNull();
     expect(commitmentState("Export API", null)).toBeNull();
     expect(commitmentWords("Export API shipped later")).toEqual(["api", "export"]);
-    expect([closedStatus("canceled"), closedStatus("cancelled"), closedStatus("done"), closedStatus("open"), closedStatus(null)])
-      .toEqual([true, true, true, false, false]);
+    expect(["canceled", "cancelled", "done", "open"].map((status) => CLOSED_STATUSES.includes(status)))
+      .toEqual([true, true, true, false]);
   });
 
   it("reads future, imperative and conditional wording as planned work, not done", () => {
