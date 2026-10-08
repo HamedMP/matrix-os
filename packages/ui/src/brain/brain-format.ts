@@ -10,8 +10,10 @@ import {
 } from "./brain-types.js";
 import type { BrainLoad } from "./use-brain-load.js";
 
-/** Conflicts read once per claims screen; the gateway's BRAIN_CONFLICTS_MAX_LIMIT. */
+/** One page of conflicts; the gateway's BRAIN_CONFLICTS_MAX_LIMIT. */
 export const BRAIN_CONFLICTS_LIMIT = 50;
+/** Conflicts a claims screen reads in all, page by page (the 500-item list limit). */
+export const BRAIN_CONFLICTS_MAX = 500;
 /** Recent syncs a source card reads and shows. */
 export const BRAIN_RECEIPTS_SHOWN = 5;
 
@@ -81,7 +83,7 @@ export function brainTabIndexForKey(key: string, index: number, count: number): 
 export function brainConflictFlags(state: BrainLoad<BrainConflictsView>): ReadonlyMap<string, string> {
   const flags = new Map<string, string>();
   if (state.status !== "ready") return flags;
-  for (const conflict of state.data.items.slice(0, BRAIN_CONFLICTS_LIMIT)) {
+  for (const conflict of state.data.items.slice(0, BRAIN_CONFLICTS_MAX)) {
     for (const side of conflict.sides) {
       if (side.claimId !== null) flags.set(side.claimId, conflict.summary);
     }

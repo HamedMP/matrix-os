@@ -129,6 +129,37 @@ describe("Claims", () => {
     expect(claims).toHaveBeenLastCalledWith(PROJECT, { kind: "risk", path: "src/", limit: 50, cursor: undefined });
   });
 
+  it("flags a claim whose conflict is on a later page, and says when conflicts were cut", async () => {
+    const conflict = (index: number, claimId: string | null) => ({
+      ...conflicts.items[0], conflictId: `cfl_${index}`, summary: `Conflict ${index}.`,
+      sides: [{ ...conflicts.items[0].sides[0], claimId }, conflicts.items[0].sides[1]] as const,
+    });
+    // A full first page about other claims, then the page that names c2.
+    const first = { items: Array.from({ length: 50 }, (_, index) => conflict(index, `other${index}`)), nextCursor: "p2" };
+    const pagesOf = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce({ items: [conflict(50, "c2")], nextCursor: null });
+    const claims = vi.fn(async () => ({
+      kind: "decision", path: null, match: null, nextCursor: null, items: [claim("c1"), claim("c2")],
+    }));
+    render(<BrainClaims {...props(fakeBrainApi({ claims, conflicts: pagesOf }))} kind="decision" />);
+    const list = await screen.findByRole("list", { name: "Decisions" });
+    expect(await within(list).findByText("Conflict 50.")).toBeTruthy();
+    expect(pagesOf).toHaveBeenNthCalledWith(1, PROJECT, { limit: 50 });
+    expect(pagesOf).toHaveBeenNthCalledWith(2, PROJECT, { limit: 50, cursor: "p2" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Only conflicts" }));
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText("Statement c2")).toBeTruthy();
+    expect(screen.queryByText(/conflicts are checked/)).toBeNull();
+    cleanup();
+
+    // A gateway that always has more stops at the list limit and says so.
+    const endless = vi.fn(async () => first);
+    render(<BrainClaims {...props(fakeBrainApi({ claims, conflicts: endless }))} kind="decision" />);
+    expect(await screen.findByText("Only the first 500 conflicts are checked.")).toBeTruthy();
+    expect(endless).toHaveBeenCalledTimes(10);
+  });
+
   it("points to Sources when there are no claims and notes missing conflict checks", async () => {
     const p = props(fakeBrainApi({
       claims: vi.fn(async () => ({ kind: "decision", path: null, match: null, nextCursor: null, items: [] })),
