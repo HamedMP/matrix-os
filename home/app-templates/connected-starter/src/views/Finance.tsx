@@ -181,9 +181,7 @@ function Ledger(props: ViewProps) {
               <th>Status</th>
               <th>Amount</th>
               <th>Evidence</th>
-              <th>
-                <span className="sr-only">Actions</span>
-              </th>
+              <th aria-label="Actions" />
             </tr>
           </thead>
           <tbody>

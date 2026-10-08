@@ -96,6 +96,12 @@
     gap: 15px;
     margin-bottom: 22px;
   }
+  .page-heading > div:first-child {
+    min-width: 0;
+  }
+  .record-count {
+    flex-shrink: 0;
+  }
   .record-count strong {
     font-size: 25px;
   }
