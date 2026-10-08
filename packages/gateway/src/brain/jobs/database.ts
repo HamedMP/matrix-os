@@ -4,7 +4,7 @@
  */
 import { sql, type ColumnType, type Kysely } from "kysely";
 import type { BrainDatabase } from "../types.js";
-import { BRAIN_JOB_WORKER_CEILINGS } from "./types.js";
+import { BRAIN_JOB_LIMITS, BRAIN_JOB_WORKER_CEILINGS } from "./types.js";
 
 export const BRAIN_JOBS_SCHEMA_LOCK = "brain_jobs_schema";
 /** Per-owner write lock of brain_jobs: pg_advisory_xact_lock(hashtext(ownerId), hashtext(BRAIN_JOBS_OWNER_LOCK)). */
@@ -47,7 +47,8 @@ export async function bootstrapBrainJobsDatabase(db: Kysely<BrainDatabase>): Pro
         lease_owner TEXT CHECK (char_length(lease_owner) BETWEEN 1 AND 64),
         lease_expires_at TIMESTAMPTZ,
         cancel_requested BOOLEAN NOT NULL DEFAULT false,
-        result JSONB CHECK (jsonb_typeof(result) = 'object' AND octet_length(result::text) <= 8192),
+        result JSONB CHECK (jsonb_typeof(result) = 'object'
+          AND octet_length(result::text) <= ${sql.lit(BRAIN_JOB_LIMITS.summaryMaxBytes)}),
         error_code TEXT CHECK (error_code ~ '^[a-z][a-z0-9_]{0,63}$'),
         created_at TIMESTAMPTZ NOT NULL,
         started_at TIMESTAMPTZ,
