@@ -6,7 +6,7 @@ const active = (operation: import("@matrix-os/contracts").ProviderWorkflow | nul
 
 export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
-  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
+  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, uninstall, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
   const canChangeAccount = capability.connectionOptions
     ? capability.connectionOptions.some(option => option.availability === "available" && (option.authKind === "api_key" ? Boolean(client.submitConnectionKey) : Boolean(client.startConnection)))
@@ -17,7 +17,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       <button
         type="button"
         className="matrix-ap-button"
-        disabled={disabled || pending || connecting}
+        disabled={disabled || pending || connecting || reconciling}
         onClick={() =>
           setMethod(inlineLogin || terminalOnly ? "account" : "key")
         }
@@ -31,13 +31,13 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       ref={connectionPanel}
       className="matrix-ap-workflow"
       aria-label={`${harness.displayName} connection`}
-      aria-busy={pending}
+      aria-busy={reconciling || (pending && !startingLogin)}
     >
       {harness.installState === "installed" && connectionPresent ? renderConnection?.(changeAccountAction) : null}
-      {renderAccountActions?.(disabled || pending || connecting
+      {renderAccountActions?.(disabled || pending || connecting || reconciling
         || (operationId !== null && operation?.id !== operationId))}
       {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
-        disabled={disabled || connectSavedDisabled || pending || connecting} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
+        disabled={disabled || connectSavedDisabled || pending || connecting || reconciling} onClick={() => void run(onConnectSaved)}>Connect saved connection</button> : null}
       {harness.installState === "installed" && !connectionPresent
         && !capability.connectionOptions && !inlineLogin && !terminalOnly && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">
@@ -46,7 +46,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       ) : null}
       {terminalOnly && harness.installState === "installed" && (!connectionPresent || method !== null || failed || connecting) ? (
         <div className="matrix-ap-workflow-actions">
-            <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting}
+            <button type="button" className="matrix-ap-button" disabled={disabled || pending || connecting || reconciling}
               onClick={() => void start("login", true)}>Log in in Terminal</button>
           {connecting && !failure && operation?.kind === "login" && operation.terminalSessionId ? (
             <button type="button" className="matrix-ap-button" disabled={disabled || pending}
@@ -59,7 +59,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       {advancedConfiguration ? (
         <details className="matrix-ap-advanced">
           <summary>Advanced configuration</summary>
-          <fieldset disabled={disabled || pending || connecting} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
+          <fieldset disabled={disabled || pending || connecting || reconciling} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
         </details>
       ) : null}
       {failure ? (
@@ -133,7 +133,8 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                     description={reuseCodex ? "Use the ChatGPT account connected on this computer" : hasSubscription ? `Use your ${subscriptionName} plan` : "Connect your provider account"}
                     recommended={hasSubscription}
                     selected={method === "account"}
-                    disabled={disabled || pending || connecting}
+                    loading={startingLogin}
+                    disabled={disabled || pending || connecting || reconciling}
                     onClick={() => void start("login")}
                   />
                 ) : null}
@@ -143,9 +144,9 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                     title="API key"
                     description={`Pay ${harness.harness === "codex" ? "OpenAI" : "your provider"} per request`}
                     selected={method === "key"}
-                    disabled={disabled || pending || connecting}
+                    disabled={disabled || pending || connecting || reconciling}
                     onClick={() => {
-                      pendingStart.current = null;
+                      pendingStartRef.current = null;
                       setMethod("key");
                       setOperation(null);
                       setFailure(null);
@@ -184,7 +185,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
         </div>
       ) : null}
       <div className="matrix-ap-workflow-actions">
-        {failure && connecting ? (
+        {failure && (connecting || operation?.state === "succeeded") ? (
           <button
             type="button"
             className="matrix-ap-button"
@@ -202,7 +203,10 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   setOperation(next);
                   setFailure(null);
                   if (active(next)) restartPolling();
-                  if (next.state === "succeeded") onRefresh();
+                  if (next.state === "succeeded") {
+                    if (next.kind === "login") void refreshAfterLogin();
+                    else onRefresh();
+                  }
                 }
               })
             }
@@ -227,7 +231,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                 if (!signal.aborted) {
                   setOperation(result);
                   if (["cancelled", "succeeded"].includes(result.state)) {
-                    pendingStart.current = null;
+                    pendingStartRef.current = null;
                     onOperationId?.(null);
                     onRefresh();
                   }
@@ -255,7 +259,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           <button
             type="button"
             className="matrix-ap-link-button"
-            disabled={disabled || pending || connecting || !onDisconnect}
+            disabled={disabled || pending || connecting || reconciling || !onDisconnect}
             onClick={() => {
               setDisconnectOpen(true);
               setUninstall(false);

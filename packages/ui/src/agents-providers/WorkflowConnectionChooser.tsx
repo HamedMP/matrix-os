@@ -7,8 +7,8 @@ const unavailable = {not_installed: "Install this agent on this computer to conn
 
 /** Only exact, qualified server options can start a provider-aware connection. */
 export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowController}) {
- const {capability, harness, disabled, pending, connecting, selectedOption, setSelectedOption,
-   setMethod, setProviderId, setApiKey, setOperation, setFailure, pendingStart, start} = state;
+ const {capability, harness, disabled, pending, startingLogin, connecting, selectedOption, setSelectedOption,
+   setMethod, setProviderId, setApiKey, setOperation, setFailure, pendingStart: pendingStartRef, start} = state;
  if (!capability.connectionOptions?.length) return <p className="matrix-ap-help" role="status">Connection in Settings is unavailable for this agent on this computer.</p>;
  return <>
    <h3>Connect {harness.displayName} with</h3>
@@ -20,9 +20,9 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
          <ConnectionMethodCard method={key ? "key" : "account"}
            title={key ? `${keyNames[option.providerId]} API key` : `${providerNames[option.providerId]} account · ${option.method ? methodNames[option.method] : "Sign in"}`}
            description={key ? "Billed per request by your provider" : "Uses your subscription for this agent on this computer"}
-           selected={selectedOption?.id === option.id} disabled={disabled || pending || connecting || !available}
+           selected={selectedOption?.id === option.id} loading={startingLogin && selectedOption?.id === option.id} disabled={disabled || pending || connecting || state.reconciling || !available}
            onClick={() => {
-             pendingStart.current = null; setSelectedOption(option); setProviderId(option.providerId);
+             pendingStartRef.current = null; setSelectedOption(option); setProviderId(option.providerId);
              setApiKey(""); setOperation(null); setFailure(null); setMethod(key ? "key" : "account");
              if (!key) void start("login", option.method === "terminal", option);
            }} />
