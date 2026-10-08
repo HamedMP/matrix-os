@@ -1,6 +1,7 @@
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { assertClaudeNativeLoginSelection } from "./claude-native-login-completion.js";
-import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
+import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
+import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
 import { verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
@@ -81,7 +82,7 @@ export interface ProviderSettingsStoreWriter {
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
-  claudeNativeAccountMetadataReader?: (includeUsage?: boolean) => Promise<ClaudeNativeAccountMetadata | null>;
+  claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
   codexNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
   homePath: string;
@@ -102,7 +103,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly configurationPath: string;
   readonly secretsPath: string;
   readonly #reader: CanonicalProviderSnapshotReader;
-  readonly #claudeAccountMetadata?: (includeUsage?: boolean) => Promise<ClaudeNativeAccountMetadata | null>;
+  readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
   readonly #nativeAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
   readonly #hermesAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
   readonly #dependencies?: ProviderAccountDependencyCoordinator;
@@ -186,7 +187,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   }
 
   async #project(canonical: AiProviderSnapshotV3, config: ProviderSettingsConfiguration, refresh = false,
-    enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null, claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null) {
+    enrichment?: ProviderSettingsEnrichment, codexNativeAccountMetadata?: CodexNativeAccountMetadata | null, hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null, claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null, claudeNativeSignedOut?: ClaudeNativeSignedOut | null) {
     try {
       const { fundingSummary, fundedPolicy, chatAvailability, genericModelCatalog } = enrichment ?? await readProviderSettingsEnrichment({
         canonical, fundingSummary: this.#fundingSummary,
@@ -204,7 +205,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         hermesNativeAccountMetadata,
         now: this.#now(),
         dependencies: this.#dependencies,
-        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata),
+        supportedActions: this.#supportedActions(config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut),
         fundingSummary,
         chatAvailability,
         fundedPolicy,
@@ -231,6 +232,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     config: ProviderSettingsConfiguration,
     canonical: AiProviderSnapshotV3,
     claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null,
+    claudeNativeSignedOut?: ClaudeNativeSignedOut | null,
   ): ProviderSettingsSupportedAction[] {
     return supportedProviderSettingsActions({
       runtime: this.#runtime,
@@ -241,6 +243,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       canonical,
       gatewayPolicyAuthority: this.#fundingSummary ? "platform" : "local",
       claudeNativeAccountMetadata,
+      claudeNativeSignedOut,
     });
   }
 
@@ -314,6 +317,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         ? this.#configuration(captured.canonical, captured.enrichment) : null);
       if (!config) continue;
       let claudeMetadata: ClaudeNativeAccountMetadata | null = null;
+      let claudeSignedOut: ClaudeNativeSignedOut | null = null;
       let metadata: CodexNativeAccountMetadata | null = null;
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
       if (options.includeNativeAccountMetadata && attempt === 0) {
@@ -335,6 +339,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           if (!config) continue;
         }
       }
+      if (options.includeNativeAccountMetadata && attempt === 0 && !claudeMetadata
+        && captured.canonical.drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed")) {
+        claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
+      }
       options.signal?.throwIfAborted();
       // Optional funding/account metadata must not turn profile expiry into logout.
       // Reobserve outside the writer lock; the existing generation/revision fence
@@ -346,7 +354,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           ? this.#configuration(captured.canonical, captured.enrichment) : null);
         if (!config) continue;
       }
-      const snapshot = await this.#project(captured.canonical, config, refresh, captured.enrichment, metadata, hermesMetadata, claudeMetadata);
+      const snapshot = await this.#project(captured.canonical, config, refresh, captured.enrichment, metadata, hermesMetadata, claudeMetadata, claudeSignedOut);
       const accepted = await this.#serialize(async () => {
         options.signal?.throwIfAborted();
         const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
@@ -542,8 +550,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       // The earlier UI snapshot is not authority for changing a saved route.
       const nativeClaudeLifecycle = (mutation.type === "logout_account" || mutation.type === "remove_account")
         && mutation.accountId === "owner_claude_profile";
-      const claudeMetadata = claudeNativeCompletion || nativeClaudeLifecycle
+      let claudeMetadata = claudeNativeCompletion || nativeClaudeLifecycle
         ? await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false)) : null;
+      let claudeSignedOut = nativeClaudeLifecycle && mutation.type === "remove_account" && !claudeMetadata
+        ? await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut) : null;
       if (claudeNativeCompletion && !claudeMetadata) throw new ProviderSettingsStoreError("invalid_route", 400);
       const snapshot = await this.#project(canonical, config, false, enrichment, null, null, claudeMetadata);
       if (claudeNativeCompletion) assertClaudeNativeLoginSelection({ mutation, snapshot });
@@ -606,14 +616,19 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             throw new ProviderSettingsStoreError("not_found", 404);
           }
           const account = requireCoordinatorLifecycleAccount(
-            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata,
+            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata, claudeSignedOut,
           );
           await this.#coordinate(() => this.#lifecycle!.logout({
             account,
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
+          if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical(true);
+          if (nativeClaudeLifecycle) {
+            claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false));
+            if (!claudeMetadata) claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
+          }
           break;
         }
         case "remove_account": {
@@ -629,7 +644,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             throw new ProviderSettingsStoreError("account_in_use", 409);
           }
           const account = requireCoordinatorLifecycleAccount(
-            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata,
+            this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata, claudeSignedOut,
           );
           await this.#coordinate(() => this.#lifecycle!.remove({
             account,
@@ -637,7 +652,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
           config.accountProfiles = config.accountProfiles.filter((profile) => profile.id !== mutation.accountId);
+          if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical(true);
+          if (nativeClaudeLifecycle) claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false));
           break;
         }
         case "reassign_account": {
@@ -687,7 +704,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         if (runtimeMutation) await this.#rollbackRuntime(runtimeMutation);
         throw error;
       }
-      const projected = await this.#project(canonical, config, false, undefined, null, null, claudeMetadata);
+      const projected = await this.#project(canonical, config, false, undefined, null, null, claudeMetadata, claudeSignedOut);
       return ProviderSettingsMutationResponseSchema.parse(attempt
         ? { kind: "login_attempt", snapshot: projected, attempt }
         : { kind: "snapshot", snapshot: projected });

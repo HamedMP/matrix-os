@@ -14,6 +14,7 @@ import type {
   ProviderLoginCoordinator,
   ProviderSettingsRuntimeCoordinator,
 } from "./provider-settings-coordinators.js";
+import type { ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
 import { isNativeClaudeLifecycleAccount, lifecycleCredentialCompetition } from "./provider-lifecycle-credential-identity.js";
 import { resolveProviderSettingsDriverId } from "./provider-settings-driver-id.js";
@@ -43,6 +44,7 @@ export function coordinatorLifecycleAccounts(input: {
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderLifecycleAccount[] {
   const preliminary = input.config.accountProfiles.flatMap((profile): ProviderLifecycleAccount[] => {
     const canonicalAccount = input.canonical.accounts.find((account) => account.id === profile.id);
@@ -84,10 +86,13 @@ export function coordinatorLifecycleAccounts(input: {
   return lifecycleCredentialCompetition(preliminary.map(account => {
     const source = input.canonical.accessSources.find(row => row.id === account.accessSourceId);
     const canonicalAccount = input.canonical.accounts.find(row => row.id === account.id);
-    return isNativeClaudeLifecycleAccount(account) && input.claudeNativeAccountMetadata
+    return isNativeClaudeLifecycleAccount(account)
       && canonicalAccount?.vendor === "anthropic" && canonicalAccount.authMethod === "provider_profile"
       && source?.vendor === "anthropic" && source.fundingKind === "owner_account"
-      ? { ...account, authenticated: true, nativeClaudeAccount: input.claudeNativeAccountMetadata } : account;
+      ? input.claudeNativeAccountMetadata
+        ? { ...account, authenticated: true, nativeClaudeAccount: input.claudeNativeAccountMetadata }
+        : input.claudeNativeSignedOut ? { ...account, authenticated: false, nativeClaudeSignedOut: input.claudeNativeSignedOut } : account
+      : account;
   }));
 }
 
@@ -96,6 +101,7 @@ export function coordinatorLifecycleAccount(input: {
   config: ProviderSettingsConfiguration;
   canonical: AiProviderSnapshotV3;
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderLifecycleAccount | undefined {
   return coordinatorLifecycleAccounts(input).find((account) => account.id === input.accountId);
 }
@@ -106,8 +112,9 @@ export function requireCoordinatorLifecycleAccount(
   config: ProviderSettingsConfiguration,
   canonical: AiProviderSnapshotV3,
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null,
+  claudeNativeSignedOut?: ClaudeNativeSignedOut | null,
 ): ProviderLifecycleAccount {
-  const account = coordinatorLifecycleAccount({ accountId, config, canonical, claudeNativeAccountMetadata });
+  const account = coordinatorLifecycleAccount({ accountId, config, canonical, claudeNativeAccountMetadata, claudeNativeSignedOut });
   if (!lifecycle || !account) {
     throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
   }
@@ -176,6 +183,7 @@ export function supportedProviderSettingsActions(input: {
   canonical: AiProviderSnapshotV3;
   gatewayPolicyAuthority?: "local" | "platform";
   claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
+  claudeNativeSignedOut?: ClaudeNativeSignedOut | null;
 }): ProviderSettingsSupportedAction[] {
   const actions: ProviderSettingsSupportedAction[] = input.runtime
     ? input.runtime.supportedActions.filter((action) =>
@@ -192,7 +200,7 @@ export function supportedProviderSettingsActions(input: {
     actions.push("start_login");
   }
   const lifecycleAccounts = input.lifecycle
-    ? coordinatorLifecycleAccounts({ config: input.config, canonical: input.canonical, claudeNativeAccountMetadata: input.claudeNativeAccountMetadata })
+    ? coordinatorLifecycleAccounts({ config: input.config, canonical: input.canonical, claudeNativeAccountMetadata: input.claudeNativeAccountMetadata, claudeNativeSignedOut: input.claudeNativeSignedOut })
     : [];
   if (input.lifecycle && lifecycleAccounts.some((account) =>
     input.lifecycle!.supportedActions(account).includes("logout_account"))) {

@@ -42,6 +42,7 @@ export interface ProviderLifecycleAccount {
   authenticated: boolean;
   /** Private native identity proof; never serialized in snapshots or receipts. */
   nativeClaudeAccount?: import("./claude-native-account-metadata.js").ClaudeNativeAccountMetadata;
+  nativeClaudeSignedOut?: import("./claude-native-signed-out.js").ClaudeNativeSignedOut;
   /** Distinct credentials addressing the same native store; aliases count once. */
   driverAccountCount: number;
 }

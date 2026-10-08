@@ -1,4 +1,5 @@
-import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, type ClaudeAccountReaderUnderLease } from "./claude-account-lifecycle-proof.js";
+import { isBoundClaudeNativeSignedOut, verifyClaudeNativeSignedOut } from "./claude-native-signed-out.js";
+import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, assertClaudeLifecycleSignedOut, type ClaudeAccountReaderUnderLease } from "./claude-account-lifecycle-proof.js";
 import { isNativeClaudeLifecycleAccount } from "./provider-lifecycle-credential-identity.js";
 import { sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { revokeOwnerAnthropicKey } from "./owner-anthropic-key.js";
@@ -164,8 +165,9 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
     const driver = accountDriver(account);
     return driver !== null && enabled.has(driver)
       && account.installState === "installed" && account.driverAccountCount === 1
-      && (!isNativeClaudeLifecycleAccount(account) || Boolean(options.profileGuard && account.nativeClaudeAccount
-        && sameBoundNativeAccountPrincipal(account.nativeClaudeAccount, account.nativeClaudeAccount)));
+      && (!isNativeClaudeLifecycleAccount(account) || Boolean(options.profileGuard && (account.authenticated
+        ? account.nativeClaudeAccount && sameBoundNativeAccountPrincipal(account.nativeClaudeAccount, account.nativeClaudeAccount)
+        : isBoundClaudeNativeSignedOut(account.nativeClaudeSignedOut, homePath))));
   }
 
   async function apply(action: LifecycleAction, input: {
@@ -195,11 +197,16 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
       }
       const nativeClaude = isNativeClaudeLifecycleAccount(input.account);
       if (nativeClaude && (!options.profileGuard
-        || !await verifyNativeAccountMetadata(input.account.nativeClaudeAccount))) {
+        || !(input.account.authenticated
+          ? await verifyNativeAccountMetadata(input.account.nativeClaudeAccount)
+          : action === "remove_account" && await verifyClaudeNativeSignedOut(input.account.nativeClaudeSignedOut, homePath)))) {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
       const mutateProfile = async () => {
-        if (nativeClaude) await assertClaudeLifecyclePrincipal(input.account.nativeClaudeAccount, readClaudeUnderLease);
+        if (nativeClaude) {
+          if (input.account.authenticated) await assertClaudeLifecyclePrincipal(input.account.nativeClaudeAccount, readClaudeUnderLease);
+          else await assertClaudeLifecycleSignedOut(homePath, readClaudeUnderLease);
+        }
         if (input.account.installState !== "installed" || input.account.driverAccountCount !== 1
           || (action === "logout_account" && !input.account.authenticated)) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
