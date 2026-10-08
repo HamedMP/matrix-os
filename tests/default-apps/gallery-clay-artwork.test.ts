@@ -14,6 +14,13 @@ describe("Figma clay identity artwork", () => {
     expect(text).not.toContain("www.figma.com/api/mcp/asset/");
   });
 
+  it("keeps the required design skill aligned with the generator's clay default", () => {
+    const skill = readFileSync("skills/matrix/design-system/SKILL.md", "utf8");
+    expect(skill).toContain("front-facing matte clay");
+    expect(skill).toContain("owner's iconStyle");
+    expect(skill).not.toContain("light premium iOS/macOS skeuomorphic artwork");
+  });
+
   it("prefers the supplied semantic icon and retains both existing fallback formats", () => {
     expect(galleryIdentitySources({ id: "folio", icon: "folio" })).toEqual([
       galleryArtwork("clay/folio.svg"), galleryArtwork("icons/folio.png"), galleryArtwork("icons/folio.svg"),
