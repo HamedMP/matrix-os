@@ -56,8 +56,8 @@ suite("Electron Desktop Company Brain", () => {
     expect(await tabs.allTextContents()).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
     expect(await view.getByRole("tab", { name: "Chat", exact: true }).getAttribute("aria-selected")).toBe("true");
     expect(await view.getByRole("heading", { level: 1 }).count()).toBe(0);
-    // The Brain tab lends no chat view yet, so the Chat tab says so; the other tabs still work.
-    await view.getByText("Chat is not available here.").first().waitFor();
+    // The stub gateway has no brain routes, so the Chat tab stops at the sources check; the other tabs still work.
+    await view.getByText("This part of the Company Brain is not turned on yet.").first().waitFor();
     await view.getByRole("tab", { name: "Search", exact: true }).click();
     await view.getByRole("searchbox", { name: "Search the Company Brain" }).waitFor();
     await page.screenshot({ path: join(evidence, "electron-desktop-ask.png") });
