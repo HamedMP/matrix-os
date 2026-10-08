@@ -1,6 +1,5 @@
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import {
-  MessageSquare,
   PinIcon,
   PinOffIcon,
 } from "lucide-react";
@@ -97,7 +96,6 @@ export function WorkRailChatRow({
       >
         {renaming ? (
           <div className={`flex w-full min-w-0 items-center gap-2.5 px-2.5 py-1.5 text-sm font-normal ${placement === "project" ? "pl-[24px]" : ""}`}>
-            <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
             <ChatTitleEditor
               title={record.chat.title}
               disabled={renamePending}
@@ -133,7 +131,6 @@ export function WorkRailChatRow({
             if (!renameDisabled) scheduleRename(0);
           }}
         >
-          <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
           <span className="work-rail-chat-label min-w-0 flex-1">
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
             {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
