@@ -158,7 +158,7 @@ its filters, so a cursor from another query is `invalid_request`. `summary: true
 | stored briefs per scope / bytes per brief | 60 / 256 KiB | `database.ts`, SQL CHECK |
 | claims scanned per conflict rule / per label group / pairs compared / conflicts per claim / per rule | 2,000 / 200 / 20,000 / 3 / 500 | `conflicts.ts` |
 | clauses compared per statement | 8 | `text.ts` |
-| spec documents / shipped pull requests scanned | 500 / 5,000 | `conflicts.ts` |
+| spec documents / shipped pull requests dated after a Draft of their spec, scanned | 500 / 5,000 | `conflicts.ts` |
 | stale items per kind / open commitments (pages of rows read) / sources per scope | 500 / 500 (10) / 100 | `stale.ts`, `reads.ts` |
 | scopes per pass / pass time / summary input | 200 / 120 s / 200 lines and 40,000 chars | `service.ts`, `summary.ts` |
 
