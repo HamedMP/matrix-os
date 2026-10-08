@@ -92,6 +92,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
   }), [client]);
+  const chatRuntime = useMemo(() => ({ client, eventSource }), [client, eventSource]);
   const { connected } = useSocket();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const navigation = useShellChatNavigation(client, eventSource, navigationScope, navigationGeneration);
@@ -726,6 +727,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
       : undefined);
   return {
+    chatRuntime,
     collaborationView,
     openSharedChat,
     openSharedProject,
