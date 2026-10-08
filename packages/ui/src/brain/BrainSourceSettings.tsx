@@ -4,8 +4,8 @@ import { useId } from "react";
 import { BrainInput, BrainSelect } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import {
-  BRAIN_CALENDAR_DAYS_MAX, BRAIN_FILE_SIZE_CHOICES, BRAIN_SOURCE_INCLUDE, brainSourceSettingsProblem,
-  type BrainSourceSettings,
+  BRAIN_CALENDAR_DAYS_MAX, BRAIN_FILE_SIZE_CHOICES, BRAIN_SOURCE_INCLUDE, brainIncludeNeed, brainIncludeOn,
+  brainSourceSettingsProblem, type BrainSourceSettings,
 } from "./brain-format.js";
 import type { BrainConnectableSourceKind } from "./brain-types.js";
 
@@ -25,13 +25,18 @@ export function BrainSourceSettingsForm({ kind, settings, onChange }: {
   return (
     <fieldset className="grid gap-2 text-sm" aria-describedby={problem === null ? undefined : hintId}>
       <legend className="mb-1 font-medium">Settings</legend>
-      {include?.map(([key, label]) => (
-        <label key={key} className="flex items-center gap-2">
-          <input type="checkbox" checked={settings.include[key] ?? true}
-            onChange={(event) => set({ include: { ...settings.include, [key]: event.target.checked } })} />
-          {label}
-        </label>
-      ))}
+      {include?.map(([key, label]) => {
+        // A type read only with another (GitHub reviews with pull requests) is off and locked while that one is off.
+        const need = brainIncludeNeed(kind, key);
+        return (
+          <label key={key} className="flex items-center gap-2">
+            <input type="checkbox" checked={brainIncludeOn(kind, settings, key)}
+              disabled={need !== undefined && !brainIncludeOn(kind, settings, need)}
+              onChange={(event) => set({ include: { ...settings.include, [key]: event.target.checked } })} />
+            {label}
+          </label>
+        );
+      })}
       {kind === "matrix_files" && (
         <div className="grid gap-2 @md:grid-cols-2">
           <label className="grid gap-1">
