@@ -48,7 +48,6 @@ export async function openCommitments(
   const seen = new Set<string>();
   for (let page = 0; page < BRIEF_SCANS.commitmentPages && open.length < options.limit; page += 1) {
     const rows = await ordered.limit(options.limit).offset(page * options.limit).execute();
-    // Rules and model extractors can both hold a claim id; the first row of each id wins.
     for (const row of rows) {
       if (seen.has(row.claim_id)) continue;
       seen.add(row.claim_id);

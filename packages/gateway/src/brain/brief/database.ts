@@ -137,11 +137,10 @@ async function storedAhead(trx: Transaction<BriefDatabase>, scope: BrainScopeKey
 }
 
 /**
- * Stores the brief and returns true only when the row now holds it. False when its JSON is over storedMaxBytes,
- * when a copy generated later is already stored, when storedPerScope newer briefs are stored (the prune would drop
- * it), when a document it cites was tombstoned while it was built, or when a source it names is gone: the scope was
- * erased while it was built, and the scope_erased listener, which takes the same lock, already ran. Older dates beyond storedPerScope are pruned in the same
- * transaction.
+ * Stores the brief and returns true only when the row now holds it. False when its JSON is over storedMaxBytes, a
+ * copy generated later is stored, storedPerScope newer briefs are stored (the prune would drop it), a document it
+ * cites was tombstoned while it was built, or a source it names is gone (the scope was erased and the scope_erased
+ * listener, under the same lock, already ran). Older dates beyond storedPerScope are pruned in the same transaction.
  */
 export async function writeStoredBrief(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, brief: BrainStoredBrief,
