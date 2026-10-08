@@ -265,3 +265,88 @@ export async function createBrainGitFixture(): Promise<BrainGitFixture> {
     destroy: () => rm(homePath, { recursive: true, force: true }),
   };
 }
+
+/**
+ * The adapter's `log` calls: `window` is the first-parent window form (else
+ * the per-commit `-1` form), `nameStatus` the paths log (else the metadata
+ * log); an omitted option matches both.
+ */
+export function isGitLog(sub: readonly string[], kind: { window?: boolean; nameStatus?: boolean } = {}): boolean {
+  if (sub[0] !== "log") return false;
+  if (kind.window !== undefined && sub.includes("--first-parent") !== kind.window) return false;
+  return kind.nameStatus === undefined || sub.includes("--name-status") === kind.nameStatus;
+}
+
+/** A runner that answers some subcommands itself; `undefined` delegates to `base`. */
+export function fakeRunner(
+  base: GitRunner,
+  override: (sub: readonly string[]) => Promise<GitRunResult | undefined> | GitRunResult | undefined,
+): GitRunner {
+  return async (args, options) => {
+    const answer = await override(args.slice(GIT_GLOBAL_ARGS.length));
+    return answer ?? base(args, options);
+  };
+}
+
+export function gitRunResult(stdout: string | Uint8Array, exitCode: number | null = 0, truncated = false): GitRunResult {
+  return { exitCode, stdout: typeof stdout === "string" ? new TextEncoder().encode(stdout) : stdout, stderr: "", truncated };
+}
+
+// The base history of the sync tests, oldest first.
+
+export const ALPHA_SPEC_V1 = "# Alpha\n\nAlpha spec v1.\n";
+export const ALPHA_SPEC_V2 = "# Alpha\n\nAlpha spec v2.\n";
+export const FEATURE_X_SPEC = "# Feature X\n\nX spec.\n";
+export const SQUASH_1_BODY = "## Summary\n- Adds alpha.\n\n## Invariants\n- Alpha stays bounded.";
+export const BETA_BODY = "* add beta\n* wire beta\n\n---------\n\nCo-authored-by: Pair Person <pair@example.com>";
+export const UNIT_SEPARATOR_BODY = "before\u001fafter";
+export const SPECIAL_PATH = "docs/caf\u00e9/na\u00efve file #1?.md";
+
+/** A spec with `## ` headings, about 1.2 KB per section, for multi-part splits. */
+export function bigSpecText(sections: number): string {
+  const body = "Lorem ipsum dolor sit amet, alpha beta gamma. ".repeat(26);
+  return ["# Big spec\n", ...Array.from({ length: sections }, (_, i) => `\n## Section ${i + 1}\n\n${body}\n`)].join("");
+}
+
+export interface BaseHistory {
+  readonly root: string;
+  readonly squash1: string;
+  readonly tidy: string;
+  readonly merge2: string;
+  readonly merge3: string;
+  readonly revert1: string;
+  readonly empty4: string;
+  readonly unitSeparator: string;
+  readonly special: string;
+  /** The 9 first-parent commits of main, oldest first. */
+  readonly firstParent: readonly string[];
+  readonly tip: string;
+}
+
+export async function buildBaseHistory(f: BrainGitFixture): Promise<BaseHistory> {
+  const root = await f.commit({
+    message: "Initial commit", files: { "README.md": "# Widgets\n", "specs/001-alpha/spec.md": ALPHA_SPEC_V1 },
+  });
+  const squash1 = await f.squashPr(1, "feat(brain): alpha", SQUASH_1_BODY, {
+    "src/alpha.ts": "export const alpha = 1;\n", "specs/001-alpha/spec.md": ALPHA_SPEC_V2,
+  });
+  const tidy = await f.commit({ message: "chore: tidy", files: { "README.md": "# Widgets\n\nTidy.\n" } });
+  const merge2 = await f.mergePr({
+    number: 2, branch: "acme/feature-x", title: "Add feature X", commits: [
+      { message: "feat: x part one", files: { "src/x.ts": "export const x = 1;\n" } },
+      { message: "docs: x spec", files: { "specs/002-feature-x/spec.md": FEATURE_X_SPEC } },
+    ],
+  });
+  const merge3 = await f.mergePr({
+    number: 3, branch: "acme/beta", title: "feat: beta", titled: true, body: BETA_BODY,
+    commits: [{ message: "feat: beta work", files: { "src/beta.ts": "export const beta = 1;\n" } }],
+  });
+  const revert1 = await f.revert(squash1);
+  const empty4 = await f.squashPr(4, "chore: empty");
+  const unitSeparator = await f.commit({
+    message: `fix: keep unit separators\n\n${UNIT_SEPARATOR_BODY}`, files: { "notes/unit.txt": "unit\n" },
+  });
+  const special = await f.commit({ message: "docs: caf\u00e9 notes", files: { [SPECIAL_PATH]: "Notes.\n" } });
+  const firstParent = [root, squash1, tidy, merge2, merge3, revert1, empty4, unitSeparator, special];
+  return { root, squash1, tidy, merge2, merge3, revert1, empty4, unitSeparator, special, firstParent, tip: special };
+}
