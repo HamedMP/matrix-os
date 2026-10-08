@@ -168,3 +168,115 @@ describe("brain search OpenAI embeddings", () => {
     expect(api.calls.map((call) => call.authorization)).toEqual([`Bearer ${KEY}`, `Bearer ${ENV_KEY}`]);
   });
 });
+
+describe("brain search embeddings config", () => {
+  let home: string;
+  let api: ReturnType<typeof createOpenAiFetch>;
+  const logs: unknown[][] = [];
+  const config = join("system", "config.json");
+  const write = (embeddings: unknown) => writeFile(join(home, config), JSON.stringify({ brain: { embeddings } }));
+  const GIT = ["git_pr", "git_commit", "git_spec"];
+  const create = (env: Record<string, string | undefined>) =>
+    createBrainSearchEmbeddings({ homePath: home, env, fetch: api.fetch });
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "brain-embed-"));
+    await mkdir(join(home, "system"));
+    api = createOpenAiFetch();
+    logs.length = 0;
+    for (const level of ["log", "info", "warn", "error"] as const) {
+      vi.spyOn(console, level).mockImplementation((...args: unknown[]) => { logs.push(args); });
+    }
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    expect(JSON.stringify(logs)).not.toContain("sk-");
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it("takes the owner's key, or OPENAI_API_KEY only when the owner opts in and no relay base URL is set", async () => {
+    await write({ openai_key: ` ${KEY} `, model: "text-embedding-3-small", dimensions: 256 });
+    const openai = (await create({ OPENAI_API_KEY: ENV_KEY }))!;
+    expect(openai.providerId).toBe("openai/text-embedding-3-small/256");
+    await openai.embed(["a"], signal());
+    await write({ openai_key: "${OPENAI_API_KEY}", model: "text-embedding-3-small", dimensions: 256 });
+    await openai.embed(["a"], signal());
+    expect(api.calls.map((call) => call.authorization)).toEqual([`Bearer ${KEY}`, `Bearer ${ENV_KEY}`]);
+    expect(logs).toContainEqual(["[brain-search] OpenAI embeddings on",
+      { source: "owner_key", dimensions: 256, provenances: GIT }]);
+    for (const env of [{ OPENAI_API_KEY: ENV_KEY, OPENAI_BASE_URL: "https://relay.example" }, {},
+      { OPENAI_API_KEY: "${OPENAI_API_KEY}" }]) expect(await create(env)).toBeNull();
+    expect(await create({ OPENAI_API_KEY: ENV_KEY, OPENAI_BASE_URL: " " })).not.toBeNull();
+    expect(logs).toContainEqual(["[brain-search] OpenAI embeddings on",
+      { source: "environment", dimensions: 256, provenances: GIT }]);
+    // The real fetch is only taken, never called, here.
+    expect(await createBrainSearchEmbeddings({ homePath: home, env: { OPENAI_API_KEY: ENV_KEY } })).not.toBeNull();
+    // The shipped empty key, a null key or no file: off, whatever the environment holds; clearing the key stops calls.
+    await write({ openai_key: "", model: "text-embedding-3-small", dimensions: 256 });
+    await expect(openai.embed(["a"], signal())).rejects.toMatchObject({ code: "not_configured" });
+    expect(await create({ OPENAI_API_KEY: ENV_KEY })).toBeNull();
+    await write({ openai_key: null });
+    expect(await create({ OPENAI_API_KEY: ENV_KEY })).toBeNull();
+    await rm(join(home, config));
+    expect(await create({ OPENAI_API_KEY: ENV_KEY })).toBeNull();
+    expect(api.calls).toHaveLength(2);
+    await writeFile(join(home, "real.json"), JSON.stringify({ brain: { embeddings: { openai_key: KEY } } }));
+    await symlink(join(home, "real.json"), join(home, config));
+    expect(await create({})).toBeNull();
+    await rm(join(home, config));
+    await write({ openai_key: "${OPENAI_API_KEY}", dimensions: 64 });
+    expect((await create({ OPENAI_API_KEY: ENV_KEY }))?.providerId).toBe("openai/text-embedding-3-small/64");
+  });
+
+  it("turns off on an invalid setting, naming only the field", async () => {
+    const cases = [["model", { model: "text-embedding-3-large", openai_key: KEY }],
+      ["dimensions", { dimensions: 2_000, openai_key: KEY }], ["dimensions", { dimensions: "256", openai_key: KEY }],
+      ["openai_key", { openai_key: "not-a-key" }], ["openai_key", { openai_key: 42 }],
+      ["openai_key", { openai_key: "${OTHER_API_KEY}" }], ["provenances", { openai_key: KEY, provenances: [] }],
+      ["provenances", { openai_key: KEY, provenances: ["git_pr", "git_pr"] }],
+      ["provenances", { openai_key: KEY, provenances: ["secrets"] }],
+      ["provenances", { openai_key: KEY, provenances: "matrix_chat" }]] as const;
+    for (const [field, embeddings] of cases) {
+      await write(embeddings);
+      expect(await create({ OPENAI_API_KEY: ENV_KEY })).toBeNull();
+      expect(logs.at(-1)).toEqual(["[brain-search] embeddings disabled by an invalid setting", { field }]);
+    }
+  });
+
+  it("needs the brain's own opt-in, never tools.embeddings, and sends git documents only unless more are listed", async () => {
+    // A key set up for another feature (the old tools.embeddings block) never turns brain embeddings on.
+    await writeFile(join(home, config), JSON.stringify({ tools: { embeddings: { openai_key: KEY } } }));
+    expect(await create({ OPENAI_API_KEY: ENV_KEY })).toBeNull();
+    await write({ openai_key: KEY });
+    expect((await create({}))?.provenances).toEqual(GIT);
+    await write({ openai_key: KEY, provenances: ["git_pr", "matrix_note"] });
+    expect((await create({}))?.provenances).toEqual(["git_pr", "matrix_note"]);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("reads the allowed provenances again on demand, so a narrowed list applies without a restart", async () => {
+    await write({ openai_key: KEY, provenances: ["git_pr", "matrix_chat"] });
+    const openai = (await create({}))!;
+    expect(openai.provenances).toEqual(["git_pr", "matrix_chat"]);
+    expect(await openai.currentProvenances!()).toEqual(["git_pr", "matrix_chat"]);
+    await write({ openai_key: KEY, provenances: ["git_pr"] });
+    expect(await openai.currentProvenances!()).toEqual(["git_pr"]);
+    await write({ openai_key: KEY });
+    expect(await openai.currentProvenances!()).toEqual(GIT);
+    // Settings that turned invalid, or a file that is gone, allow nothing.
+    await write({ openai_key: KEY, provenances: ["not a provenance"] });
+    expect(await openai.currentProvenances!()).toEqual([]);
+    await rm(join(home, config));
+    expect(await openai.currentProvenances!()).toEqual([]);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("stops at call time when the key goes away", async () => {
+    await write({ openai_key: KEY });
+    const openai = (await create({}))!;
+    await write({ openai_key: "" });
+    await expect(openai.embed(["a"], signal())).rejects.toMatchObject({ code: "not_configured" });
+    await write({ model: "other", openai_key: KEY });
+    await expect(openai.embed(["a"], signal())).rejects.toMatchObject({ code: "not_configured" });
+    expect(api.calls).toHaveLength(0);
+  });
+});
