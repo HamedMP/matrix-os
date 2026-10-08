@@ -19,9 +19,11 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
 ## Source Of Truth
 
 - Owner Postgres, `brain_jobs`, primary key `(owner_id, scope_id, job_id)`. One queued or running run per
-  `(owner_id, scope_id, kind, target)` (unique partial index `brain_jobs_active_slot`).
+  `(owner_id, scope_id, kind, target)` (unique partial index `brain_jobs_active_slot`; enqueue inserts with
+  `ON CONFLICT DO NOTHING` on it and then reads the existing run).
 - Bounded: 100 active runs per owner, 50 finished runs per scope (pruned on enqueue), request at most 1 KiB, result
-  summary at most 16 keys and 8 KiB, attempts and steps capped by the worker ceilings (SQL CHECKs mirror them).
+  summary at most 16 keys and 8 KiB as stored (`clipBrainJobSummary` counts the jsonb text's bytes and leaves out
+  an entry that would pass them), attempts and steps capped by the worker ceilings (SQL CHECKs mirror them).
 - In memory: only the worker's running runs (at most `concurrency`), one poll timer, and per run one abort
   controller, one heartbeat timer and one time-cap timer, all cleared when the run ends.
 
@@ -43,7 +45,11 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
 ## Concurrency And Recovery
 
 - Enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId), hashtext('brain-jobs'))`; worker writes are
-  fenced by `status = 'running' AND lease_owner = <worker>` instead. Claims use `FOR UPDATE SKIP LOCKED`.
+  fenced by their claim instead (`status = 'running' AND lease_owner = <worker> AND attempts = <the claim's
+  attempts>`), so a run whose lease was recovered writes nothing even after the same worker claimed the job again,
+  and that worker stops the old run before it starts the new one. Claims use `FOR UPDATE SKIP LOCKED`.
+- `heartbeatMs` is at most a third of `leaseMs` (a longer setting is shortened), so a healthy run's lease never
+  expires between two heartbeats.
 - Every write sets `lock_timeout = 5s` and `statement_timeout = 15s`; reads use `withBrainRead`.
 - Expired leases are recovered on every poll: queued again, `attempts_exhausted` after `maxAttempts`, or cancelled
   when a cancel was asked. Shutdown hands running runs back as queued without counting the claim (cancelled when a
@@ -54,7 +60,9 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
   the step ignores the signal; the extract and source sync steps also pass the signal on, so a model run makes no
   call after it and aborts the call in flight. The heartbeat timer stops renewing the lease once the run is aborted.
 - Cancel of a running run records `cancel_requested`, then the service tells this gateway's worker
-  (`BrainJobWorker.cancel`), which aborts the run at once; a run on another gateway stops at its next heartbeat.
+  (`BrainJobWorker.cancel`), which aborts the run at once; a run on another gateway stops at its next heartbeat. A
+  recorded cancel always wins: finish, release and recovery all end the run `cancelled`, even when its last step
+  had completed.
 - A refresh step whose result has a `stopReason` (`embedding_unavailable`, `vector_cap`, `graph_capacity`) and is
   not caught up stops the run with that code, so a refresh that cannot progress is never run again 500 times.
 - Busy answers (another run holds the same sync or extraction lock) are tried again every `retryDelayMs` until the
