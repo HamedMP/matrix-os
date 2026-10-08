@@ -120,6 +120,24 @@ function chatChanged(
 }
 
 describe("canonical Chat route controller", () => {
+  it("keeps external navigation selection and detail refresh independent of list reads", async () => {
+    const events = eventHarness();
+    const second = { ...detail, record: { ...globalRecord, chat: { ...globalRecord.chat, id: "chat_second" } } };
+    const source = client({ getDetail: vi.fn(async (id) => id === "chat_second" ? second : detail) });
+    const hook = renderHook(({ chatId }) => useCanonicalChatRouteController({
+      client: source, projectId: null, active: true, initialChatId: chatId,
+      autoSelectFirst: false, externalNavigation: true, eventSource: events.eventSource,
+    }), { initialProps: { chatId: globalRecord.chat.id } });
+    await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    hook.rerender({ chatId: "chat_second" });
+    await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe("chat_second"));
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(source.getDetail).toHaveBeenCalledTimes(3));
+    expect(source.list).not.toHaveBeenCalled();
+    expect(hook.result.current.status).toBe("ready");
+  });
+
+
   it("bounds simulated stream listeners like the production event source", () => {
     const events = eventHarness();
     const subscriptions = Array.from(

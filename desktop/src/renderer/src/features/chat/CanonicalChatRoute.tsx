@@ -118,7 +118,7 @@ export function CanonicalChatRoute({
       return () => { current = false; };
     }
     if (!live) return () => { current = false; };
-    if (sharedScopeId) {
+    if (sharedScopeId || externalNavigation) {
       setAvailability({ routeKey, value: "available" });
       return () => { current = false; };
     }
@@ -141,7 +141,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [canonicalProjectId, client, live, routeKey, sharedScopeId]);
+  }, [canonicalProjectId, client, live, routeKey, sharedScopeId, externalNavigation]);
 
   if (!client || (!sharedScopeId && currentAvailability === "unavailable")) return fallback;
   if (!sharedScopeId && currentAvailability === "checking") {

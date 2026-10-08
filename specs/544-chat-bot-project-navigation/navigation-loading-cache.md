@@ -107,3 +107,9 @@ After design approval: update ENG-177 and draft PR #2288 scope in English, add f
 Supply an exact-head named App and manual review flow. Obtain user review, then run authorized fresh Greptile/CI gates before merge. Disable the navigation capability to fall back to the existing loader; deleting snapshots is safe because they are reconstructable. No user-data migration or provider-routing change is required.
 
 Out of scope: full offline conversation history, database replacement, Redis, UI redesign, provider login changes, unlimited-history loading and new collaboration persistence. No unresolved product questions block presenting this proposal; latency attribution and recovery-path extraction remain explicit engineering checks.
+
+## Native acceptance correction: embedded content list ownership
+
+Native warm-selection measurements found the embedded canonical content controller still re-reading its separate legacy list on each selected Chat. When `externalNavigation` is set, WorkRail alone owns the list; skip the route-availability list probe and controller list refresh, while retaining authenticated detail reads, completion acknowledgement and event/reconnect detail recovery. Standalone canonical history/search keeps its current loader. Direct Bot-binding reads for the selected conversation remain detail reads, not per-row navigation classification.
+
+Large-file extraction plan: this patch adds only the existing external-navigation flag wiring to the 1,000+ line workspace. Keep the loader ownership guard in the focused controller; future controller behavior must extract list state/loading and detail/replay orchestration into separate hooks before extending the workspace or controller further. No unrelated rewrite is needed for this measured duplicate-read correction.
