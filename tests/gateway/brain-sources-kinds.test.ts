@@ -46,9 +46,10 @@ afterEach(async () => {
 
 const notes: BrainMatrixNotesReader = {
   listNotes: async (after) => (after < "n1" ? [{
-    id: "n1", title: "Plan", content: "We decided to ship", tags: "work", updatedAt: "2026-09-30T10:00:00.000Z", contentCut: false,
+    id: "n1", title: "Plan", content: "We decided to ship", tags: "work", selected: true,
+    updatedAt: "2026-09-30T10:00:00.000Z", contentCut: false,
   }] : []),
-  listNoteKeys: async (after) => (after < "n1" ? [{ id: "n1", tags: "work" }] : []),
+  listNoteKeys: async (after) => (after < "n1" ? [{ id: "n1", selected: true }] : []),
 };
 const chats: BrainMatrixChatReader = {
   get: async (owner, chatId) => owner.ownerId === OWNER && chatId === "chat_a"
