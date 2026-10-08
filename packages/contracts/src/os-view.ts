@@ -66,6 +66,8 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     foreground: "white",
   },
   whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
+  // The brand green tile with forest ink (desktopPalette.green and .forest in @matrix-os/brand).
+  brain: { icon: "brain", iconSource: "fixed", background: "#BED77B", foreground: "#0E3422" },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {
@@ -94,6 +96,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   "apps/notes/dist/index.html": "notes",
   "apps/whiteboard/index.html": "whiteboard",
   "apps/whiteboard/dist/index.html": "whiteboard",
+  __brain__: "brain",
 };
 
 export function osViewFixedAppAppearanceForPath(path: string) {
@@ -105,7 +108,8 @@ export function osViewFixedAppAppearanceForPath(path: string) {
 export function osViewBundledIconUrlForPath(path: string): string | undefined {
   if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
   const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
-  if (!id || id === "vscode") return undefined;
+  // VS Code keeps its own branding; Company Brain has no shipped artwork and draws its fixed glyph.
+  if (!id || id === "vscode" || id === "brain") return undefined;
   return `/system-app-icons/v2/${id}.png`;
 }
 
