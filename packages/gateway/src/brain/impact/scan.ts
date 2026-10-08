@@ -1,7 +1,8 @@
 /**
  * Impact brief: the bounded import scan at head. Lists the head tree once, reads at most IMPACT_PACKAGE_FILES_MAX
  * package.json blobs, then greps the chosen TS/JS files in chunks: files next to a changed file first, then the
- * changed files' packages, then tests, then the rest. Every cap is reported as a notice, never as an error.
+ * changed files' packages, then tests, then the rest. No blob read or grep starts once the run budget is spent. Every
+ * cap is reported as a notice, never as an error.
  */
 import { posix } from "node:path";
 import { isIndexablePath } from "../git/parse.js";
@@ -29,7 +30,7 @@ export type ImpactScanLimits = {
 
 export interface ImpactScanInput {
   readonly git: ImpactGit; readonly head: string; readonly changed: readonly ImpactChange[]; readonly depth: 1 | 2;
-  /** Milliseconds; no grep chunk starts at or after it. */
+  /** Milliseconds; no package.json read or grep chunk starts at or after it. */
   readonly deadline: number; readonly now: () => number;
   readonly limits?: ImpactScanLimits;
 }
@@ -58,15 +59,23 @@ function isRegularBlob(entry: GitTreeEntry): entry is GitTreeEntry & { size: num
     && isIndexablePath(entry.path);
 }
 
-/** Workspace packages, longest name first; a package.json that is not JSON is skipped and logged by error name. */
+/**
+ * Workspace packages, longest name first; a package.json that is not JSON is skipped and logged by error name. Stops
+ * reading at the run budget (run_budget_exhausted).
+ */
 async function readPackages(
-  git: ImpactGit, manifests: readonly (GitTreeEntry & { size: number })[], budget: { bytes: number },
+  input: ImpactScanInput, manifests: readonly (GitTreeEntry & { size: number })[], budget: { bytes: number },
+  notices: Set<BrainImpactNotice>,
 ): Promise<WorkspacePackage[]> {
   const packages: WorkspacePackage[] = [];
   for (const entry of manifests) {
+    if (input.now() >= input.deadline) {
+      notices.add("run_budget_exhausted");
+      break;
+    }
     if (entry.size > budget.bytes) break;
     budget.bytes -= entry.size;
-    const content = textDecoder.decode(await git.repo.readBlob(entry.oid, entry.size));
+    const content = textDecoder.decode(await input.git.repo.readBlob(entry.oid, entry.size));
     let json: unknown;
     try {
       json = JSON.parse(content);
@@ -110,7 +119,7 @@ export async function scanDependents(input: ImpactScanInput): Promise<ImpactScan
   const budget = { bytes: limits.readBytesPerRequest };
   if (manifests.length > IMPACT_PACKAGE_FILES_MAX) notices.add("scan_capped");
   const readable = manifests.filter((entry) => entry.size <= limits.fileReadMaxBytes);
-  const packages = await readPackages(input.git, readable.slice(0, IMPACT_PACKAGE_FILES_MAX), budget);
+  const packages = await readPackages(input, readable.slice(0, IMPACT_PACKAGE_FILES_MAX), budget, notices);
   const sources = blobs.filter((entry) => isSourcePath(entry.path));
   const files = new Set([...sources.map((entry) => entry.path), ...targets]);
   const changedFolders = new Set(targets.map((path) => posix.dirname(path)));
