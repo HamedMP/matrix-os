@@ -5,9 +5,10 @@
  * relative PATH entry and never lets repo-local config enable a transport.
  */
 import { execFile } from "node:child_process";
-import { access, chmod, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { homeBounds } from "../../packages/gateway/src/brain/git/containment.js";
 import { defaultGitRunner, openGitRepository } from "../../packages/gateway/src/brain/git/reader.js";
 import {
   GIT_ENV_OVERRIDES, GIT_GLOBAL_ARGS, GIT_SYNC_DEFAULT_LIMITS, GitSourceError,
@@ -85,6 +86,44 @@ describe("openGitRepository containment", { timeout: 30_000 }, () => {
     await symlink(join(f.homePath, ".git"), join(viaLink, ".git"));
     await expectRefused(viaLink);
     // The project itself still opens inside a versioned home.
+    await expect(open(f.repoPath)).resolves.toMatchObject({ root: await realpath(f.repoPath) });
+  });
+
+  it("refuses a .git file or symlink that leads to home's separate git directory", async () => {
+    const homeGit = join(f.homePath, ".home-git");
+    await rawGit(["init", "-q", "--separate-git-dir", homeGit, f.homePath], f.homePath);
+    const viaFile = await project("home-separate-file");
+    await writeFile(join(viaFile, ".git"), `gitdir: ${homeGit}\n`);
+    await expectRefused(viaFile);
+    const viaLink = await project("home-separate-link");
+    await symlink(homeGit, join(viaLink, ".git"));
+    await expectRefused(viaLink);
+    await expect(open(f.repoPath)).resolves.toMatchObject({ root: await realpath(f.repoPath) });
+  });
+
+  it("follows home's relative .git file, commondir and objects link to its history", async () => {
+    const gits = join(f.homePath, ".gits");
+    const shared = join(gits, "shared");
+    await rawGit(["init", "-q", "--bare", shared], f.homePath);
+    await rawGit(["--git-dir", shared, "config", "core.bare", "false"], f.homePath);
+    const store = join(f.homePath, "stores", "objects");
+    await mkdir(join(f.homePath, "stores"));
+    await rename(join(shared, "objects"), store);
+    await symlink(store, join(shared, "objects"));
+    await mkdir(join(gits, "home"));
+    await writeFile(join(gits, "home", "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(gits, "home", "commondir"), "../shared\n");
+    await writeFile(join(f.homePath, ".git"), "gitdir: .gits/home\r\n");
+    expect((await homeBounds(f.homePath)).homeGitPaths).toEqual([join(f.homePath, ".git"), join(gits, "home"), shared, store]);
+
+    const viaCommon = await project("home-common");
+    await writeFile(join(viaCommon, ".git"), `gitdir: ${shared}\n`);
+    await expectRefused(viaCommon);
+    const viaObjects = await project("home-objects");
+    await rawGit(["init", "-q", viaObjects], f.homePath);
+    await rm(join(viaObjects, ".git", "objects"), { recursive: true });
+    await symlink(store, join(viaObjects, ".git", "objects"));
+    await expectRefused(viaObjects);
     await expect(open(f.repoPath)).resolves.toMatchObject({ root: await realpath(f.repoPath) });
   });
 
