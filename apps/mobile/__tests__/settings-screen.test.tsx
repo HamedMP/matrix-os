@@ -22,7 +22,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { Alert } from "react-native";
 
-import SettingsScreen from "../app/(drawer)/settings";
+import SettingsScreen from "../app/(drawer)/(tabs)/settings";
 
 describe("drawer settings hub", () => {
   beforeEach(() => {

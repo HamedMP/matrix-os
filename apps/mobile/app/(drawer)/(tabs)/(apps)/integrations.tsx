@@ -13,6 +13,8 @@ import { useFocusEffect, useRouter } from "expo-router";
 
 import { buildIntegrationSections, integrationDescription, integrationAuthType } from "@matrix-os/contracts/integration-marketplace";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
+import { BackTopBar } from "@/components/shell/BackTopBar";
+import { TabScreen } from "@/components/shell/TabScreen";
 import {
   SearchField,
   ListRow,
@@ -25,7 +27,16 @@ import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations
 import type { IntegrationService } from "@/lib/requests";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
-export default function IntegrationsScreen() {
+export default function IntegrationsRoute() {
+  return (
+    <TabScreen>
+      <BackTopBar fallbackHref="/apps" />
+      <IntegrationsScreen />
+    </TabScreen>
+  );
+}
+
+function IntegrationsScreen() {
   const [query, setQuery] = useState("");
   const [oauthOnly, setOauthOnly] = useState(false);
   const [expandedSections, setExpandedSections] = useState<string[]>([]);

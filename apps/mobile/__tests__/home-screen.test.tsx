@@ -1,11 +1,11 @@
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
-jest.mock("@/lib/queries/use-bot-recipes", () => ({ useBotRecipes: () => ({ recipes: [], isPending: false, isError: false }) }));
-jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ invalidate: jest.fn() }) }));
+jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 import type { ReactNode } from "react";
 
 const mockSendMessage = jest.fn();
+const mockOpenSidePanel = jest.fn();
 let mockBotSnapshot: unknown = null;
 let mockActiveChatId: string | null = null;
 let mockDetail: unknown;
@@ -13,6 +13,7 @@ let mockCatalog: unknown;
 let mockComputer: unknown;
 let mockSendPending = false;
 let mockCatalogLoading = false;
+let mockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ isSignedIn: true }),
@@ -23,7 +24,7 @@ jest.mock("@clerk/clerk-expo", () => ({
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
-  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+  useSafeAreaInsets: () => mockInsets,
 }));
 
 jest.mock("@/lib/canonical-chat-session-context", () => ({
@@ -64,10 +65,12 @@ jest.mock("@expo/ui", () => {
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Alert, StyleSheet as NativeStyleSheet } from "react-native";
+import { Alert, KeyboardAvoidingView, StyleSheet as NativeStyleSheet } from "react-native";
 import * as Clipboard from "expo-clipboard";
 
-import ChatScreen from "../app/(drawer)/index";
+import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
+import { Icon } from "../components/ui/Icon";
+import { SidePanelIcon } from "../components/ui/icons";
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRealTimers(); });
@@ -94,7 +97,9 @@ describe("drawer home screen", () => {
     mockComputer = undefined;
     mockSendPending = false;
     mockCatalogLoading = false;
+    mockInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     mockSendMessage.mockReset();
+    mockOpenSidePanel.mockReset();
     jest.restoreAllMocks();
   });
   it("copies the displayed Native Mobile conversation ID by long-pressing its content", () => {
@@ -120,6 +125,37 @@ describe("drawer home screen", () => {
     const containerStyle = NativeStyleSheet.flatten(screen.getByTestId("home-rabbit-container").props.style);
     expect(containerStyle).toMatchObject({ width: 68, height: 68 });
   });
+  it("opens the side panel from the button in its top bar", () => {
+    render(<ChatScreen />);
+
+    const button = screen.getByRole("button", { name: "Open chats and projects" });
+    expect(NativeStyleSheet.flatten(button.props.style)).toMatchObject({ width: 44, height: 44 });
+    expect(screen.UNSAFE_getAllByType(Icon).some((icon) => icon.props.icon === SidePanelIcon)).toBe(true);
+    expect(mockOpenSidePanel).not.toHaveBeenCalled();
+
+    fireEvent.press(button);
+
+    expect(mockOpenSidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts below the status bar and measures the keyboard from the top of the window", () => {
+    mockInsets = { top: 62, right: 0, bottom: 34, left: 0 };
+    render(<ChatScreen />);
+
+    const keyboardView = screen.UNSAFE_getByType(KeyboardAvoidingView);
+    expect(NativeStyleSheet.flatten(keyboardView.props.style)).toMatchObject({ flex: 1, paddingTop: 62 });
+    // No header sits above the screen any more, and the tab bar is beneath it
+    // rather than inside it, so there is nothing to offset the keyboard by.
+    expect(keyboardView.props.keyboardVerticalOffset).toBeUndefined();
+  });
+
+  it("no longer offers bot recipes, which are on the Agents tab", () => {
+    render(<ChatScreen />);
+
+    expect(screen.queryByLabelText("Bot recipes")).toBeNull();
+    expect(screen.queryByText("Bot recipes")).toBeNull();
+  });
+
   describe("optimistic send", () => {
     const catalog = {
       instances: [{

@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 
 const mockPush = jest.fn();
+const mockBack = jest.fn();
 const mockUseComputerDirectory = jest.fn();
 const mockCreateFolder = jest.fn();
 const mockCreateFile = jest.fn();
 const mockRefreshDirectory = jest.fn();
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, back: mockBack, canGoBack: () => true }),
 }));
 
 jest.mock("react-native-safe-area-context", () => ({
@@ -46,7 +47,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 import { StyleSheet as UnistylesStyleSheet } from "react-native-unistyles";
-import FilesScreen from "../app/(drawer)/files";
+import FilesScreen from "../app/(drawer)/(tabs)/(apps)/files";
 
 describe("drawer files screen", () => {
   beforeEach(() => {
@@ -80,6 +81,14 @@ describe("drawer files screen", () => {
 
     await React.act(async () => resolveRefresh?.());
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+  });
+
+  it("returns to Apps from the back button in its top bar", () => {
+    render(<FilesScreen />);
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it("opens a folder as one modal workspace", () => {

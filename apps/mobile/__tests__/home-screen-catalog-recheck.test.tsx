@@ -1,11 +1,11 @@
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
-jest.mock("@/lib/queries/use-bot-recipes", () => ({ useBotRecipes: () => ({ recipes: [], isPending: false, isError: false }) }));
-jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ invalidate: jest.fn() }) }));
+jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
 import type { ReactNode } from "react";
 
 const mockSendMessage = jest.fn();
+const mockOpenSidePanel = jest.fn();
 let mockCatalogState: Record<string, unknown> = {};
 
 jest.mock("@clerk/clerk-expo", () => ({
@@ -49,7 +49,7 @@ jest.mock("@expo/ui", () => {
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 
-import ChatScreen from "../app/(drawer)/index";
+import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
 
 const catalog = { instances: [{
   id: "codex_default", driverKind: "codex", availability: "available", options: [],

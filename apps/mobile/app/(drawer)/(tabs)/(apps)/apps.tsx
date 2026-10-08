@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useRouter } from "expo-router";
 
 import { AppLogo } from "@/components/apps/AppLogo";
@@ -11,12 +11,22 @@ import {
   SearchField,
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
-import { Spacer } from "@/components/ui";
+import { TabScreen } from "@/components/shell/TabScreen";
+import { AddIcon, ChevronRightIcon, FolderIcon, Icon, IconTile, ItemRow, Spacer } from "@/components/ui";
 import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
 import { buildAppIconUrl } from "@/lib/requests";
 
-export default function AppsScreen() {
+export default function AppsTab() {
+  return (
+    <TabScreen>
+      <AppsScreen />
+    </TabScreen>
+  );
+}
+
+function AppsScreen() {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const [query, setQuery] = useState("");
   const { computer, apps, authorization, gatewayUrl, isPending, isError } = useComputerApps();
   const visibleApps = useMemo(() => {
@@ -27,6 +37,19 @@ export default function AppsScreen() {
 
   return (
     <Page title="Apps" subtitle={`Web apps on ${computer?.handle ?? "your computer"}`}>
+      <ItemRow
+        title="Files"
+        leading={<IconTile icon={FolderIcon} size={40} />}
+        trailing={<Icon icon={ChevronRightIcon} size={18} color={theme.v2.colors.textSubtle} />}
+        onPress={() => router.push("/files" as never)}
+      />
+      <ItemRow
+        title="Connect Apps"
+        leading={<IconTile icon={AddIcon} size={40} />}
+        trailing={<Icon icon={ChevronRightIcon} size={18} color={theme.v2.colors.textSubtle} />}
+        onPress={() => router.push("/integrations" as never)}
+      />
+      <Spacer size="md" />
       <Text style={styles.statusText}>
         Apps that use workspace data or connected accounts may not work here yet. Open those apps on Web Canvas, Web Desktop or Electron Desktop.
       </Text>

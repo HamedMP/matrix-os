@@ -6,6 +6,8 @@ import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 
 import { EmptyFolderState } from "@/components/files/EmptyFolderState";
+import { BackTopBar } from "@/components/shell/BackTopBar";
+import { TabScreen } from "@/components/shell/TabScreen";
 import { FileCreationControls } from "@/components/files/FileCreationControls";
 import {
   FileTileSkeletonGrid,
@@ -18,7 +20,16 @@ import { Spacer } from "@/components/ui";
 import { useComputerDirectory } from "@/lib/queries/use-computer-directory";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
-export default function FilesScreen() {
+export default function FilesRoute() {
+  return (
+    <TabScreen>
+      <BackTopBar fallbackHref="/apps" />
+      <FilesScreen />
+    </TabScreen>
+  );
+}
+
+function FilesScreen() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const { computer, entries, isPending, isError, refresh } = useComputerDirectory("");
