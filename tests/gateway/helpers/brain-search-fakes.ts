@@ -111,15 +111,17 @@ export async function fakeVectorStore(harness: BrainHarness): Promise<BrainVecto
       }
     },
     async nearest(scope, vector, limit, providerId): Promise<readonly BrainVectorMatch[]> {
-      const rows = await sql<{ document_id: string; chunk_index: number; embedding: number[] }>`
-        SELECT v.document_id, v.chunk_index, v.embedding FROM test_search_vectors v
+      const rows = await sql<{
+        document_id: string; incarnation: string; revision: number; chunk_index: number; embedding: number[];
+      }>`
+        SELECT v.document_id, v.incarnation, v.revision, v.chunk_index, v.embedding FROM test_search_vectors v
         JOIN brain_documents d ON d.owner_id = v.owner_id AND d.scope_id = v.scope_id
           AND d.document_id = v.document_id AND d.deleted_at IS NULL AND d.incarnation = v.incarnation
           AND d.revision = v.revision
         WHERE v.owner_id = ${scope.ownerId} AND v.scope_id = ${scope.scopeId} AND v.provider_id = ${providerId}`
         .execute(harness.db);
       return rows.rows.map((row) => ({
-        documentId: row.document_id, chunkIndex: row.chunk_index,
+        documentId: row.document_id, incarnation: row.incarnation, revision: row.revision, chunkIndex: row.chunk_index,
         distance: 1 - row.embedding.reduce((sum, value, index) => sum + value * vector[index]!, 0),
       })).sort((a, b) => a.distance - b.distance || (a.documentId < b.documentId ? -1 : 1)).slice(0, limit);
     },

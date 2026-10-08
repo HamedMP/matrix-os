@@ -9,7 +9,7 @@ import {
   type BrainSearchNotice, type BrainSearchQuery, type BrainSearchService, type BrainSearchServiceDeps,
   type BrainSearchView,
 } from "../contracts.js";
-import type { BrainDatabase, BrainScopeKey } from "../types.js";
+import { BRAIN_MAX_REVISION, BRAIN_UUID_PATTERN, type BrainDatabase, type BrainScopeKey } from "../types.js";
 import { hydrateBrainHits } from "./hydrate.js";
 import { withSearchRead } from "./index-sql.js";
 import { createBrainArrayVectorStore } from "./array-store.js";
@@ -21,35 +21,44 @@ import {
   parseBrainSearchQuery,
 } from "./query.js";
 import { brainSearchPatterns } from "./snippet.js";
-import { brainSearchNeedsAnyTerm, filterBrainDocumentIds, rankBrainTextHits } from "./text.js";
+import { brainSearchNeedsAnyTerm, filterBrainVectorCandidates, rankBrainTextHits } from "./text.js";
 import {
   BRAIN_SEARCH_EMBED_TIMEOUT_MS, type BrainParsedSearchQuery, type BrainRankedHit, type BrainSearchCapability,
 } from "./types.js";
 import {
   brainEmbeddingsFailure, embedBrainTexts, fuseBrainHits, isUsableBrainEmbeddingsProvider, rankBrainVectorDocuments,
+  type BrainVectorCandidate,
 } from "./vector.js";
 
 const DOCUMENT_ID = /^[a-f0-9]{64}$/;
 
-type VectorDocuments = { readonly ranked: { documentId: string; chunkIndex: number }[]; readonly capped: boolean };
+type VectorDocuments = { readonly ranked: BrainVectorCandidate[]; readonly capped: boolean };
 type VectorHits = { readonly hits: BrainRankedHit[]; readonly capped: boolean };
 
-/** The vector store's nearest chunks (its own deadline), one entry per document at its best chunk. */
+/**
+ * The vector store's nearest chunks (its own deadline), one entry per document at its best chunk and the
+ * (incarnation, revision) that chunk was built from.
+ */
 async function nearestDocuments(
   meaning: BrainSearchMeaning, scope: BrainScopeKey, vector: readonly number[],
 ): Promise<VectorDocuments> {
   const matches = (await meaning.vectors.nearest(scope, vector, BRAIN_SEARCH_CANDIDATES_MAX,
     meaning.provider.providerId)).slice(0, BRAIN_SEARCH_CANDIDATES_MAX)
-    .filter((match) => DOCUMENT_ID.test(match.documentId) && Number.isInteger(match.chunkIndex));
+    .filter((match) => DOCUMENT_ID.test(match.documentId) && BRAIN_UUID_PATTERN.test(match.incarnation)
+      && Number.isInteger(match.revision) && match.revision >= 1 && match.revision <= BRAIN_MAX_REVISION
+      && Number.isInteger(match.chunkIndex));
   return { ranked: rankBrainVectorDocuments(matches), capped: matches.length >= BRAIN_SEARCH_CANDIDATES_MAX };
 }
 
-/** Vector candidates that are live and pass the filters, as hits; inside the search transaction. */
+/**
+ * Vector candidates still live at their matched (incarnation, revision) and passing the filters, as hits; inside the
+ * search snapshot, so hydration reads the text the vectors were built from.
+ */
 async function vectorHits(
   trx: Kysely<BrainDatabase>, scope: BrainScopeKey, query: BrainParsedSearchQuery, found: VectorDocuments | null,
 ): Promise<VectorHits> {
   if (found === null) return { hits: [], capped: false };
-  const allowed = await filterBrainDocumentIds(trx, scope, query, found.ranked.map((entry) => entry.documentId));
+  const allowed = await filterBrainVectorCandidates(trx, scope, query, found.ranked);
   return {
     hits: found.ranked.filter((entry) => allowed.has(entry.documentId)).map((entry) => ({
       type: "document", hitId: entry.documentId, documentId: entry.documentId, claimId: null, extractor: null,

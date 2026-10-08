@@ -60,12 +60,13 @@ async function expectExactNearest(h: SearchHarness, documents: number, chunks: n
   const rand = mulberry32(dims);
   const seeds = Array.from({ length: documents }, (_, index) => `doc${index}`);
   await (await createSeeder(h)).sync(seeds.map((seed) => ({ seed })));
-  const stored: { documentId: string; chunkIndex: number; unit: number[] }[] = [];
+  const stored: { documentId: string; incarnation: string; revision: number; chunkIndex: number; unit: number[] }[] = [];
   for (const seed of seeds) {
     const vectors = Array.from({ length: chunks }, () => randomVector(rand, dims));
     await replace(h, store, seed, vectors);
+    const { documentId, incarnation, revision } = await documentOf(h, seed);
     vectors.forEach((vector, chunkIndex) =>
-      stored.push({ documentId: brainDocumentId(seed), chunkIndex, unit: brainUnitVector(vector)! }));
+      stored.push({ documentId, incarnation, revision, chunkIndex, unit: brainUnitVector(vector)! }));
   }
   for (let round = 0; round < 3; round += 1) {
     const query = randomVector(rand, dims);
@@ -73,7 +74,8 @@ async function expectExactNearest(h: SearchHarness, documents: number, chunks: n
     const expected = stored.map((row) => {
       let dot = 0;
       for (let index = 0; index < dims; index += 1) dot += row.unit[index]! * unit[index]!;
-      return { documentId: row.documentId, chunkIndex: row.chunkIndex, distance: 1 - dot };
+      return { documentId: row.documentId, incarnation: row.incarnation, revision: row.revision,
+        chunkIndex: row.chunkIndex, distance: 1 - dot };
     }).sort((a, b) => a.distance - b.distance || (a.documentId === b.documentId ? a.chunkIndex - b.chunkIndex
       : a.documentId < b.documentId ? -1 : 1)).slice(0, 200);
     expect(await store.nearest(SCOPE, query, 200, "p")).toEqual(expected);

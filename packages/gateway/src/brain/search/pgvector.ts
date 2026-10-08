@@ -89,9 +89,10 @@ export function createBrainPgVectorStore(db: Kysely<BrainDatabase>): BrainSearch
     async nearest(scope, vector, limit, providerId): Promise<readonly BrainVectorMatch[]> {
       const key = parseBrainInput(BrainScopeKeySchema, scope);
       const query = parseBrainInput(BrainVectorNearestSchema, { vector: [...vector], limit, providerId });
-      type Row = { document_id: string; chunk_index: number; distance: number };
+      type Row = { document_id: string; incarnation: string; revision: number; chunk_index: number; distance: number };
       const rows = await withSearchRead(db, (trx) => sql<Row>`
-        SELECT c.document_id, c.chunk_index, (c.embedding <=> ${asVector(query.vector)})::float8 AS distance
+        SELECT c.document_id, c.incarnation, c.revision, c.chunk_index,
+          (c.embedding <=> ${asVector(query.vector)})::float8 AS distance
         FROM brain_search_chunks c
         JOIN brain_documents d ON d.owner_id = c.owner_id AND d.scope_id = c.scope_id
           AND d.document_id = c.document_id AND d.deleted_at IS NULL
@@ -102,7 +103,8 @@ export function createBrainPgVectorStore(db: Kysely<BrainDatabase>): BrainSearch
         LIMIT ${query.limit}
       `.execute(trx));
       return rows.rows.filter((row) => Number.isFinite(Number(row.distance))).map((row) => ({
-        documentId: row.document_id, chunkIndex: row.chunk_index, distance: Number(row.distance),
+        documentId: row.document_id, incarnation: row.incarnation, revision: row.revision, chunkIndex: row.chunk_index,
+        distance: Number(row.distance),
       }));
     },
 
