@@ -12,6 +12,7 @@ import { createJevLabelCallRoutes, authorizeInternalJevLabels } from "../../pack
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { Orchestrator } from "../../packages/platform/src/orchestrator.js";
+import { mintCustomMcpApprovalProof } from "../../packages/platform/src/custom-mcp-approval-proof.js";
 
 function bearerFor(handle: string, secret: string): string {
   return createHmac("sha256", secret).update(handle).digest("hex");
@@ -111,6 +112,27 @@ describe("platform/internal-integration-routes", () => {
     const res = await app.request("/internal/containers/alice/integrations/probe");
 
     expect(res.status).toBe(401);
+  });
+
+  it("verifies an exact browser decision for a customer integration action", async () => {
+    const body = { chatId: "chat_1", runId: "run_1", approvalId: "approval_1", decision: "approve", clientRequestId: "req_1" };
+    const proof = mintCustomMcpApprovalProof({ method: "POST", path: "/api/chats/chat_1/runs/run_1/approvals/approval_1",
+      identity: { handle: "alice", userId: "user_alice", source: "auth" },
+      body: JSON.stringify({ clientRequestId: "req_1", decision: "approve" }), secret: "platform-secret-123" });
+    const response = await createTestApp().request("/internal/containers/alice/integrations/approval/verify", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`,
+        "content-type": "application/json", "x-matrix-custom-mcp-approval-proof": proof! }, body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ verified: true });
+    for (const [decision, candidate] of [[body, "forged"], [body, undefined], [{ ...body, clientRequestId: "req_other" }, proof],
+      [{ ...body, runId: "run_other" }, proof], [{ ...body, decision: "decline" }, proof]] as const) {
+      const rejected = await createTestApp().request("/internal/containers/alice/integrations/approval/verify", {
+        method: "POST", headers: { authorization: `Bearer ${bearerFor("alice", "platform-secret-123")}`, "content-type": "application/json",
+          ...(candidate ? { "x-matrix-custom-mcp-approval-proof": candidate } : {}) }, body: JSON.stringify(decision),
+      });
+      expect(rejected.status).toBe(403);
+    }
   });
 
   it("passes authenticated requests through with the resolved clerk user id", async () => {

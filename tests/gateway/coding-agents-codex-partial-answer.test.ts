@@ -34,7 +34,10 @@ it("preserves partial-answer lifecycle before later tools and terminal completio
     const deadline = Date.now() + 5_000;
     let transcript = "";
     while (Date.now() < deadline) {
-      transcript = await readFile(eventPath, "utf8").catch(() => "");
+      transcript = await readFile(eventPath, "utf8").catch((error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
+        throw error;
+      });
       if (transcript.includes('"type":"turn.completed"')) break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
