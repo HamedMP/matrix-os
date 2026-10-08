@@ -437,6 +437,79 @@ describe("shared project Chat assignment", () => {
       .toHaveLength(1);
   });
 
+  it("repairs an existing inherited Chat binding that no longer matches its shared project", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_existing_stale_binding",
+      title: "Stale binding",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select(["id", "revision", "auth_epoch"])
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      authority_generation: 1,
+    }).where("id", "=", child.id).execute();
+    await fixture.db.updateTable("collaboration_resource_bindings").set({
+      authority_generation: 1,
+      readiness: "blocked",
+      blocker: "stale_authority",
+    }).where("resource_scope_id", "=", child.id).execute();
+    const { authority, adapter } = collaborationAccess();
+    const stale = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+    await expect(adapter.getChat(stale)).rejects.toMatchObject({ code: "unavailable" });
+
+    await expect(coordinator().backfill()).resolves.toBe(1);
+    const repairedContext = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+    await expect(adapter.getChat(repairedContext)).resolves.toMatchObject({ id: created.chat.id, scopeId: child.id });
+    expect(await fixture.db.selectFrom("collaboration_scopes")
+      .select(["authority_runtime_id", "authority_generation", "revision", "auth_epoch"])
+      .where("id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      authority_runtime_id: RUNTIME_ID,
+      authority_generation: 2,
+      revision: Number(child.revision) + 1,
+      auth_epoch: Number(child.auth_epoch) + 1,
+    });
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings")
+      .select(["authority_runtime_id", "authority_generation", "readiness", "blocker"])
+      .where("resource_scope_id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      authority_runtime_id: RUNTIME_ID,
+      authority_generation: 2,
+      readiness: "ready",
+      blocker: null,
+    });
+    expect(endedScopes).toEqual([child.id]);
+    await expect(coordinator().backfill()).resolves.toBe(0);
+  });
+
+  it("keeps an existing blocked binding blocked while its Chat contains company-drive material", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_existing_intentionally_blocked",
+      title: "Company drive material",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select("id")
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.insertInto("chat_queued_turns").values({
+      id: "qturn_existing_company_drive", chat_id: created.chat.id,
+      client_request_id: "req_existing_company_drive", position: 1, status: "cancelled",
+      parts: JSON.stringify([{ type: "resource_reference", resource: { kind: "organization_drive" } }]),
+      driver_kind: "claude-code", instance_id: "default",
+      selection: JSON.stringify({ instanceId: "claude_default", model: "claude-opus-4-6" }),
+      interaction_mode: "default", permission_mode: "supervised", capability_snapshot: "{}",
+      created_at: NOW, updated_at: NOW,
+    }).execute();
+    await fixture.db.updateTable("collaboration_resource_bindings").set({
+      readiness: "blocked",
+      blocker: "company_drive_material",
+    }).where("resource_scope_id", "=", child.id).execute();
+
+    await expect(coordinator().backfill()).resolves.toBe(0);
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings").select(["readiness", "blocker"])
+      .where("resource_scope_id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      readiness: "blocked",
+      blocker: "company_drive_material",
+    });
+  });
+
   it("continues startup repair after a blocked Chat", async () => {
     const blocked = await repository.create(OWNER, {
       id: "chat_a_blocked", clientRequestId: "req_backfill_blocked",
