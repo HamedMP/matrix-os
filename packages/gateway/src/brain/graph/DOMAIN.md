@@ -23,4 +23,5 @@ synced documents, their refs and current decision claims. Spec: `specs/557-compa
 - The project entity is written only while the scope has a `brain_sources` row: a project erase removes those first,
   then the graph rows under the graph lock, so a refresh that outlives the erase writes nothing back.
 - A hook with document ids that removed any document sweeps orphan entities too, 1,000 at a time until fewer go or
-  its budget ends, so a removed source's people are gone when its purge reports done.
+  its budget ends, so a removed source's people are gone when its purge reports done. Freshness counts documents
+  only, so the next start's index catch-up refreshes every listed scope, finishing a sweep a shutdown cut short.
