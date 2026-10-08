@@ -137,3 +137,148 @@ describe("person merge orientation", () => {
     expect(keys(orientCandidate({ a: email, b: other }, links({})))).toBe("email:a@x.dev <= email:b@x.dev");
   });
 });
+
+describe("person merge suggestions over the graph", { timeout: 60_000 }, () => {
+  let harness: GraphHarness;
+  beforeEach(async () => { harness = await createGraphHarness(); });
+  afterEach(() => harness.destroy());
+
+  const service = (): BrainGraphService => harness.graph.service;
+  const suggest = (query = {}) => service().mergeSuggestions(OWNER, PROJECT, { limit: 50, ...query });
+  const line = (item: BrainMergeSuggestionView) => `${item.entity.key} <= ${item.alias.key}`;
+
+  async function seed(): Promise<void> {
+    const commit = (seed: string, author: string, trailer: string, day: number) => ({
+      documentId: brainDocumentId(seed), permalink: `https://example.test/${seed}`,
+      sourceUpdatedAt: `2026-09-${String(day).padStart(2, "0")}T10:00:00.000Z`, provenance: "git_commit", title: seed,
+      body: gitBody(`${seed}\n\nCo-authored-by: ${trailer}`, { sha: String(day).repeat(40).slice(0, 40), author }),
+      refs: [],
+    });
+    await harness.sync("git", [
+      commit("c1", "hamed", `Hamed <${ID}>`, 1), commit("c2", "hamed", `hamed <${PLAIN}>`, 2),
+      commit("c3", "HamedMP", `HamedMP <${ID}>`, 3), commit("c4", "HamedMP", `HamedMP <${PLAIN}>`, 4),
+      commit("c5", "hamed", `Hamed <${ID}>`, 5),
+    ]);
+    await harness.sync("github", [{
+      documentId: brainDocumentId("pr"), permalink: "https://example.test/pr", sourceUpdatedAt: "2026-09-06T10:00:00.000Z",
+      provenance: "github_pr", title: "feat", body: "Adds it.", refs: [{ kind: "pr", value: "3" }, { kind: "author", value: "github:hamedmp" }],
+    }]);
+    await harness.refresh();
+  }
+
+  it("suggests the committer split, oriented to the email with more links, and accepts through the alias route", async () => {
+    expect(await suggest()).toEqual({ items: [], nextCursor: null, truncated: false });
+    await seed();
+    const first = await suggest();
+    expect(first.truncated).toBe(false);
+    const lines = first.items.map(line);
+    expect(lines).toEqual(expect.arrayContaining([
+      `email:${ID} <= email:${PLAIN}`, `email:${ID} <= name:hamed`, `email:${PLAIN} <= name:hamed`,
+      `email:${ID} <= name:hamedmp`, `email:${PLAIN} <= name:hamedmp`, `email:${ID} <= github:hamedmp`,
+      `email:${PLAIN} <= github:hamedmp`, "github:hamedmp <= name:hamedmp",
+    ]));
+    expect(lines).toHaveLength(8);
+    const emails = first.items.find((item) => line(item) === `email:${ID} <= email:${PLAIN}`)!;
+    expect(emails).toMatchObject({
+      score: 0.99, aliasKey: `person:email:${PLAIN}`, counts: { entityLinks: 3, aliasLinks: 2, aliasEntities: 1 },
+    });
+    expect(emails.suggestionId).toMatch(/^sug_[a-f0-9]{32}$/);
+    expect(first.items.map((item) => item.score)).toEqual([...first.items.map((item) => item.score)].sort((x, y) => y - x));
+
+    const merged: BrainEntityView = await service().updateAlias(OWNER, PROJECT, emails.entity.entityId,
+      { action: "merge", aliasKey: emails.aliasKey });
+    expect(merged.aliases.map((alias) => alias.aliasKey)).toEqual([`person:email:${PLAIN}`]);
+    const after = (await suggest()).items;
+    expect(after.map(line)).not.toContain(`email:${ID} <= email:${PLAIN}`);
+    const hamedmp = after.find((item) => line(item) === `email:${ID} <= name:hamedmp`)!;
+    expect(hamedmp.counts).toEqual({ entityLinks: 5, aliasLinks: 2, aliasEntities: 1 });
+    expect(after.filter((item) => item.alias.key === "name:hamedmp" && item.entity.key.startsWith("email:"))).toHaveLength(1);
+
+    // Undo (unmerge) leaves nothing behind: the pair is suggested again and can be merged again.
+    const undone = await service().updateAlias(OWNER, PROJECT, emails.entity.entityId,
+      { action: "unmerge", aliasKey: emails.aliasKey });
+    expect(undone.aliases).toEqual([]);
+    expect((await suggest()).items.map(line)).toContain(`email:${ID} <= email:${PLAIN}`);
+    await expect(service().updateAlias(OWNER, PROJECT, emails.entity.entityId,
+      { action: "unmerge", aliasKey: emails.aliasKey })).rejects.toMatchObject({ code: "alias_conflict" });
+    await service().updateAlias(OWNER, PROJECT, emails.entity.entityId, { action: "merge", aliasKey: emails.aliasKey });
+    // A split ("not the same person") is never suggested again.
+    await service().updateAlias(OWNER, PROJECT, emails.entity.entityId, { action: "split", aliasKey: emails.aliasKey });
+    expect((await suggest()).items.map(line)).not.toContain(`email:${ID} <= email:${PLAIN}`);
+  });
+
+  it("pages by cursor without gaps and refuses foreign or broken cursors and bad input", async () => {
+    await seed();
+    const all = (await suggest()).items.map((item) => item.suggestionId);
+    const walked: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await suggest({ limit: 2, ...(cursor === undefined ? {} : { cursor }) });
+      walked.push(...page.items.map((item) => item.suggestionId));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    expect(walked).toEqual(all);
+    const foreign = Buffer.from(JSON.stringify({ v: 1, q: "0".repeat(16), s: 99, n: 1, id: `sug_${"a".repeat(32)}` }))
+      .toString("base64url");
+    for (const bad of [foreign, "not a cursor", Buffer.from("{}").toString("base64url")]) {
+      await rejectsWith(suggest({ cursor: bad }), BrainApiError, "invalid_request");
+    }
+    await rejectsWith(suggest({ limit: 0 }), BrainApiError, "invalid_request");
+    await rejectsWith(service().mergeSuggestions(OWNER, "proj_other", {}), BrainApiError, "project_not_found");
+    expect((await service().mergeSuggestions(OWNER, PROJECT, {})).items.length).toBe(Math.min(all.length, 20));
+  });
+
+  it("says truncated when a scan or the ranking cap is hit", async () => {
+    await seed();
+    await service().updateAlias(OWNER, PROJECT, brainEntityId("person", `email:${PLAIN}`),
+      { action: "merge", aliasKey: `person:email:${ID}` });
+    await service().updateAlias(OWNER, PROJECT, brainEntityId("person", `email:${PLAIN}`),
+      { action: "split", aliasKey: `person:email:${ID}` });
+    const db = harness.repository.kysely.withTables<BrainGraphTables>();
+    const base = { personsScanned: 100, splitsScanned: 100, pairsScanned: 100, suggestionsMax: 100 };
+    const run = (limits: Partial<typeof base>) => listMergeSuggestions(db, SCOPE, { limit: 50 }, { ...base, ...limits });
+    expect((await run({})).truncated).toBe(false);
+    for (const limits of [{ personsScanned: 2 }, { splitsScanned: 0 }, { pairsScanned: 1 }]) {
+      expect((await run(limits)).truncated).toBe(true);
+    }
+    const capped = await run({ suggestionsMax: 1 });
+    expect(capped).toMatchObject({ truncated: true, nextCursor: null });
+    expect(capped.items).toHaveLength(1);
+  });
+});
+
+describe("person merge suggestion route", () => {
+  const BASE = "/api/brain/projects/proj_widgets/entities/merge-suggestions";
+  const OWNER_PRINCIPAL: RequestPrincipal = { userId: "owner_a", source: "dev-default" };
+  let errors: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { errors = vi.spyOn(console, "error").mockImplementation(() => undefined); });
+  afterEach(() => errors.mockRestore());
+
+  function app() {
+    const mergeSuggestions = vi.fn<BrainGraphService["mergeSuggestions"]>(async () => ({
+      items: [], nextCursor: null, truncated: false,
+    }));
+    const getEntity = vi.fn();
+    const service = { getEntity, mergeSuggestions } as unknown as BrainGraphService;
+    const routes = new Hono();
+    routes.route("/api/brain", createBrainGraphRoutes({ service, getPrincipal: () => OWNER_PRINCIPAL }));
+    return { routes, mergeSuggestions, getEntity };
+  }
+
+  async function call(routes: Hono, path: string) {
+    const res = await routes.request(`http://localhost${path}`);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    return { status: res.status, body: await res.json() as unknown };
+  }
+
+  it("parses the query and answers before entities/:entityId", async () => {
+    const { routes, mergeSuggestions, getEntity } = app();
+    expect(await call(routes, `${BASE}?limit=5&cursor=abc`)).toEqual({ status: 200, body: { items: [], nextCursor: null, truncated: false } });
+    expect(mergeSuggestions).toHaveBeenCalledWith("owner_a", "proj_widgets", { limit: 5, cursor: "abc" });
+    expect(getEntity).not.toHaveBeenCalled();
+    for (const query of ["?x=1", "?limit=abc", "?limit=1&limit=2"]) {
+      expect((await call(routes, `${BASE}${query}`)).status).toBe(400);
+    }
+    expect(mergeSuggestions).toHaveBeenCalledTimes(1);
+  });
+});
