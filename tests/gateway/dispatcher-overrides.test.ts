@@ -163,6 +163,27 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs.every((config) => config.ownerAudioTranscriber === ownerAudioTranscriber)).toBe(true);
   });
 
+  it("injects the owner-bound brain tools into serial and batch kernels", async () => {
+    const configs: KernelConfig[] = [];
+    const brainTools = { why: vi.fn(async () => ({ status: "not_found" as const })) };
+    const brainReadTools = { search: vi.fn(async () => ({ status: "not_found" as const })) };
+    const spawn = vi.fn<SpawnFn>(async function* (_message, config) {
+      configs.push(config);
+      yield resultEvent();
+    });
+    const dispatcher = createDispatcher({
+      homePath: makeHomePath(), spawnFn: spawn, maxConcurrency: 1, brainTools, brainReadTools,
+    });
+    await dispatcher.dispatch("serial", undefined, () => {});
+    await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }]);
+
+    expect(configs).toHaveLength(2);
+    expect(configs.every((config) => config.brainTools === brainTools)).toBe(true);
+    expect(configs.every((config) => config.brainReadTools === brainReadTools)).toBe(true);
+    expect(brainTools.why).not.toHaveBeenCalled();
+    expect(brainReadTools.search).not.toHaveBeenCalled();
+  });
+
   it("rejects background Matrix SDK dispatches and implicit funded batches", async () => {
     const homePath = makeHomePath();
     writeFileSync(join(homePath, "system/config.json"), "{}");
