@@ -13,6 +13,7 @@ import {
 } from "@renderer/lib/hugeicons";
 import type { TabKind } from "../../stores/tabs";
 import { OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
+import { bundledDesktopIconForPath } from "./bundled-app-icons";
 import vscodeIconUrl from "../../../../../../shell/public/vscode.png";
 
 const APPEARANCE = OS_VIEW_FIXED_APP_APPEARANCES;
@@ -46,6 +47,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "work",
     path: "__chat__",
+    iconUrl: bundledDesktopIconForPath("__chat__"),
     kind: "work",
     icon: MessageSquare,
     name: "Chat",
@@ -55,6 +57,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "terminal",
     path: "__terminal__",
+    iconUrl: bundledDesktopIconForPath("__terminal__"),
     kind: "terminals",
     icon: SquareTerminal,
     name: "Terminal",
@@ -64,6 +67,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "files",
     path: "__file-browser__",
+    iconUrl: bundledDesktopIconForPath("__file-browser__"),
     kind: "files",
     icon: FolderTree,
     name: "Files",
@@ -73,6 +77,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "editor",
     path: "__editor__",
+    iconUrl: bundledDesktopIconForPath("__editor__"),
     kind: "editor",
     icon: FilePenLine,
     name: "Editor",
@@ -92,6 +97,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "settings",
     path: "__settings__",
+    iconUrl: bundledDesktopIconForPath("__settings__"),
     kind: "settings",
     icon: Settings,
     name: "Settings",
@@ -101,6 +107,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "plugins",
     path: "__plugins__",
+    iconUrl: bundledDesktopIconForPath("__plugins__"),
     kind: "settings",
     icon: Blocks,
     name: "Plugins",
@@ -111,6 +118,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "browser",
     path: "__browser__",
+    iconUrl: bundledDesktopIconForPath("__browser__"),
     kind: "browser",
     icon: Globe2,
     name: "Browser",
@@ -120,6 +128,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "notes",
     path: "apps/notes/index.html",
+    iconUrl: bundledDesktopIconForPath("apps/notes/index.html"),
     kind: "notes",
     icon: Notebook,
     name: "Notes",
@@ -129,6 +138,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   {
     id: "whiteboard",
     path: "apps/whiteboard/index.html",
+    iconUrl: bundledDesktopIconForPath("apps/whiteboard/index.html"),
     kind: "app",
     icon: BrushIcon,
     name: "Whiteboard",

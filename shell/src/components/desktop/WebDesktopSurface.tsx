@@ -9,6 +9,8 @@ import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
+  osViewIconUrlForApp,
+  osViewFixedAppAppearanceForPath,
 } from "@matrix-os/contracts";
 import {
   Blocks,
@@ -24,6 +26,8 @@ import {
   SquareTerminal,
   type LucideIcon,
 } from "@/lib/hugeicons";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
+import { getGatewayUrl } from "@/lib/gateway";
 import { WebDesktopHeader } from "./WebDesktopHeader";
 import type { WebDesktopSettingsSection } from "./WebDesktopControls";
 
@@ -96,18 +100,19 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
 function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: string }) {
   const appearance = desktopAppearanceForApp(app);
   const Glyph = appearance.icon;
-  const isCanonicalDesktopApp = app.path.startsWith("__");
+  const iconUrl = osViewIconUrlForApp(app, getGatewayUrl());
+  const { showImage, onError } = useIconWithFallback(iconUrl);
   return (
     <span
       data-desktop-app-icon
       className={`flex items-center justify-center overflow-hidden border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)] ${className}`}
       style={{ background: appearance.color, color: appearance.iconColor }}
     >
-      {app.iconUrl && (!isCanonicalDesktopApp || app.path === "__vscode__") ? (
+      {showImage && iconUrl ? (
         // Gateway-owned app icons can change at runtime and are already
         // versioned by ETag, so Next/Image cannot statically optimize them.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={app.iconUrl} alt="" className="size-full object-cover" draggable={false} />
+        <img src={iconUrl} alt="" className="size-full object-cover" draggable={false} onError={onError} />
       ) : (
         <Glyph className="size-[48%]" aria-hidden="true" />
       )}

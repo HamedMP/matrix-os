@@ -1,5 +1,6 @@
+import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { DesktopResourceSharing } from "../files/DesktopResourceSharing";
@@ -52,7 +53,15 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
   );
 }
 
+function BundledIcon({ url, fallback }: { url?: string; fallback: ReactNode }) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  return url && failedUrl !== url
+    ? <img src={url} alt="" className="size-full rounded-[18px] object-cover" draggable={false} onError={() => setFailedUrl(url)} />
+    : <>{fallback}</>;
+}
+
 function OsViewDestinationIcon({ path }: { path: string }) {
+  const artwork = bundledDesktopIconForPath(path);
   const appearance = osViewFixedAppAppearanceForPath(path);
   const Icon = appearance?.icon === "monitor" ? Monitor : LayoutGrid;
   return (
@@ -64,7 +73,7 @@ function OsViewDestinationIcon({ path }: { path: string }) {
         color: appearance?.foreground ?? "#BED77B",
       }}
     >
-      <Icon size={32} aria-hidden="true" />
+      <BundledIcon url={artwork} fallback={<Icon size={32} aria-hidden="true" />} />
     </span>
   );
 }
@@ -341,15 +350,13 @@ export default function AppLauncher({
                         color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
                       }}
                     >
-                      <Plus size={40} aria-hidden="true" />
+                      <BundledIcon url={bundledDesktopIconForPath("__create-app__")} fallback={<Plus size={40} aria-hidden="true" />} />
                     </span>
                   ) : entry.type === "os-view" ? (
                     <OsViewDestinationIcon path={entry.key} />
                   ) : entry.type === "fixed" ? (
                     <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
-                      {entry.app.iconUrl
-                        ? <img src={entry.app.iconUrl} alt="" className="size-full rounded-[18px] object-cover" draggable={false} />
-                        : <entry.app.icon size={32} aria-hidden="true" />}
+                      <BundledIcon url={entry.app.iconUrl} fallback={<entry.app.icon size={32} aria-hidden="true" />} />
                     </span>
                   ) : (
                     <AppIcon url={appIconUrl(platformHost, entry.app, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />

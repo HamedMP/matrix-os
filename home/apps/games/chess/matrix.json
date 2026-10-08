@@ -3,7 +3,7 @@
   "description": "Local two-player chess with full legal-move validation, SAN history, and saved games.",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "chess",
   "author": "system",
   "version": "1.0.0",
   "tags": [

@@ -74,14 +74,14 @@ describe("Tetris app", () => {
     Reflect.deleteProperty(window, "MatrixOS");
   });
 
-  it("uses the shipped shared game icon", () => {
+  it("uses its distinct shipped Tetris icon", () => {
     const repoRoot = join(__dirname, "..", "..");
     const manifest = JSON.parse(
       readFileSync(join(repoRoot, "home/apps/games/tetris/matrix.json"), "utf-8"),
     ) as { icon?: string };
 
-    expect(manifest.icon).toBe("game-center");
-    expect(existsSync(join(repoRoot, "home/system/icons/game-center.png"))).toBe(true);
+    expect(manifest.icon).toBe("tetris");
+    expect(existsSync(join(repoRoot, `home/system/icons/${manifest.icon}.png`))).toBe(true);
   });
 
   it("renders a 10x20 playfield and loads the best score from Matrix Postgres", async () => {

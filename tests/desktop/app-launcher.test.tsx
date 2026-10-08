@@ -132,11 +132,14 @@ describe("AppLauncher", () => {
     expect(onSwitchOsView).toHaveBeenCalledWith("canvas");
 
     const canvas = screen.getByRole("button", { name: "Canvas" });
+    const image = canvas.querySelector("img")!;
+    expect(image.getAttribute("src")).toContain("canvas.png");
+    fireEvent.error(image);
     expect(canvas.querySelector("img")).toBeNull();
     expect(canvas.querySelector("svg")).toBeTruthy();
   });
 
-  it("keeps core system vectors while allowing app artwork for Notes", () => {
+  it("uses bundled core artwork while preserving owner artwork for Notes", () => {
     clearDesktopApps();
     seedDesktopApps([
       { slug: "chat", name: "Chat" },
@@ -146,6 +149,9 @@ describe("AppLauncher", () => {
     render(<AppLauncher presentation="launchpad" />);
 
     const chat = screen.getByRole("button", { name: "Chat" });
+    const image = chat.querySelector("img")!;
+    expect(image.getAttribute("src")).toContain("chat.png");
+    fireEvent.error(image);
     expect(chat.querySelector("svg")).toBeTruthy();
     expect(chat.querySelector("img")).toBeNull();
 
