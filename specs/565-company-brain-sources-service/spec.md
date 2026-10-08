@@ -94,14 +94,16 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
   finishes, 120 s at most). Store writes keep their 5 s lock and 15 s statement deadlines.
 - Concurrent access: connects of one kind in one scope run one at a time per process; across processes a later
   create sees the earlier one and removes itself when over the cap. Update and remove are compare-and-set on the
-  source revision. One sync per source per process (runner guard); across processes the cursor compare-and-set
+  source revision; an update saves its config in the same transaction, so a client that reads the new revision reads
+  the new config and a failed save changes nothing. One sync per source per process (runner guard); across processes the cursor compare-and-set
   decides.
 - Crash recovery: a crash between `createSource` and `saveConfig` leaves a source without a config: its sync is
   `source_config_invalid` and connecting the same identity again stores the config. A crashed run's receipt is closed
   as interrupted by the next run.
 - Error propagation: a failed rollback is logged and the original error answers; a receipt that could not be closed
   answers the run with `receipt: null`; a run that ended before a receipt is 409 `sync_in_progress`, 404 for a source
-  that vanished, a 200 failed view for a paused source and 503 otherwise.
+  that vanished, a 200 failed view for a paused source (git included) and 503 otherwise. A git source other than the
+  project's (a registration race left two) is 409 `source_conflict`.
 
 ## Resource management
 
@@ -122,7 +124,8 @@ folder; the handlers read their providers (specs 558 to 560).
 - **Source of truth**: `brain_sources` and receipts in the core store, configs in each kind's table; this folder
   owns no table and writes documents only through the runner.
 - **Lock/transaction scope**: each store write is one repository transaction under the core scope lock; config
-  writes take the kind's own feature lock; no transaction spans a provider call.
+  writes take the kind's own feature lock, and an update's config write runs inside the source update's transaction
+  (core lock, then the kind's lock); no transaction spans a provider call.
 - **Acceptable orphan states**: a source without a config after a crash mid-connect (repaired by connecting again);
   config rows of removed sources until the scope is erased; earlier document revisions until the source is removed.
 - **Auth source of truth**: the request principal resolved to the caller's own project scope.
@@ -153,6 +156,6 @@ folder; the handlers read their providers (specs 558 to 560).
 ## Deferred
 
 Scheduled syncs; organization scopes; the Slack capture reader (until then `slack_bridge` reads `not_configured`);
-option lookups for Linear teams, Drive folders and calendars; a handler method for the calendar "event bodies turned
-off" rule, which lives in `service.ts` today; a Postgres test of two gateways connecting one kind in the same
+option lookups for Linear teams, Drive folders and calendars; a handler method for the reconnect rules (calendar
+event bodies turned off, GitHub `since` or `include` changed), which live in `service.ts` today; a Postgres test of two gateways connecting one kind in the same
 millisecond.
