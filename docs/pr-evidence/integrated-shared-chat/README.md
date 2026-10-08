@@ -22,7 +22,7 @@ This is a real Electron 41 capture under Xvfb, using the production main, preloa
 
 ![Electron Desktop Ask AI queue](electron-desktop.png)
 
-The same production journey opens **Collaboration access** and verifies the persisted Contributor AI policy. It proves that contributors can send prompts using the owner's selected source, that the saved source is **Owner Claude account**, and that the saved model is **claude-sonnet-5**. The dialog also shows the organization-only sharing boundary and the Contributor/Viewer distinction.
+The same production journey opens **Collaboration access** and verifies the persisted Contributor AI policy. It proves that contributors can send prompts using the owner's selected source, that the saved source is **Owner Claude account**, and that the saved model is **claude-sonnet-5**. The exact-head capture shows **Contributor** selected by default in the access picker, while the adjacent copy preserves **Viewer** as the explicit read-only choice. The dialog also shows the organization-only sharing boundary.
 
 ![Electron Desktop saved Contributor AI policy](contributor-ai-electron-desktop.png)
 
