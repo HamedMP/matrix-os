@@ -95,6 +95,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const { records, update: updateUnreadRecords, refresh: refreshUnread } = unreadNavigation;
   const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[], invalidateUnread = true) => {
     updateUnreadRecords(update, invalidateUnread);
+    // Streaming content updates selected detail and known unread rows. Durable
+    // changes reconcile global membership without invalidating a cold snapshot
+    // for every token (including content for rows outside the loaded window).
+    if (!invalidateUnread) return;
     navigation.store?.update(current => {
       const updated = update(current);
       if (updated === current) return current;

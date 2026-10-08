@@ -154,6 +154,34 @@ describe("Web unread navigation", () => {
     });
     await waitFor(() => expect(unreadFetch).toHaveBeenCalledTimes(4));
   });
+  it.each([false, true])("does not restart a pending global snapshot for streaming content (known row=%s)", async known => {
+    const source = item("chat_known");
+    const { id, title, lifecycle, attention, revision, messageCount, createdAt, updatedAt } = source.chat;
+    const value = { version: 1 as const, truncated: false, items: [{
+      chat: { id, title, lifecycle, attention, revision, messageCount, createdAt, updatedAt },
+      readState: source.readState, classification: { kind: "ordinary" as const }, persistence: "personal" as const,
+    }] };
+    const pending = deferred<typeof value>();
+    const load = vi.fn(async () => value);
+    state.navigation.store = createChatNavigationStore({ load });
+    if (known) await state.navigation.store.ensure();
+    load.mockImplementationOnce(() => pending.promise);
+    const request = state.navigation.store.refresh();
+    const hook = mount();
+    for (let index = 0; index < 4; index++) {
+      const recordValue = record("chat_known");
+      recordValue.chat = { ...recordValue.chat, title: "Streaming title", titleVersion: index + 2, revision: index + 2 };
+      const event = { cursor: index + 1, chatId: recordValue.chat.id, revision: recordValue.chat.revision, eventType: "run.message" as const, createdAt: recordValue.chat.createdAt };
+      await act(async () => {
+        for (const listener of [...state.listeners]) listener({ type: "chat.changed", ...event,
+          content: { type: "chat.content", event, content: { record: recordValue } } });
+      });
+    }
+    await act(async () => { pending.resolve(value); await request; });
+    expect(load).toHaveBeenCalledTimes(known ? 2 : 1);
+    expect(state.navigation.store.getSnapshot().items.map(item => item.chat.id)).toEqual(["chat_known"]);
+    expect(hook.result.current.messages).toEqual([]);
+  });
   it("refreshes unread membership for non-stream content and applies read-state changes immediately", async () => {
     state.navigation.truncated = true;
     unreadFetch.mockResolvedValueOnce(Response.json({ items: [record("chat_known")] }));
