@@ -25,7 +25,7 @@ completed account deletion and any nonterminal or unknown machine/slot obligatio
 even if old obligation owner metadata differs. A settled label without actual
 cost is insufficient evidence of financial closure.
 
-Return no-store strict version-1 configuration containing only enabled=true,
+Return no-store strict version-1 configuration containing only enabled="true",
 the reviewed untagged production Relay HTTPS origin, a current-epoch runtime
 credential and the fixed canonical Platform origin. Bind machine, handle,
 slot, epoch and source SHA; response validity is at most 30 seconds and bounded
@@ -37,6 +37,36 @@ preflight still rejects expired windows, and malformed settings still fail start
 Reject extra fields, query parameters and arbitrary
 commands, paths, environment values, provider models or budgets. Errors stay
 coarse and logs never contain credentials.
+
+### Route authorization matrix
+
+| Route / resource | Authentication and authorization | Public |
+| --- | --- | --- |
+| `GET /internal/containers/:handle/funded-host-config` | Machine Sync HMAC bearer plus matching UUID, primary slot and current epoch; fresh machine, owner, policy and financial admission | No |
+| `POST /vps/deploy` | Existing Platform-secret bearer; reviewed single handle and registered immutable version | No |
+| `GET /system-bundles/releases/:version.json` | Existing public release-metadata read; validated immutable version; no owner session or machine token | Yes |
+| Exact presigned R2 archive URL returned by release metadata | Validated signed object-read capability, exact version namespace and pinned public TLS transport; never forward Platform credentials | Capability URL only |
+
+The release-metadata read is public; the archive capability grants only the
+identified object read. Neither authorizes funded configuration or maintenance.
+
+### Concrete resource and timeout limits
+
+The protected host HTTPS transport uses a 15-second socket timeout for metadata,
+configuration and archive requests. Metadata/configuration body reads have a
+15-second monotonic deadline starting after response headers; archive body reads
+have a 180-second deadline. Each read is still subject to the socket timeout:
+these are phase deadlines, not a total request wall-clock cap. Requests reject
+redirects and response bodies above their fixed limits. The archive is at most
+2 GiB; hashing the held snapshot and decoding its at-most-20-GiB expansion each
+have a separate 180-second deadline. Temporary snapshots are removed on exit.
+
+Fixed systemd-control subprocesses have 10-second timeouts. The maintenance unit
+has `TimeoutStartSec=180`; its protected stop-post recovery restores recorded
+service state. Platform admission sets a local PostgreSQL statement timeout of
+5 seconds inside the read-only transaction. That bounds individual statements,
+not pool acquisition or the complete transaction. Response validity remains at
+most 30 seconds and is rechecked at host admission before any mutation.
 
 ## Host execution and release trust
 
@@ -175,9 +205,17 @@ untagged production service. These settings do not reset existing probe limits.
 Response has exactly `contractVersion:1`, `kind:"matrix-funded-host-config"`,
 `source:"platform"`, `sourceSha`, `issuedAt`, `expiresAt`, `identity` and
 `configuration`. Identity has exactly handle, machineId, runtimeSlot and
-runtimeTokenEpoch. Configuration has exactly the four `MATRIX_FUNDED_AI_*`
-fields described above. The credential is 64 lowercase hex and expiry is
-strictly later than issuance, no more than 30 seconds later.
+runtimeTokenEpoch. Configuration has exactly these four string-valued fields:
+
+| Field | Wire type and allowed value |
+| --- | --- |
+| `MATRIX_FUNDED_AI_ENABLED` | Literal string `"true"`, never a JSON boolean |
+| `MATRIX_FUNDED_AI_RELAY_URL` | Reviewed untagged production HTTPS origin matching `^https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app$`; maximum 256 characters; no path/query/fragment |
+| `MATRIX_FUNDED_AI_RUNTIME_TOKEN` | String matching `^[a-f0-9]{64}$`, derived for the admitted current machine/slot/epoch |
+| `MATRIX_FUNDED_AI_PLATFORM_URL` | Literal string `"https://app.matrix-os.com"` |
+
+No unknown configuration fields are accepted. Expiry is strictly later than
+issuance, no more than 30 seconds later.
 
 ```ts
 const response = FundedHostConfigResponseSchema.parse(untrustedResponse);
