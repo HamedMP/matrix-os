@@ -79,7 +79,10 @@ function messageLine(message: BrainMatrixChatMessage): string | null {
     ? [part.text] : [])).join("\n")).trim();
   if (text === "") return null;
   const time = messageAt(message).slice(11, 16);
-  return `[${time}] ${message.role}: ${text.slice(0, L.chatMessageMaxChars)}`;
+  // A cut through an emoji would leave half of it, which the store refuses: the half is dropped.
+  let cut = text.slice(0, L.chatMessageMaxChars);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `[${time}] ${message.role}: ${cut}`;
 }
 
 function addMessage(group: ChatGroup, message: BrainMatrixChatMessage, ownerId: string): void {
