@@ -87,6 +87,12 @@ describe("brain search hybrid", { timeout: 60_000 }, () => {
     expect([...first.items, ...second.items].map((item) => item.hitId)).toEqual(all.slice(0, 2));
     await expect(search({ q: "money ledger", mode: "text", cursor: first.nextCursor! }))
       .rejects.toMatchObject({ code: "invalid_request" });
+    // A cursor of another query is refused before the query is sent to the provider.
+    const calls = provider.calls.length;
+    for (const q of ["money", "!!!"]) {
+      await expect(search({ q, mode: "hybrid", cursor: first.nextCursor! })).rejects.toMatchObject({ code: "invalid_request" });
+    }
+    expect(provider.calls.length).toBe(calls);
     const empty: BrainVectorStore = { replaceChunks: vectors.replaceChunks, nearest: async () => [] };
     expect((await search({ q: "money ledger" }, { vectors: empty })).items.every((item) => item.matchedBy[0] === "text"))
       .toBe(true);

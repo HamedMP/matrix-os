@@ -112,6 +112,12 @@ describe("brain search service", { timeout: 60_000 }, () => {
     expect(seen).toEqual(all);
     const first = await search({ q: "alpha", limit: 1 });
     await expect(search({ q: "ledger", limit: 1, cursor: first.nextCursor! })).rejects.toMatchObject({ code: "invalid_request" });
+    // A query with no term left to rank still checks its cursor.
+    for (const cursor of ["garbage", "!", first.nextCursor!]) {
+      for (const mode of ["text", "auto"] as const) {
+        await expect(search({ q: "!!!", mode, cursor })).rejects.toMatchObject({ code: "invalid_request" });
+      }
+    }
   });
 
   it("reports empty queries, dropped terms, a lagging index, stale claims and missing projects", async () => {
