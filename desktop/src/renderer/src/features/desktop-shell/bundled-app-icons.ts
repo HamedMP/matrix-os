@@ -1,4 +1,4 @@
-import { osViewBundledIconUrlForPath } from "@matrix-os/contracts";
+import { osViewBundledIconUrlForPath, osViewUsesBundledArtworkForLegacyIcon } from "@matrix-os/contracts";
 import { appIconUrl, type MatrixApp } from "../apps/apps.api";
 import type { Tab } from "../../stores/tabs";
 import icon0 from "../../../../../../shell/public/system-app-icons/v2/chat.png";
@@ -46,7 +46,8 @@ export function desktopTabsWithLiveAppArtwork(
       : tab.kind === "app" && tab.slug === "whiteboard" ? "apps/whiteboard/index.html" : undefined;
     const installed = path && installedApps.find((app) => app.path === path);
     if (!path || !installed) return tab;
-    const icon = (installed.iconUrl ? appIconUrl(platformHost, installed, runtimeSlot) : null)
+    const icon = (installed.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path, iconUrl: installed.iconUrl })
+      ? appIconUrl(platformHost, installed, runtimeSlot) : null)
       ?? bundledDesktopIconForPath(path);
     return icon === tab.icon ? tab : { ...tab, icon };
   });

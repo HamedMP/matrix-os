@@ -110,11 +110,18 @@ export function osViewBundledIconUrlForPath(path: string): string | undefined {
 }
 
 /** Explicit owner artwork is authoritative; bundled artwork fills missing selections. */
+export function osViewUsesBundledArtworkForLegacyIcon(app: { path: string; iconUrl?: string }): boolean {
+  const id = OS_VIEW_FIXED_APP_ID_BY_PATH[app.path];
+  if (id !== "notes" && id !== "whiteboard") return false;
+  return typeof app.iconUrl === "string"
+    && new RegExp(`(?:^|/)icons/${id}\\.(?:png|svg)(?:\\?[^#]*)?(?:#.*)?$`).test(app.iconUrl);
+}
+
 export function osViewIconUrlForApp(
   app: { path: string; iconUrl?: string },
   bundledAssetBaseUrl?: string,
 ): string | undefined {
-  if (app.iconUrl != null) return app.iconUrl;
+  if (app.iconUrl != null && !osViewUsesBundledArtworkForLegacyIcon(app)) return app.iconUrl;
   const bundledIconUrl = osViewBundledIconUrlForPath(app.path);
   return bundledIconUrl && bundledAssetBaseUrl
     ? `${bundledAssetBaseUrl.replace(/\/+$/, "")}${bundledIconUrl}`

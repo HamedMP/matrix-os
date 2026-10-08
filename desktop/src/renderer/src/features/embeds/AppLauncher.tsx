@@ -13,6 +13,7 @@ import {
   OS_VIEW_LABELS,
   clampOsViewContextMenuPoint,
   osViewFixedAppAppearanceForPath,
+  osViewUsesBundledArtworkForLegacyIcon,
   otherOsViewMode,
   type OsViewMode,
   type OsViewDesktopAddResult,
@@ -164,7 +165,7 @@ export default function AppLauncher({
           type: "fixed" as const,
           key: app.path,
           name: app.name,
-          app: installed && appearance?.iconSource === "app"
+          app: installed?.iconUrl && appearance?.iconSource === "app" && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
             ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
             : app,
         };

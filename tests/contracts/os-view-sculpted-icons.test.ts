@@ -17,6 +17,12 @@ describe('bundled Matrix app artwork', () => {
   it.each(['/icons/owner.png', 'https://owner.example/art.png?revision=2', 'data:image/png;base64,owner'])('preserves selected owner URL %s verbatim with a runtime base', (iconUrl) => {
     expect(osViewIconUrlForApp({ path: '__terminal__', iconUrl }, 'https://app.matrix-os.com/vm/pr-2294')).toBe(iconUrl);
   });
+  it.each(['notes', 'whiteboard'])('replaces the legacy %s icon URL with bundled artwork', (slug) => {
+    expect(osViewIconUrlForApp({ path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }, 'https://runtime.example.com'))
+      .toBe(`https://runtime.example.com/system-app-icons/v2/${slug}.png`);
+    expect(osViewIconUrlForApp({ path: `apps/${slug}/index.html`, iconUrl: `/icons/owner-${slug}.png?v=selected` }, 'https://runtime.example.com'))
+      .toBe(`/icons/owner-${slug}.png?v=selected`);
+  });
   it('uses the same identity across launchers while preserving owner artwork and third-party logos', () => {
     expect(osViewIconUrlForApp({ path: '__terminal__', iconUrl: '/icons/terminal.svg' })).toBe('/icons/terminal.svg');
     expect(osViewIconUrlForApp({ path: 'apps/notes/index.html', iconUrl: '/icons/my-notes.png' })).toBe('/icons/my-notes.png');

@@ -138,7 +138,7 @@ describe("AppLauncher", () => {
     expect(canvas.querySelector("svg")).toBeTruthy();
   });
 
-  it("uses bundled core artwork while preserving owner artwork for Notes", () => {
+  it("uses bundled core artwork for Notes when no custom icon is selected", () => {
     clearDesktopApps();
     seedDesktopApps([
       { slug: "chat", name: "Chat" },
@@ -156,7 +156,20 @@ describe("AppLauncher", () => {
     expect(chat.querySelector("img")).toBeNull();
 
     const notes = screen.getByRole("button", { name: "Notes" });
-    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/icons/notes.png");
+    expect(notes.querySelector("img")?.getAttribute("src")).toContain("/system-app-icons/v2/notes.png");
+  });
+  it.each(["notes", "whiteboard"])("replaces the legacy %s icon in the launchpad while preserving a custom selection", (slug) => {
+    const name = slug === "notes" ? "Notes" : "Whiteboard";
+    clearDesktopApps();
+    seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }]);
+    const view = render(<AppLauncher presentation="launchpad" />);
+    expect(screen.getByRole("button", { name }).querySelector("img")?.getAttribute("src"))
+      .toContain(`/system-app-icons/v2/${slug}.png`);
+    view.unmount();
+    seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/owner-${slug}.svg?v=selected` }]);
+    render(<AppLauncher presentation="launchpad" />);
+    expect(screen.getByRole("button", { name }).querySelector("img")?.getAttribute("src"))
+      .toContain(`/icons/owner-${slug}.svg?v=selected`);
   });
 
   it("offers Desktop from Canvas and keeps the OS-view destination launcher-only", () => {

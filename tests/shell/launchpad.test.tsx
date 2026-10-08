@@ -277,9 +277,9 @@ describe("Launchpad (macos-glass launcher)", () => {
       .toBe(`${getGatewayUrl()}/system-app-icons/v2/create-app.png`);
     expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")?.getAttribute("src"))
       .toBe("/icons/browser.png");
-    // Notes may have owner-provided artwork; keep it instead of overwriting it.
+    // The shipped legacy Notes icon is replaced by the new bundled artwork.
     expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
-      .toBe("/icons/notes.png");
+      .toBe(`${getGatewayUrl()}/system-app-icons/v2/notes.png`);
   });
 
   it("launches Create app through the dedicated first tile", async () => {

@@ -26,6 +26,7 @@ import { useDesktopIcons } from "../../stores/desktop-icons";
 import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
+  osViewUsesBundledArtworkForLegacyIcon,
   type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -259,7 +260,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const fixedApps = FIXED_DESKTOP_APPS.map((app) => {
       if (app.id !== "notes" && app.id !== "whiteboard") return app;
       const installed = installedApps.find((candidate) => candidate.path === app.path);
-      return installed?.iconUrl
+      return installed?.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
         ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
         : app;
     });

@@ -1405,6 +1405,7 @@ export {
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
   osViewBundledIconUrlForPath,
+  osViewUsesBundledArtworkForLegacyIcon,
   osViewIconUrlForApp,
   normalizeOsViewDesktopAppPath,
   normalizeOsViewDesktopIcons,
