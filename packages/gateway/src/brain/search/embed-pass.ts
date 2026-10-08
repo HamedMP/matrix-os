@@ -5,15 +5,16 @@
  * Before each call: the signal and time budget, the refresh's token and cost budget, and the store's room net of the
  * rows the group's documents already hold. A provider that is not configured, refuses the key or is unavailable ends
  * the pass and records nothing; any other failure of a group of several documents retries them one by one, and one
- * document's failure is recorded on its row and ends the pass. A pass that paid anything logs its tokens, cost and
- * early stop (counts only, never ids or text), even when it then throws: the hook listener, the job step and the
- * index catch-up run it too, and only the refresh route returns the figures.
+ * document's failure is recorded on its row and ends the pass. Vectors are stored, and the row marked, only while the
+ * row still holds the claims set they were embedded for. A pass that paid anything logs its tokens, cost and early
+ * stop (counts only, never ids or text), even when it then throws: the hook listener, the job step and the index
+ * catch-up run it too, and only the refresh route returns the figures.
  */
 import type { Kysely } from "kysely";
 import type { BrainEmbeddingsProvider, BrainRefreshStopReason } from "../contracts.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
 import {
-  markEmbedding, selectEmbedSources, withSearchRead, withSearchScopeWrite, type BrainSearchOrphan,
+  markEmbedding, selectEmbedSources, withSearchRead, withSearchScopeWrite, type BrainSearchEmbedCandidate,
 } from "./index-sql.js";
 import {
   BRAIN_SEARCH_EMBED_BATCH_MAX, BRAIN_SEARCH_EMBED_REFRESH_BUDGET, BrainEmbeddingsError, BrainSearchVectorCapError,
@@ -72,7 +73,7 @@ export interface BrainEmbedPassResult {
 
 /** kept: per chunk, the stored vector of its text, or null when the chunk is sent. */
 interface Job {
-  readonly built: BrainSearchOrphan; readonly chunks: readonly BrainEmbedChunk[];
+  readonly built: BrainSearchEmbedCandidate; readonly chunks: readonly BrainEmbedChunk[];
   readonly kept: readonly (readonly number[] | null)[];
 }
 type Outcome = "embedded" | "split" | "stopped" | "failed" | "aborted" | "vector_cap";
@@ -82,7 +83,7 @@ type Usage = { tokens: number; costMicroUsd: number };
 const sent = (job: Job): BrainEmbedChunk[] => job.chunks.filter((_, index) => job.kept[index] === null);
 
 /** The batch's documents still live at the candidate's (incarnation, revision), in candidate order. */
-async function loadJobs(context: BrainEmbedPassContext, batch: readonly BrainSearchOrphan[]): Promise<Job[]> {
+async function loadJobs(context: BrainEmbedPassContext, batch: readonly BrainSearchEmbedCandidate[]): Promise<Job[]> {
   const rows = await withSearchRead(context.db, (trx) => selectEmbedSources(trx, context.scope,
     context.target, batch.map((built) => built.documentId)));
   const live: Omit<Job, "kept">[] = [];
@@ -118,13 +119,16 @@ function groupJobs(jobs: readonly Job[], size: number): Job[][] {
   return groups;
 }
 
-/** Stores one document's vectors (kept and fresh) and marks its row; a document erased meanwhile is skipped. */
+/**
+ * Stores one document's vectors (kept and fresh) and marks its row; a document erased meanwhile is skipped, and so is
+ * one whose row was rebuilt for another claims set (the store and the mark both check the claims key).
+ */
 async function write(context: BrainEmbedPassContext, job: Job, fresh: readonly number[][]): Promise<Outcome> {
   let at = 0;
   try {
     await context.meaning.vectors.replaceChunks(context.scope, {
       documentId: job.built.documentId, incarnation: job.built.incarnation, revision: job.built.revision,
-      providerId: context.meaning.provider.providerId,
+      claimsKey: job.built.claimsKey, providerId: context.meaning.provider.providerId,
       chunks: job.chunks.map((chunk, index) => ({ spanStart: chunk.spanStart, spanEnd: chunk.spanEnd,
         textKey: chunk.textKey, vector: job.kept[index] ?? fresh[at++]! })),
     });
@@ -166,7 +170,7 @@ async function embedGroup(context: BrainEmbedPassContext, group: readonly Job[],
 
 /** The pass, its spend logged once it ends (see the header). */
 export async function runBrainEmbedPass(
-  context: BrainEmbedPassContext, candidates: readonly BrainSearchOrphan[],
+  context: BrainEmbedPassContext, candidates: readonly BrainSearchEmbedCandidate[],
 ): Promise<BrainEmbedPassResult> {
   const usage: Usage = { tokens: 0, costMicroUsd: 0 };
   let result: BrainEmbedPassResult | null = null;
@@ -182,7 +186,7 @@ export async function runBrainEmbedPass(
 }
 
 async function embedCandidates(
-  context: BrainEmbedPassContext, candidates: readonly BrainSearchOrphan[], usage: Usage,
+  context: BrainEmbedPassContext, candidates: readonly BrainSearchEmbedCandidate[], usage: Usage,
 ): Promise<BrainEmbedPassResult> {
   const { provider, vectors } = context.meaning;
   const size = Math.min(provider.maxBatch, BRAIN_SEARCH_EMBED_BATCH_MAX);

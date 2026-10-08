@@ -36,7 +36,8 @@ weights and seams are `contracts/search.ts`; this spec adds the rest.
   NaN or infinity). Vectors are scaled to unit length on write (a zero vector is not stored) and rounded to float4.
 - Both vector tables keep `text_key` (the first 32 hex characters of the SHA-256 of the chunk text sent; added with
   `ADD COLUMN IF NOT EXISTS`), so a chunk whose text is unchanged keeps its vector. A store write runs, under the
-  search lock, only while the document is live at the input's `(incarnation, revision)`; otherwise it changes nothing.
+  search lock, only while the document is live at the input's `(incarnation, revision)` and, when the input carries
+  the `claims_key` it was embedded for, the search row still holds it; otherwise it changes nothing.
 - Store choice: the pgvector store when the bootstrap found the extension, else the array store. Capability `vector`
   is `available` when a provider with sane bounds and a store exist, and then the view also carries `store`
   (`pgvector` or `array`). Off, the capability is unchanged: `provider_not_configured` with pgvector,
@@ -193,9 +194,10 @@ service.
 - Provider: a missing or refused key or an outage ends the embedding pass with nothing recorded; search in `auto`
   falls back to text. Free-tier keys hit rate limits during a first index: each refresh embeds what it can and the
   rest stays pending. Two refreshes of one scope at once can embed a document twice (bounded by each budget). Each
-  store write first checks, under the search lock, that the document is still live at the revision it embedded, so
-  a slower pass for an older revision writes nothing and never replaces a newer revision's vectors; marking the row
-  embedded also needs that revision, so the document stays pending until its current revision is stored.
+  store write first checks, under the search lock, that the document is still live at the revision it embedded and
+  that its search row still holds the claims set it embedded, so a slower pass for an older revision or claims set
+  writes nothing and never replaces newer vectors; marking the row embedded also needs that revision and claims set,
+  so the document stays pending until its current ones are stored.
 - Concurrency: writes serialize per scope on the search lock; claims written between rebuild statements leave the
   document pending; search rows reference only `brain_documents`, so a refresh racing an extraction never waits on,
   or deadlocks with, its claim writes. A search ranks, hydrates and reads freshness in one snapshot.
