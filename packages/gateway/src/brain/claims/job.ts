@@ -251,3 +251,102 @@ async function applyOutcome(
   state.counts.claimsRemoved += result.removed;
   return true;
 }
+
+function budgetExhausted(state: Extraction, byteCount: number): boolean {
+  const { limits, usage } = state;
+  if (state.signal?.aborted || state.now() - state.startedAt >= limits.runBudgetMs) return true;
+  if (state.bytesRead > 0 && state.bytesRead + byteCount > limits.bodyBytesPerRun) return true;
+  return state.model !== undefined && (usage.inputTokens + usage.outputTokens >= limits.tokensPerRun
+    || usage.costMicroUsd >= limits.costMicroUsdPerRun);
+}
+
+/** Whether pending documents are left: past this run's page, or kept by a budget, an abort or a revision race. */
+async function processPending(state: Extraction): Promise<boolean> {
+  const { limits, model, provenances } = state;
+  if (provenances?.length === 0) return false;
+  const page = await state.store.listPendingExtractions(state.scope, {
+    extractor: state.extractor, limit: limits.documentsPerRun, maxAttempts: limits.maxAttempts,
+    order: model === undefined ? "oldest" : "newest", ...(provenances === undefined ? {} : { provenances }),
+  }).catch(unavailable);
+  let left = page.hasMore;
+  for (const item of page.items) {
+    if (budgetExhausted(state, item.byteCount)) return true;
+    const document = await state.store.getDocument(state.scope, item.documentId).catch(unavailable);
+    // Gone, or moved on since the listing: a live newer revision is pending again for the next run.
+    const moved = document?.deletedAt !== null || document.incarnation !== item.incarnation;
+    if (moved || document.revision !== item.revision) {
+      left ||= document !== null && document.deletedAt === null;
+      continue;
+    }
+    state.bytesRead += document.byteCount;
+    // The listing already filters by provenance; a store that did not is never trusted with what leaves the gateway.
+    const sendable = model === undefined || MODEL_SENDABLE.has(document.provenance);
+    const outcome = !sendable || (provenances !== undefined && !provenances.includes(document.provenance)) ? NOT_ALLOWED
+      : model === undefined ? rulesOutcome(state, document) : await modelOutcome(state, model, document);
+    if (outcome === null) return true;
+    left = !(await applyOutcome(state, document, outcome)) || left;
+    // Only model_rejected is kept for after its document: a request the API refuses must not fail a whole page.
+    if (state.stopAfter !== null) throw new ExtractionStop("model_rejected", { cause: state.stopAfter });
+  }
+  return left;
+}
+
+async function runOpened(state: Extraction): Promise<BrainExtractionResult> {
+  let failure: BrainExtractionErrorCode | null = null;
+  let left = false;
+  try {
+    state.startedAt = state.now();
+    if (state.model !== undefined) state.spend = await readBrainModelSpend(state.store, state.scope).catch(unavailable);
+    left = await processPending(state);
+  } catch (error) {
+    failure = error instanceof ExtractionStop ? error.code : "internal_error";
+    logFailure("extraction stopped", error instanceof ExtractionStop ? error.cause : error, failure);
+  }
+  const { counts, usage } = state;
+  const status = failure !== null ? "failed" : counts.documentsFailed > 0 ? "partial" : "succeeded";
+  const caughtUp = failure === null && !left;
+  const nextAction: BrainExtractionNextAction = failure !== null ? NEXT_ACTIONS[failure]
+    : !caughtUp ? "run_again" : counts.documentsFailed > 0 ? "retry_later" : "";
+  const { runId } = state;
+  const close: BrainCloseExtractionRunInput = { runId, status, counts, usage, nextAction, errorCode: failure };
+  let run: BrainExtractionRun | null = null;
+  try {
+    run = await state.store.closeExtractionRun(state.scope, close);
+  } catch (error) {
+    logFailure("run close failed", error, "store_unavailable");
+  }
+  const spend = state.spend === null ? {}
+    : { spend: brainModelSpendView(state.spend, state.limits.spendMicroUsdPer30d, usage.costMicroUsd) };
+  return { status, errorCode: failure, nextAction, extractor: state.extractor, run, counts, usage, caughtUp, ...spend };
+}
+
+/**
+ * Extracts claims for up to limits.documentsPerRun pending documents of one scope. nextAction "run_again": more
+ * documents are pending; "retry_later": some failed and are retried until limits.maxAttempts. Never rejects.
+ */
+export async function runBrainExtraction(options: BrainExtractionOptions): Promise<BrainExtractionResult> {
+  const extraction = parseOptions(options);
+  if ("errorCode" in extraction) return extraction;
+  const key = JSON.stringify([extraction.scope.ownerId, extraction.scope.scopeId]);
+  const paid = extraction.model !== undefined;
+  if (runningExtractions.has(key) || runningExtractions.size >= BRAIN_EXTRACTION_MAX_CONCURRENT_RUNS
+    || (paid && runningModelOwners.has(extraction.scope.ownerId))) {
+    return early("extraction_in_progress", extraction.extractor);
+  }
+  runningExtractions.add(key);
+  if (paid) runningModelOwners.add(extraction.scope.ownerId);
+  try {
+    try {
+      const opened = await extraction.store.openExtractionRun(extraction.scope, { extractor: extraction.extractor });
+      extraction.runId = opened.runId;
+    } catch (error) {
+      const conflict = error instanceof BrainStoreError && error.code === "conflict";
+      if (!conflict) logFailure("run open failed", error, "store_unavailable");
+      return early(conflict ? "extraction_in_progress" : "store_unavailable", extraction.extractor);
+    }
+    return await runOpened(extraction);
+  } finally {
+    runningExtractions.delete(key);
+    if (paid) runningModelOwners.delete(extraction.scope.ownerId);
+  }
+}
