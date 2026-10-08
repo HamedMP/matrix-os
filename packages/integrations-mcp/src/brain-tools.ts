@@ -54,8 +54,9 @@ const CITE_FIELDS = { label: str(400), title: str(4_000), permalink: str(2_048),
 const CITE = z.object({ documentId: str(200), kind: z.enum(BRAIN_CITE_KINDS).catch("document"), ...CITE_FIELDS });
 const FRESH = z.object({ caughtUp: z.boolean(), pendingDocuments: z.number().int().min(0), pendingCapped: z.boolean() });
 const NEXT = { nextCursor: str(1_024).nullable() };
+/** A brief copies a document's assignee ref unchanged; the store keeps refs to 512 UTF-8 bytes (so <= 512 units). */
 const LINE = z.object({
-  text: str(2_000), cites: items(CITE, 8), due: str(32).nullable(), assignee: str(400).nullable(),
+  text: str(2_000), cites: items(CITE, 8), due: str(32).nullable(), assignee: str(512).nullable(),
   severity: SEVERITY.nullable(),
 });
 const IMPACT_CLAIM = z.object({
