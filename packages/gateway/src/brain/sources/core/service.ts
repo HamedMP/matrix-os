@@ -94,11 +94,28 @@ function boundOptions(kind: BrainConnectableSourceKind, view: BrainSourceOptions
   return { kind, items, nextCursor: cursor !== null && cursor.length <= BRAIN_FEATURE_CURSOR_MAX_CHARS ? cursor : null };
 }
 
-/** The store keeps earlier revisions: turning calendar event bodies off removes and reconnects the source. */
-function purgesHistory(kind: BrainConnectableSourceKind, stored: unknown, next: unknown): boolean {
-  const before = stored as { includeEventBodies?: unknown } | null;
-  return kind === "google_calendar" && before?.includeEventBodies === true
-    && (next as { includeEventBodies?: unknown }).includeEventBodies === false;
+type RestartFields = {
+  readonly includeEventBodies?: unknown; readonly since?: unknown;
+  readonly include?: { readonly pullRequests?: unknown; readonly reviews?: unknown; readonly issues?: unknown };
+};
+
+/** What a GitHub source reads: the window start and the item types. */
+function githubReads(config: RestartFields): string {
+  return JSON.stringify([config.since ?? null, config.include?.pullRequests, config.include?.reviews, config.include?.issues]);
+}
+
+/**
+ * Config changes the source's stored documents or cursor cannot follow, so the source is removed and connected again:
+ * calendar event bodies turned off (the store keeps earlier revisions), and a GitHub `since` or `include` change (the
+ * cursor's watermark and done list were read under the old ones, so older items would never be read).
+ */
+function restartsSource(kind: BrainConnectableSourceKind, stored: unknown, next: unknown): boolean {
+  if (stored === null) return false;
+  const before = stored as RestartFields;
+  const after = next as RestartFields;
+  if (kind === "google_calendar") return before.includeEventBodies === true && after.includeEventBodies === false;
+  if (kind !== "github") return false;
+  return githubReads(before) !== githubReads(after);
 }
 
 export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSourcesService {
@@ -271,7 +288,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     await handler.checkConfig?.(scope, config);
     const label = input.label ?? source.label;
     const status = input.status ?? source.status;
-    if (purgesHistory(handler.kind, stored, config)) {
+    if (restartsSource(handler.kind, stored, config)) {
       const again = await queue(queueKey(scope, handler.kind), async () => {
         await afterRemove(scope, await repository.deleteSource(scope, {
           sourceId: source.sourceId, expectedRevision: input.expectedRevision,
