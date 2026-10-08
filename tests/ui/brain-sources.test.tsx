@@ -32,6 +32,7 @@ const KINDS = [
   { kind: "git" as const, available: true, reason: null },
   { kind: "github" as const, available: true, reason: null },
   { kind: "linear" as const, available: true, reason: null },
+  { kind: "matrix_files" as const, available: true, reason: null },
   { kind: "matrix_chat" as const, available: false, reason: "not_connected" as const },
   { kind: "slack_bridge" as const, available: false, reason: "not_configured" as const },
 ];
@@ -153,39 +154,40 @@ describe("Other sources", () => {
 describe("Connect a source", () => {
   it("connects a list kind with a name, caps the choices and closes the form", async () => {
     const sources = vi.fn(async () => ({ items: [], kinds: KINDS }));
-    const teams = Array.from({ length: 21 }, (_, index) => ({ id: `T${index}`, label: `Team ${index}`, detail: index === 0 ? "12 members" : null }));
+    const roots = Array.from({ length: 9 }, (_, index) => ({ id: `docs${index}`, label: `docs${index}`, detail: index === 0 ? "12 files" : null }));
     const api = renderSources({
       gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
       sources,
-      sourceOptions: vi.fn(async () => ({ kind: "linear", nextCursor: "c2", items: teams })),
+      sourceOptions: vi.fn(async () => ({ kind: "matrix_files", nextCursor: "c2", items: roots })),
       connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
     });
     expect(await screen.findByText("No other sources yet.")).toBeTruthy();
     const kind = screen.getByRole("combobox", { name: "Kind" });
     expect(within(kind).getAllByRole("option").map((option) => option.textContent)).toEqual([
-      "Choose a kind", "GitHub", "Linear", "Matrix chats (Connect the account in Settings)",
+      "Choose a kind", "GitHub", "Linear", "Matrix files", "Matrix chats (Connect the account in Settings)",
       "Slack (Not set up on this server)",
     ]);
     const kinds = screen.getByRole("list", { name: "Source kinds" });
     expect(within(kinds).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
-      "GitHubReady", "LinearReady", "Matrix chatsConnect the account in Settings", "SlackNot set up on this server",
+      "GitHubReady", "LinearReady", "Matrix filesReady", "Matrix chatsConnect the account in Settings",
+      "SlackNot set up on this server",
     ]);
-    fireEvent.change(kind, { target: { value: "linear" } });
+    fireEvent.change(kind, { target: { value: "matrix_files" } });
     const connect = screen.getByRole("button", { name: "Connect" });
     expect(connect).toBeDisabled();
-    expect(await screen.findByText("Choose what to include (up to 20)")).toBeTruthy();
-    expect(screen.getByText("Only the first 21 are shown.")).toBeTruthy();
-    expect(api.sourceOptions).toHaveBeenCalledWith(PROJECT, "linear", {});
+    expect(await screen.findByText("Choose what to include (up to 8)")).toBeTruthy();
+    expect(screen.getByText("Only the first 9 are shown.")).toBeTruthy();
+    expect(api.sourceOptions).toHaveBeenCalledWith(PROJECT, "matrix_files", {});
     const boxes = screen.getAllByRole("checkbox");
-    for (const box of boxes.slice(0, 20)) fireEvent.click(box);
-    expect(boxes[20]).toBeDisabled();
-    for (const box of boxes.slice(1, 20)) fireEvent.click(box);
-    expect(boxes[20]).toBeEnabled();
-    fireEvent.change(screen.getByRole("textbox", { name: "Name (optional)" }), { target: { value: " Team " } });
+    for (const box of boxes.slice(0, 8)) fireEvent.click(box);
+    expect(boxes[8]).toBeDisabled();
+    for (const box of boxes.slice(1, 8)) fireEvent.click(box);
+    expect(boxes[8]).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (optional)" }), { target: { value: " Docs " } });
     fireEvent.click(connect);
     await waitFor(() => expect(api.connectSource).toHaveBeenCalledWith(PROJECT, {
-      kind: "linear", label: "Team",
-      config: { teamKeys: ["T0"], include: { issues: true, comments: true, projectUpdates: true } },
+      kind: "matrix_files", label: "Docs",
+      config: { roots: ["docs0"], extensions: ["md", "txt"], maxFileBytes: 262_144 },
     }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Connect" })).toBeNull());
     expect(sources).toHaveBeenCalledTimes(2);
@@ -197,7 +199,7 @@ describe("Connect a source", () => {
       sources: vi.fn(async () => ({ items: [], kinds: KINDS })),
       sourceOptions: vi.fn()
         .mockResolvedValueOnce({ kind: "github", nextCursor: null, items: [{ id: "HamedMP/matrix-os", label: "matrix-os", detail: null }] })
-        .mockResolvedValueOnce({ kind: "linear", nextCursor: null, items: [] })
+        .mockResolvedValueOnce({ kind: "matrix_files", nextCursor: null, items: [] })
         .mockRejectedValueOnce(apiError("server", "source_kind_unsupported")),
       connectSource: vi.fn(async () => { throw apiError("server", "source_not_connected"); }),
     });
@@ -210,11 +212,11 @@ describe("Connect a source", () => {
     expect(api.connectSource).toHaveBeenCalledWith(PROJECT, {
       kind: "github", config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: true, reviews: true, issues: true } },
     });
-    fireEvent.change(kind, { target: { value: "linear" } });
+    fireEvent.change(kind, { target: { value: "matrix_files" } });
     expect(await screen.findByText("Nothing to choose from yet.")).toBeTruthy();
     fireEvent.change(kind, { target: { value: "" } });
     expect(screen.queryByText("Nothing to choose from yet.")).toBeNull();
-    fireEvent.change(kind, { target: { value: "linear" } });
+    fireEvent.change(kind, { target: { value: "matrix_files" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("This source kind is not available.");
   });
 
@@ -271,6 +273,58 @@ describe("Connect a source", () => {
     expect(brainTypedValues("matrix_notes", "x")).toBeNull();
     expect(brainTypedValues("github", "a/..")).toBeNull();
     expect(brainTypedValues("github", "a/b/c")).toBeNull();
-    expect(brainTypedValues("linear", "ENG")).toBeNull();
+    expect(brainTypedValues("linear", " eng, Design ENG ")).toEqual(["ENG", "DESIGN"]);
+    expect(brainTypedValues("linear", "ENG-1")).toBeNull();
+    expect(brainTypedValues("google_drive", "1aB_c-D 1aB_c-D")).toEqual(["1aB_c-D"]);
+    expect(brainTypedValues("google_drive", "folders/1aB")).toBeNull();
+    expect(brainTypedValues("google_calendar", "primary, team@group.calendar.google.com"))
+      .toEqual(["primary", "team@group.calendar.google.com"]);
+    expect(brainTypedValues("google_calendar", "..")).toBeNull();
+    // A kind that is only ever listed has no typed value.
+    expect(brainTypedValues("matrix_files", "")).toEqual([]);
+    expect(brainTypedValues("matrix_files", "docs")).toBeNull();
+  });
+
+  it("types Linear team keys, Drive folder ids and calendar ids, which their handlers never list", async () => {
+    const kinds = (["linear", "google_drive", "google_calendar"] as const).map((kind) => ({ kind, available: true, reason: null }));
+    const api = renderSources({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources: vi.fn(async () => ({ items: [], kinds })),
+      // The gateway's answer for a handler without listOptions.
+      sourceOptions: vi.fn(async (_project: string, kind: string) => ({ kind, nextCursor: null, items: [] })),
+      connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
+    });
+    const choose = async (value: string) => {
+      fireEvent.change(await screen.findByRole("combobox", { name: "Kind" }), { target: { value } });
+    };
+    await choose("linear");
+    const teams = await screen.findByRole("textbox", { name: "Team keys" });
+    expect(screen.queryByText("Nothing to choose from yet.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    fireEvent.change(teams, { target: { value: "ENG-1" } });
+    expect(screen.getByText("Check what you typed.")).toBeTruthy();
+    expect(teams).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    fireEvent.change(teams, { target: { value: "eng, design" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "linear", config: { teamKeys: ["ENG", "DESIGN"], include: { issues: true, comments: true, projectUpdates: true } },
+    }));
+    await choose("google_drive");
+    fireEvent.change(await screen.findByRole("textbox", { name: "Folder ids" }), { target: { value: "1aB_c-D" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "google_drive", config: { folderIds: ["1aB_c-D"] },
+    }));
+    await choose("google_calendar");
+    const calendars = await screen.findByRole("textbox", { name: "Calendar ids" });
+    fireEvent.change(calendars, { target: { value: Array.from({ length: 11 }, (_, index) => `c${index}`).join(" ") } });
+    expect(screen.getByText("Up to 10.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    fireEvent.change(calendars, { target: { value: "primary" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "google_calendar", config: { calendarIds: ["primary"], includeEventBodies: false, pastDays: 14, futureDays: 14 },
+    }));
   });
 });

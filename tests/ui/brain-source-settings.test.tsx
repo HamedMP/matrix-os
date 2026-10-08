@@ -34,10 +34,12 @@ async function pick(kind: string) {
 }
 
 const one = (id: string) => ({ nextCursor: null, items: [{ id, label: id, detail: null }] });
+/** What the gateway answers for a handler without listOptions (Linear, Google Drive, Google Calendar). */
+const none = { nextCursor: null, items: [] };
 
 describe("Connect settings", () => {
   it("lets GitHub and Linear leave out item types, but not all of them", async () => {
-    const api = renderConnect((kind) => ({ kind, ...one(kind === "github" ? "HamedMP/matrix-os" : "ENG") }));
+    const api = renderConnect((kind) => ({ kind, ...(kind === "github" ? one("HamedMP/matrix-os") : none) }));
     await pick("github");
     fireEvent.click(await screen.findByRole("radio", { name: "HamedMP/matrix-os" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Reviews" }));
@@ -48,7 +50,7 @@ describe("Connect settings", () => {
     }));
     await closed();
     await pick("linear");
-    fireEvent.click(await screen.findByRole("checkbox", { name: "ENG" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Team keys" }), { target: { value: "ENG" } });
     for (const name of ["Issues", "Comments", "Project updates"]) fireEvent.click(screen.getByRole("checkbox", { name }));
     expect(screen.getByText("Pick at least one.")).toBeTruthy();
     expect(screen.getByRole("group", { name: "Settings" })).toHaveAccessibleDescription("Pick at least one.");
@@ -62,7 +64,7 @@ describe("Connect settings", () => {
   });
 
   it("sets Matrix file endings and size, and the calendar window", async () => {
-    const api = renderConnect((kind) => ({ kind, ...one(kind === "matrix_files" ? "docs" : "primary") }));
+    const api = renderConnect((kind) => ({ kind, ...(kind === "matrix_files" ? one("docs") : none) }));
     await pick("matrix_files");
     fireEvent.click(await screen.findByRole("checkbox", { name: "docs" }));
     const endings = screen.getByRole("textbox", { name: "File endings" });
@@ -78,7 +80,7 @@ describe("Connect settings", () => {
     }));
     await closed();
     await pick("google_calendar");
-    fireEvent.click(await screen.findByRole("checkbox", { name: "primary" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: "Calendar ids" }), { target: { value: "primary" } });
     const back = screen.getByRole("spinbutton", { name: "Days back" });
     const ahead = screen.getByRole("spinbutton", { name: "Days ahead" });
     fireEvent.change(back, { target: { value: "" } });
@@ -96,7 +98,7 @@ describe("Connect settings", () => {
     }));
     await closed();
     await pick("google_drive");
-    expect(await screen.findByRole("checkbox", { name: "primary" })).toBeTruthy();
+    expect(await screen.findByRole("textbox", { name: "Folder ids" })).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Settings" })).toBeNull();
   });
 
