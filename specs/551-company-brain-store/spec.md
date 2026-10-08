@@ -13,8 +13,9 @@ source has been synced. Every row belongs to exactly one `(ownerId, scopeId)` pa
 and nothing outside that pair can read or change it. A later caller can prove that
 a citation still points at the current revision of a live document.
 
-This increment ships only the store: five `brain_*` Postgres tables (spec 552
-adds a sixth, `brain_document_refs`), their bootstrap, bounded Zod input schemas,
+This increment ships only the store: five `brain_*` Postgres tables, plus the
+four that later specs add to the same bootstrap (nine in all, listed under
+Bootstrap), their bootstrap, bounded Zod input schemas,
 and a `BrainRepository` class that reads and writes them with scope enforcement.
 It adds no HTTP routes, no agent tools, no sync adapters, no extraction, no
 ranking, and no startup wiring. The wiring point is described below and lands in
@@ -23,6 +24,11 @@ PR 2.
 Spec 552 (git source adapter) adds `brain_document_refs` and its lookup index;
 see `specs/552-company-brain-git-source/spec.md`. The table, its limits and the
 store rules that maintain it are part of this store and are described below.
+Spec 553 adds the `brain_documents_recent` index. Spec 554 (claims) adds
+`brain_claims`, `brain_extraction_state` and `brain_extraction_runs`, and spec
+555 adds two cache counters and a billed-runs index to the runs table; their
+columns and rules live in those specs, and the Claim tables section below lists
+only what the bootstrap creates.
 
 ## Scope of this increment
 
@@ -30,7 +36,8 @@ In scope:
 
 - Tables `brain_sources`, `brain_documents`, `brain_document_revisions`,
   `brain_sync_cursors`, `brain_sync_receipts` with CHECK constraints that mirror
-  the limits in `types.ts`.
+  the limits in `types.ts`, plus `brain_document_refs` and the three claim
+  tables created by the same bootstrap.
 - `bootstrapBrainDatabase(db)`: idempotent, concurrency-safe DDL in one transaction.
 - `schemas.ts`: one strict Zod schema per input type, plus `parseBrainInput`.
 - `BrainRepository`: sources, documents with revisions and tombstones, sync
@@ -68,9 +75,11 @@ surface matrix is therefore N/A for PR 1; PR 2 and later carry it where UI ships
 - `scopeId` is opaque text, 1..256 chars, chosen by the caller: a collaboration
   scope uuid (spec 124) for an organization brain, or `personal:<ownerId>`-style
   text for a personal brain. The store does not parse it.
-- Every row in all six tables carries `owner_id` and `scope_id` (1..256 chars
+- Every row in all nine tables carries `owner_id` and `scope_id` (1..256 chars
   each). Every primary key starts with `(owner_id, scope_id, ...)`. Every SELECT,
-  UPDATE, and DELETE carries both predicates. No helper takes a bare id.
+  UPDATE, and DELETE carries both predicates, except spec 555's owner-wide sum of
+  billed `brain_extraction_runs` (owner predicate only, never another owner's
+  rows). No helper takes a bare id.
 - A row whose `(owner_id, scope_id)` differs from the caller's key is invisible.
   A scope mismatch is indistinguishable from a missing row: reads return `null`
   or an empty page, mutations throw `not_found`, and `assertCurrent` throws the
@@ -201,23 +210,42 @@ Index `brain_document_refs_lookup` on `(owner_id, scope_id, kind, value)`. Refs
 are an index over live synced documents only and are never snapshotted into
 revisions.
 
+### Claim tables
+
+Created by `createBrainClaimTables(trx)` (`claims/database.ts`) at the end of the
+bootstrap transaction, because each references `brain_documents`; columns and
+rules are in specs 554 and 555. `brain_claims` (primary key `(owner_id, scope_id,
+claim_id, extractor)`, index `brain_claims_document`), `brain_extraction_state`
+(primary key `(owner_id, scope_id, document_id, extractor)`) and
+`brain_extraction_runs` (primary key `(owner_id, scope_id, run_id)`; the partial
+unique index `brain_extraction_runs_running`, `brain_extraction_runs_started`,
+the partial `brain_extraction_runs_billed`, and `cache_read_tokens` and
+`cache_write_tokens` added with `ADD COLUMN IF NOT EXISTS`). Claims and
+extraction state cascade from `brain_documents`; runs have no foreign key.
+
 ### Bootstrap
 
 `bootstrapBrainDatabase(db)` runs one `db.transaction()` that in order sets
 `SET LOCAL lock_timeout = '5s'`, `SET LOCAL statement_timeout = '30s'`, takes
 `SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('brain_schema'))`,
-then issues the six `CREATE TABLE IF NOT EXISTS` and five `CREATE INDEX IF NOT
-EXISTS` statements. It is idempotent, safe to run from concurrent gateway
+then issues the six store `CREATE TABLE IF NOT EXISTS` and six `CREATE INDEX IF
+NOT EXISTS` statements, and last calls `createBrainClaimTables(trx)`, which
+creates the three claim tables, their two cache-counter columns and four
+indexes. It is idempotent, safe to run from concurrent gateway
 processes, and runs under PGlite. Future schema changes are appended to the same
 function as `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` plus backfill plus `SET NOT
 NULL`, exactly as `chat/database.ts` does. There is no migrations table. The
 #2078 lock key `219784012` is never used.
 
-Exact inventory after bootstrap: tables `brain_document_refs`,
-`brain_document_revisions`, `brain_documents`, `brain_sources`,
-`brain_sync_cursors`, `brain_sync_receipts`; indexes `brain_sources_live_ref`,
-`brain_documents_search`, `brain_documents_source`, `brain_sync_receipts_started`,
-`brain_document_refs_lookup` plus the six `*_pkey`.
+Exact inventory after bootstrap: nine tables `brain_claims`,
+`brain_document_refs`, `brain_document_revisions`, `brain_documents`,
+`brain_extraction_runs`, `brain_extraction_state`, `brain_sources`,
+`brain_sync_cursors`, `brain_sync_receipts`; ten named indexes
+`brain_sources_live_ref`, `brain_documents_search`, `brain_documents_source`,
+`brain_documents_recent`, `brain_sync_receipts_started`,
+`brain_document_refs_lookup`, `brain_claims_document`,
+`brain_extraction_runs_running`, `brain_extraction_runs_started`,
+`brain_extraction_runs_billed`; plus the nine `*_pkey`, 19 indexes in all.
 
 ## Store semantics
 
@@ -390,12 +418,15 @@ or behind the documents it describes.
 
 ### `eraseScope`
 
-One transaction under the scope lock: `DELETE` from `brain_document_refs`,
+One transaction under the scope lock: `DELETE` from `brain_claims`,
+`brain_extraction_state`, `brain_extraction_runs`, `brain_document_refs`,
 `brain_document_revisions`, `brain_documents`, `brain_sync_receipts`,
 `brain_sync_cursors`, `brain_sources`, in that order, each `WHERE owner_id = ?
-AND scope_id = ?`. The cascades would cover cursors and receipts; explicit
-deletes keep the order obvious. Physical delete; frees capacity; a later create
-yields new incarnations. Returns `void`.
+AND scope_id = ?` (spec 555 first moves the scope's billed runs of the last 30
+days out of the scope so the owner's spend cap still counts them). The cascades
+would cover cursors and receipts; explicit deletes keep the order obvious.
+Physical delete; frees capacity; a later create yields new incarnations. Returns
+`void`.
 
 ## Error policy
 
@@ -670,8 +701,9 @@ file and the helper stay under 500 LOC.
 Required cases:
 
 1. Bootstrap twice; `information_schema.tables` for `brain_%` equals the exact
-   six; `pg_indexes` contains the five named indexes; `brain_documents_search`
-   indexdef matches `/gin.*to_tsvector\('simple'/i` and `WHERE (deleted_at IS NULL)`.
+   nine; `pg_indexes` contains the ten named indexes and nine `*_pkey`;
+   `brain_documents_search` indexdef matches `/gin.*to_tsvector\('simple'/i`
+   and `WHERE (deleted_at IS NULL)`.
 2. Scope isolation: the same `scopeId` under two owners, and two scopes under one
    owner, never see each other's sources, documents, cursors, or receipts;
    `getDocument` with the wrong owner returns `null`; `updateSource` with the
@@ -712,7 +744,7 @@ Required cases:
     `nextAction`, `errorCode`, `cursorAfter`; closing twice `conflict`; unknown
     receipt `not_found`; 55 closed receipts leave 50; a raw error string is
     rejected by the `errorCode` regex with `invalid`.
-12. `eraseScope` removes every row of the scope in all six tables and leaves
+12. `eraseScope` removes every row of the scope in all nine tables and leaves
     other scopes intact.
 13. A repository built on a shared `Kysely` does not destroy it on `destroy()`.
 14. Edge cases: the repository clock is sampled after the advisory lock
@@ -760,15 +792,17 @@ Manual verification scenario: point `MATRIX_TEST_POSTGRES_URL` at a local
 Postgres (the dev compose `postgres:16-alpine` from `docker-compose.dev.yml`,
 `postgresql://matrixos:matrixos@localhost:5432/matrixos`, is sufficient because
 every test creates and drops its own schema), run the optional Postgres test,
-then confirm with `psql` that `\dt brain_*` lists exactly six tables,
+then confirm with `psql` that `\dt brain_*` lists exactly the nine tables of
+the Bootstrap inventory, `\di brain_*` lists its 19 indexes,
 `\d brain_documents` shows both tombstone CHECKs and the partial GIN index, and
 `SELECT count(*) FROM brain_sync_receipts WHERE status = 'running'` is 0 after
 the suite. No image build or compose change ships with this PR.
 
 ## Code review checklist
 
-- Every statement on all six tables carries both `owner_id` and `scope_id`; no
-  helper accepts a bare id.
+- Every statement on all nine tables carries both `owner_id` and `scope_id`
+  (the one exception is spec 555's owner-wide billed-runs sum); no helper
+  accepts a bare id.
 - Every write method is one transaction that sets both `SET LOCAL` deadlines and
   takes the scope advisory lock before any read or write.
 - CAS lives in the UPDATE predicate (`revision`, `cursor`, `status = 'running'`,
