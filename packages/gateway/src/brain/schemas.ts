@@ -51,17 +51,19 @@ const NEXT_ACTION_PATTERN = /^(?:[a-z][a-z0-9_]*)?$/;
 
 /**
  * Postgres rejects U+0000 in TEXT with a driver error (22021) that is not a
- * BrainStoreError, so every free-text field refuses it here instead.
- * Regex-bound fields (ids, kind, provenance, codes) already exclude it.
+ * BrainStoreError, and a lone surrogate is replaced with U+FFFD on the way to
+ * Postgres, so the stored text would differ from the text the caller hashed.
+ * Every free-text field refuses both here. Regex-bound fields (ids, kind,
+ * provenance, codes) already exclude them.
  */
-const noNul = (value: string): boolean => !value.includes("\u0000");
+const storableText = (value: string): boolean => !value.includes("\u0000") && value.isWellFormed();
 
 const revisionSchema = z.number().int().min(1).max(BRAIN_MAX_REVISION);
-const cursorTextSchema = z.string().min(1).max(BRAIN_CURSOR_MAX_CHARS).refine(noNul);
+const cursorTextSchema = z.string().min(1).max(BRAIN_CURSOR_MAX_CHARS).refine(storableText);
 const kindSchema = z.string().regex(BRAIN_KIND_PATTERN);
 const sourceStatusSchema = z.enum(["active", "paused", "disabled"]);
 const countSchema = z.number().int().min(0).max(COUNT_MAX);
-const labelSchema = z.string().min(1).max(BRAIN_SOURCE_LABEL_MAX_CHARS).refine(noNul);
+const labelSchema = z.string().min(1).max(BRAIN_SOURCE_LABEL_MAX_CHARS).refine(storableText);
 
 /**
  * Empty, or an https URL without credentials in its canonical form: the value
@@ -85,8 +87,8 @@ function uniqueStrings(values: readonly string[]): boolean {
 }
 
 export const BrainScopeKeySchema = z.object({
-  scopeId: z.string().min(1).max(BRAIN_SCOPE_ID_MAX_CHARS).refine(noNul),
-  ownerId: z.string().min(1).max(BRAIN_OWNER_ID_MAX_CHARS).refine(noNul),
+  scopeId: z.string().min(1).max(BRAIN_SCOPE_ID_MAX_CHARS).refine(storableText),
+  ownerId: z.string().min(1).max(BRAIN_OWNER_ID_MAX_CHARS).refine(storableText),
 }).strict();
 
 export const BrainSourceIdSchema = z.string().regex(BRAIN_SOURCE_ID_PATTERN);
@@ -95,7 +97,7 @@ export const BrainReceiptIdSchema = z.string().regex(BRAIN_RECEIPT_ID_PATTERN);
 
 export const BrainCreateSourceSchema = z.object({
   kind: kindSchema,
-  externalRef: z.string().min(1).max(BRAIN_SOURCE_EXTERNAL_REF_MAX_CHARS).refine(noNul),
+  externalRef: z.string().min(1).max(BRAIN_SOURCE_EXTERNAL_REF_MAX_CHARS).refine(storableText),
   label: labelSchema,
   status: sourceStatusSchema.optional(),
 }).strict();
@@ -114,9 +116,9 @@ export const BrainDeleteSourceSchema = z.object({
 
 const documentContentFields = {
   documentId: BrainDocumentIdSchema,
-  title: z.string().trim().min(1).max(BRAIN_TITLE_MAX_CHARS).refine(noNul),
-  body: z.string().min(1).refine(noNul),
-  permalink: z.string().max(BRAIN_PERMALINK_MAX_CHARS).refine(noNul).refine(isBrainPermalink),
+  title: z.string().trim().min(1).max(BRAIN_TITLE_MAX_CHARS).refine(storableText),
+  body: z.string().min(1).refine(storableText),
+  permalink: z.string().max(BRAIN_PERMALINK_MAX_CHARS).refine(storableText).refine(isBrainPermalink),
   sourceUpdatedAt: z.iso.datetime({ offset: true }),
   provenance: kindSchema,
 };
@@ -125,7 +127,7 @@ export const BrainDocumentContentSchema = z.object(documentContentFields).strict
 
 export const BrainDocumentRefSchema = z.object({
   kind: kindSchema,
-  value: z.string().min(1).max(BRAIN_REF_VALUE_MAX_BYTES).refine(noNul)
+  value: z.string().min(1).max(BRAIN_REF_VALUE_MAX_BYTES).refine(storableText)
     .refine((value) => Buffer.byteLength(value, "utf8") <= BRAIN_REF_VALUE_MAX_BYTES),
 }).strict();
 
@@ -188,7 +190,7 @@ export const BrainCloseSyncReceiptSchema = z.object({
 
 export const BrainListOptionsSchema = z.object({
   limit: z.number().int().min(1).max(BRAIN_LIST_MAX_LIMIT).default(BRAIN_LIST_DEFAULT_LIMIT),
-  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(noNul).nullable().default(null),
+  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(storableText).nullable().default(null),
 }).strict();
 
 export const BrainListDocumentsOptionsSchema = BrainListOptionsSchema.extend({
@@ -200,7 +202,7 @@ export const BrainListReceiptsOptionsSchema = z.object({
 }).strict();
 
 export const BrainSearchSchema = z.object({
-  query: z.string().trim().min(1).max(BRAIN_SEARCH_QUERY_MAX_CHARS).refine(noNul),
+  query: z.string().trim().min(1).max(BRAIN_SEARCH_QUERY_MAX_CHARS).refine(storableText),
   limit: z.number().int().min(1).max(BRAIN_SEARCH_MAX_LIMIT).default(DEFAULT_SEARCH_LIMIT),
 }).strict();
 
@@ -212,7 +214,7 @@ export const BrainRefMatchQuerySchema = z.object({
   provenances: z.array(kindSchema).min(1).max(BRAIN_REF_MATCH_MAX_PROVENANCES).refine(uniqueStrings),
   extraRefKinds: z.array(kindSchema).max(BRAIN_REF_MATCH_MAX_EXTRA_KINDS).refine(uniqueStrings).default([]),
   limit: z.number().int().min(1).max(BRAIN_REF_MATCH_MAX_LIMIT).default(BRAIN_REF_MATCH_DEFAULT_LIMIT),
-  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(noNul).nullable().default(null),
+  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(storableText).nullable().default(null),
 }).strict();
 
 export const BrainEvidenceProofsSchema = z.array(z.object({

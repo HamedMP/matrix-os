@@ -41,7 +41,8 @@ In scope:
   `tests/gateway/brain-store-sync.test.ts`, and the shared fixtures in
   `tests/gateway/helpers/brain-store-helpers.ts`), plus
   `tests/gateway/brain-store-postgres.test.ts` for the cross-connection cases
-  PGlite cannot prove (see Integration test checkpoint).
+  PGlite cannot prove (see Integration test checkpoint), and
+  `tests/gateway/brain-store-schemas.test.ts` for the input schemas alone.
 - `packages/gateway/src/brain/DOMAIN.md`.
 
 Out of scope (no stubs or placeholders left for it):
@@ -469,10 +470,14 @@ store cannot grant what the key does not name.
 - SQL CHECK constraints mirror the same limits so a bypassed or future caller
   cannot store an oversize or malformed row.
 - Every free-text string (`scopeId`, `ownerId`, title, body, permalink, source
-  label and `externalRef`, sync cursors, list cursors, the search query) refuses
-  U+0000, because Postgres rejects it with driver error `22021`, which is not a
-  `BrainStoreError`; a NUL anywhere in a sync batch therefore surfaces as
-  `invalid` with nothing written. Regex-bound fields exclude it already.
+  label and `externalRef`, ref values, sync cursors, list cursors, the search
+  query) refuses U+0000, because Postgres rejects it with driver error `22021`,
+  which is not a `BrainStoreError`, and refuses malformed UTF-16 (a lone
+  surrogate), because the driver sends it as U+FFFD, so the stored text would
+  differ from the text `computeBrainContentHash` hashed. A NUL or lone surrogate
+  anywhere in a sync batch therefore surfaces as `invalid` with nothing written;
+  adapters replace both before building a batch. Regex-bound fields exclude them
+  already.
 - `parseBrainInput(schema, value)` runs `safeParse` and throws
   `BrainStoreError("invalid", { cause })`.
 - Search input reaches SQL only as a bound parameter to `plainto_tsquery`; no
@@ -604,7 +609,7 @@ private to `repository.ts`.
 | receipt list | limit 1..50, default 50 | Zod, query |
 | search | query 1..500 chars; limit 1..50, default 10 | Zod, query |
 | sync batch | <= 200 upserts and <= 200 deletions | Zod |
-| document refs | <= 200 per upsert, unique `(kind, value)`; <= 10000 per batch; value 1..512 bytes, no NUL | Zod; CHECK |
+| document refs | <= 200 per upsert, unique `(kind, value)`; <= 10000 per batch; value 1..512 bytes, no NUL or lone surrogate | Zod; CHECK |
 | evidence proofs | <= 100 per call | Zod |
 
 - Memory: the repository keeps no `Map`, `Set`, cache, queue, or timer. Each call
@@ -656,7 +661,9 @@ isolation, sources, documents, revisions, proofs, search, list),
 `tests/gateway/brain-store-sync.test.ts` (batches,
 receipts, erase, source-delete history purge, clock-after-lock),
 `tests/gateway/brain-store-refs.test.ts` (refs lifecycle, replay, foreign reject,
-removal on every tombstone path, bounds; added with spec 552) and
+removal on every tombstone path, bounds; added with spec 552),
+`tests/gateway/brain-store-schemas.test.ts` (free-text NUL and lone-surrogate
+rejection on every schema, no database) and
 `tests/gateway/brain-store-postgres.test.ts` (real server, optional). Each test
 file and the helper stay under 500 LOC.
 
@@ -709,9 +716,9 @@ Required cases:
     other scopes intact.
 13. A repository built on a shared `Kysely` does not destroy it on `destroy()`.
 14. Edge cases: the repository clock is sampled after the advisory lock
-    (observed through the Kysely query log) and never on reads; a NUL in a body,
-    title, scope key, source label, `externalRef`, cursor or search query gives
-    `invalid`; padded, control-character, uppercase-scheme and un-normalized
+    (observed through the Kysely query log) and never on reads; a NUL or a lone
+    surrogate in a body, title, scope key, source label, `externalRef`, ref
+    value, cursor or search query gives `invalid`; padded, control-character, uppercase-scheme and un-normalized
     permalinks give `invalid`; `nextAction: "Error: ECONNRESET at Socket"` gives
     `invalid`; `deleteSource` closes a running receipt as `interrupted` and purges
     a snapshot the source contributed to a document id another source later
@@ -740,7 +747,7 @@ Commands before the PR:
 bun run typecheck
 bun run check:patterns
 pnpm exec vitest run tests/gateway/brain-store.test.ts tests/gateway/brain-store-capacity.test.ts \
-  tests/gateway/brain-store-sync.test.ts
+  tests/gateway/brain-store-sync.test.ts tests/gateway/brain-store-schemas.test.ts
 MATRIX_TEST_POSTGRES_URL=postgresql://user:pass@localhost:5432/disposable \
   pnpm exec vitest run tests/gateway/brain-store-postgres.test.ts
 ```
