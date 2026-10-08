@@ -1238,7 +1238,7 @@ describe("WorkRail", () => {
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("invalidates a pending pin across an away-and-back tab round-trip", async () => {
+  it("publishes an accepted pin across a tab round-trip without clearing newer pin progress", async () => {
     let resolveOriginalPin!: (record: CanonicalChatRecord) => void;
     const originalPinRequest = new Promise<CanonicalChatRecord>((resolve) => {
       resolveOriginalPin = resolve;
@@ -1281,8 +1281,7 @@ describe("WorkRail", () => {
       await originalPinRequest;
     });
 
-    expect(screen.queryByRole("button", { name: "Unpin Recent global" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Unpin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("moves a Chat through the existing-project submenu with CAS and retains old placement on failure", async () => {
@@ -1415,7 +1414,7 @@ describe("WorkRail", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull());
   });
 
-  it("ignores a delayed Chat deletion after the rail route scope changes", async () => {
+  it("publishes a delayed deletion after a route switch without invoking the old navigation callback", async () => {
     let resolveDelete!: (value: { chatId: string; deletedAt: string }) => void;
     const pendingDelete = new Promise<{ chatId: string; deletedAt: string }>((resolve) => {
       resolveDelete = resolve;
@@ -1456,7 +1455,7 @@ describe("WorkRail", () => {
       await pendingDelete;
     });
 
-    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull();
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 

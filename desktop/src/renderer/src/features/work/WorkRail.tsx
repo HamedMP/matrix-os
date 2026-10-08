@@ -29,6 +29,7 @@ import {
 import { applyProjectedChats } from "./work-rail-data";
 import { OrganizationDrivesRail } from "./work-rail/OrganizationDrivesRail";
 import { useWorkRailMoves } from "./work-rail/use-work-rail-moves";
+import { projectMoveAuthorityKey } from "./work-rail/new-project-chat-move";
 import { WorkRailScrollArea } from "./work-rail/WorkRailScrollArea";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useWorkRailDisclosure } from "./work-rail/use-work-rail-disclosure";
@@ -110,16 +111,16 @@ export function WorkRail({
   const onNewProjectChat = (project: Project) => { invalidateSelection(); agentsNavigation?.close(); newProjectChat(project); };
   useEffect(() => () => { selectionAttempt.current++; }, []);
   const onSelectChat = (record:ChatNavigationRecord,project?:Project) => {
-    if(!client) return;
+    if(!client || !isCurrentScope(routeScopeRef.current)) return;
     const attempt = ++selectionAttempt.current;
     const scope=routeScopeRef.current;
     setSelectionError(null);
-    void Promise.resolve().then(()=>client.getDetail(record.chat.id,{limit:1})).then(detail=>{
-      if(selectionAttempt.current!==attempt || routeScopeRef.current.client!==scope.client || routeScopeRef.current.generation!==scope.generation) return;
+    void Promise.resolve().then(()=>isCurrentScope(scope) ? client.getDetail(record.chat.id,{limit:1}) : null).then(detail=>{
+      if(!detail || selectionAttempt.current!==attempt || !isCurrentScope(scope)) return;
       agentsNavigation?.close(); if(project) selectChat(detail.record,project);else selectChat(detail.record);
     }).catch((error:unknown)=>{
       console.warn("[chat-navigation] Open failed:",error instanceof Error?error.name:"UnknownError");
-      if(selectionAttempt.current===attempt && routeScopeRef.current.client===scope.client && routeScopeRef.current.generation===scope.generation) setSelectionError("The Chat could not be opened. Try again.");
+      if(selectionAttempt.current===attempt && isCurrentScope(scope)) setSelectionError("The Chat could not be opened. Try again.");
     });
   };
   const projectChatMoveRefresh = useUi(state => state.projectChatMoveRefreshRequest);
@@ -129,6 +130,17 @@ export function WorkRail({
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const navigation=useWorkNavigation(client,eventSource,active);
   const records=navigation.items;
+  const authorityEpoch = navigation.store?.getAuthorityEpoch() ?? 0;
+  // After revocation, only a successful navigation read may re-enable Agent data.
+  // A later transport failure retains that same epoch's verified snapshot.
+  const authorityReady = Boolean(navigation.store && (authorityEpoch === 0 || navigation.fresh || navigation.updatedAt > 0));
+  const authorityKey = projectMoveAuthorityKey();
+  const authorityCurrent = useCallback(() => authorityReady && projectMoveAuthorityKey() === authorityKey
+    && navigation.store?.getAuthorityEpoch() === authorityEpoch, [navigation.store, authorityEpoch, authorityReady, authorityKey]);
+  const agentAuthority = useMemo(() => ({
+    store: navigation.store, epoch: authorityEpoch,
+    client: authorityReady && client?.agents ? { ...client.agents } : undefined,
+  }), [navigation.store, authorityEpoch, authorityReady, client]);
   const committedCohort = navigation.status === "ready" || records.length > 0;
   const lastRenderedCohort = useRef<{ items: typeof records; fresh: boolean } | null>(null);
   useEffect(() => {
@@ -138,7 +150,9 @@ export function WorkRail({
     markChatNavigation("render-ready", records.length);
   }, [active, committedCohort, records, navigation.fresh]);
   const setRecords=useCallback((action:ChatNavigationRecord[]|((records:ChatNavigationRecord[])=>ChatNavigationRecord[]))=>{
+    if (!authorityCurrent()) return;
     navigation.store?.update(current=>{
+      if (!authorityCurrent()) return current;
       const updated=typeof action==='function'?action(current):action;
       if(updated===current) return current;
       return updated.flatMap(record=>{
@@ -146,7 +160,7 @@ export function WorkRail({
         return known?[mergeChatNavigationRecord(known,record)]:[];
       });
     });
-  },[navigation.store]);
+  },[navigation.store,authorityCurrent]);
   const status=navigation.status;
   const { sections, setExpanded } = useWorkRailDisclosure();
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
@@ -160,7 +174,7 @@ export function WorkRail({
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const openSearch = useCallback(() => { if (authorityCurrent()) setSearchOpen(true); }, [authorityCurrent]);
   useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
   const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
@@ -168,13 +182,28 @@ export function WorkRail({
     requestId: number;
   }>();
   const routeScope = `${active ? "active" : "inactive"}\0${activeChatId ?? ""}\0${activeProjectSlug ?? ""}`;
-  const routeScopeRef = useRef({ client, key: routeScope, generation: 0 });
-  if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client) {
+  const routeScopeRef = useRef({ client, store: navigation.store, key: routeScope, generation: 0, isCurrent: authorityCurrent });
+  if (routeScopeRef.current.key !== routeScope || routeScopeRef.current.client !== client
+    || routeScopeRef.current.isCurrent !== authorityCurrent) {
     routeScopeRef.current = {
       client,
+      store: navigation.store,
       key: routeScope,
       generation: routeScopeRef.current.generation + 1,
+      isCurrent: authorityCurrent,
     };
+  }
+  const isCurrentAuthority = (scope: typeof routeScopeRef.current) => scope.isCurrent()
+    && routeScopeRef.current.client === scope.client && routeScopeRef.current.store === scope.store;
+  const isCurrentScope = (scope: typeof routeScopeRef.current) => isCurrentAuthority(scope)
+    && routeScopeRef.current.generation === scope.generation;
+  const [actionAuthority, setActionAuthority] = useState({ store: navigation.store, epoch: authorityEpoch });
+  if (actionAuthority.store !== navigation.store || actionAuthority.epoch !== authorityEpoch) {
+    setActionAuthority({ store: navigation.store, epoch: authorityEpoch });
+    setPinError(null); setPinning({}); setReadPending(false); setReadError(null);
+    setDeleteChatTarget(null); setDeletingChat(false); setDeleteChatError(null);
+    setRenamingChatId(null); setRenamePending(false); setRenameError(null); setSelectionError(null);
+    setSearchOpen(false);
   }
   useEffect(()=>{
     setPinError(null);setPinning({});setReadPending(false);setReadError(null);
@@ -183,7 +212,16 @@ export function WorkRail({
   },[routeScope,client]);
   const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
   const classifications=useMemo(()=>records.map(record=>({chatId:record.chat.id,classification:record.classification})),[records]);
-  const botSummaries = useBotConversationSummaries(client?.agents, recordIds, active, botRefreshKey,classifications);
+  useEffect(() => {
+    if (!navigation.store) return;
+    return navigation.store.subscribe(() => {
+      if (navigation.store?.getAuthorityEpoch() !== authorityEpoch
+        && (agentsNavigation?.opened?.client === client?.agents || agentsNavigation?.detailsRequest?.client === client?.agents)) {
+        agentsNavigation?.close();
+      }
+    });
+  }, [navigation.store, authorityEpoch, agentsNavigation, client]);
+  const botSummaries = useBotConversationSummaries(agentAuthority.client, recordIds, active, botRefreshKey,classifications);
   const ordinaryRecords = useMemo(() => records.filter(record => record.classification.kind==="ordinary"), [records]);
   const order = useWorkRailOrder(ordinaryRecords, projects);
   const model = useMemo(() => buildWorkRailModel(order.chats, order.projects), [order.chats, order.projects]);
@@ -236,23 +274,23 @@ export function WorkRail({
   useEffect(() => {
     if (!projectedChatTitles?.length) return;
     setRecords((current) => applyProjectedChats(current, projectedChatTitles));
-  }, [projectedChatTitles]);
+  }, [projectedChatTitles, setRecords]);
 
   const toggleRead = async (record: ChatNavigationRecord) => {
-    if (!client || readPending) return;
+    if (!client || readPending || !isCurrentScope(routeScopeRef.current)) return;
     const scope = routeScopeRef.current;
     setReadPending(true);
     setReadError(null);
     try {
       const updated = await client.updateReadState(record.chat.id, chatReadAction(record));
-      if (routeScopeRef.current.client === scope.client) {
+      if (isCurrentAuthority(scope)) {
         setRecords((current) => current.map((item) => mergeChatReadState(item, updated)));
       }
     } catch (error: unknown) {
       console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
-      if (routeScopeRef.current.client === scope.client) setReadError("The Chat could not be updated. Try again.");
+      if (isCurrentScope(scope)) setReadError("The Chat could not be updated. Try again.");
     } finally {
-      if (routeScopeRef.current.client === scope.client) setReadPending(false);
+      if (isCurrentScope(scope)) setReadPending(false);
     }
   };
 
@@ -268,13 +306,13 @@ export function WorkRail({
   };
 
   const updatePinned = (record: ChatNavigationRecord) => {
-    if (!client || pinning[record.chat.id]) return;
+    if (!client || pinning[record.chat.id] || !isCurrentScope(routeScopeRef.current)) return;
     const pinned = !record.chat.userState?.pinned;
-    const requestRouteGeneration = routeScopeRef.current.generation;
+    const scope = routeScopeRef.current;
     setPinError(null);
     setPinning((current) => ({ ...current, [record.chat.id]: true }));
     void client.updateUserState(record.chat.id, { pinned }).then((updated) => {
-      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      if (!isCurrentAuthority(scope)) return;
       setRecords((current) => current.map((candidate) => (
         candidate.chat.id === updated.chat.id ? mergeChatNavigationRecord(candidate, updated) : candidate
       )));
@@ -283,11 +321,11 @@ export function WorkRail({
         "[work] Chat pin update failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      if (routeScopeRef.current.generation === requestRouteGeneration) {
+      if (isCurrentScope(scope)) {
         setPinError("Chat pin could not be updated.");
       }
     }).finally(() => {
-      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      if (!isCurrentScope(scope)) return;
       setPinning((current) => {
         const next = { ...current };
         delete next[record.chat.id];
@@ -297,9 +335,9 @@ export function WorkRail({
   };
 
   const deleteChat = async () => {
-    if (!client || !deleteChatTarget || deletingChat) return;
+    if (!client || !deleteChatTarget || deletingChat || !isCurrentScope(routeScopeRef.current)) return;
     const target = deleteChatTarget;
-    const requestRouteGeneration = routeScopeRef.current.generation;
+    const scope = routeScopeRef.current;
     const targetProject = projectGroups.find((group) => (
       group.id === target.projectId || group.slug === target.projectId
     ))?.project;
@@ -307,28 +345,30 @@ export function WorkRail({
     setDeleteChatError(null);
     try {
       await client.delete(target.chat.id, canonicalChatRequestId());
-      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      if (!isCurrentAuthority(scope)) return;
       setRecords((current) => current.filter((record) => record.chat.id !== target.chat.id));
-      setDeleteChatTarget(null);
-      onChatDeleted?.(target, targetProject);
+      if (isCurrentScope(scope)) {
+        setDeleteChatTarget(null);
+        onChatDeleted?.(target, targetProject);
+      }
     } catch (error: unknown) {
       console.warn(
         "[work] Chat deletion failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      if (routeScopeRef.current.generation === requestRouteGeneration) {
+      if (isCurrentScope(scope)) {
         setDeleteChatError("The Chat could not be deleted. Try again.");
       }
     } finally {
-      if (routeScopeRef.current.generation === requestRouteGeneration) {
+      if (isCurrentScope(scope)) {
         setDeletingChat(false);
       }
     }
   };
 
   const renameChat = async (record: ChatNavigationRecord, title: string) => {
-    if (!client || renamePending) return;
-    const requestRouteGeneration = routeScopeRef.current.generation;
+    if (!client || renamePending || !isCurrentScope(routeScopeRef.current)) return;
+    const scope = routeScopeRef.current;
     const targetProject = projectGroups.find((group) => (
       group.id === record.projectId || group.slug === record.projectId
     ))?.project;
@@ -339,20 +379,22 @@ export function WorkRail({
         expectedTitleVersion: record.chat.titleVersion ?? 0,
         title,
       });
-      if (routeScopeRef.current.generation !== requestRouteGeneration) return;
+      if (!isCurrentAuthority(scope)) return;
       setRecords((current) => current.map((candidate) => (
         candidate.chat.id === updated.chat.id ? mergeChatNavigationRecord(candidate, updated) : candidate
       )));
-      setRenamingChatId(null);
-      onChatRenamed?.(updated, targetProject);
+      if (isCurrentScope(scope)) {
+        setRenamingChatId(null);
+        onChatRenamed?.(updated, targetProject);
+      }
     } catch (error: unknown) {
       console.warn("[work] Chat rename failed:", error instanceof Error ? error.name : "UnknownError");
-      if (routeScopeRef.current.generation === requestRouteGeneration) {
+      if (isCurrentScope(scope)) {
         setRenameError("The Chat could not be renamed. Try again.");
         // Refresh the title version for an explicit retry while keeping the draft.
         try {
           const latest = await client.getDetail(record.chat.id, { limit: 1 });
-          if (routeScopeRef.current.generation === requestRouteGeneration) {
+          if (isCurrentAuthority(scope)) {
             setRecords((current) => current.map((candidate) => candidate.chat.id === record.chat.id
               ? mergeChatNavigationRecord(candidate, latest.record) : candidate));
           }
@@ -361,7 +403,7 @@ export function WorkRail({
         }
       }
     } finally {
-      if (routeScopeRef.current.generation === requestRouteGeneration) setRenamePending(false);
+      if (isCurrentScope(scope)) setRenamePending(false);
     }
   };
 
@@ -443,11 +485,11 @@ export function WorkRail({
       <div className="ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen} /></div>
       <WorkRailScrollArea>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
-      <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={client?.agents} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
+      <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
-        onOpenBotChat={onOpenBotChat ? (chatId) => { agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
+        onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
         organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
         {status === "loading" && records.length === 0 ? (
@@ -471,7 +513,7 @@ export function WorkRail({
         ) : null}
       </WorkRailScrollArea>
       <DeleteConversationDialog
-        conversation={deleteChatTarget ? {
+        conversation={authorityReady && deleteChatTarget ? {
           id: deleteChatTarget.chat.id,
           title: deleteChatTarget.chat.title,
         } : null}
@@ -492,7 +534,7 @@ export function WorkRail({
         />
       ) : null}
       <WorkRailSearchDialog
-        open={searchOpen}
+        open={authorityReady && searchOpen}
         records={ordinaryRecords}
         projects={projects}
         status={status}
