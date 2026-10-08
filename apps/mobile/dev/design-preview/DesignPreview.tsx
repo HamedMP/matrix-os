@@ -6,6 +6,7 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { ItemRow, SectionLabel } from "@/components/ui";
 
+import { AgentsListFrame, NewAgentFrame, TemplateSetupFrame } from "./agents";
 import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
 import { ComponentsGallery } from "./ComponentsGallery";
 import { SidePanelOverScreen } from "./panel";
@@ -27,6 +28,9 @@ const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "C1b", Frame: ChatInProgressFrame },
   { name: "C1c", Frame: ChatTypingFrame },
   { name: "C2", Frame: SidePanelOverChatFrame },
+  { name: "A1", Frame: AgentsListFrame },
+  { name: "A5", Frame: NewAgentFrame },
+  { name: "A5b", Frame: TemplateSetupFrame },
 ];
 
 export function DesignPreview({ frame }: { frame: string | undefined }) {

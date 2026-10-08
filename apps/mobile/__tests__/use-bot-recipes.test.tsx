@@ -1,6 +1,6 @@
 import React, { type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react-native";
+import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useBotRecipes } from "../lib/queries/use-bot-recipes";
 
@@ -20,13 +20,13 @@ const recipe = { recipeId: "inbox-triage", version: "v1" };
 const selection = { instanceId: "matrix_pi_default", model: "auto" };
 const mounted: (() => void)[] = [];
 
-function renderRecipes() {
+function renderRecipes(visible = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  // Not visible, so the recipe list itself is not requested.
-  const rendered = renderHook(() => useBotRecipes(gatewayUrl, false), { wrapper });
+  // Unless visible, the recipe list itself is not requested.
+  const rendered = renderHook(() => useBotRecipes(gatewayUrl, visible), { wrapper });
   mounted.push(rendered.unmount);
   return rendered;
 }
@@ -73,5 +73,46 @@ describe("useBotRecipes create", () => {
     expect(mockInstantiateNativeBot).toHaveBeenCalledWith("session-token", gatewayUrl, {
       recipe, clientRequestId: "req_abcdefgh", selection,
     });
+  });
+});
+
+describe("useBotRecipes refetch", () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  afterEach(() => {
+    while (mounted.length > 0) mounted.pop()!();
+  });
+
+  it("reads the templates again after a read that failed", async () => {
+    const templates = [{ recipeId: "inbox-triage", version: "v1", name: "Inbox triage", description: "Sorts mail", output: "A tidy inbox" }];
+    mockFetchNativeBotRecipes.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(templates);
+    const { result } = renderRecipes(true);
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.recipes).toEqual([]);
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+
+    expect(mockFetchNativeBotRecipes).toHaveBeenCalledTimes(2);
+    expect(mockFetchNativeBotRecipes).toHaveBeenLastCalledWith("session-token", gatewayUrl);
+    // The hook hears of the answer a moment after the read itself resolves.
+    await waitFor(() => expect(result.current.recipes).toEqual(templates));
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("resolves instead of rejecting when that read fails too", async () => {
+    mockFetchNativeBotRecipes.mockRejectedValue(new Error("offline"));
+    const { result } = renderRecipes(true);
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    await act(async () => {
+      await expect(result.current.refetch()).resolves.toBeDefined();
+    });
+
+    expect(mockFetchNativeBotRecipes).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });

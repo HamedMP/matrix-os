@@ -1,151 +1,264 @@
-const mockSelectChat = jest.fn();
-const mockInvalidateChats = jest.fn(() => Promise.resolve());
-const mockShowChatScreen = jest.fn();
-const mockCreate = jest.fn();
-const mockUseBotRecipes = jest.fn();
-let mockComputer: { gatewayPath: string } | undefined;
-const mockCatalog = { instances: [] };
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
+import { Alert } from "react-native";
 
-jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ userId: "user_a" }) }));
+import AgentsScreen from "../app/(drawer)/(tabs)/agents/index";
+import { StatusDot } from "../components/ui/StatusDot";
+
+const mockSelectChat = jest.fn();
+const mockShowChatScreen = jest.fn();
+const mockPush = jest.fn();
+const mockEnsureChat = jest.fn();
+const mockRefetchAgents = jest.fn(() => Promise.resolve());
+const mockRefetchStatuses = jest.fn(() => Promise.resolve());
+const mockUseAgents = jest.fn();
+const mockUseAgentStatuses = jest.fn();
+let mockChats: unknown[] = [];
+let mockGainFocus: () => void = () => {};
+
+jest.mock("expo-router", () => ({
+  useRouter: () => ({ push: mockPush }),
+  useFocusEffect: (effect: () => void) => {
+    const mockReact = jest.requireActual("react") as typeof import("react");
+    mockReact.useEffect(() => {
+      mockGainFocus = effect;
+      effect();
+    }, [effect]);
+  },
+}));
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({ selectChat: mockSelectChat }),
 }));
+jest.mock("@/lib/queries/use-agents", () => ({
+  useAgents: () => mockUseAgents(),
+  useEnsureAgentChat: () => ({ mutateAsync: mockEnsureChat }),
+}));
+jest.mock("@/lib/queries/use-agent-statuses", () => ({
+  useAgentStatuses: (...args: unknown[]) => mockUseAgentStatuses(...args),
+}));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({
-  useCanonicalChats: () => ({ computer: mockComputer, invalidate: mockInvalidateChats }),
-}));
-jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
-  useChatProviderCatalog: () => ({ catalog: mockCatalog }),
-}));
-jest.mock("@/lib/queries/use-bot-recipes", () => ({
-  useBotRecipes: (...args: unknown[]) => mockUseBotRecipes(...args),
+  useCanonicalChats: () => ({ chats: mockChats }),
 }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useShowChatScreen: () => mockShowChatScreen }));
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { SafeAreaInsetsContext } from "react-native-safe-area-context";
+const research = { id: "bot_research", name: "Account research", description: "Briefs you before every sales call" };
+const inbox = { id: "bot_inbox", name: "My inbox", description: "Sorts your inbox" };
+const launch = { id: "bot_launch", name: "Launch tracker", description: "Keeps the launch on track" };
+const agents = [research, inbox, launch];
 
-import AgentsScreen from "../app/(drawer)/(tabs)/agents/index";
-import { BotRecipeChooser } from "../components/BotRecipeChooser";
-import { HOSTED_GATEWAY_URL } from "../lib/storage";
+function agentsResult(overrides: Record<string, unknown> = {}) {
+  return {
+    agents,
+    agentsEnabled: true,
+    isPending: false,
+    isError: false,
+    refetch: mockRefetchAgents,
+    ...overrides,
+  };
+}
 
-import { flat } from "./ui-test-utils";
-
-const recipe = {
-  recipeId: "inbox-triage",
-  version: "v1",
-  name: "Inbox triage",
-  description: "Sorts new mail",
-  output: "A triaged inbox",
+const statuses = {
+  bot_research: { state: "attention", label: "Waiting for your approval", chatId: "chat_research", lastActivityAt: null },
+  bot_inbox: { state: "working", label: "Working", chatId: "chat_inbox", lastActivityAt: null },
+  bot_launch: { state: "idle", label: "No open tasks", chatId: null, lastActivityAt: null },
 };
-const gatewayUrl = `${HOSTED_GATEWAY_URL}/vm/solar-vale`;
 
 describe("agents tab root", () => {
+  let alert: jest.SpyInstance;
+
   beforeEach(() => {
     jest.clearAllMocks();
-    mockComputer = { gatewayPath: "/vm/solar-vale" };
-    mockUseBotRecipes.mockReturnValue({ recipes: [recipe], isPending: false, isError: false, create: mockCreate });
+    alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
+    mockUseAgents.mockReturnValue(agentsResult());
+    mockUseAgentStatuses.mockReturnValue({ statuses, waitingCount: 1, isPending: false, refetch: mockRefetchStatuses });
+    mockChats = [
+      { chat: { id: "chat_research", activityAt: new Date(Date.now() - 2 * 60_000).toISOString(), updatedAt: "2026-01-01T00:00:00.000Z" } },
+    ];
   });
 
-  afterEach(cleanup);
-
-  it("starts below the status bar with the Agents title and no top bar", () => {
-    render(
-      <SafeAreaInsetsContext.Provider value={{ top: 62, right: 0, bottom: 34, left: 0 }}>
-        <AgentsScreen />
-      </SafeAreaInsetsContext.Provider>,
-    );
-
-    const title = screen.getByRole("header", { name: "Agents" });
-    expect(flat(title)).toMatchObject({
-      fontFamily: "Geist_600SemiBold",
-      fontSize: 30,
-      lineHeight: 41,
-      color: "#242323",
-      marginTop: 8,
-      marginHorizontal: 20,
-    });
-    expect(flat(screen.root).paddingTop).toBe(62);
-    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+  afterEach(() => {
+    cleanup();
+    alert.mockRestore();
   });
 
-  it("reads the recipes of the signed-in computer as soon as the tab is shown", () => {
+  it("reads the statuses of the saved agents", () => {
     render(<AgentsScreen />);
 
-    expect(mockUseBotRecipes).toHaveBeenCalledWith(gatewayUrl, true);
+    expect(mockUseAgentStatuses).toHaveBeenCalledWith(agents);
   });
 
-  it("shows the recipe chooser once the recipes are loaded, with no toggle to open it", () => {
+  it("lists each agent with its status dot, status line and last chat activity", () => {
     render(<AgentsScreen />);
 
-    expect(screen.getByRole("button", { name: "Use Inbox triage" })).toBeTruthy();
-    expect(screen.getByLabelText("Search bot recipes")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Bot recipes" })).toBeNull();
-    expect(screen.UNSAFE_getByType(BotRecipeChooser).props).toMatchObject({
-      catalog: mockCatalog,
-      recipes: [recipe],
-      onCreate: mockCreate,
-      attemptScope: `user_a:${gatewayUrl}`,
-    });
-    expect(screen.UNSAFE_getByType(BotRecipeChooser).props.attemptRef).toEqual({ current: null });
+    const waiting = screen.getByTestId("agent-row-bot_research");
+    expect(within(waiting).getByText("Account research")).toBeTruthy();
+    expect(within(waiting).getByText("Waiting for your approval")).toBeTruthy();
+    expect(within(waiting).UNSAFE_getByType(StatusDot).props.tone).toBe("waiting");
+    expect(within(waiting).getByText("2m")).toBeTruthy();
+
+    const working = screen.getByTestId("agent-row-bot_inbox");
+    expect(within(working).getByText("Working")).toBeTruthy();
+    expect(within(working).UNSAFE_getByType(StatusDot).props.tone).toBe("active");
   });
 
-  it("says so while the recipes are loading", () => {
-    mockUseBotRecipes.mockReturnValue({ recipes: [], isPending: true, isError: false, create: mockCreate });
+  it("shows an idle agent's description instead of its status, with no dot and no time", () => {
     render(<AgentsScreen />);
 
-    expect(screen.getByText("Loading bot recipes…")).toBeTruthy();
-    expect(screen.UNSAFE_queryByType(BotRecipeChooser)).toBeNull();
+    const idle = screen.getByTestId("agent-row-bot_launch");
+    expect(within(idle).getByText("Keeps the launch on track")).toBeTruthy();
+    expect(within(idle).queryByText("No open tasks")).toBeNull();
+    expect(within(idle).UNSAFE_queryByType(StatusDot)).toBeNull();
   });
 
-  it("reports a failed load as an alert, without the server's words", () => {
-    mockUseBotRecipes.mockReturnValue({ recipes: [], isPending: false, isError: true, create: mockCreate });
+  it("opens New agent from the header", () => {
     render(<AgentsScreen />);
 
-    const alert = screen.getByRole("alert");
-    expect(alert.props.children).toBe("Bot recipes could not be loaded. Try again.");
-    expect(screen.UNSAFE_queryByType(BotRecipeChooser)).toBeNull();
+    fireEvent.press(screen.getByTestId("agents-new"));
+
+    expect(mockPush).toHaveBeenCalledWith("/agents/new");
   });
 
-  it("shows only the title while no computer is known", () => {
-    mockComputer = undefined;
+  it("opens the agent's chat on the Chats tab once the server has confirmed the chat", async () => {
+    let confirm: (chatId: string) => void = () => {};
+    mockEnsureChat.mockReturnValue(new Promise<string>((resolve) => { confirm = resolve; }));
     render(<AgentsScreen />);
 
-    expect(mockUseBotRecipes).toHaveBeenCalledWith(null, true);
-    expect(screen.getByRole("header", { name: "Agents" })).toBeTruthy();
-    expect(screen.UNSAFE_queryByType(BotRecipeChooser)).toBeNull();
-    expect(screen.queryByText("Loading bot recipes…")).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("opens the new agent's chat on the Chats tab once the server has created it", async () => {
-    let finishCreate: (chatId: string) => void = () => {};
-    mockCreate.mockReturnValue(new Promise<string>((resolve) => { finishCreate = resolve; }));
-    render(<AgentsScreen />);
-
-    fireEvent.press(screen.getByRole("button", { name: "Use Inbox triage" }));
-    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
-    expect(mockCreate.mock.calls[0][0]).toEqual({ recipeId: "inbox-triage", version: "v1" });
+    fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
+    expect(mockEnsureChat).toHaveBeenCalledWith("bot_launch");
     // Nothing moves until the server answers.
     expect(mockSelectChat).not.toHaveBeenCalled();
     expect(mockShowChatScreen).not.toHaveBeenCalled();
 
-    finishCreate("chat_new_agent");
-    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
-    expect(mockSelectChat).toHaveBeenCalledWith("chat_new_agent");
-    expect(mockInvalidateChats).toHaveBeenCalledTimes(1);
+    await act(async () => confirm("chat_launch"));
+    expect(mockSelectChat).toHaveBeenCalledWith("chat_launch");
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(alert).not.toHaveBeenCalled();
   });
 
-  it("stays on the Agents tab when the agent could not be created", async () => {
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    mockCreate.mockRejectedValue(new Error("upstream said no"));
+  it("asks for one chat only, however often the row is pressed meanwhile", async () => {
+    let confirm: (chatId: string) => void = () => {};
+    mockEnsureChat.mockReturnValue(new Promise<string>((resolve) => { confirm = resolve; }));
     render(<AgentsScreen />);
 
-    fireEvent.press(screen.getByRole("button", { name: "Use Inbox triage" }));
+    fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
+    fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
+    fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
+    expect(mockEnsureChat).toHaveBeenCalledTimes(1);
 
-    expect(await screen.findByText("Bot could not be created. Try again.")).toBeTruthy();
-    expect(screen.queryByText(/upstream said no/)).toBeNull();
+    await act(async () => confirm("chat_launch"));
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+
+    mockEnsureChat.mockResolvedValue("chat_inbox");
+    fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
+    await waitFor(() => expect(mockSelectChat).toHaveBeenLastCalledWith("chat_inbox"));
+  });
+
+  it("stays on the list with a generic alert when the chat cannot be opened", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    mockEnsureChat.mockRejectedValue(new Error("upstream said no"));
+    render(<AgentsScreen />);
+
+    fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
+
+    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    expect(alert).toHaveBeenCalledWith("Agent could not be opened", "Try again.");
+    expect(JSON.stringify([alert.mock.calls, warn.mock.calls])).not.toContain("upstream said no");
     expect(mockSelectChat).not.toHaveBeenCalled();
     expect(mockShowChatScreen).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it("leaves the first read to the queries when the screen is first shown", () => {
+    render(<AgentsScreen />);
+
+    expect(mockRefetchAgents).not.toHaveBeenCalled();
+    expect(mockRefetchStatuses).not.toHaveBeenCalled();
+  });
+
+  it("reads the agents and their statuses again each time the tab regains focus", () => {
+    render(<AgentsScreen />);
+
+    act(() => mockGainFocus());
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(1);
+    expect(mockRefetchStatuses).toHaveBeenCalledTimes(1);
+
+    act(() => mockGainFocus());
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(2);
+    expect(mockRefetchStatuses).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves the first read alone when focus returns while it is still on its way", () => {
+    mockUseAgents.mockReturnValue(agentsResult({ agents: [], agentsEnabled: null, isPending: true }));
+    render(<AgentsScreen />);
+
+    act(() => mockGainFocus());
+
+    expect(mockRefetchAgents).not.toHaveBeenCalled();
+    expect(mockRefetchStatuses).not.toHaveBeenCalled();
+  });
+
+  it("reads no statuses on focus while there are no agents to read them for", () => {
+    mockUseAgents.mockReturnValue(agentsResult({ agents: [] }));
+    render(<AgentsScreen />);
+
+    act(() => mockGainFocus());
+
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(1);
+    expect(mockRefetchStatuses).not.toHaveBeenCalled();
+  });
+
+  it("reads both again on pull to refresh, and shows the spinner until both have answered", async () => {
+    let finish: () => void = () => {};
+    render(<AgentsScreen />);
+    mockRefetchAgents.mockClear();
+    mockRefetchStatuses.mockClear();
+    mockRefetchStatuses.mockReturnValueOnce(new Promise<void>((resolve) => { finish = resolve; }));
+
+    fireEvent(screen.getByTestId("agents-list"), "refresh");
+    await waitFor(() => expect(screen.getByTestId("agents-list").props.refreshing).toBe(true));
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(1);
+    expect(mockRefetchStatuses).toHaveBeenCalledTimes(1);
+
+    await act(async () => finish());
+    expect(screen.getByTestId("agents-list").props.refreshing).toBe(false);
+  });
+
+  it("shows skeleton rows while the agents load", () => {
+    mockUseAgents.mockReturnValue(agentsResult({ agents: [], agentsEnabled: null, isPending: true }));
+    render(<AgentsScreen />);
+
+    expect(screen.getAllByTestId("agents-skeleton-row").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("agents-list")).toBeNull();
+  });
+
+  it("shows the empty state when there are no agents", () => {
+    mockUseAgents.mockReturnValue(agentsResult({ agents: [] }));
+    render(<AgentsScreen />);
+
+    expect(screen.getByTestId("agents-empty")).toBeTruthy();
+    fireEvent.press(within(screen.getByTestId("agents-empty")).getByRole("button", { name: "New agent" }));
+    expect(mockPush).toHaveBeenCalledWith("/agents/new");
+  });
+
+  it.each([
+    ["the list could not be read", { agents: [], agentsEnabled: null, isError: true }],
+    ["agents are switched off on this computer", { agents: [], agentsEnabled: false }],
+  ])("shows a generic line with a retry when %s", (_case, overrides) => {
+    mockUseAgents.mockReturnValue(agentsResult(overrides));
+    render(<AgentsScreen />);
+    mockRefetchAgents.mockClear();
+
+    expect(screen.getByRole("alert").props.children).toBe("Agents are not available right now.");
+    expect(screen.queryByTestId("agents-list")).toBeNull();
+
+    fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps showing the agents it has when reading them again fails", () => {
+    mockUseAgents.mockReturnValue(agentsResult({ isError: true }));
+    render(<AgentsScreen />);
+
+    expect(screen.getByTestId("agent-row-bot_research")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

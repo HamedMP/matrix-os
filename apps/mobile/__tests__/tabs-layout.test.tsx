@@ -1,9 +1,17 @@
+import React from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { Platform } from "react-native";
+
+import TabsLayout from "../app/(drawer)/(tabs)/_layout";
+import { TAB_BAR_HIDDEN_ROUTES } from "../lib/tab-bar-visibility";
+
 const registeredTabs: string[] = [];
 let tabsProps: {
   tabBar?: (props: unknown) => React.ReactNode;
   screenOptions?: Record<string, unknown>;
 } = {};
 let mockKeyboardVisible = false;
+let mockAgentsWaiting = 0;
 
 jest.mock("expo-router/tabs", () => {
   const mockReact = jest.requireActual("react") as typeof import("react");
@@ -19,13 +27,10 @@ jest.mock("expo-router/tabs", () => {
 });
 
 jest.mock("@/lib/use-keyboard-visible", () => ({ useKeyboardVisible: () => mockKeyboardVisible }));
-
-import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { Platform } from "react-native";
-
-import TabsLayout from "../app/(drawer)/(tabs)/_layout";
-import { TAB_BAR_HIDDEN_ROUTES } from "../lib/tab-bar-visibility";
+// The real hook reads the agents of the signed-in computer.
+jest.mock("@/components/agents/use-agents-waiting-count", () => ({
+  useAgentsWaitingCount: () => mockAgentsWaiting,
+}));
 
 const TAB_ROUTES = ["(chats)", "agents", "(apps)", "terminal", "settings"];
 
@@ -56,17 +61,21 @@ function renderTabBar(state: ReturnType<typeof tabState>, defaultPrevented = fal
 describe("tabs layout", () => {
   const originalPlatform = Platform.OS;
   const hiddenRoutes = TAB_BAR_HIDDEN_ROUTES as Record<string, readonly string[]>;
+  const realHiddenRoutes = { ...TAB_BAR_HIDDEN_ROUTES };
 
   beforeEach(() => {
     registeredTabs.length = 0;
     tabsProps = {};
     mockKeyboardVisible = false;
+    mockAgentsWaiting = 0;
   });
 
   afterEach(() => {
     cleanup();
     Platform.OS = originalPlatform;
+    // A test may list a screen of its own; the app's own entries come back.
     for (const key of Object.keys(hiddenRoutes)) delete hiddenRoutes[key];
+    Object.assign(hiddenRoutes, realHiddenRoutes);
   });
 
   it("registers the five tabs in the order of the tab bar, without headers, on the background colour", () => {
@@ -88,6 +97,27 @@ describe("tabs layout", () => {
     expect(screen.getByRole("tab", { name: "Apps" }).props.accessibilityState).toMatchObject({ selected: true });
     expect(screen.getByRole("tab", { name: "Chats" }).props.accessibilityState).toMatchObject({ selected: false });
     expect(screen.queryByTestId("tab-badge-agents")).toBeNull();
+  });
+
+  it("shows on the Agents tab how many agents are waiting on the person", () => {
+    mockAgentsWaiting = 2;
+    renderTabBar(tabState("(chats)"));
+
+    expect(screen.getByRole("tab", { name: "Agents, 2 waiting" })).toBeTruthy();
+    expect(screen.getByTestId("tab-badge-agents")).toBeTruthy();
+    expect(screen.getByText("2")).toBeTruthy();
+  });
+
+  it("drops the badge once no agent is waiting any more", () => {
+    mockAgentsWaiting = 1;
+    renderTabBar(tabState("agents"));
+    expect(screen.getByTestId("tab-badge-agents")).toBeTruthy();
+    cleanup();
+
+    mockAgentsWaiting = 0;
+    renderTabBar(tabState("agents"));
+    expect(screen.queryByTestId("tab-badge-agents")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Agents" })).toBeTruthy();
   });
 
   it("switches to the pressed tab, telling its navigator first", () => {
@@ -128,9 +158,7 @@ describe("tabs layout", () => {
     expect(navigation.navigate).not.toHaveBeenCalled();
   });
 
-  it("is hidden while the focused tab shows a screen that takes the whole display", () => {
-    hiddenRoutes.agents = ["new"];
-
+  it("is hidden on the New agent screen, which takes the whole display", () => {
     renderTabBar(tabState("agents", { agents: { index: 1, routes: [{ name: "index" }, { name: "new" }] } }));
     expect(screen.queryByRole("tab")).toBeNull();
     cleanup();
@@ -142,6 +170,22 @@ describe("tabs layout", () => {
 
     renderTabBar(tabState("(chats)", { agents: { index: 1, routes: [{ name: "index" }, { name: "new" }] } }));
     expect(screen.getAllByRole("tab")).toHaveLength(5);
+  });
+
+  it("is hidden on any other screen listed as taking the whole display", () => {
+    hiddenRoutes["(apps)"] = ["files"];
+
+    renderTabBar(tabState("(apps)", { "(apps)": { index: 1, routes: [{ name: "apps" }, { name: "files" }] } }));
+    expect(screen.queryByRole("tab")).toBeNull();
+    cleanup();
+
+    renderTabBar(tabState("(apps)", { "(apps)": { index: 0, routes: [{ name: "apps" }] } }));
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
+  });
+
+  it("gives the listed screens back to the app after a test has listed its own", () => {
+    expect(TAB_BAR_HIDDEN_ROUTES).toEqual(realHiddenRoutes);
+    expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new"] });
   });
 
   it("is hidden on Android while the keyboard is open, and returns when it closes", () => {

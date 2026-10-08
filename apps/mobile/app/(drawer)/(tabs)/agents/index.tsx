@@ -1,62 +1,94 @@
-import { useRef } from "react";
-import { Text } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
-import { useAuth } from "@clerk/clerk-expo";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
 
-import { BotRecipeChooser, type BotCreationAttempt } from "@/components/BotRecipeChooser";
-import { TabScreen } from "@/components/shell/TabScreen";
+import { AgentsListScreen } from "@/components/agents/AgentsListScreen";
+import { agentListRows } from "@/components/agents/agent-rows";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
+import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
+import { useAgents, useEnsureAgentChat } from "@/lib/queries/use-agents";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
-import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
-import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useShowChatScreen } from "@/lib/use-shell-navigation";
 
 export default function AgentsScreen() {
-  const { userId } = useAuth();
+  const router = useRouter();
   const { selectChat } = useCanonicalChatSession();
-  const chats = useCanonicalChats();
-  const { catalog } = useChatProviderCatalog();
   const showChatScreen = useShowChatScreen();
-  const gatewayUrl = chats.computer ? `${HOSTED_GATEWAY_URL}${chats.computer.gatewayPath}` : null;
-  const botCreationAttempt = useRef<BotCreationAttempt | null>(null);
-  const botRecipes = useBotRecipes(gatewayUrl, true);
+  const library = useAgents();
+  const { statuses, refetch: refetchStatuses } = useAgentStatuses(library.agents);
+  const { chats } = useCanonicalChats();
+  const ensureChat = useEnsureAgentChat();
+  const [refreshing, setRefreshing] = useState(false);
+  const opening = useRef(false);
+  const shownBefore = useRef(false);
+
+  const rows = useMemo(
+    () => agentListRows(library.agents, statuses, chats),
+    [library.agents, statuses, chats],
+  );
+
+  const reload = async () => {
+    try {
+      await Promise.all([
+        // A first read still on its way is left to finish.
+        library.isPending ? null : library.refetch(),
+        library.agents.length > 0 ? refetchStatuses() : null,
+      ]);
+    } catch (error: unknown) {
+      console.warn("[mobile] agents reload failed", error instanceof Error ? error.name : "unknown");
+    }
+  };
+  const reloadRef = useRef(reload);
+  useEffect(() => {
+    reloadRef.current = reload;
+  });
+
+  useFocusEffect(
+    useCallback(() => {
+      // The queries read on their own when the screen is first shown.
+      if (!shownBefore.current) {
+        shownBefore.current = true;
+        return;
+      }
+      void reloadRef.current();
+    }, []),
+  );
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await reload();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const openAgent = async (agentId: string) => {
+    if (opening.current) return;
+    opening.current = true;
+    try {
+      const chatId = await ensureChat.mutateAsync(agentId);
+      selectChat(chatId);
+      showChatScreen();
+    } catch (error: unknown) {
+      console.warn("[mobile] agent chat unavailable", error instanceof Error ? error.name : "unknown");
+      Alert.alert("Agent could not be opened", "Try again.");
+    } finally {
+      opening.current = false;
+    }
+  };
+
+  const unavailable = library.agentsEnabled === false || (library.isError && library.agents.length === 0);
 
   return (
-    <TabScreen>
-      <Text accessibilityRole="header" style={styles.title}>Agents</Text>
-      {!gatewayUrl ? null : botRecipes.isError ? (
-        <Text accessibilityRole="alert" style={styles.systemText}>Bot recipes could not be loaded. Try again.</Text>
-      ) : botRecipes.isPending ? (
-        <Text style={styles.systemText}>Loading bot recipes…</Text>
-      ) : (
-        <BotRecipeChooser
-          catalog={catalog}
-          recipes={botRecipes.recipes}
-          onCreate={botRecipes.create}
-          attemptRef={botCreationAttempt}
-          attemptScope={`${userId ?? ""}:${gatewayUrl}`}
-          onOpenChat={(chatId) => {
-            selectChat(chatId);
-            void chats.invalidate();
-            showChatScreen();
-          }}
-        />
-      )}
-    </TabScreen>
+    <AgentsListScreen
+      state={library.isPending ? "loading" : unavailable ? "unavailable" : "ready"}
+      rows={rows}
+      refreshing={refreshing}
+      onRefresh={() => void refresh()}
+      onRetry={() => void reload()}
+      onNewAgent={() => router.push("/agents/new" as never)}
+      onOpenAgent={(agentId) => void openAgent(agentId)}
+    />
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  title: {
-    ...theme.v2.text.title,
-    marginTop: theme.v2.space[8],
-    marginHorizontal: theme.v2.space[20],
-    color: theme.v2.colors.textDefault,
-  },
-  systemText: {
-    ...theme.v2.text.captionMedium,
-    color: theme.v2.colors.textSubtle,
-    textAlign: "center",
-  },
-}));
