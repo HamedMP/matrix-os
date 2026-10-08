@@ -118,3 +118,101 @@ which call this handler; the routes, their auth and their body limits are define
 - Credentials: the token is read from the environment when an adapter is created for one run, kept only in that
   closure, sent only in the Authorization header, and never stored, logged or returned. Integration credentials
   stay in the platform; the brain never sees them.
+
+## Integration wiring
+
+Startup (the wiring step, not these PRs): `bootstrapBrainGithubDatabase(db)` runs after the core, search and graph
+bootstraps with the same lock-timeout deferral; `createBrainIntegrationCaller` gets `internalIntegrationBaseUrl`,
+`UPGRADE_TOKEN`, `platformDb` and the Pipedream client from `server.ts` once platform integrations have started (the
+owner database starts first, so the brain gets a small wrapper that answers `unavailable` until then);
+`createBrainGithubSourceHandler({ kysely, integrations, isConnected, tokenOwnerIds })` joins the sources service's
+handlers (`isConnected`, the connection lookup the connectors use, answers availability without a GitHub call;
+`tokenOwnerIds`, the configured owner ids `MATRIX_USER_ID` and `MATRIX_CLERK_USER_ID`, or `default` outside production
+when neither is set). Five read actions are added to the registry's github service (`list_issues_since`,
+`brain_get_pr`, `brain_list_pr_commits`, `brain_list_pr_reviews`, `brain_list_pr_review_comments`; the `brain_` prefix
+keeps them apart from the platform's own `get_pr` and `list_pr_*` reads). The platform's read-call failure answer
+(`integrationActionFailure`) names the provider's 401/403 as `upstream: "unauthorized"` and 404/410 as `upstream:
+"not_found"` in its 502 body, and answers a 403 that is a rate limit like a 429. No kernel or cross-package calls; no
+`globalThis`. Config injection: `MATRIX_BRAIN_GITHUB_TOKEN` (unset by default, 20..255 characters of
+`[A-Za-z0-9_.-]`), read per run.
+
+## Failure modes
+
+- Timeouts: 10 s per GitHub call and 15 s per integration call, each also bounded by the run signal; an abort during
+  a page returns the items read so far.
+- Rate limits (token mode and the local integration transport): a 429, a 403 with `retry-after` or
+  `x-ratelimit-remaining: 0`, and a 403 whose message names a rate limit (GitHub's secondary limit can carry no
+  headers) become `rate_limited` with `retryAfterSeconds` (1..3,600, else 60); a spent budget stops later calls of
+  the run without calling. The receipt says `retry_later`.
+- Concurrent runs: the runner's cursor compare-and-set lets one batch win; a losing run's validators are never
+  confirmed. Validator writes take the `brain-github:<scopeId>` lock, never the core lock.
+- Crash recovery: a crash between pages replays at most one page as no-ops; validators of an uncommitted page stay
+  unconfirmed.
+- Provider answers (token mode and the local transport): any other 401 or 403 is `auth_failed`; 404, 410 and
+  redirects are `remote_not_found` (a pull request that 404s is passed over). Remote integration mode (hosted
+  gateways) gets these only as the read-call route's generic 502, so they are `provider_unavailable` until that route
+  names the provider's answer (`upstream`: `unauthorized` or `not_found`, read by the caller already; see Integration
+  wiring); a platform 401 there is `provider_unavailable` too.
+- Error propagation: expected failures are values; anything else is rethrown (the runner records `internal_error`).
+
+## Resource management
+
+| Limit | Value | Enforced in |
+| --- | --- | --- |
+| response body | 4 MiB (GitHub and integration calls), 256 KiB connection list | `bounded-body.ts` |
+| page | 50 listed, 25 items, 40 / 12 calls, 8 s, runner document and ref limits | `adapter.ts` |
+| per pull request | 100 commits, 100 reviews, 100 review comments, 500 children examined | `pull-reader.ts`, `database.ts` |
+| cursor | 100 applied numbers, 3 tie pages, one open pull request, 2,048 characters | `cursor.ts` |
+| validators | 8 rows per source, oldest pruned | `database.ts` |
+| label cache | 256 entries, 5 minutes | `caller.ts` |
+| refs per document | per-kind caps, 200 total | `documents.ts` |
+
+No files, timers or child processes. Third-party data flow: requests go to api.github.com (token mode) or through
+the platform's Pipedream proxy to GitHub (integration mode), carrying only the repository, numbers, a time and page
+sizes; nothing from the brain is sent to GitHub.
+
+## Invariants
+
+- **Source of truth**: GitHub; the brain copy is bounded and revisioned, written only through `applySyncBatch`.
+- **Lock/transaction scope**: documents, refs and the cursor commit in the runner's batch transaction; config and
+  validator rows commit under the feature lock; core tables are only read.
+- **Acceptable orphan states**: unconfirmed validator rows (never used, pruned); documents of a disabled include
+  switch until the source is removed; issues deleted on GitHub until the source is removed.
+- **Auth source of truth**: the request principal and the project scope (spec 553); the owner's GitHub connection
+  in the platform; the environment token on self-host, for the configured owner only.
+- **Deferred scope**: see Deferred.
+
+## Integration test checkpoint
+
+`pnpm exec vitest run tests/gateway/brain-source-github-*.test.ts tests/gateway/brain-integration-caller*.test.ts` (PGlite,
+fake client, fake fetch, recorded-shape fixtures; no network) covers mapping, both clients, the page loop with
+receipts (`succeeded`, `partial` with `retry_later`, `failed`), ties, sweeps, limits, conditional requests and the
+handler. The token-mode test runs handler, REST client, adapter and store end to end. Manual (dev Docker stack,
+after wiring): connect a github source for the matrix-os project in token mode, sync until caught up, check that
+`brain_why` on a file lists the pull request with its description, and that a second sync answers `not_modified`.
+
+## Code review checklist
+
+Provider values pass a schema before use; permalinks are built, never copied; the token is in one header only; the
+cursor moves only after an item's documents are in the page; validators are used only once confirmed; every list,
+cache and loop is bounded; no `catch {`; no new dependency.
+
+## Delivery and evidence
+
+- [ ] Two PRs, each under 2,900 additions, checks green, Invariants and the OS-view matrix (N/A) in the body, each
+      merged only after Greptile scores its current head 5/5: first the integration caller
+      (`brain/sources/integration/`, its test and fetch helper, and this spec), then the GitHub source.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): the GitHub source and its two modes.
+
+## Relationship to existing work
+
+Spec 552's git source is the pattern and is not changed; spec 560's sources/core runs this adapter; PR #2078's
+Company Brain store and the Slack stack (#2076 to #2079) are separate.
+
+## Deferred
+
+Issue and pull request conversation comments; PR file lists as `path` refs; webhooks; GitHub Enterprise hosts;
+backfill when an include switch is turned on or `since` is moved earlier; removing documents when an include switch
+is turned off or an issue is deleted on GitHub; repository options for the connect screen (`listOptions`); the
+rebased copies of commits in rebase merges (only the pull request's own shas and the merge commit are mapped);
+claims footer stripping for GitHub documents.
