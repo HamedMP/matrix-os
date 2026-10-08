@@ -109,3 +109,111 @@ describe("defaultGitRunner", { timeout: 30_000 }, () => {
     }
   });
 });
+
+describe("openGitRepository", { timeout: 30_000 }, () => {
+  let f: BrainGitFixture;
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    f = await createBrainGitFixture();
+    await f.commit({ message: "Initial commit", files: { "README.md": "readme\n", "specs/001-a/spec.md": "# A\n" } });
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(async () => {
+    warn.mockRestore();
+    await f.destroy();
+  });
+
+  const open = (input: { repoPath?: string; homePath?: string; runner?: GitRunner; gitTimeoutMs?: number } = {}) =>
+    openGitRepository({
+      repoPath: input.repoPath ?? f.repoPath, homePath: input.homePath ?? f.homePath,
+      runner: input.runner ?? defaultGitRunner, limits: { ...LIMITS, gitTimeoutMs: input.gitTimeoutMs ?? LIMITS.gitTimeoutMs },
+    });
+
+  it("opens a checkout inside home and runs every command with the global args, cwd and limits", async () => {
+    const { runner, calls } = recording(defaultGitRunner);
+    const repo = await open({ runner, gitTimeoutMs: 10 * GIT_SYNC_LIMIT_CEILINGS.gitTimeoutMs });
+    expect(repo).toMatchObject({ root: await realpath(f.repoPath), objectFormat: "sha1", shaPattern: GIT_SHA_PATTERN.sha1 });
+    expect(repo.version.major).toBeGreaterThanOrEqual(2);
+    expect(calls.map((c) => c.args.slice(GIT_GLOBAL_ARGS.length)[0])).toEqual(["version", "rev-parse"]);
+    for (const call of calls) {
+      expect(call.args.slice(0, GIT_GLOBAL_ARGS.length)).toEqual(GIT_GLOBAL_ARGS);
+      expect(call.options).toEqual({
+        cwd: repo.root, timeoutMs: GIT_SYNC_LIMIT_CEILINGS.gitTimeoutMs, maxBuffer: GIT_SMALL_OUTPUT_MAX_BYTES, overflow: "fail",
+      });
+    }
+  });
+
+  it("rejects bad input paths and timeouts as invalid_options", async () => {
+    for (const repoPath of ["", "relative/repo", `${f.repoPath}\u0000x`, `/${"a".repeat(4096)}`]) {
+      await expectCode(open({ repoPath }), "invalid_options");
+    }
+    await expectCode(open({ homePath: "home" }), "invalid_options");
+    for (const gitTimeoutMs of [0, 1.5]) await expectCode(open({ gitTimeoutMs }), "invalid_options");
+  });
+
+  it("refuses anything that is not a checkout strictly inside home", async () => {
+    const outsideHome = join(f.homePath, "other-home");
+    const subdirectory = join(f.repoPath, "sub");
+    const plain = join(f.homePath, "plain");
+    const file = join(f.homePath, "file.txt");
+    await Promise.all([mkdir(outsideHome), mkdir(subdirectory), mkdir(plain), writeFile(file, "x")]);
+    for (const input of [
+      { homePath: outsideHome }, { homePath: f.repoPath }, { repoPath: subdirectory }, { repoPath: plain },
+      { repoPath: join(f.homePath, "missing") }, { repoPath: file },
+    ]) {
+      await expectCode(open(input), "not_a_repository");
+    }
+
+    const versionedHome = await realpath(await mkdtemp(join(tmpdir(), "brain-git-home-")));
+    try {
+      await rawGit(["init", "-q", versionedHome], versionedHome);
+      await mkdir(join(versionedHome, "plain"));
+      await expectCode(open({ homePath: versionedHome, repoPath: join(versionedHome, "plain") }), "not_a_repository");
+    } finally {
+      await rm(versionedHome, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a shallow clone and reads a sha256 object format", async () => {
+    const shallow = join(f.homePath, "projects", "shallow");
+    await rawGit(["clone", "-q", "--no-checkout", "--depth", "1", `file://${f.repoPath}`, shallow], f.homePath);
+    await expectCode(open({ repoPath: shallow }), "shallow_repository");
+
+    const root = await realpath(f.repoPath);
+    const info = `false\nsha256\n${root}\n${root}/.git\n${root}/.git\n`;
+    const sha256 = fakeRunner(defaultGitRunner, (sub) => (sub[0] === "rev-parse" ? gitRunResult(info) : undefined));
+    expect(await open({ runner: sha256 })).toMatchObject({ objectFormat: "sha256", shaPattern: GIT_SHA_PATTERN.sha256 });
+  });
+
+  it("maps versions, runner failures and unexpected exits to codes, logging capped stderr", async () => {
+    const answer = (result: GitRunResult | Error) => fakeRunner(defaultGitRunner, (sub) => {
+      if (sub[0] !== "version") return undefined;
+      if (result instanceof Error) throw result;
+      return result;
+    });
+    await expectCode(open({ runner: answer(gitRunResult("git version 2.20.1\n")) }), "git_version_unsupported");
+    await expectCode(open({ runner: answer(gitRunResult("not git\n")) }), "git_output_malformed");
+    await expectCode(open({ runner: answer(new GitRunnerError("timeout")) }), "git_timeout");
+    await expectCode(open({ runner: answer(new GitRunnerError("spawn_failed")) }), "git_unavailable");
+    await expectCode(open({ runner: answer(new GitRunnerError("output_too_large")) }), "git_output_too_large");
+    const unexpected = new Error("runner bug");
+    await expect(open({ runner: answer(unexpected) })).rejects.toBe(unexpected);
+
+    warn.mockClear();
+    await expectCode(open({ runner: answer({ ...gitRunResult(""), exitCode: 2, stderr: "e".repeat(4_000) }) }), "git_command_failed");
+    expect(warn).toHaveBeenCalledWith("[brain-git] git command failed", { subcommand: "version", exitCode: 2, stderr: "e".repeat(500) });
+  });
+
+  it("rethrows a filesystem error that does not mean a missing checkout", async () => {
+    const failure = Object.assign(new Error("I/O error"), { code: "EIO" });
+    vi.mocked(realpath).mockRejectedValueOnce(failure);
+    await expect(open()).rejects.toBe(failure);
+    // The second realpath is home's own `.git`, which may be absent but must not fail otherwise.
+    const actual = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).realpath;
+    vi.mocked(realpath).mockImplementationOnce(actual).mockRejectedValueOnce(failure);
+    await expect(open()).rejects.toBe(failure);
+    vi.mocked(openFile).mockRejectedValueOnce(failure);
+    await expect(open()).rejects.toBe(failure);
+  });
+});
