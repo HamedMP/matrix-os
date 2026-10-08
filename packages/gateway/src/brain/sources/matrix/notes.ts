@@ -34,14 +34,17 @@ const START: NotesCursor = { v: 1, phase: "scan", after: "", seen: 0 };
 /** Label refs per note; a page must have room for one note's refs. */
 const NOTE_REFS_MAX = 20;
 
-/** Tags as the Notes app writes them: comma or space separated, lowercase, without "#". */
+/**
+ * Every tag as the Notes app writes them: comma or space separated, lowercase, without "#". Selection checks all of
+ * them; only the refs are capped at NOTE_REFS_MAX.
+ */
 export function noteTags(tags: string | null): string[] {
-  const out: string[] = [];
+  const out = new Set<string>();
   for (const raw of (tags ?? "").split(/[,\s]+/)) {
     const tag = raw.replace(/^#/, "").trim().toLowerCase();
-    if (/^[a-z][a-z0-9-]{1,40}$/.test(tag) && !out.includes(tag) && out.length < NOTE_REFS_MAX) out.push(tag);
+    if (/^[a-z][a-z0-9-]{1,40}$/.test(tag)) out.add(tag);
   }
-  return out;
+  return [...out];
 }
 
 function selected(config: BrainMatrixNotesSourceConfig, tags: string | null): boolean {
@@ -54,7 +57,7 @@ function noteDocument(externalRef: string, note: BrainMatrixNoteRow) {
   const firstLine = content.trim().split("\n", 1)[0]!.replace(/^#+\s*/, "").slice(0, 120);
   const title = documentTitle(note.title ?? "", firstLine.trim() === "" ? "Untitled note" : firstLine);
   const fitted = fitBody(title, content.trim() === "" ? title : content);
-  const refs = noteTags(note.tags).map((value) => ({ kind: "label", value }));
+  const refs = noteTags(note.tags).slice(0, NOTE_REFS_MAX).map((value) => ({ kind: "label", value }));
   return {
     cut: fitted.cut || note.contentCut,
     document: {
