@@ -37,6 +37,10 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  agentSummaryClient?: ChatAgentClient;
+  authorityKey?: string;
+  composerIdentity?: object;
+  isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;

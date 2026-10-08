@@ -26,10 +26,13 @@ import {
 } from "@matrix-os/ui";
 import { useShellChatNavigation } from "./useChatNavigation";
 import { useUnreadChatNavigation } from "./useUnreadChatNavigation";
+import { useCanonicalChatAuthority } from "./useCanonicalChatAuthority";
+import { useCanonicalChatSelection } from "./useCanonicalChatSelection";
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
+  CanonicalShellChatRequestError,
   createCanonicalShellChatClient,
   canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
@@ -91,9 +94,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const { connected } = useSocket();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const navigation = useShellChatNavigation(client, eventSource, navigationScope, navigationGeneration);
+  const authority = useCanonicalChatAuthority(navigation, client.agents, navigationScope, navigationGeneration);
+  const { isCurrent } = authority;
+  const composerIdentity = useMemo(() => ({ client, scope: navigationScope }), [client, navigationScope]);
   const unreadNavigation = useUnreadChatNavigation(client, navigation, unreadOnly);
   const { records, update: updateUnreadRecords, refresh: refreshUnread } = unreadNavigation;
   const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[], invalidateUnread = true) => {
+    if (!isCurrent()) return;
     updateUnreadRecords(update, invalidateUnread);
     // Streaming patches use the non-invalidating store path at the event boundary;
     // durable changes reconcile membership and fence older list responses.
@@ -106,10 +113,17 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         return known ? [mergeChatNavigationRecord(known, record)] : [];
       });
     });
-  }, [navigation.store, updateUnreadRecords]);
+  }, [navigation.store, updateUnreadRecords, isCurrent]);
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; }, [records]);
-  const [activeChatId, setActiveChatId] = useState<string>();
+  const navigationIdentity = authority.identity;
+  const [detailError, setDetailError] = useState<{ scope: string; chatId: string; notFound: boolean } | null>(null);
+  const [activeChatId, setActiveChatId] = useCanonicalChatSelection({
+    scope: navigationIdentity, candidates: records, authoritativeItems: navigation.items,
+    fresh: navigation.fresh, truncated: navigation.truncated,
+    missingId: detailError?.scope === navigationIdentity && detailError.notFound ? detailError.chatId : undefined,
+    initialExplicit: Boolean(initialDraft || initialCollaborationView),
+  });
   const [selectedCollaborationView, setSelectedCollaborationView] = useState<ChatCollaborationView | null>(
     initialCollaborationView ?? null,
   );
@@ -132,33 +146,36 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   } | null>(null);
   const detailRef = useRef(detail);
   const activeChatIdRef = useRef(activeChatId);
-  // An empty selection after New chat is intentional, not an initial restore.
-  const autoRestoreChatRef = useRef(true);
   const initialDraftConsumed = useRef(false);
-  const navigationIdentity = JSON.stringify([navigationScope ?? null, navigationGeneration ?? null]);
   const previousNavigationIdentity = useRef(navigationIdentity);
-  detailRef.current = detail;
+  const previousComposerIdentity = useRef(composerIdentity);
+  const sameAuthority = previousNavigationIdentity.current === navigationIdentity && isCurrent();
+  detailRef.current = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
   activeChatIdRef.current = activeChatId;
 
   useEffect(() => {
     if (previousNavigationIdentity.current === navigationIdentity) return;
     previousNavigationIdentity.current = navigationIdentity;
     detailRequestGeneration.current += 1;
-    activeChatIdRef.current = undefined;
+    activeChatIdRef.current = activeChatId;
     detailRef.current = null;
-    autoRestoreChatRef.current = true;
-    setActiveChatId(undefined);
     setDetail(null);
     setSelectedCollaborationView(null);
     setSafeError(null);
     inputAttempt.current = null;
-  }, [navigationIdentity]);
+    submittingRef.current = false;
+    setSubmitting(false);
+    if (previousComposerIdentity.current !== composerIdentity) {
+      previousComposerIdentity.current = composerIdentity;
+      setComposerDraftRequest(null);
+    }
+  }, [navigationIdentity, activeChatId, composerIdentity]);
 
   useEffect(() => {
     const synchronizeFromHistory = () => {
+      if (!isCurrent()) return;
       const view = collaborationViewFromPathname(window.location.pathname);
       if (view) {
-        autoRestoreChatRef.current = false;
         activeChatIdRef.current = undefined;
         detailRef.current = null;
         detailRequestGeneration.current += 1;
@@ -170,31 +187,27 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     };
     window.addEventListener("popstate", synchronizeFromHistory);
     return () => window.removeEventListener("popstate", synchronizeFromHistory);
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   useEffect(() => {
     if (!initialDraft || initialDraftConsumed.current) return;
     initialDraftConsumed.current = true;
-    autoRestoreChatRef.current = false;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
     setActiveChatId(undefined);
     setDetail(null);
     setComposerDraftRequest({ id: ++composerDraftSequence.current, text: initialDraft });
-  }, [initialDraft]);
+  }, [initialDraft, setActiveChatId]);
 
-  const loadList=useCallback(async()=>{refreshUnread(); await navigation.store?.refresh();},[navigation.store, refreshUnread]);
-  useEffect(()=>{
-    if(autoRestoreChatRef.current && records.length) setActiveChatId(current=>current??records[0]?.chat.id);
-  },[records]);
-
+  const loadList=useCallback(async()=>{if (!isCurrent()) return; refreshUnread(); await navigation.store?.refresh();},[navigation.store, refreshUnread, isCurrent]);
 
   const loadDetail = useCallback(async (chatId: string) => {
+    if (!isCurrent()) return null;
     const generation = ++detailRequestGeneration.current;
     try {
       let value = await client.detail(chatId);
-      if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
+      if (!isCurrent() || activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
         return null;
       }
       const current = detailRef.current;
@@ -212,17 +225,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       if (current) value = { ...value, record: mergeChatReadState(value.record, current.record) };
       detailRef.current = value;
       setDetail(value);
+      setDetailError(null);
       setSafeError(null);
       return value;
     } catch (error: unknown) {
-      if (activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
+      if (!isCurrent() || activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
         return null;
       }
       console.warn("[canonical-chat] Shell detail unavailable:", error instanceof Error ? error.name : "UnknownError");
-      setSafeError("Chat could not be loaded. Try again.");
+      setDetailError({ scope: navigationIdentity, chatId, notFound: error instanceof CanonicalShellChatRequestError && error.status === 404 });
       return null;
     }
-  }, [client]);
+  }, [client, navigationIdentity, isCurrent]);
 
 
   useEffect(() => {
@@ -253,6 +267,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       !activeChatId || Boolean(await loadDetail(activeChatId))
     ));
     const subscription = eventSource.subscribe((event) => {
+      if (!isCurrent()) return;
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
         setBotEventRevision((revision) => revision + 1);
@@ -269,6 +284,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             const merged = { ...next, record: mergeCanonicalChatRecord(current.record, next.record) };
             detailRef.current = merged;
             setDetail(merged);
+            setDetailError(null);
             setSafeError(null);
           } else selectedRefresh.schedule();
         }
@@ -286,7 +302,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       subscription.dispose();
       selectedRefresh.dispose();
     };
-  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread, navigation.store]);
+  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread, navigation.store, isCurrent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -350,6 +366,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     files?: Array<{ name: string; type: string; data: string }>,
     options?: ChatSubmitOptions,
   ) => {
+    if (!isCurrent()) return false;
     if ((!text.trim() && !options?.resources?.length && !files?.length) || submittingRef.current) return false;
     if (activeChatId && detailRef.current?.record.chat.id !== activeChatId) {
       setSafeError("Wait for this chat to finish loading.");
@@ -377,12 +394,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         };
         let record = detailRef.current?.record ?? null;
         if (!record) {
-          autoRestoreChatRef.current = false;
+          setActiveChatId(undefined);
           record = await client.create({
             clientRequestId: options.clientRequestId ? `${options.clientRequestId}_chat` : requestId(),
             title: generatedChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
+          if (!isCurrent()) return false;
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
         const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
@@ -393,6 +411,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           uploadedReferences.push(reference.ownerReference);
           return reference;
         }));
+        if (!isCurrent()) return false;
         const failedUpload = uploadResults.find((result) => result.status === "rejected");
         if (failedUpload?.status === "rejected") throw failedUpload.reason;
         const attachmentParts = uploadResults.flatMap((result) =>
@@ -411,12 +430,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
         if (options.resources?.length) {
           const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
-          const attempt = mentionRequests.resolve(client, requestScope, semanticInput, operation, seed);
+          const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, seed);
           input.clientRequestId = attempt.clientRequestId;
           operation = attempt.operation;
         }
         if (operation === "queue") {
           const queued = await client.queueTurn(record.chat.id, input);
+          if (!isCurrent()) return false;
           turnAdmitted = true;
           mentionRequests.accepted(requestScope, input.clientRequestId);
           const current = detailRef.current;
@@ -427,9 +447,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             setDetail(next);
           }
           await loadDetail(record.chat.id);
-          return true;
+          return isCurrent();
         }
         const admitted = await client.admitTurn(record.chat.id, input);
+        if (!isCurrent()) return false;
         turnAdmitted = true;
         mentionRequests.accepted(requestScope, input.clientRequestId);
         if (activeChatIdRef.current === sourceChatId) {
@@ -449,39 +470,45 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         await loadList();
         await loadDetail(record.chat.id);
-        return true;
+        return isCurrent();
       } catch (error: unknown) {
+        if (!isCurrent()) return false;
         const definitelyUnadmitted = !admissionAttempted || isDefinitiveCanonicalChatRejection(error);
         if (!turnAdmitted && definitelyUnadmitted && uploadedReferences.length > 0) {
           await Promise.allSettled(uploadedReferences.map((reference) => client.deleteAttachment(reference)));
         }
+        if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
         if (activeChatIdRef.current === sourceChatId) setSafeError(canonicalShellChatFailureMessage(error));
         return turnAdmitted;
       }
     };
     return send().finally(() => {
+      if (!isCurrent()) return;
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [activeChatId, client, loadDetail, loadList, mentionRequests]);
+  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    if (!isCurrent()) return false;
     const current = detailRef.current;
     if (!activeChatId || current?.record.chat.id !== activeChatId) return false;
     try {
       await client.cancelQueuedTurn(activeChatId, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
+      if (!isCurrent()) return false;
       await loadDetail(activeChatId);
-      return true;
+      return isCurrent();
     } catch (error: unknown) {
+      if (!isCurrent()) return false;
       console.warn("[canonical-chat] Queue cancellation failed:", error instanceof Error ? error.name : "UnknownError");
       if (activeChatIdRef.current === activeChatId) setSafeError("Queued request could not be cancelled. Try again.");
       return false;
     }
-  }, [activeChatId, client, loadDetail]);
+  }, [activeChatId, client, loadDetail, isCurrent]);
 
   const newChat = useCallback(async () => {
-    autoRestoreChatRef.current = false;
+    if (!isCurrent()) return;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -490,9 +517,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   const switchConversation = useCallback((chatId: string) => {
+    if (!isCurrent()) return;
     activeChatIdRef.current = chatId;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -501,10 +529,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   const openSharedChat = useCallback((scopeId: string) => {
-    autoRestoreChatRef.current = false;
+    if (!isCurrent()) return;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -513,10 +541,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView({ kind: "chat", scopeId });
     pushShellChatPath(`/shared/chat/${encodeURIComponent(scopeId)}`);
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   const openSharedProject = useCallback((scopeId: string) => {
-    autoRestoreChatRef.current = false;
+    if (!isCurrent()) return;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -525,10 +553,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView({ kind: "project", scopeId });
     pushShellChatPath(`/shared/project/${encodeURIComponent(scopeId)}`);
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   const openSharedHome = useCallback(() => {
-    autoRestoreChatRef.current = false;
+    if (!isCurrent()) return;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -537,25 +565,28 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView({ kind: "home" });
     pushShellChatPath("/shared");
-  }, []);
+  }, [setActiveChatId, isCurrent]);
 
   const abortCurrent = useCallback(() => {
+    if (!isCurrent()) return false;
     const current = detailRef.current;
     if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return;
     const chatId = current.record.chat.id;
     void client.cancelRun(chatId, current.record.activeRun.runId, requestId())
-      .then(() => { if (activeChatIdRef.current === chatId) return loadDetail(chatId); })
+      .then(() => { if (isCurrent() && activeChatIdRef.current === chatId) return loadDetail(chatId); })
       .catch((error: unknown) => {
+        if (!isCurrent()) return;
         console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
         if (activeChatIdRef.current === chatId) setSafeError("The run could not be stopped. Try again.");
       });
-  }, [client, loadDetail]);
+  }, [client, loadDetail, isCurrent]);
 
   const submitInput = useCallback(async (
     runId: string,
     inputRequestId: string,
     input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">,
   ) => {
+    if (!isCurrent()) return false;
     const current = detailRef.current;
     if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
       || current.record.activeRun.runId !== runId || inputAttempt.current?.inFlight) return false;
@@ -568,23 +599,26 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     attempt.inFlight = true;
     try {
       await client.submitInput(chatId, runId, inputRequestId, { ...input, clientRequestId: attempt.clientRequestId });
+      if (!isCurrent()) return false;
       if (activeChatIdRef.current === chatId) await loadDetail(chatId);
-      return true;
+      return isCurrent();
     } catch (error: unknown) {
+      if (!isCurrent()) return false;
       console.warn("[canonical-chat] Shell input submission failed:", error instanceof Error ? error.name : "UnknownError");
       if (activeChatIdRef.current === chatId) await loadDetail(chatId);
-      if (activeChatIdRef.current === chatId) setSafeError("Your answer could not be submitted. Try again.");
+      if (isCurrent() && activeChatIdRef.current === chatId) setSafeError("Your answer could not be submitted. Try again.");
       return false;
     } finally {
       attempt.inFlight = false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, isCurrent]);
 
   const submitApproval = useCallback(async (
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
   ) => {
+    if (!isCurrent()) return false;
     const current = detailRef.current;
     if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current
       || current.record.activeRun.runId !== runId) {
@@ -599,17 +633,20 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         decision,
         requestId(),
       );
+      if (!isCurrent()) return false;
       await loadDetail(current.record.chat.id);
-      return true;
+      return isCurrent();
     } catch (error: unknown) {
+      if (!isCurrent()) return false;
       console.warn("[canonical-chat] Shell approval failed:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("The approval could not be submitted. Refresh and try again.");
       await loadDetail(current.record.chat.id);
       return false;
     }
-  }, [client, loadDetail]);
+  }, [client, loadDetail, isCurrent]);
 
   const renameConversation = useCallback(async (chatId: string, title: string) => {
+    if (!isCurrent()) return false;
     const current = detailRef.current?.record.chat.id === chatId
       ? detailRef.current.record
       : records.find((record) => record.chat.id === chatId);
@@ -622,6 +659,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         expectedTitleVersion: current.chat.titleVersion ?? 0,
         title,
       });
+      if (!isCurrent()) return false;
       setRecords((existing) => existing.map((record) => record.chat.id === chatId
         ? mergeChatNavigationRecord(record, updated) : record));
       const active = detailRef.current;
@@ -636,17 +674,20 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setSafeError(null);
       return true;
     } catch (error: unknown) {
+      if (!isCurrent()) return false;
       console.warn("[canonical-chat] Shell rename failed:", error instanceof Error ? error.name : "UnknownError");
       await loadList();
       await loadDetail(chatId);
-      setSafeError("The Chat could not be renamed. Try again.");
+      if (isCurrent()) setSafeError("The Chat could not be renamed. Try again.");
       return false;
     }
-  }, [client, records, loadList, loadDetail, setRecords]);
+  }, [client, records, loadList, loadDetail, setRecords, isCurrent]);
 
   const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
+    if (!isCurrent()) return false;
     try {
       const response = await client.updateReadState(chatId, input);
+      if (!isCurrent()) return false;
       setRecords((current) => current.map((record) => mergeChatReadState(record, response)));
       const current = detailRef.current;
       if (current?.record.chat.id === chatId) {
@@ -656,23 +697,27 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
       return true;
     } catch (error: unknown) {
+      if (!isCurrent()) return false;
       console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
       setSafeError("The Chat could not be updated. Try again.");
       return false;
     }
-  }, [client, setRecords]);
+  }, [client, setRecords, isCurrent]);
 
-  const messages = detail ? projectCanonicalTranscript(detail) : [];
-  const visibleError = safeError ?? unreadNavigation.error ?? navigation.error;
+  const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
+  const messages = selectedDetail ? projectCanonicalTranscript(selectedDetail) : [];
+  const selectedDetailError = detailError?.scope === navigationIdentity && detailError.chatId === activeChatId
+    ? "Chat could not be loaded. Try again." : null;
+  const visibleError = (sameAuthority ? safeError : null) ?? selectedDetailError ?? unreadNavigation.error ?? navigation.error;
   if (visibleError) {
     messages.push({ id: "canonical-safe-error", role: "system", content: visibleError, timestamp: Date.now() });
   }
-  const activeRecord = detail && detail.record.chat.id === activeChatId
-    ? detail.record
+  const activeRecord = selectedDetail
+    ? selectedDetail.record
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
-  const projectedSharedChat = sharedChatMembershipFromProjection(detail?.record.chat.collaboration);
-  const collaborationView = selectedCollaborationView
+  const projectedSharedChat = sharedChatMembershipFromProjection(selectedDetail?.record.chat.collaboration);
+  const collaborationView = (sameAuthority ? selectedCollaborationView : null)
     ?? (projectedSharedChat && activeRecord
       ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
       : undefined);
@@ -682,30 +727,34 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     openSharedProject,
     openSharedHome,
     unreadOnly, setUnreadOnly,
-    readState: detail?.record.chat.id === activeChatId ? detail?.record.readState : undefined,
-    displayedThroughSeq: Math.max(0, ...(detail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
+    readState: selectedDetail?.record.readState,
+    displayedThroughSeq: Math.max(0, ...(selectedDetail?.messages ?? []).filter((message) => message.role === "assistant" && message.state === "committed").map((message) => message.seq)),
     updateReadState,
     messages,
     sessionId: activeChatId,
-    busy: submitting || detailLoading || Boolean(detail?.record.activeRun),
-    activeRunId: detail && detail.record.chat.id === activeChatId ? detail.record.activeRun?.runId : undefined,
+    busy: (sameAuthority && submitting) || detailLoading || Boolean(selectedDetail?.record.activeRun),
+    activeRunId: selectedDetail?.record.activeRun?.runId,
     currentTool: null,
     connected,
     queue: [],
-    agentClient: client.agents,
+    agentClient: authority.agentClient,
+    agentSummaryClient: authority.summaryClient,
+    authorityKey: navigationIdentity,
+    composerIdentity,
+    isCurrentAuthority: isCurrent,
     botEventRevision,
-    queuedTurns: detail?.queuedTurns ?? [],
+    queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
-    providerSelection: detail?.record.chat.currentSelection,
-    boundProviderInstanceId: detail?.record.providerBinding?.instanceId,
+    providerSelection: selectedDetail?.record.chat.currentSelection,
+    boundProviderInstanceId: selectedDetail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
     navigationFresh:navigation.fresh,
     navigationClassifications: unreadNavigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,
-    composerDraftRequest,
-    requestComposerDraft: (text) => setComposerDraftRequest({ id: ++composerDraftSequence.current, text }),
-    consumeComposerDraft: (id) => setComposerDraftRequest((current) => current?.id === id ? null : current),
+    composerDraftRequest: sameAuthority && previousComposerIdentity.current === composerIdentity ? composerDraftRequest : null,
+    requestComposerDraft: (text) => { if (isCurrent()) setComposerDraftRequest({ id: ++composerDraftSequence.current, text }); },
+    consumeComposerDraft: (id) => { if (isCurrent()) setComposerDraftRequest((current) => current?.id === id ? null : current); },
     submitMessage,
     newChat,
     switchConversation,

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { ChatAgentClient } from "../../../packages/ui/src/chat-agents/client.js";
 import type { ChatAgentListResponse } from "@matrix-os/contracts";
 import { ChatAgentsRailSection } from "../../../packages/ui/src/chat-agents/ChatAgentsRailSection.js";
-import { ChatAgentsWorkspace } from "../../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
+import { ChatAgentsWorkspace, useChatAgentsNavigation } from "../../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { clientFixture, saved } from "../../desktop/chat-agents-fixture.js";
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -103,4 +104,41 @@ it.each([true, false])("publishes authoritative enabled=%s to both mounted same-
     expect(a.queryByRole("button", { name: "Agents" })).toBeNull();
     expect(b.queryByRole("button", { name: "Agents" })).toBeNull();
   }
+});
+
+it("keeps the raw action identity while an explicit summary authority resets the library", async () => {
+  const client = clientFixture(); client.list.mockResolvedValue(library);
+  const first = { ...client };
+  let navigation: ReturnType<typeof useChatAgentsNavigation>;
+  function Probe() { const value = useChatAgentsNavigation(); useLayoutEffect(() => { navigation = value; }, [value]); return null; }
+  const content = (summaryClient: typeof client) => <ChatAgentsWorkspace>
+    <ChatAgentsRailSection client={client} summaryClient={summaryClient} /><Probe />
+  </ChatAgentsWorkspace>;
+  const { rerender } = render(content(first));
+  await screen.findByRole("button", { name: `Chat with ${saved.name}` });
+  fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+  expect(navigation!.opened?.client).toBe(client);
+  let fail!: (error: unknown) => void;
+  client.list.mockImplementation(() => new Promise((_resolve, reject) => { fail = reject; }));
+  const next = { ...client };
+  rerender(content(next));
+  expect(screen.queryByRole("button", { name: `Chat with ${saved.name}` })).toBeNull();
+  await waitFor(() => expect(fail).toBeTypeOf("function"));
+  await act(async () => fail(new Error("transient authority recovery failure")));
+  expect(screen.queryByRole("button", { name: `Chat with ${saved.name}` })).toBeNull();
+});
+
+it("checks a live host authority fence before a pending Bot opener settles", async () => {
+  const raw = clientFixture(); raw.list.mockResolvedValue(library);
+  let authorized = true;
+  let finish!: (chatId: string) => void;
+  const ensureDirectChat = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+  const client = { ...raw, bots: { ensureDirectChat } } as unknown as ChatAgentClient;
+  const open = vi.fn();
+  render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} summaryClient={{ ...client }} isCurrent={() => authorized} onOpenBotChat={open} /></ChatAgentsWorkspace>);
+  fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  authorized = false;
+  await act(async () => finish("chat_previous_authority"));
+  expect(open).not.toHaveBeenCalled();
 });
