@@ -171,6 +171,17 @@ describe("integrations-mcp brain tools", () => {
     } finally { await f.close(); }
   });
 
+  it("accepts a commitment assignee as long as a stored ref, which the brief copies unchanged", async () => {
+    const assignee = `name:${"a".repeat(507)}`;
+    const f = await connect(json({ date: "2026-10-01", window: "day", truncated: false, summary: null,
+      sections: { ...BRIEF_EMPTY, commitments: [{ ...LINE, assignee, severity: null }] } }));
+    try {
+      const brief = await f.call("brain_brief", { project: "p" });
+      expect(brief.isError).toBe(false);
+      expect(brief.text).toContain("Bound lists (due 2026-10-03, assignee name:aaaa");
+    } finally { await f.close(); }
+  });
+
   it("covers the plain variants: file paths, uncut briefs, impact without notes and long emoji titles", async () => {
     const bodies: Record<string, unknown> = {
       claims: { kind: null, path: "src/a.ts", match: "file_or_folder", nextCursor: null, items: [
