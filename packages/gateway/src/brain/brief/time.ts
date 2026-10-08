@@ -25,10 +25,7 @@ export const CALENDAR_DATE = new RegExp(String.raw`^(?:\d{4}-(?:(?:0[13578]|1[02
 
 export interface BriefWindowRange { readonly date: string; readonly from: Date; readonly to: Date }
 
-/**
- * The window of a brief date: default today UTC; a date after today or more than historyDays back is
- * invalid_request.
- */
+/** The window of a brief date (default today UTC); a date after today or over historyDays back is invalid_request. */
 export function briefWindow(date: string | undefined, window: BrainBriefWindow, now: Date): BriefWindowRange {
   const today = parseUtcDate(utcDate(now))!;
   const day = date === undefined ? today : parseUtcDate(date);
