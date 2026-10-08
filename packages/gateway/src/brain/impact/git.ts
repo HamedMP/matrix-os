@@ -130,3 +130,90 @@ export function parseImportGrep(stdout: Uint8Array, commit: string, truncated: b
   }
   return matches;
 }
+
+export async function openImpactGit(input: OpenImpactGitInput): Promise<ImpactGit> {
+  const limits = { ...GIT_SYNC_DEFAULT_LIMITS, gitTimeoutMs: BRAIN_IMPACT_LIMITS.gitTimeoutMs };
+  const { repoPath, homePath, runner } = input;
+  const repo = await openGitRepository({ repoPath, homePath, runner, limits });
+  const sha = (value: string): string => (repo.shaPattern.test(value) ? value : malformed());
+
+  async function git(sub: readonly string[], call: Call): Promise<GitRunResult> {
+    let result: GitRunResult;
+    try {
+      result = await input.runner([...GIT_GLOBAL_ARGS, ...sub], {
+        cwd: repo.root, timeoutMs: BRAIN_IMPACT_LIMITS.gitTimeoutMs, maxBuffer: call.maxBuffer,
+        overflow: call.truncate === true ? "truncate" : "fail",
+      });
+    } catch (err: unknown) {
+      if (!(err instanceof GitRunnerError)) throw err;
+      console.warn(`${LOG_PREFIX} git runner failed`, { subcommand: sub[0], failure: err.failure });
+      throw new GitSourceError(RUNNER_FAILURE_CODES[err.failure], { cause: err });
+    }
+    if (!call.okExits.includes(result.exitCode)) {
+      console.warn(`${LOG_PREFIX} git command failed`, { subcommand: sub[0], exitCode: result.exitCode });
+      throw new GitSourceError("git_command_failed");
+    }
+    return result;
+  }
+
+  async function verify(ref: string): Promise<string | null> {
+    const args = ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`];
+    const result = await git(args, { maxBuffer: GIT_SMALL_OUTPUT_MAX_BYTES, okExits: [0, 1, 128] });
+    return result.exitCode === 0 ? sha(text.decode(result.stdout).trim()) : null;
+  }
+
+  return {
+    repo,
+
+    async resolveRev(rev) {
+      const candidates = SHA_INPUT.test(rev) ? [rev] : [];
+      if (isSafeBranchName(rev)) {
+        candidates.push(`refs/heads/${rev}`, `refs/remotes/origin/${rev}`, `refs/remotes/${rev}`);
+      }
+      for (const candidate of candidates) {
+        const resolved = await verify(candidate);
+        if (resolved !== null) return { ref: candidate, sha: resolved };
+      }
+      return null;
+    },
+
+    async mergeBase(left, right) {
+      const args = ["merge-base", sha(left), sha(right)];
+      const result = await git(args, { maxBuffer: GIT_SMALL_OUTPUT_MAX_BYTES, okExits: [0, 1] });
+      return result.exitCode === 0 ? sha(text.decode(result.stdout).trim()) : null;
+    },
+
+    async commitTime(commit) {
+      const args = ["log", "-1", "--no-walk", "--format=%cI", sha(commit), "--"];
+      const result = await git(args, { maxBuffer: GIT_SMALL_OUTPUT_MAX_BYTES, okExits: [0] });
+      const at = new Date(text.decode(result.stdout).trim());
+      return Number.isNaN(at.getTime()) ? malformed() : at.toISOString();
+    },
+
+    async diff(from, to) {
+      const args = [
+        "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative", "-M", "--name-status", "-z",
+        sha(from), sha(to), "--",
+      ];
+      const result = await git(args, { maxBuffer: DIFF_MAX_BYTES, truncate: true, okExits: [0, null] });
+      return parseNameStatus(result.stdout, result.truncated);
+    },
+
+    async listTree(commit) {
+      const args = ["ls-tree", "-r", "-z", "-l", "--full-tree", sha(commit), "--"];
+      const result = await git(args, { maxBuffer: TREE_MAX_BYTES, truncate: true, okExits: [0, null] });
+      const entries = parseLsTree(wholeRecords(result.stdout, result.truncated), repo.shaPattern);
+      return { entries, truncated: result.truncated };
+    },
+
+    async grepImports(commit, paths) {
+      if (paths.length === 0) return { matches: [], truncated: false };
+      const args = [
+        "grep", "-I", "-z", "-n", "--no-column", "--no-color", "-o", "-E", "-e", IMPORT_GREP_PATTERN, sha(commit),
+        "--", ...paths,
+      ];
+      const result = await git(args, { maxBuffer: GREP_MAX_BYTES, truncate: true, okExits: [0, 1, null] });
+      return { matches: parseImportGrep(result.stdout, commit, result.truncated), truncated: result.truncated };
+    },
+  };
+}
