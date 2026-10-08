@@ -115,3 +115,116 @@ function eachPair(ids: readonly string[], fn: (x: string, y: string) => void): v
   if (ids.length > BRAIN_MERGE_SUGGESTION_LIMITS.entitiesPerName) return;
   for (let i = 0; i < ids.length; i += 1) for (let j = i + 1; j < ids.length; j += 1) fn(ids[i]!, ids[j]!);
 }
+
+/** Scores every pair of roots with evidence; roots split apart by the owner are left out. */
+export function findMergeCandidates(input: BrainMergeInput): BrainMergeCandidate[] {
+  const byId = new Map(input.persons.map((person) => [person.entityId, person]));
+  const clusterOf = (entityId: string): string | undefined => {
+    const person = byId.get(entityId);
+    return person !== undefined && byId.has(person.root) ? person.root : undefined;
+  };
+  const pairKey = (x: string, y: string) => (x < y ? `${x} ${y}` : `${y} ${x}`);
+  const blocked = new Set<string>();
+  for (const split of input.splits) {
+    const x = clusterOf(split.aliasId);
+    const y = clusterOf(split.entityId);
+    if (x !== undefined && y !== undefined) blocked.add(pairKey(x, y));
+  }
+  const found = new Map<string, Found>();
+  const add = (x: string, y: string, signal: BrainMergeSignal, detail: string, weight: number, documents: number | null) => {
+    const a = clusterOf(x);
+    const b = clusterOf(y);
+    if (a === undefined || b === undefined || a === b || blocked.has(pairKey(a, b))) return;
+    const key = pairKey(a, b);
+    const entry = found.get(key) ?? { a: a < b ? a : b, b: a < b ? b : a, evidence: new Map() };
+    found.set(key, entry);
+    const evidenceKey = `${signal}\n${compactName(detail)}`;
+    const previous = entry.evidence.get(evidenceKey);
+    if (previous === undefined || previous.weight < weight) {
+      entry.evidence.set(evidenceKey, { signal, detail: cutText(detail, 200), documents, weight });
+    }
+  };
+
+  // Logins by exact login ("john-smith" and "johnsmith" are two accounts); compactLogins only matches names to them.
+  const logins = new Groups();
+  const compactLogins = new Map<string, Set<string>>();
+  const locals = new Groups();
+  const names = new Groups();
+  for (const person of input.persons) {
+    const handle = handleOf(person.key);
+    if (handle !== null && "login" in handle) {
+      logins.add(handle.login, handle.login, person.entityId);
+      const compact = compactName(handle.login);
+      compactLogins.set(compact, (compactLogins.get(compact) ?? new Set<string>()).add(handle.login));
+    }
+    if (handle !== null && "local" in handle) locals.add(handle.local, handle.local, person.entityId);
+    for (const name of namesOf(person)) {
+      const compact = compactName(name);
+      if (compact.length >= MIN_COMPACT_CHARS) names.add(compact, name, person.entityId);
+    }
+  }
+  for (const group of logins.byKey.values()) {
+    eachPair([...group.ids], (x, y) => add(x, y, "same_github_login", group.label, WEIGHTS.same_github_login, null));
+  }
+  const { entitiesPerName } = BRAIN_MERGE_SUGGESTION_LIMITS;
+  for (const [compact, group] of names.byKey) {
+    const ids = [...group.ids];
+    eachPair(ids, (x, y) => add(x, y, "shared_name", group.label, sharedNameWeight(group.words), null));
+    if (ids.length > entitiesPerName) continue; // A common name matches no login or email either.
+    const local = locals.byKey.get(compact);
+    const handles = [
+      ["name_matches_login", [...compactLogins.get(compact) ?? []].map((login) => logins.byKey.get(login)!)],
+      ["name_matches_email", local === undefined ? [] : [local]],
+    ] as const;
+    for (const [signal, matches] of handles) {
+      if (matches.reduce((sum, match) => sum + match.ids.size, 0) > entitiesPerName) continue;
+      for (const match of matches) {
+        for (const x of ids) for (const y of match.ids) add(x, y, signal, match.label, WEIGHTS[signal], null);
+      }
+    }
+  }
+
+  // Trailer pairs: a name seen with several emails was never merged automatically; its share of documents decides.
+  const byName = new Map<string, { total: number; emails: { e: string; documents: number }[] }>();
+  for (const pair of input.pairs) {
+    const entry = byName.get(pair.n) ?? { total: 0, emails: [] };
+    entry.total += pair.documents;
+    entry.emails.push({ e: pair.e, documents: pair.documents });
+    byName.set(pair.n, entry);
+  }
+  for (const [nameKey, entry] of byName) {
+    const name = personDisplay(nameKey);
+    const nameId = brainEntityId("person", nameKey);
+    for (const email of entry.emails) {
+      const weight = 0.5 + 0.4 * (email.documents / entry.total);
+      add(nameId, brainEntityId("person", email.e), "name_seen_with_email", name, weight, email.documents);
+    }
+    eachPair(entry.emails.map((email) => brainEntityId("person", email.e)),
+      (x, y) => add(x, y, "shared_name", name, sharedNameWeight(MULTI_WORD.test(name)), entry.total));
+  }
+
+  return [...found.values()].map((entry) => {
+    const evidence = [...entry.evidence.values()].sort((x, y) => y.weight - x.weight
+      || x.signal.localeCompare(y.signal) || x.detail.localeCompare(y.detail));
+    const miss = evidence.reduce((product, item) => product * (1 - item.weight), 1);
+    return {
+      a: byId.get(entry.a)!, b: byId.get(entry.b)!, score: Math.min(0.99, Math.round((1 - miss) * 100) / 100),
+      evidence: evidence.slice(0, BRAIN_MERGE_SUGGESTION_LIMITS.evidencePerSuggestion)
+        .map(({ signal, detail, documents }) => ({ signal, detail, documents })),
+    };
+  });
+}
+
+/** Email keys are the identity, then GitHub logins, then names (other handles carry no signal). */
+function kindRank(key: string): number {
+  return key.startsWith("email:") ? 0 : key.startsWith("github:") ? 1 : 2;
+}
+
+/** The entity that stays (an email first, then a GitHub login, then more links, then a) and the one merged in. */
+export function orientCandidate(
+  candidate: Pick<BrainMergeCandidate, "a" | "b">, linksOf: (root: string) => number,
+): { readonly entity: BrainMergePerson; readonly alias: BrainMergePerson } {
+  const { a, b } = candidate;
+  const aStays = kindRank(a.key) - kindRank(b.key) || linksOf(b.entityId) - linksOf(a.entityId);
+  return aStays <= 0 ? { entity: a, alias: b } : { entity: b, alias: a };
+}
