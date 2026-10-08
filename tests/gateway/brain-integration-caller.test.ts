@@ -150,3 +150,152 @@ describe("integration caller, request checks", () => {
     expect(db.getUserByClerkId).not.toHaveBeenCalled();
   });
 });
+
+describe("integration caller, local transport", () => {
+  const USER_ID = "0b6c5d1e-2f3a-4b5c-8d9e-0f1a2b3c4d5e";
+  const connection = (label: string) => ({ service: "github", account_label: label, pipedream_account_id: `apn_${label}` });
+  /** Like the platform database: users and connections are keyed by UUID, and a non-UUID id is a Postgres 22P02. */
+  type Read = (request: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>;
+  function local(options: { connections?: unknown[]; externalId?: string | null; proxyGet?: Read; bounded?: boolean } = {}) {
+    // The raw, byte-capped read every brain call takes (pipedream.boundedProxy).
+    const proxyGet = vi.fn<Read>(options.proxyGet ?? (async () => [{ number: 1 }]));
+    const user = { id: USER_ID, clerk_id: "user_2abc", pipedream_external_id: options.externalId === undefined ? "ext_1" : options.externalId };
+    const uuidOnly = (id: string) => {
+      if (!/^[0-9a-f-]{36}$/.test(id)) throw Object.assign(new Error("invalid input syntax for type uuid"), { code: "22P02" });
+    };
+    const db = {
+      getUserByClerkId: vi.fn(async (clerkId: string) => (clerkId === user.clerk_id ? user : null)),
+      getUserById: vi.fn(async (id: string) => { uuidOnly(id); return id === USER_ID ? user : null; }),
+      listConnectedServices: vi.fn(async (id: string) => { uuidOnly(id); return id === USER_ID ? options.connections ?? [connection("work")] : []; }),
+    };
+    const sdkProxyGet = vi.fn(async () => [{ number: 1 }]);
+    const pipedream = options.bounded === false ? { proxyGet: sdkProxyGet } : { boundedProxy: proxyGet, proxyGet: sdkProxyGet };
+    const caller = createBrainIntegrationCaller({ db: db as never, pipedream: pipedream as never, timeoutMs: 50 });
+    return { caller, proxyGet, sdkProxyGet, db };
+  }
+  const statusError = (status: number, headers?: Record<string, string>) => Object.assign(new Error("provider"), { status, headers });
+
+  it("runs the registry action for the platform user behind the owner's Clerk id", async () => {
+    const { caller, proxyGet, db } = local({ connections: [connection("home"), connection("work")] });
+    expect(await caller.call("user_2abc", { ...request, label: "work" }, signal())).toEqual({ status: "ok", data: [{ number: 1 }] });
+    expect(db.listConnectedServices).toHaveBeenCalledWith(USER_ID);
+    expect(db.getUserById).not.toHaveBeenCalled();
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({
+      externalUserId: "ext_1", accountId: "apn_work", method: "GET", url: "https://api.github.com/repos/acme/widgets/issues",
+      maxBytes: 4 * 1024 * 1024,
+    }), expect.any(AbortSignal));
+  });
+
+  it("cancels the raw read when the call times out and never falls back to an unbounded SDK read", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let seen: AbortSignal | null = null;
+    const hung = local({ proxyGet: (_request, signal) => { seen = signal; return new Promise(() => undefined); } });
+    expect(await hung.caller.call("user_2abc", request, signal())).toEqual({ status: "unavailable" });
+    expect(seen!.aborted).toBe(true);
+    const unbounded = local({ bounded: false });
+    expect(await unbounded.caller.call("user_2abc", request, signal())).toEqual({ status: "unavailable" });
+    expect(unbounded.sdkProxyGet).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("[brain-integration] local github/list_issues failed:", "BoundedPipedreamReadError");
+    warn.mockRestore();
+  });
+
+  it("accepts a platform user id, and answers not_connected for an owner with no platform user", async () => {
+    const byId = local();
+    expect(await byId.caller.call(USER_ID, request, signal())).toEqual({ status: "ok", data: [{ number: 1 }] });
+    expect(byId.db.getUserById).toHaveBeenCalledWith(USER_ID);
+    const unknown = local();
+    expect(await unknown.caller.call("default", request, signal())).toEqual({ status: "not_connected" });
+    expect(await unknown.caller.call("1b6c5d1e-2f3a-4b5c-8d9e-0f1a2b3c4d5e", request, signal())).toEqual({ status: "not_connected" });
+    expect(unknown.db.getUserById).toHaveBeenCalledTimes(1);
+    expect(unknown.db.listConnectedServices).not.toHaveBeenCalled();
+    expect(unknown.proxyGet).not.toHaveBeenCalled();
+  });
+
+  it("maps missing, ambiguous and unusable connections", async () => {
+    expect(await local({ connections: [] }).caller.call("user_2abc", request, signal())).toEqual({ status: "not_connected" });
+    expect(await local({ connections: [connection("w"), connection("w")] }).caller.call("user_2abc", { ...request, label: "w" }, signal()))
+      .toEqual({ status: "invalid" });
+    expect(await local({ externalId: null }).caller.call("user_2abc", request, signal())).toEqual({ status: "unavailable" });
+    expect(await local({ proxyGet: async () => undefined }).caller.call("user_2abc", request, signal())).toEqual({ status: "ok", data: undefined });
+  });
+
+  it.each([
+    [statusError(429, { "retry-after": "12" }), { status: "rate_limited", retryAfterSeconds: 12 }],
+    [statusError(401), { status: "unauthorized" }], [statusError(403), { status: "unauthorized" }],
+    [statusError(403, { "x-ratelimit-remaining": "9" }), { status: "unauthorized" }],
+    [statusError(403, { "retry-after": "30" }), { status: "rate_limited", retryAfterSeconds: 30 }],
+    [statusError(403, { "x-ratelimit-remaining": "0" }), { status: "rate_limited", retryAfterSeconds: 60 }],
+    // A secondary rate limit: a 403 whose only sign is its message, in the error text or its body.
+    [Object.assign(new Error("You have exceeded a secondary rate limit."), { status: 403 }), { status: "rate_limited", retryAfterSeconds: 60 }],
+    [Object.assign(new Error("StatusCode: 403"), { statusCode: 403, body: { message: "You have exceeded a secondary rate limit." } }),
+      { status: "rate_limited", retryAfterSeconds: 60 }],
+    [Object.assign(new Error("StatusCode: 403"), { statusCode: 403, body: "secondary rate limit" }), { status: "rate_limited", retryAfterSeconds: 60 }],
+    [Object.assign(new Error("StatusCode: 403"), { statusCode: 403, body: { message: "Bad credentials" } }), { status: "unauthorized" }],
+    [Object.assign(new Error("StatusCode: 403"), { statusCode: 403, body: null }), { status: "unauthorized" }],
+    [Object.assign(new Error("provider"), { statusCode: 403, rawResponse: { headers: new Headers({ "x-ratelimit-remaining": "0" }) } }),
+      { status: "rate_limited", retryAfterSeconds: 60 }],
+    [statusError(404), { status: "not_found" }], [statusError(410), { status: "not_found" }],
+    [statusError(422), { status: "invalid" }], [statusError(400), { status: "invalid" }],
+    [statusError(500), { status: "unavailable" }],
+  ])("maps provider failure %# to an outcome", async (error, outcome) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await local({ proxyGet: async () => { throw error; } }).caller.call("user_2abc", request, signal())).toEqual(outcome);
+    warn.mockRestore();
+  });
+
+  it("answers unavailable when the provider outlives the call timeout", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await local({ proxyGet: () => new Promise(() => undefined) }).caller.call("user_2abc", request, signal())).toEqual({ status: "unavailable" });
+    warn.mockRestore();
+  });
+});
+
+function chunked(chunks: string[], cancel?: () => void): ReadableStream<Uint8Array> {
+  let index = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index < chunks.length) controller.enqueue(new TextEncoder().encode(chunks[index++]));
+      else controller.close();
+    },
+    cancel,
+  });
+}
+
+describe("bounded JSON body reader", () => {
+  it("reads JSON within the cap", async () => {
+    expect(await readBoundedJson(new Response(chunked(['{"a":', "1}"])), 100, signal())).toEqual({ ok: true, value: { a: 1 } });
+  });
+
+  it("refuses bad lengths, oversized bodies, invalid UTF-8 and missing bodies", async () => {
+    const lengthy = (value: string) => new Response("{}", { headers: { "content-length": value } });
+    expect(await readBoundedJson(lengthy("abc"), 100, signal())).toEqual({ ok: false, reason: "too_large" });
+    expect(await readBoundedJson(lengthy("101"), 100, signal())).toEqual({ ok: false, reason: "too_large" });
+    expect(await readBoundedJson(new Response(chunked(["x".repeat(60), "y".repeat(60)])), 100, signal())).toEqual({ ok: false, reason: "too_large" });
+    expect(await readBoundedJson(new Response(new Uint8Array([0xff, 0xfe])), 100, signal())).toEqual({ ok: false, reason: "invalid" });
+    expect(await readBoundedJson(new Response(null), 100, signal())).toEqual({ ok: false, reason: "invalid" });
+  });
+
+  it("cancels the body and rethrows when the signal aborts mid-read", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("stop"));
+    await expect(readBoundedJson(new Response(chunked(["{}"])), 100, controller.signal)).rejects.toThrow("stop");
+  });
+
+  it("logs a failed cancel by name and rethrows unexpected parse errors", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (const thrown of [new RangeError("cancel"), "plain"]) {
+      const failing = new Response(chunked(["x".repeat(200)], () => { throw thrown; }));
+      expect(await readBoundedJson(failing, 100, signal())).toEqual({ ok: false, reason: "too_large" });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warn).toHaveBeenCalledWith("[brain-sources] response body cancel failed:", "RangeError");
+    expect(warn).toHaveBeenCalledWith("[brain-sources] response body cancel failed:", "UnknownError");
+    const parse = vi.spyOn(JSON, "parse").mockImplementation(() => { throw new RangeError("odd"); });
+    try {
+      await expect(readBoundedJson(new Response("{}"), 100, signal())).rejects.toThrow(RangeError);
+    } finally {
+      parse.mockRestore();
+      warn.mockRestore();
+    }
+  });
+});
