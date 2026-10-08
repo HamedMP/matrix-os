@@ -94,6 +94,10 @@ describe("bot integration client", () => {
     expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ path: "/call", body: expect.objectContaining({ connectionId: "saved-one" }) }));
   });
 
+  it("keeps ordinary Drive reads at their bot response ceiling", async () => {
+    const client = createBotIntegrationClient(async () => json({ data: { content: "x".repeat(300 * 1024) } }));
+    await expect(client.call(OWNER, { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "document_1" }, read: true })).rejects.toEqual(new BotIntegrationError("unavailable"));
+  });
   it("maps upstream failures to allowlisted codes and bounds what it reads", async () => {
     for (const [status, code] of [[409, "ambiguous"], [404, "missing"], [400, "missing"], [403, "denied"], [502, "unavailable"]] as const) {
       const client = createBotIntegrationClient(async () => json({ error: "provider said something at /secret" }, status));
