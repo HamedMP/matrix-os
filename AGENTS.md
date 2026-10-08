@@ -385,9 +385,37 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
   for stack work instead of silently falling back. Do not flatten a stack unless
   explicitly asked.
 
+### PR Body: Concise and Actionable
+
+PR descriptions must help an engineer review and follow the process quickly. Aim for 150 words or fewer in the visible body; expand only for a material risk or decision. Use plain language, short bullets, and links for detail. Refresh the description when scope changes.
+
+- **Summary**: one sentence on the outcome, then name the changed files (group related files by directory for larger diffs) and their key changes. Do not paste a file inventory or narrate implementation history.
+- **Tests**: list the 1-3 most important checks, with the action and expected result. Briefly state what passed, failed, or remains untested; link logs/CI instead of dumping commands and output. Never hide a blocker in collapsed details.
+- **Process**: include only applicable checkboxes for the linked Linear ticket, validation, spec/stakeholder review suggestion, per-surface live evidence/parity, and Slack tech-channel sharing. Check a box only when completed and link the evidence (including the Slack message). State non-applicable spec/UI requirements in one short `N/A` line; do not mark them completed.
+- Keep required surface matrices and deeper technical review notes in clearly labeled collapsed details or linked documents. Mandatory invariants stay in the PR body, but may be brief and collapsed below the actionable content.
+
+```markdown
+## Summary
+
+<one sentence describing the outcome>
+- `<file or directory>`: <key change>
+
+## Tests
+
+- <action> -> <expected result>; <passed / failed / not run>
+
+## Process
+
+- [ ] Linear: <ticket link>
+- [ ] Key checks passed: <evidence>
+- [ ] Spec linked; stakeholder review suggested: <links>
+- [ ] UI: live screenshots + recording for each affected surface; parity checked
+- [ ] UI: shared in Slack tech channel: <message link>
+```
+
 ### PR Body: Mandatory Invariants
 
-Every backend PR must include an "Invariants" section:
+Every backend PR must include an "Invariants" section. Keep each point to one short line; use a collapsed `<details>` block so the main description stays easy to scan. Preserve any broader constitution requirement for other PRs.
 
 - **Source of truth**: which store is canonical, how divergence is reconciled
 - **Lock/transaction scope**: what is inside the critical section, are network calls inside or outside
