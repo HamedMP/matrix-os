@@ -109,3 +109,115 @@ export const BrainModelWireClaimSchema = z.object({
 });
 export const BrainModelWireOutputSchema = z.object({ claims: z.array(BrainModelWireClaimSchema) });
 export type BrainModelWireOutput = z.output<typeof BrainModelWireOutputSchema>;
+
+// Additions to the model seam: job.ts reads them; claims/types.ts BrainClaimModelOutput carries `outcome`.
+
+/** Document codes of a revision the model extractor reads no claims from; a skipped revision is not pending again. */
+export const BRAIN_MODEL_SKIP_CODES =
+  ["model_refused", "body_too_short", "commit_list_only", "document_too_large"] as const;
+export type BrainModelSkipCode = (typeof BRAIN_MODEL_SKIP_CODES)[number];
+
+/**
+ * Absent: `claims` holds the candidates. skipped: no claims for this revision (a refusal, or a body not worth a call).
+ * invalid: a billed response with no usable output (cut off, not JSON, wrong shape), recorded as model_output_invalid.
+ */
+export const BrainClaimModelOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("skipped"), code: z.enum(BRAIN_MODEL_SKIP_CODES) }).strict(),
+  z.object({ status: z.literal("invalid") }).strict(),
+]);
+export type BrainClaimModelOutcome = z.output<typeof BrainClaimModelOutcomeSchema>;
+
+/** inputTokens counts every prompt token: uncached, cache writes and cache reads. costMicroUsd is rounded up. */
+export interface BrainModelUsage {
+  readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number; readonly costMicroUsd: number;
+}
+
+/** A candidate as verify.ts receives it: label null when unusable, fields only with valid, non-null values. */
+export interface BrainModelClaimCandidate {
+  readonly kind: string; readonly label: string | null; readonly statement: string; readonly quote: string;
+  readonly fields?: BrainClaimFields;
+}
+
+/** Assignable to BrainClaimModelOutput. usage covers every response the API billed, whatever the outcome. */
+export interface BrainModelOutput {
+  readonly claims: readonly BrainModelClaimCandidate[]; readonly usage: BrainModelUsage;
+  readonly outcome?: BrainClaimModelOutcome;
+}
+
+export interface BrainAnthropicClaimModel extends BrainClaimModel {
+  extract(input: BrainClaimModelInput, signal: AbortSignal): Promise<BrainModelOutput>;
+}
+
+// Errors.
+
+/**
+ * A failed call; any other throw from a model stays the document's model_failed. runBrainExtraction maps:
+ * - model_auth_failed (401, 402, 403, 404): the run stops failed, nextAction configure_model, no document state.
+ * - model_unavailable (429, 5xx including 529, network after retries): the run stops failed, retry_later, no state.
+ * - model_rejected (400, 413, 422, any other status): the document fails model_failed, then the run stops failed with
+ *   contact_support, so a request the API refuses cannot fail a whole page of documents.
+ * - model_timeout (the SDK's own per-attempt timeout): the document fails model_timeout, the call is charged at its
+ *   worst case (it may still be billed), and the run goes on within its budgets.
+ * A caller abort is rethrown as the SDK's abort error: the job checks its own signals before anything else.
+ */
+export const BRAIN_MODEL_ERROR_CODES =
+  ["model_auth_failed", "model_unavailable", "model_rejected", "model_timeout"] as const;
+export type BrainModelErrorCode = (typeof BRAIN_MODEL_ERROR_CODES)[number];
+
+/** The message is the code; the SDK error is only the cause and is never logged beyond its name. */
+export class BrainModelError extends Error {
+  constructor(readonly code: BrainModelErrorCode, options?: ErrorOptions) {
+    super(code, options);
+    this.name = "BrainModelError";
+  }
+}
+
+// Pricing (pricing.ts).
+
+/** Tenths of a micro-USD per token ($0.20 per million is 2). cacheWrite is the 5-minute rate, the only TTL sent. */
+export interface BrainModelPrice {
+  readonly input: number; readonly output: number; readonly cacheRead: number; readonly cacheWrite: number;
+}
+
+/** One response's or one attempt's token counts; the SDK's BetaUsage and its iterations are assignable. */
+export interface BrainModelTokenCounts {
+  readonly input_tokens: number; readonly output_tokens: number;
+  readonly cache_read_input_tokens: number | null; readonly cache_creation_input_tokens: number | null;
+}
+
+export interface BrainModelIterationCounts extends BrainModelTokenCounts {
+  readonly type: string; readonly model?: string | null;
+}
+
+/** iterations, when non-empty, is the per-attempt source of truth: a fallback attempt is priced at its own model. */
+export interface BrainModelUsageReport extends BrainModelTokenCounts {
+  readonly iterations: readonly BrainModelIterationCounts[] | null;
+}
+
+// Client and provider (client.ts, config.ts).
+
+export type BrainModelFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+/** apiKey: resolved for this request only. timeoutMs: the SDK's per-attempt timeout. fetch: the test seam. */
+export interface BrainAnthropicModelOptions {
+  readonly apiKey: string; readonly modelId: BrainModelRequestId; readonly effort: BrainModelEffort;
+  readonly bodyMaxBytes: number; readonly timeoutMs: number; readonly fetch?: BrainModelFetch;
+}
+
+/** One model extract request: the model, its extractor identity and the limits passed to runBrainExtraction. */
+export interface BrainClaimModelResolution {
+  readonly model: BrainClaimModel; readonly modelId: string; readonly promptVersion: string;
+  readonly limits: Partial<BrainExtractionLimits>;
+}
+
+/**
+ * Called once per model extract request. null: no valid configuration or no usable credential (409
+ * extractor_not_configured). Rejects only when the owner's config file cannot be read (503 brain_unavailable).
+ */
+export type BrainClaimModelProvider = () => Promise<BrainClaimModelResolution | null>;
+
+/** env: the configuration is parsed once at build time, the credential read per call. fetch: the test seam. */
+export interface BrainClaimModelProviderOptions {
+  readonly homePath: string; readonly env: BrainModelEnv; readonly fetch?: BrainModelFetch;
+}
