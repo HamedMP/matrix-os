@@ -19,7 +19,7 @@ vi.mock("@clerk/nextjs", async (importOriginal) => ({
   useAuth: () => ({ userId: null, sessionId: null }),
 }));
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
-  ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <div data-testid="harness-setup">{children}</div>,
 }));
 
 const BOT_SELECTION = { instanceId: "matrix_bot_default", model: "auto" };
@@ -121,6 +121,15 @@ describe("useCanonicalChatThread", () => {
     await act(async () => { await result.current.onSubmit("Why?", undefined, SEND); });
     expect(onChatChanged).not.toHaveBeenCalled();
     expect(result.current.sessionId).toBe("chat_new");
+    // The new Chat's composer gets the question back once, so a refused first send loses nothing.
+    const returned = result.current.composerDraftRequest;
+    expect(returned).toMatchObject({ text: "Why?" });
+    act(() => result.current.onComposerDraftConsumed(returned!.id));
+    expect(result.current.composerDraftRequest).toBeNull();
+    // A refused turn in a Chat that already existed keeps its question in the same composer, so nothing comes back.
+    client.admitTurn.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { await result.current.onSubmit("And then?", undefined, SEND); });
+    expect(result.current.composerDraftRequest).toBeNull();
   });
 
   it("applies streamed content, falls back to a snapshot on a gap, and ignores other Chats", async () => {
@@ -194,6 +203,22 @@ describe("Company Brain chat on Web", () => {
     expect(switchConversation).toHaveBeenCalledWith("chat_brain");
     expect(openWindow).toHaveBeenCalledWith("Chat", "__chat__", expect.any(Number));
     expect(within(screen.getByRole("tablist")).getByRole("tab", { selected: true })).toHaveTextContent("Chat");
+  });
+
+  it("shows no harness setup in a Bot's chat, and gives a refused first question back to the composer", async () => {
+    const { client } = webBrain();
+    client.admitTurn.mockRejectedValueOnce(new Error("provider_unavailable"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await screen.findByRole("heading", { name: "Ask about matrix-os" })).toBeTruthy();
+    expect(screen.queryByTestId("harness-setup")).toBeNull();
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    expect(composer().getAttribute("placeholder") ?? "").not.toMatch(/harness/);
+    fireEvent.change(composer(), { target: { value: "Why did src/a.ts change?" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_brain", expect.anything()));
+    await waitFor(() => expect(composer()).toHaveValue("Why did src/a.ts change?"));
+    expect(screen.queryByTestId("harness-setup")).toBeNull();
   });
 
   it("on Web Canvas, Open in Chat brings the Chat window back and pans the view to it", async () => {
