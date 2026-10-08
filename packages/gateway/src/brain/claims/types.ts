@@ -309,3 +309,138 @@ export interface BrainApplyDocumentExtractionInput {
 export type BrainApplyDocumentExtractionResult =
   | { readonly applied: true; readonly written: number; readonly removed: number }
   | { readonly applied: false; readonly reason: "stale" };
+
+/**
+ * claimsRejected: candidates dropped for shape, kind, bounds, a span mismatch or the per-document cap.
+ * quotesRejected: candidates whose quote is not in the document text.
+ */
+export interface BrainExtractionCounts {
+  readonly documentsProcessed: number; readonly documentsFailed: number; readonly claimsWritten: number;
+  readonly claimsRemoved: number; readonly claimsRejected: number; readonly quotesRejected: number;
+}
+
+/** usage: the cache counts default to 0. */
+export interface BrainCloseExtractionRunInput {
+  readonly runId: string; readonly status: BrainExtractionRunOutcome; readonly counts: BrainExtractionCounts;
+  readonly usage: BrainExtractionUsageInput; readonly nextAction: BrainExtractionNextAction;
+  readonly errorCode: BrainExtractionErrorCode | null;
+}
+
+export interface BrainExtractionRun {
+  readonly scopeId: string; readonly runId: string; readonly extractor: string;
+  readonly status: BrainExtractionRunStatus; readonly counts: BrainExtractionCounts;
+  readonly usage: BrainExtractionUsage; readonly nextAction: string; readonly errorCode: string | null;
+  readonly startedAt: string; readonly finishedAt: string | null;
+}
+
+/**
+ * Model spend of one scope (spend.ts): cost and count of the runs that cost anything and started after `since`, the
+ * repository clock minus BRAIN_MODEL_SPEND_WINDOW_MS. A running run is not in it yet.
+ */
+export interface BrainModelSpendTotal {
+  readonly since: string; readonly costMicroUsd: number; readonly billedRuns: number;
+}
+
+/**
+ * The spend cap of a model run, on its result: spent counts the closed runs of the window and this run. remaining is 0
+ * once the window holds BRAIN_MODEL_SPEND_BILLED_RUNS_MAX billed runs.
+ */
+export interface BrainModelSpend {
+  readonly windowStart: string; readonly capMicroUsd: number; readonly spentMicroUsd: number;
+  readonly remainingMicroUsd: number;
+}
+
+/**
+ * What job.ts needs; BrainRepository implements it. Writes run under the per-scope advisory lock. readModelSpend is
+ * read once per model run after the run opens; a store without it never gets a model call (store_unavailable).
+ */
+export interface BrainExtractionStore {
+  getDocument(scope: BrainScopeKey, documentId: string): Promise<BrainDocument | null>;
+  listPendingExtractions(scope: BrainScopeKey, query: BrainPendingExtractionQuery): Promise<BrainPendingExtractionPage>;
+  /** Throws conflict while a run younger than the lease is running in the scope. */
+  openExtractionRun(scope: BrainScopeKey, input: { readonly extractor: string }): Promise<BrainExtractionRun>;
+  applyDocumentExtraction(
+    scope: BrainScopeKey, input: BrainApplyDocumentExtractionInput,
+  ): Promise<BrainApplyDocumentExtractionResult>;
+  closeExtractionRun(scope: BrainScopeKey, input: BrainCloseExtractionRunInput): Promise<BrainExtractionRun>;
+  /** The 30-day model spend of the scope's owner, across every scope (spend.ts). */
+  readModelSpend?(scope: BrainScopeKey): Promise<BrainModelSpendTotal>;
+}
+
+export interface BrainClaimReader {
+  listClaims(scope: BrainScopeKey, query: BrainClaimListQuery): Promise<BrainClaimPage>;
+}
+
+// Extractors (rules.ts, verify.ts).
+
+export interface BrainClaimSourceDocument {
+  readonly documentId: string; readonly provenance: string; readonly title: string; readonly body: string;
+}
+
+/** claims: ordered by spanStart then claimId; unique claim ids; at most the requested maxClaims. */
+export interface BrainClaimExtraction {
+  readonly claims: readonly BrainClaimInput[]; readonly claimsRejected: number; readonly quotesRejected: number;
+}
+
+/**
+ * text: claimSourceText(document), so spans index it and, because it is a prefix, the stored body. candidates:
+ * BrainClaimModelOutput.claims as received; validated, never trusted.
+ */
+export interface BrainModelClaimsInput {
+  readonly documentId: string; readonly text: string; readonly candidates: unknown;
+  readonly kinds: readonly BrainClaimKind[]; readonly maxClaims: number;
+}
+
+// Model seam. model/client.ts implements it with Claude (spec 555); tests pass fakes.
+
+export interface BrainClaimModelInput {
+  readonly title: string; readonly body: string; readonly kinds: readonly BrainClaimKind[]; readonly maxClaims: number;
+}
+
+/**
+ * claims are typed loosely on purpose: verify.ts re-validates every candidate with BrainClaimCandidateSchema. usage
+ * covers every billed response, whatever the outcome. outcome: absent when claims holds the candidates.
+ */
+export interface BrainClaimModelOutput {
+  readonly claims: readonly {
+    readonly kind: string; readonly label?: string | null; readonly statement: string; readonly quote: string;
+    readonly fields?: BrainClaimFields;
+  }[];
+  readonly usage: BrainExtractionUsageInput;
+  readonly outcome?: BrainClaimModelOutcome;
+}
+
+export interface BrainClaimModel {
+  extract(input: BrainClaimModelInput, signal: AbortSignal): Promise<BrainClaimModelOutput>;
+}
+
+// Job (job.ts runBrainExtraction).
+
+/** The model extractor id is brainModelExtractorId(modelId, promptVersion); `kinds` defaults to every kind. */
+export type BrainExtractorChoice = { readonly kind: "rules" } | {
+  readonly kind: "model"; readonly modelId: string; readonly promptVersion: string;
+  readonly kinds?: readonly BrainClaimKind[];
+};
+
+/**
+ * model: required for a model choice, else model_not_configured. provenances: only these are listed, and a document of
+ * any other is skipped provenance_not_allowed before it is extracted (absent: all). now: milliseconds clock.
+ */
+export interface BrainExtractionOptions {
+  readonly repository: BrainExtractionStore; readonly scope: BrainScopeKey; readonly extractor: BrainExtractorChoice;
+  readonly model?: BrainClaimModel; readonly limits?: Partial<BrainExtractionLimits>; readonly signal?: AbortSignal;
+  readonly provenances?: readonly string[]; readonly now?: () => number;
+}
+
+/**
+ * runBrainExtraction never rejects: every failure is a code here and, once a run row exists, on the run.
+ * extractor: the resolved id (`rules/v2`, `model:<id>/<version>`), "" when the options were invalid. run: the closed
+ * run, null when none could be opened or closing failed. caughtUp: nothing failed at run level and no pending
+ * document was left behind by this run's limits. spend: on model runs whose store reported the window's spend.
+ */
+export interface BrainExtractionResult {
+  readonly status: BrainExtractionRunOutcome; readonly errorCode: BrainExtractionErrorCode | null;
+  readonly nextAction: BrainExtractionNextAction; readonly extractor: string; readonly run: BrainExtractionRun | null;
+  readonly counts: BrainExtractionCounts; readonly usage: BrainExtractionUsage; readonly caughtUp: boolean;
+  readonly spend?: BrainModelSpend;
+}
