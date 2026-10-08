@@ -33,6 +33,10 @@ import {
   type OwnerAudioTranscriber,
 } from "./tools/transcribe-audio.js";
 import {
+  BRAIN_WHY_DESCRIPTION, BRAIN_WHY_INPUT_SHAPE, createBrainWhyToolHandler, type BrainAgentTools,
+} from "./tools/brain-why.js";
+import { brainReadToolDefinitions, type BrainAgentReadTools } from "./tools/brain-read-tools.js";
+import {
   connectServiceHandler,
   callServiceHandler,
   describeServiceHandler,
@@ -83,6 +87,8 @@ export async function createIpcServer(
   homePath?: string,
   osViewTools?: OsViewAgentTools,
   ownerAudioTranscriber?: OwnerAudioTranscriber,
+  brainTools?: BrainAgentTools,
+  brainReadTools?: BrainAgentReadTools,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
@@ -1094,6 +1100,11 @@ export async function createIpcServer(
           }),
         ),
       ] : []),
+
+      ...(brainTools ? [tool("brain_why", BRAIN_WHY_DESCRIPTION, BRAIN_WHY_INPUT_SHAPE, createBrainWhyToolHandler(brainTools),
+        { annotations: { readOnlyHint: true } })] : []),
+      ...(brainReadTools ? brainReadToolDefinitions(brainReadTools).map((definition) => tool(definition.name,
+        definition.description, definition.inputShape, definition.handler, { annotations: { readOnlyHint: true } })) : []),
 
       ...(await createWebTools(homePath, tool)),
 
