@@ -19,6 +19,8 @@ import type { z } from "zod/v4";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
 import { loadCollaborationDraft, saveCollaborationDraft } from "@/lib/collaboration-drafts";
 import { notifyCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
+import { BackTopBar } from "@/components/shell/BackTopBar";
+import { TabScreen } from "@/components/shell/TabScreen";
 import { SharedChatComposer } from "@/components/collaboration/SharedChatComposer";
 import { canControlSharedAiRequest } from "@/components/collaboration/shared-chat-composer-model";
 import { SessionDiscussionSheet } from "@/components/collaboration/SessionDiscussionSheet";
@@ -158,7 +160,16 @@ function screenReducer(state: ScreenState, action: ScreenAction): ScreenState {
   };
 }
 
-export default function SharedScreen() {
+export default function SharedRoute() {
+  return (
+    <TabScreen>
+      <BackTopBar fallbackHref="/(drawer)" />
+      <SharedScreen />
+    </TabScreen>
+  );
+}
+
+function SharedScreen() {
   const { getToken, userId } = useAuth();
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);

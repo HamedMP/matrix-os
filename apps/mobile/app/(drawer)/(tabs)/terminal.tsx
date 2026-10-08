@@ -25,6 +25,7 @@ import {
   SearchField,
 } from "@/components/shell/Controls";
 import { Page } from "@/components/shell/Page";
+import { TabScreen } from "@/components/shell/TabScreen";
 import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/terminal/TerminalAgentLogo";
 import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
@@ -38,7 +39,15 @@ type TerminalAction = {
 
 const SHEET_DISMISS_NAVIGATION_DELAY_MS = 500;
 
-export default function TerminalScreen() {
+export default function TerminalTab() {
+  return (
+    <TabScreen>
+      <TerminalScreen />
+    </TabScreen>
+  );
+}
+
+function TerminalScreen() {
   const router = useRouter();
   const { theme } = useUnistyles();
   const [searchQuery, setSearchQuery] = useState("");

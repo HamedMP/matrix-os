@@ -104,6 +104,8 @@ export const size = {
   grabberHeight: 5,
   statusDot: 8,
   badge: 16,
+  tabItemWidth: 70,
+  tabIcon: 24,
 } as const;
 
 export const borderWidth = {

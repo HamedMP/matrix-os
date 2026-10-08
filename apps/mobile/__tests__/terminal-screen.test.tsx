@@ -43,7 +43,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
-import TerminalScreen from "../app/(drawer)/terminal";
+import TerminalScreen from "../app/(drawer)/(tabs)/terminal";
 import { appColors, palette } from "@/lib/theme-v2";
 
 describe("drawer terminal screen", () => {

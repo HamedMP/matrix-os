@@ -9,11 +9,20 @@ import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import UserIcon from "@hugeicons/core-free-icons/UserIcon";
 
 import { Page } from "@/components/shell/Page";
+import { TabScreen } from "@/components/shell/TabScreen";
 import { SettingsCardStack, SettingsRow } from "@/components/settings/SettingsSurface";
 import { resetAnalytics } from "@/lib/analytics";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
 
-export default function SettingsScreen() {
+export default function SettingsTab() {
+  return (
+    <TabScreen>
+      <SettingsScreen />
+    </TabScreen>
+  );
+}
+
+function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
 

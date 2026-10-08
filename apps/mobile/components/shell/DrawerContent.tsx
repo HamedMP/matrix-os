@@ -1,14 +1,10 @@
 import { Fragment, useEffect, useState } from "react";
 import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
-import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
-import GridViewIcon from "@hugeicons/core-free-icons/GridViewIcon";
 import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
 import PencilEdit02Icon from "@hugeicons/core-free-icons/PencilEdit02Icon";
 import PlusSignIcon from "@hugeicons/core-free-icons/PlusSignIcon";
-import PuzzleIcon from "@hugeicons/core-free-icons/PuzzleIcon";
-import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
 import UserMultiple02Icon from "@hugeicons/core-free-icons/UserMultiple02Icon";
 import { Pressable, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -23,20 +19,19 @@ import { DrawerContentScrollView, type DrawerContentComponentProps } from "expo-
 
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
-import { Icon, IconButton, Spacer, Text, type IconData } from "@/components/ui";
+import { Icon, Spacer, Text } from "@/components/ui";
 import type { ProjectSummary } from "@/lib/requests";
+import { TABS_ROUTE, chatScreenParams, sharedScreenParams } from "@/lib/shell-routes";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
-
-const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
-  { route: "files", label: "Files", icon: Folder01Icon },
-  { route: "terminal", label: "Terminal", icon: ComputerTerminal01Icon },
-  { route: "integrations", label: "Connect Apps", icon: PuzzleIcon },
-  { route: "apps", label: "Apps", icon: GridViewIcon },
-  { route: "shared", label: "Shared with me", icon: UserMultiple02Icon },
-];
 
 interface DrawerContentProps extends DrawerContentComponentProps {
   computerName: string;
+  /**
+   * Whether the chat screen is the one on screen. A chat only reads as active
+   * then: `activeSessionId` is session state and stays set on every other
+   * screen, where it would highlight a chat that is not being shown.
+   */
+  chatScreenFocused: boolean;
   collaborationEnabled: boolean;
   pendingInvitationCount?: number;
   recentChats: CanonicalChatRecord[];
@@ -50,6 +45,7 @@ interface DrawerContentProps extends DrawerContentComponentProps {
 
 export function DrawerContent({
   computerName,
+  chatScreenFocused,
   collaborationEnabled,
   pendingInvitationCount = 0,
   recentChats,
@@ -65,26 +61,26 @@ export function DrawerContent({
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const { theme } = useUnistyles();
 
-  function navigate(route: string) {
-    props.navigation.navigate(route);
+  function showChatScreen() {
+    props.navigation.navigate(TABS_ROUTE, chatScreenParams());
+    props.navigation.closeDrawer();
+  }
+
+  function openShared() {
+    props.navigation.navigate(TABS_ROUTE, sharedScreenParams());
     props.navigation.closeDrawer();
   }
 
   function openChat(id: string) {
     onSelectConversation(id);
-    navigate("index");
+    showChatScreen();
   }
 
   function newChat(projectId?: string | null) {
     onNewConversation(projectId);
-    navigate("index");
+    showChatScreen();
   }
 
-  // A chat only reads as "active" while the user is actually looking at the
-  // chat screen -- activeSessionId otherwise stays set (it's session state,
-  // not screen state) even after navigating to Files/Terminal/Settings, which
-  // would highlight a chat that isn't actually on screen.
-  const isOnChatScreen = props.state.routeNames[props.state.index] === "index";
   const unassignedChats = recentChats.filter((record) => !record.projectId);
 
   return (
@@ -95,7 +91,7 @@ export function DrawerContent({
             accessibilityRole="button"
             accessibilityLabel="Open Matrix OS home"
             hitSlop={8}
-            onPress={() => navigate("index")}
+            onPress={showChatScreen}
             style={({ pressed }) => [styles.identity, pressed && styles.pressed]}
           >
             <Text size="large">Matrix OS</Text>
@@ -104,42 +100,38 @@ export function DrawerContent({
           </Pressable>
         </View>
 
-        <Spacer size="xl" />
-
-        {primaryItems.filter((item) => item.route !== "shared" || collaborationEnabled).map((item, index, visibleItems) => {
-          return (
-            <Fragment key={item.route}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={item.route === "shared" && pendingInvitationCount > 0
-                  ? `${item.label}, ${pendingInvitationCount} pending ${pendingInvitationCount === 1 ? "invitation" : "invitations"}`
-                  : item.label}
-                onPress={() => navigate(item.route)}
-                style={({ pressed }) => [
-                  styles.padded,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Spacer size="xxs" />
-                <View testID={`drawer-primary-row-${item.route}`} style={styles.primaryRow}>
-                  <View style={styles.itemContainer}>
-                    <Icon
-                      icon={item.icon}
-                      size={20}
-                      style={styles.itemIcon}
-                    />
-                    <Text size="body">{item.label}</Text>
-                  </View>
-                  {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
-                    <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
-                  </View> : null}
+        {collaborationEnabled ? (
+          <>
+            <Spacer size="xl" />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={pendingInvitationCount > 0
+                ? `Shared with me, ${pendingInvitationCount} pending ${pendingInvitationCount === 1 ? "invitation" : "invitations"}`
+                : "Shared with me"}
+              onPress={openShared}
+              style={({ pressed }) => [
+                styles.padded,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Spacer size="xxs" />
+              <View testID="drawer-primary-row-shared" style={styles.primaryRow}>
+                <View style={styles.itemContainer}>
+                  <Icon
+                    icon={UserMultiple02Icon}
+                    size={20}
+                    style={styles.itemIcon}
+                  />
+                  <Text size="body">Shared with me</Text>
                 </View>
-                <Spacer size="xxs" />
-              </Pressable>
-              {index < visibleItems.length - 1 ? <Spacer size="sm" /> : null}
-            </Fragment>
-          );
-        })}
+                {pendingInvitationCount > 0 ? <View style={styles.badge}>
+                  <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
+                </View> : null}
+              </View>
+              <Spacer size="xxs" />
+            </Pressable>
+          </>
+        ) : null}
 
         {projects.length > 0 ? (
           <>
@@ -182,7 +174,7 @@ export function DrawerContent({
                         const label = record.chat.title.trim()
                           || record.chat.lastMessagePreview?.trim()
                           || "New chat";
-                        const active = isOnChatScreen && record.chat.id === activeSessionId;
+                        const active = chatScreenFocused && record.chat.id === activeSessionId;
                         return (
                           <ChatContextMenu key={record.chat.id} chatId={record.chat.id}>
                           <Pressable
@@ -239,7 +231,7 @@ export function DrawerContent({
           const label = record.chat.title.trim()
             || record.chat.lastMessagePreview?.trim()
             || "New chat";
-          const active = isOnChatScreen && record.chat.id === activeSessionId;
+          const active = chatScreenFocused && record.chat.id === activeSessionId;
           return (
             <Fragment key={record.chat.id}>
               <ChatContextMenu chatId={record.chat.id}>
@@ -292,17 +284,6 @@ export function DrawerContent({
         </View>
         <Spacer size="sm" />
       </Pressable>
-
-      <IconButton
-        accessibilityLabel="Settings"
-        icon={Settings02Icon}
-        iconSize={22}
-        iconColor={theme.v2.colors.textDefault}
-        iconTestID="settings-icon"
-        buttonSize={40}
-        style={styles.settingsButton}
-        onPress={() => navigate("settings")}
-      />
     </View>
   );
 }
@@ -435,14 +416,5 @@ const styles = StyleSheet.create((theme) => ({
   },
   newChatIcon: {
     marginRight: 8,
-  },
-  settingsButton: {
-    position: "absolute",
-    right: 16,
-    bottom: 26,
-    borderWidth: 1,
-    borderColor: theme.v2.colors.borderSubtle,
-    borderRadius: 999,
-    boxShadow: theme.v2.designShadows.lg,
   },
 }));

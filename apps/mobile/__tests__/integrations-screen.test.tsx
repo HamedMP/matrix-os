@@ -1,4 +1,5 @@
 const mockPush = jest.fn();
+const mockBack = jest.fn();
 const mockUseComputerIntegrations = jest.fn();
 const mockRefreshConnection = jest.fn();
 const mockDeleteConnection = jest.fn();
@@ -22,7 +23,7 @@ jest.mock("react-native-gesture-handler", () => {
 });
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, back: mockBack, canGoBack: () => true }),
   useFocusEffect: (callback: () => void | (() => void)) => callback(),
 }));
 
@@ -34,7 +35,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
-import IntegrationsScreen from "../app/(drawer)/integrations";
+import IntegrationsScreen from "../app/(drawer)/(tabs)/(apps)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
 
 describe("drawer integrations screen", () => {
@@ -90,6 +91,14 @@ describe("drawer integrations screen", () => {
 
     await act(async () => resolveRefresh?.());
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
+  });
+
+  it("returns to Apps from the back button in its top bar", () => {
+    render(<IntegrationsScreen />);
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it("uses spacers instead of vertical padding or margins", () => {
