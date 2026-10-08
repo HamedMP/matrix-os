@@ -71,6 +71,7 @@ describe("brief routes", () => {
   it("serves a real brief end to end", async () => {
     const fx = await createBriefFixture();
     try {
+      await fx.source();
       const root = app(fx.feature.service);
       const brief = await call(root, "proj_a/brief");
       expect(brief).toMatchObject({ status: 200, body: { date: "2026-10-01", stored: true, sections: { attention: [] } } });
