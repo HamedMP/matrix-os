@@ -170,6 +170,18 @@ describe("openGitRepository containment", { timeout: 30_000 }, () => {
     await expectRefused(f.repoPath);
   });
 
+  it("refuses an alternate whose .. leaves home through a symlink", async () => {
+    const info = join(f.repoPath, ".git", "objects", "info");
+    await mkdir(info, { recursive: true });
+    await mkdir(join(f.homePath, "links"));
+    // Normalized, `links/escape/..` is the plain `links` folder; git walks the link to the outside objects.
+    await symlink(join(outside.repoPath, ".git", "objects", "info"), join(f.homePath, "links", "escape"));
+    for (const entry of [`${join(f.homePath, "links", "escape")}/..`, "../../../../../links/escape/.."]) {
+      await writeFile(join(info, "alternates"), `${entry}\n`);
+      await expectRefused(f.repoPath);
+    }
+  });
+
   it("refuses alternates it cannot bound or read: too large, too deep, too many, or not a file", async () => {
     const info = join(f.repoPath, ".git", "objects", "info");
     const alternates = join(info, "alternates");

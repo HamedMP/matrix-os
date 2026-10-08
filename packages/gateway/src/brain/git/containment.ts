@@ -181,7 +181,9 @@ async function readRegularFile(path: string, maxBytes: number): Promise<string |
 /**
  * Every alternate object directory (git's `objects/info/alternates`, followed
  * recursively) must be allowed too, or an object store outside home could
- * stand in for the checkout's history. Quoted entries are refused.
+ * stand in for the checkout's history. Quoted entries are refused, and so is
+ * an entry whose `..` leads somewhere else when taken through a symlink (as
+ * newer git does) than when normalized away first (as older git does).
  */
 async function assertAlternatesAllowed(bounds: GitHomeBounds, objectsDir: string): Promise<void> {
   const pending: Array<{ objectsDir: string; depth: number }> = [{ objectsDir, depth: 0 }];
@@ -193,8 +195,10 @@ async function assertAlternatesAllowed(bounds: GitHomeBounds, objectsDir: string
       const line = raw.trim();
       if (line === "" || line.startsWith("#")) continue;
       if (line.startsWith("\"") || next.depth >= ALTERNATES_MAX_DEPTH || ++checked > ALTERNATES_MAX_ENTRIES) refuse();
-      const real = await allowedDirectory(bounds, resolve(next.objectsDir, line));
-      pending.push({ objectsDir: real, depth: next.depth + 1 });
+      const lexical = await allowedDirectory(bounds, resolve(next.objectsDir, line));
+      const physical = await allowedDirectory(bounds, isAbsolute(line) ? line : `${next.objectsDir}/${line}`);
+      if (physical !== lexical) refuse();
+      pending.push({ objectsDir: physical, depth: next.depth + 1 });
     }
   }
 }
