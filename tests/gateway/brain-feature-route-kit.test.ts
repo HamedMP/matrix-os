@@ -25,6 +25,8 @@ function router(service: { run(): Promise<unknown> } | null, getPrincipal: () =>
     c.json({ ownerId, projectRef, value: await svc.run() }, 200)));
   app.post("/projects/:projectId/x", brainBodyLimit(64), route(async (c) =>
     c.json(await readBrainBody(c, z.object({ a: z.number() }).strict()), 200)));
+  app.post("/projects/:projectId/optional", brainBodyLimit(64), route(async (c) =>
+    c.json(await readBrainBody(c, z.object({ a: z.number().optional() }).strict()), 200)));
   return app;
 }
 
@@ -77,5 +79,29 @@ describe("brain feature route kit", () => {
     expect((await call(app, "/projects/proj_a/x", post(JSON.stringify({ a: 1, pad: "x".repeat(100) })))).status).toBe(413);
     expect(await call(app, "/projects/proj_a/x", { method: "POST" })).toMatchObject({ status: 400 });
     error.mockRestore();
+  });
+
+  it("reads an empty body as {} however it arrives, and still rejects bad JSON", async () => {
+    const app = router({ run: async () => 1 });
+    const emptyStream = () => new ReadableStream<Uint8Array>({ start: (controller) => controller.close() });
+    const post = (body: BodyInit | undefined, headers: Record<string, string>) =>
+      ({ method: "POST", body, headers, duplex: "half" }) as RequestInit;
+    const json = { "content-type": "application/json" };
+    for (const init of [
+      { method: "POST" },
+      post("", json),
+      post("", { ...json, "content-length": "0" }),
+      post(emptyStream(), { ...json, "transfer-encoding": "chunked" }),
+      post(emptyStream(), { "transfer-encoding": "chunked" }),
+      post(" \n", json),
+    ]) {
+      expect(await call(app, "/projects/proj_a/optional", init)).toEqual({ status: 200, body: {} });
+    }
+    expect(await call(app, "/projects/proj_a/optional", post('{"a":2}', json))).toEqual({ status: 200, body: { a: 2 } });
+    for (const bad of ["{", "null", "[]", "x"]) {
+      expect(await call(app, "/projects/proj_a/optional", post(bad, json))).toMatchObject({
+        status: 400, body: { error: { code: "invalid_request" } },
+      });
+    }
   });
 });
