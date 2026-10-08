@@ -14,6 +14,41 @@ Key principles:
 4. **Defense in Depth (NON-NEGOTIABLE)**: auth matrix, input validation, resource limits, timeouts
 5. **TDD (NON-NEGOTIABLE)**: tests first, 99-100% coverage target
 
+## Project Work Tracking and Review
+
+**Goal:** Make project work easy to track and review. These rules apply to every
+project chat, model, harness, and delegated agent. Read this root `AGENTS.md` at
+the start of project work and after compaction; `CLAUDE.md` points to the same
+file so the rules have one source of truth.
+
+- **Use ENG tickets assigned to the requester.** Create or reuse the relevant
+  Linear Engineering ticket, resolve the requester's actual Linear identity,
+  and assign it to them. Keep it in the requested project. For substantial
+  work, split independent deliverables into linked tickets and preserve their
+  dependencies; do not manufacture small tickets to inflate completion counts.
+- **Link substantial changes to specs.** Keep the spec or plan in `specs/` and
+  link it from the ENG ticket and PR. Keep tickets brief: goal, essential
+  actions, completion check, and links; detailed context belongs in the spec.
+- **Suggest stakeholder approval.** Recommend review of substantial scope or
+  behavior changes by the affected product, design, engineering, or integration
+  owners. Record the recommendation and any existing approval in the ticket or
+  PR; a recommendation is not an additional approval gate when the requester
+  has already authorized the work or merge.
+- **Require live visual evidence for every affected surface.** Capture
+  screenshots or short recordings from the running candidate on Web Canvas,
+  Web Desktop, Electron Desktop, Web Mobile, and Native Mobile wherever the
+  change applies. Follow the existing surface matrix: one surface cannot stand
+  in for another, and `N/A` needs architectural rationale and reviewer approval.
+- **Put the evidence in both the PR and Slack `#tech`.** Include the actual
+  captures or accessible capture links in the PR, post the same evidence with
+  the ENG ticket and PR links in the tech channel, and link its Slack permalink
+  back to the PR. State the exact commit/build, scenario, and any test bypass or
+  fixture limitations; redact credentials and private customer content.
+- **Do not claim visual qualification without evidence.** Mockups, automated
+  test results, or another surface's capture do not prove the affected running
+  surface. Missing runtime/device access is an explicit blocker to review and
+  merge readiness; continue unaffected work and obtain the missing evidence.
+
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
@@ -330,7 +365,9 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 **Screenshot evidence (mandatory for frontend-facing changes)**: every PR that changes
 user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include
-a current screenshot or short screen recording of the changed state. Prefer capturing it directly
+live screenshots or short screen recordings of the changed state on every affected surface,
+both in the PR and Slack `#tech`, with the Slack permalink linked from the PR. Follow
+Project Work Tracking and Review above. Prefer capturing evidence directly
 from the coding-agent environment with Playwright/browser tooling after running the relevant
 stack. If the agent cannot run the surface locally, it must ask the developer to run the stack and
 provide the screenshot before treating the frontend work as review-ready. For auth-gated shell UI,
