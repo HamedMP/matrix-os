@@ -44,11 +44,54 @@ describe("Docker development entrypoint dependency layout", () => {
       "pnpm --filter @matrix-os/brand build",
     );
     const shellStart = entrypoint.indexOf(
-      "pnpm --filter shell exec next dev -p 3000",
+      "pnpm --filter shell exec next dev --webpack -p 3000",
     );
 
     expect(brandBuild).toBeGreaterThan(-1);
     expect(shellStart).toBeGreaterThan(brandBuild);
+  });
+
+  it("starts the shell with the same bundler as the shell's own dev script", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+    const shellPackage = JSON.parse(
+      readFileSync(join(root, "shell/package.json"), "utf8"),
+    ) as { scripts: { dev: string } };
+
+    expect(shellPackage.scripts.dev).toContain("--webpack");
+    expect(entrypoint).toContain("exec next dev --webpack -p 3000");
+  });
+
+  it("checks the lockfile hash with flags BusyBox md5sum supports", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+    const md5Lines = entrypoint
+      .split("\n")
+      .filter((line) => line.includes("md5sum") && !line.trim().startsWith("#"));
+
+    expect(md5Lines.length).toBeGreaterThan(0);
+    for (const line of md5Lines) {
+      expect(line).not.toContain("--status");
+    }
+    expect(entrypoint).toContain(
+      "md5sum -c node_modules/.pnpm-lock-hash >/dev/null 2>&1",
+    );
+  });
+
+  it("retries a failed dependency install only after the lockfile changes again", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+    const watcher = entrypoint.slice(entrypoint.indexOf("failed_lock_hash=\"\""));
+
+    expect(watcher).toContain('[ -n "$current_lock_hash" ] || continue');
+    expect(watcher).toContain('[ "$current_lock_hash" = "$failed_lock_hash" ] && continue');
+    expect(watcher).toMatch(/else\s+failed_lock_hash="\$current_lock_hash"/);
   });
 
   it("builds the terminal runtime before starting the gateway", () => {
