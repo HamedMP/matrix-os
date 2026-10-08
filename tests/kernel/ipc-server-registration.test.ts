@@ -4,7 +4,7 @@ import { createIpcServer } from "../../packages/kernel/src/ipc-server.js";
 
 const sdk = vi.hoisted(() => ({
   createSdkMcpServer: vi.fn((config: unknown) => config),
-  tool: vi.fn((name: string, _description: string, _schema: unknown, handler: unknown) => ({ name, handler })),
+  tool: vi.fn((name: string, _description: string, _schema: unknown, handler: unknown, _extras?: unknown) => ({ name, handler })),
 }));
 
 vi.mock("@anthropic-ai/claude-agent-sdk", () => sdk);
@@ -29,6 +29,34 @@ describe("IPC server dependency registration", () => {
 
     const config = sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> };
     expect(config.tools.map((registered) => registered.name)).toContain("transcribe");
+  });
+
+  it("registers brain_why only when the gateway injects brain tools", async () => {
+    await createIpcServer(db, "/home/matrix/home");
+    const without = sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> };
+    expect(without.tools.map((registered) => registered.name)).not.toContain("brain_why");
+
+    const why = vi.fn(async () => ({ status: "not_found" as const }));
+    await createIpcServer(db, "/home/matrix/home", undefined, undefined, { why });
+    type Registered = { name: string; handler: (input: unknown) => Promise<unknown> };
+    const withTools = sdk.createSdkMcpServer.mock.calls[1]?.[0] as { tools: Registered[] };
+    const brainWhy = withTools.tools.find((registered) => registered.name === "brain_why");
+    expect(sdk.tool.mock.calls.find((call) => call[0] === "brain_why")?.[4]).toEqual({ annotations: { readOnlyHint: true } });
+    await expect(brainWhy?.handler({ project: "widgets", path: "src/" })).resolves.toEqual({
+      content: [{ type: "text", text: "That project was not found." }],
+    });
+    expect(why).toHaveBeenCalledWith({ project: "widgets", path: "src/", limit: 5, detail: "brief" });
+  });
+
+  it("registers a read-only brain read tool for each injected method only", async () => {
+    const search = vi.fn(async () => ({ status: "not_found" as const }));
+    await createIpcServer(db, "/home/matrix/home", undefined, undefined, undefined, { search });
+    const config = sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> };
+    const names = config.tools.map((registered) => registered.name);
+    expect(names).toContain("brain_search");
+    expect(names).not.toContain("brain_impact");
+    expect(names).not.toContain("brain_why");
+    expect(sdk.tool.mock.calls.find((call) => call[0] === "brain_search")?.[4]).toEqual({ annotations: { readOnlyHint: true } });
   });
 });
 

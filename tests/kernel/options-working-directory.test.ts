@@ -78,7 +78,7 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined, undefined);
   });
 
   it("registers owner audio transcription only from an injected managed dependency", async () => {
@@ -91,6 +91,31 @@ describe("kernel working directory", () => {
       "/home/matrix/home",
       undefined,
       ownerAudioTranscriber,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("allows brain_why only when brain tools are injected and hands them to the IPC server", async () => {
+    const brainTools = { why: vi.fn(async () => ({ status: "unavailable" as const })) };
+    const withoutTools = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__brain_why");
+
+    const withTools = await kernelOptions({ db, homePath: "/home/matrix/home", brainTools });
+    expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__brain_why");
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, brainTools, undefined);
+  });
+
+  it("allows only the brain read tools that are injected and hands them to the IPC server", async () => {
+    const brainReadTools = { search: vi.fn(async () => ({ status: "unavailable" as const })) };
+    const withoutTools = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__brain_search");
+
+    const withTools = await kernelOptions({ db, homePath: "/home/matrix/home", brainReadTools });
+    expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__brain_search");
+    expect(withTools.allowedTools).not.toContain("mcp__matrix-os-ipc__brain_impact");
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(
+      db, "/home/matrix/home", undefined, undefined, undefined, brainReadTools,
     );
   });
 });

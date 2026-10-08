@@ -12,6 +12,8 @@ import type { MatrixDB } from "./db.js";
 import { createIpcServer } from "./ipc-server.js";
 import type { OsViewAgentTools } from "./ipc-server.js";
 import type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
+import type { BrainAgentTools } from "./tools/brain-why.js";
+import { brainReadIpcToolNames, type BrainAgentReadTools } from "./tools/brain-read-tools.js";
 import { getCoreAgents, loadCustomAgents, loadCustomAgentMcpAllowlists } from "./agents.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { ensureSdkSkillsMirror } from "./skills.js";
@@ -61,6 +63,7 @@ const OS_VIEW_IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__list_placeable_apps",
   "mcp__matrix-os-ipc__add_app_to_desktop",
 ];
+const BRAIN_IPC_TOOL_NAMES = ["mcp__matrix-os-ipc__brain_why"];
 
 const BROWSER_TOOL_NAMES = [
   "mcp__matrix-os-browser__browser",
@@ -242,6 +245,8 @@ export interface KernelConfig {
   requestApproval?: RequestApprovalFn;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  brainTools?: BrainAgentTools;
+  brainReadTools?: BrainAgentReadTools;
 }
 
 export async function kernelOptions(config: KernelConfig) {
@@ -263,6 +268,8 @@ export async function kernelOptions(config: KernelConfig) {
     homePath,
     config.osViewTools,
     config.ownerAudioTranscriber,
+    config.brainTools,
+    config.brainReadTools,
   );
   const coreAgents = getCoreAgents(homePath);
   const customAgents = loadCustomAgents(`${homePath}/agents/custom`, homePath);
@@ -310,6 +317,8 @@ export async function kernelOptions(config: KernelConfig) {
       "WebFetch",
       ...IPC_TOOL_NAMES,
       ...(config.osViewTools ? OS_VIEW_IPC_TOOL_NAMES : []),
+      ...(config.brainTools ? BRAIN_IPC_TOOL_NAMES : []),
+      ...brainReadIpcToolNames(config.brainReadTools),
       ...browserToolNames,
     ],
     skills: "all" as const,
