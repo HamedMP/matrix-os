@@ -194,4 +194,33 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     })).rejects.toThrow("config refused");
     expect(await second.getSource(scopeA, source.sourceId)).toMatchObject({ revision: 2, label: "Renamed" });
   });
+
+  it("commits a source's replacement with the write made alongside it, so no connection sees one without the other", async () => {
+    const { source } = await first.createSource(scopeA, natural);
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const written = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const live = async () => (await second.listSources(scopeA)).items.map((item) => item.sourceId);
+    const replace = first.replaceSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Again" }, async (trx, next) => {
+      await sql`INSERT INTO side_config VALUES (${next.sourceId}, 'new')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    // Until the replacement commits, another connection sees the old source and neither its successor nor the write.
+    expect(await live()).toEqual([source.sourceId]);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM "${schema}".side_config`)).rows).toEqual([{ n: 0 }]);
+    held.resolve();
+    const { removed, source: next } = await replace;
+    expect(removed).toMatchObject({ sourceId: source.sourceId, revision: 2, deletedAt: expect.any(String) });
+    expect(next).toMatchObject({ kind: natural.kind, externalRef: natural.externalRef, label: "Again", revision: 1 });
+    expect(await live()).toEqual([next.sourceId]);
+    expect((await admin.query(`SELECT source_id FROM "${schema}".side_config`)).rows).toEqual([{ source_id: next.sourceId }]);
+    // A write alongside that fails takes the removal back with it.
+    await expect(first.replaceSource(scopeA, { sourceId: next.sourceId, expectedRevision: 1, label: "Lost" }, async () => {
+      throw new Error("config refused");
+    })).rejects.toThrow("config refused");
+    expect(await second.getSource(scopeA, next.sourceId)).toMatchObject({ revision: 1, label: "Again" });
+    expect(await live()).toEqual([next.sourceId]);
+  });
 });

@@ -94,8 +94,9 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
   finishes, 120 s at most). Store writes keep their 5 s lock and 15 s statement deadlines.
 - Concurrent access: connects of one kind in one scope run one at a time per process; across processes a later
   create sees the earlier one and removes itself when over the cap. Update and remove are compare-and-set on the
-  source revision; an update saves its config in the same transaction, so a client that reads the new revision reads
-  the new config and a failed save changes nothing. One sync per source per process (runner guard); across processes the cursor compare-and-set
+  source revision; an update saves its config in the same transaction (a reconnect also removes the source and
+  creates its successor there), so a client that reads the new revision reads the new config and a failed save
+  changes nothing. One sync per source per process (runner guard); across processes the cursor compare-and-set
   decides.
 - Crash recovery: a crash between `createSource` and `saveConfig` leaves a source without a config: its sync is
   `source_config_invalid` and connecting the same identity again stores the config. A crashed run's receipt is closed
