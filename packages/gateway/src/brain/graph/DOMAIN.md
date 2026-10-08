@@ -18,8 +18,9 @@ the synced documents, their refs and their current decision claims. Spec: `specs
 
 - The core tables (`brain_documents`, `brain_document_refs`, `brain_claims`, `brain_sources`) are read only, with
   plain SELECTs. The graph tables are derived and can be rebuilt by refresh at any time, except manual alias rows.
-- `brain_graph_state` records, per document, the `(incarnation, revision)` and an md5 digest of the current decision
-  claim ids it was derived from, plus the name and email pairs its git trailers showed.
+- `brain_graph_state` records, per document, the `(incarnation, revision)`, an md5 digest of the current decision
+  claim ids and an md5 digest of its refs it was derived from (a sync can replace refs at the same revision), plus the
+  name and email pairs its git trailers showed.
 - Per-document rows (state, links, document entities) reference `brain_documents` ON DELETE CASCADE. Other entities
   and aliases are scope level and go on `scope_erased`.
 
