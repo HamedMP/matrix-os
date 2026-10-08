@@ -22,8 +22,8 @@ Applies to every LLM model, agent harness, and project chat, including new or re
 - **Ask when missing**: ask the user/developer once: "Is there an existing Linear ticket, or should I create a short one?" Create only when authorized; prior authorization in the conversation counts. Preserve the answer and ticket ID/link across handoffs and compaction.
 - **Engineering tickets use ENG**: create engineering work in the Linear **Engineering (`ENG`) team**. Assign it to the person who initiated the request when their Linear identity is verified; otherwise ask which user to assign before creating it. Do not assume the connected account or agent is the requester. Reuse relevant existing tickets even if they belong to another team; do not duplicate or move them solely to change the prefix.
 - **If Linear is unavailable**: report that verification is blocked and ask for the ticket link or developer help. Do not treat an unavailable search as proof that no ticket exists. Read-only investigation and a local draft may continue while waiting; PR creation and merge require a verified ticket.
-- **Every PR needs a ticket**: before opening or merging any PR (including docs-only, stacked, and automated PRs), verify a relevant Linear ticket and put its ID and URL in the PR body. Link the PR back from the ticket. One ticket may cover several related PRs; each PR must link it.
-- **Recheck before merge**: inspect the conversation and PR body again, including when using `worktree-pr-monitor`, `land`, or another merge workflow. If no ticket is linked, reuse a verified ticket already in the conversation; otherwise ask the user/developer whether to create one or use an existing one. Wait for a verified, linked ticket before merging or enabling auto-merge. A merge request alone does not authorize ticket creation; do not repeat the question when authorization is already recorded.
+- **Standalone PRs need a ticket; stacks share one**: before opening or merging a standalone PR (including docs-only and automated PRs), verify a relevant Linear ticket and put its ID and URL in the PR body. A PR in a stack does **not** need a separate ticket: reuse the stack's verified ticket and mention both its ID/link and the stack name/link in each PR description. Link the PRs back from the shared ticket; never create one ticket per stack layer just to satisfy this rule.
+- **Recheck before merge**: inspect the conversation and PR body again, including when using `worktree-pr-monitor`, `land`, or another merge workflow. Reuse the verified task or stack ticket already recorded. Only when neither exists, ask the user/developer whether to create one or use an existing one. Wait for the relevant ticket link (and stack reference for stacked PRs) before merging or enabling auto-merge. A merge request alone does not authorize ticket creation; do not repeat the question when authorization is already recorded.
 
 **Ticket briefs must be easy to scan**: use a short, concrete title and aim for at most 100 words. Prefer three short bullets: goal, essential actions, and completion check. Use plain language, one idea per bullet, and links for detailed context. Avoid long background paragraphs and repeated explanations.
 
@@ -329,7 +329,7 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 
 ### Pre-PR Checklist (mandatory)
 
-Verify the Linear ticket and include its ID and URL in the PR body before opening the PR. See **Linear Ticket Check** above.
+Verify the task or shared stack ticket and include its ID and URL in the PR body before opening the PR. Stacked PRs must also name/link their stack; no separate ticket is required per layer. See **Linear Ticket Check** above.
 
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
@@ -374,16 +374,8 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 - **> 3000 additions or > 50 files**: split the PR
 - Split along: gateway, platform, sync-client, shell, docs/deploy
-- For multi-slice features, prefer Graphite stacked PRs over one oversized PR.
-  Follow `docs/dev/stacked-prs.md`: initialize with `gt init`, create each
-  layer with `gt create --all --message "<conventional commit>"`, update
-  layers with `gt modify --all` or `gt modify --commit --all --message`,
-  restack with `gt restack`, sync with `gt sync`, publish with
-  `gt submit --stack` or `gt ss -np`, and open the stack with `gt pr`.
-  Prefer Graphite commands over raw git/gh equivalents for stack operations.
-  If `gt` is missing or unauthenticated, treat that as an environment blocker
-  for stack work instead of silently falling back. Do not flatten a stack unless
-  explicitly asked.
+- For multi-slice features, use stacked PRs instead of one oversized PR. **GitHub Stack or Graphite** may be the primary tool; no project-wide preference is established. Follow the existing stack's tool, or choose one for a new stack and use it consistently for create, restack, submit, and merge. Record the chosen tool and stack link in the PR descriptions.
+- For Graphite, follow `docs/dev/stacked-prs.md`: `gt create`, `gt modify`, `gt restack`, `gt sync`, `gt submit --stack`, and `gt merge`. For GitHub Stack, use its supported stack workflow. If the chosen tool is unavailable or unauthenticated, report the blocker instead of silently changing tools. Do not flatten or migrate a stack unless explicitly asked.
 
 ### PR Body: Concise and Actionable
 
@@ -391,7 +383,7 @@ PR descriptions must help an engineer review and follow the process quickly. Aim
 
 - **Summary**: one sentence on the outcome, then name the changed files (group related files by directory for larger diffs) and their key changes. Do not paste a file inventory or narrate implementation history.
 - **Tests**: list the 1-3 most important checks, with the action and expected result. Briefly state what passed, failed, or remains untested; link logs/CI instead of dumping commands and output. Never hide a blocker in collapsed details.
-- **Process**: include only applicable checkboxes for the linked Linear ticket, validation, spec/stakeholder review suggestion, per-surface live evidence/parity, and Slack tech-channel sharing. Check a box only when completed and link the evidence (including the Slack message). State non-applicable spec/UI requirements in one short `N/A` line; do not mark them completed.
+- **Process**: include only applicable checkboxes for the linked task/shared stack ticket, stack reference/tool, validation, spec/stakeholder review suggestion, per-surface live evidence/parity, and Slack tech-channel sharing. Check a box only when completed and link the evidence (including the Slack message). State non-applicable spec/UI requirements in one short `N/A` line; do not mark them completed.
 - Keep required surface matrices and deeper technical review notes in clearly labeled collapsed details or linked documents. Mandatory invariants stay in the PR body, but may be brief and collapsed below the actionable content.
 
 ```markdown
@@ -406,7 +398,8 @@ PR descriptions must help an engineer review and follow the process quickly. Aim
 
 ## Process
 
-- [ ] Linear: <ticket link>
+- [ ] Linear: <task or shared stack ticket link>
+- [ ] Stack (if applicable): <name/link>; <GitHub Stack or Graphite>
 - [ ] Key checks passed: <evidence>
 - [ ] Spec linked; stakeholder review suggested: <links>
 - [ ] UI: live screenshots + recording for each affected surface; parity checked
@@ -434,16 +427,11 @@ Do not request review while still pushing commits. Either declare a review commi
 
 ### Stacked-PR Merge Safety (NON-NEGOTIABLE)
 
-**Stacked PRs are managed with Graphite (`gt`) end to end — create, restack, submit,
-AND merge (`gt merge` / Graphite web queue). Raw `gh`/`git` is NOT the tool for stack
-operations.** If a stack was not created with `gt`, track it (`gt track`) before
-landing it. Full workflow: `docs/dev/stacked-prs.md`.
+**Use the stack's chosen primary tool, GitHub Stack or Graphite, end to end.** Do not mix tools or silently migrate an existing stack. For Graphite, track untracked branches with `gt track` before landing and follow `docs/dev/stacked-prs.md`. Each layer references the shared Linear ticket and its stack; separate tickets per layer are unnecessary.
 
 Learned from the 2026-07-13 merge cascade (PRs #932/#934/#935/#926/#933/#941/#945/#948:
 a raw `gh pr merge` loop merged children into parent branches instead of `main`, and
-four PRs became unrecoverable-closed, requiring reland PRs). If you must land a stack
-without Graphite (last resort, e.g. `gt` unauthenticated — normally an environment
-blocker, not a green light):
+four PRs became unrecoverable-closed, requiring reland PRs). Whichever stack tool is chosen, preserve these merge safeguards:
 
 - **Merge a PR only when its base branch is `main`.** Verify first:
   `gh pr view <n> --json baseRefName`. Merging a stacked PR whose base is another
@@ -461,7 +449,7 @@ blocker, not a green light):
 ### Hard Rules (never violate)
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
-- **No PR creation, merge, or auto-merge without a verified, linked Linear ticket** -- follow **Linear Ticket Check** above, including in automated monitoring and merge workflows.
+- **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
 - **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push the score stays stale until you ask, so waiting for an automatic re-review blocks forever.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
