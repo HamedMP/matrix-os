@@ -101,20 +101,23 @@ export interface BrainEntitiesParsedQuery {
   readonly kind?: BrainEntityKind; readonly q?: string; readonly limit: number; readonly cursor?: string;
 }
 
-/** Before every real last_seen_at: the cursor of a first page that held only exact matches. */
-const EXACT_ONLY_CURSOR = { at: "9999-12-31T23:59:59.999999Z", id: "ent_" };
+/** The cursor id of a page that ended among the exact matches: `exact:<key length>:<entity id>`. */
+const EXACT_CURSOR_ID = /^exact:([0-9]{1,4}):(ent_[a-f0-9]{32})$/;
 
 /**
  * Entities that are not merged aliases and are still backed by live data (LIVE_ENTITY). q is case-insensitive and
  * matches a key or name prefix, a spec's number ("124" finds specs/124-...) or a file or folder's last segment; exact
- * matches (the key, the name, a spec number or a file name with or without its extension) come first on the first page,
- * the rest newest last_seen_at first.
+ * matches (the key, the name, a spec number or a file name with or without its extension) come first, shortest key
+ * then newest, and the rest after them newest last_seen_at first. A cursor continues within the exact matches while a
+ * page ends among them, so no entity is listed twice.
  */
 export async function listGraphEntities(
   db: BrainGraphExecutor, scope: BrainScopeKey, query: BrainEntitiesParsedQuery,
 ): Promise<BrainEntitiesView> {
   const fingerprint = queryFingerprint(["entities", query.kind ?? null, query.q ?? null]);
   const cursor = query.cursor === undefined ? null : decodeGraphCursor(query.cursor, fingerprint);
+  const exactAfter = cursor === null ? null : EXACT_CURSOR_ID.exec(cursor.id);
+  if (exactAfter !== null && query.q === undefined) throw new BrainApiError("invalid_request");
   let page = entities(db, scope)
     .select(["e.entity_id", "e.kind", "e.key", "e.display_name", ISO_MICROS("e.last_seen_at").as("at")])
     .where(({ not, exists, selectFrom }) => not(exists(selectFrom("brain_graph_aliases as a").select("a.entity_id")
@@ -122,7 +125,7 @@ export async function listGraphEntities(
       .whereRef("a.alias_entity_id", "=", "e.entity_id").where("a.state", "=", "merged"))))
     .where(LIVE_ENTITY);
   if (query.kind !== undefined) page = page.where("e.kind", "=", query.kind);
-  let exact: Awaited<ReturnType<typeof page.execute>> = [];
+  let exact: (Awaited<ReturnType<typeof page.execute>>[number] & { key_length: number })[] = [];
   if (query.q !== undefined) {
     const q = query.q.toLowerCase();
     const leaf = sql`lower(substring(e.key from '[^/]*$'))`;
@@ -133,24 +136,31 @@ export async function listGraphEntities(
     page = page.where(sql<boolean>`(starts_with(lower(e.key), ${q}) OR starts_with(lower(e.display_name), ${q})
       OR (e.kind = 'spec' AND starts_with(lower(e.key), ${`specs/${q}`}))
       OR (${isPath} AND starts_with(${leaf}, ${q})))`);
-    if (cursor === null) {
-      exact = await page.where(exactMatch).orderBy(sql`length(e.key)`).orderBy("e.last_seen_at", "desc")
+    if (cursor === null || exactAfter !== null) {
+      let matches = page.where(exactMatch).select(sql<number>`length(e.key)`.as("key_length"));
+      if (exactAfter !== null) {
+        const length = Number(exactAfter[1]);
+        matches = matches.where(sql<boolean>`(length(e.key) > ${length} OR (length(e.key) = ${length}
+          AND (e.last_seen_at, e.entity_id) < (${cursor!.at}::timestamptz, ${exactAfter[2]})))`);
+      }
+      exact = await matches.orderBy(sql`length(e.key)`).orderBy("e.last_seen_at", "desc")
         .orderBy("e.entity_id", "desc").limit(query.limit + 1).execute();
     }
-    // After a first page of exact matches only, the next pages list them again rather than lose any.
-    if (cursor?.id !== EXACT_ONLY_CURSOR.id) page = page.where(sql<boolean>`NOT ${exactMatch}`);
+    page = page.where(sql<boolean>`NOT ${exactMatch}`);
   }
-  const after = exact.length >= query.limit ? EXACT_ONLY_CURSOR : cursor;
-  if (after !== null) {
-    page = page.where(sql<boolean>`(e.last_seen_at, e.entity_id) < (${after.at}::timestamptz, ${after.id})`);
+  if (cursor !== null && exactAfter === null) {
+    page = page.where(sql<boolean>`(e.last_seen_at, e.entity_id) < (${cursor.at}::timestamptz, ${cursor.id})`);
   }
+  // The rest starts at the top once the exact matches are all listed.
   const rest = exact.length > query.limit ? [] : await page.orderBy("e.last_seen_at", "desc")
     .orderBy("e.entity_id", "desc").limit(query.limit + 1 - exact.length).execute();
   const rows = [...exact, ...rest];
   const items = rows.slice(0, query.limit);
-  const last = rows.length > query.limit ? items[items.length - 1] : undefined;
-  const next = last === undefined ? null : rest.includes(last) ? { at: last.at, id: last.entity_id }
-    : EXACT_ONLY_CURSOR;
+  const lastIndex = rows.length > query.limit ? items.length - 1 : -1;
+  const lastExact = lastIndex >= 0 && lastIndex < exact.length ? exact[lastIndex] : undefined;
+  const next = lastIndex < 0 ? null : lastExact !== undefined
+    ? { at: lastExact.at, id: `exact:${Number(lastExact.key_length)}:${lastExact.entity_id}` }
+    : { at: items[lastIndex]!.at, id: items[lastIndex]!.entity_id };
   return {
     items: items.map(toEntityRef),
     nextCursor: next === null ? null : encodeGraphCursor(fingerprint, next.at, next.id),
