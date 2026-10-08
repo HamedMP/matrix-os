@@ -73,29 +73,32 @@ interface BrainChatProps {
 }
 
 /**
- * The Chat tab: checks that the project's brain has something to read, finds the owner's Company Brain Bot (or offers
- * to start it), lists this project's brain chats and hosts the surface's chat view for the open one.
+ * The Chat tab: finds the owner's Company Brain Bot (or offers to start it), lists this project's brain chats and
+ * hosts the surface's chat view for the open one.
  */
 export function BrainChat({ host, ...props }: BrainChatProps) {
   if (!host) return <ChatNotice text="Chat is not available here." onOpenSearch={props.onOpenSearch} />;
-  return <BrainChatSources host={host} {...props} />;
+  return <BrainChatBot host={host} {...props} />;
 }
 
-/** A brain that is off, or a project with no sources yet, could only answer "I could not find that". */
-function BrainChatSources({ api, projectId, onOpenSources, ...props }: BrainChatProps & { readonly host: BrainChatHost }) {
+type BotProps = Omit<BrainChatProps, "host"> & { readonly host: BrainChatHost };
+
+/**
+ * What stands in for a new chat while the brain is off, or the project has no sources yet: a question could then only
+ * get "I could not find that". Null when a new chat can be asked. Saved chats open either way.
+ */
+function useDraftNotice(api: BrainShellClient, projectId: string, onOpenSources: () => void): ReactNode {
   const sources = useBrainLoad(() => api.sources(projectId), "sources");
   const state = sources.state;
-  if (state.status === "loading" || state.status === "idle") return <BrainLoading label="Opening the brain chat..." />;
+  if (state.status === "loading" || state.status === "idle") return <BrainLoading label="Checking the project's sources..." />;
   if (state.status === "error") {
     return <div className="p-4"><BrainError error={state.error} onRetry={sources.reload} onOpenSources={onOpenSources} /></div>;
   }
   if (!Array.isArray(state.data.items) || state.data.items.length === 0) {
     return <ChatNotice text={brainErrorText(NO_SOURCES)} onOpenSources={onOpenSources} />;
   }
-  return <BrainChatBot projectId={projectId} {...props} />;
+  return null;
 }
-
-type BotProps = Omit<BrainChatProps, "api" | "onOpenSources" | "host"> & { readonly host: BrainChatHost };
 
 function BrainChatBot({ host, ...props }: BotProps) {
   const bot = useBrainLoad(() => findCompanyBrainBot(host.agents), "bot");
@@ -218,8 +221,11 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
 /** Renames and deletes made here, kept over the list until the server list has them (a "Show more" page may not). */
 type LocalEdits = ReadonlyMap<string, string | null>;
 
-function BrainChatThreads({ host, botId, projectId, projectName, onOpenSearch }: BotProps & { readonly botId: string }) {
+function BrainChatThreads({
+  host, api, botId, projectId, projectName, onOpenSearch, onOpenSources,
+}: BotProps & { readonly botId: string }) {
   const threads = useBrainThreads(host.agents, botId, projectId);
+  const draftNotice = useDraftNotice(api, projectId, onOpenSources);
   const { key, current, open, createChat, onChatChanged } = useBrainChatSlot(host, botId, projectId, threads);
   const [listOpen, setListOpen] = useState(false);
   const [edits, setEdits] = useState<LocalEdits>(() => new Map());
@@ -272,7 +278,7 @@ function BrainChatThreads({ host, botId, projectId, projectName, onOpenSearch }:
           )}
         </div>
         <div key={`${key}:${current.slot}`} className="flex min-h-0 flex-1 flex-col">
-          {host.render({
+          {(chatId === null ? draftNotice : null) ?? host.render({
             projectId, agentId: botId, chatId, prompt: `Ask about ${projectName}`, promptDetail: PROMPT_DETAIL,
             createChat, onChatChanged,
           })}
