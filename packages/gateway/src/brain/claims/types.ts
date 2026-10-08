@@ -167,3 +167,145 @@ export interface BrainClaimTables {
   brain_claims: BrainClaimsTable; brain_extraction_state: BrainExtractionStateTable;
   brain_extraction_runs: BrainExtractionRunsTable;
 }
+
+// Fields, model output and usage: verify.ts parses model output with these, claims/schemas.ts store input.
+
+export const noNul = (value: string): boolean => !value.includes("\u0000");
+export const noControl = (value: string): boolean => !/\p{Cc}/u.test(value);
+
+/** due: YYYY-MM-DD, a real calendar date. At most 1 KiB as JSON. */
+export const BrainClaimFieldsSchema = z.object({
+  assignee: z.string().trim().min(1).max(120).refine(noControl)
+    .refine((value) => value.isWellFormed()).optional(),
+  due: z.iso.date().optional(),
+  severity: z.enum(["low", "medium", "high"]).optional(),
+}).strict().refine((fields) => Buffer.byteLength(JSON.stringify(fields), "utf8") <= 1_024);
+export type BrainClaimFields = z.output<typeof BrainClaimFieldsSchema>;
+
+/** One raw model claim. verify.ts also requires the kind to be one the call asked for. */
+export const BrainClaimCandidateSchema = z.object({
+  kind: z.enum(BRAIN_CLAIM_KINDS),
+  label: z.string().trim().min(1).max(BRAIN_CLAIM_LABEL_MAX_CHARS).refine(noControl).nullable().optional(),
+  statement: z.string().trim().min(1).max(BRAIN_CLAIM_STATEMENT_MAX_CHARS).refine(noNul),
+  quote: z.string().trim().min(1).max(BRAIN_CLAIM_QUOTE_MAX_CHARS).refine(noNul),
+  fields: BrainClaimFieldsSchema.optional(),
+}).strict();
+
+/**
+ * Tokens or micro-USD reported by one model call; more than 10,000,000 is model_usage_invalid. inputTokens counts
+ * every prompt token; the cache counts are the part of it read from or written to the prompt cache (default 0).
+ */
+const usageCount = z.number().int().min(0).max(10_000_000);
+export const BrainExtractionUsageSchema = z.object({
+  inputTokens: usageCount, outputTokens: usageCount, costMicroUsd: usageCount,
+  cacheReadTokens: usageCount.default(0), cacheWriteTokens: usageCount.default(0),
+}).strict();
+export type BrainExtractionUsage = z.output<typeof BrainExtractionUsageSchema>;
+/** What a model reports: the cache counts may be left out. */
+export type BrainExtractionUsageInput = z.input<typeof BrainExtractionUsageSchema>;
+
+// Claim ids.
+
+/** NFC, whitespace runs collapsed to one space, trimmed, lowercased. */
+export function normalizeBrainClaimText(text: string): string {
+  return text.normalize("NFC").replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
+/**
+ * sha256 of ["brain_claim_v1", documentId, kind, normalized label or null, normalized statement]; never of spans or
+ * the extractor, so a claim that a new rules version reads the same way keeps its id (`brain_claim_v1` is the recipe's
+ * version, not the extractor's). Rows are keyed by (claim id, extractor).
+ */
+export function computeBrainClaimId(
+  documentId: string, kind: BrainClaimKind, label: string | null, statement: string,
+): string {
+  const normalizedLabel = label === null ? null : normalizeBrainClaimText(label);
+  const tuple = ["brain_claim_v1", documentId, kind, normalizedLabel, normalizeBrainClaimText(statement)];
+  return createHash("sha256").update(JSON.stringify(tuple)).digest("hex");
+}
+
+export function brainModelExtractorId(modelId: string, promptVersion: string): string {
+  return `model:${modelId}/${promptVersion}`;
+}
+
+// Claims.
+
+/** A verified claim before its id: quote === text.slice(spanStart, spanEnd); the statement has no whitespace runs. */
+export interface BrainClaimDraft {
+  readonly kind: BrainClaimKind; readonly label: string | null; readonly statement: string; readonly quote: string;
+  readonly spanStart: number; readonly spanEnd: number; readonly fields: BrainClaimFields;
+  readonly confidence: BrainClaimConfidence;
+}
+
+/** What the store accepts: claimId must equal computeBrainClaimId(documentId, kind, label, statement). */
+export interface BrainClaimInput extends BrainClaimDraft { readonly claimId: string }
+
+/**
+ * createdAt: when the claim id was first written for the document and extractor. stale: the live document's
+ * incarnation or revision differs from the one the claim was read from.
+ */
+export interface BrainClaim extends BrainClaimInput {
+  readonly documentId: string; readonly extractor: string; readonly incarnation: string; readonly revision: number;
+  readonly createdAt: string; readonly stale: boolean;
+}
+
+/** The live document. bodyTail: the last BRAIN_CLAIM_FOOTER_TAIL_CHARS of a git_pr or git_commit body (its footer). */
+export interface BrainClaimDocument {
+  readonly documentId: string; readonly provenance: string; readonly title: string; readonly permalink: string;
+  readonly revision: number; readonly sourceUpdatedAt: string; readonly bodyTail: string | null;
+}
+
+export interface BrainClaimListItem { readonly claim: BrainClaim; readonly document: BrainClaimDocument }
+
+/** path: only claims of documents with a path ref equal to or under the value (refs-reads.ts valueMatches). */
+export interface BrainClaimListQuery {
+  readonly kind?: BrainClaimKind; readonly path?: { readonly value: string; readonly mode: BrainRefMatchMode };
+  readonly limit?: number; readonly cursor?: string | null;
+}
+
+/** Live documents only; newest source_updated_at, then document id descending; then span_start, claim id, extractor. */
+export interface BrainClaimPage { readonly items: readonly BrainClaimListItem[]; readonly nextCursor: string | null }
+
+// Extraction state and runs.
+
+/**
+ * order: "oldest" (default, the rules extractor) or "newest" (the model extractor reads recent documents first).
+ * provenances: only documents of these provenances; absent means every provenance. For a rules extractor, a document
+ * that still has state of another rules version is pending even when this version is done.
+ */
+export interface BrainPendingExtractionQuery {
+  readonly extractor: string; readonly limit: number; readonly maxAttempts: number;
+  readonly order?: "oldest" | "newest"; readonly provenances?: readonly string[];
+}
+
+export interface BrainPendingExtraction {
+  readonly documentId: string; readonly incarnation: string; readonly revision: number;
+  readonly provenance: string; readonly byteCount: number; readonly sourceUpdatedAt: string;
+}
+
+/** By source_updated_at, then document id: ascending for order "oldest" (the default), descending for "newest". */
+export interface BrainPendingExtractionPage {
+  readonly items: readonly BrainPendingExtraction[]; readonly hasMore: boolean;
+}
+
+export type BrainDocumentExtractionOutcome =
+  | { readonly status: "done"; readonly claims: readonly BrainClaimInput[] }
+  | { readonly status: "failed" | "skipped"; readonly errorCode: BrainExtractionDocumentErrorCode };
+
+/**
+ * runId must name the scope's running run for the same extractor, else conflict. runCostMicroUsd: the run's cost so
+ * far (default 0), saved on the run row in the same write, even for a stale document, and never lowered.
+ */
+export interface BrainApplyDocumentExtractionInput {
+  readonly runId: string; readonly documentId: string; readonly incarnation: string; readonly revision: number;
+  readonly extractor: string; readonly outcome: BrainDocumentExtractionOutcome; readonly runCostMicroUsd?: number;
+}
+
+/**
+ * written: claim rows new for this extractor. removed: rows deleted, including, for a rules extractor, the document's
+ * claims of every other rules version. stale: the live document is gone or no longer at (incarnation, revision);
+ * nothing was written.
+ */
+export type BrainApplyDocumentExtractionResult =
+  | { readonly applied: true; readonly written: number; readonly removed: number }
+  | { readonly applied: false; readonly reason: "stale" };
