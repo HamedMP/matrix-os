@@ -52,6 +52,8 @@ export interface AiProviderSnapshotReader {
 }
 
 interface AiProviderServiceOptions {
+  /** Registered native Claude profile uses a separate account from owner API keys. */
+  exposeClaudeProfileAccount?: boolean;
   nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
   hermesRuntimeSource?: AgentRuntimeSource;
   openclawRuntimeSource?: AgentRuntimeSource;
@@ -192,6 +194,7 @@ function readinessForDriver(
 
 export class AiProviderService implements AiProviderSnapshotReader {
   readonly #credentials: ProviderCredentialStore;
+  readonly #exposeClaudeProfileAccount: boolean;
   readonly #now: () => Date;
   readonly #healthProbe?: AiProviderHealthProbe;
   readonly #healthCache: ProviderHealthCache<AiProviderReadiness>;
@@ -211,6 +214,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       env: options.env,
       fundedCredentialProvider: options.fundedCredentialProvider,
     });
+    this.#exposeClaudeProfileAccount = options.exposeClaudeProfileAccount === true;
     this.#now = options.now ?? (() => new Date());
     this.#healthProbe = options.healthProbe;
     this.#healthCache = options.healthCache ?? new ProviderHealthCache<AiProviderReadiness>();
@@ -504,6 +508,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
       },
     ];
 
+    const nativeClaudeProfile = this.#exposeClaudeProfileAccount && !managedMatrixOnly
+      && drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed");
+    if (nativeClaudeProfile) accounts.push({ id: "owner_claude_profile", vendor: "anthropic",
+      authMethod: "provider_profile", accountLabel: "Claude account", ...readinessForObservation("unverified", "profile", now) });
+
     const kernelInstances = accessSources
       .filter((source) => source.vendor === "anthropic")
       .map((source) => {
@@ -552,9 +561,21 @@ export class AiProviderService implements AiProviderSnapshotReader {
       defaultModelId: codexReadiness.state === "ready" ? OWNER_OPENAI_MODEL_IDS[0] : null,
       catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     };
+    if (nativeClaudeProfile) {
+      const original = accessSources.find(source => source.id === "owner_anthropic_profile")!;
+      accessSources.push({ ...original, id: "owner_claude_profile", displayName: "Claude account", accountLabel: "Claude account" });
+      for (const model of catalog) {
+        if (!model.eligibleAccessSourceIds.includes(original.id)) continue;
+        model.eligibleAccessSourceIds.push("owner_claude_profile");
+        model.dataPolicies.push({ accessSourceId: "owner_claude_profile", route: "owner_direct", disclosureKey: "owner-direct-anthropic" });
+      }
+    }
     const instances = [
       ...kernelInstances,
       ...(codexDriver ? [codexInstance] : []),
+      ...(nativeClaudeProfile ? [{ ...kernelInstances.find(instance => instance.accessSourceId === "owner_anthropic_profile")!,
+        id: "claude_code_owner_profile", driverId: "claude_code", accountId: "owner_claude_profile", accessSourceId: "owner_claude_profile",
+        label: "Claude account" }] : []),
     ];
 
     const selectedInstance = instances.find(

@@ -97,3 +97,86 @@ Record exact combined source head, client app/build hashes, immutable Preview ru
 Historical October1 captures and validation reports refer to an older uncommitted implementation and synthetic gateway. They remain archived provenance only. New captures use a distinct output directory and cannot silently replace historical tracked screenshots. No latest combined acceptance is claimed by this spec.
 
 Deliver bounded stacked PRs with latest-head Greptile5/5 and required CI green, plus a separate public documentation PR in the private site repository. Coordinator owns runnable Human Review and any explicitly authorized scoped deployment. This spec authorizes no new payments, grants, access changes, primary-account credential changes or fleet/channel promotion.
+
+
+## Native Claude subscription completion contract (2026-10-07)
+
+### 1. Scope / trigger
+
+A first Settings browser login can finish successfully in the native CLI while the Settings projection still reports unknown authentication. Completion must read the CLI-owned subscription identity before selecting the exact account. A no-resource admission failure must not leave a permanently protected retry receipt.
+
+### 2. Signatures
+
+- `createClaudeNativeAccountMetadataReader({ executable, cwd, environment, timeoutMs?, runCommand?, assertProfileAvailable? }): () => Promise<ClaudeNativeAccountMetadata | null>`
+- Fixed subprocess: `claude auth status --json`, scoped to the same owner home as `claude auth login --claudeai`.
+- `ProviderSettingsStore.getSnapshot({ refresh: true, includeNativeAccountMetadata: true })` supplies privately bound current identity to foreground completion. Owner GET transports additionally opt into `includeClaudeAccountDetails=true` for Claude plan labels; old servers may ignore this additive query field.
+- Successful completion calls the server-only `ProviderSettingsStore.completeClaudeNativeLogin({ harnessInstanceId, expectedRevision, idempotencyKey })`. The store constructs the exact `owner_claude_profile` selection with enablement, re-observes and independently verifies the current native principal inside serialized mutation admission, and supplies a private completion flag to the actual specialized runtime coordinator. This method is never registered as a public action. Discovery alone does not enable a harness.
+- The production Terminal handoff wrapper must preserve this optional private completion method and its store receiver when registering the native workflow runtime. A store without the method remains unsupported; wrapping must neither discard an available method nor fabricate one.
+- An explicit no-resource `ProviderWorkflowNotStartedError('conflict')` maps to the existing HTTP409 workflow conflict; no new status enum is added.
+- `createGatewayChatProviderCatalog(...).resolveClaudeCredentialLaunch` uses its existing `harnessSettingsSource` to honor an explicitly enabled native Claude source before calling the credential launcher; missing or ambiguous native selection fails before any model invocation.
+
+### 3. Contracts
+
+The authoritative native receipt must report `loggedIn: true`, `authMethod: "claude.ai"`, `apiProvider: "firstParty"`, a bounded valid email, and the exact owner `.claude` config directory. Only allowlisted Pro, Max, Team and Enterprise plan names may be projected, and only with the additive `includeClaudeAccountDetails=true` read negotiation. Existing `includeAccountDetails=true` clients retain compatible email/identity fields without new Claude plan enum values. Authentication does not depend on the new plan flag. Unknown plans remain unknown. This receipt supplies connection identity; it does not supply quota, a model execution verdict, or paid entitlement admission.
+
+The reader strips provider credential environment variables and foreign `CLAUDE_CONFIG_DIR`, keeps default owner HOME resolution identical to browser login, bounds process time and output, checks writer availability before and after the observation, and revalidates the current principal before attaching metadata. Do not explicitly set `CLAUDE_CONFIG_DIR=HOME/.claude`: official CLI versions use a different global `.claude.json` path in that mode even when the reported config directory matches. The native `owner_claude_profile` source/account and `claude_code_owner_profile` instance are separate from historical `owner_anthropic_profile`, `owner_anthropic` and kernel instances; existing source/instance identities remain unchanged. Explicit native credential resolution aliases only the owner Claude profile and rejects API-key/ambient fallback. Default reads, non-owner reads and mutation replies retain their existing privacy contract. Tokens and authorization codes never enter snapshots, logs, receipts or command arguments.
+
+For explicit logout/removal, the two exact registered terminal records (`owner_claude_profile` / `owner_claude_profile` and `owner_anthropic` / `owner_anthropic_profile`) address one native credential. Count that credential once; independently revocable API keys do not compete with CLI logout, while unknown profiles remain distinct. Canonical native readiness remains unknown: only fresh privately bound metadata authorizes native lifecycle execution. Inside the successfully admitted durable writer callback, a coordinator-owned status reader must verify the same HOME/email/organization before invoking logout. This internal reader may omit the ordinary writer-availability probe only while its coordinator owns that lease; ordinary readers retain all fences. Drift or unavailable identity fails before destructive execution, quota is not required, and proof never becomes public or persisted authority. Removal aggregates dependencies of both exact terminal aliases, preserving active/resumable Chats and unrelated key accounts. Completed lifecycle receipts replay without invoking logout again. A logged-out native profile may be removed only with a separate process-private, HOME-bound signed-out receipt from the official CLI; a null identity read never proves absence. The observed official signed-out protocol is bounded JSON with `loggedIn: false`, `authMethod: "none"`, `apiProvider: "firstParty"`, and the exact owner config directory, including the exit code 1 verified against the installed official CLI. Timeout, signals, malformed or foreign-HOME output, other exits, and unavailable readers remain unknown. Re-observe signed-out state inside the admitted writer lease before removal, and reject a newly appeared login. Logout invalidates pre-action identity and quota enrichment before projecting its mutation response. Removal clears saved configuration/secrets; the installed CLI's fixed inventory descriptor may be rediscovered as disconnected, without restoring credentials or repeating logout.
+
+### 4. Validation and error matrix
+
+| Condition | Required result |
+| --- | --- |
+| Empty owner home and installed CLI | Browser login may start; prior account files are not required |
+| CLI exits successfully and exact native subscription status is current | Select the matching profile and enable the exact harness under revision control |
+| Production store is wrapped for Terminal handoff | Preserve private completion through the wrapper; exercise the same registration path used by the server |
+| API-key mode, foreign config directory, missing/invalid receipt, changed identity or timeout | Do not certify subscription authentication or select its account |
+| Explicitly running managed operation, no new resource acquired | Return conflict with safe busy guidance; discard only the provisional attempt |
+| Unknown process liveness or uncertain lease cleanup | Preserve protection; do not kill or bypass a writer |
+| Admission failed before acquisition, then the existing process stops | A new attempt can proceed; shutdown has no phantom cleanup task |
+| Existing saved API-key, Claude profile or Hermes binding during refresh | Preserve its account, source, enablement and immutable Chat identity |
+| Explicit native source with a previously saved API key | Runtime discovery and execution use the same native credential resolver without key fallback |
+| Native source disabled, missing, conflicting or ambiguous | Reject before credential acquisition or subprocess invocation |
+
+### 5. Good / base / bad cases
+
+- Good: a fresh-home browser code callback is accepted by a native subprocess, its authoritative status identifies the same owner subscription, and the real store returns Connected for the explicitly selected route.
+- Base: no native login exists; show Not connected without fabricated identity or usage.
+- Bad: a `.claude.json` marker or CLI exit0 alone is treated as proof, or a busy first attempt poisons every subsequent retry.
+
+### 6. Tests required
+
+- Exercise the full fresh-home guard -> registered HTTP workflow -> subprocess -> native status reader -> **production Terminal handoff wrapper** -> canonical service -> real Settings store -> **production generic harness coordinator and specialized-harness guard** -> revisioned fixed-native selection path. An unwrapped store or stub advertising `select_access_source` cannot establish production wiring.
+- Cover both a wrapped store with private completion and one without it, preserve the original store receiver, and verify successful completion is visible in the owner Settings response without expanding public capabilities.
+- Reject public generic source selection for fixed native harnesses, stale revisions, unbound or changed principal evidence, missing drivers and mismatched sources/models. Revalidate principal and canonical eligibility before owner configuration persistence; compensate the actual runtime receipt on rejection. A duplicate completion receipt after explicit Off must return current configuration without re-enabling it.
+- Cover existing API-key and saved profile routes, unchanged legacy Claude/Hermes bindings, and explicit connection account selection. Exercise the actual runtime catalog resolver with a prior API key to prove explicit native selection cannot silently use it; direct credential-helper tests alone do not establish runtime wiring.
+- Reject API-key fallback, foreign home, changed principal, stale/invalid/oversized status and concurrent writers. An unrecognized subscription plan must not fabricate a plan label or invalidate otherwise current native authentication.
+- Verify private enrichment is omitted from default, collaborator and mutation responses, and legacy metadata clients still parse their original strict plan enum. New plan labels require the additive query negotiation.
+- Verify the actual Web and Electron transports preserve HTTP409 and that workflow busy copy does not replace generic revision-conflict copy.
+- Label native protocol fixtures as simulation. Real licensed OAuth and affected-customer acceptance require separate evidence.
+
+### 7. Wrong versus correct
+
+Wrong: native login exits0 -> check a generic unverified canonical profile -> reject successful authorization or enable whichever route was previously saved.
+
+Correct: native writer exits and releases its fence -> read and independently bind current native subscription status -> private serialized fixed-Claude completion -> production specialized coordinator -> revalidate current principal/catalog -> persist the exact account selection and enablement -> refresh the scoped Settings projection. Keep inference readiness and quota unknown unless their own authoritative observations exist.
+
+
+## Foreground sign-in progress (2026-10-07)
+
+A connection click immediately shows a spinner on its selected card and a labelled “Starting sign-in…” status while the start response is pending. After a running receipt arrives without an authorization URL/code, show “Preparing sign-in page…” rather than an apparently idle finish panel. Once the authorization action is available, retain visible waiting feedback. Failed start, cancellation, terminal receipts and runtime/identity changes clear the scoped loading state; late results from an old scope cannot restore its action or spinner. Use the shared 16px current-color ring, stable indicator slot and reduced-motion treatment.
+
+Tests must delay both the start response and URL publication, verify the eventual action, retry after failure, terminal receipt clearing, cancellation and late-result isolation. These are UI feedback states, not new server workflow enums.
+
+
+## Claude completion refresh and native allowance
+
+A successful foreground login receipt starts an explicit, indeterminate “Sign-in complete. Updating connection…” phase. The grouped row remains Connecting and account-changing controls stay disabled until the owner/runtime-scoped snapshot refresh settles. This phase is bounded to 30 seconds; failure offers a read-only connection check rather than restarting OAuth. Runtime/account changes discard the old completion feedback. Both Web and Electron use the same composed view and awaitable scoped refresh. Overlapping successful receipt reconciliations use an ephemeral latest-refresh identity within that same scope. Only the current refresh may stop the spinner, clear its own refresh error or report a failure; stale success, rejection or timeout cannot overwrite newer feedback. Scope changes, a new login action and Back invalidate prior refreshes.
+
+Native Claude identity remains verified through official CLI `auth status --json`. Login completion requests identity only: quota failures cannot reject successful authentication. Owner-only Settings snapshot reads may additionally request the native subscription allowance. This is a read-only Gateway operation using the fixed current native profile, never browser cookies, renderer credential access, environment/API-key fallback, token-count estimation or a model call.
+
+The native quota adapter reads a bounded owner-only regular credential file without symlinks, uses its non-expired profile-scoped credential only in memory for the fixed HTTPS allowance endpoint, rejects redirects and bounds request/body size. It normalizes only the five-hour utilization and reset into the existing subscription allowance contract. A process-private credential equality proof and fresh CLI principal observation bind the result to the exact native account/source. Other Anthropic sources and historical Chat bindings do not inherit it. Cache entries hold normalized data and equality evidence only; successful reads are throttled for five minutes, failures for one minute, and account/credential changes or quota resets invalidate reuse. Unknown/malformed/unauthorized/rate-limited quota remains unavailable while valid account identity remains visible.
+
+Validation covers delayed completion refresh in the actual grouped view, refresh timeout/failure/runtime change, private credential safety, bounded malformed upstream data, quota throttling, principal/credential changes, exact-source projection and quota-independent completion. Simulated tests are separate from actual owner Preview/Electron acceptance.
+
+A five-hour reset ends positive-cache reuse immediately, even inside its five-minute TTL; the next read fetches the new authoritative window. Negative results retain their one-minute cooldown. Quota invalidation during either the post-fetch CLI observation or final metadata binding removes only the attached allowance. A still-current, matching CLI principal retains authenticated identity and plan; changed principals, expired identity observations and active writer fences still reject metadata.

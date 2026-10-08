@@ -1,5 +1,6 @@
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
+import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
@@ -1428,6 +1429,7 @@ export async function createGateway(config: GatewayConfig) {
   let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
   const aiProviderService = new AiProviderService({
     matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
+    exposeClaudeProfileAccount: true,
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
@@ -1477,6 +1479,7 @@ export async function createGateway(config: GatewayConfig) {
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
+    claudeNativeAccountMetadataReader: createClaudeNativeAccountMetadataReader({ executable: "claude", cwd: homePath, environment: buildSettingsAccountEnvironment(homePath) }),
     hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
     ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
       executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },

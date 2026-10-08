@@ -105,7 +105,7 @@ it("inline Claude start replays the original current receipt and rejects conflic
     expect(await (await post("", start)).json()).toMatchObject({ id: first.id, state: "cancelled", authorizationUrl: null });
     const next = { ...start, idempotencyKey: "claude-complete" };
     const second = await (await post("", next)).json();
-    await post(`/${second.id}/code`, { code: "synthetic-fixture-code" });
+    expect((await post(`/${second.id}/code`, { code: "synthetic-fixture-code" })).status).toBe(200);
     expect(await (await post("", next)).json()).toMatchObject({ id: second.id, state: "succeeded", authorizationUrl: null });
     expect(await (await post("", start)).json()).toMatchObject({ id: first.id, state: "cancelled" });
     expect(gateway.workflowEvents.filter(event => event === "browser-login")).toHaveLength(2);

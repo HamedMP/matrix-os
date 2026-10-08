@@ -1,6 +1,9 @@
+import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { spawn } from "node:child_process";
 import type { ProviderWorkflow } from "@matrix-os/contracts";
-import { ProviderWorkflowError, ProviderWorkflowCodeNotAcceptedError } from "./provider-workflows.js";
+import { ProviderWorkflowError, ProviderWorkflowCodeNotAcceptedError, ProviderWorkflowNotStartedError } from "./provider-workflows.js";
+
+import { NativeProviderAdmissionNotStartedError } from "./native-provider-profile-guard.js";
 
 type Publish = (update: Partial<Pick<ProviderWorkflow, "state" | "authorizationUrl" | "safeFailure">>) => void;
 /** Claude Code 2.1.280 uses these exact OAuth authorization endpoints. */
@@ -24,9 +27,16 @@ export function createClaudeSettingsLogin(options: {
   acquire: () => Promise<() => void | Promise<void>>;
 }) {
   return async ({ publish, onSuccess, registerCleanup }: { publish: Publish; onSuccess: () => Promise<void>; registerCleanup?: (cancel: () => Promise<void>) => void }) => {
-    const release = await options.acquire();
+    let release: () => void | Promise<void>;
+    try { release = await options.acquire(); }
+    catch (error) {
+      if (error instanceof NativeProviderAdmissionNotStartedError) throw new ProviderWorkflowNotStartedError(error.reason === 'busy' ? 'conflict' : 'unavailable');
+      throw error;
+    }
+    let released = false;
+    const releaseAdmission = async () => { if (!released) { await release(); released = true; } };
     const launching: { child?: ReturnType<typeof spawn> } = {};
-    registerCleanup?.(async () => { if (!launching.child) { await release(); return; } await stop(); });
+    registerCleanup?.(async () => { if (!launching.child) { await releaseAdmission(); return; } await stop(); });
     const child = launching.child = spawn(options.command, options.args ?? ["auth", "login", "--claudeai"], {
       cwd: options.cwd, env: { ...options.env, BROWSER: "/bin/true" }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
     });
@@ -67,9 +77,12 @@ export function createClaudeSettingsLogin(options: {
         try {
           if (cancelled) return;
           if (code !== 0 || !authorizationUrl) throw new ProviderWorkflowError("unavailable");
+          // The native child has closed. Release its writer fence before the
+          // authoritative read, which independently rejects concurrent writers.
+          await releaseAdmission();
           await onSuccess(); publish({ state: "succeeded", safeFailure: null });
-        } catch (error) { console.warn("[provider-workflow] Browser completion unavailable:", error instanceof Error ? error.name : "UnknownError"); publish({ state: "failed", safeFailure: "unavailable" }); }
-        finally { await release(); }
+        } catch (error) { console.warn("[provider-workflow] Browser completion unavailable:", error instanceof Error ? error.name : "UnknownError", error instanceof ProviderWorkflowError || error instanceof ProviderSettingsStoreError ? error.code : "unknown"); publish({ state: "failed", safeFailure: "unavailable" }); }
+        finally { await releaseAdmission(); }
       })();
     });
     return {
