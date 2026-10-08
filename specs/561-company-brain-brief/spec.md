@@ -102,3 +102,105 @@ Paging is an offset cursor (base64url JSON `{v, k, o}`, at most 512 characters);
 its filters, so a cursor from another query is `invalid_request`. `summary: true` without the flag and a model is
 409 `summary_not_configured`.
 
+## Security architecture
+
+| Entry point | Authentication | Authorization and scope | Errors |
+| --- | --- | --- | --- |
+| The four routes | `authMiddleware`, `requireRequestPrincipal` | project owned by the principal (resolver); scope `personal:project:<id>` | fixed codes |
+| Runner and scheduler | server code | scopes with a live source of the gateway owner | counted, logged by name |
+| `scope_erased` listener | server code | the erased scope key | rejects on database errors |
+
+- Input validation: project ref pattern, bodyLimit, strict zod queries and bodies (also in the service for direct
+  callers), real calendar dates, bounded lists, strict cursor regex, bound SQL parameters only.
+- Error policy: `{ error: { code, message } }` with fixed messages from `BRAIN_API_ERRORS` and
+  `BRAIN_FEATURE_ERRORS`; store errors map through `BRAIN_FEATURE_STORE_ERROR_CODES`; anything else is a logged
+  error name and 503. No document text, SQL, paths or provider text in logs or answers.
+- Credentials: none in this increment. A later summary model gets its credential through the provider the wiring
+  passes; the brief never reads, logs or stores one.
+
+## Integration wiring
+
+- Startup: `api/start.ts` runs `bootstrapBrainBriefDatabase(kysely)` on its own (a failure leaves only the brief
+  off), then `createBrainBrief({ repository, resolver })`, registers `feature.listener` and adds the scheduler to
+  `jobs`. `api/feature-routes.ts` mounts the routes; `server.ts` starts jobs after owner services and stops them
+  before the owner Kysely is destroyed.
+- Cross-package: the kernel and MCP tools reach the brief through the service (spec 562); no globals.
+- Config: `MATRIX_BRAIN_BRIEF_SUMMARY` (`1`, `true` or `on`; default off), read per request by
+  `createBrainBriefSummaryProvider`; `api/start.ts` starts the brief feature and its daily job.
+
+## Failure modes
+
+- Timeouts: each write sets `lock_timeout 5s` and `statement_timeout 15s`; a scheduler pass is bounded by 120 s and an
+  abort signal; a summary call by 60 s. No fetch or child process in this folder.
+- Concurrent access: two requests that build one brief both write; the upsert keeps the copy generated last and
+  only that request answers `stored: true`. Writes use the brief's own scope lock, so they never block syncs or
+  extraction.
+- Erase during a build: before its upsert, a write counts the documents its lines cite and the sources its change
+  groups name (tombstones keep their rows; only `eraseScope` deletes them). If any is gone it stores nothing. The
+  `scope_erased` listener runs after the erase commits and takes the same lock, so a build either writes before the
+  listener (which then deletes it) or sees the erase and stores nothing.
+- Crash recovery: every write is one transaction (upsert plus prune), so a crash leaves the old copy. A crashed
+  scheduler pass is simply run again the next day or at start.
+- Error propagation: route errors reach the mapper; runner failures are counted per scope and logged by name; a
+  stored body that no longer reads as a brief is logged and rebuilt. No catch-and-ignore.
+
+## Resource management
+
+| Limit | Value | Enforced in |
+| --- | --- | --- |
+| lines per section / change groups / items per group / cites per line / line text | 50 / 20 / 10 / 4 / 400 chars | `sections.ts` |
+| stored briefs per scope / bytes per brief | 60 / 256 KiB | `database.ts`, SQL CHECK |
+| claims scanned per conflict rule / per label group / pairs compared / conflicts per claim / per rule | 2,000 / 200 / 20,000 / 3 / 500 | `conflicts.ts` |
+| clauses compared per statement | 8 | `text.ts` |
+| spec documents / shipped pull requests scanned | 500 / 5,000 | `conflicts.ts` |
+| stale items per kind / commitments scanned / sources per scope | 500 / 500 / 100 | `stale.ts`, `reads.ts` |
+| scopes per pass / pass time / summary input | 200 / 120 s / 200 lines and 40,000 chars | `service.ts`, `summary.ts` |
+
+- Buffers: every list is capped by a scan limit before it is held in memory; maps and sets live for one call.
+- Files: none written. Stored briefs are rows, pruned by count.
+- Memory: the scheduler holds one timer, one controller and one pass; `stop()` clears and aborts them.
+- Third-party data: none by default. With the flag on and a model wired, only the date and the texts of lines whose
+  every cite is a git document (`BRAIN_MODEL_PROVENANCES`: `git_pr`, `git_commit`, `git_spec`) go to it, the same
+  rule as model claim extraction. Lines citing chats, notes, files, calendar, Slack, Linear or GitHub documents never
+  do; a source line goes only when it cites a git document of a git source.
+
+## Invariants
+
+- **Source of truth**: owner Postgres core tables; `brain_brief_briefs` holds snapshots only, derived and rebuildable.
+- **Lock/transaction scope**: brief writes take `brain-brief:<scopeId>` in one transaction (upsert and prune, or
+  delete); reads take no lock, except a GET that deletes a stored copy citing a deleted document.
+- **Acceptable orphan states**: a stored brief keeps a document deleted after it was built until the next scheduled
+  pass or GET of its date deletes it (GET never returns it); a stored brief of an erased scope lives until the
+  `scope_erased` listener runs. A build that finishes after the listener stores nothing that names the scope's
+  documents or sources; a brief with no lines and no change groups may still be stored, and it holds no text of the
+  scope.
+- **Auth source of truth**: the request principal and the resolver's owner-scoped project lookup.
+- **Deferred scope**: a summary model and spend records, organization scopes, delivering briefs to chat or mail,
+  model-based conflict detection, per-user brief settings.
+
+## Integration test checkpoint
+
+- `pnpm exec vitest run tests/gateway/brain-brief-*.test.ts`: 43 tests over PGlite, fake timers and fakes; coverage of
+  `brain/brief/` is 100% statements and branches.
+- End to end in tests: a real service behind the routes builds, stores and serves a brief; conflicts and stale data
+  are built from real claims written through extraction runs.
+- Manual (dev Docker stack, after wiring, on the synced matrix-os project): `GET .../brief?date=2026-10-01` lists 13
+  new documents of the git source, 30 decisions and 7 risks of that day, 50 open commitments (truncated) and the
+  Draft-spec conflicts under attention; `GET .../conflicts` lists 13 `draft_spec_shipped` items (for example
+  `specs/094-electron-macos-shell` with `#1608`); `GET .../stale` is empty right after a sync;
+  `POST .../brief` with `{"summary":true}` is 409 `summary_not_configured`.
+
+## Code review checklist
+
+Every line has a cite; every scan has a limit; the brief never writes a core table; writes take only the brief lock;
+no `catch {`; no model call or new dependency; generic errors only; the summary stays off without the flag.
+
+## Delivery and evidence
+
+- [ ] One PR under 3,000 additions, checks green, Invariants and the OS-view matrix (N/A) in the body.
+- [ ] Site docs PR: brief, conflicts and stale routes.
+
+## Deferred
+
+Everything under Deferred scope above, plus a shared `brain/cite.ts`, record of summary usage, and conflict rules
+that read the graph (same entity across names).
