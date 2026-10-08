@@ -6,12 +6,14 @@ export interface LocalChatgptPlanStatus {
   models: Array<{ id: string; displayName: string }>;
   grant: { revision: number; enabled: boolean; background: boolean };
   bridgeConnected: boolean;
+  bridgeFailure?: "device_conflict";
   revocation: "none" | "confirmed" | "unconfirmed";
 }
 
 export interface LocalChatgptPlanClient {
   status(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   connect(input: { purpose: "personal_local" }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
+  rebind?(input: { purpose: "replace_device" }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   cancel(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   disconnect(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   refreshModels(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
