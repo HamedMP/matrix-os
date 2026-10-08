@@ -259,7 +259,6 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 throw new Error('source changed');
             try {
                 await peer.start({ ...value, ...keys }, next, qualified, replaceDevice);
-                bridgeFailure = undefined;
             } catch (error: unknown) {
                 if (qualified() && error instanceof PlanFailure && error.stage === 'peer_connect' && error.httpStatus === 409) {
                     bridgeFailure = 'device_conflict';
@@ -271,6 +270,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 await peer.stop();
                 throw new Error('source changed');
             }
+            bridgeFailure = undefined;
             peerSignature = signature;
         })();
         peerSyncTask = task;
@@ -460,7 +460,18 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const epoch = generation, accountId = active()!.id;
             const authorized = () => current(value) && epoch === generation && active()?.id === accountId;
             await readCatalog(value, AbortSignal.timeout(15000));
-            await restartPeer(value, true, authorized);
+            try {
+                await restartPeer(value, true, authorized);
+            } catch (error: unknown) {
+                if (!authorized()) throw error;
+                // The durable pin may have changed even when its reply was lost.
+                // Probe once using normal enrollment; never repeat replacement.
+                // A transient probe failure leaves ordinary background recovery
+                // enabled, while a real pin conflict restores its explicit action.
+                logPlanFailure('peer_rebind', error);
+                bridgeFailure = undefined;
+                await restartPeer(value, false, authorized);
+            }
             return snapshot(value);
         })();
         rebindTask = task;

@@ -37,7 +37,12 @@ challenges and drains peers. No shared database pool is closed by this registry.
 
 Native recovery requires a current account, enabled grant and observed conflict;
 it allows one in-flight action and fences owner, runtime, account and generation
-through discovery and peer publication. The renderer receives only the allowlisted
+through discovery and peer publication. If explicit replacement loses its response
+or fails after committing, the same fenced action probes once with ordinary signed
+reconnect. It never repeats replacement intent automatically. A successful probe
+restores the bridge, a genuine conflict retains the explicit recovery action, and a
+transient probe failure allows ordinary background reconnect. Stale owner/runtime
+or generation changes cannot clear or overwrite the new scope's failure state. The renderer receives only the allowlisted
 `device_conflict` category, never key material or raw provider errors. All network
 requests retain existing deadline, redirect and response-size restrictions.
 
