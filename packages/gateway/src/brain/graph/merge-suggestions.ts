@@ -14,6 +14,7 @@ import {
 } from "../contracts.js";
 import type { BrainScopeKey } from "../types.js";
 import { brainEntityId, cutText, personDisplay, queryFingerprint } from "./ids.js";
+import { LIVE_DOCUMENT, LIVE_ENTITY } from "./reads.js";
 import type { BrainGraphExecutor } from "./types.js";
 
 export const BRAIN_MERGE_SUGGESTION_LIMITS = {
@@ -266,7 +267,8 @@ async function readInput(db: BrainGraphExecutor, scope: BrainScopeKey, limits: B
       .on("a.state", "=", "merged"))
     .select(["e.entity_id", "e.key", "e.display_name", "a.entity_id as root"])
     .where("e.owner_id", "=", scope.ownerId).where("e.scope_id", "=", scope.scopeId).where("e.kind", "=", "person")
-    .orderBy("e.last_seen_at", "desc").orderBy("e.entity_id").limit(limits.personsScanned + 1).execute();
+    .where(LIVE_ENTITY).orderBy("e.last_seen_at", "desc").orderBy("e.entity_id").limit(limits.personsScanned + 1)
+    .execute();
   const splits = await db.selectFrom("brain_graph_aliases").select(["alias_entity_id", "entity_id"])
     .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("state", "=", "split")
     .orderBy("alias_entity_id").limit(limits.splitsScanned + 1).execute();
@@ -288,15 +290,17 @@ async function readInput(db: BrainGraphExecutor, scope: BrainScopeKey, limits: B
   return { input, truncated };
 }
 
-/** Stored links per entity id (persons only author, review or are mentioned). */
+/** Stored links of live documents per entity id (persons only author, review or are mentioned). */
 async function linkCounts(db: BrainGraphExecutor, scope: BrainScopeKey, ids: readonly string[]) {
   const counts = new Map(ids.map((id) => [id, 0]));
   if (ids.length === 0) return counts;
-  const owner = sql`owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}`;
+  const owner = sql`l.owner_id = ${scope.ownerId} AND l.scope_id = ${scope.scopeId}`;
   const result = await sql<{ id: string; n: number }>`SELECT id, count(*)::int AS n FROM (
-      SELECT from_entity_id AS id FROM brain_graph_links WHERE ${owner} AND from_entity_id IN (${sql.join(ids)})
-      UNION ALL SELECT to_entity_id FROM brain_graph_links WHERE ${owner} AND to_entity_id IN (${sql.join(ids)})
-    ) AS l GROUP BY id`.execute(db);
+      SELECT l.from_entity_id AS id FROM brain_graph_links l ${LIVE_DOCUMENT}
+        WHERE ${owner} AND l.from_entity_id IN (${sql.join(ids)})
+      UNION ALL SELECT l.to_entity_id FROM brain_graph_links l ${LIVE_DOCUMENT}
+        WHERE ${owner} AND l.to_entity_id IN (${sql.join(ids)})
+    ) AS live GROUP BY id`.execute(db);
   for (const row of result.rows) counts.set(row.id, Number(row.n));
   return counts;
 }

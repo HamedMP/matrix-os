@@ -78,9 +78,11 @@ export async function entityRefViews(
 /** Entity `e` itself and every key merged into it: the ends its links may carry. */
 const MEMBERS = sql`SELECT e.entity_id UNION ALL SELECT a.alias_entity_id FROM brain_graph_aliases a
   WHERE a.owner_id = e.owner_id AND a.scope_id = e.scope_id AND a.entity_id = e.entity_id AND a.state = 'merged'`;
+/** Joined to links `l`: a tombstoned document's links stay stored until refresh removes them, but never count. */
+export const LIVE_DOCUMENT = sql`JOIN brain_documents d ON d.owner_id = l.owner_id AND d.scope_id = l.scope_id
+  AND d.document_id = l.document_id AND d.deleted_at IS NULL`;
 const LIVE_LINK = (end: "from_entity_id" | "to_entity_id") => sql`EXISTS (SELECT 1 FROM brain_graph_links l
-  JOIN brain_documents d ON d.owner_id = l.owner_id AND d.scope_id = l.scope_id AND d.document_id = l.document_id
-    AND d.deleted_at IS NULL
+  ${LIVE_DOCUMENT}
   WHERE l.owner_id = e.owner_id AND l.scope_id = e.scope_id AND ${sql.ref(`l.${end}`)} IN (${MEMBERS}))`;
 const PATH_REF = (match: RawBuilder<unknown>) => sql`EXISTS (SELECT 1 FROM brain_document_refs r
   WHERE r.owner_id = e.owner_id AND r.scope_id = e.scope_id AND r.kind = 'path' AND ${match})`;
@@ -90,7 +92,7 @@ const PATH_REF = (match: RawBuilder<unknown>) => sql`EXISTS (SELECT 1 FROM brain
  * live document's path ref names; or any entity (or a key merged into it) at an end of a link from a live document.
  * A removed source's people and items stay stored until a refresh sweeps them, but never list.
  */
-const LIVE_ENTITY = sql<boolean>`(e.kind = 'project'
+export const LIVE_ENTITY = sql<boolean>`(e.kind = 'project'
   OR (e.kind = 'document' AND EXISTS (SELECT 1 FROM brain_documents d WHERE d.owner_id = e.owner_id
     AND d.scope_id = e.scope_id AND d.document_id = e.document_id AND d.deleted_at IS NULL))
   OR (e.kind = 'file' AND ${PATH_REF(sql`r.value = e.key`)})
@@ -167,10 +169,10 @@ export async function listGraphEntities(
   };
 }
 
-/** Stored links touching any of the ids, counted up to BRAIN_GRAPH_LINK_COUNT_CAP + 1. */
+/** Stored links of live documents touching any of the ids, counted up to BRAIN_GRAPH_LINK_COUNT_CAP + 1. */
 async function countLinks(db: BrainGraphExecutor, scope: BrainScopeKey, ids: readonly string[]): Promise<number> {
   const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM (SELECT 1 FROM brain_graph_links l
-    WHERE l.owner_id = ${scope.ownerId} AND l.scope_id = ${scope.scopeId}
+    ${LIVE_DOCUMENT} WHERE l.owner_id = ${scope.ownerId} AND l.scope_id = ${scope.scopeId}
       AND (l.from_entity_id IN (${sql.join(ids)}) OR l.to_entity_id IN (${sql.join(ids)}))
     LIMIT ${BRAIN_GRAPH_LINK_COUNT_CAP + 1}) AS capped`.execute(db);
   return Number(result.rows[0]!.n);

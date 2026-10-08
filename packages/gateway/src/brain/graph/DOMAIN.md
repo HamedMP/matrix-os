@@ -76,9 +76,10 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   characters); a failed lookup keeps the stored name (logged by error name) and the first one falls back to the id.
 - Reads (the freshness scan and the entity an alias change answers with included) run read-only with a 10 s
   statement deadline (`brain/bounded.ts`); at most two refreshes run at once.
-- Merge suggestions scan at most 5,000 persons, split rows and name and email pairs and rank at most 500 pairs; past
-  a cap the answer says `truncated`. A name or login held by more than 4 entities pairs nothing, so one read adds at
-  most 4 x 4 pairs per name; `same_github_login` needs the exact login (`john-smith` is not `johnsmith`).
+- Merge suggestions scan at most 5,000 persons (those `GET entities` would list), their split rows and name and email
+  pairs and rank at most 500 pairs; past a cap the answer says `truncated`. Their link counts, like an entity's, count
+  links of live documents only. A name or login held by more than 4 entities pairs nothing, so one read adds at most
+  4 x 4 pairs per name; `same_github_login` needs the exact login (`john-smith` is not `johnsmith`).
 
 ## Tests
 
