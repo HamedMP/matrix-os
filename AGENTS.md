@@ -14,6 +14,26 @@ Key principles:
 4. **Defense in Depth (NON-NEGOTIABLE)**: auth matrix, input validation, resource limits, timeouts
 5. **TDD (NON-NEGOTIABLE)**: tests first, 99-100% coverage target
 
+## Linear Ticket Check (all project chats and models)
+
+Applies to every LLM model, agent harness, and project chat, including new or resumed chats, new tasks in an existing chat, and sessions after compaction.
+
+- **Check first**: before implementation, check the conversation, branch, and PR for a Linear ticket ID/link. Verify that it covers the task; if none is recorded, search Linear for an existing matching ticket before proposing a new one. Reuse the ticket instead of creating duplicates.
+- **Ask when missing**: ask the user/developer once: "Is there an existing Linear ticket, or should I create a short one?" Create only when authorized; prior authorization in the conversation counts. Preserve the answer and ticket ID/link across handoffs and compaction.
+- **If Linear is unavailable**: report that verification is blocked and ask for the ticket link or developer help. Do not treat an unavailable search as proof that no ticket exists. Read-only investigation and a local draft may continue while waiting; PR creation and merge require a verified ticket.
+- **Every PR needs a ticket**: before opening or merging any PR (including docs-only, stacked, and automated PRs), verify a relevant Linear ticket and put its ID and URL in the PR body. Link the PR back from the ticket. One ticket may cover several related PRs; each PR must link it.
+- **Recheck before merge**: inspect the conversation and PR body again, including when using `worktree-pr-monitor`, `land`, or another merge workflow. If no ticket is linked, reuse a verified ticket already in the conversation; otherwise ask the user/developer whether to create one or use an existing one. Wait for a verified, linked ticket before merging or enabling auto-merge. A merge request alone does not authorize ticket creation; do not repeat the question when authorization is already recorded.
+
+**Ticket briefs must be easy to scan**: use a short, concrete title and aim for at most 100 words. Prefer three short bullets: goal, essential actions, and completion check. Use plain language, one idea per bullet, and links for detailed context. Avoid long background paragraphs and repeated explanations.
+
+```markdown
+- Goal: <one sentence>
+- Do: <essential actions>
+- Done when: <observable completion check>
+
+Links: <spec or PR, when available>
+```
+
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
@@ -306,6 +326,8 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 
 ### Pre-PR Checklist (mandatory)
 
+Verify the Linear ticket and include its ID and URL in the PR body before opening the PR. See **Linear Ticket Check** above.
+
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
 bun run check:patterns      # CLAUDE.md pattern scanner (scripts/review/check-patterns.sh)
@@ -412,6 +434,7 @@ blocker, not a green light):
 ### Hard Rules (never violate)
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
+- **No PR creation, merge, or auto-merge without a verified, linked Linear ticket** -- follow **Linear Ticket Check** above, including in automated monitoring and merge workflows.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
 - **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push the score stays stale until you ask, so waiting for an automatic re-review blocks forever.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
