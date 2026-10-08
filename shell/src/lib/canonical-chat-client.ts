@@ -1,3 +1,5 @@
+import { markChatNavigation } from "@matrix-os/ui";
+import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -43,6 +45,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
+  navigation?():Promise<CanonicalChatNavigationResponse>;
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
@@ -193,7 +196,15 @@ export function createCanonicalShellChatClient(options: {
       if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
       return response;
     },
+    async navigation(){
+      markChatNavigation("request");
+      const response=await fetchFn(`${options.gatewayUrl}/api/chats/navigation?version=1&limit=1000`,{signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)});
+      if(!response.ok) throw new CanonicalShellChatRequestError(response.status);
+      const raw=await response.text();if(new TextEncoder().encode(raw).byteLength>2*1024*1024)throw new Error("NavigationTooLarge");
+      return CanonicalChatNavigationResponseSchema.parse(JSON.parse(raw));
+    },
     async list(input = {}) {
+      markChatNavigation("legacy-request");
       const query = new URLSearchParams({ limit: "100", scope: "global" });
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);

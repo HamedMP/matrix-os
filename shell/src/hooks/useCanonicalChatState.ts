@@ -3,6 +3,8 @@
 import {
   generatedChatTitle,
   mergeCanonicalChatRecord,
+  mergeChatNavigationRecord,
+  type ChatNavigationRecord,
   mergeChatReadState,
   sharedChatMembershipFromProjection,
   type ChatCollaborationView,
@@ -14,7 +16,6 @@ import {
   type CanonicalChatApprovalDecision,
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
-  type CanonicalChatRecord,
 } from "@matrix-os/contracts";
 import {
   createChatMentionRequestTracker,
@@ -23,6 +24,7 @@ import {
   applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
 } from "@matrix-os/ui";
+import { useShellChatNavigation } from "./useChatNavigation";
 import { useSocket } from "@/hooks/useSocket";
 import type { ChatState, ChatSubmitOptions } from "@/hooks/useChatState";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -40,13 +42,13 @@ function requestId(): string {
   return `req_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
 }
 
-function conversationMeta(record: CanonicalChatRecord) {
+function conversationMeta(record: ChatNavigationRecord) {
   return {
     canonicalRecord: record,
     readState: record.readState,
     id: record.chat.id,
     title: record.chat.title,
-    preview: record.chat.lastMessagePreview ?? record.chat.title,
+    preview: record.chat.title,
     messageCount: record.chat.messageCount,
     createdAt: Date.parse(record.chat.createdAt),
     updatedAt: Date.parse(record.chat.activityAt ?? record.chat.createdAt),
@@ -74,8 +76,10 @@ function leaveSharedChatPath(): void {
   }
 }
 
-export function useCanonicalChatState({ initialDraft, initialCollaborationView }: {
+export function useCanonicalChatState({ initialDraft, initialCollaborationView, navigationScope,navigationGeneration }: {
   initialDraft?: string | null;
+  navigationScope?:string;
+  navigationGeneration?:string;
   initialCollaborationView?: ChatCollaborationView;
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
@@ -85,7 +89,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   }), [client]);
   const { connected } = useSocket();
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const [records, setRecords] = useState<CanonicalChatRecord[]>([]);
+  const navigation = useShellChatNavigation(client, eventSource, navigationScope, navigationGeneration);
+  const records = useMemo(() => navigation.items.filter(record => !unreadOnly || record.readState.unread), [navigation.items, unreadOnly]);
+  const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[]) => {
+    navigation.store?.update(current => {
+      const updated = update(current);
+      if (updated === current) return current;
+      return updated.flatMap(record => {
+        const known = current.find(item => item.chat.id === record.chat.id);
+        return known ? [mergeChatNavigationRecord(known, record)] : [];
+      });
+    });
+  }, [navigation.store]);
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; }, [records]);
   const [activeChatId, setActiveChatId] = useState<string>();
@@ -114,8 +129,24 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
   // An empty selection after New chat is intentional, not an initial restore.
   const autoRestoreChatRef = useRef(true);
   const initialDraftConsumed = useRef(false);
+  const navigationIdentity = JSON.stringify([navigationScope ?? null, navigationGeneration ?? null]);
+  const previousNavigationIdentity = useRef(navigationIdentity);
   detailRef.current = detail;
   activeChatIdRef.current = activeChatId;
+
+  useEffect(() => {
+    if (previousNavigationIdentity.current === navigationIdentity) return;
+    previousNavigationIdentity.current = navigationIdentity;
+    detailRequestGeneration.current += 1;
+    activeChatIdRef.current = undefined;
+    detailRef.current = null;
+    autoRestoreChatRef.current = true;
+    setActiveChatId(undefined);
+    setDetail(null);
+    setSelectedCollaborationView(null);
+    setSafeError(null);
+    inputAttempt.current = null;
+  }, [navigationIdentity]);
 
   useEffect(() => {
     const synchronizeFromHistory = () => {
@@ -147,33 +178,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     setComposerDraftRequest({ id: ++composerDraftSequence.current, text: initialDraft });
   }, [initialDraft]);
 
-  const listGeneration = useRef(0);
-  const loadList = useCallback(async () => {
-    const generation = ++listGeneration.current;
-    try {
-      const loaded: CanonicalChatRecord[] = [];
-      let cursor: string | undefined;
-      // Match the Work Rail's bounded 1,000-chat window, following server cursors.
-      for (let pageIndex = 0; pageIndex < 10; pageIndex += 1) {
-        const page = await client.list({ ...(unreadOnly ? { unreadOnly: true } : {}), ...(cursor ? { cursor } : {}) });
-        if (listGeneration.current !== generation) return;
-        loaded.push(...page.items);
-        if (!page.nextCursor || page.nextCursor === cursor) break;
-        cursor = page.nextCursor;
-      }
-      setRecords((current) => loaded.map((record) => {
-        const previous = current.find((item) => item.chat.id === record.chat.id);
-        return previous ? mergeCanonicalChatRecord(previous, record) : record;
-      }));
-      if (autoRestoreChatRef.current) {
-        setActiveChatId((current) => current ?? loaded[0]?.chat.id);
-      }
-    } catch (error: unknown) {
-      if (listGeneration.current !== generation) return;
-      console.warn("[canonical-chat] Shell list unavailable:", error instanceof Error ? error.name : "UnknownError");
-      setSafeError("Chats could not be loaded. Try again.");
-    }
-  }, [client, unreadOnly]);
+  const loadList=useCallback(async()=>{await navigation.store?.refresh();},[navigation.store]);
+  useEffect(()=>{
+    if(autoRestoreChatRef.current && records.length) setActiveChatId(current=>current??records[0]?.chat.id);
+  },[records]);
+  useEffect(()=>{if(navigation.error)setSafeError(navigation.error);},[navigation.error]);
 
   const loadDetail = useCallback(async (chatId: string) => {
     const generation = ++detailRequestGeneration.current;
@@ -188,7 +197,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         return current;
       }
       const known = recordsRef.current.find((item) => item.chat.id === chatId);
-      const merged = known ? mergeCanonicalChatRecord(known, value.record) : value.record;
+      const merged = known ? mergeChatNavigationRecord(value.record, known) : value.record;
       const titleRecord = current?.record.chat.id === chatId
         ? mergeCanonicalChatRecord(current.record, merged) : merged;
       value = { ...value, record: { ...value.record, chat: { ...value.record.chat,
@@ -209,9 +218,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     }
   }, [client]);
 
-  useEffect(() => {
-    void loadList();
-  }, [loadList]);
 
   useEffect(() => {
     const pendingDisposal = pendingEventSourceDisposalRef.current;
@@ -240,7 +246,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     const selectedRefresh = createCanonicalChatRefresh(async () => (
       !activeChatId || Boolean(await loadDetail(activeChatId))
     ));
-    let listTimer: number | undefined;
     const subscription = eventSource.subscribe((event) => {
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
@@ -249,7 +254,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
-          ? mergeCanonicalChatRecord(item, record) : item));
+          ? mergeChatNavigationRecord(item, record) : item));
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
@@ -260,27 +265,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
             setSafeError(null);
           } else selectedRefresh.schedule();
         }
-        if (event.eventType === "chat.created" || event.eventType === "chat.updated") void loadList();
         return;
       }
       if (event.type === "chat.full_refresh" || event.chatId === activeChatId) {
         selectedRefresh.schedule(EVENT_INVALIDATION_COALESCE_MS);
       }
-      // Token/message deltas affect the selected transcript, not the work rail.
-      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
-        if (listTimer !== undefined) return;
-        listTimer = window.setTimeout(() => {
-          listTimer = undefined;
-          void loadList();
-        }, EVENT_INVALIDATION_COALESCE_MS);
-      }
+
     });
     return () => {
       subscription.dispose();
       selectedRefresh.dispose();
-      if (listTimer !== undefined) window.clearTimeout(listTimer);
     };
-  }, [activeChatId, eventSource, loadDetail, loadList]);
+  }, [activeChatId, eventSource, loadDetail, loadList, setRecords]);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,7 +292,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         pending = false;
         const selectedChatId = activeChatIdRef.current;
         await Promise.all([
-          loadList(),
+          navigation.store?.ensure(),
           ...(selectedChatId ? [loadDetail(selectedChatId)] : []),
         ]);
       } while (!cancelled && pending);
@@ -312,7 +308,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
       window.removeEventListener("focus", refreshVisible);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadDetail, loadList]);
+  }, [loadDetail, navigation.store]);
 
   useEffect(() => {
     if (!activeChatId) {
@@ -617,7 +613,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
         title,
       });
       setRecords((existing) => existing.map((record) => record.chat.id === chatId
-        ? mergeCanonicalChatRecord(record, updated) : record));
+        ? mergeChatNavigationRecord(record, updated) : record));
       const active = detailRef.current;
       if (active?.record.chat.id === chatId) {
         const merged = mergeCanonicalChatRecord(active.record, updated);
@@ -636,7 +632,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
       setSafeError("The Chat could not be renamed. Try again.");
       return false;
     }
-  }, [client, records, loadList, loadDetail]);
+  }, [client, records, loadList, loadDetail, setRecords]);
 
   const updateReadState = useCallback(async (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => {
     try {
@@ -654,7 +650,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
       setSafeError("The Chat could not be updated. Try again.");
       return false;
     }
-  }, [client]);
+  }, [client, setRecords]);
 
   const messages = detail ? projectCanonicalTranscript(detail) : [];
   if (safeError) {
@@ -664,7 +660,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     ? detail.record
     : records.find((record) => record.chat.id === activeChatId);
   const detailLoading = activeChatId !== undefined && detail?.record.chat.id !== activeChatId;
-  const projectedSharedChat = sharedChatMembershipFromProjection(activeRecord?.chat.collaboration);
+  const projectedSharedChat = sharedChatMembershipFromProjection(detail?.record.chat.collaboration);
   const collaborationView = selectedCollaborationView
     ?? (projectedSharedChat && activeRecord
       ? { kind: "canonical-chat" as const, chatId: activeRecord.chat.id }
@@ -689,9 +685,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView }
     botEventRevision,
     queuedTurns: detail?.queuedTurns ?? [],
     cancelQueuedTurn,
-    providerSelection: activeRecord?.chat.currentSelection,
-    boundProviderInstanceId: activeRecord?.providerBinding?.instanceId,
+    providerSelection: detail?.record.chat.currentSelection,
+    boundProviderInstanceId: detail?.record.providerBinding?.instanceId,
     conversations: records.map(conversationMeta),
+    navigationFresh:navigation.fresh,
+    navigationClassifications: navigation.items.map(item=>({chatId:item.chat.id,classification:item.classification})),
     activeConversationTitle: activeRecord?.chat.title,
     renameConversation,
     composerDraftRequest,

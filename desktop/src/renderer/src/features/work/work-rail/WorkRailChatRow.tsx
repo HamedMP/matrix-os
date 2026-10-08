@@ -1,4 +1,4 @@
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import {
   MessageSquare,
   PinIcon,
@@ -25,6 +25,7 @@ const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {
 export function WorkRailChatRow({
   record,
   active,
+  fresh = true,
   pinning,
   placement,
   onSelect,
@@ -41,8 +42,9 @@ export function WorkRailChatRow({
   moveItems,
   moving = false,
 }: {
-  record: CanonicalChatRecord;
+  record: ChatNavigationRecord;
   active: boolean;
+  fresh?:boolean;
   pinning: boolean;
   placement: "pinned" | "project" | "recent";
   onSelect: () => void;
@@ -86,6 +88,7 @@ export function WorkRailChatRow({
     <ChatContextMenu chatId={record.chat.id} onContextMenuOpenChange={setContextMenuOpen} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", disabled: readPending, onSelect: onToggleRead } : undefined} items={menuItems}>
       <div
         data-chat-title-row
+        data-navigation-fresh={fresh || undefined}
         data-placement={placement}
         data-current={active || undefined}
         data-two-line={agentState !== "idle" || undefined}
@@ -136,7 +139,7 @@ export function WorkRailChatRow({
             {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}
           </span>
           {isChatUnread(record) && (record.readState || agentState !== "unseen_completion") ? <span aria-label={`Unread ${record.chat.title}`} className="size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
-          <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} />
+          <ChatAgentStateIndicator state={record.readState && agentState === "unseen_completion" ? "idle" : agentState} title={record.chat.title} fresh={fresh} />
         </button>}
         {!renaming ? <div
           className="work-rail-chat-actions pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-[8px] opacity-0 transition-opacity group-hover/chat:pointer-events-auto group-hover/chat:opacity-100 group-focus-within/chat:pointer-events-auto group-focus-within/chat:opacity-100"
@@ -162,9 +165,11 @@ export function WorkRailChatRow({
 
 function ChatAgentStateIndicator({
   state,
+  fresh,
   title,
 }: {
   state: WorkRailAgentState;
+  fresh:boolean;
   title: string;
 }) {
   if (state === "idle") return null;
@@ -183,6 +188,6 @@ function ChatAgentStateIndicator({
       : state === "input_required"
         ? `Input required for ${title}`
         : `Agent failed for ${title}`;
-  return <span aria-label={label} className="ml-auto size-[6px] shrink-0 rounded-full"
+  return <span aria-label={fresh?label:`Last known: ${label}; syncing`} className="ml-auto size-[6px] shrink-0 rounded-full"
     style={{ background: state === "running" ? "var(--matrix-chat-rail-success, var(--success))" : "var(--matrix-chat-rail-warning, var(--warning))" }} />;
 }

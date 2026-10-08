@@ -6,7 +6,7 @@ Status: implementation underway; exact-head native review pending. Follow-up to 
 
 Classify newly unknown Chat identities as a bounded cohort, then publish ordinary rows together before waiting for Bot approval attention. Keep same-client verified history and Bot reminders visible during background refresh and remount. Failed/unknown bindings remain excluded; stale client/cohort completions cannot publish. Newly ordinary raw-cache results do not hydrate until a live classification cohort commits; cache sizes, TTLs and four-read concurrency remain bounded. This supersedes the previous expectation that fast ordinary identities publish while slower identities in the same cold cohort are pending.
 
-Atomic presentation does not imply faster completion of uncached per-ID identity queries. No batch backend API or cross-reload identity persistence is introduced. Shared Web consumers retain the same classification safety.
+Atomic presentation does not imply faster completion of uncached per-ID identity queries. The original cohort repair adds no batch backend API or cross-reload identity persistence. The approved follow-up in [navigation-loading-cache.md](navigation-loading-cache.md) adds bounded batch navigation reads and disposable metadata snapshots; shared Web consumers retain the same classification safety.
 
 ## New Chat presentation
 

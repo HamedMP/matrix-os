@@ -94,7 +94,12 @@ function ShellHomeBody({
   const recipePrompt = useSyncExternalStore(subscribeLaunchPathNoop, readRecipePromptFromLocation, getLaunchPathServerSnapshot);
   const terminalCollaborationView = initialCollaborationView?.kind === "terminal" ? initialCollaborationView : undefined;
   const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView;
-  const chat = useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView });
+  const chat = useCanonicalChatState({
+    initialDraft: recipePrompt,
+    initialCollaborationView: chatCollaborationView,
+    navigationScope: sessionId && cacheScope ? `${cacheScope.userId}/runtime/${cacheScope.runtimeScope}` : undefined,
+    navigationGeneration: sessionId ?? "self-hosted",
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,

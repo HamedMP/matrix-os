@@ -157,6 +157,8 @@ interface ChatAppProps {
   ) => void | Promise<boolean>;
   agentClient?: ChatAgentClient;
   botEventRevision?: number;
+  navigationFresh?:boolean;
+  navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   providerSelection?: CanonicalChatModelSelection;
@@ -198,7 +200,7 @@ function ChatAppContent({
   onSubmit,
   providerSelection,
   boundProviderInstanceId,
-  agentClient, botEventRevision, queuedTurns = [], onCancelQueuedTurn,
+  agentClient, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -331,7 +333,7 @@ function ChatAppContent({
     });
   };
 
-  const botSummaries = useBotConversationSummaries(agentClient, conversations.map(item => item.id), active, botEventRevision);
+  const botSummaries = useBotConversationSummaries(agentClient, conversations.map(item => item.id), active, botEventRevision,navigationClassifications);
   const excludedBotChats = new Set([...botSummaries.conversations.map(item => item.chatId), ...botSummaries.unresolvedChatIds]);
   const ordinaryConversations = conversations.filter(item => !excludedBotChats.has(item.id));
   const railOrder = useWebChatRailOrder(ordinaryConversations,agentClient);
@@ -391,7 +393,7 @@ function ChatAppContent({
         </ShellNotificationPortal>
       )}
       {/* Sidebar */}
-      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
+      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"

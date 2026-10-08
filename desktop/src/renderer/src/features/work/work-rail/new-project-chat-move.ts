@@ -1,7 +1,7 @@
 import { useConnection } from "../../../stores/connection";
 import { useUi } from "../../../stores/ui";
 import { createCanonicalChatClient } from "../../../lib/canonical-chat-client";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { openWorkProject } from "../work-navigation";
 import type { Project } from "../../../stores/board";
 
@@ -9,7 +9,7 @@ export function projectMoveAuthorityKey() {
   const connection = useConnection.getState();
   return JSON.stringify([connection.userId, connection.platformHost, connection.runtimeSlot, connection.authGeneration]);
 }
-export function createProjectForChat(record: CanonicalChatRecord) {
+export function createProjectForChat(record: ChatNavigationRecord) {
   useUi.getState().openCreateProjectForChat({chatId:record.chat.id, baseRevision:record.chat.revision, authorityKey:projectMoveAuthorityKey()});
 }
 /** Completes the existing creation dialog's optional move without changing its engine. */

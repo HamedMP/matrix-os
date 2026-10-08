@@ -1,0 +1,213 @@
+import { markChatNavigation } from "./metrics.js";
+import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationItem, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+export interface ChatNavigationPersistence {
+  load(): Promise<CanonicalChatNavigationResponse | null>;
+  save(snapshot: CanonicalChatNavigationResponse): Promise<void>;
+  clear(): Promise<void>;
+}
+export interface ChatNavigationState {
+  items: CanonicalChatNavigationItem[];
+  status: "idle" | "loading" | "ready" | "error";
+  fresh: boolean;
+  truncated: boolean;
+  updatedAt: number;
+  error: string | null;
+}
+export const EMPTY_CHAT_NAVIGATION: ChatNavigationState = { items: [], status: "idle", fresh: false, truncated: false, updatedAt: 0, error: null };
+export const CHAT_NAVIGATION_STALE_MS = 60000;
+export class ChatNavigationAuthorityRevoked extends Error {
+  constructor() {
+    super("Chat navigation authority revoked");
+    this.name = "ChatNavigationAuthorityRevoked";
+  }
+}
+/** Disposable, authenticated-scope UI state. A mutation invalidates older reads. */
+export function createChatNavigationStore(options: {
+  load(): Promise<CanonicalChatNavigationResponse>;
+  persistence?: ChatNavigationPersistence;
+  now?: () => number;
+}) {
+  let state: ChatNavigationState = EMPTY_CHAT_NAVIGATION;
+  let loader = options.load;
+  let persistence = options.persistence;
+  const now = options.now ?? (() => Date.now());
+  const listeners = new Set<() => void>(); // capped subscriptions, explicitly removed
+  let generation = 0;
+  let revision = 0;
+  let disposed = false;
+  let hydrated = false;
+  let hydratePromise: Promise<void> | undefined;
+  let inFlight: Promise<void> | undefined;
+  let dirty = false;
+  let writeTimer: ReturnType<typeof setTimeout> | undefined;
+  const publish = (next: ChatNavigationState) => {
+    state = next;
+    for (const listener of listeners) {
+      try {
+        listener();
+      }
+      catch (error: unknown) {
+        console.warn("[chat-navigation] Subscriber failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
+  };
+  const warn = (kind: string, error: unknown) => console.warn(`[chat-navigation] ${kind}:`, error instanceof Error ? error.name : "UnknownError");
+  const persist = (value: CanonicalChatNavigationResponse, fence: number, version: number) => {
+    if (!persistence || value.truncated) {
+      return;
+    }
+    if (writeTimer !== undefined) {
+      clearTimeout(writeTimer);
+    }
+    writeTimer = setTimeout(() => {
+      writeTimer = undefined;
+      if (disposed || generation !== fence || revision !== version) {
+        return;
+      }
+      // Membership-sensitive rows are never reconstructed from a local file.
+      const personal = { ...value, items: value.items.filter(item => item.persistence === "personal") };
+      void persistence?.save(personal).catch(error => warn("Cache save failed", error));
+    }, 0);
+  };
+  const hydrate = () => {
+    if (hydrated) {
+      return Promise.resolve();
+    }
+    if (hydratePromise) {
+      return hydratePromise;
+    }
+    hydrated = true;
+    const fence = generation;
+    hydratePromise = (async () => {
+      try {
+        const cached = await persistence?.load();
+        if (!cached || disposed || fence !== generation || state.updatedAt !== 0 || revision !== 0) {
+          return;
+        }
+        const value = CanonicalChatNavigationResponseSchema.parse(cached);
+        if (value.truncated || value.items.some(item => item.persistence !== "personal")) {
+          return;
+        }
+        markChatNavigation("cache-ready", value.items.length);
+        publish({ ...state, items: value.items, status: state.status === "error" ? "error" : "ready", fresh: false, truncated: false });
+      }
+      catch (error: unknown) {
+        warn("Cache unavailable", error);
+      }
+    })();
+    return hydratePromise;
+  };
+  const refresh = (): Promise<void> => {
+    if (disposed) {
+      return Promise.resolve();
+    }
+    if (inFlight) {
+      dirty = true;
+      return inFlight;
+    }
+    const fence = generation;
+    publish({ ...state, status: state.items.length ? state.status : "loading", error: null });
+    inFlight = (async () => {
+      do {
+        dirty = false;
+        const version = revision;
+        try {
+          const value = CanonicalChatNavigationResponseSchema.parse(await loader());
+          if (disposed || fence !== generation) {
+            return;
+          }
+          if (revision !== version) {
+            dirty = true;
+            continue;
+          }
+          markChatNavigation("snapshot-ready", value.items.length);
+          publish({ items: value.items, status: "ready", fresh: true, truncated: value.truncated, updatedAt: now(), error: null });
+          persist(value, fence, version);
+        }
+        catch (error: unknown) {
+          if (disposed || fence !== generation) {
+            return;
+          }
+          warn("List unavailable", error);
+          if (error instanceof ChatNavigationAuthorityRevoked) {
+            generation++;
+            disposed = true;
+            dirty = false;
+            if (writeTimer !== undefined) {
+              clearTimeout(writeTimer);
+            }
+            publish({ ...EMPTY_CHAT_NAVIGATION, status: "error", error: "Your session has expired. Please sign in again." });
+            void persistence?.clear().catch(failure => warn("Cache clear failed", failure));
+            return;
+          }
+          publish({ ...state, status: "error", fresh: false, error: "Chats could not be loaded. Try again." });
+          // A failed fetch needs an explicit retry/focus, not a tight error loop.
+          dirty = false;
+        }
+      } while (dirty && !disposed && fence === generation);
+    })().finally(() => {
+      inFlight = undefined;
+    });
+    return inFlight;
+  };
+  return {
+    getSnapshot: () => state,
+    subscribe(listener: () => void) {
+      if (listeners.size >= 64) {
+        throw new Error("NavigationSubscriberLimit");
+      }
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    ensure() {
+      if (disposed) {
+        return Promise.resolve();
+      }
+      void hydrate();
+      if (inFlight) {
+        return inFlight;
+      }
+      return state.fresh && now() - state.updatedAt < CHAT_NAVIGATION_STALE_MS ? Promise.resolve() : refresh();
+    },
+    refresh,
+    update(update: (items: CanonicalChatNavigationItem[]) => CanonicalChatNavigationItem[]) {
+      if (disposed) {
+        return;
+      }
+      const updated = update(state.items);
+      if (updated === state.items) {
+        return;
+      }
+      const items = updated.length > 1000 ? updated.slice(0, 1000) : updated;
+      revision++;
+      if (inFlight) {
+        dirty = true;
+      }
+      publish({ ...state, items });
+      // Never write optimistic or partially reconciled state to disk.
+    },
+    configure(next: {
+      load: () => Promise<CanonicalChatNavigationResponse>;
+      persistence?: ChatNavigationPersistence;
+    }) {
+      loader = next.load;
+      persistence = next.persistence;
+    },
+    dispose(clear = false) {
+      disposed = true;
+      generation++;
+      dirty = false;
+      if (writeTimer !== undefined) {
+        clearTimeout(writeTimer);
+      }
+      publish(EMPTY_CHAT_NAVIGATION);
+      listeners.clear();
+      if (clear) {
+        void persistence?.clear().catch(error => warn("Cache clear failed", error));
+      }
+    },
+  };
+}
+export type ChatNavigationStore = ReturnType<typeof createChatNavigationStore>;

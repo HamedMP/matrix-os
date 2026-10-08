@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { CanonicalChatNavigationItem } from '@matrix-os/contracts';
 import type { ChatAgentClient } from '../client.js';
 import { botSummaryReads } from './bot-summary-reads.js';
 
@@ -31,8 +32,9 @@ async function bounded<T>(values: readonly T[], work: (value: T) => Promise<void
   }));
 }
 /** Authenticated binding projection, shared across renderers. Unknown identities never become ordinary Chats. */
-export function useBotConversationSummaries(client: ChatAgentClient | undefined, recordIds: readonly string[], active = true, refreshKey?: number): BotConversationSummaries {
+export function useBotConversationSummaries(client: ChatAgentClient | undefined, recordIds: readonly string[], active = true, refreshKey?: number, authoritative?: readonly {chatId:string;classification:CanonicalChatNavigationItem["classification"]}[]): BotConversationSummaries {
   const idsKey = JSON.stringify([...new Set(recordIds)]);
+  const authoritativeKey=JSON.stringify(authoritative ?? null);
   const refreshRevision = useRef<{ client: ChatAgentClient; key: number | undefined } | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [baseline, setBaseline] = useState<Snapshot | null>(null);
@@ -49,6 +51,13 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
       projection = next.value;
     }
   }
+  if (active && client?.bots && authoritative) {
+    const known=new Map(projection.conversations.map(item=>[item.chatId,item]));
+    const present=new Set(authoritative.map(item=>item.chatId));
+    projection={...projection,unresolvedChatIds:projection.unresolvedChatIds.filter(id=>!present.has(id)),
+      conversations:[...projection.conversations.filter(item=>!present.has(item.chatId)),...authoritative.flatMap(item=>item.classification.kind==='bot'
+        ? [{chatId:item.chatId,agentId:item.classification.agentId,name:known.get(item.chatId)?.name??'Your bot',pendingApprovalCount:known.get(item.chatId)?.pendingApprovalCount??0}] : [])]};
+  }
   useEffect(() => {
     committed.current = active && client?.bots ? { client, key: idsKey, value: projection } : null;
   }, [active, client, idsKey, projection]);
@@ -59,6 +68,8 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
     refreshRevision.current = { client, key: refreshKey };
     const eventToken = revisionChanged ? `event:${refreshKey}` : undefined;
     const allIds = JSON.parse(idsKey) as string[];
+    const confirmed=JSON.parse(authoritativeKey) as typeof authoritative;
+    const classified=new Map((confirmed??[]).map(item=>[item.chatId,item.classification]));
     const ids = allIds.slice(0, MAX_RECORDS);
     let current = true;
     let pending = false;
@@ -68,12 +79,18 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
       pending = true;
       let failed = false;
       const { bindings, unresolved } = cachedIdentities(reads, allIds);
-      const checking = new Set(ids);
+      for(const [chatId,classification] of classified){
+        unresolved.delete(chatId);
+        if(classification.kind==='bot') bindings.set(chatId,{agentId:classification.agentId,name:bindings.get(chatId)?.name??'Your bot'});
+        else bindings.delete(chatId);
+      }
+      const checking = new Set(ids.filter(id=>!classified.has(id)));
       // Ordinary results stay staged even when a Bot update publishes first.
       // The baseline is captured once per cohort, never from a live partial cache.
       const staged = new Set(committed.current?.client === client && committed.current.key === idsKey
         ? committed.current.value.unresolvedChatIds : allIds);
       for (const chatId of bindings.keys()) staged.delete(chatId);
+      for (const chatId of classified.keys()) staged.delete(chatId);
       const publishIdentities = () => {
         if (current) setSnapshot(previous => {
           const known = previous?.client === client ? previous : null;
@@ -101,11 +118,12 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
         try { agents = (await reads.library(token)).agents; }
         catch (error: unknown) { failed = true; console.warn('[bots] List unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
         if (!current) return;
+        for(const [chatId,binding] of bindings){const agent=agents.find(agent=>agent.id===binding.agentId);if(agent)bindings.set(chatId,{...binding,name:agent.name});}
         await bounded(agents.filter(agent => !agent.archived), async agent => {
           if (!current) return;
           try {
             const chatId = await reads.directChat(agent.id, token);
-            if (current && chatId) {
+            if (current && chatId && classified.get(chatId)?.kind!=="ordinary") {
               checking.delete(chatId);
               const known = bindings.get(chatId);
               bindings.set(chatId, { agentId: agent.id, name: agent.name });
@@ -115,7 +133,7 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
           }
           catch (error: unknown) { failed = true; console.warn('[bots] Binding unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
         });
-        await bounded(ids.filter(id => !bindings.has(id)), async chatId => {
+        await bounded(ids.filter(id => !bindings.has(id) && !classified.has(id)), async chatId => {
           if (!current) return;
           try {
             const agentId = await reads.directBot(chatId, token);
@@ -167,7 +185,7 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
     const focus = (event: FocusEvent) => { void refresh(`focus:${event.timeStamp}`); };
     window.addEventListener('focus', focus);
     return () => { current = false; window.clearInterval(timer); window.removeEventListener('focus', focus); };
-  }, [client, idsKey, active, refreshKey]);
+  }, [client, idsKey, active, refreshKey, authoritativeKey]);
   return projection;
 }
 

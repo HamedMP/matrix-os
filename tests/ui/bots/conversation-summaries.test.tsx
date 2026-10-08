@@ -45,6 +45,15 @@ function fixture() {
   interactions: vi.fn(async () => [{ kind: 'approval', status: 'pending', expiresAt:'2099-01-01T00:00:00.000Z' }, { kind: 'approval', status: 'pending', expiresAt:'2000-01-01T00:00:00.000Z' }, { kind: 'approval', status: 'resolved' }, { kind: 'input', status: 'pending' }]),
  }} as unknown as ChatAgentClient;
 }
+it('uses authoritative navigation classification without per-Chat Bot identity requests',async()=>{
+ const client=fixture();
+ const classifications=[{chatId:'chat_regular',classification:{kind:'ordinary' as const}},{chatId:'chat_old',classification:{kind:'bot' as const,agentId:'bot_one'}}];
+ const {result}=renderHook(()=>useBotConversationSummaries(client,['chat_regular','chat_old'],true,0,classifications));
+ expect(result.current.unresolvedChatIds).toEqual([]);
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(client.bots!.directBot).not.toHaveBeenCalled();
+ expect(result.current.conversations.find(item=>item.chatId==='chat_old')?.pendingApprovalCount).toBe(1);
+});
 it('uses bindings for current and older histories and counts only pending approvals', async () => {
  const client=fixture(); const { result }=renderHook(() => useBotConversationSummaries(client,['chat_old','chat_regular']));
  await waitFor(() => expect(result.current.loading).toBe(false));
