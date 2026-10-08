@@ -132,7 +132,7 @@ describe("brain change hooks", () => {
     await hooks.close(1_000);
   });
 
-  it("collapses the oldest scope past the queue bound and drops new scopes past the hard bound, never an erase", async () => {
+  it("collapses the oldest scope past the bound; past the hard bound an erase evicts a change-only scope", async () => {
     const { calls, listeners } = recorder();
     const hooks = createBrainChangeHooks({ listeners: listeners.filter((listener) => listener.name === "graph") });
     hooks.emit(erased(scope(0)));
@@ -145,14 +145,37 @@ describe("brain change hooks", () => {
     hooks.emit(documents(scope("dropped"), ["d"]));
     hooks.emit(erased(scope("kept")));
     expect(warnLog).toHaveBeenCalledWith("[brain-hooks] queue full; event dropped until the next refresh:", "documents_changed");
+    expect(warnLog)
+      .toHaveBeenCalledWith("[brain-hooks] queue full; a queued scope's change events dropped for an erase");
     await settle();
-    await vi.waitFor(() => expect(calls).toHaveLength(BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES + 2));
+    await vi.waitFor(() => expect(calls).toHaveLength(BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES + 1));
+    // scope_0 holds an erase, so scope_1 (the oldest scope with only change events) made room for the new erase.
     expect(calls.slice(0, 3).map((call) => call.event)).toEqual([
-      erased(scope(0)), documents(scope(0), null), documents(scope(1), ["d1"]),
+      erased(scope(0)), documents(scope(0), null), documents(scope(2), ["d2"]),
     ]);
     const scopes = calls.map((call) => call.event.scope.scopeId);
+    expect(scopes).not.toContain("scope_1");
     expect(scopes).not.toContain("scope_dropped");
     expect(scopes.at(-1)).toBe("scope_kept");
+    await hooks.close(1_000);
+  });
+
+  it("never queues more scopes than the hard bound, erases included", async () => {
+    const { calls, listeners } = recorder();
+    const hooks = createBrainChangeHooks({ listeners: listeners.filter((listener) => listener.name === "brief") });
+    for (let i = 0; i < BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES + 3; i += 1) hooks.emit(erased(scope(i)));
+    hooks.emit(documents(scope("late"), ["d"]));
+    // An erase of a scope already queued takes no new room.
+    hooks.emit(erased(scope(0)));
+    const dropped = ["[brain-hooks] queue full of erases; scope_erased dropped"];
+    expect(errorLog.mock.calls).toEqual([dropped, dropped, dropped]);
+    await settle();
+    await vi.waitFor(() => expect(calls).toHaveLength(BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES));
+    const scopes = calls.map((call) => call.event.scope.scopeId);
+    expect(new Set(scopes).size).toBe(BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES);
+    expect(scopes.at(-1)).toBe(`scope_${BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES - 1}`);
+    expect(scopes).not.toContain(`scope_${BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES}`);
+    expect(scopes).not.toContain("scope_late");
     await hooks.close(1_000);
   });
 
