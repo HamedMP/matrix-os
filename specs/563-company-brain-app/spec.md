@@ -35,30 +35,33 @@ A project picker (the owner's active projects, `GET /api/workspace/projects`, fi
 six tabs: Chat, Today, Decisions, Timeline, Search and Sources. Chat is first, in bold, and the tab the app opens on.
 Older ids still open: `ask` opens Search, `commitments` and `risks` open Decisions on that kind.
 
-**Chat** is an ordinary Matrix Chat run by the owner's Company Brain Bot. First the tab reads the project's sources
-(`GET .../sources`): with none it shows "Connect this project's repository in Sources first." and Open Sources, and a
-brain that is off shows its error with Try again, as every tab does, since the Bot could only answer "I could not
-find that in the brain." Then it finds the Bot through the shared Chat Agents client (`GET /api/chat-agents`, which
-lists active Bots only): an active one is used; none shows a one-time card, "Chat with your Company Brain", whose
-Start creates it (`GET /api/chat-agents/bot-recipes?recipeId=company-brain`, then `POST /api/chat-agents/instantiate`
-with no model, so the server picks Automatic, and a request id fixed per recipe version, so a retry makes one Bot).
-When the Bot that Start returns is not listed as active (a replay of a Bot archived since), the tab says "The Company
-Brain chat was archived, so it cannot start here. Search, Today, Decisions and Timeline still work." with a way to
-Search. Bots that are off, or that answer 503 to the recipe, Start or thread list calls, show "Chat with the brain is
-not running on this computer. Search, Today, Decisions and Timeline still work." with a way to Search. Past brain
-chats of the project are listed beside the chat (`GET /api/chat-agents/:agentId/threads?projectId=`, 50 a page,
-"Show more" up to 500, kept through a reload), with title and how long ago; each row's menu (right click or More)
-renames it or deletes it after a confirm, over the normal Chat routes of the surface's chat client, and deleting the
-open chat opens the next one or a draft. The list reloads on open, on window focus, when a thread is created and
-after every admitted turn the chat view reports, the same on every surface. The tab opens the chat this viewer had
-open last for the project if it is still listed, else the newest, else a draft, and remembers the chat it opens;
-"New chat" opens a draft. A draft saves nothing until its first send, which creates one thread
-(`POST /api/chat-agents/:agentId/threads` with the project) however often the view asks, then sends the turn through
-the normal Chat routes; the tab shows the new thread as soon as it exists, even when that first turn fails. "Open in
-Chat" shows the same Chat in the Chat app. Below 42rem the list folds behind a "Chats" button. The transcript,
-composer, Bot header and model controls are each surface's own chat view, so answers render their Markdown source
-links like every Chat. The empty chat's heading and line come from the tab, so they read the same everywhere; the
-embedded view offers no suggestion chips, no project picker and no Share, settings or connection line.
+**Chat** is an ordinary Matrix Chat run by the owner's Company Brain Bot. The tab finds the Bot through the shared Chat
+Agents client (`GET /api/chat-agents`, which lists active Bots only): an active one is used; none shows a one-time card,
+"Chat with your Company Brain", whose Start creates it (`GET /api/chat-agents/bot-recipes?recipeId=company-brain`, then
+`POST /api/chat-agents/instantiate` with no model, so the server picks Automatic, and a request id fixed per recipe
+version, so a retry makes one Bot). When the Bot that Start returns is not listed as active (a replay of a Bot archived
+since), the tab says "The Company Brain chat was archived, so it cannot start here. Search, Today, Decisions and
+Timeline still work." with a way to Search. Bots that are off, a gateway that lists no brain recipe (one with no runtime
+host, spec 567), or Bots that answer 503 to the recipe, Start or thread list calls, show "Chat with the brain is not
+running on this computer. Search, Today, Decisions and Timeline still work." with a way to Search, before any thread is
+made. Past brain chats of the project are listed beside the chat (`GET /api/chat-agents/:agentId/threads?projectId=`, 50
+a page, "Show more" up to 500, kept through a reload), with title and how long ago; each row's menu (right click or
+More) renames it or deletes it after a confirm, over the normal Chat routes of the surface's chat client, and deleting
+the open chat opens the next one or a draft. The list reloads on open, on window focus, when a thread is created and
+after every admitted turn the chat view reports, the same on every surface. The tab opens the chat this viewer had open
+last for the project if it is still listed, else the newest, else a draft, and remembers the chat it opens; "New chat"
+opens a draft. A draft saves nothing until its first send, which creates one thread (`POST
+/api/chat-agents/:agentId/threads` with the project) however often the view asks, then sends the turn through the normal
+Chat routes; the tab shows the new thread as soon as it exists, even when that first turn fails, and a refused first
+question goes back into the composer. A thread is named from its first question by the shared automatic title, where a
+long path reads by its last part. The tab also reads the project's sources (`GET .../sources`): with none, a new chat
+shows "Connect this project's repository in Sources first." and Open Sources in place of the composer, and a brain that
+is off shows its error with Try again there, since the Bot could only answer "I could not find that in the brain.";
+saved chats still list and open. "Open in Chat" shows the same Chat in the Chat app. Below 42rem the list folds behind a
+"Chats" button. The transcript, composer, Bot header and model controls are each surface's own chat view, so answers
+render their Markdown source links like every Chat. The empty chat's heading and line come from the tab, so they read
+the same everywhere; the embedded view offers no suggestion chips, no project picker, no harness setup (a Bot runs on
+its own model) and no Share, settings or connection line.
 
 **Search** (once Ask; hits best
 first with matched terms marked, stale claims marked "Outdated", a note while the index catches up; a question that
@@ -90,15 +93,15 @@ text files up to 256 KiB, 14 days each way. The gateway validates every config.
 ## States
 
 Every request shows loading, then its data, an empty state (icon, headline, next step), or an error. Errors come only
-from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
-offline, too slow, brain off (503 or an unknown server code), not found (the code's fixed text, or "not turned on yet"
-for a route that is not mounted), and refused (the code's fixed text). The not-connected codes add an "Open Sources"
-button. A reload keeps the previous data on screen until the new answer arrives. The Chat tab has its own fixed
-states: loading, no sources, "The brain chat could not be opened." with Try again, the not running, archived and Start
-states above, "Past chats could not be loaded." with Try again (a draft opens meanwhile), "No brain chats for
-<project> yet.", "The chat could not be renamed. Try again." (or deleted) in the row, and "Chat is not available
-here." on a host without a chat view. Errors inside the chat are the chat view's
-own (the shared Chat failure and Bot model notices).
+from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403), offline,
+too slow, brain off (503 or an unknown server code), not found (the code's fixed text, or "not turned on yet" for a
+route that is not mounted), and refused (the code's fixed text). The not-connected codes add an "Open Sources" button. A
+reload keeps the previous data on screen until the new answer arrives. The Chat tab has its own fixed states: loading,
+no sources (in place of a new chat), "The brain chat could not be opened." with Try again, the not running, archived and
+Start states above, "Past chats could not be loaded." with Try again (a draft opens meanwhile), "No brain chats for
+<project> yet.", "The chat could not be renamed. Try again." (or deleted) in the row, and "Chat is not available here."
+on a host without a chat view. Errors inside the chat are the chat view's own (the shared Chat failure and Bot model
+notices).
 
 ## Security architecture
 
@@ -228,8 +231,9 @@ the gateway send project text to Anthropic (see Security architecture), and a ch
 | Web Mobile | yes | mobile shell list and render branch; the heading shows, as the app frame has no title bar; the same chat slot with touch sizes; Open in Chat switches to the Chat app |
 | Native Mobile | no | deferred: the Expo app has no brain screen yet |
 
-Every covered surface renders the same view: the tabs are one scrolling row next to the project picker, and the past
-chats list is a side column from 42rem and folds behind "Chats" below it, down to 360 px.
+Every covered surface renders the same view: the tabs are one scrolling row next to the project picker (the app's one
+column may be narrower than that row, so Web Mobile at 390 px cuts nothing off), and the past chats list is a side
+column from 42rem and folds behind "Chats" below it, down to 360 px.
 
 ## Accessibility
 
@@ -249,8 +253,10 @@ problem text describes it; the path history, kinds, people and reasons are label
 `pnpm exec vitest run tests/ui/brain-*.test.ts tests/ui/brain-*.test.tsx` (jsdom, fake client, no network) covers
 every route mapping, error reading by shape, request ordering, and all six tabs with their states and buttons
 (`brain-chat` the Chat tab: opening order and memory, one thread per draft shown before its turn, Show more kept
-through a reload, Start with no model, archived after Start, not running on 503, no sources and brain off, rename and
-delete, stale lists, the narrow fold and its focus; `brain-company-bot` the thread calls, the Bot lookup, 503 and the
+through a reload, Start with no model, archived after Start, not running on 503 and with no runtime host, no sources
+and brain off with saved chats still open, rename and delete, stale lists, the narrow fold and its focus;
+`brain-app` the six tabs and a column that never grows wider than a phone; `generated-chat-title` titles of path
+questions; `brain-company-bot` the thread calls, the Bot lookup, 503 and the
 archived replay; `brain-chat-boundary` that the
 folder opens no stream or request and draws no transcript or composer);
 `brain-jobs` polls with fake timers (backoff, failures, cap, stop, stale answers) and words a model run as still
@@ -258,12 +264,13 @@ finishing only when a direct run was cut short, `brain-ask-path`, `brain-merges`
 the path history, duplicates and per-kind settings. `tests/shell/brain-shell.test.tsx` covers the Web binding (the
 Web client by default, its errors read by the shared reader, a delete with no body, the heading);
 `tests/shell/canonical-chat-thread.test.tsx` covers the one-Chat hook (one create per draft, a report after every
-admitted turn and none when it fails, content deltas, a snapshot on a gap, no URL change) and the Web slot end to end
-(no rail, chips, settings or connection line, a draft sent as a brain thread, Open in Chat, and on Web Canvas the
-Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
+admitted turn and none when it fails, a refused first question given back, content deltas, a snapshot on a gap, no
+URL change) and the Web slot end to end (no rail, chips, harness setup, settings or connection line, a draft sent as
+a brain thread, Open in Chat, and on Web Canvas the Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
 `tests/desktop/brain-chat-tab.test.tsx` covers the Electron slot through `useDesktopBrainChatHost().render(slot)` (a
 draft made through the host and sent as the Bot, the turn reported once, a saved chat opened in the conversation
-view without its open report, no project picker or Share, no Chat tab opened on its own, Open in Chat).
+view without its open report, no project picker or Share, no Chat tab opened on its own, Open in Chat), and
+`tests/desktop/canonical-new-chat-content.test.tsx` the brain greeting with no starter cards or harness setup.
 `tests/desktop/brain-desktop-view.test.tsx` covers the Electron Desktop transport (empty delete body, the two
 desktop-only categories) and view (connect message, runtime pinning, remount on a runtime switch or new sign-in); the
 launcher, palette, tab, persistence and analytics suites cover its registration, and
@@ -293,8 +300,7 @@ wraps or truncates inside a 390 px screen; no new dependency.
 
 ## Deferred
 
-Native Mobile screen; renaming and deleting a brain chat from the Brain app's list (both work in the Chat app); a
-model field on the Start card (the model is changed later in the chat's Bot controls); filtering and paging connect
+Native Mobile screen; a model field on the Start card (the model is changed later in the chat's Bot controls); filtering and paging connect
 options; editing source settings after connect; background jobs
 for the index refreshes; a screen listing past jobs (Sources only resumes the running ones); impact and stale
 screens (their answers stay untyped);
