@@ -12,6 +12,7 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { BotToolRequestSchema, BotToolResultSchema } from "@matrix-os/contracts";
 import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
+import { createBotConnections } from "../../../packages/gateway/src/bots/connections.js";
 import { createBotAccessHandlers } from "../../../packages/gateway/src/bots/access-handlers.js";
 import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
@@ -96,6 +97,27 @@ const read = { service: "gmail", action: "list_threads", connectionId: "conn_wor
 const send = { service: "gmail", action: "send_email", connectionId: "conn_work", params: { to: "a@example.com", subject: "Hi", body: "Hello" } };
 
 describe("bot integration tools", () => {
+  it.each(["existing", "reconciled"])("grants disclosed Jev labels through a %s multi-account connection choice", async (path) => {
+    connected = [];
+    const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read", "label"], required: true }] } as BotRecipe;
+    const { tools, interactions, client } = setup(undefined, undefined, undefined, undefined, recipe);
+    await tools.call(binding, read);
+    const [request] = await pending();
+    expect(request).toMatchObject({ kind: "connect_request", payload: { access: ["read", "label"] } });
+    const connections = createBotConnections({
+      client: { ...client, connect: vi.fn(async () => "https://connect.example/consent"), sync: vi.fn(async () => undefined) },
+      transact: createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>)), tools, now: () => toolClock,
+    });
+    if (path === "existing") connected = [WORK, HOME];
+    await connections.startConnect(OWNER, CHAT, request!.interaction_id, 1);
+    if (path === "reconciled") { connected = [WORK, HOME]; await connections.reconcile(OWNER); }
+    const choice = (await pending()).find((item) => item.kind === "account_choice");
+    expect(choice).toMatchObject({ status: "pending", payload: { access: ["read", "label"] } });
+    await interactions.resolve(OWNER, CHAT, choice!.interaction_id, { kind: "account_choice", baseRevision: 1, connectionId: "conn_home" });
+    expect(await createBotGrantsRepository(db).listLive({ ownerId: OWNER, botId: BOT, audience: "direct", now: AT }))
+      .toEqual([expect.objectContaining({ connectionId: "conn_home", effects: ["read", "label"] })]);
+  });
+
   it("discloses narrow labeling access and rejects an old undisclosed account choice", async () => {
     const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read", "label"] as const, required: true }] };
     const { tools, interactions, call } = setup(undefined, undefined, undefined, undefined, recipe);
