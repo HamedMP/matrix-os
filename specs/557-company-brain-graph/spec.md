@@ -94,7 +94,8 @@ like one human and scores each pair from these signals:
   the owner split is never suggested again; a merged pair stops showing; an unmerged pair shows again.
 - Order: score, then links of both sides, both descending, then suggestion id; keyset paged by a cursor bound to the
   query. One read scans at most 5,000 person entities (those `GET /entities` would list), their split rows and name
-  and email pairs and ranks at most 500 pairs; past a cap the answer says `truncated`.
+  and email pairs and ranks at most 500 pairs; past a cap the answer says `truncated`, and a pair whose split row
+  went unread is left out rather than suggested again.
 - Measured on the matrix-os project graph (30 persons, 20 suggestions): the top committer's four entities
   (`name:hamed`, `name:hamedmp`, `email:hamedmp@users.noreply.github.com`,
   `email:3755031+hamedmp@users.noreply.github.com`) are joined by suggestions scored 0.75 to 0.99.
