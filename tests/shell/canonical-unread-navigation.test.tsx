@@ -95,12 +95,12 @@ describe("Web unread navigation", () => {
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.messages.some(message => message.content === "Unread Chats could not be refreshed. Try again.")).toBe(true));
     expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_older"]);
-    const dispose = vi.spyOn(state.navigation.store!, "dispose");
+    const revoke = vi.spyOn(state.navigation.store!, "revoke");
     unreadFetch.mockResolvedValueOnce(Response.json({ error: { code: "unauthorized" } }, { status: 403 }));
     state.navigation = { ...state.navigation, updatedAt: state.navigation.updatedAt + 1, items: [...state.navigation.items] };
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.conversations).toEqual([]));
-    expect(dispose).toHaveBeenCalledWith(true);
+    expect(revoke).toHaveBeenCalledOnce();
   });
   it("bounds a server's repeated unread cursor and cancels results when the filter closes", async () => {
     state.navigation.truncated = true;

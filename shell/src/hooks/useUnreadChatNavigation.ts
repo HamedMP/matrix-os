@@ -62,7 +62,7 @@ export function useUnreadChatNavigation(client: CanonicalShellChatClient, naviga
         if (!isCurrent()) return;
         const revoked = error instanceof ChatNavigationAuthorityRevoked
           || (error instanceof CanonicalShellChatRequestError && (error.status === 401 || error.status === 403));
-        if (revoked) scope?.dispose(true);
+        if (revoked) scope?.revoke();
         setSnapshot(previous => ({ client, scope,
           items: !revoked && previous?.client === client && previous.scope === scope ? previous.items : [],
           error: "Unread Chats could not be refreshed. Try again.",
