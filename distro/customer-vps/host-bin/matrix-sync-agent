@@ -362,6 +362,11 @@ restore_rollback_release_metadata() {
   sudo mv -Tf "$RELEASE_ROLLBACK_FILE" "$RELEASE_FILE" || return 1
 }
 
+# BEGIN funded host bootstrap
+# Build replaces this fail-closed development placeholder with reviewed inline Python.
+funded_host_bootstrap() { return 1; }
+# END funded host bootstrap
+
 install_host_bin_payload() {
   local source_dir="$1" source name incoming destination protected_helper
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -513,12 +518,6 @@ write_update_transaction_state() {
   printf '%s\n' "$state" >"$incoming" && mv -fT "$incoming" "$UPDATE_TRANSACTION_STATE"
 }
 
-seal_update_transaction() {
-  [ "$(cat "$UPDATE_TRANSACTION_STATE" 2>/dev/null || true)" = prepared ] || return 1
-  write_update_transaction_state mutating || return 1
-  sudo chown -R root:root "$UPDATE_TRANSACTION_DIR" || return 1
-  sudo chmod -R go-w "$UPDATE_TRANSACTION_DIR" || return 1
-}
 
 record_update_file() {
   local source="$1" label="$2"
@@ -704,16 +703,9 @@ restore_update_transaction() {
       *) return 1 ;;
     esac
   done <"$UPDATE_TRANSACTION_DIR/systemd.enablement"
-  while IFS=: read -r name state; do
-    [ -n "$name" ] || continue
-    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$ ]] || return 1
-    update_payload_name_was_added "$name" && continue
-    case "$state" in
-      active) [ "$name" = matrix-sync-agent.service ] || sudo systemctl start "$name" >/dev/null || return 1 ;;
-      inactive) ;;
-      *) return 1 ;;
-    esac
-  done <"$UPDATE_TRANSACTION_DIR/systemd.activity"
+  if [ "${1:-}" != defer-services ]; then
+    resume_update_transaction_services || return 1
+  fi
 }
 
 cleanup_update_transaction() {
@@ -723,6 +715,10 @@ cleanup_update_transaction() {
 # Keep the one-level rollback snapshot while the previous app bundle can still
 # be restored. The next update replaces both its rollback app and transaction.
 preserve_host_rollback_transaction() {
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/receipt.json; then
+    log "Preserved committed host artifacts for funded repair rollback"
+    return 0
+  fi
   if { [ -f "$UPDATE_TRANSACTION_DIR/systemd.present" ] &&
       grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
     [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] ||
@@ -893,14 +889,6 @@ terminal_runtime_is_healthy() {
     /opt/matrix/bin/matrix-terminal-runtime --health-check >/dev/null 2>&1
 }
 
-transaction_candidate_is_committed() {
-  local expected_version="$1" release_version
-  [ -n "$expected_version" ] || return 1
-  [ "$(current_version)" = "$expected_version" ] || return 1
-  [ -f "$RELEASE_FILE" ] && [ ! -L "$RELEASE_FILE" ] || return 1
-  release_version="$(json_field "$(cat "$RELEASE_FILE")" version 2>/dev/null || true)"
-  [ "$release_version" = "$expected_version" ]
-}
 
 clear_consumed_update_markers() {
   rm -f -- "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
@@ -1237,21 +1225,6 @@ installed_terminal_runtime_is_ready() {
   [ "$actual_generation" = "$generation" ]
 }
 
-requested_update_is_already_current() {
-  local remote_version="$1"
-  [ -f "$UPDATE_VERSION_FILE" ] && [ ! -L "$UPDATE_VERSION_FILE" ] || return 1
-  [ "$remote_version" = "$(current_version)" ] || return 1
-  [ ! -e "$UPDATE_PHASE_MARKER" ] && [ ! -L "$UPDATE_PHASE_MARKER" ] || return 1
-  [ ! -e "$UPDATE_ERROR_MARKER" ] && [ ! -L "$UPDATE_ERROR_MARKER" ] || return 1
-  installed_terminal_runtime_is_ready || return 1
-}
-
-consume_idempotent_update_request() {
-  log "Exact requested version is already installed; consuming idempotent request"
-  rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
-  consume_update_trigger || log "WARN: failed to consume idempotent update trigger"
-}
-
 prepare_triggered_update() {
   local url="" target="" requested_version=""
   prepare_triggered_update_action=apply
@@ -1361,6 +1334,16 @@ apply_update() {
   if [ ! -f "$UPDATE_MARKER" ]; then
     log "No update available — nothing to apply"; return 1
   fi
+  # Preserve pending proof before download can replace its archive or phase.
+  # A failed recovery must resolve first; malformed pin evidence also defers.
+  if [ -e /opt/matrix/staging/update-transaction/same-version-repair.json ] \
+    || [ -L /opt/matrix/staging/update-transaction/same-version-repair.json ] \
+    || { sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json \
+      && { [ -e "$UPDATE_PHASE_MARKER" ] || [ -L "$UPDATE_PHASE_MARKER" ]; }; }; then
+    log "ERROR: protected artifact recovery remains pending"
+    write_update_error "post_install_rollback_failed" "The previous update must be recovered before another update can begin." || true
+    return 1
+  fi
   local manifest version sha256 bundle_url cur bundle_file extract_dir
   local request_identity validation_status
   request_identity="$(update_request_identity)" || return 1
@@ -1380,6 +1363,17 @@ apply_update() {
   sha256="$(json_field "$manifest" sha256)"
   bundle_url="$(json_field "$manifest" url)"
   cur="$(current_version)"
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json \
+    && [ "$(compare_host_bundle_versions "$version" "$cur")" != newer ] && [ "$version" != "$cur" ]; then
+    # Retain current app; only the saved exact prior protected receipt can
+    # authorize narrow field rollback. Passive downgrades never schedule it.
+    if [ "$trigger_source" = explicit ]; then
+      reject_unchanged_update_request "$request_identity" || return 1
+      funded_host_bootstrap rollback "$cur" "$version" || log "WARN: funded rollback admission deferred"
+    fi
+    write_update_error "funded_rollback_required" "The previous funded configuration must be verified before this rollback." "$version" || true
+    return 1
+  fi
   log "Starting update from $cur to $version"
 
   sudo mkdir -p "$STAGING_DIR"
@@ -1432,35 +1426,44 @@ apply_update() {
   if ! tar -xzf "$bundle_file" -C "$extract_dir"; then
     log "ERROR: extraction failed"
     write_update_error "bundle_extract_failed" "The release bundle could not be extracted." "$version"
-    rm -rf "$extract_dir" "$bundle_file"; return 1
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"; return 1
   fi
   if [ ! -d "$extract_dir/app" ]; then
     log "ERROR: extracted bundle missing 'app' directory"
     write_update_error "bundle_layout_invalid" "The release bundle layout was invalid." "$version"
-    rm -rf "$extract_dir" "$bundle_file"; return 1
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"; return 1
   fi
   if ! prepare_legacy_r2_migration "$extract_dir"; then
     write_update_error "storage_broker_unavailable" "The tenant-isolated backup broker was unavailable; the update was not applied." "$version"
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   if ! stage_release_metadata "$extract_dir/release.json" "$version"; then
     log "ERROR: Release metadata staging failed; aborting before app replacement"
     write_update_error "release_metadata_invalid" "The release metadata could not be staged safely." "$version"
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   if ! prepare_update_transaction "$extract_dir" "$version"; then
     log "ERROR: Update transaction backup failed; aborting before replacement"
     write_update_error "update_transaction_prepare_failed" "The installed runtime could not be backed up safely." "$version"
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
 
   # Stop services only after all replaced host artifacts have recoverable backups.
   if ! seal_update_transaction; then
     cleanup_staged_release_metadata
+    return 1
+  fi
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json \
+    && ! funded_host_bootstrap recovery-preflight >/dev/null; then
+    log "ERROR: funded runtime recovery proof failed; deferring before service stop"
+    write_update_error "update_transaction_prepare_failed" "The installed runtime could not be backed up safely." "$version"
+    cleanup_update_transaction
+    cleanup_staged_release_metadata
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   log "Stopping services..."
@@ -1474,7 +1477,7 @@ apply_update() {
     else
       log "ERROR: legacy Symphony could not resume; retaining the update transaction for recovery"
     fi
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   if ! install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"; then
@@ -1485,7 +1488,7 @@ apply_update() {
       write_update_error "post_install_rollback_failed" "The terminal runtime helpers failed and rollback did not complete." "$version"
     fi
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   write_update_phase terminal-runtime || return 1
@@ -1497,7 +1500,7 @@ apply_update() {
       write_update_error "post_install_rollback_failed" "The terminal runtime installation failed and rollback did not complete." "$version"
     fi
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
 
@@ -1525,7 +1528,7 @@ apply_update() {
         write_update_error "post_install_rollback_failed" "The host update helpers could not be installed and rollback did not complete." "$version"
       fi
       cleanup_staged_release_metadata
-      rm -rf "$extract_dir" "$bundle_file"
+      cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
       return 1
     fi
     log "Updated bin scripts"
@@ -1597,7 +1600,7 @@ apply_update() {
       write_update_error "post_install_rollback_failed" "The updated terminal runtime failed to start and rollback did not complete." "$version"
     fi
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   if ! sudo systemctl start matrix-gateway matrix-shell; then
@@ -1608,7 +1611,7 @@ apply_update() {
       write_update_error "post_install_rollback_failed" "The updated services failed to start and rollback did not complete." "$version"
     fi
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
   sudo systemctl start --no-block matrix-vps-registration.service || true
@@ -1633,7 +1636,7 @@ apply_update() {
       if ! retire_legacy_symphony; then
         log "ERROR: legacy Symphony service could not be retired"
         write_update_error "symphony_retirement_failed" "The update completed, but the retired Symphony service could not be stopped safely." "$version"
-        rm -rf "$extract_dir" "$bundle_file"
+        cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
         return 1
       fi
       if mark_hermes_reconciliation_pending "$version"; then
@@ -1641,13 +1644,18 @@ apply_update() {
       else
         log "ERROR: failed to persist pending Hermes release reconciliation"
         write_update_error "hermes_reconciliation_not_persisted" "The update completed, but the Hermes upgrade could not be scheduled safely." "$version"
-        rm -rf "$extract_dir" "$bundle_file"
+        cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
         return 1
       fi
       if ! remove_legacy_r2_credentials; then
         log "ERROR: legacy R2 credentials could not be removed after the broker migration"
         write_update_error "legacy_storage_credentials_remain" "The update completed, but legacy storage credentials still require removal." "$version"
-        rm -rf "$extract_dir" "$bundle_file"
+        cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
+        return 1
+      fi
+      if ! retire_completed_same_version_repair "$version"; then
+        write_update_error "post_install_rollback_failed" "The completed artifact repair could not be verified safely." "$version"
+        rm -rf -- "$extract_dir"
         return 1
       fi
       log "Health check passed — update to $version complete"
@@ -1661,7 +1669,7 @@ apply_update() {
         write_update_error "post_install_rollback_failed" "The release metadata could not be committed and rollback did not complete." "$version"
       fi
       cleanup_staged_release_metadata
-      rm -rf "$extract_dir" "$bundle_file"
+      cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
       return 1
     fi
   else
@@ -1685,12 +1693,17 @@ apply_update() {
       write_update_error "post_install_rollback_failed" "The updated gateway failed its health check and rollback did not complete." "$version"
     fi
     cleanup_staged_release_metadata
-    rm -rf "$extract_dir" "$bundle_file"
+    cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi
-  rm -rf "$extract_dir" "$bundle_file"
-  clean_staging || true
   rm -f -- "$UPDATE_PHASE_MARKER"
+  if [ "$trigger_source" = explicit ]; then
+    # The predecessor's first hop cannot retroactively invoke this hook.
+    # Explicit deployment requires an externally coordinated owner idle window.
+    funded_host_bootstrap schedule "$version" || log "WARN: funded host repair deferred"
+  fi
+  cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
+  clean_staging || true
   restart_sync_agent_after_update
 }
 
@@ -1734,6 +1747,7 @@ clean_staging() {
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || continue
+    pending_same_version_repair_archive "$path" && continue
     if [ "$(stat -c %Y "$path" 2>/dev/null || echo "$now")" -gt "$cutoff" ]; then
       continue
     fi
@@ -1752,6 +1766,7 @@ clean_staging_now() {
   while IFS= read -r -d '' path; do
     [ -e "$path" ] || continue
     [ ! -L "$path" ] || continue
+    pending_same_version_repair_archive "$path" && continue
     sudo rm -rf -- "$path"
     count=$((count + 1))
   done < <(find "$STAGING_DIR" -mindepth 1 -maxdepth 1 \( -name 'failed-*' -o -name 'bundle-*' \) -print0)
@@ -1895,6 +1910,11 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+funded_installed_version="$(cat "$APP_DIR/BUNDLE_VERSION" 2>/dev/null || true)"
+if [[ "$funded_installed_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ ! -e "$UPDATE_PHASE_MARKER" ]; then
+  # Startup installs independently verified bytes only; it never stops a runtime.
+  funded_host_bootstrap install "$funded_installed_version" || log "WARN: funded host component installation deferred"
+fi
 reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
@@ -1909,7 +1929,7 @@ while true; do
     request_identity="$(update_request_identity)" || request_identity=""
     if prepare_triggered_update; then
       if [ "$prepare_triggered_update_action" = already-current ]; then
-        consume_idempotent_update_request
+        schedule_current_funded_retry "$request_identity" || log "WARN: exact-version retry claim deferred"
       elif run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
