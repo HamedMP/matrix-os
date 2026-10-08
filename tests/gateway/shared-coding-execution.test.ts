@@ -10,11 +10,15 @@
  * the focused Codex/Claude adapters with execution-root sandboxing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CollaborationChatCommands } from "../../packages/gateway/src/chat/collaboration-commands.js";
+import { OwnerAccountEligibility } from "../../packages/gateway/src/collaboration/account-eligibility.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { COLLABORATION_VERSIONED_MIGRATIONS } from "../../packages/gateway/src/collaboration/database-migrations.js";
 import { CollaborationChatExecutionAdapter } from "../../packages/gateway/src/collaboration/chat-execution-adapter.js";
+import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
+import { CollaborationExecutionPolicyRepository } from "../../packages/gateway/src/collaboration/execution-policy.js";
 import {
   COLLABORATION_SHARED_RUN_LOSS_MIGRATION_VERSION,
   CollaborationRunLossRepository,
@@ -31,8 +35,12 @@ import {
 } from "../../packages/gateway/src/chat/shared-execution-coordinator.js";
 import { createSharedClaudeAdapter } from "../../packages/gateway/src/collaboration/shared-claude-adapter.js";
 import { ScopeRuntimeClientError } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
-import { CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
+import { CollaborationAuthority, CollaborationAuthorizationError, type AuthorizedCollaborationContext } from "../../packages/gateway/src/collaboration/authority.js";
+import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
+import { CollaborationRunBindingRepository } from "../../packages/gateway/src/collaboration/run-account-binding.js";
+import { SharedRunOwnerSource } from "../../packages/gateway/src/collaboration/shared-run-owner-source.js";
 import {
+  allowAllOrganizationPrecondition,
   collaborationActors,
   collaborationExecutionEligibility,
   collaborationIds,
@@ -92,24 +100,85 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
-    it("lets a Contributor prompt the owner's configured AI without another per-member opt-in", async () => {
+    it("lets a directly granted project Contributor prompt through real authorization and the owner's saved AI policy", async () => {
+      const parentId = "79000000-0000-4000-8000-000000000998";
+      await fixture.db.insertInto("collaboration_scopes").values({
+        id: parentId, owner_type: "personal", owner_id: collaborationActors.owner,
+        kind: "project", resource_id: "project_default_contributor_prompt", parent_scope_id: null,
+        membership_mode: "direct", lifecycle: "shared", revision: 1, auth_epoch: 1,
+        authority_runtime_id: collaborationIds.runtime, authority_generation: 1,
+        execution_generation: null, organization_id: "org_collaboration_primary",
+        execution_eligibility: null, deleted_at: null, created_at: now, updated_at: now,
+      }).execute();
+      await fixture.db.updateTable("collaboration_members").set({ scope_id: parentId })
+        .where("scope_id", "=", collaborationIds.scope).execute();
+      await fixture.db.deleteFrom("collaboration_members")
+        .where("scope_id", "=", parentId).where("actor_id", "=", collaborationActors.editor).execute();
+      await fixture.db.insertInto("collaboration_grants").values({
+        id: "79000000-0000-4000-8000-000000000997", scope_id: parentId,
+        organization_id: "org_collaboration_primary", audience_kind: "member",
+        audience_actor_id: collaborationActors.editor, preset: "contributor", state: "active",
+        policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null,
+        revision: 1, created_by: collaborationActors.owner, created_at: now, updated_at: now, revoked_at: null,
+      }).execute();
+      await fixture.db.updateTable("collaboration_scopes")
+        .set({ parent_scope_id: parentId, membership_mode: "inherited" })
+        .where("id", "=", collaborationIds.scope).execute();
+      await fixture.db.insertInto("collaboration_resource_bindings").values({
+        id: "79000000-0000-4000-8000-000000000996", project_scope_id: parentId,
+        resource_scope_id: collaborationIds.scope, resource_kind: "chat", resource_id: collaborationIds.chat,
+        authority_runtime_id: collaborationIds.runtime, authority_generation: 1, revision: 1,
+        readiness: "ready", blocker: null, incarnation: null, created_at: now, updated_at: now,
+      }).execute();
+
+      const capabilities = new CollaborationCapabilityRepository(fixture.db, {
+        now: () => new Date(now), createId: () => uuid(65),
+      });
+      const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db, { now: () => new Date(now) }), {
+        now: () => new Date(now), organizationPrecondition: allowAllOrganizationPrecondition, capabilities,
+      });
+      repository.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
+
+      const eligibility = new OwnerAccountEligibility({
+        snapshots: { async getSnapshotV3() { return ownerProviderSnapshot(); } },
+      });
+      const policies = new CollaborationExecutionPolicyRepository(fixture.db, {
+        now: () => new Date(now), eligibility,
+        organizationAiSubmission: { async resolve() { return "members"; } },
+      });
+      await policies.put({
+        scopeId: parentId,
+        actorId: collaborationActors.owner,
+        request: {
+          clientRequestId: uuid(66), expectedRevision: "0",
+          accessSourceId: "owner_anthropic_profile", providerInstanceId: "claude_shared",
+          submitMode: "owner_only", acknowledgeProviderTerms: true,
+          allowedModelIds: ["claude-opus-4-6"],
+        },
+        payloadHash: "6".repeat(64),
+      });
+      const ownerSource = new SharedRunOwnerSource({
+        policies,
+        eligibility,
+        bindings: new CollaborationRunBindingRepository(fixture.db, { now: () => new Date(now), eligibility }),
+      });
       const requestDispatch = vi.fn(async () => undefined);
       const adapter = new CollaborationChatExecutionAdapter({
         repository, commands: createCommands(),
         resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
         resolveEligibility: async () => collaborationExecutionEligibility(),
         resolveResourceRevision: async () => 1,
-        resolveEffectiveSubmitMode: async () => "members",
-        resolveOwnerSourceAdmission: async () => "ready",
+        resolveEffectiveSubmitMode: (scopeId) => policies.effectiveSubmitMode(scopeId),
+        resolveOwnerSourceAdmission: (scopeId, ownerId) => ownerSource.admission({ scopeId, ownerId }),
         requestDispatch,
         createQueuedTurnId: () => "qturn_default_contributor_prompt",
       });
 
-      await expect(adapter.submit({
-        ...readContext(collaborationActors.editor),
-        capability: "request_ai",
-        role: "editor",
-      }, {
+      const context = await authority.authorize({
+        scopeId: collaborationIds.scope, actorId: collaborationActors.editor, action: "request_ai",
+      });
+      expect(context).toMatchObject({ membershipScopeId: parentId, role: "editor", capability: "request_ai" });
+      await expect(adapter.submit(context, {
         clientRequestId: uuid(68), expectedRevision: "1", text: "Use the owner's AI",
       })).resolves.toMatchObject({
         request: {
@@ -898,4 +967,53 @@ function member(actorId: string, role: "owner" | "editor" | "viewer") {
 
 function uuid(index: number): string {
   return `79000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+}
+
+function ownerProviderSnapshot(): AiProviderSnapshotV3 {
+  const readiness = {
+    state: "ready" as const, checkedAt: now, staleAfter: null,
+    action: "none" as const, safeReason: null,
+  };
+  return {
+    contractVersion: 3,
+    revision: 1,
+    refreshedAt: now,
+    accessSources: [{
+      ...readiness,
+      id: "owner_anthropic_profile",
+      displayName: "Owner Claude profile",
+      fundingKind: "owner_account",
+      vendor: "anthropic",
+      accountLabel: "owner@example.com",
+      eligibleModelIds: ["claude-opus-4-6"],
+      policyVersion: "test-policy-1",
+    }],
+    accounts: [{
+      ...readiness,
+      id: "owner_claude_account",
+      vendor: "anthropic",
+      authMethod: "oauth_pkce",
+      accountLabel: "owner@example.com",
+    }],
+    drivers: [],
+    instances: [{
+      id: "claude_shared",
+      driverId: "claude_code",
+      vendor: "anthropic",
+      accountId: "owner_claude_account",
+      accessSourceId: "owner_anthropic_profile",
+      label: "Owner Claude",
+      readiness,
+      capabilitySnapshot: [],
+      modelIds: ["claude-opus-4-6"],
+      defaultModelId: "claude-opus-4-6",
+      catalogVersion: "test-catalog-1",
+    }],
+    models: [],
+    active: {
+      providerInstanceId: "claude_shared",
+      accessSourceId: "owner_anthropic_profile",
+      modelId: "claude-opus-4-6",
+    },
+  };
 }
