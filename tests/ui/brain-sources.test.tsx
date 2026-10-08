@@ -149,3 +149,128 @@ describe("Other sources", () => {
     await waitFor(() => expect(sources.mock.calls.length).toBeGreaterThanOrEqual(4));
   });
 });
+
+describe("Connect a source", () => {
+  it("connects a list kind with a name, caps the choices and closes the form", async () => {
+    const sources = vi.fn(async () => ({ items: [], kinds: KINDS }));
+    const teams = Array.from({ length: 21 }, (_, index) => ({ id: `T${index}`, label: `Team ${index}`, detail: index === 0 ? "12 members" : null }));
+    const api = renderSources({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources,
+      sourceOptions: vi.fn(async () => ({ kind: "linear", nextCursor: "c2", items: teams })),
+      connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
+    });
+    expect(await screen.findByText("No other sources yet.")).toBeTruthy();
+    const kind = screen.getByRole("combobox", { name: "Kind" });
+    expect(within(kind).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Choose a kind", "GitHub", "Linear", "Matrix chats (Connect the account in Settings)",
+      "Slack (Not set up on this server)",
+    ]);
+    const kinds = screen.getByRole("list", { name: "Source kinds" });
+    expect(within(kinds).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "GitHubReady", "LinearReady", "Matrix chatsConnect the account in Settings", "SlackNot set up on this server",
+    ]);
+    fireEvent.change(kind, { target: { value: "linear" } });
+    const connect = screen.getByRole("button", { name: "Connect" });
+    expect(connect).toBeDisabled();
+    expect(await screen.findByText("Choose what to include (up to 20)")).toBeTruthy();
+    expect(screen.getByText("Only the first 21 are shown.")).toBeTruthy();
+    expect(api.sourceOptions).toHaveBeenCalledWith(PROJECT, "linear", {});
+    const boxes = screen.getAllByRole("checkbox");
+    for (const box of boxes.slice(0, 20)) fireEvent.click(box);
+    expect(boxes[20]).toBeDisabled();
+    for (const box of boxes.slice(1, 20)) fireEvent.click(box);
+    expect(boxes[20]).toBeEnabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name (optional)" }), { target: { value: " Team " } });
+    fireEvent.click(connect);
+    await waitFor(() => expect(api.connectSource).toHaveBeenCalledWith(PROJECT, {
+      kind: "linear", label: "Team",
+      config: { teamKeys: ["T0"], include: { issues: true, comments: true, projectUpdates: true } },
+    }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Connect" })).toBeNull());
+    expect(sources).toHaveBeenCalledTimes(2);
+  });
+
+  it("picks one repository, reports refusals, empty and failed choices", async () => {
+    const api = renderSources({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources: vi.fn(async () => ({ items: [], kinds: KINDS })),
+      sourceOptions: vi.fn()
+        .mockResolvedValueOnce({ kind: "github", nextCursor: null, items: [{ id: "HamedMP/matrix-os", label: "matrix-os", detail: null }] })
+        .mockResolvedValueOnce({ kind: "linear", nextCursor: null, items: [] })
+        .mockRejectedValueOnce(apiError("server", "source_kind_unsupported")),
+      connectSource: vi.fn(async () => { throw apiError("server", "source_not_connected"); }),
+    });
+    const kind = await screen.findByRole("combobox", { name: "Kind" });
+    fireEvent.change(kind, { target: { value: "github" } });
+    expect(await screen.findByText("Choose one")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /matrix-os/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connect the account for this source in Settings first.");
+    expect(api.connectSource).toHaveBeenCalledWith(PROJECT, {
+      kind: "github", config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: true, reviews: true, issues: true } },
+    });
+    fireEvent.change(kind, { target: { value: "linear" } });
+    expect(await screen.findByText("Nothing to choose from yet.")).toBeTruthy();
+    fireEvent.change(kind, { target: { value: "" } });
+    expect(screen.queryByText("Nothing to choose from yet.")).toBeNull();
+    fireEvent.change(kind, { target: { value: "linear" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("This source kind is not available.");
+  });
+
+  it("types a repository, a Slack scope or note tags when a kind lists no choices", async () => {
+    const kinds = KINDS.map((view) => ({ ...view, available: true, reason: null }));
+    const api = renderSources({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources: vi.fn(async () => ({ items: [], kinds: [...kinds, { kind: "matrix_notes" as const, available: true, reason: null }] })),
+      sourceOptions: vi.fn()
+        .mockRejectedValueOnce(apiError("server", "source_kind_unsupported"))
+        .mockResolvedValueOnce({ kind: "slack_bridge", nextCursor: null, items: [] })
+        .mockRejectedValue(apiError("notFound")),
+      connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
+    });
+    const kind = await screen.findByRole("combobox", { name: "Kind" });
+    fireEvent.change(kind, { target: { value: "github" } });
+    const repo = await screen.findByRole("textbox", { name: "Repository (owner/name)" });
+    const connect = screen.getByRole("button", { name: "Connect" });
+    expect(connect).toBeDisabled();
+    fireEvent.change(repo, { target: { value: "../matrix-os" } });
+    expect(screen.getByText("Check what you typed.")).toBeTruthy();
+    fireEvent.submit(connect.closest("form")!);
+    expect(api.connectSource).not.toHaveBeenCalled();
+    fireEvent.change(repo, { target: { value: " HamedMP/matrix-os " } });
+    fireEvent.click(connect);
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "github", config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: true, reviews: true, issues: true } },
+    }));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Kind" }), { target: { value: "slack_bridge" } });
+    const scope = await screen.findByRole("textbox", { name: "Company Brain scope id" });
+    fireEvent.change(scope, { target: { value: "6F1C2A4E-9B7D-4C3A-8E21-0D5B7A9C1E33" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "slack_bridge", config: { companyScopeId: "6F1C2A4E-9B7D-4C3A-8E21-0D5B7A9C1E33", channelIds: [] },
+    }));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Kind" }), { target: { value: "matrix_notes" } });
+    const tags = await screen.findByRole("textbox", { name: "Tags (optional)" });
+    expect(screen.getByText("Leave empty to include every note.")).toBeTruthy();
+    fireEvent.change(tags, { target: { value: Array.from({ length: 21 }, (_, index) => `tag${index}`).join(",") } });
+    expect(screen.getByText("Up to 20.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+    fireEvent.change(tags, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, { kind: "matrix_notes", config: { folders: [] } }));
+  });
+
+  it("builds every kind's config and reads typed values", () => {
+    const ids = ["a", "b"];
+    expect(brainSourceConfig("matrix_files", ids)).toEqual({ roots: ids, extensions: ["md", "txt"], maxFileBytes: 262_144 });
+    expect(brainSourceConfig("matrix_chat", ids)).toEqual({ chatIds: ids });
+    expect(brainSourceConfig("google_drive", ids)).toEqual({ folderIds: ids });
+    expect(brainSourceConfig("google_calendar", ids)).toEqual({ calendarIds: ids, includeEventBodies: false, pastDays: 14, futureDays: 14 });
+    expect(brainTypedValues("matrix_notes", " #Design, roadmap design ")).toEqual(["design", "roadmap"]);
+    expect(brainTypedValues("matrix_notes", "x")).toBeNull();
+    expect(brainTypedValues("github", "a/..")).toBeNull();
+    expect(brainTypedValues("github", "a/b/c")).toBeNull();
+    expect(brainTypedValues("linear", "ENG")).toBeNull();
+  });
+});
