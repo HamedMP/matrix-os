@@ -774,7 +774,7 @@ function ChatAppContent({
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
                 unavailablePlaceholder={!providerState.loading && !providerReady
-                  ? "Write or dictate a draft — connect a harness to send"
+                  ? directBotId ? BOT_UNAVAILABLE_PLACEHOLDER : "Write or dictate a draft — connect a harness to send"
                   : undefined}
                 attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
               />
@@ -791,6 +791,14 @@ function ChatAppContent({
       </ChatAgentsContent></BotModelRecoveryProvider>
     </div>
   );
+}
+
+/** A Bot runs on its own model route, never on a harness. */
+const BOT_UNAVAILABLE_PLACEHOLDER = "Write or dictate a draft. This Bot cannot answer right now.";
+
+/** The harness setup around a new chat's greeting; a Bot chat has none. */
+function HarnessSetup({ bot, children }: { bot: boolean; children: React.ReactNode }) {
+  return bot ? <>{children}</> : <ChatProviderOnboarding>{children}</ChatProviderOnboarding>;
 }
 
 function EmptyState({
@@ -821,8 +829,8 @@ function EmptyState({
   return (
     <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
       <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
-        {/* Greeting */}
-        <ChatProviderOnboarding><div className="grid justify-items-center gap-2 text-center">
+        {/* Greeting; a Bot runs on its own model, so a Bot chat shows no harness setup */}
+        <HarnessSetup bot={Boolean(composerProps.botContext)}><div className="grid justify-items-center gap-2 text-center">
           <AgentAvatar id="matrix_home" name="Matrix"/>
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
             {emptyState?.title ?? "What should Matrix do?"}
@@ -832,7 +840,7 @@ function EmptyState({
           </p>
         </div>
 
-        </ChatProviderOnboarding>
+        </HarnessSetup>
 
         {/* Input */}
         <ChatInput
@@ -843,7 +851,9 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
+          unavailablePlaceholder={!providerReady
+            ? composerProps.botContext ? BOT_UNAVAILABLE_PLACEHOLDER : "Write or dictate a draft — connect a harness to send"
+            : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 
