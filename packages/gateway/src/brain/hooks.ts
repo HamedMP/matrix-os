@@ -13,7 +13,11 @@ import {
 } from "./contracts.js";
 import type { BrainScopeKey } from "./types.js";
 
-/** Queued scopes past which a new scope's change events are dropped (an erase is always kept). */
+/**
+ * Most scopes the queue ever holds. Past it a new scope's change events are dropped (the next refresh repairs them);
+ * a new scope's erase takes the place of the oldest queued scope holding no erase, and is dropped only when every
+ * queued scope holds one.
+ */
 export const BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES = BRAIN_HOOK_QUEUE_MAX_SCOPES * 8;
 
 export interface BrainChangeHooksDeps {
@@ -113,11 +117,24 @@ export function createBrainChangeHooks(deps: BrainChangeHooksDeps): BrainChangeH
     if (worker === null) worker = drain();
   }
 
+  /** Room for one more scope under the hard bound; only an erase may evict, and only a scope holding no erase. */
+  function makeRoom(event: BrainChangeEvent): boolean {
+    if (queue.size < BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES) return true;
+    if (event.type !== "scope_erased") return false;
+    for (const [key, entry] of queue) {
+      if (entry.events.some((queued) => queued.type === "scope_erased")) continue;
+      queue.delete(key);
+      console.warn("[brain-hooks] queue full; a queued scope's change events dropped for an erase");
+      return true;
+    }
+    return false;
+  }
+
   function enqueue(event: BrainChangeEvent): boolean {
     const key = scopeKey(event.scope);
     let entry = queue.get(key);
     if (entry === undefined) {
-      if (queue.size >= BRAIN_HOOK_QUEUE_HARD_MAX_SCOPES && event.type !== "scope_erased") return false;
+      if (!makeRoom(event)) return false;
       if (queue.size >= BRAIN_HOOK_QUEUE_MAX_SCOPES) {
         for (const oldest of queue.values()) {
           oldest.events = oldest.events.map(collapse);
@@ -145,7 +162,8 @@ export function createBrainChangeHooks(deps: BrainChangeHooksDeps): BrainChangeH
         return;
       }
       if (!enqueue(event)) {
-        console.warn("[brain-hooks] queue full; event dropped until the next refresh:", event.type);
+        if (event.type === "scope_erased") console.error("[brain-hooks] queue full of erases; scope_erased dropped");
+        else console.warn("[brain-hooks] queue full; event dropped until the next refresh:", event.type);
         return;
       }
       schedule();
