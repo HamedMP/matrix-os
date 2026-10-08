@@ -84,11 +84,22 @@ it("keeps voice available when task setup is missing and dismisses before openin
   useVocalStore.getState().setActive(true);
   render(<Harness />);
   expect(screen.getByText("Listening")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", {name: "Recheck"}));
-  expect(session.refreshReadiness).toHaveBeenCalledOnce();
+  expect(document.querySelector(".aoede-header")?.contains(screen.getByRole("button", {name: "Connect harness"}))).toBe(true);
+  expect(within(screen.getByRole("region", {name: "Voice tasks"})).queryByText("Connect a task provider")).toBeNull();
+  expect(screen.queryByText("Voice and task execution connect separately.")).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Connect harness"}));
   await waitFor(() => expect(settings).toHaveBeenCalledOnce());
   window.removeEventListener("matrix:open-provider-settings", settings);
+});
+
+it("keeps failed readiness checks quiet and never calls a timeout missing setup", () => {
+  session.readiness = { status: "error", message: "Execution access could not be checked. Recheck access or check Settings before requesting work." };
+  overlay();
+  expect(screen.queryByText(session.readiness.message)).toBeNull();
+  expect(screen.queryByText("Task execution needs attention")).toBeNull();
+  expect(screen.queryByRole("button", {name: "Connect harness"})).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name: "Check task access"}));
+  expect(session.refreshReadiness).toHaveBeenCalledOnce();
 });
 
 it("does not retry uncertain tasks and gates fresh starts on connection", () => {

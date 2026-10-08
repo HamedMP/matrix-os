@@ -47,20 +47,11 @@ function TaskCard({ card, session, live }: { card: AoedeCard; session: SessionVi
   </li>;
 }
 
-function TaskActivity({ session, live, setup }: { session: SessionView; live: boolean; setup: () => void }) {
+function TaskActivity({ session, live }: { session: SessionView; live: boolean }) {
   return <section aria-label="Voice tasks" className="aoede-tasks" tabIndex={0}>
     <h2>Actions</h2>
     {session.cards.length ? <ul>{session.cards.map(card => <TaskCard key={card.id} card={card} session={session} live={live} />)}</ul>
       : <p className="aoede-empty">No actions yet.</p>}
-    {session.readiness.status !== "ready" && <div className="aoede-notice" role="status">
-      <h3>Task execution {session.readiness.status === "checking" ? "is being checked" : "needs attention"}</h3>
-      <p>{session.readiness.message}</p>
-      <p>Voice and task execution connect separately.</p>
-      <div className="aoede-actions">
-        {session.readiness.status === "setup_required" && <Button size="sm" onClick={setup}>Connect harness</Button>}
-        <Button size="sm" variant="ghost" disabled={session.readiness.status === "checking"} onClick={() => void session.refreshReadiness()}>Recheck</Button>
-      </div>
-    </div>}
     {session.taskErrors.map(error => <div className="aoede-notice" role="alert" key={`${error.sessionId}:${error.delegationId}`}>
       <h3>{error.outcome === "uncertain" ? "Task status is uncertain" : "Task did not start"}</h3>
       <p>{error.message}</p>
@@ -124,15 +115,22 @@ export function AoedeOverlay({ active, onUi }: {
       <AoedeSurface animate={active && live} />
       <header className="aoede-header"><DialogHeader><DialogTitle>Aoede</DialogTitle>
         <DialogDescription className="sr-only">Voice conversation, actions, and transcript</DialogDescription></DialogHeader>
-        <Button variant="ghost" size="icon" aria-label="Close Aoede" onClick={dismiss}><XIcon /></Button></header>
+        <div className="aoede-header-actions">
+          {session.readiness.status === "setup_required" && <Button className="aoede-access" variant="secondary" size="sm" onClick={setup}>Connect harness</Button>}
+          {["checking", "error"].includes(session.readiness.status) && <Button className="aoede-access" variant="ghost" size="sm"
+            disabled={session.readiness.status === "checking"} title={session.readiness.status === "error" ? "Task access couldn’t be checked. Try again." : undefined}
+            onClick={() => void session.refreshReadiness()}>{session.readiness.status === "checking" ? "Checking task access…" : "Check task access"}</Button>}
+          <Button variant="ghost" size="icon" aria-label="Close Aoede" onClick={dismiss}><XIcon /></Button>
+        </div></header>
       <main className="aoede-body">
         <div className="aoede-presence-column">
           <div className="aoede-presence">
-            <AoedeOrb animate={active && live && !session.muted} />
+            <AoedeOrb animate={active && live} connecting={session.status === "connecting"}
+              muted={session.muted} inputStream={session.inputStream} audioRef={audioRef} />
             <h2 role="status">{session.muted && session.status === "active" ? "Microphone paused" : messages[session.status]}</h2>
             <p>{voiceHint(session, live)}</p>
           </div>
-          <TaskActivity session={session} live={live} setup={setup} />
+          <TaskActivity session={session} live={live} />
           <SessionControls session={session} live={live} />
         </div>
         <section className="aoede-conversation" aria-label="Conversation">
