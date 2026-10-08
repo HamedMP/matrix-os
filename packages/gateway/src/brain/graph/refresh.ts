@@ -14,8 +14,7 @@ import { BRAIN_PROJECT_SCOPE_PREFIX } from "../api/types.js";
 import type { BrainScopeKey } from "../types.js";
 import { cutText, isEntityKey, brainEntityId } from "./ids.js";
 import {
-  claimsDigestSql, decisionPathsChangedSql, deriveGraphDocument, refsDigestSql, withGraphLock,
-  type BrainGraphCapacity,
+  claimsDigestSql, countGraphEntities, decisionPathsChangedSql, deriveGraphDocument, refsDigestSql, withGraphLock,
 } from "./store.js";
 import { BRAIN_GRAPH_ORPHAN_SWEEP_MAX, type BrainGraphDatabase, type BrainGraphExecutor } from "./types.js";
 
@@ -60,23 +59,13 @@ async function pendingIds(db: BrainGraphExecutor, scope: BrainScopeKey, limit: n
 }
 
 /**
- * The project entity of a project scope (named after the project when its name is known, else its id; a known name
- * replaces a stored one that differs), then up to BRAIN_GRAPH_ORPHAN_SWEEP_MAX unreferenced entities removed.
+ * Up to BRAIN_GRAPH_ORPHAN_SWEEP_MAX unreferenced entities removed, then the project entity of a project scope (named
+ * after the project when its name is known, else its id; a known name replaces a stored one that differs), added only
+ * while it fits under `maxEntities`. Returns the entities removed.
  */
 async function sweepEntities(
-  trx: BrainGraphExecutor, scope: BrainScopeKey, now: Date, projectName: string | null,
+  trx: BrainGraphExecutor, scope: BrainScopeKey, now: Date, projectName: string | null, maxEntities: number,
 ): Promise<number> {
-  const projectId = scope.scopeId.slice(BRAIN_PROJECT_SCOPE_PREFIX.length);
-  if (scope.scopeId.startsWith(BRAIN_PROJECT_SCOPE_PREFIX) && isEntityKey("project", projectId)) {
-    const name = projectName === null ? "" : cutText(projectName, BRAIN_ENTITY_DISPLAY_NAME_MAX_CHARS);
-    const onConflict = name === "" ? sql`DO NOTHING` : sql`DO UPDATE SET display_name = excluded.display_name
-      WHERE brain_graph_entities.display_name <> excluded.display_name`;
-    await sql`INSERT INTO brain_graph_entities
-        (owner_id, scope_id, entity_id, kind, key, display_name, document_id, first_seen_at, last_seen_at)
-      VALUES (${scope.ownerId}, ${scope.scopeId}, ${brainEntityId("project", projectId)}, 'project', ${projectId},
-        ${name === "" ? projectId : name}, NULL, ${now}, ${now})
-      ON CONFLICT (owner_id, scope_id, entity_id) ${onConflict}`.execute(trx);
-  }
   const scoped = sql`x.owner_id = e.owner_id AND x.scope_id = e.scope_id`;
   const result = await sql<{ entity_id: string }>`DELETE FROM brain_graph_entities WHERE owner_id = ${scope.ownerId}
     AND scope_id = ${scope.scopeId} AND entity_id IN (SELECT e.entity_id FROM brain_graph_entities e
@@ -90,30 +79,40 @@ async function sweepEntities(
         AND NOT (e.kind = 'folder' AND EXISTS (SELECT 1 FROM brain_document_refs x WHERE ${scoped}
           AND x.kind = 'path' AND x.value >= e.key || '/' AND x.value < e.key || '0'))
       LIMIT ${BRAIN_GRAPH_ORPHAN_SWEEP_MAX}) RETURNING entity_id`.execute(trx);
+  const projectId = scope.scopeId.slice(BRAIN_PROJECT_SCOPE_PREFIX.length);
+  if (scope.scopeId.startsWith(BRAIN_PROJECT_SCOPE_PREFIX) && isEntityKey("project", projectId)) {
+    const entityId = brainEntityId("project", projectId);
+    const stored = await trx.selectFrom("brain_graph_entities").select("entity_id")
+      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("entity_id", "=", entityId)
+      .executeTakeFirst();
+    const name = projectName === null ? "" : cutText(projectName, BRAIN_ENTITY_DISPLAY_NAME_MAX_CHARS);
+    const onConflict = name === "" ? sql`DO NOTHING` : sql`DO UPDATE SET display_name = excluded.display_name
+      WHERE brain_graph_entities.display_name <> excluded.display_name`;
+    if (stored !== undefined || await countGraphEntities(trx, scope, maxEntities) < maxEntities) {
+      await sql`INSERT INTO brain_graph_entities
+          (owner_id, scope_id, entity_id, kind, key, display_name, document_id, first_seen_at, last_seen_at)
+        VALUES (${scope.ownerId}, ${scope.scopeId}, ${entityId}, 'project', ${projectId},
+          ${name === "" ? projectId : name}, NULL, ${now}, ${now})
+        ON CONFLICT (owner_id, scope_id, entity_id) ${onConflict}`.execute(trx);
+    }
+  }
   return result.rows.length;
 }
 
 export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIndex {
   const { db, now } = deps;
   const clock = deps.clock ?? Date.now;
+  const maxEntities = Math.min(deps.maxEntities ?? BRAIN_GRAPH_LIMITS.entitiesPerScope,
+    BRAIN_GRAPH_LIMITS.entitiesPerScope);
 
-  async function capacityOf(scope: BrainScopeKey): Promise<BrainGraphCapacity> {
-    const max = Math.min(deps.maxEntities ?? BRAIN_GRAPH_LIMITS.entitiesPerScope, BRAIN_GRAPH_LIMITS.entitiesPerScope);
-    const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM (SELECT 1 FROM brain_graph_entities
-      WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} LIMIT ${max}) AS capped`.execute(db);
-    return { remaining: max - Number(result.rows[0]!.n) };
-  }
-
-  /** Derives ids in order until done, aborted, out of budget or out of entity capacity. */
+  /** Derives ids in order until done, aborted, out of budget or out of entity capacity (checked under the lock). */
   async function run(scope: BrainScopeKey, ids: readonly string[], deadline: number, signal: AbortSignal) {
-    const capacity = await capacityOf(scope);
-    let processed = 0;
-    let removed = 0;
+    let [processed, removed] = [0, 0];
     for (const id of ids) {
       if (signal.aborted || clock() >= deadline) return { processed, removed, stopped: true, full: false };
       let outcome: string;
       try {
-        outcome = await withGraphLock(db, scope, (trx) => deriveGraphDocument(trx, scope, id, now(), capacity));
+        outcome = await withGraphLock(db, scope, (trx) => deriveGraphDocument(trx, scope, id, now(), maxEntities));
       } catch (error: unknown) {
         if (!isForeignKeyViolation(error)) throw error;
         outcome = "skipped";
@@ -137,6 +136,11 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       console.warn("[brain-graph] project name unavailable:", error instanceof Error ? error.name : typeof error);
       return null;
     }
+  }
+
+  async function sweep(scope: BrainScopeKey): Promise<number> {
+    const name = await projectNameOf(scope);
+    return withGraphLock(db, scope, (trx) => sweepEntities(trx, scope, now(), name, maxEntities));
   }
 
   async function freshness(scope: BrainScopeKey): Promise<BrainIndexFreshness> {
@@ -164,8 +168,7 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       if (pass.full) return { processed, removed, caughtUp: false, stopReason: "graph_capacity" };
       if (pass.stopped) return { processed, removed, caughtUp: false };
     }
-    const name = await projectNameOf(scope);
-    const swept = await withGraphLock(db, scope, (trx) => sweepEntities(trx, scope, now(), name));
+    const swept = await sweep(scope);
     return { processed, removed, caughtUp: swept < BRAIN_GRAPH_ORPHAN_SWEEP_MAX && (await freshness(scope)).caughtUp };
   }
 

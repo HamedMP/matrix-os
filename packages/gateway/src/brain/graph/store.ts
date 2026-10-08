@@ -17,8 +17,7 @@ import {
   type BrainIdentityPair,
 } from "./types.js";
 
-/** Entities a batch may still add before the scope is full; derivation stops (capacity) at zero. */
-export interface BrainGraphCapacity { remaining: number }
+/** capacity: the entities the derivation would add do not fit the scope's limit; nothing was written. */
 export type BrainGraphDeriveOutcome = "derived" | "removed" | "capacity";
 
 const FOOTER_TAIL_CHARS = 2_048;
@@ -168,11 +167,33 @@ async function nudgeDependents(
   await unlinked.execute();
 }
 
-/** Inserts new entities (counted against capacity) and widens first/last seen of existing ones. */
+/** Entities of the scope, counted up to `max`. */
+export async function countGraphEntities(trx: BrainGraphExecutor, scope: BrainScopeKey, max: number): Promise<number> {
+  const result = await sql<{ n: number }>`SELECT count(*)::int AS n FROM (SELECT 1 FROM brain_graph_entities
+    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} LIMIT ${max}) AS capped`.execute(trx);
+  return Number(result.rows[0]!.n);
+}
+
+/**
+ * Whether the entities without a row yet (the document's own included) fit under `max`. Read under the graph lock,
+ * so entities another writer added are counted; a derivation that adds none always fits.
+ */
+async function entitiesFit(
+  trx: BrainGraphExecutor, scope: BrainScopeKey, entities: readonly BrainEntityDraft[], max: number,
+): Promise<boolean> {
+  const ids = entities.map((entity) => brainEntityId(entity.kind, entity.key));
+  const existing = await trx.selectFrom("brain_graph_entities").select("entity_id")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("entity_id", "in", ids)
+    .execute();
+  const added = ids.length - existing.length;
+  return added === 0 || await countGraphEntities(trx, scope, max) + added <= max;
+}
+
+/** Inserts new entities and widens first/last seen of existing ones. */
 async function writeEntities(
   trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, entities: readonly BrainEntityDraft[],
   documentId: string, at: string,
-): Promise<number> {
+): Promise<void> {
   const rows = entities.map((entity) => ({
     owner_id: scope.ownerId, scope_id: scope.scopeId, entity_id: brainEntityId(entity.kind, entity.key),
     kind: entity.kind, key: entity.key, display_name: entity.displayName,
@@ -184,9 +205,8 @@ async function writeEntities(
       display_name: document.display_name, first_seen_at: at, last_seen_at: at,
     })).execute();
   const others = rows.filter((row) => row !== document);
-  if (others.length === 0) return 0;
-  const inserted = await trx.insertInto("brain_graph_entities").values(others)
-    .onConflict((conflict) => conflict.doNothing()).returning("entity_id").execute();
+  if (others.length === 0) return;
+  await trx.insertInto("brain_graph_entities").values(others).onConflict((conflict) => conflict.doNothing()).execute();
   await trx.updateTable("brain_graph_entities")
     .set({
       first_seen_at: sql`LEAST(first_seen_at, ${at}::timestamptz)`,
@@ -202,13 +222,14 @@ async function writeEntities(
       .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
       .where("entity_id", "=", row.entity_id).where("display_name", "=", personDisplay(row.key)).execute();
   }
-  return inserted.length;
 }
 
-/** Re-derives one document, or removes its graph rows when it is tombstoned or gone. */
+/**
+ * Re-derives one document, or removes its graph rows when it is tombstoned or gone; `capacity` (nothing written) when
+ * the entities it would add pass `maxEntities`.
+ */
 export async function deriveGraphDocument(
-  trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, documentId: string, now: Date,
-  capacity: BrainGraphCapacity,
+  trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, documentId: string, now: Date, maxEntities: number,
 ): Promise<BrainGraphDeriveOutcome> {
   const document = await trx.selectFrom("brain_documents as d")
     .select(["d.document_id", "d.incarnation", "d.revision", "d.provenance", "d.title", "d.body", "d.deleted_at",
@@ -220,7 +241,6 @@ export async function deriveGraphDocument(
     await removeDocument(trx, scope, documentId, document?.provenance ?? "", now);
     return "removed";
   }
-  if (capacity.remaining <= 0) return "capacity";
   const refs = await trx.selectFrom("brain_document_refs").select(["kind", "value"])
     .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", documentId)
     .orderBy("kind").orderBy("value").limit(200).execute();
@@ -241,11 +261,12 @@ export async function deriveGraphDocument(
     parentTargets: await parentTargets(trx, scope, refs),
     commitPullRequests: document.provenance === "git_commit" ? await commitPullRequests(trx, scope, document.body) : [],
   });
+  if (!await entitiesFit(trx, scope, derivation.entities, maxEntities)) return "capacity";
   const previousNames = await readIdentities(trx, scope, documentId);
   const before = await describedIds(trx, scope, documentId);
   await trx.deleteFrom("brain_graph_links").where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
     .where("document_id", "=", documentId).execute();
-  capacity.remaining -= await writeEntities(trx, scope, derivation.entities, documentId, document.at);
+  await writeEntities(trx, scope, derivation.entities, documentId, document.at);
   if (derivation.links.length > 0) {
     await trx.insertInto("brain_graph_links").values(derivation.links.map((link) => {
       const fromId = brainEntityId(link.from.kind, link.from.key);
