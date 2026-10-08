@@ -5,9 +5,10 @@
  *   (a removed source's tombstones still need dropping), newest change first, at most BRAIN_SCHEDULED_SCOPES_MAX,
  *   and runs one bounded refresh of each derived index whose freshness shows pending documents. One pass under a
  *   wall-clock budget; stop() aborts it and waits briefly. Timers are unref'd.
- * - purgeBrainRemovedSource: right after a source is removed, the listeners drop the derived rows of the documents
- *   that removal tombstoned (in id batches, under a budget), so person names, emails and text do not stay readable
- *   until the next refresh. Returns false when it could not finish; the caller then emits the change event.
+ * - purgeBrainRemovedSource: right after a source is removed, the listeners drop the derived rows of its tombstoned
+ *   documents, whenever they were tombstoned (in id batches, under a budget), so person names, emails and text do not
+ *   stay readable until the next refresh. Returns false when it could not finish; the caller then emits the change
+ *   event.
  */
 import { sql, type Kysely } from "kysely";
 import {
@@ -126,9 +127,10 @@ export function createBrainIndexCatchUp(deps: {
 }
 
 /**
- * Drops the derived rows of the documents `removed` tombstoned: their ids (tombstoned at the removal), in batches of
- * BRAIN_HOOK_DOCUMENT_IDS_MAX, each handed to every listener as documents_changed. True when every batch ran; false
- * when the ids ran past the batch cap, the budget ran out or a listener failed (logged by name).
+ * Drops the derived rows of every tombstoned document of `removed`: the ones its removal tombstoned and the ones
+ * tombstoned before it, whose change event may have been lost. Their ids go in batches of BRAIN_HOOK_DOCUMENT_IDS_MAX,
+ * each handed to every listener as documents_changed. True when every batch ran; false when the ids ran past the
+ * batch cap, the budget ran out or a listener failed (logged by name).
  */
 export async function purgeBrainRemovedSource(
   db: Kysely<BrainDatabase>, listeners: readonly BrainChangeListener[], scope: BrainScopeKey, removed: BrainSource,
@@ -140,7 +142,7 @@ export async function purgeBrainRemovedSource(
   try {
     const { rows } = await withBrainRead(db, (trx) => sql<{ document_id: string }>`SELECT document_id
       FROM brain_documents WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}
-        AND source_id = ${removed.sourceId} AND deleted_at >= ${removedAt}::timestamptz
+        AND source_id = ${removed.sourceId} AND deleted_at IS NOT NULL
       ORDER BY document_id LIMIT ${cap + 1}`.execute(trx));
     const ids = rows.slice(0, cap).map((row) => row.document_id);
     for (let at = 0; at < ids.length; at += BRAIN_HOOK_DOCUMENT_IDS_MAX) {
