@@ -18,6 +18,7 @@ const BUILT_IN_START_APPS: readonly (Omit<TaskbarAppEntry, "iconUrl"> & { iconSl
   { name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { name: "Files", path: "__file-browser__", iconSlug: "files" },
   { name: "Chat", path: "__chat__", iconSlug: "chat" },
+  { name: "Company Brain", path: "__brain__", iconSlug: "search" },
 ];
 
 /** Window paths may carry an instance suffix (`__terminal__:session`, app

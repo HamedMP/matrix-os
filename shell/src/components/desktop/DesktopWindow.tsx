@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
+import { BrainApp } from "@/components/brain";
 import { AppViewer } from "@/components/AppViewer";
 import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";
@@ -248,6 +249,8 @@ export function DesktopWindow({
           </div>
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
+        ) : win.path === "__brain__" ? (
+          <BrainApp showHeading={false} />
         ) : (
           <AppViewer path={win.path} onOpenApp={onAppOpen} />
         )}

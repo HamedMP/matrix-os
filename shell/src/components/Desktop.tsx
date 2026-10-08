@@ -80,6 +80,7 @@ import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
 import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
 import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
+import { BRAIN_APP_KEYWORDS, BRAIN_SHELL_VIEW } from "./brain";
 import { WebDesktopSurface } from "./desktop/WebDesktopSurface";
 import {
   WebDesktopControls,
@@ -647,6 +648,13 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         execute: () => openWindow("Files", "__file-browser__"),
       },
       {
+        id: "action:open-company-brain",
+        label: `Open ${BRAIN_SHELL_VIEW.title}`,
+        group: "Actions",
+        keywords: [...BRAIN_APP_KEYWORDS],
+        execute: () => openWindow(BRAIN_SHELL_VIEW.title, BRAIN_SHELL_VIEW.path),
+      },
+      {
         id: "action:toggle-vocal",
         label: "Toggle Aoede",
         group: "Actions",
@@ -780,6 +788,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       "action:toggle-mc",
       "action:open-settings",
       "action:open-file-browser",
+      "action:open-company-brain",
       "action:toggle-vocal",
       "file:new-window",
       "file:close-window",
