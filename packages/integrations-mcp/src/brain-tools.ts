@@ -116,3 +116,92 @@ const SCHEMAS: { [N in ToolName]: z.ZodType<Views[N]> } = {
     specs: items(z.object({ spec: str(1_024), changedPaths: items(str(1_024), 500), cite: CITE.nullable() }), 20),
   }),
 };
+
+// Gateway calls.
+
+const NOT_CONFIGURED = new Set(["vector_search_unavailable", "summary_not_configured"]);
+const ERROR_BODY = z.object({ error: z.object({ code: str(64) }) });
+
+/** Any other non-2xx answer; the kernel handler logs this name and answers "temporarily unavailable". */
+class BrainGatewayStatus extends Error {
+  constructor() { super("BrainGatewayStatus"); this.name = "BrainGatewayStatus"; }
+}
+
+/** Reads at most RESPONSE_MAX_BYTES of UTF-8, yielding between chunks; the caller's signal bounds the time. */
+async function readBounded(response: Response, signal: AbortSignal): Promise<string> {
+  if (!response.body) throw new Error("BrainResponseEmpty");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let bytes = 0;
+  let text = "";
+  try {
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+      signal.throwIfAborted();
+      bytes += chunk.value.byteLength;
+      if (bytes > RESPONSE_MAX_BYTES) throw new Error("BrainResponseTooLarge");
+      text += decoder.decode(chunk.value, { stream: true });
+      await yieldRead();
+    }
+    return text + decoder.decode();
+  } finally {
+    await reader.cancel().catch((error: unknown) =>
+      console.warn("[brain-tools] Cleanup failed:", error instanceof Error ? error.name : "UnknownError"));
+  }
+}
+
+/** The tool input as route query keys (brain_search's `query` is `q`); lists travel comma-separated. */
+function queryOf(tool: ToolName, input: { readonly project: string }): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || key === "project") continue;
+    params.set(tool === "brain_search" && key === "query" ? "q" : key, Array.isArray(value) ? value.join(",") : String(value));
+  }
+  return params;
+}
+
+/** One bounded GET; a non-2xx answer becomes a status from the HTTP status and the error code only. */
+async function callGateway<N extends ToolName>(
+  fetcher: GatewayFetcher, tool: N, input: { readonly project: string },
+): Promise<BrainAgentResult<Views[N]>> {
+  const signal = AbortSignal.timeout(TIMEOUT_MS);
+  const base = process.env.GATEWAY_URL ?? "http://localhost:4000";
+  const path = `/api/brain/projects/${encodeURIComponent(input.project)}/${tool.slice("brain_".length)}`;
+  const response = await fetcher(`${base}${path}?${queryOf(tool, input)}`, {
+    method: "GET", headers: gatewayAuthHeaders(), redirect: "error", signal,
+  });
+  if (!(response instanceof Response)) throw new Error("BrainResponseUnavailable");
+  const text = await readBounded(response, signal);
+  if (response.ok) return { ...SCHEMAS[tool].parse(JSON.parse(text)), status: "ok" as const };
+  if (response.status === 404) return { status: "not_found" };
+  if (response.status === 400) return { status: "invalid" };
+  const code = response.status === 409 ? ERROR_BODY.safeParse(JSON.parse(text)).data?.error.code : undefined;
+  if (code && NOT_CONFIGURED.has(code)) return { status: "not_configured" };
+  throw new BrainGatewayStatus();
+}
+
+function gatewayTools(fetcher: GatewayFetcher): Required<BrainAgentReadTools> {
+  return {
+    search: (input) => callGateway(fetcher, "brain_search", input),
+    timeline: (input) => callGateway(fetcher, "brain_timeline", input),
+    claims: (input) => callGateway(fetcher, "brain_claims", input),
+    brief: (input) => callGateway(fetcher, "brain_brief", input),
+    conflicts: (input) => callGateway(fetcher, "brain_conflicts", input),
+    impact: (input) => callGateway(fetcher, "brain_impact", input),
+  };
+}
+
+export const BRAIN_MCP_TOOL_NAMES: readonly ToolName[] = TOOL_NAMES;
+
+/** Registers the six read-only Company Brain tools; the owner comes from the gateway bearer, never from input. */
+export function registerBrainTools(server: McpServer, fetcher: GatewayFetcher = fetch): void {
+  // A run-scoped bearer is refused on /api/brain until run-capability access to the brain routes lands (deferred).
+  if (process.env.MATRIX_AGENT_INTEGRATIONS_TOKEN !== undefined) return;
+  for (const definition of brainReadToolDefinitions(gatewayTools(fetcher))) {
+    // Every /api/brain route takes a project id or slug, so each tool keeps the kernel's own input shape.
+    const schema = z.object(definition.inputShape).strict();
+    server.registerTool(definition.name, {
+      description: definition.description, inputSchema: schema,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    }, async (input: unknown) => (schema.safeParse(input).success ? definition.handler(input) : INVALID_ARGUMENTS));
+  }
+}
