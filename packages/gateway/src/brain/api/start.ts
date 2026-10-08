@@ -151,3 +151,121 @@ export function withBrainChangeEvents(
     },
   };
 }
+
+export async function startBrainServices(
+  kysely: Kysely<BrainDatabase>,
+  deps: BrainServicesStartDeps,
+): Promise<BrainServicesHandle | null> {
+  const { scheduleOwnerId, sources: sourceOptions = {}, catchUpDelayMs, jobWorkerLimits, ownerIds: given, ...rest } = deps;
+  const ownerId = scheduleOwnerId === undefined ? resolveBrainAgentOwnerId() : scheduleOwnerId;
+  const ownerIds = given ?? (ownerId === null ? [] : [ownerId]);
+  const projectDeps = { ...rest, modelOwnerIds: ownerIds };
+  let core: BrainProjectService | null;
+  try {
+    core = await startBrainProjectService(kysely, projectDeps);
+  } catch (error: unknown) {
+    console.error("[brain] the brain is off after its core start failed:", errorName(error), sqlState(error) ?? "");
+    return null;
+  }
+  if (core === null) return null;
+  const repository = new BrainRepository(kysely);
+  const resolver = createBrainProjectResolver({ projects: deps.projects, homePath: deps.homePath });
+  const search = await startFeature("search", async () => createBrainSearch({
+    repository, resolver, capability: await bootstrapBrainSearchDatabase(kysely),
+    embeddings: await createBrainSearchEmbeddings({ homePath: deps.homePath, env: process.env }),
+    embeddingOwnerIds: ownerIds,
+  }));
+  const graph = await startFeature("graph", async () => {
+    await bootstrapBrainGraphDatabase(kysely);
+    return createBrainGraph({ repository, resolver });
+  });
+  // Never throws: each group that fails is logged and only its kinds are left out.
+  const sourceTables = await bootstrapBrainSourceTables(kysely);
+  const brief = await startFeature("brief", async () => {
+    await bootstrapBrainBriefDatabase(kysely);
+    return createBrainBrief({ repository, resolver });
+  });
+  const impact = createBrainImpactService({ repository, resolver });
+  const listeners: BrainChangeListener[] = [
+    ...(search === null ? [] : [search.index]), ...(graph === null ? [] : [graph.index]),
+    ...(brief === null ? [] : [brief.listener]),
+  ];
+  const hooks = createBrainChangeHooks({ listeners });
+  const project = withBrainChangeEvents(core, resolver, hooks);
+  // The same account lookup pins an account at connect (service) and checks it at run time (handlers).
+  const { integrations = UNAVAILABLE_INTEGRATIONS, notes = null, chats = null, limits, ...seams } = sourceOptions;
+  const sources = await startFeature("sources", async () => createBrainSourcesService({
+    repository, resolver, runner: runBrainSourceSync, hooks, gitSync: createBrainGitSourceSync(project),
+    handlers: createBrainSourceHandlers({
+      kysely, integrations, homePath: deps.homePath, notes, chats, ...seams,
+    }, sourceTables),
+    ...(seams.accounts === undefined ? {} : { accounts: seams.accounts }),
+    ...(limits === undefined ? {} : { limits }),
+    purgeRemoved: (scope, removed) => purgeBrainRemovedSource(kysely, listeners, scope, removed),
+  }));
+  const indexes = [...(search === null ? [] : [search.index]), ...(graph === null ? [] : [graph.index])];
+  const runs = await startFeature("jobs", async () => {
+    await bootstrapBrainJobsDatabase(kysely);
+    const store = new BrainJobStore(kysely);
+    const steps = createBrainJobSteps({
+      project, sources, search: search?.index ?? null, graph: graph?.index ?? null, brief: brief?.service ?? null,
+    });
+    // No owner to run for: nothing is queued (every kind is unavailable), so clients run the work directly.
+    const worker = ownerId === null ? null : createBrainJobWorker({
+      store, ownerId, steps, ...(jobWorkerLimits === undefined ? {} : { limits: jobWorkerLimits }),
+    });
+    const service = createBrainJobsService({
+      store, resolver, kinds: worker === null ? [] : Object.keys(steps) as BrainJobKind[],
+      wake: () => worker?.wake(), ...(worker === null ? {} : { stop: worker.cancel }),
+      ...(ownerId === null ? {} : { workerOwnerId: ownerId }),
+    });
+    return { service, worker };
+  });
+  const jobs = [
+    ...(runs?.worker ? [runs.worker] : []),
+    ...(ownerId === null || brief === null ? [] : [createBrainBriefScheduler({
+      runner: brief.runner, ownerId, scopes: createBrainBriefScopeLister(kysely),
+    })]),
+    ...(indexes.length === 0 ? [] : [createBrainIndexCatchUp({
+      db: kysely, indexes, ...(catchUpDelayMs === undefined ? {} : { startDelayMs: catchUpDelayMs }),
+    })]),
+  ];
+  return {
+    project,
+    search: search?.service ?? null,
+    graph: graph?.service ?? null,
+    sources,
+    brief: brief?.service ?? null,
+    impact,
+    runs: runs?.service ?? null,
+    searchCapability: search?.service.capability() ?? null,
+    indexes,
+    hooks,
+    jobs,
+    async eraseProject(eraseOwnerId, projectId) {
+      if (!BRAIN_PROJECT_ID_PATTERN.test(projectId)) return;
+      await eraseBrainProject(kysely, eraseOwnerId, projectId);
+      const scope = brainProjectScope(eraseOwnerId, projectId);
+      hooks.emit({ type: "scope_erased", scope, at: new Date().toISOString() });
+    },
+  };
+}
+
+async function stopJobs(jobs: readonly BrainBackgroundJob[]): Promise<void> {
+  const stopped = await Promise.allSettled(jobs.map((job) => job.stop()));
+  for (const result of stopped) {
+    if (result.status === "rejected") console.warn("[brain] job stop failed:", errorName(result.reason));
+  }
+}
+
+/**
+ * Gateway shutdown, before the owner Kysely is destroyed: stops the run worker first (it hands its runs back and its
+ * steps call the other services), then the other jobs together, then drains the hooks. Never throws.
+ */
+export async function stopBrainServices(services: BrainServices | null, deadlineMs = 5_000): Promise<void> {
+  if (services === null) return;
+  const worker = services.jobs.filter((job) => job.name === BRAIN_JOB_WORKER_NAME);
+  await stopJobs(worker);
+  await stopJobs(services.jobs.filter((job) => job.name !== BRAIN_JOB_WORKER_NAME));
+  await services.hooks.close(deadlineMs);
+}
