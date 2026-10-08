@@ -22,6 +22,20 @@ export class ChatNavigationAuthorityRevoked extends Error {
     this.name = "ChatNavigationAuthorityRevoked";
   }
 }
+// Streaming does not order pin/mute, completion acknowledgements, run state,
+// Project/provider binding or lifecycle. Those always come from the base record.
+function mergeStreamPatch(current: CanonicalChatNavigationItem, incoming: ChatNavigationRecord) {
+  const title = (incoming.chat.titleVersion ?? 0) > (current.chat.titleVersion ?? 0) ? incoming.chat : current.chat;
+  const read = incoming.readState && incoming.readState.version > current.readState.version ? incoming.readState : current.readState;
+  const later = (a: string | undefined, b: string | undefined) => !a || (b && Date.parse(b) > Date.parse(a)) ? b : a;
+  return mergeChatNavigationRecord(current, { ...current, chat: { ...current.chat,
+    revision: Math.max(current.chat.revision, incoming.chat.revision),
+    title: title.title, titleVersion: title.titleVersion,
+    messageCount: Math.max(current.chat.messageCount, incoming.chat.messageCount),
+    activityAt: later(current.chat.activityAt, incoming.chat.activityAt),
+    updatedAt: later(current.chat.updatedAt, incoming.chat.updatedAt) ?? current.chat.updatedAt,
+  }, readState: { ...read, latestIncomingSeq: Math.max(current.readState.latestIncomingSeq, incoming.readState?.latestIncomingSeq ?? 0) } });
+}
 /** Disposable, authenticated-scope UI state. A mutation invalidates older reads. */
 export function createChatNavigationStore(options: {
   load(): Promise<CanonicalChatNavigationResponse>;
@@ -157,7 +171,7 @@ export function createChatNavigationStore(options: {
           const items = value.items.map(item => {
             const patch = patches.get(item.chat.id);
             if (!patch) return item;
-            const merged = CanonicalChatNavigationItemSchema.parse(mergeChatNavigationRecord(item, patch));
+            const merged = CanonicalChatNavigationItemSchema.parse(mergeStreamPatch(item, patch));
             // Persist only when the server has independently caught up. Live
             // overlays cannot add membership or replace classification policy.
             if (JSON.stringify(merged) === JSON.stringify(item)) patches.delete(item.chat.id);
@@ -195,7 +209,7 @@ export function createChatNavigationStore(options: {
       if (disposed || revoked) return;
       const current = state.items.find(item => item.chat.id === record.chat.id);
       if (!current) return;
-      const merged = mergeChatNavigationRecord(current, record);
+      const merged = mergeStreamPatch(current, record);
       patches.set(record.chat.id, merged);
       patchVersion++;
       publish({ ...state, items: state.items.map(item => item === current ? merged : item) });
@@ -230,7 +244,17 @@ export function createChatNavigationStore(options: {
       if (updated === state.items) {
         return;
       }
-      const items = updated.length > 1000 ? updated.slice(0, 1000) : updated;
+      const previous = new Map(state.items.map(item => [item.chat.id, item]));
+      const items = (updated.length > 1000 ? updated.slice(0, 1000) : updated).map(item => {
+        const patch = patches.get(item.chat.id);
+        if (!patch || previous.get(item.chat.id) === item) return item;
+        // The mutation supersedes the old overlay. Retain only stream clocks
+        // that are still ahead of that response, never its old user/run fields.
+        patches.delete(item.chat.id);
+        const merged = CanonicalChatNavigationItemSchema.parse(mergeStreamPatch(item, patch));
+        if (JSON.stringify(merged) !== JSON.stringify(CanonicalChatNavigationItemSchema.parse(item))) patches.set(item.chat.id, merged);
+        return merged;
+      });
       revision++;
       prunePatches(items);
       if (inFlight) {

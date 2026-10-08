@@ -239,3 +239,44 @@ it('exposes authority epochs and ignores revoked or disposed live patches', asyn
   store.patch(snapshot('Late disposed').items[0]!);
   expect(store.getSnapshot().items).toEqual([]);
 });
+
+it.each(['server', 'mutation'])('lets equal-revision %s pin/completion results supersede stream overlays and resume persistence', async boundary => {
+  const initial = snapshot();
+  initial.items[0]!.chat.userState = { pinned: false, muted: false, readThroughSeq: 0 };
+  initial.items[0]!.latestSuccessfulCompletion = { runId: 'run_complete', completedAt: '2026-10-08T00:00:00Z', unacknowledged: true };
+  const load = vi.fn(async () => initial);
+  const save = vi.fn(async () => {});
+  const store = createChatNavigationStore({ load, persistence: { load: async () => null, save, clear: async () => {} } });
+  await store.ensure();
+  const live = structuredClone(initial.items[0]!);
+  live.chat = { ...live.chat, revision: 2, messageCount: 5, updatedAt: '2026-10-08T01:00:00Z' };
+  store.patch(live);
+  const fresh = structuredClone(live);
+  fresh.chat.userState = { pinned: true, muted: true, readThroughSeq: 5 };
+  fresh.latestSuccessfulCompletion!.unacknowledged = false;
+  fresh.chat.lifecycle = 'archived';
+  fresh.projectId = 'new-project';
+  fresh.readState = { ...fresh.readState, version: 1, readThroughSeq: 5, latestIncomingSeq: 5, unread: false };
+  const result = { ...initial, items: [fresh] };
+  if (boundary === 'mutation') store.update(() => [fresh]);
+  load.mockResolvedValue(result);
+  await store.refresh();
+  expect(store.getSnapshot().items[0]).toEqual(fresh);
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith(result));
+});
+it('stream patches never downgrade independent clocks or overwrite unversioned server fields', async () => {
+  const initial = snapshot('Renamed');
+  const current = initial.items[0]!;
+  current.chat = { ...current.chat, revision: 3, titleVersion: 4, messageCount: 8, updatedAt: '2026-10-08T02:00:00Z',
+    activityAt: '2026-10-08T02:00:00Z', userState: { pinned: true, muted: true, readThroughSeq: 7 } };
+  current.readState = { ...current.readState, version: 3, readThroughSeq: 7, latestIncomingSeq: 8, unread: true };
+  const store = createChatNavigationStore({ load: async () => initial });
+  await store.ensure();
+  const old = snapshot('Old').items[0]!;
+  old.chat.revision = 5; // A larger Chat revision does not order pin/title/read clocks.
+  old.readState = { ...old.readState, version: 3, readThroughSeq: 0, latestIncomingSeq: 9, unread: true };
+  store.patch(old);
+  expect(store.getSnapshot().items[0]).toMatchObject({ chat: { revision: 5, title: 'Renamed', messageCount: 8,
+    updatedAt: current.chat.updatedAt, activityAt: current.chat.activityAt, userState: current.chat.userState },
+    readState: { version: 3, readThroughSeq: 7, latestIncomingSeq: 9, unread: true } });
+});
