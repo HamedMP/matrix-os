@@ -11,6 +11,7 @@ import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import { createBotExecutorReadiness } from "../../../packages/gateway/src/bots/executor-readiness.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
@@ -43,7 +44,7 @@ function setup(options: {
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
   admit?: () => Promise<never>;
-  executorReady?: () => Promise<boolean>;
+  executorReady?: (ownerId: string, botId: string) => Promise<boolean>;
   cancelDelivered?: boolean;
   activeDeadlineMs?: number;
   cancelGraceMs?: number;
@@ -162,6 +163,23 @@ describe("bot turns through the matrix_bot adapter", () => {
       text: "Hello", signal: new AbortController().signal });
     expect(await run.result).toMatchObject({ status: "completed" });
     expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
+  it("runs shared Preview coordinator tools without consulting the host owner's native executor", async () => {
+    const execution = vi.fn(async () => { throw new Error("foreign native owner"); });
+    const admit = vi.fn(async () => { throw new Error("foreign native owner"); });
+    const executorReady = createBotExecutorReadiness({ runtimeOwnerId: "different_host_owner", computerId: "preview", nativeTasks: true, connections: { execution, admit } });
+    const { adapter, orchestrator } = setup({ executorReady, worker: async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      expect(spec.capabilities).not.toContain("agent.task");
+      expect(spec.capabilities).toContain("artifact.write");
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(execution).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
   });
 
   it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {
