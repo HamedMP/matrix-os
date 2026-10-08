@@ -8,12 +8,13 @@
  * Every call is bounded in time and size, and failures surface as allowlisted
  * codes, never upstream text.
  */
-import type { Hono } from "hono";
+import { Hono } from "hono";
 import { z } from "zod/v4";
 import { delegatedIntegrationHeaders } from "../integrations/delegated-identity.js";
 import { REFRESH_LIMITS } from "../integrations/refresh/contracts.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "../integrations/scope-provenance.js";
 import { appIntegrationReplyBytes } from "@matrix-os/contracts";
+import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../request-principal.js";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
@@ -234,12 +235,21 @@ export function createPlatformIntegrationTransport(options: { baseUrl: string; m
 }
 
 /** The gateway's own integration routes, called in process for the owner. */
-export function createLocalIntegrationTransport(routes: Pick<Hono, "request">): BotIntegrationTransport {
+export function createLocalIntegrationTransport(routes: Hono): BotIntegrationTransport {
   return (ownerId, request) => {
-    const headers = new Headers({ "x-platform-user-id": ownerId });
+    // This adapter is called by trusted server code, never by an app page.
+    // Project its owner into verified context instead of trusting an HTTP header.
+    const local = new Hono();
+    local.use("*", async (c, next) => {
+      setPlatformVerifiedPrincipal(c, ownerId);
+      markAuthContextReady(c);
+      await next();
+    });
+    local.route("/", routes);
+    const headers = new Headers();
     if (request.body) headers.set("content-type", "application/json");
     if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
-    return Promise.resolve(routes.request(request.path, {
+    return Promise.resolve(local.request(request.path, {
       method: request.method,
       headers,
       ...(request.body ? { body: JSON.stringify(request.body) } : {}),

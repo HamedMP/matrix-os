@@ -124,7 +124,7 @@ policy/inference operations run concurrently. The shared approved discovery and
 inference budget of ten per minute is charged only after the exact app/selection
 grant succeeds; denied apps cannot consume it. Cancellation retains admission
 until work drains. V3 provider truth plus owner Settings determines exact readiness. Public route
-discovery is capped at128 entries and retains the exact selected default; complete
+discovery is capped at 128 entries and retains the exact selected default; complete
 bounded internal authorization remains independent of that discovery cap. Safe completion
 adapters cover managed Matrix AI, owner Anthropic keys, verified Claude profiles,
 verified Pi 1.0.4 SDK profiles including supported static keys and OAuth, and an
@@ -175,6 +175,19 @@ drains and safety fences. Exhausted grace reports unavailable instead of proving
 completion. The funded relay retains responsibility for exact settlement or
 reconciliation when final usage is unavailable.
 
+## Chat integrations
+
+Local production integration routes resolve the owner from authenticated request
+context. In-process app and bot transports provide that same verified context;
+caller identity headers cannot select a different owner. Database outages return
+unavailable errors rather than being treated as missing accounts.
+
+App permissions and Chat tool scopes are separate. The explicit read integration
+scope gives a Claude Chat inventory, action discovery and exact-account reads
+through Matrix's built-in connection. It grants no connection management or
+writes. Existing Custom MCP scopes remain unchanged. Never ask the user to
+register a second Drive login when the built-in connection is available through
+the permitted Chat scope.
 
 ## Verification and rollout
 

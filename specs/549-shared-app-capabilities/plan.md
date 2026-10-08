@@ -1,5 +1,5 @@
 ---
-status: active
+status: completed
 ---
 # Shared app capabilities
 

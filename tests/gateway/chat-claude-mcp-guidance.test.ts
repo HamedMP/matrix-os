@@ -43,9 +43,11 @@ it.each([
       interactionMode: mode, permissionMode: permission, signal: new AbortController().signal,
     })) { /* Drain the native transport. */ }
     const prompt = frames.find(frame => frame.type === "user")!.message!.content;
-    expect(prompt).not.toContain("call list_integration_inventory");
-    expect(prompt).toContain("Selected integration dependencies are unavailable through this route");
+    expect(prompt).not.toContain("Selected integration dependencies are unavailable through this route");
     if (scope) {
+      expect(prompt).toContain("list_integration_inventory");
+      expect(prompt).toContain("describe_service");
+      expect(prompt).toContain("exact account label");
       expect(prompt).toContain("list_custom_mcp_servers");
       expect(prompt).toContain("describe_custom_mcp_server");
       if (scope === "call") expect(prompt).toContain("call_custom_mcp_tool");
@@ -54,6 +56,7 @@ it.each([
         expect(prompt).toContain("discovery only");
       }
     } else {
+      expect(prompt).not.toContain("list_integration_inventory");
       expect(prompt).not.toContain("list_custom_mcp_servers");
       expect(prompt).toContain("No Matrix tools are available for this run");
     }

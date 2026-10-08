@@ -50,7 +50,7 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
-  it("registers only the scoped Matrix Custom MCP broker on fresh and resumed supervised Runs", async () => {
+  it("registers scoped Matrix integration reads and Custom MCP on fresh and resumed supervised Runs", async () => {
     vi.stubEnv("MATRIX_CLERK_USER_ID", "owner_claude");
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
       JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "done", session_id: "claude_mcp_session" }),
@@ -86,7 +86,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       expect(Object.keys(config.mcpServers)).toEqual(["matrix-integrations"]);
       expect(config.mcpServers["matrix-integrations"]).toEqual({
         command: "/opt/matrix/bin/matrix-integrations-mcp",
-        args: ["--require-scoped-capability", "--tool-surface=custom-mcp-call"],
+        args: ["--require-scoped-capability", "--tool-surface=custom-mcp-call-integrations"],
       });
       expect(options.env.MATRIX_AGENT_INTEGRATIONS_TOKEN).toMatch(/^[a-f0-9]{64}$/);
 
@@ -96,6 +96,9 @@ describe("Claude canonical Chat Provider adapter", () => {
       };
       expect(settings.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true });
       expect(settings.permissions.allow?.filter((rule) => rule.startsWith("mcp__"))).toEqual([
+        "mcp__matrix-integrations__list_integration_inventory",
+        "mcp__matrix-integrations__describe_service",
+        "mcp__matrix-integrations__call_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
       ]);
@@ -103,7 +106,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     }
   });
 
-  it("keeps review Runs discovery-only on fresh and resumed launches despite full-access selection", async () => {
+  it("keeps review Runs on built-in reads and Custom MCP discovery despite full-access selection", async () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: baseInput.owner.ownerId });
     const seen: Array<{ args: string[]; token: string }> = [];
     const spawnFn = vi.fn<CanonicalCliSpawn>((_command, args, options) => {
@@ -127,7 +130,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     for (const { args, token } of seen) {
       const config = JSON.parse(args[args.indexOf("--mcp-config") + 1]!);
       expect(config.mcpServers["matrix-integrations"].args).toEqual([
-        "--require-scoped-capability", "--tool-surface=custom-mcp-discovery",
+        "--require-scoped-capability", "--tool-surface=custom-mcp-discovery-integrations",
       ]);
       expect(args.slice(args.indexOf("--permission-mode"), args.indexOf("--permission-mode") + 2))
         .toEqual(["--permission-mode", "plan"]);
@@ -135,6 +138,9 @@ describe("Claude canonical Chat Provider adapter", () => {
         permissions: { allow: string[]; deny: string[] };
       };
       expect(settings.permissions.allow).toEqual([
+        "mcp__matrix-integrations__list_integration_inventory",
+        "mcp__matrix-integrations__describe_service",
+        "mcp__matrix-integrations__call_service",
         "mcp__matrix-integrations__list_custom_mcp_servers",
         "mcp__matrix-integrations__describe_custom_mcp_server",
       ]);
