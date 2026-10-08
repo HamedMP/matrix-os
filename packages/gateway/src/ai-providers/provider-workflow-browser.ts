@@ -1,3 +1,4 @@
+import { resolveClaudeNativeExecutable } from "./claude-native-executable.js";
 import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { spawn } from "node:child_process";
 import type { ProviderWorkflow } from "@matrix-os/contracts";
@@ -37,7 +38,7 @@ export function createClaudeSettingsLogin(options: {
     const releaseAdmission = async () => { if (!released) { await release(); released = true; } };
     const launching: { child?: ReturnType<typeof spawn> } = {};
     registerCleanup?.(async () => { if (!launching.child) { await releaseAdmission(); return; } await stop(); });
-    const child = launching.child = spawn(options.command, options.args ?? ["auth", "login", "--claudeai"], {
+    const child = launching.child = spawn(options.command === "claude" ? resolveClaudeNativeExecutable(options.cwd, options.env) : options.command, options.args ?? ["auth", "login", "--claudeai"], {
       cwd: options.cwd, env: { ...options.env, BROWSER: "/bin/true" }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
     });
     let stopped = false; let cancelled = false; let submitted = false;

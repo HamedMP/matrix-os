@@ -1,3 +1,4 @@
+import { resolveClaudeNativeExecutable } from "./claude-native-executable.js";
 import { bindClaudeNativeSignedOut, type ClaudeNativeSignedOut } from './claude-native-signed-out.js';
 import { createClaudeNativeUsageReader } from './claude-native-usage.js';
 import { execFile, type ExecFileOptions } from 'node:child_process';
@@ -61,7 +62,7 @@ export function createClaudeNativeAccountMetadataReader(input: {
     await assertAvailable();
     let stdout: string | Buffer, failed = false;
     try {
-      ({ stdout } = await (input.runCommand ?? nativeCommand)(input.executable, ['auth', 'status', '--json'], {
+      ({ stdout } = await (input.runCommand ?? nativeCommand)(input.executable === 'claude' ? resolveClaudeNativeExecutable(home, env) : input.executable, ['auth', 'status', '--json'], {
         cwd: home, env, encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 8192, windowsHide: true,
       }));
     } catch (error: unknown) {
