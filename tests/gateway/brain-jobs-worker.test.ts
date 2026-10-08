@@ -404,7 +404,10 @@ describe("brain job worker", () => {
     const jobId = await queue("sync");
     let calls = 0;
     const heartbeat = vi.spyOn(store, "heartbeat");
-    heartbeat.mockImplementationOnce(() => Promise.reject(new SyntaxError("beat")));
+    // The check before the first step passes; the first timed heartbeat fails.
+    heartbeat.mockImplementationOnce(function (this: BrainJobStore, ...args) {
+      return BrainJobStore.prototype.heartbeat.apply(this, args);
+    }).mockImplementationOnce(() => Promise.reject(new SyntaxError("beat")));
     start({ sync: async () => {
       calls += 1;
       await new Promise((resolve) => setTimeout(resolve, 40));
