@@ -10,6 +10,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { focusOrOpenShellWindow, openShellWindow, panCanvasToShellWindow, shellWindowXOffset } from "@/lib/shell-window-focus";
 import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
 import { MissionControl } from "./MissionControl";
 import { DotGrid } from "./DotGrid";
@@ -65,10 +66,7 @@ import {
   loadShellSnapshot,
   type ShellSnapshotScope,
 } from "@/lib/shell-snapshot-cache";
-import {
-  isRetiredBuiltInAppPath,
-  normalizeBuiltInAppPath,
-} from "@/lib/builtin-apps";
+import { normalizeBuiltInAppPath } from "@/lib/builtin-apps";
 import {
   DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS,
   findAppByName,
@@ -159,7 +157,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
-  const dockXOffset = dock.position === "left" ? dock.size + 16 : 20;
+  const dockXOffset = shellWindowXOffset(dock);
 
   const minimizeTimers = useRef<Map<string, ReturnType<typeof setTimeout>> | null>(null);
   if (minimizeTimers.current === null) minimizeTimers.current = new Map();
@@ -326,62 +324,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     wmSetWindows((prev) => prev.filter((w) => w.path !== appPath && !w.path.startsWith(appPath + ":")));
   };
 
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the command-registration useEffect dependency array (L~1435) and feeds loadModules' deps (also a useEffect dependency); a fresh function each render would re-fire both effects every render
-  const openWindow = useCallback((name: string, path: string) => {
-    if (isRetiredBuiltInAppPath(path)) return;
-    // Open without minimizing other windows — allow multiple apps visible.
-    // Terminal is a singleton app now; individual shell sessions live inside
-    // its Paper drawer rather than separate OS windows.
-    wmOpenWindow(name, path, dockXOffset);
-
-    // In canvas mode, pan to center on the window after it opens/focuses
-    if (useDesktopMode.getState().mode === "canvas") {
-      requestAnimationFrame(() => {
-        const win = useWindowManager.getState().windows.find((w) => (
-          w.path === path && (path !== "__terminal__" || w.terminalPersistence !== "ephemeral")
-        ));
-        if (win) {
-          const cRect = useCanvasTransform.getState().containerRect;
-          useCanvasTransform.getState().focusOnWindow(
-            win,
-            cRect?.width ?? window.innerWidth,
-            cRect?.height ?? window.innerHeight,
-          );
-        }
-      });
-    }
-  }, [wmOpenWindow, dockXOffset]);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity feeds focusOrOpen's deps, and focusOrOpen is a useEffect dependency (L~930); a fresh function each render would re-fire the launch-path effect every render
-  const focusCanvasWindow = useCallback((winId: string) => {
-    if (useDesktopMode.getState().mode !== "canvas") return;
-    requestAnimationFrame(() => {
-      const win = useWindowManager.getState().getWindow(winId);
-      if (!win || win.minimized) return;
-      const cRect = useCanvasTransform.getState().containerRect;
-      useCanvasTransform.getState().focusOnWindow(
-        win,
-        cRect?.width ?? window.innerWidth,
-        cRect?.height ?? window.innerHeight,
-      );
-    });
-  }, []);
-
-  // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity consumed by the launch-path useEffect dependency array (L~930); a fresh function each render would re-fire that effect every render
-  const focusOrOpen = useCallback((name: string, path: string) => {
-    const existing = useWindowManager.getState().windows.find(
-      (w) => path === "__terminal__"
-        ? w.path === path && w.terminalPersistence !== "ephemeral"
-        : w.path === path || w.path.startsWith(path + ":"),
-    );
-
-    if (existing) {
-      wmRestoreAndFocusWindow(existing.id);
-      focusCanvasWindow(existing.id);
-    } else {
-      openWindow(name, path);
-    }
-  }, [focusCanvasWindow, openWindow, wmRestoreAndFocusWindow]);
+  // Opening, focusing and the Canvas pan are shared with apps that open another app ("Open in Chat"). They are module
+  // functions, so their identity never changes and the effects that list them never re-fire for them.
+  const openWindow = openShellWindow;
+  const focusCanvasWindow = panCanvasToShellWindow;
+  const focusOrOpen = focusOrOpenShellWindow;
 
   // Keep every app entry point on one routing path. Some installed catalog
   // apps (notably Browser) intentionally map to shell-owned behavior instead

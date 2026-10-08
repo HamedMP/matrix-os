@@ -1,6 +1,6 @@
 "use client";
 import {COMPANY_DRIVE_MOBILE_CHAT_EVENT,useCompanyDriveChatDraft} from "@/stores/company-drive-chat-draft";
-import {useWindowManager} from "@/hooks/useWindowManager";
+import {focusOrOpenShellWindow} from "@/lib/shell-window-focus";
 
 import {
   OrganizationDriveDownloadSchema,
@@ -190,8 +190,7 @@ export function OrganizationDrivesView({ requestedScopeId, requestedIntentId, dr
                 const reference=companyDriveChatReference(active,selection.kind==="file"?{kind:"file",fileId:selection.file.id,version:selection.file.version,path:selection.file.path}:selection.kind==="folder"?selection:undefined);
                 useCompanyDriveChatDraft.getState().open(reference,draftIdentity);
                 if(mobile){window.dispatchEvent(new Event(COMPANY_DRIVE_MOBILE_CHAT_EVENT));return;}
-                const manager=useWindowManager.getState(),existing=manager.windows.find(window=>window.path==="__chat__");
-                if(existing){manager.restoreWindow(existing.id);manager.focusWindow(existing.id);}else manager.openWindow("Chat","__chat__",0);
+                focusOrOpenShellWindow("Chat","__chat__");
               }:undefined}
               onDownload={file => void download(active, file)} hasMore={Boolean(active.snapshot.nextCursor)}
               pageLimitReached={(active.pages ?? 1) >= 20} onLoadMore={() => void loadMore(active)}
