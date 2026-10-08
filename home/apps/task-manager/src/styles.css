@@ -521,3 +521,28 @@ input, textarea, select { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+/* Board columns remain spatial, with soft trays and individual task cards. */
+:root .board-shell { background: transparent; }
+.board-shell .app-icon { border-radius: 15px; box-shadow: var(--family-lift); }
+.board-shell .search-field { border-radius: 14px; box-shadow: var(--family-inset); }
+.board-shell .column { background: color-mix(in srgb, var(--app-card) 55%, transparent); border: 1px solid var(--app-border); border-radius: var(--family-radius); box-shadow: var(--shadow); }
+.board-shell .column__header { padding: 14px 12px 8px; }
+.board-shell .column__title { min-width: 0; }
+.board-shell .column__title h2 { overflow-wrap: anywhere; }
+.board-shell .column__cards { padding: 0 12px 12px; }
+.board-shell .task-card { border-radius: 18px; background: var(--family-surface); box-shadow: var(--family-lift); padding: 18px; }
+.board-shell :is(.task-card__title, .task-card__desc) { overflow-wrap: anywhere; }
+.board-shell .column__quick-add { padding: 0 12px 12px; }
+.board-shell .column__quick-add input { min-width: 0; border-radius: 14px; background: var(--app-card); }
+.board-shell .column-adder { border-radius: var(--family-radius); }
+:root .detail-title { overflow-wrap: anywhere; }
+:root .detail-sheet .field { text-transform: none; letter-spacing: 0; }
+@media (max-width: 720px) {
+ .board-shell .column { flex-basis: min(310px, calc(100vw - 32px)); }
+ .board-shell .header-tools { min-width: 0; }
+ .board-shell .search-field { min-width: 0; }
+ .board-shell .column__header { flex-wrap: wrap; }
+ .board-shell .column__menu { margin-left: auto; }
+ :root .detail-sheet { border-radius: 24px 24px 0 0; }
+}

@@ -82,3 +82,47 @@ h1 { letter-spacing: -.045em; }
 }
 
 :root[data-app] .button--primary,:root[data-app] .primary-btn,:root[data-app] .exp-primary,:root[data-app] .focus-start,:root[data-app] .key--equals,:root[data-app] .primary-action { color:var(--identity-on-accent); }
+
+/* Sculpted surfaces use host neutrals; identity tokens supply the colored details. */
+:root:root:root {
+  --family-surface: linear-gradient(155deg, color-mix(in srgb, var(--app-card) 96%, var(--app-fg)), var(--app-card) 60%);
+  --family-inset: inset 0 1px 3px color-mix(in srgb, var(--app-fg) 7%, transparent);
+  --family-lift: inset 0 1px 0 color-mix(in srgb, var(--app-card) 80%, transparent), 0 8px 24px color-mix(in srgb, var(--app-fg) 6%, transparent);
+  --family-radius: var(--matrix-radius, clamp(18px, 3vw, 26px));
+  --family-control-radius: var(--matrix-radius, 14px);
+  --shadow: 0 3px 10px color-mix(in srgb, var(--app-fg) 5%, transparent);
+  --shadow-lg: 0 14px 38px color-mix(in srgb, var(--app-fg) 8%, transparent);
+  --app-font: var(--matrix-font-sans, "Inter", ui-sans-serif, system-ui, sans-serif);
+}
+body { font-family: var(--app-font); }
+:root :is(.button, .primary-btn, .secondary-btn, .exp-primary, .primary-action) {
+  min-height: 44px;
+  border-radius: var(--family-control-radius);
+}
+:root :is(.button--primary, .primary-btn, .exp-primary, .primary-action) {
+  background: var(--app-accent);
+  color: var(--app-primary-fg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--app-card) 25%, transparent), 0 4px 10px color-mix(in srgb, var(--app-accent) 16%, transparent);
+}
+:root :is(.button--primary, .primary-btn, .exp-primary, .primary-action):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-accent) 92%, var(--app-fg));
+}
+:root :is(.search-field, .exp-field, .field) :is(input, select, textarea) { min-width: 0; }
+:root :is(.search-field, .search-bar):focus-within {
+  border-color: var(--app-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 15%, transparent);
+}
+:root :is(button, input, textarea, select, [contenteditable="true"]):focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 3px;
+}
+:root :is(.error-banner, .banner, .exp-banner, .exp-warning, .demo-notice, .error-notice) { overflow-wrap: anywhere; }
+:root :is(.search-card, .edit-card, .ring-card, .exp-overlay__panel, .search-panel, .detail-sheet, .inspector) {
+  border: 1px solid var(--app-border);
+  border-radius: var(--family-radius);
+  box-shadow: var(--shadow-lg);
+}
+:root[data-app] .tab--active { color: var(--app-text-accent); }
+@media (pointer: coarse) {
+  :root :is(.loc-chip__remove, .wb-boarditem__actions) { opacity: 1; }
+}

@@ -1,32 +1,140 @@
 @import "./app-foundation.css";
-/* Game boards keep their mechanics and geometry; their surrounding controls
-   use calmer surfaces and a stable dynamic viewport. Never enlarge cells
-   globally: a nine-column board cannot fit 44px cells on a narrow phone. */
-.chess-app, .tetris-app, .snake-app, .sol-app, .bg-app, .ms-root, .app { height: 100dvh; background: var(--app-bg); }
-.chess-app .stage-title h1, .snake-app h1, .app .title { letter-spacing: -.04em; font-weight: 600; }
-.chess-app .eyebrow, .snake-app .eyebrow { text-transform: none; letter-spacing: 0; font-size: 12px; }
-.chess-app .board-frame { box-shadow: 0 12px 28px rgba(30, 35, 42, .1); }
-.chess-app .ghost-btn, .chess-app .seg-btn, .chess-app .primary-btn,
+
+/* Game-specific accents, shared porcelain chrome. Host neutral tokens stay
+   authoritative; board ink and geometry remain local to each game. */
+:root:root:root {
+  --app-bg: var(--matrix-bg, var(--game-wash, #eef0fa));
+  --app-fg: var(--matrix-fg, #202338);
+  --app-card: var(--matrix-card, #ffffff);
+  --app-muted: var(--matrix-muted, #f0f1f7);
+  --app-muted-fg: var(--matrix-muted-fg, #64687d);
+  --app-border: var(--matrix-border, #dedfeb);
+  --app-accent: var(--game-accent, #5954bd);
+  --app-primary: var(--app-accent);
+  --app-primary-fg: #ffffff;
+  --app-radius: var(--matrix-radius, 24px);
+  --game-text-accent: color-mix(in srgb, var(--app-fg) 80%, var(--app-accent));
+  --game-shadow: 0 4px 12px rgba(38, 35, 70, .05), 0 16px 36px rgba(38, 35, 70, .06);
+  --game-relief: inset 0 1px 1px rgba(255, 255, 255, .45), 0 4px 10px rgba(38, 35, 70, .1);
+  font-family: var(--app-font, var(--matrix-font-sans, system-ui, sans-serif));
+  color-scheme: light dark;
+}
+body { color: var(--app-fg); }
+.chess-app, .tetris-app, .snake-app, .sol-app, .bg-app, .ms-root, .app {
+  height: 100dvh;
+  background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--app-accent) 7%, transparent), transparent 60%), var(--app-bg);
+}
+.chess-app .stage-title h1, .snake-app h1, .tetris-app h1, .ms-title, .app .title {
+  letter-spacing: -.045em;
+  font-weight: 650;
+}
+.chess-app .eyebrow, .snake-app .eyebrow, .tetris-app .preview__label,
+.tetris-app .stat span, .snake-app .stat span, .app .score-label,
+.sol-stat-label, .bg-pip .label, .ms-stat-label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+  font-weight: 550;
+}
+.chess-app .capture-tray, .chess-app .history-card, .chess-app .promo-card,
+.snake-app .board-panel, .snake-app .control-card, .snake-app .overlay-card,
+.tetris-app .stat, .tetris-app .preview, .tetris-app .overlay__card,
+.ms-root .ms-frame, .app .score-card, .sol-app .sol-stat, .sol-app .sol-win-card {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--app-card);
+  box-shadow: var(--game-shadow);
+}
+.chess-app .capture-tray, .chess-app .history-card,
+.snake-app .control-card, .tetris-app .preview { padding: 18px; }
+.chess-app .product-mark, .snake-app .brand-mark, .tetris-app .brand__mark, .sol-app .sol-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--app-accent);
+  color: #ffffff;
+  box-shadow: var(--game-relief);
+}
+.chess-app .ghost-btn, .chess-app .seg-btn, .chess-app .primary-action, .chess-app .secondary-action,
 .tetris-app .primary-action, .tetris-app .secondary-action, .tetris-app .icon-action,
-.snake-app .primary-action, .snake-app .secondary-action, .snake-app .icon-action,
-.sol-app .sol-btn, .bg-app .bg-btn, .ms-root .ms-diff-btn, .ms-root .ms-reset,
-.app .btn { min-height: 44px; }
-.tetris-app .board-wrap { border-radius: 10px; }
-.snake-app .board-panel { border-radius: 18px; box-shadow: none; border: 1px solid var(--app-border); }
-.snake-app .scoreboard { border-radius: 10px; box-shadow: none; }
-.sol-app .sol-bar { border-bottom: 1px solid var(--app-border); }
-.bg-app .bg-board-wrap { box-shadow: 0 12px 30px rgba(39, 32, 25, .14); }
-.ms-root .ms-frame { border-radius: 14px; box-shadow: none; border: 1px solid var(--app-border); }
-.app .score-card { border-radius: 10px; box-shadow: none; }
-.app .board { border-radius: 14px; }
-/* Board symbols use fixed game ink. Keep these small play surfaces independent
-   of the surrounding Matrix theme, including injected dark host palettes. */
+.snake-app .primary-action, .snake-app .ghost-action, .snake-app .diff-chip,
+.sol-app .sol-btn, .sol-app .seg, .bg-app .bg-btn,
+.ms-root .ms-diff-btn, .ms-root .ms-reset, .app .btn, .app .banner-dismiss {
+  min-height: 44px;
+  border-radius: 999px;
+  font-weight: 600;
+  transition: background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.chess-app .ghost-btn, .tetris-app .icon-action, .bg-app .bg-btn.icon, .app .banner-dismiss { min-width: 44px; }
+.chess-app .primary-action, .tetris-app .primary-action, .snake-app .primary-action,
+.sol-app .sol-btn--primary, .sol-app .sol-btn--accent, .bg-app .bg-btn.primary, .app .btn.primary {
+  background: var(--app-accent);
+  color: #ffffff;
+  box-shadow: var(--game-relief);
+}
+.chess-app .secondary-action, .chess-app .ghost-btn, .tetris-app .secondary-action,
+.tetris-app .icon-action, .snake-app .ghost-action, .sol-app .sol-btn,
+.bg-app .bg-btn, .app .btn.ghost {
+  border: 1px solid var(--app-border);
+}
+.chess-app .seg, .sol-app .sol-segment, .ms-root .ms-difficulty {
+  padding: 4px;
+  border: 1px solid var(--app-border);
+  border-radius: 28px;
+  background: var(--app-muted);
+}
+.chess-app .seg-btn--on, .sol-app .seg--on, .ms-root .ms-diff-btn.is-active {
+  color: var(--game-text-accent);
+  box-shadow: 0 2px 6px rgba(38, 35, 70, .08);
+}
+.chess-app .status-pill, .bg-app .bg-turn {
+  border: 1px solid var(--app-border);
+  box-shadow: none;
+  border-radius: 999px;
+}
+.snake-app .diff-chip { border-radius: 16px; }
+.snake-app .diff-chip--active strong, .snake-app .stat--best strong,
+.tetris-app .overlay__stat, .chess-app .status-pill--thinking { color: var(--game-text-accent); }
+.snake-app .overlay-icon { background: var(--app-accent); color: #ffffff; box-shadow: var(--game-relief); }
+.chess-app .board, .tetris-app .board, .app .board { box-shadow: var(--game-shadow); }
+.chess-app .board-frame { box-shadow: none; }
+.tetris-app .board-wrap { border-radius: var(--app-radius); min-width: 0; }
+.bg-app .bg-board-wrap { box-shadow: none; }
+.bg-app .bg-board { filter: drop-shadow(0 12px 24px rgba(38, 35, 70, .15)); }
+
+/* Fixed game ink keeps suits, numbers and both piece colors legible in any
+   selected host theme. These small play surfaces have their own palette. */
 .sol-app .sol-card--black, .sol-app .sol-card--red { background: #ffffff; }
 .sol-app .sol-card--red { color: #b91c1c; }
 .ms-root .ms-cell.is-open:not(.is-exploded) { background: #fafaf5; color: #172033; }
 .bg-app .chk-count { fill: #1c1f1a; stroke: #f4f1e8; }
-@media (max-width: 680px) {
- .chess-app, .tetris-app, .snake-app, .bg-app, .ms-root, .app { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
- .sol-app .sol-bar { padding-top: max(12px, env(safe-area-inset-top)); }
- .chess-app select, .bg-app select, .ms-root input, .ms-root select { font-size: 16px; min-height: 44px; }
+.chess-app .piece--w { -webkit-text-stroke: .7px #343947; }
+.chess-app .piece--b { -webkit-text-stroke: .6px #f6f4ee; }
+.chess-app .capture-glyph { color: var(--app-fg); }
+.chess-app .capture-glyph--w { -webkit-text-stroke: .5px var(--app-fg); color: var(--app-card); }
+
+@media (prefers-color-scheme: dark) {
+  :root:root:root {
+    --app-bg: var(--matrix-bg, #1d2234);
+    --app-fg: var(--matrix-fg, #f2f1f8);
+    --app-card: var(--matrix-card, #292d43);
+    --app-muted: var(--matrix-muted, #33364e);
+    --app-muted-fg: var(--matrix-muted-fg, #bbbace);
+    --app-border: var(--matrix-border, #42455e);
+    color-scheme: dark;
+  }
+}
+@media (max-width: 760px) {
+  .chess-app, .tetris-app, .snake-app, .bg-app, .ms-root, .app {
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .sol-app .sol-bar { padding-top: max(16px, env(safe-area-inset-top)); }
+  .sol-app .sol-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .chess-app select, .bg-app select, .ms-root input, .ms-root select { font-size: 16px; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

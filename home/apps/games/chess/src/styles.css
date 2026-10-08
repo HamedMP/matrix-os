@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #4e627f;
+  --game-wash: #eaf0f8;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -56,7 +58,10 @@ body {
   align-items: center;
   gap: 16px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
+.board-stage > * { flex-shrink: 0; }
 
 .stage-head {
   display: flex;
@@ -554,4 +559,31 @@ body {
     grid-template-rows: auto auto;
     overflow-y: auto;
   }
+}
+
+/* A stable board palette keeps dark and light pieces separate from host chrome. */
+:root { --sq-light: #ece8dd; --sq-dark: #8292a8; }
+.stage-title h1 { font-size: 24px; }
+.board-stage { min-height: 0; }
+.board-frame { flex-shrink: 0; }
+.board-actions { flex-wrap: wrap; }
+.side-panel { overflow-y: auto; }
+.difficulty { border-radius: 999px; min-height: 44px; }
+.difficulty select { min-height: 32px; padding-right: 6px; }
+.capture-row { flex-wrap: wrap; }
+.capture-label { width: 100%; }
+.promo-card { max-width: calc(100vw - 24px); }
+.promo-options { flex-wrap: wrap; justify-content: center; }
+@media (max-width: 900px) {
+  .chess-app { grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; padding: 16px; }
+}
+@media (max-width: 760px) {
+  .chess-app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; overflow-y: auto; }
+  .board-stage { gap: 12px; min-height: auto; overflow: visible; }
+  .setup-bar { justify-content: flex-start; }
+  .side-panel { overflow: visible; }
+  .capture-row { flex-wrap: nowrap; }
+  .capture-label { width: 96px; }
+  .history-card { min-height: 180px; }
+  .move-history { max-height: 260px; }
 }
