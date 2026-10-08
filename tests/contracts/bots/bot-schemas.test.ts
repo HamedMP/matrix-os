@@ -74,6 +74,16 @@ describe("bot interaction contracts", () => {
     }).kind).toBe("approval");
   });
 
+  it("accepts disclosed account access and legacy choices while rejecting forged effects", () => {
+    const choice = { kind: "account_choice", service: "gmail", options: [{ connectionId: "conn_work", label: "Work" }] };
+    expect(BotInteractionPayloadSchema.parse(choice)).toEqual(choice);
+    expect(BotInteractionPayloadSchema.parse({ ...choice, access: ["read"] })).toEqual({ ...choice, access: ["read"] });
+    for (const access of [[], ["read", "read"], ["admin"]]) {
+      expect(BotInteractionPayloadSchema.safeParse({ ...choice, access }).success).toBe(false);
+    }
+    expect(BotInteractionPayloadSchema.safeParse({ ...choice, access: ["read"], ownerId: "forged" }).success).toBe(false);
+  });
+
   it("rejects empty account choices, duplicates, or free-text accounts", () => {
     const choice = { kind: "account_choice", service: "gmail", options: [{ connectionId: "conn_1", label: "Work" }] };
     expect(BotInteractionPayloadSchema.safeParse({ ...choice, options: [] }).success).toBe(false);

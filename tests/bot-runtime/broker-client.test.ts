@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type Server } from "node:net";
+import { createServer, Socket, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BotBrokerError, createBotBrokerClient } from "../../packages/bot-runtime/src/broker-client.js";
 
 const RUNTIME = `runtime_${"a".repeat(32)}`;
@@ -37,6 +37,20 @@ const client = (socketPath: string, timeoutMs = 2_000) => createBotBrokerClient(
 });
 
 describe("bot broker client", () => {
+  it("allows the bounded Jev evaluation deadline without widening ordinary reads or explicit overrides", async () => {
+    const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+      result: { ok: true, content: [{ type: "text", text: "confirmed" }] } }));
+    const timeout = vi.spyOn(Socket.prototype, "setTimeout");
+    try {
+      const defaultClient = createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", requestIdFactory: () => REQUEST_ID });
+      await defaultClient.tool({ toolCallId: "call_long", capability: "jev.inbox", args: { operation: "evaluate", receipt: "a".repeat(64) } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(635_000);
+      await defaultClient.tool({ toolCallId: "call_read", capability: "jev.inbox", args: { operation: "discover" } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(30_000);
+      await client(socketPath, 1000).tool({ toolCallId: "call_override", capability: "jev.inbox", args: { operation: "evaluate", receipt: "a".repeat(64) } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(1000);
+    } finally { timeout.mockRestore(); }
+  });
   it("sends one authenticated frame per request and validates the typed result", async () => {
     const { socketPath, frames } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true, result: { ok: true, content: [{ type: "text", text: "2 accounts" }] } }));
     const result = await client(socketPath).tool({ toolCallId: "call_1", capability: "integration.inventory", args: {} });

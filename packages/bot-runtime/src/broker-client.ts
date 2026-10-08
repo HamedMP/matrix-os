@@ -109,7 +109,9 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     if (!frame.success) throw new BotBrokerError("invalid_arguments");
     const tool = frame.data.action === "bot.tool" ? frame.data.tool : undefined;
     const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
-    const raw = await exchange(waitsForApproval && options.timeoutMs === undefined
+    // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
+    const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
+    const raw = await exchange((waitsForApproval || longJevOperation) && options.timeoutMs === undefined
       ? { ...options, timeoutMs: 10 * 60_000 + 35_000 } : options, frame.data);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
