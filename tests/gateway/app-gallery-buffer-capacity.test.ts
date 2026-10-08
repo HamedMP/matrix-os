@@ -44,6 +44,18 @@ describe("gallery bounded read allocations", () => {
     expect(bytes.buffer.byteLength).toBe(content.length);
   });
 
+  it("keeps retained content bounded when another library enlarges the global buffer pool", async () => {
+    const originalPoolSize = Buffer.poolSize;
+    Buffer.poolSize = 65536;
+    try {
+      const content = Buffer.alloc(9000, 42);
+      const { directory } = directoryWithFile(content);
+      const bytes = await directory.readFile("medium.txt", DEFAULT_LIMITS.maxFileBytes);
+      expect(bytes).toEqual(content);
+      expect(bytes.buffer.byteLength).toBe(content.length);
+    } finally { Buffer.poolSize = originalPoolSize; }
+  });
+
   it("accepts content exactly at the byte limit", async () => {
     const { directory } = directoryWithFile(Buffer.from("12345"));
     expect(String(await directory.readFile("exact.txt", 5))).toBe("12345");
