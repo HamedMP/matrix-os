@@ -113,6 +113,41 @@ describe("github adapter", () => {
     expect(receipts[0]).toMatchObject({ status: "partial", errorCode: "rate_limited", nextAction: "retry_later" });
   });
 
+  it("returns a failure held from the last page before calling GitHub again, even when a retry would succeed", async () => {
+    const base = fixtureResponder(listing(() => fixtureIssues));
+    let limited = true;
+    const { adapter, client } = adapterFor((resource, call) => {
+      if (resource.kind !== "pull" || !limited) return base(resource, call);
+      limited = false;
+      return { ok: false, code: "rate_limited", retryAfterSeconds: 30 };
+    });
+    expect(await run(adapter)).toMatchObject({
+      status: "partial", pages: 1, written: 1, errorCode: "rate_limited", retryAfterSeconds: 30,
+    });
+    expect(client.calls.map((call) => call.kind)).toEqual(["issues", "pull"]);
+    // The failure is returned once; the next run continues from the committed cursor.
+    expect(await run(adapter)).toMatchObject({ status: "succeeded", caughtUp: true, written: 4 });
+  });
+
+  it("drops a held failure when the next call does not continue from the page that held it", async () => {
+    const base = fixtureResponder(listing(() => fixtureIssues));
+    let limited = true;
+    const { adapter } = adapterFor((resource, call) => {
+      if (resource.kind !== "pull" || !limited) return base(resource, call);
+      limited = false;
+      return { ok: false, code: "provider_timeout" };
+    });
+    const read = (cursor: string | null) => adapter.readPage({
+      scope: scopeA, sourceId, externalRef, config: githubConfig, cursor, limits: { maxUpserts: 100, maxDeletions: 200, maxRefs: 5_000 },
+      signal: new AbortController().signal, documents: harness.repository, now: () => new Date("2026-06-01T00:00:00Z"),
+    });
+    const first = await read(null);
+    expect(first).toMatchObject({ ok: true, page: { caughtUp: false } });
+    // The page's batch never committed: the runner reads from the old cursor again, so GitHub is asked again.
+    const again = await read(null);
+    expect(again).toMatchObject({ ok: true, page: { caughtUp: true } });
+  });
+
   it("fails the run on listing errors and unreadable cursors or output", async () => {
     const down = adapterFor(() => ({ ok: false, code: "provider_unavailable" }));
     expect(await run(down.adapter)).toMatchObject({ status: "failed", errorCode: "provider_unavailable" });

@@ -2,7 +2,8 @@
  * GitHub source adapter: one readPage call reads the repository's issue listing (issues and pull requests, oldest
  * update first, from the cursor's watermark) and maps up to a bounded number of items to documents. A page stops
  * early at its item, provider call, document, ref and time limits, or at the first provider failure (the items read
- * so far are still returned; the failure comes back on the next call). Each item moves the cursor only once its
+ * so far are still returned; the failure comes back on the next call that continues from that page, before any provider
+ * call, so a retry never hides it or ignores its retryAfterSeconds). Each item moves the cursor only once its
  * documents are in the page, so a page's cursor never runs ahead of what it writes. A pull request too big for one
  * page stays open in the cursor and continues on the next page. Document ids use the source's stored external ref; a
  * config whose repository is another one is refused.
@@ -37,6 +38,8 @@ function hashCursor(cursor: string): string {
 function fail(code: BrainSourceErrorCode, retryAfterSeconds?: number): BrainSourceReadResult {
   return retryAfterSeconds === undefined ? { ok: false, code } : { ok: false, code, retryAfterSeconds };
 }
+
+type GithubFailure = { readonly ok: false; readonly code: BrainSourceErrorCode; readonly retryAfterSeconds?: number };
 
 /** What became of an item: all of it is in the page, only its first `written` children are, or none of it fit. */
 type Added = { readonly done: true } | { readonly done: false; readonly written: number } | null;
@@ -117,6 +120,8 @@ function advance(cursor: BrainGithubCursor, updatedAt: string, number: number, p
 export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAdapter<BrainGithubSourceConfig> {
   let rows: ReturnType<typeof githubConditionalRows> | null = null;
   const pending: { key: string; validators: BrainGithubValidators }[] = [];
+  /** A failure that ended a non-empty page, held for the call continuing from that page's cursor. */
+  let held: { readonly failure: GithubFailure; readonly cursor: string } | null = null;
   const client = deps.createClient({
     lookup: (key) => rows === null ? Promise.resolve(null) : rows.lookup(key),
     remember: (key, validators) => {
@@ -126,7 +131,7 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
 
   async function readItem(
     context: BrainSourceReadContext<BrainGithubSourceConfig>, doc: GithubDocumentContext, issue: GithubIssue,
-  ): Promise<{ ok: true; documents: GithubItemDocuments | null } | { ok: false; code: BrainSourceErrorCode; retryAfterSeconds?: number }> {
+  ): Promise<{ ok: true; documents: GithubItemDocuments | null } | GithubFailure> {
     const isPull = issue.pull_request !== undefined;
     const include = context.config.include;
     if (isPull ? !include.pullRequests : !include.issues) return { ok: true, documents: null };
@@ -144,6 +149,11 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
   return {
     kind: "github",
     async readPage(context) {
+      const deferred = held;
+      held = null;
+      if (deferred !== null && deferred.cursor === context.cursor) {
+        return fail(deferred.failure.code, deferred.failure.retryAfterSeconds);
+      }
       if (githubExternalRef(context.config.repo) !== context.externalRef) return fail("config_invalid");
       const doc: GithubDocumentContext = { externalRef: context.externalRef, repo: context.config.repo };
       const stored = context.cursor === null ? null : decodeGithubCursor(context.cursor);
@@ -171,6 +181,7 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
       let items = 0;
       let stopped = false;
       let progressed = false;
+      let failure: GithubFailure | null = null;
       for (const issue of parsed.data) {
         const updatedAt = toGithubTime(Date.parse(issue.updated_at));
         if (updatedAt < cursor.since || (updatedAt === cursor.since && cursor.done.includes(issue.number))) continue;
@@ -186,6 +197,7 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
         const item = await readItem(context, doc, issue);
         if (!item.ok) {
           if (page.empty) return fail(item.code, item.retryAfterSeconds);
+          failure = item;
           stopped = true;
           break;
         }
@@ -212,6 +224,7 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
       }
       const caughtUp = !stopped && !full;
       const nextCursor = encodeGithubCursor(cursor);
+      if (failure !== null) held = { failure, cursor: nextCursor };
       if (caughtUp && pending.length > 0 && cursor.since === request.since && cursor.page === request.page) {
         await conditional.persist(pending, hashCursor(nextCursor), nextCursor === context.cursor, context.now());
       }
