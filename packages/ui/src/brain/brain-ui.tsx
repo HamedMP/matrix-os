@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 import { ExternalLink, LoaderCircle, TriangleAlert } from "lucide-react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
@@ -46,6 +46,45 @@ export function BrainEmpty({ title, children }: { readonly title: string; readon
       <p className="font-medium">{title}</p>
       {children && <div className="mt-2 text-muted-foreground">{children}</div>}
     </div>
+  );
+}
+
+/**
+ * A confirm that floats over the content below its trigger, so opening it moves nothing: it spans the nearest
+ * positioned ancestor, just under it, and paints over the view's unpositioned content without a z-index of its own.
+ * The trigger toggles `open` (the caller's state); a click outside the trigger and the panel, or Escape, closes it
+ * through `onClose`.
+ */
+export function BrainConfirm({ open, onClose, label, trigger, children }: {
+  readonly open: boolean; readonly onClose: () => void; readonly label: string; readonly trigger: ReactNode;
+  readonly children: ReactNode;
+}) {
+  const anchor = useRef<HTMLSpanElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useEffectEvent(onClose);
+  useEffect(() => {
+    if (!open) return undefined;
+    const inside = (target: EventTarget | null) => target instanceof Node
+      && (anchor.current?.contains(target) === true || panel.current?.contains(target) === true);
+    const onPointerDown = (event: PointerEvent) => { if (!inside(event.target)) close(); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+  return (
+    <>
+      <span ref={anchor} className="contents">{trigger}</span>
+      {open && (
+        <div ref={panel} role="dialog" aria-label={label}
+          className={`absolute inset-x-0 top-full mt-2 grid gap-2 rounded-md border p-3 text-sm ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
+          {children}
+        </div>
+      )}
+    </>
   );
 }
 
