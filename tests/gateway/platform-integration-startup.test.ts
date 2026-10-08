@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { integrationClerkIdForPrincipal } from "../../packages/gateway/src/integrations/principal-identity.js";
 import { createIntegrationUserResolver, initializePlatformIntegrations } from "../../packages/gateway/src/startup/platform-integrations.js";
 
 describe("platform integration startup identity", () => {
@@ -33,6 +34,24 @@ describe("platform integration startup identity", () => {
     expect(await response.json()).toEqual({ id: "dev-owner" });
     expect(raw).toHaveBeenCalledOnce();
     expect(raw.mock.calls[0]?.[0]).toMatch(/ON CONFLICT \(clerk_id\) DO UPDATE/);
+  });
+});
+
+describe("integration identity of the dev principal", () => {
+  it("stores the dev connection under the Clerk id the brain reads for the dev principal", async () => {
+    const env = { NODE_ENV: "development", MATRIX_HANDLE: "dev", HOSTNAME: "local" };
+    const raw = vi.fn(async () => ({ rows: [{ id: "dev-owner" }] }));
+    const app = new Hono();
+    const resolve = createIntegrationUserResolver({ raw } as unknown as PlatformDb, env);
+    app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
+    await app.request("/identity");
+    const stored = (raw.mock.calls[0] as unknown as [string, string[]])[1][0];
+    expect(stored).toBe("dev");
+    expect(integrationClerkIdForPrincipal("default", env)).toBe(stored);
+    expect(integrationClerkIdForPrincipal("default", { ...env, MATRIX_CLERK_USER_ID: "clerk-dev" })).toBe("clerk-dev");
+    expect(integrationClerkIdForPrincipal("default", {})).toBe("default");
+    expect(integrationClerkIdForPrincipal("default", { ...env, NODE_ENV: "production" })).toBe("default");
+    expect(integrationClerkIdForPrincipal("user_2abc", env)).toBe("user_2abc");
   });
 });
 
