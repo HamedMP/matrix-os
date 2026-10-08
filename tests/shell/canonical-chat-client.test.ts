@@ -129,6 +129,18 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("deletes a Chat through the canonical route with its request id, and refuses a bad id before sending", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ chatId: "chat_shell_test", deletedAt: "2026-10-08T00:00:00.000Z" }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    await expect(client.delete("chat_shell_test", "req_delete_one")).resolves.toBeUndefined();
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/chat_shell_test?clientRequestId=req_delete_one&readStateVersion=1&fundingVersion=1",
+      expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) }),
+    );
+    await expect(client.delete("../chats", "req_delete_two")).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it("projects canonical parts without exposing raw structured payloads", () => {
     expect(projectCanonicalMessages([{
       id: "msg_shell_user", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",
