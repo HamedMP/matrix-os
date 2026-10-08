@@ -272,3 +272,165 @@ describe("Repository background runs", () => {
     expect(api.syncGit).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Model budget and other sources' background runs", () => {
+  const LINEAR = {
+    sourceId: "src_lin", kind: "linear" as const, label: "Linear ENG", externalRef: null, status: "active" as const,
+    revision: 3, createdAt: "x", updatedAt: "x", config: null, lastSync: null,
+  };
+
+  it("shows the model budget in the confirm and words a run that hit the spend limit", async () => {
+    const api = fakeBrainApi({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources: vi.fn(async () => ({ items: [], kinds: [] })),
+      claims: vi.fn(async () => ({
+        kind: null, path: null, match: null, items: [], nextCursor: null,
+        modelSpend: { windowStart: "x", capMicroUsd: 5_000_000, spentMicroUsd: 1_250_001, remainingMicroUsd: 3_749_999 },
+      })),
+      startJob: vi.fn(async () => ({ job: job("queued"), deduped: false })),
+      // The gateway's job: a run code the screens do not word, with the run's next action in the summary.
+      job: vi.fn(async () => job("failed", {
+        steps: 1, errorCode: "spend_cap_reached",
+        result: { status: "failed", errorCode: "spend_cap_reached", nextAction: "raise_budget", caughtUp: false },
+      })),
+    });
+    render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
+    await flush();
+    const repository = screen.getByRole("region", { name: "Repository" });
+    fireEvent.click(within(repository).getByRole("button", { name: "Find claims with the model" }));
+    await flush();
+    expect(api.claims).toHaveBeenCalledWith(PROJECT, { limit: 1 });
+    expect(within(repository).getByRole("group", { name: "Read with the model" }))
+      .toHaveTextContent("Model budget (per owner, all projects): 3.74 of 5.00 USD left for the last 30 days.");
+    // The spend is on screen by itself too, not only inside the confirm.
+    expect(within(repository).getByText("Model spend in the last 30 days, all projects: 1.25 of 5.00 USD."))
+      .toBeTruthy();
+    fireEvent.click(within(repository).getByRole("button", { name: "Read with the model" }));
+    await flush();
+    await advance(1_000);
+    expect(within(repository).getByRole("status")).toHaveTextContent(
+      "Finding claims with the model: failed. The model spend limit for the last 30 days is used up.",
+    );
+  });
+
+  it("syncs another source as a background job and reloads the list when it ends", async () => {
+    const sources = vi.fn(async () => ({ items: [LINEAR], kinds: [] }));
+    const api = fakeBrainApi({
+      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+      sources,
+      startJob: vi.fn(async () => ({ job: job("queued"), deduped: false })),
+      job: vi.fn()
+        .mockResolvedValueOnce(job("running", { steps: 1 }))
+        .mockResolvedValueOnce(job("failed", {
+          steps: 1, errorCode: "not_connected", result: { errorCode: "not_connected", nextAction: "connect_account" },
+        })),
+    });
+    render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
+    await flush();
+    const row = within(screen.getByRole("list", { name: "Connected sources" })).getByRole("listitem");
+    fireEvent.click(within(row).getByRole("button", { name: "Sync now" }));
+    await flush();
+    expect(api.startJob).toHaveBeenCalledWith(PROJECT, { kind: "sync", sourceId: "src_lin" });
+    expect(api.syncSource).not.toHaveBeenCalled();
+    expect(within(row).getByRole("status")).toHaveTextContent("Sync: waiting to start.");
+    expect(within(row).getByRole("button", { name: "Syncing..." })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "Pause" })).toBeDisabled();
+    await advance(1_000);
+    expect(within(row).getByRole("status")).toHaveTextContent("Sync: running, 1 step done.");
+    await advance(2_000);
+    expect(within(row).getByRole("status")).toHaveTextContent("Sync: failed. Connect the account in Settings.");
+    expect(within(row).getByRole("button", { name: "Sync now" })).toBeEnabled();
+    await flush();
+    expect(sources).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("useBrainJob", () => {
+  const view = (status: "queued" | "running" | "succeeded" = "queued", jobId = "job_1") => ({
+    jobId, status, steps: null, errorCode: null, nextAction: "",
+  });
+
+  it("ignores Stop and Check again when they do not apply, and drops answers for an older job", async () => {
+    let answer!: (value: unknown) => void;
+    let refuse!: (error: unknown) => void;
+    const poll = vi.fn(() => new Promise((resolve, reject) => { answer = resolve; refuse = reject; }));
+    const cancel = vi.fn()
+      .mockResolvedValueOnce(job("cancelled"))
+      .mockResolvedValueOnce({ jobId: "job_2", status: "cancelled" });
+    const onFinished = vi.fn();
+    const { result, unmount } = renderHook(() => useBrainJob({ poll, cancel, onFinished }));
+    act(() => { result.current.stop(); result.current.checkAgain(); });
+    expect(result.current.watch).toBeNull();
+    expect(cancel).not.toHaveBeenCalled();
+    act(() => { result.current.start("first", view()); });
+    await advance(1_000);
+    // A newer start in the same turn as the older job's answer: the answer is dropped.
+    await act(async () => { answer(job("succeeded")); result.current.start("second", view("running", "job_2")); });
+    expect(result.current.watch).toMatchObject({ name: "second", phase: "watching", view: { jobId: "job_2" } });
+    expect(onFinished).not.toHaveBeenCalled();
+    act(() => { result.current.stop(); });
+    act(() => { result.current.stop(); });
+    await flush();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    // An answer about another job does not end this one.
+    expect(result.current.watch?.phase).toBe("watching");
+    act(() => { result.current.stop(); });
+    await flush();
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(onFinished).toHaveBeenCalledWith("second", expect.objectContaining({ status: "cancelled" }));
+    act(() => { result.current.checkAgain(); });
+    expect(result.current.watch?.phase).toBe("finished");
+    act(() => { result.current.start("third", view()); });
+    await advance(1_000);
+    await act(async () => { refuse(apiError("offline")); result.current.start("fourth", view("running", "job_4")); });
+    expect(result.current.watch).toMatchObject({ name: "fourth", phase: "watching", error: null });
+    unmount();
+    await advance(10_000);
+    expect(poll).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports a job once when a poll and a stop both end it", async () => {
+    let answer!: (value: unknown) => void;
+    let stopped!: (value: unknown) => void;
+    const onFinished = vi.fn();
+    const { result } = renderHook(() => useBrainJob({
+      poll: () => new Promise((resolve) => { answer = resolve; }),
+      cancel: () => new Promise((resolve) => { stopped = resolve; }), onFinished,
+    }));
+    act(() => { result.current.start("sync", view()); });
+    await advance(1_000);
+    act(() => { result.current.stop(); });
+    await act(async () => answer(job("succeeded")));
+    await act(async () => stopped(job("cancelled")));
+    expect(onFinished).toHaveBeenCalledTimes(1);
+    expect(onFinished).toHaveBeenCalledWith("sync", expect.objectContaining({ status: "succeeded" }));
+  });
+
+  it("drops a stop answer for a job the view has left and labels an unknown run", async () => {
+    let stopped!: (value: unknown) => void;
+    let refused!: (error: unknown) => void;
+    const cancel = vi.fn()
+      .mockReturnValueOnce(new Promise((resolve) => { stopped = resolve; }))
+      .mockReturnValueOnce(new Promise((_, reject) => { refused = reject; }));
+    function Harness() {
+      const state = useBrainJob({ poll: () => new Promise(() => undefined), cancel, onFinished: () => undefined });
+      return (
+        <>
+          <button type="button" onClick={() => state.start("other", view())}>start</button>
+          <BrainJobProgress job={state} labels={{}} />
+        </>
+      );
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Background run: waiting to start.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    await act(async () => stopped(job("cancelled")));
+    expect(screen.getByRole("status")).toHaveTextContent("Background run: waiting to start.");
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "start" }));
+    await act(async () => refused(apiError("offline")));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
