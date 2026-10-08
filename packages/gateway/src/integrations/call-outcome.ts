@@ -40,6 +40,23 @@ export function getRetryAfterSeconds(err: unknown, fallback = 60): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function headerValue(err: object, name: string): unknown {
+  const { headers, rawResponse } = err as { headers?: unknown; rawResponse?: { headers?: unknown } };
+  const source = rawResponse?.headers ?? headers;
+  if (typeof source !== "object" || source === null) return undefined;
+  const get = (source as { get?: unknown }).get;
+  return typeof get === "function" ? get.call(source, name) : (source as Record<string, unknown>)[name];
+}
+
+// GitHub's primary and secondary rate limits can be a 403: retry-after, x-ratelimit-remaining 0, or only a message.
+function isRateLimitedForbidden(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if (getRetryAfterSeconds(err, 0) > 0 || headerValue(err, "x-ratelimit-remaining") === "0") return true;
+  const { message, body } = err as { message?: unknown; body?: unknown };
+  const bodyMessage = typeof body === "object" && body !== null ? (body as { message?: unknown }).message : body;
+  return [message, bodyMessage].some((text) => typeof text === "string" && /rate limit/i.test(text.slice(0, 4_096)));
+}
+
 /** Shared post-provider response classification and usage accounting for /call and /read-call. */
 export async function integrationActionSuccess(c: Context, input: {
   db: Pick<PlatformDb, "touchServiceUsage">;
@@ -80,7 +97,7 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     return c.json({ error: "Action not available" }, 501);
   }
   const upstreamStatus = getErrorStatusCode(err);
-  if (upstreamStatus === 429) {
+  if (upstreamStatus === 429 || (upstreamStatus === 403 && isRateLimitedForbidden(err))) {
     const retryAfter = getRetryAfterSeconds(err);
     return c.json(
       { error: "Rate limited by provider. Please try again later.", retry_after: retryAfter },
@@ -96,5 +113,9 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     return c.json({ error: "Integration service unavailable" }, 503);
   }
   console.error(`[integrations] callAction error for ${service}/${action}:`, err);
-  return c.json({ error: "Integration call failed" }, 502);
+  // Which answer the provider gave (never its text), so a caller can tell a revoked account or a missing resource
+  // from an outage.
+  const upstream = upstreamStatus === 401 || upstreamStatus === 403 ? "unauthorized"
+    : upstreamStatus === 404 || upstreamStatus === 410 ? "not_found" : undefined;
+  return c.json({ error: "Integration call failed", ...(upstream ? { upstream } : {}) }, 502);
 }
