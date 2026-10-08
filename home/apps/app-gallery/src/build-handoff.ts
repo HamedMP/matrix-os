@@ -4,5 +4,5 @@ export interface BuildBridge { generate?: (context: string) => void | Promise<un
 export async function requestAppBuild(bridge: BuildBridge, input: string): Promise<void> {
   const prompt = input.trim();
   if (!prompt || prompt.length > 2000 || !bridge.generate) throw new Error('Build unavailable');
-  await bridge.generate(`[BUILD] Build an app for my Matrix computer: ${prompt}. Use my connected tools only after I choose the accounts and approve imports. Make it work in Web Desktop, Web Canvas, Electron Desktop and mobile.`);
+  await bridge.generate(`[BUILD] Build an app for my Matrix computer: ${prompt}. Use my connected tools only after I choose the accounts and approve imports. Make it work in Web Desktop, Web Canvas, Electron Desktop, Web Mobile and Native Mobile.`);
 }

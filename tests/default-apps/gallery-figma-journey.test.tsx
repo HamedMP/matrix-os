@@ -49,3 +49,12 @@ it('preserves a typed request when the host rejects the build handoff', async ()
   await screen.findByText('The build request could not be sent. Try again in Chat.');
   expect(screen.getByRole('textbox',{name:'Describe an app'})).toHaveProperty('value','Track my receipts');
 });
+
+it('helps a new owner find their first app from the installed-app empty state', async () => {
+  window.MatrixOS={integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:[]})};
+  render(<Gallery/>);
+  const heading=await screen.findByRole('heading',{name:'No apps yet'});
+  expect(heading.closest('.installed-empty')?.querySelector('svg')).toBeTruthy();
+  expect(screen.getByText('Get an app from Gallery to make it yours.')).toBeTruthy();
+  expect(screen.getByRole('link',{name:'Explore Gallery'}).getAttribute('href')).toBe('#catalog-title');
+});

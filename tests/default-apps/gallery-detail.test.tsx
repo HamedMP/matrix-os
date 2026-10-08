@@ -25,6 +25,8 @@ describe("full-page Gallery details", () => {
     fireEvent.keyDown(container.querySelector(".gallery-detail")!, { key: "Escape" });
     expect(callbacks.onClose).toHaveBeenCalledTimes(2);
     expect(screen.queryByText("Receipt Inbox")).toBeNull();
+    expect(screen.getByText("Web Desktop · Web Canvas · Electron Desktop · Web Mobile")).toBeTruthy();
+    expect(screen.queryByText("Desktop and mobile")).toBeNull();
   });
   it("preserves install, retry and installed launch actions and blocks all actions while pending", () => {
     const callbacks = props();

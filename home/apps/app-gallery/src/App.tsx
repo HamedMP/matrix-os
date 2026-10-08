@@ -203,12 +203,13 @@ export default function App() {
             </div>
           </div>
           {installed.length ? <div className="installed-strip">{installed.map(app => <button key={app.id} disabled={pending !== null} aria-label={`Launch ${app.name}`} onClick={() => void action(app)}><AppIdentity app={app} /><span>{app.installedName ?? app.name}</span></button>)}</div>
-            : <p className="installed-empty">{loading ? "Loading your apps…" : "Your installed apps will appear here."}</p>}
+            : loading ? <p className="installed-loading" role="status">Loading your apps…</p>
+            : <div className="installed-empty"><Icon name="grid" /><div><h3>No apps yet</h3><p>Get an app from Gallery to make it yours.</p><a href="#catalog-title">Explore Gallery</a></div></div>}
           {installed.filter(app => actionErrors[app.id] && !visible.some(item => item.id === app.id)).map(app =>
             <p className="card-error" role="alert" key={app.id}>{actionErrors[app.id]}</p>)}
         </section>
         <section className="catalog-section" aria-labelledby="catalog-title">
-          <div className="section-heading"><h2 id="catalog-title">Gallery</h2>
+          <div className="section-heading"><h2 id="catalog-title" tabIndex={-1}>Gallery</h2>
             <nav className="category-tabs" aria-label="App categories">
               {["", ...categories].map(category => <button key={category} aria-pressed={filters.category === category} onClick={() => setFilters(current => ({...current, category}))}>{category || "All"}</button>)}
             </nav>

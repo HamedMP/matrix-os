@@ -60,7 +60,7 @@ export default function GalleryDetail({ app, connections, pending, error, onClos
           <dd>{app.services.length > 0 && <DetailIcon name="mail" />}{app.services.length ? app.services.map(service => service.name).join(", ") : "No external connection required"}</dd>
         </div>
         <div><dt>Category</dt><dd>{app.category}</dd></div>
-        <div><dt>Runs on</dt><dd>Desktop and mobile</dd></div>
+        <div><dt>Runs on</dt><dd>Web Desktop · Web Canvas · Electron Desktop · Web Mobile</dd></div>
       </dl>
       <div className="gallery-detail-previews">
         <Preview app={app} large />
