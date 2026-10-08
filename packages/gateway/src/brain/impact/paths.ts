@@ -16,6 +16,9 @@ const SPEC_FOLDER = /^(specs\/[^/]+)\//;
 /** Changed paths listed per touched spec. */
 export const IMPACT_SPEC_PATHS_MAX = 20;
 
+/** A list cut at its cap; capped when an entry (or a path of one) was left out. */
+export interface ImpactCappedList<T> { readonly items: T[]; readonly capped: boolean }
+
 export function isTestPath(path: string): boolean {
   return TEST_FOLDER.test(path) || TEST_FILE.test(path);
 }
@@ -51,30 +54,40 @@ function covers(test: string, source: string, imports: ReadonlyMap<string, Reado
  */
 export function untestedFiles(
   changed: readonly ImpactChange[], imports: ReadonlyMap<string, ReadonlySet<string>>, max: number,
-): BrainImpactUntested[] {
+): ImpactCappedList<BrainImpactUntested> {
   const live = changed.filter((file) => file.status !== "deleted");
   const tests = live.filter((file) => isTestPath(file.path)).map((file) => file.path);
-  return live
+  const all = live
     .filter((file) => isCodePath(file.path) && !isTestPath(file.path))
     .filter((file) => !tests.some((test) => covers(test, file.path, imports)))
     .map((file) => ({ path: file.path }))
-    .sort((a, b) => (a.path < b.path ? -1 : 1))
-    .slice(0, max);
+    .sort((a, b) => (a.path < b.path ? -1 : 1));
+  return { items: all.slice(0, max), capped: all.length > max };
 }
 
-/** Spec folders (specs/<name>) with the changed paths under them, by folder; cites are added by the caller. */
+/**
+ * Spec folders (specs/<name>) with the changed paths under them, by folder, at most max folders of at most
+ * IMPACT_SPEC_PATHS_MAX paths; cites are added by the caller.
+ */
 export function specsTouched(
   changed: readonly ImpactChange[], max: number,
-): Array<Omit<BrainImpactSpec, "cite">> {
+): ImpactCappedList<Omit<BrainImpactSpec, "cite">> {
   const bySpec = new Map<string, string[]>();
+  let pathsCut = false;
   for (const file of changed) {
     for (const path of file.previousPath === null ? [file.path] : [file.path, file.previousPath]) {
       const spec = SPEC_FOLDER.exec(path)?.[1];
       if (spec === undefined) continue;
       const paths = bySpec.get(spec) ?? [];
-      if (paths.length < IMPACT_SPEC_PATHS_MAX && !paths.includes(path)) paths.push(path);
       bySpec.set(spec, paths);
+      if (paths.includes(path)) continue;
+      if (paths.length >= IMPACT_SPEC_PATHS_MAX) pathsCut = true;
+      else paths.push(path);
     }
   }
-  return [...bySpec.keys()].sort().slice(0, max).map((spec) => ({ spec, changedPaths: bySpec.get(spec)! }));
+  const specs = [...bySpec.keys()].sort();
+  return {
+    items: specs.slice(0, max).map((spec) => ({ spec, changedPaths: bySpec.get(spec)! })),
+    capped: pathsCut || specs.length > max,
+  };
 }

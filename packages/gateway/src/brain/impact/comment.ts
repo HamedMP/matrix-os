@@ -32,6 +32,10 @@ const NOTICE_TEXT: Readonly<Record<BrainImpactNotice, string>> = {
   scan_capped: "The import scan covered only part of the repository.",
   read_budget_exhausted: "The import scan stopped at its read limit.",
   run_budget_exhausted: "The import scan stopped at its time limit.",
+  prior_capped: "Earlier pull requests are listed for only some of the changed files.",
+  claims_capped: "More invariants or decisions apply, or name more changed files, than are listed.",
+  untested_capped: "More changed code lacks a matching test change than is listed.",
+  specs_capped: "More specs, or more changed files in a spec, were touched than are listed.",
   no_git_source: "This project has no git source in the brain, so its history is missing.",
   brain_behind_head: "The brain has not synced the merge base yet, so recent work may be missing.",
 };
