@@ -190,3 +190,193 @@ function pairDelimiters(pieces: Piece[]): void {
     if (closer.canOpen && closer.to > closer.from) openers.push(closer);
   }
 }
+
+interface Scan {
+  readonly pieces: Piece[];
+  /** Past the end of an HTML comment that runs on after this line, else -1. */
+  readonly resume: number;
+}
+
+/** One construct starting at `at`: its pieces and end, or null for plain text. */
+function construct(
+  ctx: Context, at: number, to: number, pipes: boolean, depth: number, code: CodeSpans,
+  pairs: ReadonlyMap<number, number>,
+): { readonly pieces: Piece[]; readonly end: number } | null {
+  const { source } = ctx;
+  const char = source[at]!;
+  const span = code.get(at);
+  if (span !== undefined) return { pieces: [{ kind: "keep", from: span[0], to: span[1] }], end: span[2] };
+  if (char === "\\") {
+    // A backslash that ends a line is a line break.
+    if (at + 1 === to && (source[to] === "\n" || source[to] === "\r")) return { pieces: [], end: to };
+    return at + 1 < to && isAsciiPunctuation(source.charCodeAt(at + 1))
+      ? { pieces: [{ kind: "keep", from: at + 1, to: at + 2 }], end: at + 2 } : null;
+  }
+  if (char === "|") return pipes ? { pieces: [{ kind: "put", text: " ", at }], end: at + 1 } : null;
+  if (char === "&") {
+    const match = stickyMatch(ENTITY, source, at, to);
+    const text = match === null ? null : entityText(match);
+    return match === null || text === null ? null : { pieces: [{ kind: "put", text, at }], end: at + match[0].length };
+  }
+  if (char === "<") {
+    const link = stickyMatch(AUTOLINK, source, at, to);
+    if (link !== null) {
+      return { pieces: [{ kind: "keep", from: at + 1, to: at + link[0].length - 1 }], end: at + link[0].length };
+    }
+    const tag = stickyMatch(HTML_TAG, source, at, to);
+    const name = tag?.[1]!.toLowerCase() ?? "";
+    if (tag === null || !(BLOCK_TAGS.has(name) || INLINE_TAGS.has(name))) return null;
+    return { pieces: BLOCK_TAGS.has(name) ? [{ kind: "put", text: " ", at }] : [], end: at + tag[0].length };
+  }
+  if (char === "[" || (char === "!" && source[at + 1] === "[")) {
+    const open = char === "[" ? at : at + 1;
+    const end = depth < LINK_DEPTH_MAX ? linkEnd(ctx, open, to, pairs) : -1;
+    return end === -1 ? null : { pieces: scanInline(ctx, open + 1, pairs.get(open)!, false, depth + 1).pieces, end };
+  }
+  return null;
+}
+
+/** Inline markup of [from, to): code spans, escapes, links, autolinks, HTML, entities, emphasis, table pipes. */
+function scanInline(ctx: Context, from: number, to: number, pipes: boolean, depth: number): Scan {
+  const { source } = ctx;
+  const code = codeSpans(source, from, to);
+  const pairs = bracketPairs(source, from, to, code);
+  const pieces: Piece[] = [];
+  let kept = from;
+  const cut = (at: number, resume: number) => {
+    if (at > kept) pieces.push({ kind: "keep", from: kept, to: at });
+    kept = resume;
+  };
+  for (let at = from; at < to;) {
+    const char = source[at]!;
+    if (char === "<" && depth === 0 && source.startsWith("<!--", at)) {
+      const close = source.indexOf("-->", at + 2);
+      const end = close === -1 ? source.length : close + 3;
+      cut(at, end);
+      if (end > to) {
+        pairDelimiters(pieces);
+        return { pieces, resume: end };
+      }
+      at = end;
+      continue;
+    }
+    const made = construct(ctx, at, to, pipes, depth, code, pairs);
+    if (made !== null) {
+      cut(at, made.end);
+      pieces.push(...made.pieces);
+      at = made.end;
+      continue;
+    }
+    if (char !== "*" && char !== "_" && char !== "~" && char !== "`") {
+      at += 1;
+      continue;
+    }
+    let end = at + 1;
+    while (end < to && source[end] === char) end += 1;
+    const sides = char === "`" || (char === "~" && end - at !== 2) ? null : flanking(source, at, end, char);
+    if (sides !== null && (sides.canOpen || sides.canClose)) {
+      cut(at, end);
+      pieces.push({ kind: "delimiter", char, from: at, to: end, ...sides });
+    }
+    at = end;
+  }
+  cut(to, to);
+  pairDelimiters(pieces);
+  return { pieces, resume: -1 };
+}
+
+/** The content end of an ATX heading line: before a closing run of hashes that follows a space. */
+function headingEnd(source: string, from: number, to: number): number {
+  let end = to;
+  while (end > from && (source[end - 1] === " " || source[end - 1] === "\t")) end -= 1;
+  let hashes = end;
+  while (hashes > from && source[hashes - 1] === "#") hashes -= 1;
+  if (hashes === end || (hashes > from && source[hashes - 1] !== " " && source[hashes - 1] !== "\t")) return end;
+  return hashes;
+}
+
+/** Stored text with its markup dropped and whitespace collapsed, with the stored index of every unit. */
+export function brainPlainText(source: string): BrainPlainText {
+  const ctx: Context = { source, labels: definitionLabels(source) };
+  const parts: string[] = [];
+  const at: number[] = [];
+  const emit = (pieces: readonly Piece[]) => {
+    for (const piece of pieces) {
+      if (piece.kind === "put") {
+        parts.push(piece.text);
+        for (let unit = 0; unit < piece.text.length; unit += 1) at.push(piece.at);
+      } else if (piece.to > piece.from) {
+        parts.push(source.slice(piece.from, piece.to));
+        for (let index = piece.from; index < piece.to; index += 1) at.push(index);
+      }
+    }
+  };
+  let fence: string | null = null;
+  let skipUntil = -1;
+  const inline = (from: number, to: number, pipes: boolean) => {
+    const scan = scanInline(ctx, from, to, pipes, 0);
+    emit(scan.pieces);
+    if (scan.resume !== -1) skipUntil = scan.resume;
+  };
+  for (let start = 0; start <= source.length;) {
+    const newline = source.indexOf("\n", start);
+    const lineEnd = newline === -1 ? source.length : newline;
+    const end = lineEnd > start && source[lineEnd - 1] === "\r" ? lineEnd - 1 : lineEnd;
+    if (skipUntil > start) {
+      // Inside an HTML comment: only the text after its end is read, as inline text.
+      if (skipUntil <= end) {
+        const from = skipUntil;
+        skipUntil = -1;
+        inline(from, end, false);
+      }
+    } else if (fence !== null) {
+      const close = FENCE_CLOSE.exec(source.slice(start, end));
+      if (close !== null && close[1]![0] === fence[0] && close[1]!.length >= fence.length) fence = null;
+      else emit([{ kind: "keep", from: start, to: end }]);
+    } else {
+      const from = start + (QUOTE.exec(source.slice(start, end))?.[0].length ?? 0);
+      const rest = source.slice(from, end);
+      const open = FENCE_OPEN.exec(rest);
+      if (open !== null && !(open[1]![0] === "`" && rest.includes("`", open[0].length))) fence = open[1]!;
+      else if (!(RULE.test(rest) || LINK_DEFINITION.test(rest)
+        || (TABLE_RULE.test(rest) && rest.includes("|") && rest.includes("-")))) {
+        const heading = HEADING.exec(rest);
+        const content = from + ((heading ?? BULLET.exec(rest))?.[0].length ?? 0);
+        inline(content, heading === null ? end : headingEnd(source, content, end), rest.trimStart().startsWith("|"));
+      }
+    }
+    if (newline === -1) break;
+    emit([{ kind: "put", text: "\n", at: newline }]);
+    start = newline + 1;
+  }
+  return collapse(parts.join(""), at, source.length);
+}
+
+/** Runs of whitespace become one space (at its first unit) and the ends are trimmed. */
+function collapse(text: string, at: readonly number[], sourceLength: number): BrainPlainText {
+  const parts: string[] = [];
+  const sources: number[] = [];
+  let previousEnd = -1;
+  for (const word of text.matchAll(/\S+/g)) {
+    if (previousEnd !== -1) {
+      parts.push(" ");
+      sources.push(at[previousEnd]!);
+    }
+    parts.push(word[0]);
+    for (let index = word.index; index < word.index + word[0].length; index += 1) sources.push(at[index]!);
+    previousEnd = word.index + word[0].length;
+  }
+  sources.push(sourceLength);
+  return { text: parts.join(""), sources: Int32Array.from(sources) };
+}
+
+/** The first plain index whose stored index is at or after `sourceIndex` (the plain length past the end). */
+export function brainPlainIndex(plain: BrainPlainText, sourceIndex: number): number {
+  let [low, high] = [0, plain.text.length];
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (plain.sources[middle]! < sourceIndex) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
