@@ -35,6 +35,8 @@ export function createChatNavigationStore(options: {
   let generation = 0;
   let revision = 0;
   let disposed = false;
+  let revoked = false;
+  let cacheClear: Promise<void> = Promise.resolve();
   let hydrated = false;
   let hydratePromise: Promise<void> | undefined;
   let inFlight: Promise<void> | undefined;
@@ -52,6 +54,23 @@ export function createChatNavigationStore(options: {
     }
   };
   const warn = (kind: string, error: unknown) => console.warn(`[chat-navigation] ${kind}:`, error instanceof Error ? error.name : "UnknownError");
+  const clearCache = () => {
+    const adapter = persistence;
+    cacheClear = cacheClear.then(() => adapter?.clear()).catch(error => warn("Cache clear failed", error));
+  };
+  const revoke = () => {
+    if (disposed) return;
+    generation++;
+    revoked = true;
+    dirty = false;
+    // A new authenticated read may proceed without waiting for superseded I/O.
+    inFlight = undefined;
+    hydrated = true;
+    if (writeTimer !== undefined) clearTimeout(writeTimer);
+    writeTimer = undefined;
+    clearCache();
+    publish({ ...EMPTY_CHAT_NAVIGATION, status: "error", error: "Your session has expired. Please sign in again." });
+  };
   const persist = (value: CanonicalChatNavigationResponse, fence: number, version: number) => {
     if (!persistence || value.truncated) {
       return;
@@ -66,7 +85,10 @@ export function createChatNavigationStore(options: {
       }
       // Membership-sensitive rows are never reconstructed from a local file.
       const personal = { ...value, items: value.items.filter(item => item.persistence === "personal") };
-      void persistence?.save(personal).catch(error => warn("Cache save failed", error));
+      void cacheClear.then(async () => {
+        if (disposed || generation !== fence || revision !== version) return;
+        await persistence?.save(personal);
+      }).catch(error => warn("Cache save failed", error));
     }, 0);
   };
   const hydrate = () => {
@@ -107,7 +129,7 @@ export function createChatNavigationStore(options: {
     }
     const fence = generation;
     publish({ ...state, status: state.items.length ? state.status : "loading", error: null });
-    inFlight = (async () => {
+    const request = (async () => {
       do {
         dirty = false;
         const version = revision;
@@ -120,6 +142,7 @@ export function createChatNavigationStore(options: {
             dirty = true;
             continue;
           }
+          revoked = false;
           markChatNavigation("snapshot-ready", value.items.length);
           publish({ items: value.items, status: "ready", fresh: true, truncated: value.truncated, updatedAt: now(), error: null });
           persist(value, fence, version);
@@ -130,14 +153,7 @@ export function createChatNavigationStore(options: {
           }
           warn("List unavailable", error);
           if (error instanceof ChatNavigationAuthorityRevoked) {
-            generation++;
-            disposed = true;
-            dirty = false;
-            if (writeTimer !== undefined) {
-              clearTimeout(writeTimer);
-            }
-            publish({ ...EMPTY_CHAT_NAVIGATION, status: "error", error: "Your session has expired. Please sign in again." });
-            void persistence?.clear().catch(failure => warn("Cache clear failed", failure));
+            revoke();
             return;
           }
           publish({ ...state, status: "error", fresh: false, error: "Chats could not be loaded. Try again." });
@@ -146,9 +162,10 @@ export function createChatNavigationStore(options: {
         }
       } while (dirty && !disposed && fence === generation);
     })().finally(() => {
-      inFlight = undefined;
+      if (inFlight === request) inFlight = undefined;
     });
-    return inFlight;
+    inFlight = request;
+    return request;
   };
   return {
     getSnapshot: () => state,
@@ -172,8 +189,9 @@ export function createChatNavigationStore(options: {
       return state.fresh && now() - state.updatedAt < CHAT_NAVIGATION_STALE_MS ? Promise.resolve() : refresh();
     },
     refresh,
+    revoke,
     update(update: (items: CanonicalChatNavigationItem[]) => CanonicalChatNavigationItem[]) {
-      if (disposed) {
+      if (disposed || revoked) {
         return;
       }
       const updated = update(state.items);
@@ -205,7 +223,7 @@ export function createChatNavigationStore(options: {
       publish(EMPTY_CHAT_NAVIGATION);
       listeners.clear();
       if (clear) {
-        void persistence?.clear().catch(error => warn("Cache clear failed", error));
+        clearCache();
       }
     },
   };

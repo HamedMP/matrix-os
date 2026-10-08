@@ -12,7 +12,6 @@ type Entry = {
     dispose(): void;
   };
   source?: Source;
-  lastCursor: number;
 };
 function connect(entry: Entry) {
   const source = entry.sources.keys().next().value as Source | undefined;
@@ -25,12 +24,8 @@ function connect(entry: Entry) {
     if (event.type === "chat.changed" && event.eventType === "run.message") {
       return;
     }
-    if (event.cursor !== undefined) {
-      if (event.cursor <= entry.lastCursor) {
-        return;
-      }
-      entry.lastCursor = event.cursor;
-    }
+    // The event source deduplicates actual events. Cursors are allocated before
+    // commit, so lower live cursors and unchanged reconnect cursors are valid.
     // A full refresh represents replayed changes or a gap, not an empty
     // attachment. An in-flight snapshot may predate recovery: keep its dirty
     // follow-up rather than dropping the only durable correction signal.
@@ -77,7 +72,7 @@ function scopedStore(scope: string, generation: string, load: () => Promise<Cano
       }
       candidates.delete(unused[0]);
     }
-    entry = { store: createChatNavigationStore({ load, persistence }), generation, consumers: 0, sources: new Map(), lastCursor: -1 };
+    entry = { store: createChatNavigationStore({ load, persistence }), generation, consumers: 0, sources: new Map() };
     candidates.set(key, { scope, entry });
   }
   return entry;

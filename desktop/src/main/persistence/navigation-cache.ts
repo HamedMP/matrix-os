@@ -126,6 +126,7 @@ export function createNavigationCache(options: Options): NavigationCache {
         || clock() - value.storedAt > NAVIGATION_CACHE_MAX_AGE
         || value.storedAt > clock()
         || Buffer.byteLength(JSON.stringify(value.snapshot)) > MAX_BYTES
+        || value.snapshot.truncated
         || value.snapshot.items.some(item => item.persistence !== "personal");
       if (invalid) return null;
       return value;
@@ -301,7 +302,7 @@ export function createNavigationCache(options: Options): NavigationCache {
       const captured = epoch;
       const parsed = CanonicalChatNavigationResponseSchema.safeParse(input.snapshot);
       if (!accepted(input, captured) || !parsed.success) return { ok: false };
-      if (Buffer.byteLength(JSON.stringify(parsed.data)) > MAX_BYTES
+      if (parsed.data.truncated || Buffer.byteLength(JSON.stringify(parsed.data)) > MAX_BYTES
         || parsed.data.items.some(item => item.persistence !== "personal")) {
         return { ok: false };
       }

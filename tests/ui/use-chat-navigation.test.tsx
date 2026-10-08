@@ -126,3 +126,22 @@ it('does not evict a mounted inactive consumer into a permanently disposed store
   await waitFor(() => expect(inactive.result.current.fresh).toBe(true));
   expect(load).toHaveBeenCalledOnce();
 });
+
+it('revalidates equal/lower reconnect cursors and lower committed live events without token refreshes', async () => {
+  const load = vi.fn(async () => empty);
+  let emit!: (event: unknown) => void;
+  const events = { subscribe: (listener: typeof emit) => { emit = listener; return { dispose() {} }; } };
+  const hook = renderHook(() => useChatNavigation({ scope: 'unordered-commits', load, eventSource: events }));
+  await waitFor(() => expect(hook.result.current.fresh).toBe(true));
+  for (const [index, event] of [
+    { type: 'chat.changed', chatId: 'chat_high', cursor: 10, eventType: 'chat.updated' },
+    { type: 'chat.full_refresh', cursor: 10 },
+    { type: 'chat.full_refresh', cursor: 8 },
+    { type: 'chat.changed', chatId: 'chat_late', cursor: 9, eventType: 'chat.updated' },
+  ].entries()) {
+    await act(async () => emit(event));
+    expect(load).toHaveBeenCalledTimes(index + 2);
+  }
+  await act(async () => emit({ type: 'chat.changed', chatId: 'chat_high', cursor: 11, eventType: 'run.message' }));
+  expect(load).toHaveBeenCalledTimes(5);
+});

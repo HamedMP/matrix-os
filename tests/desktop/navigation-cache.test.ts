@@ -368,3 +368,22 @@ describe("navigation IPC authority", () => {
     }, {} as never, () => true)).toThrow();
   });
 });
+
+it('rejects a truncated write without replacing the complete saved snapshot', async () => {
+  const x = fixture();
+  const req = request(x);
+  expect(await x.cache.save({ ...req, snapshot })).toEqual({ ok: true });
+  expect(await x.cache.save({ ...req, snapshot: { ...snapshot, truncated: true } })).toEqual({ ok: false });
+  expect(await x.cache.load(req)).toEqual({ snapshot });
+});
+it('rejects and prunes truncated snapshots already on disk', async () => {
+  const x = fixture();
+  const req = request(x);
+  await x.cache.save({ ...req, snapshot });
+  const path = join(dir, 'navigation-cache', req.scope + '.json');
+  const envelope = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(path, JSON.stringify({ ...envelope, snapshot: { ...snapshot, truncated: true } }));
+  expect(await x.cache.load(req)).toEqual({ snapshot: null });
+  await x.cache.drain();
+  await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+});

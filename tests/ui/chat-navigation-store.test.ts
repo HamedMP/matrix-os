@@ -125,3 +125,46 @@ it('replaces older personal cache with a complete empty personal cohort', async 
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(save).toHaveBeenCalledWith({ version: 1, items: [], truncated: false });
 });
+
+it('recovers from authorization rejection in the same store without hydrating revoked cache', async () => {
+  const cached = deferred<CanonicalChatNavigationResponse | null>();
+  const persistence = { load: vi.fn(() => cached.promise), save: vi.fn(async () => {}), clear: vi.fn(async () => {}) };
+  const load = vi.fn().mockRejectedValueOnce(new ChatNavigationAuthorityRevoked()).mockResolvedValue(snapshot('Recovered'));
+  const store = createChatNavigationStore({ load, persistence });
+  await store.ensure();
+  expect(store.getSnapshot().items).toEqual([]);
+  expect(persistence.clear).toHaveBeenCalledOnce();
+  cached.resolve(snapshot('Revoked'));
+  await store.ensure();
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(store.getSnapshot().items[0]?.chat.title).toBe('Recovered');
+  expect(persistence.load).toHaveBeenCalledOnce();
+});
+it('fences revoked reads without letting their completion detach a new single flight', async () => {
+  const stale = deferred<CanonicalChatNavigationResponse>();
+  const fresh = deferred<CanonicalChatNavigationResponse>();
+  const cleanup = deferred<void>();
+  const save = vi.fn(async () => {});
+  const load = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValue(fresh.promise);
+  const store = createChatNavigationStore({ load, persistence: { load: async () => null, save, clear: () => cleanup.promise } });
+  const oldRequest = store.ensure();
+  store.revoke();
+  store.update(() => snapshot('Unsafe optimistic').items);
+  expect(store.getSnapshot().items).toEqual([]);
+  const newRequest = store.ensure();
+  stale.resolve(snapshot('Stale'));
+  await oldRequest;
+  expect(store.getSnapshot().items).toEqual([]);
+  expect(store.ensure()).toBe(newRequest);
+  expect(load).toHaveBeenCalledTimes(2);
+  fresh.resolve(snapshot('Recovered'));
+  await newRequest;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(save).not.toHaveBeenCalled();
+  cleanup.resolve();
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith(snapshot('Recovered')));
+  expect(store.getSnapshot().items[0]?.chat.title).toBe('Recovered');
+  store.dispose(true);
+  await store.ensure();
+  expect(load).toHaveBeenCalledTimes(2);
+});
