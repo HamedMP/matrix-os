@@ -1,7 +1,7 @@
 /**
  * The array vector store (stock Postgres, no pgvector): unit vectors under a strict CHECK, nearest neighbours equal to
- * a brute-force scan, the per-scope cap, writes skipped for documents no longer at the input's revision, vectors
- * read back by text key, the default-store switch and cleanup. PGlite always; a disposable real PostgreSQL schema too
+ * a brute-force scan, the per-scope cap, writes skipped for documents no longer at the input's revision or claims set,
+ * vectors read back by text key, the default-store switch and cleanup. PGlite always; a disposable real PostgreSQL schema too
  * when MATRIX_TEST_POSTGRES_URL is set.
  */
 import { randomUUID } from "node:crypto";
@@ -178,6 +178,24 @@ describe("brain search array store", { timeout: 60_000 }, () => {
     }
     await expect(store.storedVectors!(SCOPE, { ...ask, textKeys: ["xyz"] })).rejects.toBeInstanceOf(BrainStoreError);
     await expect(write(await documentOf(h, "a"), [1, 0], "XYZ")).rejects.toBeInstanceOf(BrainStoreError);
+  });
+
+  it("skips a write for another claims set than the document's search row holds", async () => {
+    const store = createBrainArrayVectorStore(h.db);
+    await (await createSeeder(h)).sync([{ seed: "a", body: "kittens" }]);
+    await createBrainSearch({ repository: h.repository, resolver, capability: h.capability, now: h.now })
+      .service.refresh(OWNER, PROJECT_ID);
+    const claimsKey = (await sql<{ claims_key: string }>`SELECT claims_key FROM brain_search_documents
+      WHERE document_id = ${brainDocumentId("a")}`.execute(h.db)).rows[0]!.claims_key;
+    const document = await documentOf(h, "a");
+    const write = (key: string) => store.replaceChunks(SCOPE, { documentId: document.documentId,
+      incarnation: document.incarnation, revision: document.revision, providerId: "p", claimsKey: key,
+      chunks: [{ spanStart: 0, spanEnd: 1, vector: [1, 0] }] });
+    await write("f".repeat(32));
+    expect(await vectorRows(h)).toBe(0);
+    await write(claimsKey);
+    expect(await vectorRows(h)).toBe(1);
+    await expect(write("XYZ")).rejects.toBeInstanceOf(BrainStoreError);
   });
 
   it("skips a removal while the document is live at another revision, so a late sweep keeps restored vectors", async () => {

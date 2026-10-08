@@ -245,11 +245,13 @@ export async function isLiveAt(
 
 /**
  * Whether a vector write for `built` goes ahead: a write of chunks only while the document is live at that
- * (incarnation, revision); a removal (no chunks) unless the document is live at another one. The sweep reads `built`
- * as a tombstone, so by its removal the vectors may be those of the document restored and embedded since.
+ * (incarnation, revision) and, given a claims key, claims set (isLiveAt); a removal (no chunks) unless the document is
+ * live at another one. The sweep reads `built` as a tombstone, so by its removal the vectors may be those of the
+ * document restored and embedded since.
  */
 export async function mayReplaceVectors(
-  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan, removal: boolean,
+  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan & { readonly claimsKey?: string },
+  removal: boolean,
 ): Promise<boolean> {
   if (!removal) return isLiveAt(trx, scope, built);
   const rows = await sql`SELECT 1 FROM brain_documents

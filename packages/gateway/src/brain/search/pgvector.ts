@@ -1,9 +1,9 @@
 /**
  * BrainVectorStore over brain_search_chunks (pgvector). Use only when bootstrapBrainSearchDatabase found the
  * extension. Exact cosine-distance scan per scope and provider, under the search statement deadline; an approximate
- * index is later work. A write is skipped unless the document is live at its (incarnation, revision), and a removal
- * (no chunks) while the document is live at another one; stored vectors can be read back by text key, so an unchanged
- * chunk is never embedded twice.
+ * index is later work. A write is skipped unless the document is live at its (incarnation, revision) and, given a
+ * claims key, its search row still holds that claims set, and a removal (no chunks) while the document is live at
+ * another one; stored vectors can be read back by text key, so an unchanged chunk is never embedded twice.
  */
 import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
@@ -27,6 +27,8 @@ export const BrainVectorReplaceSchema = z.object({
   incarnation: z.string().regex(BRAIN_UUID_PATTERN),
   revision: z.number().int().min(1).max(BRAIN_MAX_REVISION),
   providerId: ProviderIdSchema,
+  /** brain_search_documents.claims_key the vectors were embedded for (an md5, 32 hex characters). */
+  claimsKey: z.string().regex(/^[a-f0-9]{32}$/).optional(),
   chunks: z.array(z.object({
     spanStart: z.number().int().min(0), spanEnd: z.number().int().max(65_536), vector: VectorSchema,
     textKey: z.string().regex(BRAIN_SEARCH_TEXT_KEY_PATTERN).optional(),
