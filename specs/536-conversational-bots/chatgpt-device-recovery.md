@@ -62,3 +62,10 @@ stale/concurrent IPC rejection, and the shared explicit action/catalog refresh.
 Preview VPS and Electron Desktop acceptance must still demonstrate recovered GPT
 models and a real chat on matching immutable client/server versions before merge.
 No production pin reset, test credits or fleet changes are part of this change.
+
+After a failed replacement action, shared Settings rereads the native receipt with
+its existing client, lifetime and action-revision fences. Cleared native conflicts
+resume bounded connection polling and refresh provider discovery when connected.
+Confirmed conflicts remain actionable; a failed status read preserves the safe
+error and the existing Settings refresh retries it. No failed-action path repeats
+replacement or applies a previous Computer's delayed receipt to the active view.
