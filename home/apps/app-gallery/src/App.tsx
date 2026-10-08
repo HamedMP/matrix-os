@@ -10,157 +10,21 @@ import {
   type GalleryAppListing,
   type GalleryConnection,
   type GalleryFilters,
-  type GalleryReadinessStatus,
 } from "./model";
-import Preview, { Icon } from "./Preview";
+import { Icon } from "./Preview";
 import AppIdentity from "./AppIdentity";
 import GalleryResults from "./GalleryResults";
+import GalleryDetail from "./GalleryDetail";
+import { requestAppBuild } from "./build-handoff";
 declare global {
   interface Window {
     MatrixOS?: GalleryBridge;
   }
 }
-const statusLabels: Record<GalleryReadinessStatus, string> = {
-  ready: "Connections ready",
-  choose_accounts: "Choose accounts after install",
-  needs_connection: "Connection needed",
-  unknown: "Connections not checked",
-};
-function Detail({
-  app,
-  connections,
-  pending,
-  error,
-  onClose,
-  onAction,
-}: {
-  app: GalleryAppListing;
-  connections: GalleryConnection[] | null;
-  pending: boolean;
-  error: string;
-  onClose: () => void;
-  onAction: () => void;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const readiness = deriveGalleryReadiness(app, connections);
-  useEffect(() => {
-    const dialog = ref.current;
-    dialog?.showModal();
-    return () => dialog?.close();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      className="detail"
-      aria-labelledby="detail-title"
-      onCancel={onClose}
-    >
-      <div className="detail-inner">
-        <header className="detail-header">
-          <AppIdentity app={app} />
-          <div>
-            <p>
-              {app.collection === "personal" ? "Personal" : "Business"} /{" "}
-              {app.category}
-            </p>
-            <h2 id="detail-title">{app.name}</h2>
-          </div>
-          <button
-            className="icon-button"
-            aria-label="Close app details"
-            onClick={onClose}
-          >
-            <Icon name="close" />
-          </button>
-        </header>
-        <Preview app={app} large />
-        <div className="detail-body">
-          <h3>{app.tagline}</h3>
-          <p className="description">{app.description}</p>
-          <ul className="highlights">
-            {app.highlights.map((value) => (
-              <li key={value}>
-                <Icon name="check" />
-                {value}
-              </li>
-            ))}
-          </ul>
-          <section className="requirements">
-            <h3>Your connections</h3>
-            <p className="muted">
-              {app.services.length
-                ? "Select accounts in the app when you ask Matrix to import."
-                : "This app works with your own entries. No external connection required."}
-            </p>
-            {readiness.services.map((service) => (
-              <div className="requirement" key={service.id}>
-                <span className="service-symbol">
-                  <Icon name="grid" />
-                </span>
-                <div>
-                  <strong>{service.name}{app.services.find(source => source.id === service.id)?.optional ? " · optional source" : ""}</strong>
-                  <p>
-                    {connections === null
-                      ? "Connection inventory unavailable"
-                      : service.accounts.length
-                        ? service.accounts
-                            .map(
-                              (account) =>
-                                account.account_label +
-                                (account.account_email
-                                  ? ` (${account.account_email})`
-                                  : ""),
-                            )
-                            .join(", ")
-                        : "No connected account"}
-                  </p>
-                </div>
-                <span
-                  className={`connection-state ${service.accounts.length ? "available" : ""}`}
-                >
-                  {connections === null
-                    ? "Unknown"
-                    : service.accounts.length
-                      ? `${service.accounts.length} ${service.accounts.length === 1 ? "account" : "accounts"}`
-                      : "Needed"}
-                </span>
-              </div>
-            ))}
-          </section>
-          <p className="owner-note">Apps start empty. Records stay in your Matrix database. Imports happen only when you ask Matrix.</p>
-        </div>
-        <footer className="detail-footer">
-          <div aria-live="polite">
-            {error ? (
-              <span className="error-text">{error}</span>
-            ) : (
-              <span className="muted">
-                {app.installed
-                  ? "Already on your computer"
-                  : statusLabels[readiness.status]}
-              </span>
-            )}
-          </div>
-          <button
-            className="primary-button"
-            onClick={onAction}
-            disabled={pending}
-          >
-            {pending
-              ? "Installing…"
-              : app.installed
-                ? "Open app"
-                : error
-                  ? "Retry installation"
-                  : "Get app"}
-          </button>
-        </footer>
-      </div>
-    </dialog>
-  );
-}
 export default function App() {
-  const [logoStage, setLogoStage] = useState<0 | 1 | 2>(0);
+  const [buildPrompt, setBuildPrompt] = useState("");
+  const [building, setBuilding] = useState(false);
+  const buildBusy = useRef(false);
   const [apps, setApps] = useState<GalleryAppListing[]>([]),
     [connections, setConnections] = useState<GalleryConnection[] | null>(null),
     [loading, setLoading] = useState(true),
@@ -175,6 +39,18 @@ export default function App() {
     category: "",
     readiness: "all",
   });
+  const browseScroll = useRef(0);
+  const lastSelected = useRef<string | null>(null);
+  const galleryRef = useRef<HTMLElement>(null);
+  const chooseApp = (id: string) => { browseScroll.current = galleryRef.current?.scrollTop ?? 0; lastSelected.current = id; setSelected(id); };
+  useEffect(() => {
+    if (selected) { if (galleryRef.current) galleryRef.current.scrollTop = 0; return; }
+    if (lastSelected.current) {
+      const button = galleryRef.current?.querySelector<HTMLButtonElement>(`article[aria-labelledby="gallery-title-${lastSelected.current}"] .card-preview`);
+      button?.focus({ preventScroll: true });
+      if (galleryRef.current) galleryRef.current.scrollTop = browseScroll.current;
+    }
+  }, [selected]);
   const request = useRef(0),
     busy = useRef(false);
   const refresh = useCallback(async () => {
@@ -272,173 +148,79 @@ export default function App() {
       query: "",
       readiness: "all",
     }));
+  const build = async (input = buildPrompt) => {
+    if (buildBusy.current) return;
+    buildBusy.current = true;
+    setBuilding(true);
+    setNotice("");
+    try {
+      await requestAppBuild(window.MatrixOS ?? {}, input);
+      setBuildPrompt("");
+      setNotice("Sent to Matrix. Follow the build in Chat.");
+    } catch (error) {
+      console.warn("App build handoff unavailable", error instanceof Error ? error.name : "Unknown error");
+      setNotice("The build request could not be sent. Try again in Chat.");
+    } finally { buildBusy.current = false; setBuilding(false); }
+  };
+  const installed = apps.filter(app => app.installed && app.collection === filters.collection);
+  const control = (name: string) => <img src={galleryArtwork(`controls/${name}.svg`)} alt="" aria-hidden="true" />;
   return (
-    <main className="gallery">
-      <header className="gallery-header">
-        <div className="gallery-brand">
-          <span className="gallery-logo" aria-hidden="true">
-            {logoStage === 2 ? <Icon name="grid" /> : <img key={logoStage} src={galleryArtwork(logoStage === 0 ? "app-gallery-v2.png" : "app-gallery.svg")} alt="" onError={() => setLogoStage(logoStage === 0 ? 1 : 2)} />}
-          </span>
-          <span>Made by Matrix OS</span>
-        </div>
-        <button
-          className="icon-button"
-          aria-label="Refresh gallery and connections"
-          onClick={() => void refresh()}
-          disabled={loading || pending !== null}
-        >
-          <Icon name="refresh" />
-        </button>
-      </header>
+    <main className="gallery" ref={galleryRef}>
+      {active ? <GalleryDetail app={active} connections={connections} pending={pending !== null}
+        error={actionErrors[active.id] ?? ""} onClose={() => setSelected(null)} onAction={() => void action(active)} /> : (
       <div className="gallery-content">
-        <section className="heading">
-          <div>
-            <h1>App Gallery</h1>
-            <p>Install a workspace for life or work.</p>
+        <header className="gallery-heading">
+          <h1>Apps</h1>
+          <div className="heading-tools">
+            <label className="search">{control("search")}<input aria-label="Search apps" maxLength={200} value={filters.query} placeholder="Search"
+              onChange={event => setFilters(current => ({ ...current, query: event.target.value }))} /></label>
+            <button className="icon-button refresh" aria-label="Refresh gallery and connections" onClick={() => void refresh()} disabled={loading || pending !== null}><Icon name="refresh" /></button>
           </div>
-          <div
-            className="collections"
-            role="tablist"
-            aria-label="App collections"
-          >
-            {(["personal", "business"] as const).map((collection) => (
-              <button
-                role="tab"
-                aria-selected={filters.collection === collection}
-                tabIndex={filters.collection === collection ? 0 : -1}
-                key={collection}
-                onClick={() => chooseCollection(collection)}
-                onKeyDown={(event) => {
-                  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    chooseCollection(
-                      collection === "personal" ? "business" : "personal",
-                    );
-                    const sibling =
-                      event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(
-                        `button[aria-selected="false"]`,
-                      );
-                    sibling?.focus();
-                  }
-                }}
-              >
-                {collection === "personal" ? "Personal" : "Business"}
-                <span>
-                  {apps.filter((app) => app.collection === collection).length ||
-                    "—"}
-                </span>
-              </button>
-            ))}
-          </div>
+        </header>
+        <section className="build-composer" aria-labelledby="build-title">
+          <h2 id="build-title">{control("sparkles")}What should we make?</h2>
+          <form onSubmit={event => { event.preventDefault(); void build(); }}>
+            <textarea aria-label="Describe an app" placeholder="Describe an app…" maxLength={2000} value={buildPrompt} disabled={building}
+              onChange={event => setBuildPrompt(event.target.value)} rows={1} />
+            <div className="build-bottom">
+              <div className="build-suggestions">{["Subscriptions", "Weekly plan", "Workout log"].map(idea => <button type="button" key={idea} onClick={() => setBuildPrompt(idea)}>{idea}</button>)}</div>
+              <button className="build-submit" type="submit" aria-label="Build app" disabled={building || !buildPrompt.trim() || !window.MatrixOS?.generate}>{control("arrow-up")}</button>
+            </div>
+          </form>
+          {!window.MatrixOS?.generate && <p className="build-unavailable">Open Chat to describe an app you’d like to build.</p>}
         </section>
-        <div className="filters">
-          <label className="search">
-            <Icon name="search" />
-            <input
-              aria-label="Search apps"
-              maxLength={200}
-              value={filters.query}
-              placeholder="Search apps"
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  query: event.target.value,
-                }))
-              }
-            />
-          </label>
-          <select
-            aria-label="Category"
-            value={filters.category}
-            onChange={(event) =>
-              setFilters((current) => ({
-                ...current,
-                category: event.target.value,
-              }))
-            }
-          >
-            <option value="">All categories</option>
-            {categories.map((category) => (
-              <option key={category}>{category}</option>
-            ))}
-          </select>
-          <select
-            aria-label="Connection readiness"
-            value={filters.readiness}
-            onChange={(event) =>
-              setFilters((current) => ({
-                ...current,
-                readiness: event.target.value as GalleryFilters["readiness"],
-              }))
-            }
-          >
-            <option value="all">All connections</option>
-            <option value="ready">Connections ready</option>
-            <option value="choose_accounts">Choose accounts</option>
-            <option value="needs_connection">Connection needed</option>
-            <option value="unknown">Not checked</option>
-            <option value="installed">Installed</option>
-          </select>
-        </div>
-        <div className="collection-description">
-          <span>
-            {filters.collection === "personal"
-              ? "Personal apps"
-              : "Business apps"}
-          </span>
-          <span>
-            {!loading &&
-              `${visible.length} ${visible.length === 1 ? "app" : "apps"}`}
-          </span>
-        </div>
-        {notice && (
-          <div className="notice" role="status">
-            <Icon name="check" />
-            {notice}
+        {notice && <p className="notice" role="status">{notice}</p>}
+        <section className="your-apps" aria-labelledby="your-apps-title">
+          <div className="section-heading"><h2 id="your-apps-title">Your apps</h2>
+            <div className="collections" role="tablist" aria-label="App collections">
+              {(["personal", "business"] as const).map(collection => <button role="tab" key={collection} aria-selected={filters.collection === collection}
+                tabIndex={filters.collection === collection ? 0 : -1} onClick={() => chooseCollection(collection)}
+                onKeyDown={event => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); chooseCollection(collection === "personal" ? "business" : "personal"); event.currentTarget.parentElement?.querySelector<HTMLButtonElement>('button[aria-selected="false"]')?.focus(); } }}>
+                {collection === "personal" ? "Personal" : "Business"}</button>)}
+            </div>
           </div>
-        )}
-        {connections === null && !loading && !loadError && (
-          <p className="inventory-note">
-            Connections could not be checked. You can still explore and install
-            apps.
-          </p>
-        )}
-        <GalleryResults
-          apps={visible}
-          connections={connections}
-          loading={loading}
-          error={loadError}
-          collection={filters.collection}
-          bridgeUnavailable={!window.MatrixOS}
-          pending={pending}
-          actionErrors={actionErrors}
-          onSelect={setSelected}
-          onAction={action}
-          onRefresh={refresh}
-          onClear={() =>
-            setFilters((current) => ({
-              ...current,
-              query: "",
-              category: "",
-              readiness: "all",
-            }))
-          }
-        />
-        <footer className="gallery-footer">
-          <span>Apps for your Matrix computer.</span>
-          <span>App screenshots. Example data is labeled. Apps start empty.</span>
-        </footer>
-      </div>
-      {active && (
-        <Detail
-          app={active}
-          connections={connections}
-          pending={pending !== null}
-          error={actionErrors[active.id] ?? ""}
-          onClose={() => setSelected(null)}
-          onAction={() => void action(active)}
-        />
-      )}
+          {installed.length ? <div className="installed-strip">{installed.map(app => <button key={app.id} disabled={pending !== null} aria-label={`Launch ${app.name}`} onClick={() => void action(app)}><AppIdentity app={app} /><span>{app.installedName ?? app.name}</span></button>)}</div>
+            : <p className="installed-empty">{loading ? "Loading your apps…" : "Your installed apps will appear here."}</p>}
+        </section>
+        <section className="catalog-section" aria-labelledby="catalog-title">
+          <div className="section-heading"><h2 id="catalog-title">Gallery</h2>
+            <nav className="category-tabs" aria-label="App categories">
+              {["", ...categories].map(category => <button key={category} aria-pressed={filters.category === category} onClick={() => setFilters(current => ({...current, category}))}>{category || "All"}</button>)}
+            </nav>
+          </div>
+          <div className="readiness-tools"><select aria-label="Connection readiness" value={filters.readiness}
+            onChange={event => setFilters(current => ({...current, readiness: event.target.value as GalleryFilters["readiness"]}))}>
+            <option value="all">All connections</option><option value="ready">Connections ready</option><option value="choose_accounts">Choose accounts</option><option value="needs_connection">Connection needed</option><option value="unknown">Not checked</option><option value="installed">Installed</option>
+          </select><span>{!loading && `${visible.length} ${visible.length === 1 ? "app" : "apps"}`}</span></div>
+          <GalleryResults apps={visible} connections={connections} loading={loading} error={loadError} collection={filters.collection}
+            bridgeUnavailable={!window.MatrixOS} pending={pending} actionErrors={actionErrors} onSelect={chooseApp} onAction={action} onRefresh={refresh}
+            onClear={() => setFilters(current => ({...current, query: "", category: "", readiness: "all"}))} />
+        </section>
+        <section className="ideas" aria-labelledby="ideas-title"><h2 id="ideas-title">Ideas</h2><div className="ideas-grid">
+          {["Who should I reconnect with this week?", "Tell me when my wishlist items are worth buying", "Compare the flats I’m viewing"].map(idea => <button key={idea} disabled={building || !window.MatrixOS?.generate} onClick={() => void build(idea)}><span>“{idea}”</span><small>{control("sparkles")}Build this</small></button>)}
+        </div></section>
+        <footer className="gallery-footer"><span>Made for your Matrix computer.</span><span>Real app previews. Example data is labelled. Apps start empty.</span></footer>
+      </div>)}
     </main>
   );
 }

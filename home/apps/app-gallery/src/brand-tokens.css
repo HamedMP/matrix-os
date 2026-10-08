@@ -13,4 +13,16 @@
   --brand-danger: #9F3F2C;
   --brand-font-display: "Bricolage Grotesque", Geist, ui-sans-serif, system-ui, sans-serif;
   --brand-font-sans: Geist, ui-sans-serif, system-ui, sans-serif;
+  --brand-gallery-paper: #FFFEFC;
+  --brand-gallery-canvas: #FFFFFF;
+  --brand-gallery-ink: #242323;
+  --brand-gallery-textMuted: #635F5F;
+  --brand-gallery-subtle: #827D7D;
+  --brand-gallery-border: #EBEAE6;
+  --brand-gallery-surfaceMuted: #FAF9F7;
+  --brand-gallery-action: #171717;
+  --brand-gallery-green: #F3F7EC;
+  --brand-gallery-gold: #FCF5E8;
+  --brand-gallery-teal: #EEF7F2;
+  --brand-gallery-blue: #EDF4F8;
 }

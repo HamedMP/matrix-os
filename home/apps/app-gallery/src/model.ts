@@ -11,6 +11,7 @@ import {
 export { deriveGalleryReadiness };
 export type { GalleryAppListing, GalleryConnection, GalleryReadinessStatus };
 export interface GalleryBridge {
+  generate?: (context: string) => void | Promise<unknown>;
   gatewayFetch: (
     url: string,
     init?: { method?: string; headers?: Record<string, string>; body?: string },

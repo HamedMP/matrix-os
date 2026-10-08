@@ -11,7 +11,7 @@ if (requested === "gallery") {
   (window as any).MatrixOS = {
     gatewayFetch: async (_url: string, init?: { method?: string }) => {
       if (init?.method === "POST") throw new Error("Install on the preview computer");
-      return { version: 1, apps: catalog.apps.map(app => ({ ...app, installed: false })) };
+      return { version: 1, apps: catalog.apps.map(app => ({ ...app, installed: new URLSearchParams(location.search).get("installed") === "1" && ["folio", "atlas", "subscriptions", "agenda", "focus", "workout-coach"].includes(app.id), launchPath: `apps/${app.id}` })) };
     }, integrations: async () => [],
   };
   await import("../../../home/apps/app-gallery/src/App.css");

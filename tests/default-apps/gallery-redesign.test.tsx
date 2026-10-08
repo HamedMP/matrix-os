@@ -16,7 +16,7 @@ function props() {
 }
 afterEach(cleanup);
 describe("curated gallery presentation", () => {
-  it("keeps each filtered app once across featured previews and app rows, with working Get and details actions", () => {
+  it("keeps each filtered app once across compact preview cards, with working Get and details actions", () => {
     const callbacks = props();
     render(<GalleryResults {...callbacks} />);
     for (const app of apps) expect(screen.getAllByRole("button", { name: `Explore ${app.name}` })).toHaveLength(1);
@@ -24,7 +24,7 @@ describe("curated gallery presentation", () => {
     expect(callbacks.onAction).toHaveBeenCalledWith(apps[0]);
     fireEvent.click(screen.getByRole("button", { name: `Explore ${apps[3].name}` }));
     expect(callbacks.onSelect).toHaveBeenCalledWith(apps[3].id);
-    expect(screen.getByRole("region", { name: "Featured apps" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Personal apps" })).toBeTruthy();
   });
   it("keeps installed launch and failed-install retry distinct, and disables actions during an install", () => {
     const callbacks = props();
@@ -70,9 +70,12 @@ describe("curated gallery presentation", () => {
 });
 
 describe("gallery packaged artwork", () => {
-  it("tries the app PNG, then its SVG, then a readable glyph, resetting for a different app", () => {
+  it("tries the Figma clay icon, PNG, SVG and glyph, resetting for a different app", () => {
     const { container, rerender } = render(<AppIdentity app={apps[0]} />);
     let image = container.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[0].id}.svg`));
+    fireEvent.error(image);
+    image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].id}.png`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
@@ -81,6 +84,9 @@ describe("gallery packaged artwork", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(container.querySelector("svg")).toBeTruthy();
     rerender(<AppIdentity app={apps[1]} />);
+    image = container.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[1].id}.svg`));
+    fireEvent.error(image);
     image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].id}.png`));
     fireEvent.error(image);

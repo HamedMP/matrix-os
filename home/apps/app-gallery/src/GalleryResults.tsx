@@ -1,6 +1,7 @@
 import React from "react";
 import Preview, { Icon } from "./Preview";
 import AppIdentity from "./AppIdentity";
+import { galleryArtwork } from "./artwork";
 import { deriveGalleryReadiness, type GalleryAppListing, type GalleryConnection } from "./model";
 interface Props {
   apps: GalleryAppListing[];
@@ -40,28 +41,22 @@ function Action({ app, pending, error, onAction }: Pick<Props, "pending" | "onAc
     </button>
   );
 }
-function Installed({ app }: { app: GalleryAppListing }) {
-  return app.installed ? <span className="installed-badge"><Icon name="check" />Installed</span> : null;
-}
-function AppCard({ app, props, featured }: { app: GalleryAppListing; props: Props; featured: boolean }) {
+function AppCard({ app, props }: { app: GalleryAppListing; props: Props }) {
   const error = props.actionErrors[app.id] ?? "";
-  if (featured) return (
-    <article className="featured-app" aria-labelledby={`gallery-title-${app.id}`}>
-      <button className="featured-explore" aria-label={`Explore ${app.name}`} onClick={() => props.onSelect(app.id)}>
-        <Preview app={app} />
-        <div className="featured-copy"><AppIdentity app={app} /><div><h2 id={`gallery-title-${app.id}`}>{app.name}</h2><p>{app.tagline}</p><Installed app={app} /></div></div>
-      </button>
-      <footer className="card-footer"><ConnectionLabel app={app} connections={props.connections} /><Action app={app} pending={props.pending} error={error} onAction={props.onAction} /></footer>
-      {error && <p className="card-error" role="alert">{error}</p>}
-    </article>
-  );
   return (
-    <article className="app-row" aria-labelledby={`gallery-title-${app.id}`}>
-      <button className="row-explore" aria-label={`Explore ${app.name}`} onClick={() => props.onSelect(app.id)}>
-        <AppIdentity app={app} /><div className="app-row-copy"><h2 id={`gallery-title-${app.id}`}>{app.name}</h2><p className="app-row-category">{app.category}</p><p className="row-description">{app.description}</p><Installed app={app} /></div>
-      </button>
-      <Action app={app} pending={props.pending} error={error} onAction={props.onAction} />
-      <div className="row-support"><ConnectionLabel app={app} connections={props.connections} /></div>
+    <article className="gallery-card" aria-labelledby={`gallery-title-${app.id}`}>
+      <button className="card-preview" aria-label={`Explore ${app.name}`} onClick={() => props.onSelect(app.id)}><Preview app={app} /></button>
+      <div className="card-info">
+        <button className="card-identity" aria-label={`Details for ${app.name}`} onClick={() => props.onSelect(app.id)}><AppIdentity app={app} /><div><h2 id={`gallery-title-${app.id}`}>{app.name}</h2><p>{app.tagline}</p></div></button>
+        <Action app={app} pending={props.pending} error={error} onAction={props.onAction} />
+      </div>
+      <div className="card-connections"><span>{app.services.every(service => service.optional) ? "Optional" : "Works with"}</span>
+        {app.services.length ? app.services.map(service => {
+          const symbol = /calendar/.test(service.id) ? "calendar" : service.id === "gmail" ? "mail" : /drive|docs/.test(service.id) ? "folder" : null;
+          return <span className="service-chip" key={service.id}>{symbol && <img src={galleryArtwork(`controls/${symbol}.svg`)} alt="" />}{service.name}</span>;
+        }) : <span className="service-chip">Your own entries</span>}
+      </div>
+      <div className="card-readiness"><ConnectionLabel app={app} connections={props.connections} /></div>
       {error && <p className="card-error" role="alert">{error}</p>}
     </article>
   );
@@ -78,13 +73,11 @@ export default function GalleryResults(props: Props) {
   if (!props.apps.length) return (
     <div className="empty"><Icon name="search" /><h2>No apps match your filters.</h2><p>Try another search or explore the whole collection.</p><button className="primary-button" onClick={props.onClear}>Clear filters</button></div>
   );
-  const preferred = props.collection === "business" ? ["cashflow", "projects"] : ["folio", "atlas"];
-  const ordered = [...props.apps.filter(app => preferred.includes(app.id)), ...props.apps.filter(app => !preferred.includes(app.id))];
-  const featured = ordered.slice(0, 2), remaining = props.apps.filter(app => !featured.some(item => item.id === app.id));
+  const preferred = props.collection === "personal" ? ["folio", "subscriptions", "agenda"] : ["cashflow", "projects", "meeting-briefs"];
+  const ordered = [...preferred.flatMap(id => props.apps.filter(app => app.id === id)), ...props.apps.filter(app => !preferred.includes(app.id))];
   return (
     <section className="gallery-results" aria-label={`${props.collection === "personal" ? "Personal" : "Business"} apps`} aria-busy={props.loading}>
-      <section className="featured-shelf" aria-label="Featured apps">{featured.map(app => <AppCard key={app.id} app={app} props={props} featured />)}</section>
-      {remaining.length > 0 && <div className="app-list">{remaining.map(app => <AppCard key={app.id} app={app} props={props} featured={false} />)}</div>}
+      <div className="gallery-grid">{ordered.map(app => <AppCard key={app.id} app={app} props={props} />)}</div>
     </section>
   );
 }
