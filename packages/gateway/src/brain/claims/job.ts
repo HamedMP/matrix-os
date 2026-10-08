@@ -120,3 +120,134 @@ function parseOptions(options: BrainExtractionOptions): Extraction | BrainExtrac
     now: options.now ?? Date.now, runId: "", startedAt: 0, bytesRead: 0, stopAfter: null, spend: null, ...zero(),
   };
 }
+
+/** A Postgres data (class 22) or constraint (class 23) error: the store refused the values written. */
+const refusedByPostgres = (error: unknown): boolean =>
+  /^2[23][0-9A-Z]{3}$/.test(String((error as { readonly code?: unknown } | null)?.code));
+
+const NOT_ALLOWED: BrainDocumentExtractionOutcome = { status: "skipped", errorCode: "provenance_not_allowed" };
+
+/** Store reads: any failure is store_unavailable. */
+const unavailable = (error: unknown): never => { throw new ExtractionStop("store_unavailable", { cause: error }); };
+
+function rulesOutcome(state: Extraction, document: BrainDocument): BrainDocumentExtractionOutcome {
+  try {
+    const { claims, claimsRejected } = extractRulesClaims(document);
+    state.counts.claimsRejected += claimsRejected;
+    return { status: "done", claims };
+  } catch (error) {
+    logFailure("rules extractor failed", error, "extractor_error");
+    return { status: "failed", errorCode: "extractor_error" };
+  }
+}
+
+/**
+ * A call that was sent but never answered (it timed out, or the caller aborted it) may still be billed, and no usage
+ * comes back: its worst case is added to the run's cost, so the run row, the per-run budget and the 30-day cap count
+ * it.
+ */
+function chargeUnanswered(state: Extraction, inputBytes: number): void {
+  state.usage.costMicroUsd += brainModelCallWorstCostMicroUsd(inputBytes);
+}
+
+/**
+ * Null when the caller aborted during the call: the run stops and the document keeps its state. A BrainModelError
+ * either fails the document (model_timeout, model_rejected) or stops the run (model_auth_failed, model_unavailable).
+ * A timeout or an abort after the call started is charged at its worst case (chargeUnanswered).
+ */
+async function modelOutcome(
+  state: Extraction, model: BrainClaimModel, document: BrainDocument,
+): Promise<BrainDocumentExtractionOutcome | null> {
+  const text = claimSourceText(document);
+  if (text.trim() === "") return { status: "done", claims: [] };
+  // The 30-day cap: this call starts only when the budget left covers its worst case. An abort is handled below.
+  const inputBytes = Buffer.byteLength(document.title, "utf8") + Buffer.byteLength(text, "utf8");
+  const spendStop = state.signal?.aborted ? null
+    : brainSpendStop(state.spend, state.limits.spendMicroUsdPer30d, state.usage.costMicroUsd, inputBytes);
+  if (spendStop !== null) throw new ExtractionStop(spendStop);
+  const timeout = AbortSignal.timeout(state.limits.modelCallTimeoutMs);
+  const signal = state.signal === undefined ? timeout : AbortSignal.any([state.signal, timeout]);
+  const input = { title: document.title, body: text, kinds: state.kinds, maxClaims: BRAIN_CLAIMS_PER_DOCUMENT_MAX };
+  let output: { readonly usage?: unknown; readonly claims?: unknown; readonly outcome?: unknown } | null;
+  let onAbort = (): void => undefined;
+  // Set once the call is made: an abort before it sends nothing and costs nothing.
+  let started = false;
+  try {
+    signal.throwIfAborted();
+    started = true;
+    // Rejects once the signal aborts, so a model that ignores its signal cannot hang the run.
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    // The async wrapper turns a synchronous throw into a rejection, so `aborted` always has its handler.
+    output = await Promise.race([(async () => model.extract(input, signal))(), aborted]);
+  } catch (error) {
+    if (state.signal?.aborted) {
+      if (started) chargeUnanswered(state, inputBytes);
+      return null;
+    }
+    const modelError = error instanceof BrainModelError ? error : null;
+    if (timeout.aborted || modelError?.code === "model_timeout") {
+      chargeUnanswered(state, inputBytes);
+      return { status: "failed", errorCode: "model_timeout" };
+    }
+    if (modelError !== null) {
+      if (modelError.code === "model_rejected") {
+        state.stopAfter = modelError;
+        return { status: "failed", errorCode: "model_failed" };
+      }
+      throw new ExtractionStop(modelError.code, { cause: error });
+    }
+    logFailure("model call failed", error, "model_failed");
+    return { status: "failed", errorCode: "model_failed" };
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+  // Cost unknown: fail the run closed rather than keep spending.
+  const usage = BrainExtractionUsageSchema.safeParse(output?.usage);
+  if (!usage.success) throw new ExtractionStop("model_usage_invalid", { cause: usage.error });
+  for (const key of USAGE_KEYS) state.usage[key] += usage.data[key];
+  // After the usage, so a billed refusal or unusable response is still counted.
+  const outcome = BrainClaimModelOutcomeSchema.optional().safeParse(output?.outcome);
+  if (!outcome.success || outcome.data?.status === "invalid") {
+    return { status: "failed", errorCode: "model_output_invalid" };
+  }
+  if (outcome.data?.status === "skipped") return { status: "skipped", errorCode: outcome.data.code };
+  const verified = verifyModelClaims({
+    documentId: document.documentId, text, candidates: output?.claims, kinds: input.kinds, maxClaims: input.maxClaims,
+  });
+  if (verified === null) return { status: "failed", errorCode: "model_output_invalid" };
+  state.counts.claimsRejected += verified.claimsRejected;
+  state.counts.quotesRejected += verified.quotesRejected;
+  return { status: "done", claims: verified.claims };
+}
+
+/** False when the document was revised or deleted since it was read: a live newer revision stays pending. */
+async function applyOutcome(
+  state: Extraction, document: BrainDocument, outcome: BrainDocumentExtractionOutcome,
+): Promise<boolean> {
+  const { documentId, incarnation, revision } = document;
+  let result: BrainApplyDocumentExtractionResult;
+  try {
+    // The run's cost so far rides along, so the row keeps it even if this run never closes.
+    result = await state.store.applyDocumentExtraction(state.scope, {
+      runId: state.runId, documentId, incarnation, revision, extractor: state.extractor, outcome,
+      runCostMicroUsd: state.usage.costMicroUsd,
+    });
+  } catch (error) {
+    const code = error instanceof BrainStoreError ? error.code : null;
+    if (outcome.status === "done" && (code === "invalid" || refusedByPostgres(error))) {
+      logFailure("store refused claims", error, "claim_invalid");
+      return applyOutcome(state, document, { status: "failed", errorCode: "claim_invalid" });
+    }
+    const stop = code === "capacity" ? "claims_capacity" : code === "conflict" ? "run_superseded" : "store_unavailable";
+    throw new ExtractionStop(stop, { cause: error });
+  }
+  if (!result.applied) return false;
+  state.counts.documentsProcessed += 1;
+  if (outcome.status === "failed") state.counts.documentsFailed += 1;
+  state.counts.claimsWritten += result.written;
+  state.counts.claimsRemoved += result.removed;
+  return true;
+}
