@@ -5,7 +5,10 @@
  * per-document feature row and every source config row); then every feature's scope-level rows go from each of its
  * tables that exists, one transaction per feature under that feature's own lock, and the scope's background runs
  * through BrainJobStore. A missing table, or an older one without owner_id and scope_id, holds nothing of the scope.
- * Any other failure throws, so the project deletion fails and is retried.
+ * Any other failure throws, so the project deletion fails and is retried. The core rows go first, so work already
+ * running for the scope (a hook, a job, a refresh) that writes after its feature's erase finds nothing to write from:
+ * per-document rows need their document (a foreign key or a live check under the feature lock) and the graph's
+ * project entity needs a source row of the scope.
  */
 import { sql, type Kysely } from "kysely";
 import { BRAIN_FEATURE_SCOPE_LOCK_PREFIXES } from "../contracts.js";
