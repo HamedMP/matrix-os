@@ -332,8 +332,10 @@ I/O is read-only (`realpath`, `stat`, git reading the repository); nothing is wr
   fatal UTF-8 decoder and must be 1..512 bytes with no control character, leading `/`, or empty,
   `.` or `..` segment; others are dropped and counted (`invalid_paths_dropped`). Messages decode
   lossily with NUL replaced; author names lose control characters and are capped at 200 chars;
-  dates are strict ISO 8601 with offset; at most 64 parents. Output to the store passes the
-  store's strict schemas; a bad draft is `document_invalid` with nothing written.
+  dates are strict ISO 8601 with offset; at most 64 parents. The metadata log ends the author
+  name with `%n`, which a commit header line cannot hold, so a `\x1f` git keeps inside a name
+  never moves the message boundary. Output to the store passes the store's strict schemas; a
+  bad draft is `document_invalid` with nothing written.
 
 ### Error response policy
 
