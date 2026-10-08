@@ -113,3 +113,155 @@ function assertFixturePath(path: string): void {
 function subjectOf(message: string): string {
   return message.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
 }
+
+export async function createBrainGitFixture(): Promise<BrainGitFixture> {
+  const homePath = await realpath(await mkdtemp(join(tmpdir(), "brain-git-")));
+  const repoPath = join(homePath, "projects", "widgets", "repo");
+  const gitDir = join(repoPath, ".git");
+  const baseArgs = [...IDENTITY_ARGS, "--git-dir", gitDir];
+  const snapshots = new Map<string, ReadonlyMap<string, string>>();
+  const parentsOf = new Map<string, readonly string[]>();
+  const messages = new Map<string, string>();
+  let counter = 0;
+
+  await mkdir(repoPath, { recursive: true });
+  await runGit([...IDENTITY_ARGS, "init", "-q", "-b", "main", repoPath], homePath, fixtureEnv(homePath));
+
+  const run = (args: readonly string[], extraEnv: Readonly<Record<string, string>> = {}, okExits?: readonly number[]) =>
+    runGit([...baseArgs, ...args], homePath, fixtureEnv(homePath, extraEnv), okExits);
+  const git = async (args: readonly string[], options: { env?: Record<string, string> } = {}) =>
+    (await run(args, options.env)).stdout.trimEnd();
+
+  const branchTip = async (branch: string): Promise<string | null> => {
+    const outcome = await run(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], {}, [0, 1]);
+    return outcome.code === 0 ? outcome.stdout.trim() : null;
+  };
+  const snapshotOf = (sha: string): ReadonlyMap<string, string> => {
+    const snapshot = snapshots.get(sha);
+    if (!snapshot) throw new Error(`fixture does not know commit ${sha}`);
+    return snapshot;
+  };
+  const diffFiles = (from: ReadonlyMap<string, string>, to: ReadonlyMap<string, string>): Record<string, string | null> => {
+    const files: Record<string, string | null> = {};
+    for (const path of new Set([...from.keys(), ...to.keys()])) {
+      if (from.get(path) !== to.get(path)) files[path] = to.get(path) ?? null;
+    }
+    return files;
+  };
+
+  const writeTree = async (snapshot: ReadonlyMap<string, string>, n: number): Promise<string> => {
+    const stage = join(homePath, `stage-${n}`);
+    const indexEnv = { GIT_INDEX_FILE: join(homePath, `index-${n}`) };
+    await mkdir(stage);
+    try {
+      for (const [path, content] of snapshot) {
+        const file = join(stage, path);
+        await mkdir(dirname(file), { recursive: true });
+        await writeFile(file, content);
+      }
+      await runGit([...IDENTITY_ARGS, "--git-dir", gitDir, "--work-tree", stage, "add", "-A", "-f"], stage,
+        fixtureEnv(homePath, indexEnv));
+      return (await run(["write-tree"], indexEnv)).stdout.trim();
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+      await rm(indexEnv.GIT_INDEX_FILE, { force: true });
+    }
+  };
+
+  const commit = async (input: FixtureCommitInput): Promise<string> => {
+    const branch = input.branch ?? "main";
+    const current = input.parents ? null : await branchTip(branch);
+    const parents = input.parents ?? (current ? [current] : []);
+    const next = new Map(parents.length > 0 ? snapshotOf(parents[0]!) : []);
+    for (const [path, content] of Object.entries(input.files ?? {})) {
+      assertFixturePath(path);
+      if (content === null) next.delete(path);
+      else next.set(path, content);
+    }
+    if (next.size > MAX_FIXTURE_FILES) throw new Error("fixture snapshot is too large");
+    const n = counter++;
+    const tree = await writeTree(next, n);
+    const date = `${FIXTURE_EPOCH + 60 * n} +0000`;
+    const messageFile = join(homePath, `message-${n}.txt`);
+    await writeFile(messageFile, input.message.endsWith("\n") ? input.message : `${input.message}\n`);
+    try {
+      const outcome = await run(
+        ["commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", messageFile],
+        { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+      );
+      const sha = outcome.stdout.trim();
+      await run(["update-ref", `refs/heads/${branch}`, sha]);
+      snapshots.set(sha, next);
+      parentsOf.set(sha, parents);
+      messages.set(sha, input.message);
+      return sha;
+    } finally {
+      await rm(messageFile, { force: true });
+    }
+  };
+
+  const tip = async (branch = "main"): Promise<string> => {
+    const sha = await branchTip(branch);
+    if (sha === null) throw new Error(`fixture branch ${branch} does not exist`);
+    return sha;
+  };
+
+  const setBranch = async (branch: string, sha: string): Promise<void> => {
+    await run(["update-ref", `refs/heads/${branch}`, sha]);
+  };
+
+  await run(["remote", "add", "origin", FIXTURE_REMOTE_URL]);
+
+  return {
+    homePath,
+    repoPath,
+    git,
+    commit,
+    tip,
+    setBranch,
+    squashPr: (n, title, body, files) =>
+      commit({ message: body ? `${title} (#${n})\n\n${body}` : `${title} (#${n})`, files }),
+    async mergePr(input) {
+      if (input.commits.length === 0) throw new Error("a fixture merge needs at least one branch commit");
+      const mainTip = await tip("main");
+      let side = mainTip;
+      for (const branchCommit of input.commits) {
+        side = await commit({ branch: `pr-${input.number}`, parents: [side], ...branchCommit });
+      }
+      const tail = input.body ? `\n\n${input.body}` : "";
+      const message = input.titled
+        ? `${input.title} (#${input.number})${tail}`
+        : `Merge pull request #${input.number} from ${input.branch}\n\n${input.title}${tail}`;
+      return commit({ message, parents: [mainTip, side], files: diffFiles(snapshotOf(mainTip), snapshotOf(side)) });
+    },
+    async revert(sha, branch = "main") {
+      const parent = parentsOf.get(sha)?.[0];
+      const before = parent ? snapshotOf(parent) : new Map<string, string>();
+      return commit({
+        branch,
+        message: `Revert "${subjectOf(messages.get(sha) ?? "")}"\n\nThis reverts commit ${sha}.`,
+        files: diffFiles(snapshotOf(sha), before),
+      });
+    },
+    writeSpec: (dir, content, message) =>
+      commit({ message: message ?? `docs: update ${dir} spec`, files: { [`specs/${dir}/spec.md`]: content } }),
+    removeSpec: (dir, message) =>
+      commit({ message: message ?? `docs: remove ${dir} spec`, files: { [`specs/${dir}/spec.md`]: null } }),
+    async forcePush(branch, onto, commits) {
+      await setBranch(branch, onto);
+      const shas: string[] = [];
+      for (const next of commits) shas.push(await commit({ ...next, branch }));
+      return shas;
+    },
+    async setRemote(url) {
+      if (url === null) await run(["config", "--local", "--unset-all", "remote.origin.url"], {}, [0, 5]);
+      else await run(["config", "--local", "remote.origin.url", url]);
+    },
+    async setOriginHead(branch, sha) {
+      await run(["update-ref", `refs/remotes/origin/${branch}`, sha]);
+      await run(["symbolic-ref", "refs/remotes/origin/HEAD", `refs/remotes/origin/${branch}`]);
+    },
+    committedAt: (sha) => git(["log", "-1", "--no-color", "--format=%cI", sha, "--"]),
+    destroy: () => rm(homePath, { recursive: true, force: true }),
+  };
+}
