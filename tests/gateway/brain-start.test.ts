@@ -2,6 +2,9 @@
  * Starting every Company Brain feature on one owner database: bootstrap order and deferral, the services bag, the
  * change events of the project service, shutdown, and the shared project resolver.
  */
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
@@ -15,6 +18,7 @@ import type {
   BrainBackgroundJob, BrainChangeEvent, BrainProjectResolver, BrainServices,
 } from "../../packages/gateway/src/brain/contracts.js";
 import { BrainRepository } from "../../packages/gateway/src/brain/index.js";
+import { saveMatrixConfig } from "../../packages/gateway/src/brain/sources/matrix/database.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
 import type { OwnerScope } from "../../packages/gateway/src/state-ops.js";
 import { createSeeder, seedClaims } from "./helpers/brain-search-fakes.js";
@@ -201,6 +205,53 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
       expect(kinds.get(off as never)).toMatchObject({ available: false, reason: "not_configured" });
     }
     expect(isConnected).toHaveBeenCalledWith(OWNER, "linear");
+  });
+
+  it("reads the gateway's notes and home for its owner principals only, never into a collaborator's project", async () => {
+    const home = mkdtempSync(join(tmpdir(), "brain-start-home-"));
+    try {
+      mkdirSync(join(home, "docs"));
+      writeFileSync(join(home, "docs", "plan.md"), "# Plan\nThe owner's plan.\n");
+      const notes = { listNotes: vi.fn(async () => []), listNoteKeys: vi.fn(async () => []) };
+      // Every principal resolves a project of its own, as a shared-preview collaborator can.
+      const everyone: BrainProjectLookup = {
+        getProjectById: async () => ({ ok: true, project: PROJECT }),
+        getProject: async () => ({ ok: true, project: PROJECT }),
+        resolveProjectWorkingDirectory: async () => "/home/widgets",
+      };
+      started = await startBrainServices(harness.db, {
+        projects: everyone, homePath: home, claimModels: noModel, scheduleOwnerId: null, ownerIds: [OWNER],
+        sources: { notes, chats: null },
+      });
+      const sources = started!.sources!;
+      const reasons = async (who: string) => {
+        const kinds = new Map((await sources.list(who, "widgets")).kinds.map((view) => [view.kind, view.reason]));
+        return [kinds.get("matrix_notes"), kinds.get("matrix_files")];
+      };
+      expect(await reasons(OWNER)).toEqual([null, null]);
+      expect(await reasons("collaborator")).toEqual(["not_configured", "not_configured"]);
+      const files = { roots: ["docs"], extensions: ["md"] };
+      for (const input of [{ kind: "matrix_notes", config: {} }, { kind: "matrix_files", config: files }] as const) {
+        await expect(sources.connect("collaborator", "widgets", input))
+          .rejects.toMatchObject({ code: "source_kind_unsupported" });
+      }
+      await expect(sources.options("collaborator", "widgets", "matrix_files", {}))
+        .rejects.toMatchObject({ code: "source_kind_unsupported" });
+      // A source already in the collaborator's scope never syncs either.
+      const scope = brainProjectScope("collaborator", PROJECT.id);
+      const { source } = await harness.repository.createSource(scope, {
+        kind: "matrix_notes", externalRef: "matrix_notes", label: "Notes",
+      });
+      await saveMatrixConfig(harness.db, "matrix_notes", scope, source.sourceId, { folders: [] }, new Date());
+      await expect(sources.sync("collaborator", "widgets", source.sourceId))
+        .rejects.toMatchObject({ code: "source_not_connected" });
+      expect(notes.listNotes).not.toHaveBeenCalled();
+      // The owner connects and syncs the same home.
+      const owned = await sources.connect(OWNER, "widgets", { kind: "matrix_files", config: files });
+      expect((await sources.sync(OWNER, "widgets", owned.source.sourceId)).counts.written).toBe(1);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("leaves only the source kinds of a failed table group off and keeps the rest", async () => {

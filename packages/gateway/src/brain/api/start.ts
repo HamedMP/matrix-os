@@ -71,7 +71,8 @@ export interface BrainServicesStartDeps extends Omit<BrainProjectServiceDeps, "r
   readonly scheduleOwnerId?: string | null;
   /**
    * The gateway owner's principals: only they may spend the owner's keys (the Anthropic key of model claims, the
-   * OpenAI key of meaning search). Default: the schedule owner alone (none when there is no owner).
+   * OpenAI key of meaning search) and read its Notes and home (matrix_notes, matrix_files). Default: the schedule
+   * owner alone (none when there is no owner).
    */
   readonly ownerIds?: readonly string[];
   readonly sources?: BrainSourcesStartOptions;
@@ -197,7 +198,7 @@ export async function startBrainServices(
   const sources = await startFeature("sources", async () => createBrainSourcesService({
     repository, resolver, runner: runBrainSourceSync, hooks, gitSync: createBrainGitSourceSync(project),
     handlers: createBrainSourceHandlers({
-      kysely, integrations, homePath: deps.homePath, notes, chats, ...seams,
+      kysely, integrations, homePath: deps.homePath, homeOwnerIds: ownerIds, notes, chats, ...seams,
     }, sourceTables),
     ...(seams.accounts === undefined ? {} : { accounts: seams.accounts }),
     ...(limits === undefined ? {} : { limits }),
