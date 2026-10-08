@@ -14,9 +14,128 @@ jest.mock("react-native-webview", () => {
   };
 });
 
-import { TerminalSurface } from "../components/TerminalSurface";
+import { TerminalSurface, type TerminalSurfaceHandle } from "../components/TerminalSurface";
+
+function renderSurface(onResize = jest.fn()) {
+  const ref = React.createRef<TerminalSurfaceHandle>();
+  render(
+    <TerminalSurface
+      ref={ref}
+      fontScale={1}
+      onInput={jest.fn()}
+      onBinary={jest.fn()}
+      onResize={onResize}
+    />,
+  );
+  const webView = screen.getByTestId("terminal-webview");
+  const emulatorSays = (message: Record<string, unknown>) => act(() => webView.props.onMessage({
+    nativeEvent: { data: JSON.stringify(message) },
+  }));
+  return { surface: ref.current!, webView, emulatorSays };
+}
+
+function injectedScripts(): string[] {
+  return mockInjectJavaScript.mock.calls.map((call) => String(call[0]));
+}
 
 describe("native mobile terminal surface", () => {
+  beforeEach(() => {
+    mockInjectJavaScript.mockClear();
+  });
+
+  it("holds the grid and its output for an emulator that has not booted, in order", () => {
+    const { surface, emulatorSays } = renderSurface();
+
+    act(() => {
+      surface.resize(120, 36);
+      surface.write("first");
+      surface.write("second");
+    });
+    expect(mockInjectJavaScript).not.toHaveBeenCalled();
+
+    emulatorSays({ type: "ready", cols: 49, rows: 36 });
+
+    const scripts = injectedScripts();
+    expect(scripts).toHaveLength(1);
+    const grid = scripts[0]!.indexOf("applyGrid(120,36)");
+    const first = scripts[0]!.indexOf(JSON.stringify("first"));
+    const second = scripts[0]!.indexOf(JSON.stringify("second"));
+    expect(grid).toBeGreaterThanOrEqual(0);
+    expect(first).toBeGreaterThan(grid);
+    expect(second).toBeGreaterThan(first);
+  });
+
+  it("drops held output a reset has superseded but keeps the grid", () => {
+    const { surface, emulatorSays } = renderSurface();
+
+    act(() => {
+      surface.resize(49, 36);
+      surface.write("stale screen");
+      surface.reset();
+      surface.write("fresh screen");
+    });
+    emulatorSays({ type: "ready", cols: 49, rows: 36 });
+
+    const script = injectedScripts().join(";");
+    expect(script).toContain("applyGrid(49,36)");
+    expect(script).toContain("fresh screen");
+    expect(script).not.toContain("stale screen");
+  });
+
+  it("applies each operation as it arrives once the emulator is running", () => {
+    const { surface, emulatorSays } = renderSurface();
+    emulatorSays({ type: "ready", cols: 49, rows: 36 });
+    mockInjectJavaScript.mockClear();
+
+    act(() => {
+      surface.resize(49, 18);
+      surface.reset();
+      surface.write("prompt");
+    });
+
+    const scripts = injectedScripts();
+    expect(scripts).toHaveLength(3);
+    expect(scripts[0]).toContain("applyGrid(49,18)");
+    expect(scripts[1]).toContain("__term.reset()");
+    expect(scripts[2]).toContain(JSON.stringify("prompt"));
+  });
+
+  it("refuses a grid the emulator could not hold", () => {
+    const { surface, emulatorSays } = renderSurface();
+    emulatorSays({ type: "ready", cols: 49, rows: 36 });
+    mockInjectJavaScript.mockClear();
+
+    act(() => {
+      surface.resize(0, 36);
+      surface.resize(49.5, 36);
+      surface.resize(501, 36);
+      surface.resize(49, 201);
+    });
+
+    expect(mockInjectJavaScript).not.toHaveBeenCalled();
+  });
+
+  it("reports the grid that fits the screen", () => {
+    const onResize = jest.fn();
+    const { emulatorSays } = renderSurface(onResize);
+
+    emulatorSays({ type: "ready", cols: 49, rows: 36 });
+    emulatorSays({ type: "resize", cols: 49, rows: 18 });
+
+    expect(onResize.mock.calls).toEqual([[49, 36], [49, 18]]);
+  });
+
+  it("measures the screen without resizing a grid the computer owns", () => {
+    const { webView } = renderSurface();
+    const html = String(webView.props.source.html);
+
+    // The fit addon may only propose a size. Refitting the emulator itself
+    // while the computer still draws for its own grid scrolls the screen away.
+    expect(html).toContain("fit.proposeDimensions()");
+    expect(html).not.toContain("fit.fit()");
+    expect(html).toContain("if (!gridApplied)");
+  });
+
   it("forwards xterm onBinary protocol bytes through the React Native bridge", () => {
     const onBinary = jest.fn();
     render(
