@@ -185,6 +185,28 @@ describe("start and kind rules", () => {
     }
   });
 
+  it("reads a GitHub source again from the start when its window or item types change", async () => {
+    const sources = await start();
+    const pullsOnly = { ...(CONFIGS.github as object), include: { pullRequests: true, reviews: false, issues: false } };
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "github", config: pullsOnly });
+    // The listing holds only issues: each is read and passed over, and the cursor moves past them.
+    expect((await sources.sync(OWNER, "proj_a", source.sourceId)).counts.written).toBe(0);
+    const withIssues = await sources.update(OWNER, "proj_a", source.sourceId, {
+      expectedRevision: 1, config: { ...pullsOnly, include: { pullRequests: true, reviews: false, issues: true } },
+    });
+    expect(withIssues).toMatchObject({ revision: 1, label: source.label, config: { issues: true, accountLabel: "work" } });
+    expect(withIssues.sourceId).not.toBe(source.sourceId);
+    const run = await sources.sync(OWNER, "proj_a", withIssues.sourceId);
+    expect(run.counts.written).toBeGreaterThan(0);
+    // A setting outside what it reads keeps the source and its cursor.
+    const renamed = await sources.update(OWNER, "proj_a", withIssues.sourceId, {
+      expectedRevision: 1, config: { ...pullsOnly, include: { pullRequests: true, reviews: false, issues: true }, mode: "integration" },
+      label: "Widgets on GitHub",
+    });
+    expect(renamed).toMatchObject({ sourceId: withIssues.sourceId, revision: 2, label: "Widgets on GitHub" });
+    expect((await sources.sync(OWNER, "proj_a", withIssues.sourceId)).counts).toMatchObject({ written: 0, unchanged: 0 });
+  });
+
   it("passes the optional dependencies through: token owners, fetch, limits, git sync and the runner", async () => {
     const runner = vi.fn<BrainSourceSyncRunner>(runBrainSourceSync);
     const network = vi.fn(async () => { throw new Error("no network in tests"); });
