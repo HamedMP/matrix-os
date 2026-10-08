@@ -331,3 +331,94 @@ async function runWindows(run: SyncRun, opened: OpenedRun, progress: RunProgress
     from = windowEnd;
   }
 }
+
+/** A cursor CAS miss is a concurrent run unless the source stopped being active. */
+async function conflictCode(run: SyncRun): Promise<GitSyncErrorCode> {
+  try {
+    const source = await run.repository.getSource(run.scope, run.sourceId);
+    return source !== null && source.deletedAt === null && source.status === "active" ? "cursor_conflict" : "source_inactive";
+  } catch (error) {
+    logSyncError("source re-read failed", error, "cursor_conflict");
+    return "cursor_conflict";
+  }
+}
+
+/** Closing never throws; a receipt interrupted by a concurrent run or a source delete is logged and reported as null. */
+async function closeReceipt(
+  run: SyncRun,
+  receipt: BrainSyncReceipt,
+  close: {
+    status: BrainSyncReceiptOutcome;
+    counts: BrainSyncCounts;
+    nextAction: GitSyncNextAction;
+    errorCode: GitSyncErrorCode | GitSyncInfoCode | null;
+  },
+): Promise<BrainSyncReceipt | null> {
+  try {
+    return await run.repository.closeSyncReceipt(run.scope, { sourceId: run.sourceId, receiptId: receipt.receiptId, ...close });
+  } catch (error) {
+    logSyncError("receipt close failed", error);
+    return null;
+  }
+}
+
+async function finishRun(
+  run: SyncRun,
+  receipt: BrainSyncReceipt,
+  progress: RunProgress,
+  failure: GitSyncErrorCode | null,
+): Promise<GitSyncResult> {
+  if (progress.rewritten) progress.notice("history_rewritten");
+  const counts = progress.counts();
+  const status: BrainSyncReceiptOutcome = failure !== null ? "failed" : progress.rejectedCount > 0 ? "partial" : "succeeded";
+  const errorCode = failure
+    ?? (progress.rejectedCount > 0 ? "documents_rejected" : progress.rewritten ? "history_rewritten" : null);
+  const nextAction: GitSyncNextAction = failure !== null ? NEXT_ACTIONS[failure] : progress.remaining > 0 ? "run_again" : "";
+  const closed = await closeReceipt(run, receipt, { status, counts, nextAction, errorCode });
+  const remaining = failure === null ? progress.remaining : 0;
+  return {
+    status, errorCode, nextAction, receipt: closed, counts,
+    cursorBefore: progress.cursorBefore, cursorAfter: progress.cursor,
+    commitsProcessed: progress.processed, commitsRemaining: remaining,
+    caughtUp: failure === null && remaining === 0, historyRewritten: progress.rewritten,
+    batches: progress.batches, rejectedDocumentIds: [...progress.rejectedIds], notices: [...progress.notices],
+  };
+}
+
+async function syncWithReceipt(run: SyncRun): Promise<GitSyncResult> {
+  const opened = await openRun(run);
+  if (typeof opened === "string") return earlyResult(opened);
+  const progress = new RunProgress();
+  let failure: GitSyncErrorCode | null = null;
+  try {
+    await runWindows(run, opened, progress);
+  } catch (error) {
+    failure = error instanceof BrainStoreError && error.code === "conflict" ? await conflictCode(run) : errorCodeOf(error);
+    console.warn("[brain-git] sync failed", { code: failure });
+  }
+  return finishRun(run, opened.receipt, progress, failure);
+}
+
+/**
+ * Syncs one git source (brain_sources.kind "git") from the checkout at
+ * repoPath into the store. Bounded per run by limits.commitsPerRun and
+ * limits.runBudgetMs; a result with nextAction "run_again" has more history
+ * to apply. Never rejects.
+ */
+export async function syncGitSource(options: GitSyncOptions): Promise<GitSyncResult> {
+  try {
+    const run = parseOptions(options);
+    if (run === null) return earlyResult("invalid_options");
+    const key = JSON.stringify([run.scope.ownerId, run.scope.scopeId, run.sourceId]);
+    if (runningSyncs.has(key) || runningSyncs.size >= GIT_MAX_CONCURRENT_SYNCS) return earlyResult("sync_in_progress");
+    runningSyncs.add(key);
+    try {
+      return await syncWithReceipt(run);
+    } finally {
+      runningSyncs.delete(key);
+    }
+  } catch (error) {
+    logSyncError("sync crashed", error, "internal_error");
+    return earlyResult("internal_error");
+  }
+}
