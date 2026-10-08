@@ -71,17 +71,35 @@ describe("Repository", () => {
     expect(api.gitReceipts).toHaveBeenCalledWith(PROJECT, 5);
     expect(await within(repository).findAllByRole("listitem")).toHaveLength(3);
     expect(within(repository).getByText("Try again later.")).toBeTruthy();
+    const confirm = () => within(repository).queryByRole("dialog", { name: "Read with the model" });
     fireEvent.click(button("Find claims with the model"));
-    expect(within(repository).getByRole("group", { name: "Read with the model" })).toHaveTextContent(/sends this project's pull requests.*to Anthropic/);
-    expect(button("Find claims with the model")).toBeDisabled();
-    // A confirm left open cannot start a paid run while a sync runs.
+    expect(confirm()).toHaveTextContent(/sends this project's pull requests.*to Anthropic/);
+    // It floats over the receipts instead of pushing them down.
+    expect(confirm()).toHaveClass("absolute");
+    expect(within(repository).getByRole("list", { name: "Recent syncs" })).toBeTruthy();
+    // Its trigger closes it again, and so do Escape and a click outside; a click inside keeps it.
+    expect(button("Find claims with the model")).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(button("Find claims with the model"));
+    expect(confirm()).toBeNull();
+    expect(button("Find claims with the model")).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(button("Find claims with the model"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(confirm()).toBeNull();
+    fireEvent.click(button("Find claims with the model"));
+    fireEvent.pointerDown(within(confirm()!).getByText(/sends this project's pull requests/));
+    fireEvent.pointerDown(button("Find claims with the model"));
+    expect(confirm()).not.toBeNull();
+    fireEvent.pointerDown(document.body);
+    expect(confirm()).toBeNull();
+    fireEvent.click(button("Find claims with the model"));
+    // A confirm left open (Sync started from the keyboard, with no pointer outside) cannot start a paid run meanwhile.
     fireEvent.click(button("Sync now"));
     expect(button("Read with the model")).toBeDisabled();
     await act(async () => finishSync(syncView("succeeded", "run_again")));
     expect(within(repository).getByText(/Synced: 3 written, 2 unchanged, 0 removed, 0 failed\. There is more/)).toBeTruthy();
     expect(button("Read with the model")).toBeEnabled();
     fireEvent.click(button("Cancel"));
-    expect(within(repository).queryByRole("group", { name: "Read with the model" })).toBeNull();
+    expect(confirm()).toBeNull();
     fireEvent.click(button("Sync now"));
     expect(await within(repository).findByText("Sync failed. Try again later.")).toBeTruthy();
     fireEvent.click(button("Find claims"));

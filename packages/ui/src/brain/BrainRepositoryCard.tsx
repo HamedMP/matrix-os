@@ -10,7 +10,7 @@ import {
 } from "./brain-format.js";
 import type { BrainExtractView, BrainJobStartInput, BrainReceiptView } from "./brain-types.js";
 import {
-  BrainBadge, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
+  BrainBadge, BrainConfirm, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
 import { brainStartOrRun, useBrainJob, useBrainJobResume, type BrainActiveJobs } from "./use-brain-job.js";
 import { useBrainAction, useBrainLoad } from "./use-brain-load.js";
@@ -89,7 +89,8 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
               <BrainBadge tone={view.source.status === "active" ? "good" : "warn"}>{view.source.status}</BrainBadge>
               {view.source.webBase && <span className="truncate text-xs text-muted-foreground">{view.source.webBase}</span>}
             </div>
-            <div className="flex flex-wrap gap-2">
+            {/* relative: the model confirm floats over what follows, the width of this row. */}
+            <div className="relative flex flex-wrap gap-2">
               <BrainButton size="sm" disabled={busy}
                 onClick={() => runInBackground("sync", async () => brainSyncText(await api.syncGit(projectId)))}>
                 {action.busy === "sync" ? "Syncing..." : "Sync now"}
@@ -99,13 +100,13 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
                   async () => brainExtractText(await api.extract(projectId, { extractor: "rules" })))}>
                 {action.busy === "rules" ? "Reading..." : "Find claims"}
               </BrainButton>
-              <BrainButton size="sm" variant="outline" disabled={busy || confirmModel}
-                onClick={() => { setConfirmModel(true); budget.reload(); }}>
-                {action.busy === "model" ? "Reading..." : "Find claims with the model"}
-              </BrainButton>
-            </div>
-            {confirmModel && (
-              <div role="group" aria-label="Read with the model" className={`grid gap-2 rounded-md p-3 text-sm ${BRAIN_TONE.panel}`}>
+              <BrainConfirm open={confirmModel} onClose={() => setConfirmModel(false)} label="Read with the model"
+                trigger={(
+                  <BrainButton size="sm" variant="outline" disabled={busy} aria-haspopup="dialog" aria-expanded={confirmModel}
+                    onClick={() => { if (!confirmModel) budget.reload(); setConfirmModel(!confirmModel); }}>
+                    {action.busy === "model" ? "Reading..." : "Find claims with the model"}
+                  </BrainButton>
+                )}>
                 <p>{MODEL_RUN_NOTE}</p>
                 {budgetText !== "" && <p className="text-muted-foreground">{budgetText}</p>}
                 <div className="flex flex-wrap gap-2">
@@ -119,8 +120,8 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
                   }}>Read with the model</BrainButton>
                   <BrainButton size="sm" variant="ghost" onClick={() => setConfirmModel(false)}>Cancel</BrainButton>
                 </div>
-              </div>
-            )}
+              </BrainConfirm>
+            </div>
             {spendText !== "" && <p className="text-xs text-muted-foreground">{spendText}</p>}
             <BrainJobProgress job={job} labels={RUN_LABELS} />
             <BrainReceipts receipts={view.receipts} />
