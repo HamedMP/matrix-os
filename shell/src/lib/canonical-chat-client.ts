@@ -198,7 +198,7 @@ export function createCanonicalShellChatClient(options: {
     },
     async navigation(){
       markChatNavigation("request");
-      const response=await fetchFn(`${options.gatewayUrl}/api/chats/navigation?version=1&limit=1000`,{signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)});
+      const response=await fetchFn(`${options.gatewayUrl}/api/chat-navigation?version=1&limit=1000`,{signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)});
       if(!response.ok) throw new CanonicalShellChatRequestError(response.status);
       const raw=await response.text();if(new TextEncoder().encode(raw).byteLength>2*1024*1024)throw new Error("NavigationTooLarge");
       return CanonicalChatNavigationResponseSchema.parse(JSON.parse(raw));

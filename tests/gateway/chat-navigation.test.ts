@@ -133,19 +133,20 @@ describe("authenticated navigation routes and recovery", () => {
     const { db, service, count } = await setup();
     await seed(db, 1);
     const app = createCanonicalChatRoutes({ service, getPrincipal: () => ({ userId: owner.ownerId, source: 'jwt' }) });
-    const response = await app.request('/api/chats/navigation');
+    const response = await app.request('/api/chat-navigation');
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toContain('no-store');
     const payload = await response.json();
     expect(CanonicalChatNavigationResponseSchema.parse(payload).items[0]?.chat.titleVersion).toBe(0);
-    expect((await app.request('/api/chats/navigation?ownerId=outsider')).status).toBe(400);
-    expect((await app.request('/api/chats/navigation?limit=1001')).status).toBe(400);
-    expect((await app.request('/api/chats/navigation?version=2')).status).toBe(400);
-    expect((await app.request('/api/chats/navigation?limit=1&limit=2')).status).toBe(400);
+    expect((await app.request('/api/chat-navigation?ownerId=outsider')).status).toBe(400);
+    expect((await app.request('/api/chat-navigation?limit=1001')).status).toBe(400);
+    expect((await app.request('/api/chat-navigation?version=2')).status).toBe(400);
+    expect((await app.request('/api/chat-navigation?fundingVersion=1')).status).toBe(400);
+    expect((await app.request('/api/chat-navigation?limit=1&limit=2')).status).toBe(400);
     expect(count.value).toBe(1);
     CanonicalChatListResponseSchema.parse(await (await app.request('/api/chats')).json());
     const denied = createCanonicalChatRoutes({ service, getPrincipal: () => { throw new MissingRequestPrincipalError(); } });
-    expect((await denied.request('/api/chats/navigation')).status).toBe(401);
+    expect((await denied.request('/api/chat-navigation')).status).toBe(401);
     expect(count.value).toBe(1);
   });
   it("paints navigation while authenticated event-stream recovery is pending, then observes its durable corrections", async () => {
@@ -183,7 +184,7 @@ describe("authenticated navigation routes and recovery", () => {
     const app = createCanonicalChatRoutes({ service: createCanonicalChatService(repository, { navigation }),
       getPrincipal: () => ({ userId: owner.ownerId, source: 'jwt' }) });
     await sql`DROP TABLE bot_chat_bindings`.execute(db);
-    const response = await app.request('/api/chats/navigation');
+    const response = await app.request('/api/chat-navigation');
     expect(response.status).toBe(503);
     expect(JSON.stringify(await response.json())).not.toContain('bot_chat_bindings');
   });

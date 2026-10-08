@@ -234,7 +234,7 @@ export function createCanonicalChatClient(
           : transport.patch(path, body)),
     async navigation() {
       markChatNavigation("request");
-      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chats/navigation?version=1&limit=1000", {maxBytes:2*1024*1024}));
+      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024}));
     },
     async list(input = {}) {
       markChatNavigation("legacy-request");

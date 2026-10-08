@@ -36,7 +36,7 @@ it("clears selected detail when the verified viewer changes while the next snaps
   const initialNavigation: CanonicalChatNavigationResponse = { ...snapshot, items: [{ ...snapshot.items[0]!, chat: { ...snapshot.items[0]!.chat, id: chat.id, title: chat.title } }] };
   let navigationCalls = 0;
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
-    if (input.includes("/navigation?")) {
+    if (input.includes("/api/chat-navigation?")) {
       if (++navigationCalls > 1) return new Promise<Response>(() => {});
       return Response.json(initialNavigation);
     }

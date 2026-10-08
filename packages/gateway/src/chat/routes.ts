@@ -309,8 +309,6 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
-    // Dedicated versioned DTO must not be stripped by legacy detail/list negotiation.
-    if (context.req.path === "/api/chats/navigation") return next();
     if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
       || !ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion")).success) {
@@ -395,7 +393,7 @@ export function createCanonicalChatRoutes(options: {
     }
   });
 
-  routes.get("/api/chats/navigation", async (context) => {
+  routes.get("/api/chat-navigation", async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
       const parsed = CanonicalChatNavigationQuerySchema.safeParse(context.req.query());

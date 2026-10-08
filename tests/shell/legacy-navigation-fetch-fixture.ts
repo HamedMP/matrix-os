@@ -4,7 +4,7 @@ export function stubLegacyChatFetch(fetchFn: unknown): void {
   const transport = fetchFn as typeof fetch;
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
-    if (path.includes("/api/chats/navigation?")) {
+    if (path.includes("/api/chat-navigation?")) {
       return Promise.resolve(Response.json({ error: { code: "not_found" } }, { status: 404 }));
     }
     if (/\/api\/chat-agents(?:\?|$)/.test(path)) {

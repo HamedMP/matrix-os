@@ -316,7 +316,7 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
-      if (path === "/api/chats/navigation?version=1&limit=1000") {
+      if (path === "/api/chat-navigation?version=1&limit=1000") {
         return CanonicalChatNavigationResponseSchema.parse({
           version: 1,
           truncated: false,

@@ -34,7 +34,7 @@ Cached run/attention state is last-known, not proof an agent is still running. K
 
 ### 1. Dedicated bounded navigation read
 
-Add GET /api/chats/navigation, registered before /api/chats/:chatId. Return a versioned, lean navigation DTO, not a fabricated CanonicalChatRecord. Include only IDs, bounded title, title/revision fields, Project association, pin/order/activity fields, read/attention projection, source label fields actually consumed by the rail, and explicit ordinary/Bot classification. Do not send transcripts, provider credentials or execution payloads.
+Add GET /api/chat-navigation outside the /api/chats/:chatId namespace. This avoids older gateways treating the literal navigation path as an invalid Chat ID (400), and keeps generic Chat funding/metadata negotiation out of the strict versioned navigation query. A legacy runtime therefore returns a reliable unsupported 404; 400, authorization errors and other failures remain errors, never fallback signals. Return a versioned, lean navigation DTO, not a fabricated CanonicalChatRecord. Include only IDs, bounded title, title/revision fields, Project association, pin/order/activity fields, read/attention projection, source label fields actually consumed by the rail, and explicit ordinary/Bot classification. Do not send transcripts, provider credentials or execution payloads.
 
 Use a discriminated classification: ordinary or bot with agentId. Derive it from live owner-scoped direct bindings, including bindings to archived agents. Missing/failed classification must not mean ordinary. Bot approval details may refresh separately and must not gate ordinary history.
 
@@ -78,7 +78,7 @@ Persist personal, owner-visible list metadata only. Shared-with-me/org membershi
 
 | Boundary | Authentication / validation | Public |
 | --- | --- | --- |
-| GET /api/chats/navigation | Existing verified principal; derive owner server-side; validate bounded query/version; owner-qualified SQL and binding reads | No |
+| GET /api/chat-navigation | Existing verified principal; derive owner server-side; validate bounded query/version; owner-qualified SQL and binding reads | No |
 | Cache read/write IPC | Trusted renderer IPC; active main-process verified auth/runtime scope; strict versioned payload/size validation | No |
 | Event subscription | Existing canonical authenticated event source and ownership filtering | No |
 

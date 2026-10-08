@@ -1,6 +1,7 @@
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { useWorkNavigation } from "./use-work-navigation";
 import {
+  markChatNavigation,
   mergeChatNavigationRecord,
   notifyCollaborationDiscoveryChanged,
   chatReadAction,
@@ -128,6 +129,14 @@ export function WorkRail({
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const navigation=useWorkNavigation(client,eventSource,active);
   const records=navigation.items;
+  const committedCohort = navigation.status === "ready" || records.length > 0;
+  const lastRenderedCohort = useRef<{ items: typeof records; fresh: boolean } | null>(null);
+  useEffect(() => {
+    if (!active || !committedCohort) return;
+    if (lastRenderedCohort.current?.items === records && lastRenderedCohort.current.fresh === navigation.fresh) return;
+    lastRenderedCohort.current = { items: records, fresh: navigation.fresh };
+    markChatNavigation("render-ready", records.length);
+  }, [active, committedCohort, records, navigation.fresh]);
   const setRecords=useCallback((action:ChatNavigationRecord[]|((records:ChatNavigationRecord[])=>ChatNavigationRecord[]))=>{
     navigation.store?.update(current=>{
       const updated=typeof action==='function'?action(current):action;

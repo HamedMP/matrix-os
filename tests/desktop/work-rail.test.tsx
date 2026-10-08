@@ -1460,6 +1460,30 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
+  it("marks a committed cohort without titles and reuses it during selection", async () => {
+    const original = globalThis.performance;
+    const mark = vi.fn();
+    vi.stubGlobal("performance", { now: () => original.now(), mark, getEntriesByName: () => [], clearMarks: vi.fn() });
+    try {
+      const client = { list: vi.fn(async () => ({ items: [recent] })) } as unknown as CanonicalChatClient;
+      const props = { client, projects: [] as Project[], active: true, onNewGlobalChat: vi.fn(),
+        onCreateProject: vi.fn(), onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn() };
+      const view = render(<WorkRail {...props} />);
+      await screen.findByRole("button", { name: "Recent global" });
+      const commits = () => mark.mock.calls.filter(([name]) => name === "matrix.chat.navigation.render-ready");
+      expect(commits()).toEqual([["matrix.chat.navigation.render-ready", { detail: { rows: 1 } }]]);
+      view.rerender(<WorkRail {...props} activeChatId="chat_recent" />);
+      view.rerender(<WorkRail {...props} activeProjectSlug="alpha" />);
+      view.rerender(<WorkRail {...props} active={false} />);
+      view.rerender(<WorkRail {...props} />);
+      expect(commits()).toHaveLength(1);
+      expect(client.list).toHaveBeenCalledTimes(1);
+      view.unmount();
+    } finally {
+      vi.stubGlobal("performance", original);
+    }
+  });
+
   it("opens Project deletion from the project context menu", async () => {
     setup();
     const project = await screen.findByRole("button", { name: "Alpha" });
