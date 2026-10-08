@@ -12,6 +12,8 @@ import {
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 import { appKeys } from "../../shell/src/api/apps.js";
+import { WebDesktopSurface } from "../../shell/src/components/desktop/WebDesktopSurface.js";
+import { getGatewayUrl } from "../../shell/src/lib/gateway.js";
 
 vi.mock("@/hooks/useTaskBoard", () => ({
   useTaskBoard: () => ({
@@ -107,6 +109,42 @@ describe("Launchpad (macos-glass launcher)", () => {
     vi.unstubAllGlobals();
     document.body.style.overflow = "";
     act(() => useWindowManager.setState({ appLaunchTimes: {} }));
+    window.history.replaceState({}, "", "/");
+  });
+
+  it.each(["flat", "macos-glass"])("scopes %s launcher fallback artwork to the explicit VM and runtime", async (style) => {
+    setDesign(style);
+    for (const route of ["/vm/pr-2294", "/vm/pr-2294?runtime=review"]) {
+      window.history.replaceState({}, "", route);
+      const { unmount } = await renderLauncher({ apps: [
+        { name: "Terminal", path: "__terminal__" },
+        { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/owner-notes.png" },
+      ] });
+      expect(screen.getByRole("button", { name: "Terminal" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${getGatewayUrl()}/system-app-icons/v2/terminal.png`);
+      if (style === "macos-glass") expect(screen.getByRole("button", { name: "Create app" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${getGatewayUrl()}/system-app-icons/v2/create-app.png`);
+      expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
+        .toBe("/icons/owner-notes.png");
+      unmount();
+    }
+  });
+
+  it.each(["/vm/pr-2294", "/vm/pr-2294?runtime=review"])("scopes Web Desktop fallback artwork at %s without rewriting owner artwork", (route) => {
+    window.history.replaceState({}, "", route);
+    render(<WebDesktopSurface
+      apps={[{ name: "Terminal", path: "__terminal__" }, { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/owner-notes.png" }]}
+      windows={[]} fullscreenWindowId={null} launcherOpen={false}
+      desktopIcons={[{ path: "__terminal__", x: 0, y: 0 }, { path: "apps/notes/index.html", x: 88, y: 0 }]}
+      onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()}
+      onActivateWindow={vi.fn()} onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()}
+    />);
+    expect(screen.getByRole("button", { name: "Terminal" }).querySelector("img")?.getAttribute("src"))
+      .toBe(`${getGatewayUrl()}/system-app-icons/v2/terminal.png`);
+    expect(screen.getByRole("button", { name: "Open Files" }).querySelector("img")?.getAttribute("src"))
+      .toBe(`${getGatewayUrl()}/system-app-icons/v2/files.png`);
+    expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
+      .toBe("/icons/owner-notes.png");
   });
 
   it("keeps current apps visible until the launcher refresh completes", async () => {
@@ -227,30 +265,19 @@ describe("Launchpad (macos-glass launcher)", () => {
 
     await renderLauncher({ apps });
 
-    const expectedBackgrounds = new Map([
-      ["Chat", "var(--surface-error-emphasis, #BA5236)"],
-      ["Terminal", "var(--surface-warning-emphasis, #E0AA52)"],
-      ["Files", "var(--surface-brand-emphasis, #748E59)"],
-      ["Editor", "rgb(77, 127, 168)"],
-      ["Settings", "var(--surface-neutral-emphasis, #6B7280)"],
-      ["Plugins", "rgb(124, 109, 180)"],
-      ["Browser", "var(--surface-info-emphasis, #3B85BA)"],
-    ]);
-
-    for (const [name, background] of expectedBackgrounds) {
+    for (const name of ["Chat", "Terminal", "Files", "Editor", "Settings", "Plugins"]) {
       const tile = screen.getByRole("button", { name });
-      const icon = tile.querySelector<HTMLElement>("[data-launchpad-built-in-icon]");
-      expect(icon).toBeTruthy();
-      expect(icon?.style.background).toBe(background);
-      expect(icon?.querySelector("svg")).toBeTruthy();
-      expect(icon?.textContent).toBe("");
+      const image = tile.querySelector("img")!;
+      expect(image.getAttribute("src")).toBe(`${getGatewayUrl()}/system-app-icons/v2/${name.toLowerCase()}.png`);
+      fireEvent.error(image);
+      expect(tile.querySelector("img")).toBeNull();
+      expect(tile.querySelector("svg")).toBeTruthy();
     }
-
-    const createIcon = screen.getByRole("button", { name: "Create app" })
-      .querySelector<HTMLElement>("[data-launchpad-create-icon]");
-    expect(createIcon?.style.background).toBe("var(--accent)");
-    expect(createIcon?.style.color).toBe("white");
-    expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")).toBeNull();
+    expect(screen.getByRole("button", { name: "Create app" }).querySelector("img")?.getAttribute("src"))
+      .toBe(`${getGatewayUrl()}/system-app-icons/v2/create-app.png`);
+    expect(screen.getByRole("button", { name: "Browser" }).querySelector("img")?.getAttribute("src"))
+      .toBe("/icons/browser.png");
+    // Notes may have owner-provided artwork; keep it instead of overwriting it.
     expect(screen.getByRole("button", { name: "Notes" }).querySelector("img")?.getAttribute("src"))
       .toBe("/icons/notes.png");
   });
@@ -312,13 +339,16 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onAddToDesktop).not.toHaveBeenCalled();
   });
 
-  it("renders Web Canvas with a bundled vector instead of a letter fallback", async () => {
+  it("renders Web Canvas with bundled artwork and a vector fallback", async () => {
     setDesign("macos-glass");
     await renderLauncher({
-      apps: [{ name: "Web Canvas", path: "__os-view-canvas__", iconUrl: "/icons/canvas.svg" }],
+      apps: [{ name: "Web Canvas", path: "__os-view-canvas__" }],
     });
 
     const canvas = screen.getByRole("button", { name: "Web Canvas" });
+    const image = canvas.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe(`${getGatewayUrl()}/system-app-icons/v2/canvas.png`);
+    fireEvent.error(image);
     expect(canvas.querySelector("img")).toBeNull();
     expect(canvas.querySelector("[data-launchpad-built-in-icon] svg")).toBeTruthy();
   });

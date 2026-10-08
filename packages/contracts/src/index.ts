@@ -1404,6 +1404,8 @@ export {
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
+  osViewBundledIconUrlForPath,
+  osViewIconUrlForApp,
   normalizeOsViewDesktopAppPath,
   normalizeOsViewDesktopIcons,
   otherOsViewMode,

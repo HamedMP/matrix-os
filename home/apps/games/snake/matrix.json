@@ -3,7 +3,7 @@
   "description": "Classic snake game with increasing speed",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "snake",
   "author": "system",
   "version": "1.0.0",
   "tags": [

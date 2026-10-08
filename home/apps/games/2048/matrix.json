@@ -3,7 +3,7 @@
   "description": "Merge tiles to reach 2048",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "2048",
   "author": "system",
   "version": "1.0.0",
   "tags": [

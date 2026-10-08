@@ -63,12 +63,12 @@ describe("Snake app", () => {
     Reflect.deleteProperty(window, "MatrixOS");
   });
 
-  it("uses a shipped default game icon", () => {
+  it("uses its distinct shipped Snake icon", () => {
     const manifestPath = resolve(process.cwd(), "home/apps/games/snake/matrix.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { icon?: string };
 
-    expect(manifest.icon).toBe("game-center");
-    expect(existsSync(resolve(process.cwd(), "home/system/icons/game-center.png"))).toBe(true);
+    expect(manifest.icon).toBe("snake");
+    expect(existsSync(resolve(process.cwd(), `home/system/icons/${manifest.icon}.png`))).toBe(true);
   });
 
   it("renders the start screen with controls hint and a high score", async () => {

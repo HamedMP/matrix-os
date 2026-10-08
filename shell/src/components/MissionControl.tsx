@@ -8,6 +8,7 @@ import { useTaskBoard } from "@/hooks/useTaskBoard";
 import { nameToSlug } from "@/lib/utils";
 import { groupLauncherApps } from "@/lib/dock-sections";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { getGatewayUrl } from "@/lib/gateway";
 import { AppTile } from "./AppTile";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { Launchpad } from "./launchpad/Launchpad";
@@ -17,7 +18,7 @@ import {
   Loader2Icon,
   CheckCircle2Icon,
 } from "@/lib/hugeicons";
-import type { OsViewDesktopAddResult, OsViewDesktopBounds } from "@matrix-os/contracts";
+import { osViewIconUrlForApp, type OsViewDesktopAddResult, type OsViewDesktopBounds } from "@matrix-os/contracts";
 
 interface AppEntry {
   name: string;
@@ -298,7 +299,7 @@ function LauncherGrid({
           }}
           pinned={!isOsViewDestination && pinnedApps.includes(app.path)}
           onTogglePin={isOsViewDestination ? undefined : () => onTogglePin(app.path)}
-          iconUrl={app.iconUrl}
+          iconUrl={osViewIconUrlForApp(app, getGatewayUrl())}
           onRegenerateIcon={isOsViewDestination ? undefined : () => onRegenerateIcon(slug)}
           onRename={!isOsViewDestination && onRenameApp ? (newName) => onRenameApp(slug, newName) : undefined}
           onRemoveFromCanvas={!isOsViewDestination && onRemoveFromCanvas ? () => onRemoveFromCanvas(app.path) : undefined}
