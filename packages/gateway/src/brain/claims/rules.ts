@@ -191,3 +191,185 @@ function boundStatement(statement: string): string {
 
 const newSection = (level: number, kind: SectionKind, label: string | null, future = false, notes = false): Section =>
   ({ level, kind, label, future, notes, bullets: false, held: [] });
+
+/** Line scanner over `text`; calls `sink` with each draft. */
+function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void {
+  const stack: Section[] = [newSection(0, "none", null)];
+  let items: Item[] = [];
+  let open: Item | null = null;
+  let fence: { readonly char: string; readonly length: number } | null = null;
+  let comment = false;
+  const top = (): Section => stack[stack.length - 1]!;
+
+  /** The item's own label, else its nearest labelled parent item's; null when only a section labels it. */
+  const itemLabel = (item: Item): string | null => {
+    for (let node: Item | null = item; node !== null; node = node.parent) if (node.label !== null) return node.label;
+    return null;
+  };
+
+  /** One draft per item, so a quote is never stored under two kinds. */
+  function draftOf(item: Item, lead: Lead, statement: string): BrainClaimDraft | null {
+    const quote = boundQuote(text.slice(item.start, item.end));
+    const own = itemLabel(item);
+    const label = lead.kind !== null ? null : own ?? stack.findLast((section) => section.label !== null)?.label ?? null;
+    const draft = (kind: BrainClaimKind, confidence: BrainClaimConfidence): BrainClaimDraft => ({
+      kind, label, statement, quote, spanStart: item.start, spanEnd: item.start + quote.length, fields: {}, confidence,
+    });
+    if (label === null && PROCESS.test(statement)) return null;
+    if (lead.kind !== null) return draft(lead.kind, "high");
+    // Items under an `Open questions` label (their own or a parent bullet's) are undecided.
+    if (own !== null && OPEN.test(own)) return null;
+    const { kind, future, notes } = item.section;
+    // A deferred item that points at later work is a commitment instead of an invariant; a deferred section is always
+    // labelled.
+    const later = kind === "deferred" ? future || FUTURE.test(statement)
+      : kind === "invariants" && label === DEFERRED_LABEL && FUTURE.test(statement);
+    if (later) return draft("commitment", "medium");
+    if (kind === "invariants") return draft("invariant", isCanonical(label) ? "high" : "medium");
+    if (kind === "deferred") return draft("invariant", "high");
+    // A design note under a sub-heading of decisions is a decision only when it states a choice.
+    if (kind === "decisions" && notes && own === null && !CHOICE.test(statement)) return null;
+    return draft(kind === "decisions" ? "decision" : kind === "risks" ? "risk" : "commitment", "high");
+  }
+
+  function closeItem(): void {
+    const item = open;
+    open = null;
+    if (item === null || item.skip) return;
+    const raw = text.slice(item.start, item.end);
+    const lead = leadOf(raw);
+    item.label = lead.label;
+    if (item.section.kind === "none" && lead.kind === null) return;
+    const statement = boundStatement(collapse(raw.slice(lead.rest)));
+    if (statement === "" || TRIVIAL.test(statement)) return;
+    const draft = draftOf(item, lead, statement);
+    if (draft === null) return;
+    const counts = !item.paragraph || lead.kind !== null || lead.label !== null || item.section.label !== null;
+    if (counts) sink(draft);
+    else if (item.section.held.length < DRAFTS_MAX) item.section.held.push(draft);
+  }
+
+  function popSections(keep: (section: Section) => boolean): void {
+    while (stack.length > 1 && !keep(top())) {
+      const section = stack.pop()!;
+      if (!section.bullets) section.held.forEach(sink);
+    }
+  }
+
+  /**
+   * A title (level 1), in-scope or open-question heading opens no section, even under a claim section. Any other
+   * sub-heading of a claim section keeps its kind unless it names its own; deferred items stay `Deferred scope`, others
+   * take the sub-heading's words as their label. A sub-heading that keeps a decisions kind holds design notes.
+   */
+  function enterHeading(level: number, headingText: string): void {
+    popSections((section) => section.level < level);
+    const parent = top();
+    const classified = level === 1 ? UNCLASSIFIED : classify(headingText);
+    const future = FUTURE.test(headingText);
+    const closed = classified === IN_SCOPE_SECTION || classified === OPEN_SECTION;
+    if (parent.kind === "none" || level === 1 || closed) {
+      stack.push(newSection(level, classified.kind, classified.label, future));
+      return;
+    }
+    const own = classified.kind === "deferred" || classified.kind === "decisions" || classified.kind === "risks";
+    const kind = own ? classified.kind : parent.kind;
+    const label = kind === "deferred" ? DEFERRED_LABEL : canonicalLabel(headingText) ?? verbatimLabel(headingText);
+    stack.push(newSection(level, kind, label, future || parent.future, !own && kind === "decisions"));
+  }
+
+  /**
+   * A bare label line inside a claim section labels it; any other bare heading, an open-question line included, starts
+   * a new top-level section.
+   */
+  function enterBareHeading(trimmed: string): void {
+    const classified = classify(trimmed);
+    const label = top().kind === "none" || classified === OPEN_SECTION ? null : labelLine(trimmed);
+    if (label !== null) {
+      top().label = label;
+      return;
+    }
+    popSections(() => false);
+    stack.push(newSection(BARE_HEADING_LEVEL, classified.kind, classified.label, FUTURE.test(trimmed)));
+  }
+
+  function startItem(line: string, at: number, bullet: RegExpExecArray | null): void {
+    const indent = bullet === null ? line.length - line.trimStart().length : bullet[1]!.length;
+    const start = at + (bullet === null ? indent : bullet[0].length - bullet[3]!.length);
+    if (bullet === null) items = [];
+    while (items.length > 0 && items[items.length - 1]!.indent >= indent) items.pop();
+    const skip = bullet !== null && CHECKBOX.test(bullet[3]!);
+    open = {
+      indent, start, end: at + line.trimEnd().length, paragraph: bullet === null, skip,
+      parent: items[items.length - 1] ?? null, section: top(), label: null,
+    };
+    if (bullet === null) return;
+    items.push(open);
+    if (!skip) stack.forEach((section) => { section.bullets = true; });
+  }
+
+  function scanLine(line: string, at: number): void {
+    if (fence !== null) {
+      const closing = fenceOf(line);
+      if (closing !== null && closing.char === fence.char && closing.length >= fence.length) fence = null;
+      return;
+    }
+    if (comment) {
+      comment = !line.includes("-->");
+      return;
+    }
+    const trimmed = line.trim();
+    const opening = fenceOf(line);
+    const heading = opening === null ? headingOf(line) : null;
+    const bullet = BULLET.exec(line);
+    const atMargin = trimmed !== "" && line[0] === trimmed[0];
+    const bare = atMargin && bullet === null && isBareHeading(trimmed);
+    const separator = atMargin && SEPARATOR.test(line);
+    const skipped = trimmed.startsWith("<!--") || SKIP_LINE.test(trimmed);
+    const plain = trimmed !== "" && opening === null && heading === null && !bare && !separator && !skipped;
+    if (plain && bullet === null && open !== null && !(open.paragraph && leadOf(trimmed) !== NO_LEAD)) {
+      open.end = at + line.trimEnd().length;
+      return;
+    }
+    closeItem();
+    if (opening !== null || heading !== null || bare || separator) items = [];
+    if (opening !== null) fence = opening;
+    else if (heading !== null) enterHeading(heading.level, heading.text);
+    else if (bare) enterBareHeading(trimmed);
+    else if (separator) popSections(() => false);
+    else if (trimmed.startsWith("<!--")) comment = !trimmed.includes("-->", 4);
+    else if (plain) startItem(line, at, bullet);
+  }
+
+  for (let at = 0; at <= text.length;) {
+    const newline = text.indexOf("\n", at);
+    const line = text.slice(at, newline < 0 ? text.length : newline);
+    scanLine(line.endsWith("\r") ? line.slice(0, -1) : line, at);
+    at = newline < 0 ? text.length + 1 : newline + 1;
+  }
+  closeItem();
+  popSections(() => false);
+}
+
+/**
+ * The body prefix claims are read from: git_pr and git_commit bodies stop before the adapter footer and truncation
+ * marker (parseBrainGitFooter's message is always a prefix of the body).
+ */
+export function claimSourceText(document: Pick<BrainClaimSourceDocument, "provenance" | "body">): string {
+  if (!(BRAIN_CLAIM_FOOTER_PROVENANCES as readonly string[]).includes(document.provenance)) return document.body;
+  return parseBrainGitFooter(document.body)?.message ?? document.body;
+}
+
+/** Deterministic; never throws on any string input. Ordered by span then id, at most maxClaims (cap 50). */
+export function extractRulesClaims(
+  document: BrainClaimSourceDocument, maxClaims = BRAIN_CLAIMS_PER_DOCUMENT_MAX,
+): BrainClaimExtraction {
+  const text = claimSourceText(document);
+  const drafts: BrainClaimDraft[] = [];
+  let overflow = 0;
+  scanClaims(text, (draft) => {
+    if (drafts.length < DRAFTS_MAX) drafts.push(draft);
+    else overflow += 1;
+  });
+  const finalized = finalizeBrainClaims({ documentId: document.documentId, text, drafts, maxClaims });
+  return { ...finalized, claimsRejected: finalized.claimsRejected + overflow };
+}
