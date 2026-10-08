@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
 import { createPlatformAoedeLiveService } from "../../packages/platform/src/aoede/service.js";
+import { migrateAoedeLiveTerminationV2 } from "../../packages/platform/src/database/migrations/aoede-live-termination-v2.js";
 import { createAoedeLiveRuntimeRoutes, createAoedeLiveUpgradeHandler } from "../../packages/platform/src/aoede/routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createDisabledOrchestrator } from "../../packages/platform/src/orchestrator.js";
@@ -56,10 +57,10 @@ afterEach(async () => {
   await new Promise<void>((resolve) => provider?.close(() => resolve()));
   await destroyTestPlatformDb(db);
 });
-function makeService(enabled = true) {
+function makeService(enabled = true, allowance = 1_000_000) {
   funding = createAiFundedSpeechFundingPort({ capability: "speech:live", allowedSources: ["promotional"],
     credentialHashSecret: "s".repeat(32), reservationIdFactory: () => "live_" + randomUUID(),
-    monthlyAllowance: { monthlyBudgetMicrousd: 1_000_000, monthlyPromotionalCreditMicrousd: 1_000_000 } });
+    monthlyAllowance: { monthlyBudgetMicrousd: allowance, monthlyPromotionalCreditMicrousd: allowance } });
   return createPlatformAoedeLiveService({ db, policy: { ...policy, enabled }, apiKey: "k".repeat(32),
     fingerprintSecret: "f".repeat(32), fetchImpl: mint as typeof fetch,
     finalizationTimeoutMs: 50,
@@ -132,6 +133,49 @@ it("replaces cumulative snapshots and settles fractional final seconds exactly o
   expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().where("kind", "=", "promotional_debit").execute()).toHaveLength(1);
 });
 
+it.each([undefined, {}, { seconds: -1 }, { seconds: "bad" }, { seconds: 1_000_000 }])("trusted close with usage %s releases liveness without fabricating billing", async (usage) => {
+  const first = await service.mint(identity, input());
+  peers[0].removeAllListeners("message");
+  peers[0].send(JSON.stringify({ type: "session.closed", session: { id: first.providerSessionId }, usage }));
+  await vi.waitFor(async () => {
+    const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
+    expect(row.live_terminated_at).toBeTruthy();
+    expect(row.live_termination_provider_id).toBe(first.providerSessionId);
+    expect(row.live_confirmed).toBe(false);
+  });
+  expect((await reservation()).finalization_mode).toBe("conservative");
+  expect(await service.close(identity, first.providerSessionId)).toEqual({ closed: true, finalization: "unconfirmed" });
+  const fresh = await service.mint(identity, input());
+  await service.close(identity, fresh.providerSessionId);
+});
+
+it("persists closure despite settlement rejection and recovers accounting once without replay", async () => {
+  const first = await service.mint(identity, input());
+  peers[0].removeAllListeners("message");
+  const settle = vi.spyOn(funding, "settle").mockRejectedValueOnce(new Error("injected settlement failure"));
+  peers[0].send(JSON.stringify({ type: "session.closed", session: { id: first.providerSessionId }, usage: { seconds: 1 } }));
+  await vi.waitFor(async () => {
+    const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
+    expect(row.live_terminated_at).toBeTruthy();
+    expect(row.execution_state).toBe("dispatching");
+  });
+  expect((await reservation()).status).toBe("in_flight");
+  await expect(service.mint(identity, input())).rejects.toThrow();
+  const connections = peers.length;
+  await Promise.all([service.reconcile(), service.reconcile()]);
+  expect((await reservation()).finalization_mode).toBe("conservative");
+  expect(settle).toHaveBeenCalledTimes(2);
+  const ledger = await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute();
+  await service.reconcile();
+  await service.close(identity, first.providerSessionId);
+  expect(settle).toHaveBeenCalledTimes(2);
+  expect(peers).toHaveLength(connections);
+  expect(mint).toHaveBeenCalledTimes(1);
+  expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual(ledger);
+  const fresh = await service.mint(identity, input());
+  await service.close(identity, fresh.providerSessionId);
+});
+
 it("lost finalization conservatively charges and blocks a fresh invocation", async () => {
   await service.mint(identity, input());
   peers[0].terminate();
@@ -141,8 +185,9 @@ it("lost finalization conservatively charges and blocks a fresh invocation", asy
   expect(Number((await reservation()).actual_microusd)).toBe(Number((await reservation()).reserved_microusd));
 });
 
-it("ambiguous REST failure is never refunded or automatically reminted", async () => {
-  mint.mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"));
+it.each([undefined, 503, 404, 410])("ambiguous REST failure %s is never refunded or automatically reminted", async (status) => {
+  if (status === undefined) mint.mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"));
+  else mint.mockResolvedValueOnce(new Response(null, { status }));
   await expect(service.mint(identity, input())).rejects.toThrow();
   expect((await reservation()).finalization_mode).toBe("conservative");
   await expect(service.mint(identity, input())).rejects.toThrow();
@@ -216,12 +261,111 @@ it("restart reconciliation closes an orphan without replay or remint and preserv
   service = makeService();
   await service.reconcile();
   const operation = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
-  expect(operation.live_confirmed).toBe(true);
+  expect(operation.live_confirmed).toBe(false);
+  expect(operation.live_terminated_at).toBeTruthy();
+  expect(operation.live_termination_evidence).toBe("session.closed");
   expect(operation.execution_state).toBe("uncertain");
   expect((await reservation()).finalization_mode).toBe("conservative");
   expect(mint).toHaveBeenCalledTimes(1);
   const fresh = await service.mint(identity, input());
   await service.close(identity, fresh.providerSessionId);
+});
+
+it.each([-3_600, 3_600])("identity-bound provider expiry offset %s and ambiguous attach never release the fence, and retries back off", async (offset) => {
+  const result = await service.mint(identity, input());
+  const expiry = Math.floor(Date.now() / 1_000) + offset;
+  peers[0].removeAllListeners("message");
+  peers[0].send(JSON.stringify({ type: "session.updated", session: { id: "live_wrong", expires_at: expiry } }));
+  peers[0].send(JSON.stringify({ type: "session.updated", session: { id: result.providerSessionId, expires_at: expiry } }));
+  await vi.waitFor(async () => {
+    const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
+    expect(row.live_provider_expires_at).toBe(new Date(expiry * 1_000).toISOString());
+  });
+  peers[0].terminate();
+  await vi.waitFor(async () => expect((await reservation()).finalization_mode).toBe("conservative"));
+  const ledger = await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute();
+  await db.executor.updateTable("speech_operations").set({ expires_at: new Date(Date.now() - 1_000).toISOString() }).execute();
+  failAttach = true;
+  await service.reconcile();
+  const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
+  expect(row.live_terminated_at).toBeNull();
+  expect(Date.parse(row.live_reconcile_after!)).toBeGreaterThan(Date.now());
+  failAttach = false;
+  await service.reconcile();
+  expect(peers).toHaveLength(1);
+  await expect(service.mint(identity, input())).rejects.toThrow();
+  expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual(ledger);
+});
+
+it("wrong-session close is ignored and concurrent reconciliation cannot duplicate funding", async () => {
+  const result = await service.mint(identity, input());
+  peers[0].removeAllListeners("message");
+  peers[0].send(JSON.stringify({ type: "session.closed", session: { id: "live_wrong" }, usage: { seconds: 1 } }));
+  peers[0].send(JSON.stringify({ type: "session.usage.updated", usage: { seconds: 2 } }));
+  await vi.waitFor(async () => {
+    const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
+    expect(row.live_usage_seconds).toBe(2);
+    expect(row.live_terminated_at).toBeNull();
+  });
+  peers[0].terminate();
+  await vi.waitFor(async () => expect((await reservation()).finalization_mode).toBe("conservative"));
+  await db.executor.updateTable("speech_operations").set({ expires_at: new Date(Date.now() - 1_000).toISOString() }).execute();
+  const other = makeService();
+  try {
+    const outcomes = await Promise.allSettled([service.reconcile(), other.reconcile(), service.mint(identity, input())]);
+    expect(outcomes[0].status).toBe("fulfilled");
+    expect(outcomes[1].status).toBe("fulfilled");
+    expect(outcomes[2].status).toBe("rejected");
+    expect(peers).toHaveLength(2);
+    const row = await db.executor.selectFrom("speech_operations").selectAll().where("live_provider_id", "=", result.providerSessionId).executeTakeFirstOrThrow();
+    expect(row.live_terminated_at).toBeTruthy();
+    expect(row.live_confirmed).toBe(false);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().where("kind", "=", "promotional_debit").execute()).toHaveLength(1);
+  } finally { await other.shutdown(); }
+});
+
+it("late old-session events cannot change replacement accounting or settle twice", async () => {
+  const first = await service.mint(identity, input());
+  const other = makeService();
+  try {
+    await other.bind(identity, first.providerSessionId);
+    await service.close(identity, first.providerSessionId);
+    const old = await db.executor.selectFrom("speech_operations").selectAll().where("live_provider_id", "=", first.providerSessionId).executeTakeFirstOrThrow();
+    const fresh = await service.mint(identity, input());
+    peers[1].send(JSON.stringify({ type: "session.closed", session: { id: first.providerSessionId }, usage: { seconds: 1 } }));
+    await other.close(identity, first.providerSessionId);
+    expect(await db.executor.selectFrom("speech_operations").selectAll().where("live_provider_id", "=", first.providerSessionId).executeTakeFirstOrThrow()).toEqual(old);
+    const replacement = await db.executor.selectFrom("speech_operations").selectAll().where("live_provider_id", "=", fresh.providerSessionId).executeTakeFirstOrThrow();
+    expect(replacement.live_terminated_at).toBeNull();
+    expect(replacement.execution_state).toBe("dispatching");
+    await service.close(identity, fresh.providerSessionId);
+    expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().where("kind", "=", "promotional_debit").execute()).toHaveLength(2);
+  } finally { await other.shutdown(); }
+});
+
+it("v2 upgrades a retained v1 index and preserves legacy close evidence without backfilling uncertainty", async () => {
+  const first = await service.mint(identity, input());
+  await service.close(identity, first.providerSessionId);
+  const second = await service.mint(identity, input());
+  await service.close(identity, second.providerSessionId);
+  await service.mint(identity, input());
+  peers[2].terminate();
+  await vi.waitFor(async () => {
+    const row = await db.executor.selectFrom("speech_operations").selectAll().where("live_provider_id", "=", first.providerSessionId).executeTakeFirstOrThrow();
+    expect(row.live_terminated_at).toBeTruthy();
+    expect(await db.executor.selectFrom("speech_operations").selectAll().where("execution_state", "=", "uncertain").execute()).toHaveLength(1);
+  });
+  await sql`DROP INDEX speech_live_owner_active`.execute(db.executor);
+  await sql`CREATE UNIQUE INDEX speech_live_owner_active ON speech_operations(owner_id)
+    WHERE adapter_id = 'aoede-live' AND live_confirmed = FALSE AND execution_state <> 'cancelled'`.execute(db.executor);
+  await db.executor.updateTable("speech_operations").set({ live_terminated_at: null, live_termination_evidence: null }).execute();
+  await db.transaction((trx) => migrateAoedeLiveTerminationV2(trx.executor));
+  const rows = await db.executor.selectFrom("speech_operations").selectAll().execute();
+  expect(rows.filter((row) => row.live_termination_evidence === "legacy.session.closed")).toHaveLength(2);
+  expect(rows.find((row) => row.execution_state === "uncertain")!.live_terminated_at).toBeNull();
+  const index = await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes WHERE indexname = 'speech_live_owner_active'`.execute(db.executor);
+  expect(index.rows[0].indexdef).toContain("live_terminated_at IS NULL");
+  await expect(service.mint(identity, input())).rejects.toThrow();
 });
 
 it("enforces one runtime controller across platform processes and never reflects audio", async () => {
@@ -248,6 +392,17 @@ function platformApp() {
   return createApp({ db, platformSecret, orchestrator: createDisabledOrchestrator({ db, image: "test" }),
     internalAoedeLiveRuntimeRoutes: createAoedeLiveRuntimeRoutes({ db, platformSecret, service }) });
 }
+it("actual exhausted funding returns 429 without minting or exposing funding details", async () => {
+  await service.shutdown();
+  service = makeService(true, 1);
+  const response = await platformApp().request("/internal/containers/alice/aoede/session?runtimeSlot=primary", {
+    method: "POST", headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" }, body: JSON.stringify(input()),
+  });
+  expect(response.status).toBe(429);
+  expect(await response.json()).toEqual({ error: { code: "unavailable", message: "Voice session unavailable" } });
+  expect(mint).not.toHaveBeenCalled();
+});
+
 it("real platform dispatcher requires current machine/slot/epoch credentials and no-store on mint and close", async () => {
   const app = platformApp();
   const path = "/internal/containers/alice/aoede/session?runtimeSlot=primary";

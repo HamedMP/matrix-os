@@ -5,27 +5,63 @@ import { useSocket } from "@/hooks/useSocket";
 import { getGatewayUrl } from "@/lib/gateway";
 import { createCanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
-import { AoedeMedia, type CaptionEvent } from "./media";
+import { AoedeMedia, type AoedeFailure, type AoedePhase, type CaptionEvent } from "./media";
 import type { UiResult } from "./shell-actions";
 
 type State = { status: "idle" | "connecting" | "active" | "closed" | "interrupted" | "superseded" | "error" | "denied" | "caption_limit";
   readiness: AoedeReadiness | { status: "checking"; message: string }; muted: boolean;
   taskErrors: Extract<AoedeServerMessage, { type: "aoede:task_error" }>[];
   recoveryError: boolean;
+  failure: AoedeFailure | null; phase: AoedePhase | null; reconnecting: boolean; playbackBlocked: boolean; resumeSessionId: string | null;
   captions: { id: number; role: "user" | "assistant"; text: string; start: number; end: number }[]; cards: AoedeCard[]; actionError: boolean; deciding: string[]; captioning: boolean };
-const initial: State = { status: "idle", readiness: { status: "checking", message: "Checking execution access…" }, muted: false, taskErrors: [], recoveryError: false, captions: [], cards: [], actionError: false, deciding: [], captioning: false };
+const initial: State = { status: "idle", readiness: { status: "checking", message: "Checking execution access…" }, muted: false, taskErrors: [], recoveryError: false, failure: null, phase: null, reconnecting: false, playbackBlocked: false, resumeSessionId: null, captions: [], cards: [], actionError: false, deciding: [], captioning: false };
 const readinessUnavailable: AoedeReadiness = { status: "error", message: "Execution access could not be checked. Recheck access or check Settings before requesting work." };
-type Update = { status: State["status"] } | { readiness: State["readiness"] } | { muted: boolean } | { recoveryError: boolean } | { taskError: State["taskErrors"][number] } | { caption: CaptionEvent } | { card: AoedeCard } | { actionError: boolean } | { deciding: string; finished?: boolean } | { captioning: false };
+// In-flight sharing only, never a readiness cache. One current gateway request;
+// each hook owns its subscription, not another hook's cancellation authority.
+type ReadinessCheck = { url: string; controller: AbortController; users: number; promise: Promise<AoedeReadiness> };
+let readinessCheck: ReadinessCheck | null = null;
+let readinessSettingsEvent: Event | null = null;
+function readReadiness(url: string, signal: AbortSignal): { promise: Promise<AoedeReadiness>; release: () => void } {
+  if (!readinessCheck || readinessCheck.url !== url || readinessCheck.controller.signal.aborted) {
+    const check: ReadinessCheck = { url, controller: new AbortController(), users: 0, promise: Promise.resolve(readinessUnavailable) };
+    check.promise = fetch(url, { credentials: "same-origin", signal: AbortSignal.any([check.controller.signal, AbortSignal.timeout(10_000)]) })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("AoedeReadinessUnavailable");
+        return AoedeReadinessSchema.parse(await response.json());
+      }).finally(() => { if (readinessCheck === check) readinessCheck = null; });
+    readinessCheck = check;
+  }
+  const check = readinessCheck;
+  check.users += 1;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true; signal.removeEventListener("abort", release);
+    check.users -= 1;
+    if (check.users === 0) { check.controller.abort(); if (readinessCheck === check) readinessCheck = null; }
+  };
+  signal.addEventListener("abort", release, { once: true });
+  return { promise: check.promise, release };
+}
+type Update = { lifecycle: Partial<Pick<State, "failure" | "phase" | "reconnecting" | "playbackBlocked" | "resumeSessionId">> } | { status: State["status"] } | { readiness: State["readiness"] } | { muted: boolean } | { recoveryError: boolean } | { taskError: State["taskErrors"][number] } | { caption: CaptionEvent } | { card: AoedeCard } | { actionError: boolean } | { deciding: string; finished?: boolean } | { captioning: false };
 function reducer(state: State, update: Update): State {
+  if ("lifecycle" in update) return { ...state, ...update.lifecycle };
   if ("readiness" in update) return { ...state, readiness: update.readiness };
   if ("muted" in update) return { ...state, muted: update.muted };
   if ("recoveryError" in update) return { ...state, recoveryError: update.recoveryError };
   if ("taskError" in update) return { ...state, taskErrors: [...state.taskErrors, update.taskError].slice(-12) };
-  if ("status" in update) return update.status === "connecting" ? { ...initial, readiness: state.readiness, recoveryError: state.recoveryError, status: update.status } : { ...state, status: update.status, muted: update.status === "active" && state.muted, captioning: false };
+  if ("status" in update) return update.status === "connecting" ? { ...initial, readiness: state.readiness, recoveryError: state.recoveryError, resumeSessionId: state.resumeSessionId, phase: "microphone", status: update.status } : { ...state, status: update.status, phase: null, reconnecting: update.status === "active" && state.reconnecting, playbackBlocked: update.status === "active" && state.playbackBlocked, muted: update.status === "active" && state.muted, captioning: false };
   if ("captioning" in update) return { ...state, captioning: false };
   if ("actionError" in update) return { ...state, actionError: update.actionError };
   if ("deciding" in update) return { ...state, deciding: update.finished ? state.deciding.filter((id) => id !== update.deciding) : [...state.deciding, update.deciding].slice(-100) };
-  if ("card" in update) return { ...state, cards: [...state.cards.filter((c) => c.id !== update.card.id), update.card].slice(-12) };
+  if ("card" in update) {
+    const cards = [...state.cards.filter((c) => c.id !== update.card.id), update.card];
+    // Recovery and full refresh can deliver terminal history after actionable work.
+    // Stable sorting retains recency within each group; history is evicted first.
+    cards.sort((a, b) => Number(["done", "failed", "cancelled"].includes(b.status))
+      - Number(["done", "failed", "cancelled"].includes(a.status)));
+    return { ...state, cards: cards.slice(-12) };
+  }
   const event = update.caption;
   if (typeof event.delta !== "string" || !Number.isFinite(event.start_ms) || !Number.isFinite(event.end_ms)) return state;
   const role = event.type === "session.input_transcript.delta" ? "user" : "assistant";
@@ -60,18 +96,9 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
     readinessController.current = controller;
     const isCurrent = () => overlayActive.current && !controller.signal.aborted && readinessController.current === controller;
     dispatch({ readiness: { status: "checking", message: "Checking execution access…" } });
+    const check = readReadiness(`${getGatewayUrl()}/api/aoede/readiness`, controller.signal);
     try {
-      const response = await fetch(`${getGatewayUrl()}/api/aoede/readiness`, {
-        credentials: "same-origin", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
-      });
-      if (!response.ok) {
-        if (isCurrent()) {
-          console.warn("[aoede] Execution readiness rejected:", response.status);
-          dispatch({ readiness: readinessUnavailable });
-        }
-        return;
-      }
-      const readiness = AoedeReadinessSchema.parse(await response.json());
+      const readiness = await check.promise.finally(check.release);
       if (isCurrent()) dispatch({ readiness });
     } catch (error: unknown) {
       if (isCurrent()) {
@@ -84,14 +111,18 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
     overlayActive.current = active;
     if (!active) return;
     void refreshReadiness();
-    const refresh = () => { void refreshReadiness(); };
+    const refresh = (event: Event) => {
+      if (readinessSettingsEvent !== event) {
+        readinessSettingsEvent = event;
+        readinessCheck?.controller.abort(); readinessCheck = null;
+      }
+      void refreshReadiness();
+    };
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
-    window.addEventListener("focus", refresh);
     return () => {
       overlayActive.current = false;
       readinessController.current?.abort();
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, refresh);
-      window.removeEventListener("focus", refresh);
     };
   }, [active, refreshReadiness]);
   useEffect(() => { current.current = { onUi, state, connected: socket.connected, epoch: socket.connectionEpoch }; }, [onUi, state, socket.connected, socket.connectionEpoch]);
@@ -100,6 +131,7 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
     muted.current = false;
     clearTimeout(captionTimer.current);
     const old = media.current; media.current = null; old?.close(); dispatch({ status });
+    if (old?.sessionId) dispatch({ lifecycle: { resumeSessionId: old.sessionId } });
   }, []);
   const send = socket.send;
   const approval = useCallback(async (card: AoedeCard, decision: "approve_once" | "deny", clientRequestId = crypto.randomUUID()) => {
@@ -134,20 +166,35 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
         approvalId: card.approval.approvalId, clientRequestId, accepted } satisfies AoedeClientMessage);
     }
   }, [send]);
-  const start = useCallback(() => {
+  const start = useCallback((resumeSessionId?: string) => {
     if (!overlayActive.current || media.current || !audioRef.current || !current.current.connected) return;
     generation.current += 1;
     muted.current = false;
     invocationEpoch.current = current.current.epoch;
     dispatch({ status: "connecting" }); seen.current.clear(); decisions.current.clear(); captionSize.current = 0;
     let ready = false;
+    let started = false;
+    let settled = false;
+    let phase: AoedePhase = "microphone";
+    const activate = () => {
+      if (media.current !== invocation || !started || !settled || !invocation.sessionId || ready) return;
+      ready = true; dispatch({ status: "active" });
+      send({ type: "aoede:ready", sessionId: invocation.sessionId } satisfies AoedeClientMessage);
+    };
+    const failed = (failure: AoedeFailure) => {
+      if (media.current !== invocation) return;
+      stop(failure.code === "denied" && failure.phase === "microphone" ? "denied" : ready ? "interrupted" : "error");
+      dispatch({ lifecycle: { failure } });
+    };
     const invocation = new AoedeMedia({ gatewayUrl: getGatewayUrl(), audio: audioRef.current,
-      onFailure: () => { if (media.current === invocation) stop("interrupted"); },
+      onFailure: failed,
+      onPhase: (next) => { if (media.current === invocation) { phase = next; dispatch({ lifecycle: { phase: next } }); } },
+      onReconnecting: (reconnecting) => { if (media.current === invocation) dispatch({ lifecycle: { reconnecting } }); },
+      onPlaybackBlocked: (playbackBlocked) => { if (media.current === invocation) dispatch({ lifecycle: { playbackBlocked } }); },
       onEvent: (event) => {
         if (media.current !== invocation) return;
-        if (event.type === "session.started" && invocation.sessionId && !ready) {
-          ready = true; invocation.started(); dispatch({ status: "active" });
-          send({ type: "aoede:ready", sessionId: invocation.sessionId } satisfies AoedeClientMessage);
+        if (event.type === "session.started") {
+          started = true; invocation.started(); activate();
         } else if (["session.input_transcript.delta", "session.output_transcript.delta"].includes(event.type)) {
           dispatch({ caption: event }); clearTimeout(captionTimer.current);
           // Preserve every received fragment; end explicitly instead of silently dropping earlier text.
@@ -160,9 +207,12 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
       },
     });
     media.current = invocation;
-    void invocation.start().catch((error: unknown) => {
+    void invocation.start(resumeSessionId).then(() => { settled = true; activate(); }).catch((error: unknown) => {
       console.warn("[aoede] Startup unavailable:", error instanceof Error ? error.name : "UnknownError");
-      if (media.current === invocation) stop(error instanceof DOMException && error.name === "NotAllowedError" ? "denied" : "error");
+      if (media.current !== invocation) return;
+      // Media reports typed failures first. This fallback also covers capture/API mocks.
+      const name = error instanceof Error || error instanceof DOMException ? error.name : "UnknownError";
+      failed({ phase, code: phase === "microphone" && name === "NotAllowedError" ? "denied" : name === "TimeoutError" ? "timeout" : phase === "microphone" ? "device" : phase === "mint" ? "unavailable" : "transport" });
     });
   }, [send, stop]);
   useEffect(() => socket.subscribe((message) => {
@@ -205,9 +255,13 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
     }).then(async (response) => {
       if (!response.ok) throw new Error("AoedeSnapshotUnavailable");
       const snapshot: unknown = await response.json();
-      if (!controller.signal.aborted && generation.current === probeGeneration && !media.current && typeof snapshot === "object" && snapshot !== null
-        && "session" in snapshot && typeof snapshot.session === "object" && snapshot.session !== null
-        && "state" in snapshot.session && snapshot.session.state === "interrupted") dispatch({ status: "interrupted" });
+      if (controller.signal.aborted || generation.current !== probeGeneration || media.current) return;
+      if (typeof snapshot !== "object" || snapshot === null || !("session" in snapshot)) throw new Error("AoedeSnapshotInvalid");
+      const resume = "resumeSessionId" in snapshot ? snapshot.resumeSessionId : null;
+      if (resume !== null && (typeof resume !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resume))) throw new Error("AoedeSnapshotInvalid");
+      // Canonical conversation resume can remain available after speech recovery expires.
+      dispatch({ lifecycle: { resumeSessionId: typeof resume === "string" ? resume : null } });
+      if (typeof snapshot.session === "object" && snapshot.session !== null && "state" in snapshot.session && snapshot.session.state === "interrupted") dispatch({ status: "interrupted" });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted && generation.current === probeGeneration && !media.current) {
         console.warn("[aoede] Recovery snapshot unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -218,6 +272,12 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
   }, [active, stop]);
   useEffect(() => { if (!socket.connected && media.current) stop("interrupted"); }, [socket.connected, stop]);
   useEffect(() => { if (media.current && invocationEpoch.current !== socket.connectionEpoch) stop("interrupted"); }, [socket.connectionEpoch, stop]);
+  useEffect(() => {
+    if (state.status !== "connecting" && state.status !== "active") return;
+    const warn = (event: BeforeUnloadEvent) => { if (media.current) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [state.status]);
   const cancel = (card: AoedeCard) => {
     const sessionId = media.current?.sessionId;
     if (sessionId && socket.connected) send({ type: "aoede:cancel", sessionId, cardId: card.id } satisfies AoedeClientMessage);
@@ -231,11 +291,12 @@ export function useAoedeSession(active: boolean, onUi: (frame: Extract<AoedeServ
     }
   };
   const inputStream = useCallback(() => media.current?.microphoneStream, []);
+  const resumePlayback = useCallback(async (): Promise<void> => { await media.current?.resumePlayback(); }, []);
   const toggleMute = useCallback(() => {
     if (!media.current) return;
     muted.current = !muted.current;
     media.current.setMuted(muted.current);
     dispatch({ muted: muted.current });
   }, []);
-  return { ...state, audioRef, inputStream, start, stop, approval, cancel, clearRecovery, refreshReadiness, toggleMute, connected: socket.connected };
+  return { ...state, audioRef, inputStream, start, stop, approval, cancel, clearRecovery, refreshReadiness, toggleMute, resumePlayback, connected: socket.connected };
 }

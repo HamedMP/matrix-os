@@ -44,15 +44,17 @@ describe("Aoede invoking-shell authority", () => {
     const audioContext = vi.fn(function () { throw new DOMException("Unavailable", "NotSupportedError"); });
     vi.stubGlobal("AudioContext", audioContext);
     render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fresh" })); });
     act(() => harness.event?.({ type: "session.started" }));
     expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
     expect(harness.close).not.toHaveBeenCalled();
     expect(audioContext).not.toHaveBeenCalled();
     expect(document.querySelector(".aoede-static-orb")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    expect(harness.close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "End voice session" }));
     expect(harness.close).toHaveBeenCalledOnce();
-    expect(screen.getByRole("button", { name: "Start fresh session" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Fresh" })).toBeTruthy();
   });
   it("ignores another session and duplicate UI execution, then stops on supersession", () => {
     const hook = start();
@@ -107,8 +109,9 @@ describe("Aoede invoking-shell authority", () => {
     expect(posts).toHaveLength(1);
     expect(JSON.parse(String(posts[0][1].body))).toEqual({ clientRequestId: `req_${decision.clientRequestId}`, decision: "decline" });
   });
-  it("releases media on socket loss and does not automatically mint on reconnection", () => {
-    const hook = start(); harness.connected = false; hook.rerender();
+  it("releases media on socket loss and does not automatically mint on reconnection", async () => {
+    const hook = start(); await act(async () => {});
+    harness.connected = false; hook.rerender();
     expect(harness.close).toHaveBeenCalledOnce();
     harness.connected = true; harness.epoch += 1; hook.rerender();
     expect(hook.result.current.status).toBe("interrupted");
@@ -143,21 +146,23 @@ describe("Aoede invoking-shell authority", () => {
   it("explains microphone denial with actionable permission guidance and a retry", async () => {
     harness.startupError = new DOMException("Denied", "NotAllowedError");
     render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fresh" })); });
     expect(screen.getByText("Microphone access is blocked")).toBeTruthy();
     expect(screen.getByText(/browser’s site permissions/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Start fresh session" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Fresh" }).hasAttribute("disabled")).toBe(false);
     expect(harness.send).not.toHaveBeenCalled();
   });
   it("ends capture without dismissing and retains every caption in conversation details", async () => {
     render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fresh" })); });
     act(() => {
       harness.event?.({ type: "session.started" });
       harness.event?.({ type: "session.input_transcript.delta", delta: "Earlier words", start_ms: 1, end_ms: 2 });
       harness.event?.({ type: "session.output_transcript.delta", delta: "Latest words", start_ms: 3, end_ms: 4 });
     });
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    expect(harness.close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "End voice session" }));
     expect(harness.close).toHaveBeenCalledOnce();
     expect(screen.getByRole("dialog")).toBeTruthy();
     const transcript = screen.getByRole("region", { name: "Conversation transcript" });
@@ -198,7 +203,7 @@ describe("Aoede invoking-shell authority", () => {
     act(() => hook.result.current.stop("closed"));
     expect(harness.send.mock.calls.filter(([frame]) => frame.type === "aoede:cancel")).toHaveLength(1);
   });
-  it("Escape stops voice, closes the visibility store, and returns keyboard focus", async () => {
+  it("Escape requests confirmation without ending voice, then explicit end returns keyboard focus", async () => {
     const trigger = document.createElement("button"); document.body.append(trigger); trigger.focus();
     useVocalStore.getState().setActive(true);
     function Host() { const active = useVocalStore((s) => s.active); return React.createElement(AoedeOverlay, { active, onUi: () => ({ status: "failed" }) }); }
@@ -206,8 +211,11 @@ describe("Aoede invoking-shell authority", () => {
     expect(screen.getByRole("dialog").className).toContain("aoede-live");
     expect(screen.getByRole("button", { name: "Close Aoede" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Voice tasks" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Start fresh session" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fresh" })); });
     await act(async () => { fireEvent.keyDown(document.activeElement!, { key: "Escape" }); });
+    expect(harness.close).not.toHaveBeenCalled();
+    expect(useVocalStore.getState().active).toBe(true);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "End voice session" })); });
     expect(harness.close).toHaveBeenCalledOnce();
     expect(useVocalStore.getState().active).toBe(false);
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));

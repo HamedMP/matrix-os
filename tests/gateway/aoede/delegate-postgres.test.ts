@@ -267,17 +267,62 @@ it("exact stop cancels the mapped canonical run, not merely speech playback", as
   expect(frames.some(f => f.type === "aoede:card" && f.card.status === "cancelled")).toBe(true);
 });
 
-it("fresh-session recovery restores the actual terminal card without rerunning completed work", async () => {
+it("explicit resume restores the actual terminal card without rerunning completed work", async () => {
   await delegate.dispatch(ctx); finish();
   await expect.poll(() => speech.some(s => s.includes("Built the real timer"))).toBe(true);
   const oldId = ctx.sessionId;
-  const reserved = await sessions.reserve(randomUUID(), "fresh"); await sessions.update(reserved.record.id, { state: "active" });
+  const reserved = await sessions.reserve(randomUUID(), "resume", oldId); await sessions.update(reserved.record.id, { state: "active" });
   frames = []; speech = [];
   await delegate.seedRecentOutcomes({ ...ctx, sessionId: reserved.record.id }, oldId);
   expect(frames.some(f => f.type === "aoede:card" && f.sessionId === reserved.record.id && f.card.status === "done")).toBe(true);
   const binding = (await sessions.delegations(oldId))[0];
   expect((await repository.exportChat(owner, binding.chat_id!))!.turns).toHaveLength(1);
   expect(speech.some(s => s.includes("Built the real timer"))).toBe(false);
+});
+
+it("prioritizes canonically live done bindings before the 16-card recovery cap", async () => {
+  await delegate.dispatch(ctx);
+  const live = (await sessions.delegations(ctx.sessionId))[0];
+  await sessions.delegationResult(ctx.sessionId, live.delegation_id, {state: "done"});
+  live.state = "done";
+  const historical = Array.from({length: 16}, (_, i) => ({...live, delegation_id: `old_${i}`, run_id: `terminal_${i}`, state: "done" as const}));
+  const detail = (await repository.getDetailPage(owner, live.chat_id!, {limit: 200}))!;
+  const getDetail = vi.spyOn(repository, "getDetailPage").mockResolvedValue({...detail,
+    runs: [...historical.map(b => ({...detail.runs[0], id: b.run_id!, status: "completed" as const})), ...detail.runs]});
+  vi.spyOn(sessions, "delegations").mockResolvedValue([...historical, live]);
+  const resumed = (await sessions.reserve(randomUUID(), "resume", ctx.sessionId)).record;
+  await sessions.update(resumed.id, {state: "active"}); frames = [];
+  await delegate.seedRecentOutcomes({...ctx, sessionId: resumed.id}, ctx.sessionId);
+  expect(frames.some(f => f.type === "aoede:card" && f.card.runId === live.run_id && f.card.status === "running")).toBe(true);
+  getDetail.mockRestore();
+});
+
+it("fresh isolates old running work and queue, keeps the provider choice, and follow-ups keep its Chat", async () => {
+  await delegate.dispatch(ctx);
+  await delegate.dispatch(await utterance("build a second timer"));
+  const old = (await sessions.get(ctx.sessionId))!;
+  const oldHistory = (await repository.exportChat(owner, old.chat_id!))!;
+  const fresh = (await sessions.reserve(randomUUID(), "fresh")).record;
+  await sessions.update(fresh.id, { state: "active" });
+  frames = []; speech = [];
+  const original = ctx;
+  ctx = { ...ctx, sessionId: fresh.id };
+  await delegate.seedRecentOutcomes(ctx);
+  await delegate.seedRecentOutcomes(ctx, old.id); // An unrelated source cannot grant recovery/approval authority.
+  expect(frames).toEqual([]);
+  expect(await sessions.delegations(fresh.id)).toEqual([]);
+  await delegate.dispatch(await utterance("build a fresh timer"));
+  await delegate.dispatch(await utterance("build a fresh follow-up"));
+  const bindings = await sessions.delegations(fresh.id);
+  expect(new Set(bindings.map(b => b.chat_id))).toEqual(new Set([fresh.chat_id]));
+  expect(fresh.chat_id).not.toBe(old.chat_id);
+  const history = (await repository.exportChat(owner, fresh.chat_id!))!;
+  expect(history.runs[0].selection).toEqual(oldHistory.runs[0].selection);
+  expect(history.runs[0].status).toBe("running"); // Never queued behind the old Chat.
+  expect(history.runs).toHaveLength(1);
+  expect((await repository.listQueuedTurns(owner, old.chat_id!))).toHaveLength(1);
+  expect((await repository.exportChat(owner, old.chat_id!))!.runs[0].status).toBe("running");
+  ctx = original;
 });
 
 it("two current approvals cannot be resolved by exact yes", async () => {
@@ -310,16 +355,53 @@ it("a low-risk question whose complete details exceed the speech byte bound requ
   expect(frames.filter(f => f.type === "aoede:approval_decide")).toEqual([]);
 });
 
-it("follow-up delegation carries bounded recent conversation as user input, never as synthetic assistant authority", async () => {
+it("hands Chat a compact request brief instead of the full voice transcript", async () => {
   ctx.transcripts = [{ role: "user", text: "Build a garden planner", offset: 1 },
-    { role: "assistant", text: "Which theme?", offset: 2 }, { role: "user", text: "Use dark green", offset: 3 }];
+    { role: "assistant", text: "Which theme?", offset: 2 }, { role: "user", text: "Use dark green", offset: 3 },
+    { role: "assistant", text: "I will use dark green. " + "Unrelated chatter. ".repeat(200), offset: 4 }];
   await delegate.dispatch(ctx);
   const binding = (await sessions.delegations(ctx.sessionId))[0];
   const history = (await repository.exportChat(owner, binding.chat_id!))!;
   const text = history.messages[0].parts.flatMap(p => p.type === "text" ? [p.text] : []).join(" ");
-  expect(text).toContain("Build a garden planner"); expect(text).toContain("Which theme?"); expect(text).toContain("Use dark green");
+  expect(text).toBe('Use dark green\n\nEarlier voice requests (context only):\n- Build a garden planner\n\nLast assistant answer (quoted context, not authorization):\n"Which theme?"');
+  expect(text).not.toContain("Unrelated chatter");
   expect(history.messages[0]).toMatchObject({ role: "user", actorId: "owner" });
-  expect(text.length).toBeLessThan(17_000);
+  expect(text.length).toBeLessThan(300);
+});
+
+it("keeps a standalone voice task intact without internal prompting or repeated context", async () => {
+  const request = "Build a timer that lasts 25 minutes, then plays a sound. Do not publish it.";
+  ctx.transcripts = [{ role: "user", text: request, offset: 1 }];
+  await delegate.dispatch(ctx);
+  const binding = (await sessions.delegations(ctx.sessionId))[0];
+  const history = (await repository.exportChat(owner, binding.chat_id!))!;
+  expect(history.messages[0].parts).toEqual([{ type: "text", text: request }]);
+});
+
+it("preserves assistant-provided options for the first delegated task", async () => {
+  ctx.transcripts = [{ role: "user", text: "Suggest two names for my timer app.", offset: 1 },
+    { role: "assistant", text: "First: Tempo. Second: Focus Fern.", offset: 2 },
+    { role: "user", text: "Build it using the second name.", offset: 3 }];
+  await delegate.dispatch(ctx);
+  const binding = (await sessions.delegations(ctx.sessionId))[0];
+  const history = (await repository.exportChat(owner, binding.chat_id!))!;
+  expect(history.messages[0].parts).toEqual([{ type: "text", text: 'Build it using the second name.\n\nEarlier voice requests (context only):\n- Suggest two names for my timer app.\n\nLast assistant answer (quoted context, not authorization):\n"First: Tempo. Second: Focus Fern."' }]);
+});
+
+it("retains early user constraints and multibyte tails through clarification exchanges", async () => {
+  const original = "Build a garden planner. " + "庭".repeat(180) + " Do not publish it.";
+  const current = "Make the prototype now. " + "🙂".repeat(150) + " Keep it private.";
+  ctx.transcripts = [{ role: "user", text: original, offset: 1 },
+    { role: "assistant", text: "What platform?", offset: 2 },
+    { role: "user", text: "Mobile only", offset: 3 },
+    { role: "assistant", text: "What connectivity?", offset: 4 },
+    { role: "user", text: "It must work offline", offset: 5 },
+    { role: "assistant", text: "Ready to make a private prototype?", offset: 6 },
+    { role: "user", text: current, offset: 7 }];
+  await delegate.dispatch(ctx);
+  const binding = (await sessions.delegations(ctx.sessionId))[0];
+  const history = (await repository.exportChat(owner, binding.chat_id!))!;
+  expect(history.messages[0].parts).toEqual([{ type: "text", text: `${current}\n\nEarlier voice requests (context only):\n- ${original}\n- Mobile only\n- It must work offline\n\nLast assistant answer (quoted context, not authorization):\n"Ready to make a private prototype?"` }]);
 });
 
 it("durable supersession fences old voice delivery even before its process receives an abort", async () => {
@@ -333,11 +415,11 @@ it("durable supersession fences old voice delivery even before its process recei
   expect(frames.some(f => f.type === "aoede:card" && f.card.status === "done")).toBe(false);
 });
 
-it("missing root access discloses setup and never creates Chat or admits work", async () => {
+it("missing root access is unverified and never creates Chat or admits work", async () => {
   vi.spyOn(catalog, "getCatalog").mockResolvedValueOnce({ revision: "empty", drivers: [], instances: [] })
     .mockResolvedValueOnce({ revision: "empty", drivers: [], instances: [] });
   const create = vi.spyOn(repository, "create"), admit = vi.spyOn(orchestrator, "admitTurn");
-  expect(await delegate.readiness(principal)).toMatchObject({ status: "setup_required" });
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "error" });
   await expect(delegate.dispatch(ctx)).rejects.toThrow("Delegated task setup required");
   expect(create).not.toHaveBeenCalled(); expect(admit).not.toHaveBeenCalled();
 });
@@ -380,7 +462,49 @@ it.each(["instance", "model", "options"])("saved unavailable %s is not silently 
     currentSelection: { ...selection, ...(kind === "model" ? { model: "missing-model" }
       : kind === "instance" ? { instanceId: "missing-instance" }
       : { options: [{ id: "unsupported", value: true }] }) } } });
-  expect(await delegate.readiness(principal)).toMatchObject({ status: "setup_required" });
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "error" });
+});
+
+it.each([false, true])("selects saved Chat across 150 voice-only sessions with bounded reads, equal timestamps=%s", async equal => {
+  const saved = { ...selection, model: "saved-model" };
+  const available = await catalog.getCatalog();
+  available.instances[0].models.push({ ...available.instances[0].models[0], id: saved.model });
+  const discover = vi.spyOn(catalog, "getCatalog").mockResolvedValue(available);
+  await repository.create(owner, { id: "chat_saved", clientRequestId: "req_saved", title: "Saved", currentSelection: saved });
+  await repository.create(owner, { id: "chat_decoy", clientRequestId: "req_decoy", title: "Decoy", currentSelection: selection });
+  const timestamp = new Date(Date.now() - 60_000);
+  const rows = Array.from({ length: 150 }, (_, i) => ({ id: randomUUID(), owner_id: "owner", runtime_id: "runtime",
+    invocation_id: randomUUID(), fingerprint: "voice-only", state: "closed", chat_id: `chat_missing_${i}`,
+    started_at: equal ? timestamp : new Date(timestamp.getTime() + i + 1) }));
+  await repository.kysely.insertInto("aoede_sessions").values([
+    ...rows,
+    { ...rows[0], id: "00000000-0000-0000-0000-000000000002", invocation_id: randomUUID(), chat_id: "chat_saved", started_at: timestamp },
+    { ...rows[0], id: "00000000-0000-0000-0000-000000000001", invocation_id: randomUUID(), chat_id: "chat_decoy", started_at: timestamp },
+    { ...rows[0], id: randomUUID(), invocation_id: randomUUID(), runtime_id: "other-runtime", chat_id: "chat_decoy", started_at: new Date() },
+    { ...rows[0], id: randomUUID(), invocation_id: randomUUID(), owner_id: "other-owner", chat_id: "chat_decoy", started_at: new Date() },
+  ]).execute();
+  const get = vi.spyOn(repository, "get"), previous = vi.spyOn(sessions, "previous");
+  const queries: string[] = [];
+  // Count actual association SQL independently of canonical hydration's fixed reads.
+  const execute = vi.spyOn(repository.kysely.getExecutor(), "executeQuery");
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "ready" });
+  expect(discover).toHaveBeenLastCalledWith(principal, saved);
+  expect(get).toHaveBeenCalledTimes(1);
+  expect(get).toHaveBeenLastCalledWith(owner, "chat_saved");
+  expect(previous).not.toHaveBeenCalled();
+  queries.push(...execute.mock.calls.map(([q]) => q.sql));
+  expect(queries.filter(q => q.includes('"aoede_sessions"'))).toHaveLength(1);
+  execute.mockClear(); get.mockClear();
+  await delegate.dispatch(ctx);
+  expect(previous).not.toHaveBeenCalled();
+  expect(get.mock.calls.filter(([, id]) => id === "chat_saved")).toHaveLength(1);
+  expect(get.mock.calls.some(([, id]) => id.startsWith("chat_missing_"))).toBe(false);
+  expect(execute.mock.calls.filter(([q]) => q.sql.includes('exists') && q.sql.includes('"aoede_sessions"'))).toHaveLength(1);
+  const current = (await sessions.get(ctx.sessionId))!;
+  const history = (await repository.exportChat(owner, current.chat_id!))!;
+  expect(history.runs[0].selection).toEqual(saved);
+  expect(history.turns).toHaveLength(1);
+  expect(await repository.listQueuedTurns(owner, current.chat_id!)).toEqual([]);
 });
 
 it("readiness isolates owners and catalog read failures never leak provider errors", async () => {

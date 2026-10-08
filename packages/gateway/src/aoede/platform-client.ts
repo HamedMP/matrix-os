@@ -13,7 +13,7 @@ export interface AoedePlatformClient {
   close(id: string): Promise<void>;
 }
 export class AoedePlatformError extends Error {
-  constructor() { super("Voice service unavailable"); }
+  constructor(readonly status: 409 | 429 | 503 = 503) { super("Voice service unavailable"); this.name = "AoedePlatformError"; }
 }
 
 // No Gemini fallback or provider key. Config loader is the existing validated speech-domain authority.
@@ -34,7 +34,10 @@ export function createAoedePlatformClient(config: PlatformSpeechRuntimeConfig, d
   async function request(path: string, method: string, body?: unknown) {
     const response = await fetchFn(url(path), { method, headers, redirect: "error",
       signal: AbortSignal.timeout(15_000), body: body === undefined ? undefined : JSON.stringify(body) });
-    if (!response.ok) { await response.body?.cancel(); throw new AoedePlatformError(); }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new AoedePlatformError(response.status === 409 || response.status === 429 ? response.status : 503);
+    }
     return response;
   }
   return {

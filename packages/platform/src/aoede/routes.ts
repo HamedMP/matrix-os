@@ -8,6 +8,7 @@ import { getRunningUserMachineByHandle, type PlatformDB } from "../db.js";
 import { RuntimeSlotSchema } from "../customer-vps-schema.js";
 import { buildPlatformSpeechRuntimeVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
 import { rejectWebSocketUpgrade } from "../websocket-upgrade-rejection.js";
+import { SpeechFundingError } from "../speech/funding.js";
 import { AoedeLiveError, LiveMintInput, LiveProviderId, type PlatformAoedeLiveService } from "./service.js";
 
 const Handle = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -44,8 +45,12 @@ export function createAoedeLiveRuntimeRoutes(options: { db: PlatformDB; platform
       if (!input.success) return c.json(errorBody, 400);
       if (!options.service) return c.json(errorBody, 503);
       return c.json(await options.service.mint(identity, input.data, c.req.raw.signal), 201);
-    } catch (error) { return c.json(errorBody, error instanceof Error && error.name === "BodyLimitError" ? 413
-      : error instanceof SyntaxError ? 400 : error instanceof AoedeLiveError && error.code === "conflict" ? 409 : 503); }
+    } catch (error) {
+      console.warn("[aoede-live] mint request failed", error instanceof Error ? error.name : "UnknownError");
+      return c.json(errorBody, error instanceof Error && error.name === "BodyLimitError" ? 413
+        : error instanceof SyntaxError ? 400 : error instanceof AoedeLiveError && error.code === "conflict" ? 409
+        : error instanceof SpeechFundingError && error.code === "allowance_exhausted" ? 429 : 503);
+    }
   });
   app.delete("/sessions/:id", async (c) => {
     try {

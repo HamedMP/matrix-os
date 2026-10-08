@@ -75,11 +75,27 @@ export function createPlatformAoedeLiveService(options: {
       || !row.funding_reservation_id) throw new AoedeLiveError("not_found");
     return row;
   }
-  async function finalize(operationId: string, seconds?: number) {
+  async function finalize(operationId: string, seconds?: number, closedProviderId?: string) {
+    if (closedProviderId) {
+      await db.transaction(async (trx) => {
+        const row = await trx.executor.selectFrom("speech_operations").selectAll()
+          .where("operation_id", "=", operationId).where("adapter_id", "=", "aoede-live").forUpdate().executeTakeFirstOrThrow();
+        if (row.live_provider_id && row.live_provider_id !== closedProviderId) throw new AoedeLiveError("conflict");
+        if (row.live_termination_provider_id && row.live_termination_provider_id !== closedProviderId) throw new AoedeLiveError("conflict");
+        if (row.live_terminated_at || row.execution_state === "cancelled") return;
+        // The REST-bound authenticated observer is also trusted during compensating closure
+        // when storing the REST ID failed. Commit evidence independently of wallet settlement.
+        await trx.executor.updateTable("speech_operations").set({
+          live_terminated_at: new Date().toISOString(), live_termination_evidence: "session.closed",
+          live_termination_provider_id: closedProviderId,
+        }).where("operation_id", "=", operationId).where("adapter_id", "=", "aoede-live").execute();
+      });
+    }
     await db.transaction(async (trx) => {
       const row = await trx.executor.selectFrom("speech_operations").selectAll()
         .where("operation_id", "=", operationId).where("adapter_id", "=", "aoede-live").forUpdate().executeTakeFirstOrThrow();
-      if (row.live_confirmed || row.execution_state === "cancelled") return;
+      // Settlement is immutable after uncertainty; terminal evidence does not revise the ledger.
+      if (row.execution_state !== "dispatching") return;
       const validFinal = seconds !== undefined && Number.isFinite(seconds) && seconds >= 0;
       const cost = validFinal ? Math.ceil(seconds * Number(row.live_rate_microusd_per_minute) / 60) : Number(row.reserved_microusd);
       const exact = validFinal && cost <= Number(row.reserved_microusd);
@@ -90,9 +106,9 @@ export function createPlatformAoedeLiveService(options: {
       if (validFinal && !exact) console.warn("[aoede-live] final usage exceeds reservation; accounting reconciliation required");
       await trx.executor.updateTable("speech_operations").set({
         live_confirmed: validFinal && exact, ...(validFinal ? { live_usage_seconds: seconds } : {}),
-        execution_state: row.execution_state === "uncertain" || !exact ? "uncertain" : "succeeded",
-        safe_outcome_code: row.execution_state === "uncertain" || !exact ? "provider_failure" : "no_speech",
-        actual_microusd: row.execution_state === "uncertain" || !exact ? Number(row.reserved_microusd) : cost,
+        execution_state: !exact ? "uncertain" : "succeeded",
+        safe_outcome_code: !exact ? "provider_failure" : "no_speech",
+        actual_microusd: !exact ? Number(row.reserved_microusd) : cost,
         updated_at: new Date().toISOString(),
       }).where("operation_id", "=", operationId).where("adapter_id", "=", "aoede-live").execute();
     });
@@ -130,7 +146,11 @@ export function createPlatformAoedeLiveService(options: {
       let decoded: unknown;
       try { decoded = JSON.parse(raw.toString()); } catch (error) { report(error); requestClose(); return; }
       if (!decoded || typeof decoded !== "object" || !("type" in decoded) || !EVENTS.has(String(decoded.type))) return;
-      const parsed = Event.safeParse(decoded);
+      // Close identity is independent of optional accounting. Invalid usage is omitted,
+      // never promoted to confirmed seconds and never allowed to erase terminal evidence.
+      const closeUsage = decoded.type === "session.closed"
+        ? Event.shape.usage.safeParse("usage" in decoded ? decoded.usage : undefined) : undefined;
+      const parsed = Event.safeParse(closeUsage ? { ...decoded, usage: closeUsage.success ? closeUsage.data : undefined } : decoded);
       if (!parsed.success) { requestClose(); return; }
       const event = parsed.data;
       if (event.session?.id && event.session.id !== id) return;
@@ -140,16 +160,22 @@ export function createPlatformAoedeLiveService(options: {
       pending++; queuedBytes += size;
       queue = queue.then(async () => {
         if (event.type === "session.closed") {
-          await finalize(operationId, event.usage?.seconds);
-          control.client?.(text);
-          dispose();
+          try {
+            await finalize(operationId, event.usage?.seconds, id);
+            control.client?.(text);
+          } finally { dispose(); }
           return;
         }
         if (event.type === "session.usage.updated" && Number.isFinite(event.usage?.seconds) && event.usage!.seconds! >= 0) {
           await db.executor.updateTable("speech_operations").set({ live_usage_seconds: event.usage!.seconds! })
             .where("operation_id", "=", operationId).where("execution_state", "=", "dispatching").execute();
         }
-        if (event.session?.expires_at && Number.isFinite(event.session.expires_at)) {
+        if (event.session?.expires_at && Number.isFinite(event.session.expires_at)
+          && event.session.expires_at * 1_000 <= 8_640_000_000_000_000) {
+          await db.executor.updateTable("speech_operations").set({
+            live_provider_expires_at: new Date(event.session.expires_at * 1_000).toISOString(),
+          }).where("operation_id", "=", operationId).where("live_provider_id", "=", id)
+            .where("live_terminated_at", "is", null).execute();
           clearTimeout(control.timer);
           control.timer = setTimeout(requestClose,
             Math.max(1, Math.min(Date.parse(expiresAt), event.session.expires_at * 1_000) - Date.now()));
@@ -187,7 +213,7 @@ export function createPlatformAoedeLiveService(options: {
       await Promise.race([control.completion, new Promise<void>((resolve) => { timer = setTimeout(resolve, deadline); })]);
       clearTimeout(timer!);
       const row = await query(id).executeTakeFirst();
-      if (row && !row.live_confirmed) await finalize(row.operation_id);
+      if (row && !row.live_terminated_at) await finalize(row.operation_id);
       control.socket.terminate();
       controls.delete(id);
       control.finish();
@@ -203,9 +229,10 @@ export function createPlatformAoedeLiveService(options: {
       .where("operation_id", "=", input.clientRequestId).executeTakeFirst();
     if (replay) throw new AoedeLiveError("conflict");
     const old = await db.executor.selectFrom("speech_operations").selectAll().where("owner_id", "=", identity.ownerId)
-      .where("adapter_id", "=", "aoede-live").where("live_confirmed", "=", false).where("execution_state", "!=", "cancelled").executeTakeFirst();
+      .where("adapter_id", "=", "aoede-live").where((eb) => eb.or([eb("live_terminated_at", "is", null), eb("execution_state", "in", ["reserved", "dispatching"])]))
+      .where("execution_state", "!=", "cancelled").executeTakeFirst();
     if (old) {
-      if (old.operation_id === input.clientRequestId || !old.live_provider_id || old.execution_state !== "dispatching") throw new AoedeLiveError("conflict");
+      if (old.live_terminated_at || old.operation_id === input.clientRequestId || !old.live_provider_id || old.execution_state !== "dispatching") throw new AoedeLiveError("conflict");
       const control = controls.get(old.live_provider_id) ?? await open(old.live_provider_id, old.operation_id, old.expires_at);
       await closeControl(old.live_provider_id, control);
     }
@@ -216,7 +243,8 @@ export function createPlatformAoedeLiveService(options: {
         .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
       if (machine?.runtime_token_epoch !== identity.runtimeTokenEpoch) throw new AoedeLiveError();
       const count = await trx.executor.selectFrom("speech_operations").select("operation_id")
-        .where("adapter_id", "=", "aoede-live").where("live_confirmed", "=", false).where("execution_state", "in", ["reserved", "dispatching"]).limit(16).execute();
+        .where("adapter_id", "=", "aoede-live").where((eb) => eb.or([eb("live_terminated_at", "is", null), eb("execution_state", "in", ["reserved", "dispatching"])]))
+        .where("execution_state", "!=", "cancelled").limit(16).execute();
       if (count.length >= 16) throw new AoedeLiveError("conflict");
       const recent = await trx.executor.selectFrom("speech_operations").select("operation_id").where("owner_id", "=", identity.ownerId)
         .where("adapter_id", "=", "aoede-live").where("created_at", ">", new Date(Date.now() - 60_000).toISOString()).limit(10).execute();
@@ -269,11 +297,13 @@ export function createPlatformAoedeLiveService(options: {
         for (;;) { const part = await reader.read(); if (part.done) break;
           bytes += part.value.byteLength; if (bytes > 64 * 1024) throw new AoedeLiveError(); text += decoder.decode(part.value, { stream: true }); }
       } finally { await reader.cancel(); }
-      const result = z.object({ session: z.object({ id: LiveProviderId }),
+      const result = z.object({ session: z.object({ id: LiveProviderId,
+        expires_at: z.number().positive().finite().max(8_640_000_000_000).optional() }),
         transport: z.object({ type: z.literal("webrtc"), sdp: z.string().min(1).max(60_000) }) }).parse(JSON.parse(text + decoder.decode()));
       providerId = result.session.id;
       if (signal?.aborted) throw new AoedeLiveError();
-      await db.executor.updateTable("speech_operations").set({ live_provider_id: providerId })
+      await db.executor.updateTable("speech_operations").set({ live_provider_id: providerId,
+        ...(result.session.expires_at ? { live_provider_expires_at: new Date(result.session.expires_at * 1_000).toISOString() } : {}) })
         .where("operation_id", "=", input.clientRequestId).where("owner_id", "=", identity.ownerId).executeTakeFirstOrThrow();
       await open(providerId, input.clientRequestId, expiresAt);
       if (stopping || signal?.aborted) throw new AoedeLiveError();
@@ -300,11 +330,11 @@ export function createPlatformAoedeLiveService(options: {
   }
   async function bind(identity: LiveIdentity, id: string) {
     const row = await bound(identity, id);
-    if (stopping || row.live_confirmed || row.execution_state !== "dispatching") throw new AoedeLiveError("conflict");
+    if (stopping || row.live_terminated_at || row.execution_state !== "dispatching") throw new AoedeLiveError("conflict");
     const attachmentId = randomUUID();
     const claimed = await db.executor.updateTable("speech_operations").set({ live_attachment_id: attachmentId })
       .where("live_provider_id", "=", id).where("live_attachment_id", "is", null)
-      .where("execution_state", "=", "dispatching").where("live_confirmed", "=", false)
+      .where("execution_state", "=", "dispatching").where("live_terminated_at", "is", null)
       .returning("operation_id").executeTakeFirst();
     if (!claimed) throw new AoedeLiveError("conflict");
     const clearAttachment = () => db.executor.updateTable("speech_operations").set({ live_attachment_id: null })
@@ -336,18 +366,33 @@ export function createPlatformAoedeLiveService(options: {
   }
   async function close(identity: LiveIdentity, id: string) {
     const row = await bound(identity, id);
-    if (row.live_confirmed) return { closed: true, finalization: "confirmed" as const };
+    if (row.live_terminated_at && row.execution_state === "dispatching") await finalize(row.operation_id);
+    const settled = row.live_terminated_at ? await query(id).executeTakeFirstOrThrow() : row;
+    if (row.live_terminated_at || row.execution_state === "cancelled") return {
+      closed: true, finalization: settled.live_confirmed ? "confirmed" as const : "unconfirmed" as const };
     const control = controls.get(id) ?? await open(id, row.operation_id, row.expires_at);
     await closeControl(id, control);
     const finished = await query(id).executeTakeFirstOrThrow();
-    return { closed: finished.live_confirmed, finalization: finished.live_confirmed ? "confirmed" as const : "unconfirmed" as const };
+    return { closed: Boolean(finished.live_terminated_at), finalization: finished.live_confirmed ? "confirmed" as const : "unconfirmed" as const };
   }
   async function reconcile() {
     const rows = await db.executor.selectFrom("speech_operations").selectAll().where("adapter_id", "=", "aoede-live")
-      .where("live_confirmed", "=", false).where("execution_state", "in", ["reserved", "dispatching", "uncertain"])
-      .where("expires_at", "<=", new Date().toISOString()).orderBy("updated_at").limit(16).execute();
+      .where((eb) => eb.or([eb("live_terminated_at", "is", null), eb("execution_state", "=", "dispatching")])).where("execution_state", "!=", "cancelled")
+      .where((eb) => eb.or([eb("live_reconcile_after", "is", null), eb("live_reconcile_after", "<=", new Date().toISOString())]))
+      .where((eb) => eb.or([eb("expires_at", "<=", new Date().toISOString()), eb("live_terminated_at", "is not", null)]))
+      .orderBy("updated_at").limit(16).execute();
     await Promise.all(rows.map(async (row) => {
-      if (row.execution_state === "reserved") {
+      // Persist a bounded retry delay across process restarts. No delay implies termination.
+      const claimed = await db.executor.updateTable("speech_operations").set({ live_reconcile_after: new Date(Date.now() + 5 * 60_000).toISOString() })
+        .where("operation_id", "=", row.operation_id).where("adapter_id", "=", "aoede-live")
+        .where((eb) => eb.or([eb("live_terminated_at", "is", null), eb("execution_state", "=", "dispatching")]))
+        .where("execution_state", "!=", "cancelled")
+        .where((eb) => eb.or([eb("live_reconcile_after", "is", null), eb("live_reconcile_after", "<=", new Date().toISOString())]))
+        .returning("operation_id").executeTakeFirst();
+      if (!claimed) return;
+      if (row.live_terminated_at) {
+        await finalize(row.operation_id);
+      } else if (row.execution_state === "reserved") {
         await db.transaction(async (trx) => {
           const locked = await trx.executor.selectFrom("speech_operations").selectAll().where("operation_id", "=", row.operation_id)
             .where("owner_id", "=", row.owner_id).forUpdate().executeTakeFirstOrThrow();
@@ -358,7 +403,9 @@ export function createPlatformAoedeLiveService(options: {
         });
       } else if (row.live_provider_id) {
         try { const control = controls.get(row.live_provider_id) ?? await open(row.live_provider_id, row.operation_id, row.expires_at);
-          await closeControl(row.live_provider_id, control); } catch (error) { report(error); await finalize(row.operation_id); }
+          await closeControl(row.live_provider_id, control); } catch (error) {
+          console.warn("[aoede-live] reconcile attach ambiguous", { operationId: row.operation_id, phase: "attach-close", errorClass: error instanceof Error ? error.name : "UnknownError" });
+          await finalize(row.operation_id); }
       } else await finalize(row.operation_id);
     }));
   }

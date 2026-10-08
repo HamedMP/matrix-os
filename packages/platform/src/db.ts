@@ -238,6 +238,11 @@ export interface SpeechOperationsTable {
   live_rate_microusd_per_minute: Generated<number | null>;
   live_attachment_id: Generated<string | null>;
   live_confirmed: Generated<boolean>;
+  live_provider_expires_at: Generated<string | null>;
+  live_terminated_at: Generated<string | null>;
+  live_termination_evidence: Generated<string | null>;
+  live_termination_provider_id: Generated<string | null>;
+  live_reconcile_after: Generated<string | null>;
   owner_id: string;
   machine_id: string;
   runtime_slot: string;

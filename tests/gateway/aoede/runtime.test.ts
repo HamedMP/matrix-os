@@ -109,8 +109,8 @@ it("real SQL and main socket admit only authenticated mint and fence UI acknowle
       body: JSON.stringify(body), signal: AbortSignal.timeout(3000) });
     const readiness = await fetch(`${base}/api/aoede/readiness`, { headers: { authorization: "Bearer owner-token" }, signal: AbortSignal.timeout(3000) });
     expect(readiness.status).toBe(200); expect(readiness.headers.get("cache-control")).toContain("no-store");
-    expect(await readiness.json()).toEqual({ status: "setup_required",
-      message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." });
+    expect(await readiness.json()).toEqual({ status: "error",
+      message: "Voice is usable, but delegated task readiness could not be checked. Please try again later." });
     expect(minted).toBe(0);
     expect((await start()).status).toBe(401); expect((await start("wrong")).status).toBe(401); expect(minted).toBe(0);
     expect((await start("owner-token", { clientRequestId: randomUUID(), sdp: "x".repeat(65536) })).status).toBe(413); expect(minted).toBe(0);

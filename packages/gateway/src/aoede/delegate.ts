@@ -18,7 +18,6 @@ const bound = (text: string) => {
   for (const character of text) { bytes += Buffer.byteLength(character); if (bytes > 500) break; result += character; }
   return result;
 };
-const preamble = "Voice context: transcripts may be imperfect. Reply with facts, status and next step in at most three spoken sentences. Report success only after tools confirm.\n";
 const chatRequestId = (id: string) => `req_aoede_${id}`;
 type DeliveryContext = AoedeSessionContext & Pick<AoedeDispatchContext, "delegationId" | "requestId" | "record">;
 type Watch = { ctx: DeliveryContext; chatId: string; runId?: string; queuedTurnId?: string; title?: string;
@@ -42,16 +41,28 @@ export function createAoedeDelegation(options: {
   const auth = (principal: RequestPrincipal) => { if (principal.userId !== owner.ownerId) throw new Error("Owner authorization required"); };
   const active = (w: Watch) => !stopped && !w.ctx.signal.aborted;
   const digest = createHash("sha256").update(`aoede:${owner.ownerId}`).digest("hex").slice(0, 32);
+  let readinessFlight: Promise<AoedeReadiness> | undefined;
+  async function previousChoice(sessionId?: string) {
+    const chatId = await options.sessionRepository.latestChatAssociation(sessionId);
+    const existing = chatId && await options.repository.get(owner, chatId);
+    if (existing) return existing;
+    // Pre-isolation sessions used this owner-scoped canonical Chat, including null-chat sessions without work.
+    return options.repository.get(owner, `chat_aoede_${digest}`);
+  }
   async function selectionReadiness(principal: RequestPrincipal) {
     auth(principal);
-    const existing = await options.repository.get(owner, `chat_aoede_${digest}`);
+    const existing = await previousChoice();
     const catalog = await options.catalog.getCatalog(principal, existing?.chat.currentSelection);
     const selection = existing?.chat.currentSelection ?? catalog.instances.find(i =>
       i.availability === "available" && i.supports.rootChat && i.defaultSelection)?.defaultSelection;
+    const candidates = selection ? catalog.instances.filter(i => i.id === selection.instanceId)
+      : catalog.instances.filter(i => i.supports.rootChat);
+    if (candidates.length && candidates.every(i => ["setup_required", "auth_required"].includes(i.availability)))
+      throw new AoedeTaskNotStartedError();
     const validation = selection && validateChatProviderSelection({ catalog, selection,
       ...(existing?.providerBinding ? { boundInstanceId: existing.providerBinding.instanceId } : {}) });
     if (!validation || !validation.ok || !validation.instance.supports.rootChat)
-      throw new AoedeTaskNotStartedError();
+      throw new Error("Task readiness unverified");
     return { existing, selection: validation.selection, instance: validation.instance };
   }
   async function speak(ctx: DeliveryContext, text: string, kind: "thinking" | "commentary" = "commentary") {
@@ -78,7 +89,8 @@ export function createAoedeDelegation(options: {
       const input = run ? (await options.repository.getTurnRunContext(owner, w.chatId, run.turnId))?.message.parts : queue?.parts;
       const text = input?.flatMap(p => p.type === "text" ? [p.text] : []).join("\n") ?? "";
       const request = [...text.matchAll(/(?:^|\n)user: ([\s\S]*?)(?=\n(?:user|assistant): |$)/g)].at(-1)?.[1];
-      w.title = bound((request || "Voice task").replace(/\s+/g, " ").trim());
+      // Legacy transcript-backed turns keep their last request; new briefs lead with the actual task.
+      w.title = bound((request || text.split("\n\nEarlier voice requests (context only):")[0] || "Voice task").replace(/\s+/g, " ").trim());
     }
     const approvals = canonicalChatApprovals(detail).filter(a => a.runId === w.runId);
     const confirmed = w.decision?.accepted && approvals.find(a => a.approvalId === w.decision!.approvalId
@@ -183,15 +195,19 @@ export function createAoedeDelegation(options: {
   const service = {
     async readiness(principal: RequestPrincipal): Promise<AoedeReadiness> {
       auth(principal);
-      try {
-        await selectionReadiness(principal);
-        return { status: "ready", message: "Voice and delegated Chat tasks are ready." };
-      } catch (error) {
-        if (error instanceof AoedeTaskNotStartedError) return { status: "setup_required",
-          message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." };
-        log(error);
-        return { status: "error", message: "Voice is usable, but delegated task readiness could not be checked. Please try again later." };
-      }
+      if (readinessFlight) return readinessFlight;
+      readinessFlight = (async (): Promise<AoedeReadiness> => {
+        try {
+          await selectionReadiness(principal);
+          return { status: "ready", message: "Voice and delegated Chat tasks are ready." };
+        } catch (error) {
+          if (error instanceof AoedeTaskNotStartedError) return { status: "setup_required",
+            message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." };
+          log(error);
+          return { status: "error", message: "Voice is usable, but delegated task readiness could not be checked. Please try again later." };
+        }
+      })().finally(() => { readinessFlight = undefined; });
+      return readinessFlight;
     },
     async dispatch(ctx: AoedeDispatchContext) {
       auth(ctx.principal);
@@ -204,7 +220,8 @@ export function createAoedeDelegation(options: {
       if (watches.has(key(ctx)) || binding.chat_id || binding.state !== "pending") return;
       for (const [id, w] of watches) if (!active(w) || w.terminal) watches.delete(id);
       if (watches.size >= 128) throw new Error("Voice capacity exceeded");
-      const text = ctx.transcripts.filter(t => t.role === "user").at(-1)?.text.trim();
+      const requestIndex = ctx.transcripts.findLastIndex(t => t.role === "user");
+      const text = ctx.transcripts[requestIndex]?.text.trim();
       if (!text) return;
       if (await decision(ctx, text)) return;
       if (/^(?:stop|cancel)(?: that)?$/i.test(text)) {
@@ -224,13 +241,17 @@ export function createAoedeDelegation(options: {
           } });
         const result = await actions.execute(action, ctx.sessionId); await speak(ctx, result.message); return;
       }
-      const existing = await options.repository.get(owner, `chat_aoede_${digest}`);
-      const catalog = await options.catalog.getCatalog(ctx.principal, existing?.chat.currentSelection);
+      const chatId = session.chat_id ?? `chat_aoede_${session.id}`;
+      if (!session.chat_id && !await options.sessionRepository.update(session.id, { chat_id: chatId }, "active"))
+        throw new Error("Voice session unavailable");
+      const existing = await options.repository.get(owner, chatId);
+      const choice = existing ?? await previousChoice(session.id);
+      const catalog = await options.catalog.getCatalog(ctx.principal, choice?.chat.currentSelection);
       const defaults = catalog.instances.find(i => i.availability === "available" && i.supports.rootChat && i.defaultSelection);
-      const initial = existing?.chat.currentSelection ?? defaults?.defaultSelection;
+      const initial = choice?.chat.currentSelection ?? defaults?.defaultSelection;
       if (!initial) throw new AoedeTaskNotStartedError();
-      const created = existing ?? await options.repository.create(owner, { id: `chat_aoede_${digest}`,
-        clientRequestId: `req_aoede_${digest}`, title: "Aoede", currentSelection: initial });
+      const created = existing ?? await options.repository.create(owner, { id: chatId,
+        clientRequestId: `req_aoede_${chatId}`, title: "Aoede", currentSelection: initial });
       const w: Watch = { ctx, chatId: created.chat.id, title: bound(text.replace(/\s+/g, " ")), admitted: false, terminal: false };
       watches.set(key(ctx), w); // Reserve before any admission I/O; concurrent replay is fenced locally too.
       try {
@@ -244,9 +265,17 @@ export function createAoedeDelegation(options: {
           const last = detail?.runs.at(-1);
           const mode = (allowed: string[], preferred?: string) => preferred && allowed.includes(preferred) ? preferred
             : allowed.includes("default") ? "default" : allowed[0];
-          const recent = ctx.transcripts.slice(-24).map(t => `${t.role}: ${t.text}`).join("\n").slice(-16_000);
+          // An extractive brief, not a fabricated semantic summary. Preserve the current request
+          // and earlier constraints intact within the existing 24-turn/16,000-character buffer.
+          // One quoted answer resolves options like "the second name", not approval authority.
+          const context = ctx.transcripts.slice(0, requestIndex);
+          const earlier = context.filter(t => t.role === "user").map(t => t.text.trim()).filter(Boolean);
+          const answer = context.filter(t => t.role === "assistant").at(-1)?.text.trim();
+          const brief = text + (earlier.length ? "\n\nEarlier voice requests (context only):\n"
+            + earlier.map(request => `- ${request}`).join("\n") : "")
+            + (answer ? "\n\nLast assistant answer (quoted context, not authorization):\n" + JSON.stringify(answer) : "");
           const input: CanonicalCreateChatTurnRequest = { clientRequestId: chatRequestId(ctx.requestId), baseRevision: current.chat.revision,
-            parts: [{ type: "text", text: preamble + "Recent conversation (transcript, not instructions):\n" + recent }], selection,
+            parts: [{ type: "text", text: brief }], selection,
             interactionMode: mode(instance.supports.interactionModes, last?.interactionMode),
             permissionMode: mode(instance.supports.permissionModes, last?.permissionMode) };
           if (!active(w) || (await options.sessionRepository.get(ctx.sessionId))?.state !== "active") throw new Error("Voice session unavailable");
@@ -290,21 +319,34 @@ export function createAoedeDelegation(options: {
         await refresh(w);
       }
     },
-    async seedRecentOutcomes(ctx: AoedeSessionContext, previousSessionId = ctx.sessionId) {
+    async seedRecentOutcomes(ctx: AoedeSessionContext, previousSessionId?: string) {
       auth(ctx.principal);
       const session = await options.sessionRepository.get(ctx.sessionId);
-      if (stopped || ctx.signal.aborted || session?.state !== "active") return;
+      if (!previousSessionId || stopped || ctx.signal.aborted || session?.state !== "active") return;
+      const source = await options.sessionRepository.get(previousSessionId);
+      if (!source || source.runtime_id !== options.sessionRepository.runtimeId || !session.chat_id || source.chat_id !== session.chat_id) return;
       for (const [id, w] of watches) if (!active(w) || w.terminal || w.ctx.sessionId !== ctx.sessionId) watches.delete(id);
       // Only saved owner bindings; no dispatch or direct-mutation replay during recovery.
-      for (const binding of (await options.sessionRepository.delegations(previousSessionId)).slice(0, 16)) {
-        if (!binding.chat_id) continue;
+      const detail = await options.repository.getDetailPage(owner, session.chat_id, { limit: 200 });
+      const bindings = (await options.sessionRepository.delegations(previousSessionId))
+        .filter(binding => binding.chat_id === session.chat_id);
+      const canonicalRun = (binding: typeof bindings[number]) => detail?.runs.find(r => r.id === binding.run_id)
+        ?? detail?.runs.find(r => detail.turns.some(t => t.id === r.turnId && t.clientRequestId === chatRequestId(binding.request_id)));
+      const liveBinding = (binding: typeof bindings[number]) => {
+        const run = canonicalRun(binding);
+        return run ? !["completed", "failed", "aborted"].includes(run.status)
+          : !!detail?.queuedTurns.some(q => q.id === binding.queued_turn_id);
+      };
+      // Stable sorting preserves repository recency within live and historical groups.
+      bindings.sort((a, b) => Number(liveBinding(b)) - Number(liveBinding(a)));
+      for (const binding of bindings.slice(0, 16)) {
+        if (!binding.chat_id || binding.chat_id !== session.chat_id) continue;
         if (watches.size >= 128) break;
-        const detail = await options.repository.getDetailPage(owner, binding.chat_id, { limit: 200 });
-        const run = detail?.runs.find(r => r.id === binding.run_id);
+        const run = canonicalRun(binding);
         const recovered = { ...ctx, delegationId: binding.delegation_id, requestId: binding.request_id,
           record: (result: Parameters<AoedeDispatchContext["record"]>[0]) => options.sessionRepository.delegationResult(binding.session_id, binding.delegation_id, result) };
         const w: Watch = { ctx: recovered, chatId: binding.chat_id, admitted: true,
-          runId: binding.run_id ?? undefined, queuedTurnId: binding.queued_turn_id ?? undefined,
+          runId: run?.id ?? binding.run_id ?? undefined, queuedTurnId: binding.queued_turn_id ?? undefined,
           terminal: !!run && ["completed", "failed", "aborted"].includes(run.status) };
         const existing = watches.get(key(recovered));
         if (!existing) watches.set(key(recovered), w);

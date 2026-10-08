@@ -12,6 +12,8 @@ const session = vi.hoisted(() => ({
   readiness: { status: "ready", message: "Tasks are ready" },
   taskErrors: [] as {type: string; sessionId: string; delegationId: string; outcome: string; message: string}[],
   captioning: false, recoveryError: false, deciding: [] as string[], actionError: false,
+  failure: null as null | {phase: string; code: string}, phase: null as string | null,
+  reconnecting: false, playbackBlocked: false, resumePlayback: vi.fn(), resumeSessionId: null as string | null,
   audioRef: { current: null }, inputStream: () => null,
   start: vi.fn(), stop: vi.fn(), clearRecovery: vi.fn(), approval: vi.fn(), cancel: vi.fn(),
 }));
@@ -22,39 +24,74 @@ const approval: AoedeCard = { ...running, id: "task-two", status: "approval", ap
   risk: "low", allowedDecisions: ["approve_once", "deny"],
 } };
 function overlay() { return render(<AoedeOverlay active onUi={() => ({ status: "failed" })} />); }
+it("retains End confirmation focus across incoming captions", () => {
+  const view = overlay();
+  fireEvent.click(screen.getByRole("button", {name: "End session"}));
+  const end = screen.getByRole("button", {name: "End voice session"}); end.focus();
+  session.captions = [{id: "new", role: "assistant", text: "Still working"}];
+  view.rerender(<AoedeOverlay active onUi={() => ({status: "failed"})} />);
+  expect(document.activeElement).toBe(end);
+});
+it.each(["keep", "escape"])("restores origin only after inert removal on %s cancellation", (method) => {
+  overlay();
+  const origin = screen.getByRole("button", {name: "End session"}); origin.focus();
+  fireEvent.click(origin);
+  const focus = origin.focus.bind(origin);
+  vi.spyOn(origin, "focus").mockImplementation(() => { if (!origin.closest("[inert]")) focus(); });
+  if (method === "keep") fireEvent.click(screen.getByRole("button", {name: "Keep talking"}));
+  else fireEvent.keyDown(document.activeElement!, {key: "Escape"});
+  expect(document.activeElement).toBe(origin);
+});
 beforeEach(() => {
   vi.stubGlobal("matchMedia", vi.fn(() => ({matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn()})));
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   session.captioning = false; session.recoveryError = false;
+  session.failure = null; session.phase = null; session.reconnecting = false; session.playbackBlocked = false; session.resumeSessionId = null;
   session.cards = []; session.captions = []; session.taskErrors = []; session.readiness = {status: "ready", message: "Tasks are ready"}; session.muted = false; session.deciding = []; session.connected = true; session.status = "active"; vi.clearAllMocks();
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it("shows ordinary tasks immediately with exact cancellation and controls outside the list", () => {
+it("collapses ordinary tasks with a live loader, exact cancellation and fixed action slots", () => {
   session.cards = [running, { ...running, id: "task-three", title: "List installed apps", status: "done" }];
   overlay();
+  const disclosure = screen.getByRole("button", {name: "2 tasks"});
+  expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText(running.title)).toBeNull();
+  expect(disclosure.querySelector(".aoede-task-spinner")).toBeTruthy();
+  fireEvent.click(disclosure);
   expect(screen.getByText(running.title)).toBeTruthy();
   const rows = screen.getAllByRole("listitem");
   expect(rows).toHaveLength(2);
-  expect(within(rows[0]).getByText("Working in Chat")).toBeTruthy();
+  expect(within(rows[0]).getByText("Running")).toBeTruthy();
+  expect(rows[0].querySelector(".aoede-task-spinner")).toBeTruthy();
   expect(within(rows[1]).getByText("Done")).toBeTruthy();
-  fireEvent.click(within(rows[0]).getByRole("button", { name: "Cancel task" }));
+  fireEvent.click(within(rows[0]).getByRole("button", { name: `Cancel task: ${running.title}` }));
   expect(session.cancel).toHaveBeenCalledWith(running);
   expect(within(rows[1]).queryByRole("button")).toBeNull();
+  expect(rows[1].querySelector(".aoede-task-cancel")).toBeTruthy();
+  fireEvent.click(disclosure);
+  expect(screen.queryByText(running.title)).toBeNull();
   expect(within(screen.getByRole("region", {name: "Voice tasks"})).queryByRole("button", {name: "Mute"})).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Mute"}));
   expect(session.toggleMute).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", {name: "End session"}));
+  expect(session.stop).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", {name: "End voice session"}));
   expect(session.stop).toHaveBeenCalledWith("closed");
 });
 
 it("never hides approvals or failures behind the task disclosure", () => {
   session.cards = [running, approval, { ...running, id: "task-failed", title: "Read forecast", status: "failed" }];
   overlay();
-  expect(screen.getByText(running.title)).toBeTruthy();
+  expect(screen.queryByText(running.title)).toBeNull();
+  expect(screen.getByRole("button", {name: "1 task"}).getAttribute("aria-expanded")).toBe("false");
   expect(screen.getByRole("heading", { name: "Read project files" })).toBeTruthy();
   expect(screen.getByText(approval.approval!.description)).toBeTruthy();
   expect(screen.getByText("Read forecast")).toBeTruthy();
+  const cancel = screen.getByRole("button", {name: `Cancel task: ${approval.title}`});
+  expect(cancel.closest(".aoede-actions")).toBeNull();
+  fireEvent.click(cancel);
+  expect(session.cancel).toHaveBeenCalledWith(approval);
   fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
   expect(session.approval).toHaveBeenCalledWith(approval, "approve_once");
 });
@@ -88,6 +125,8 @@ it("keeps voice available when task setup is missing and dismisses before openin
   expect(within(screen.getByRole("region", {name: "Voice tasks"})).queryByText("Connect a task provider")).toBeNull();
   expect(screen.queryByText("Voice and task execution connect separately.")).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Connect harness"}));
+  expect(settings).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", {name: "End voice session"}));
   await waitFor(() => expect(settings).toHaveBeenCalledOnce());
   window.removeEventListener("matrix:open-provider-settings", settings);
 });
@@ -108,7 +147,7 @@ it("does not retry uncertain tasks and gates fresh starts on connection", () => 
   overlay();
   expect(screen.getByText(/Check Chat before trying again/)).toBeTruthy();
   expect(screen.queryByRole("button", {name: /Retry/})).toBeNull();
-  expect((screen.getByRole("button", {name: "Start fresh session"}) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", {name: "Fresh"}) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("renders only permitted approval decisions and disables them after the voice session ends", () => {
@@ -117,7 +156,7 @@ it("renders only permitted approval decisions and disables them after the voice 
   overlay();
   expect(screen.queryByRole("button", {name: "Allow once"})).toBeNull();
   expect((screen.getByRole("button", {name: "Deny"}) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByRole("button", {name: "Start fresh session"}));
+  fireEvent.click(screen.getByRole("button", {name: "Fresh"}));
   expect(session.start).toHaveBeenCalledOnce();
 });
 
@@ -129,7 +168,7 @@ it("disables decisions during confirmation and after disconnection", () => {
   session.deciding = []; session.connected = false;
   view.rerender(<AoedeOverlay active onUi={() => ({ status: "failed" })} />);
   expect((screen.getByRole("button", { name: "Deny" }) as HTMLButtonElement).disabled).toBe(true);
-  expect((screen.getByRole("button", { name: "Cancel task" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: `Cancel task: ${approval.title}` }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 it("uses static artwork for reduced motion and real empty states", () => {
@@ -167,13 +206,73 @@ it("discloses unavailable recovery without claiming saved text is ready", () => 
 });
 
 it("dismisses with Escape and restores the previously focused element", async () => {
+  session.status = "idle";
   const trigger = document.createElement("button");
   document.body.append(trigger); trigger.focus();
   const view = overlay();
   expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true);
   fireEvent.keyDown(document.activeElement!, {key: "Escape"});
-  expect(session.stop).toHaveBeenCalledWith("closed");
+  expect(session.stop).not.toHaveBeenCalled();
   view.rerender(<AoedeOverlay active={false} onUi={() => ({status: "failed"})} />);
   await waitFor(() => expect(document.activeElement).toBe(trigger));
   trigger.remove();
+});
+
+it.each(["active", "connecting"])("guards Escape and X during %s and focuses the safe choice", (status) => {
+  session.status = status;
+  overlay();
+  fireEvent.keyDown(document.activeElement!, {key: "Escape"});
+  expect(session.stop).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(screen.getByRole("button", {name: "Keep talking"}));
+  expect(screen.getByText(/Chat work continues/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", {name: "Keep talking"}));
+  fireEvent.click(screen.getByRole("button", {name: "Close Aoede"}));
+  fireEvent.click(screen.getByRole("button", {name: "End voice session"}));
+  expect(session.stop).toHaveBeenCalledOnce();
+  expect(useVocalStore.getState().active).toBe(false);
+});
+
+it("starts Fresh without an ID and resumes only the exact saved conversation", () => {
+  session.status = "closed"; session.resumeSessionId = "saved-exact-id";
+  overlay();
+  fireEvent.click(screen.getByRole("button", {name: "Fresh"}));
+  expect(session.start).toHaveBeenLastCalledWith();
+  fireEvent.click(screen.getByRole("button", {name: "Resume last conversation"}));
+  expect(session.start).toHaveBeenLastCalledWith("saved-exact-id");
+  expect(screen.queryByText(/fresh with saved text/i)).toBeNull();
+});
+
+it("guards outside pointer dismissal and cancels safely with Escape", async () => {
+  overlay();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  fireEvent.pointerDown(document.body, {pointerType: "mouse", button: 0});
+  expect(session.stop).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", {name: "Keep talking"})).toBe(document.activeElement);
+  fireEvent.keyDown(document.activeElement!, {key: "Escape"});
+  expect(screen.queryByRole("button", {name: "Keep talking"})).toBeNull();
+  expect(session.stop).not.toHaveBeenCalled();
+});
+
+it("does not claim listening while reconnecting or playback is blocked", () => {
+  session.reconnecting = true;
+  const view = overlay();
+  expect(screen.queryByText("Listening")).toBeNull();
+  session.reconnecting = false; session.playbackBlocked = true;
+  view.rerender(<AoedeOverlay active onUi={() => ({status: "failed"})} />);
+  expect(screen.queryByText("Listening")).toBeNull();
+  fireEvent.click(screen.getByRole("button", {name: "Enable audio"}));
+  expect(session.resumePlayback).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["microphone", "device", /Connect a working microphone/],
+  ["mint", "conflict", /still being settled/],
+  ["mint", "auth", /Sign in again/],
+  ["mint", "limited", /Voice limit reached/],
+  ["mint", "unavailable", /Voice service is unavailable/],
+  ["transport", "timeout", /connection could not be confirmed/],
+])("shows actionable %s %s failure hints", (phase, code, hint) => {
+  session.status = "error"; session.failure = {phase, code};
+  overlay();
+  expect(screen.getByText(hint)).toBeTruthy();
 });

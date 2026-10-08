@@ -1,5 +1,6 @@
 import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import { migrateAoedeLive } from './migrations/aoede-live.js';
+import { migrateAoedeLiveTerminationV2 } from './migrations/aoede-live-termination-v2.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
@@ -42,6 +43,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'provider-deletion', run: migrateProviderDeletion },
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
   { name: 'account-deletion', run: migrateAccountDeletion },
+  { name: 'aoede-live-termination-v2', run: migrateAoedeLiveTerminationV2 },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

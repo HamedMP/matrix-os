@@ -4,7 +4,7 @@ import { AoedeClientMessageSchema, AoedeServerMessageSchema, AoedeStartRequestSc
   type AoedeTranscript, type AoedeServerMessage, type AoedeSessionResponse } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import { AoedeConflictError, type AoedeRepository, type SessionRecord, type DelegationRecord } from "./repository.js";
-import type { AoedePlatformClient, AoedeSideband } from "./platform-client.js";
+import { AoedePlatformError, type AoedePlatformClient, type AoedeSideband } from "./platform-client.js";
 import { createTranscriptBuffer } from "./transcript.js";
 import { buildAoedePrompt, AOEDE_GREETING } from "./prompt.js";
 
@@ -258,8 +258,11 @@ export function createAoedeSessionService(options: {
       const result = tail.then(async () => {
         await service.recover(); if (stopped) throw new AoedeSessionError();
         for (const current of live.values()) if (active(current)) await flush(current);
-        const prior = await repo.latest();
-        const reserved = await repo.reserve(input.clientRequestId, createHash("sha256").update(input.sdp).digest("hex"));
+        const prior = input.resumeSessionId ? await repo.get(input.resumeSessionId) : undefined;
+        if (input.resumeSessionId && (!prior || prior.owner_id !== repo.ownerId || prior.runtime_id !== repo.runtimeId))
+          throw new AoedeConflictError();
+        const fingerprint = createHash("sha256").update(JSON.stringify([input.sdp, input.resumeSessionId ?? null])).digest("hex");
+        const reserved = await repo.reserve(input.clientRequestId, fingerprint, input.resumeSessionId);
         const row = reserved.record;
         if (!reserved.created) {
           if (row.state !== "active" || !row.answer || !row.provider_id || !live.has(row.id)) throw new AoedeConflictError();
@@ -269,10 +272,15 @@ export function createAoedeSessionService(options: {
           const old = live.get(reserved.superseded.id) ?? makeLive(reserved.superseded, principal);
           await closeLive(old, "superseded");
         }
+        if (!row.chat_id) {
+          row.chat_id = prior?.chat_id ?? `chat_aoede_${prior?.id ?? row.id}`;
+          if (!await repo.update(row.id, { chat_id: row.chat_id }, "connecting")) throw new AoedeConflictError();
+        }
         const s = makeLive(row, principal, prior?.checkpoint_until && prior.checkpoint_until.getTime() > Date.now() ? prior.checkpoint : []);
-        s.previousSessionId = prior?.id;
+        s.previousSessionId = input.resumeSessionId;
         try {
-          const minted = await platform.mint({ ...input, instructions: buildAoedePrompt(await options.facts?.()),
+          const minted = await platform.mint({ clientRequestId: input.clientRequestId, sdp: input.sdp,
+            instructions: buildAoedePrompt(await options.facts?.()),
             input: s.buffer.startup() });
           row.provider_id = minted.providerSessionId;
           // Persist binding even if a competing process has superseded this invocation; compensate below.
@@ -289,7 +297,8 @@ export function createAoedeSessionService(options: {
             durationMs, (row.expires_at?.getTime() ?? Infinity) - Date.now())));
           return { sessionId: row.id, ...minted };
         } catch (error) {
-          log(error); await closeLive(s, "interrupted"); throw new AoedeSessionError();
+          log(error); await closeLive(s, "interrupted");
+          throw new AoedeSessionError(error instanceof AoedePlatformError ? error.status : 503);
         }
       });
       tail = result.then(() => {}, () => {});
@@ -309,7 +318,9 @@ export function createAoedeSessionService(options: {
       return { session: row ? { id: row.id, state: row.state, providerSessionId: row.provider_id, chatId: row.chat_id,
         startedAt: row.started_at, endedAt: row.ended_at, expiresAt: row.expires_at, finalizationConfirmed: row.finalization_confirmed } : null,
         recovery: row?.checkpoint ?? [], delegations: row ? await repo.delegations(row.id) : [],
-        warning: "Recent speech may be missing. Start a fresh session; uncertain actions are not replayed." };
+        resumeSessionId: row?.runtime_id === repo.runtimeId ? row.id : null,
+        recoveryAvailableUntil: row?.checkpoint_until ?? null,
+        warning: "Recent speech may be missing. Resume restores this conversation's cards; fresh starts a new conversation. Actions are never replayed." };
     },
     async clearRecovery(principal: RequestPrincipal) {
       auth(principal);
@@ -329,7 +340,7 @@ export function createAoedeSessionService(options: {
         if (s.greeted) return; s.greeted = true;
         try {
           await append(s, "instructions", AOEDE_GREETING, null);
-          await options.onReady?.(delivery(s), s.previousSessionId);
+          if (s.previousSessionId) await options.onReady?.(delivery(s), s.previousSessionId);
           emit(s, { type: "aoede:state", sessionId: s.row.id, state: "active" });
         }
         catch (error) { log(error); emit(s, { type: "aoede:state", sessionId: s.row.id, state: "error" }); }

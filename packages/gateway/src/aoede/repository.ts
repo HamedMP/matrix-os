@@ -41,7 +41,7 @@ export function createAoedeRepository(db: Kysely<any>, identity: { ownerId: stri
         chat_id text, run_id text, queued_turn_id text, PRIMARY KEY(session_id, delegation_id)
       )`.execute(db);
     },
-    async reserve(invocationId: string, fingerprint: string) {
+    async reserve(invocationId: string, fingerprint: string, resumeSessionId?: string) {
       return db.transaction().execute(async (tx) => {
         // Serialize owner singleton creation across processes, without holding a lock during provider I/O.
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${identity.ownerId}, 0))`.execute(tx);
@@ -51,11 +51,19 @@ export function createAoedeRepository(db: Kysely<any>, identity: { ownerId: stri
           if (existing.fingerprint !== fingerprint || existing.runtime_id !== identity.runtimeId) throw new AoedeConflictError();
           return { record: existing as SessionRecord, created: false, superseded: undefined };
         }
+        const source = resumeSessionId ? await tx.selectFrom("aoede_sessions").selectAll()
+          .where("owner_id", "=", identity.ownerId).where("runtime_id", "=", identity.runtimeId)
+          .where("id", "=", resumeSessionId).forUpdate().executeTakeFirst() : undefined;
+        if (resumeSessionId && !source) throw new AoedeConflictError();
+        const id = randomUUID();
+        const chatId = source ? source.chat_id ?? `chat_aoede_${source.id}` : `chat_aoede_${id}`;
+        if (source && !source.chat_id) await tx.updateTable("aoede_sessions").set({ chat_id: chatId })
+          .where("id", "=", source.id).execute();
         const old = await tx.selectFrom("aoede_sessions").selectAll().where("owner_id", "=", identity.ownerId)
           .where("state", "in", ["connecting", "active", "closing"]).executeTakeFirst();
         if (old) await tx.updateTable("aoede_sessions").set({ state: "superseded", ended_at: new Date(), answer: null })
           .where("id", "=", old.id).execute();
-        const record = await tx.insertInto("aoede_sessions").values({ id: randomUUID(), owner_id: identity.ownerId,
+        const record = await tx.insertInto("aoede_sessions").values({ id, owner_id: identity.ownerId, chat_id: chatId,
           runtime_id: identity.runtimeId, invocation_id: invocationId, fingerprint, state: "connecting" })
           .returningAll().executeTakeFirstOrThrow();
         return { record: record as SessionRecord, created: true, superseded: old as SessionRecord | undefined };
@@ -65,6 +73,29 @@ export function createAoedeRepository(db: Kysely<any>, identity: { ownerId: stri
     async latest() {
       return await db.selectFrom("aoede_sessions").selectAll().where("owner_id", "=", identity.ownerId)
         .orderBy("started_at", "desc").limit(1).executeTakeFirst() as SessionRecord | undefined;
+    },
+    async latestChatAssociation(sessionId?: string) {
+      let query = db.selectFrom("aoede_sessions as s").select("s.chat_id")
+        .where("s.owner_id", "=", identity.ownerId).where("s.runtime_id", "=", identity.runtimeId)
+        // Match ChatRepository.get's personal-owner filter; hydrate selection only through that repository.
+        .where((eb) => eb.exists(eb.selectFrom("chats as c").select("c.id")
+          .whereRef("c.id", "=", "s.chat_id").where("c.owner_type", "=", "personal")
+          .where("c.owner_id", "=", identity.ownerId)));
+      if (sessionId) query = query.where("s.id", "!=", sessionId)
+        .where("s.started_at", "<=", db.selectFrom("aoede_sessions").select("started_at")
+          .where("id", "=", sessionId).where("owner_id", "=", identity.ownerId)
+          .where("runtime_id", "=", identity.runtimeId));
+      // Bound returned data/I/O, not the number of voice-only sessions eligible to skip.
+      return (await query.orderBy("s.started_at", "desc").orderBy("s.id", "desc")
+        .limit(1).executeTakeFirst())?.chat_id as string | undefined;
+    },
+    async previous(id: string) {
+      const current = await scope(id).executeTakeFirst();
+      if (!current) return undefined;
+      return await db.selectFrom("aoede_sessions").selectAll().where("owner_id", "=", identity.ownerId)
+        .where("runtime_id", "=", identity.runtimeId).where("id", "!=", id)
+        .where("started_at", "<=", current.started_at).orderBy("started_at", "desc").limit(1)
+        .executeTakeFirst() as SessionRecord | undefined;
     },
     async update(id: string, values: Partial<Pick<SessionRecord, "state" | "provider_id" | "answer" | "chat_id" | "expires_at" | "ended_at" | "finalization_confirmed">>, expected?: SessionState) {
       let q = db.updateTable("aoede_sessions").set(values).where("owner_id", "=", identity.ownerId).where("id", "=", id);
@@ -79,7 +110,7 @@ export function createAoedeRepository(db: Kysely<any>, identity: { ownerId: stri
           .orderBy("started_at", "desc").limit(1).forUpdate().executeTakeFirst();
         if (latest?.id !== id || latest.checkpoint_epoch !== epoch) return;
         await tx.updateTable("aoede_sessions").set({ checkpoint: sql`'[]'::jsonb`, checkpoint_until: null })
-          .where("owner_id", "=", identity.ownerId).execute();
+          .where("owner_id", "=", identity.ownerId).where("id", "!=", id).execute();
         await tx.updateTable("aoede_sessions").set({ checkpoint: JSON.stringify(text),
           checkpoint_until: new Date(Date.now() + 86_400_000) }).where("id", "=", id).execute();
       });
@@ -105,18 +136,24 @@ export function createAoedeRepository(db: Kysely<any>, identity: { ownerId: stri
     },
     async delegationResult(id: string, delegationId: string, result: Partial<Pick<DelegationRecord, "state" | "chat_id" | "run_id" | "queued_turn_id">>) {
       await db.transaction().execute(async (tx) => {
-        if (!await tx.selectFrom("aoede_sessions").select("id").where("owner_id", "=", identity.ownerId)
-          .where("id", "=", id).executeTakeFirst()) throw new AoedeConflictError();
+        const session = await tx.selectFrom("aoede_sessions").select(["id", "chat_id"])
+          .where("owner_id", "=", identity.ownerId).where("runtime_id", "=", identity.runtimeId)
+          .where("id", "=", id).forUpdate().executeTakeFirst();
+        if (!session || (result.chat_id && session.chat_id && result.chat_id !== session.chat_id)) throw new AoedeConflictError();
         await tx.updateTable("aoede_delegations").set(result).where("session_id", "=", id)
           .where("delegation_id", "=", delegationId).execute();
-        if (result.chat_id) await tx.updateTable("aoede_sessions").set({ chat_id: result.chat_id }).where("id", "=", id).execute();
+        if (result.chat_id && !session.chat_id) await tx.updateTable("aoede_sessions").set({ chat_id: result.chat_id }).where("id", "=", id).execute();
       });
     },
     async delegations(id: string) {
-      if (!await scope(id).executeTakeFirst()) return [];
+      const session = await scope(id).executeTakeFirst();
+      if (!session || session.runtime_id !== identity.runtimeId) return [];
       return await db.selectFrom("aoede_delegations as d").innerJoin("aoede_sessions as s", "s.id", "d.session_id")
         .selectAll("d").where("s.owner_id", "=", identity.ownerId)
-        .where((eb) => eb.or([eb("d.session_id", "=", id), eb("d.state", "in", ["pending", "uncertain"])]))
+        .where("s.runtime_id", "=", identity.runtimeId)
+        .where((eb) => session.chat_id ? eb.or([eb("d.session_id", "=", id), eb("s.chat_id", "=", session.chat_id)])
+          : eb("d.session_id", "=", id))
+        .orderBy("s.started_at", "desc").orderBy("d.delegation_id", "desc")
         .limit(128).execute() as DelegationRecord[];
     },
     async beginClose(id: string, state: SessionState) {

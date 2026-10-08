@@ -10,6 +10,7 @@ export type AoedeReadiness = z.infer<typeof AoedeReadinessSchema>;
 export const AoedeStartRequestSchema = z.object({
   clientRequestId: SessionId,
   sdp: z.string().min(1).max(60_000),
+  resumeSessionId: SessionId.optional(),
 }).strict();
 export const AoedeCloseRequestSchema = z.object({ sessionId: SessionId }).strict();
 export const AoedeSessionResponseSchema = z.object({

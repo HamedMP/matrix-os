@@ -6,6 +6,8 @@ import { createAoedeRepository } from "../../../packages/gateway/src/aoede/repos
 import { AoedeTaskNotStartedError, createAoedeSessionService } from "../../../packages/gateway/src/aoede/session.js";
 import { createAoedeGatewayRoutes } from "../../../packages/gateway/src/aoede/routes.js";
 import { MissingRequestPrincipalError } from "../../../packages/gateway/src/request-principal.js";
+import { createAoedePlatformClient } from "../../../packages/gateway/src/aoede/platform-client.js";
+import { loadPlatformSpeechRuntimeConfig } from "../../../packages/gateway/src/speech/platform-client.js";
 import type { AoedePlatformClient, AoedeSideband } from "../../../packages/gateway/src/aoede/platform-client.js";
 
 // Required real Postgres: connection/setup failures deliberately fail this suite.
@@ -42,6 +44,36 @@ function provider() {
 }
 
 describe("Aoede owner lifecycle on Postgres", () => {
+  it.each([[409, 409], [429, 429], [401, 503], [403, 503], [500, 503]])("platform HTTP %s reaches browser as %s after cleanup", async (upstream, expected) => {
+    const fetchFn = vi.fn(async () => new Response("private provider payload", { status: upstream }));
+    const platform = createAoedePlatformClient(loadPlatformSpeechRuntimeConfig({
+      MATRIX_PLATFORM_SPEECH_ENABLED: "true", MATRIX_PLATFORM_SPEECH_ORIGIN: "https://platform.invalid",
+      MATRIX_HANDLE: "test", MATRIX_CLERK_USER_ID: ownerId, MATRIX_MACHINE_ID: "test-machine",
+      MATRIX_RUNTIME_SLOT: "main", MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN: "a".repeat(64),
+    })!, { fetchFn });
+    const service = createAoedeSessionService({ repository: repo, platform });
+    const app = createAoedeGatewayRoutes({ service, getPrincipal: () => principal });
+    const request = { clientRequestId: randomUUID(), sdp: "offer" };
+    try {
+      const response = await app.request("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+      expect(response.status).toBe(expected);
+      expect(await response.json()).toEqual({ error: "Voice request failed" });
+      expect((await repo.latest())?.state).toBe("interrupted");
+      const retry = await app.request("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+      expect(retry.status).toBe(409);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    } finally { await service.shutdown(); }
+  });
+
+  it("retains only the latest owner checkpoint", async () => {
+    const first = (await repo.reserve(randomUUID(), "first")).record;
+    await repo.checkpoint(first.id, [{role: "user", text: "older", offset: 0}], first.checkpoint_epoch);
+    const latest = (await repo.reserve(randomUUID(), "latest")).record;
+    await repo.checkpoint(latest.id, [{role: "user", text: "latest", offset: 0}], latest.checkpoint_epoch);
+    expect((await repo.get(first.id))?.checkpoint).toEqual([]);
+    expect((await repo.get(first.id))?.checkpoint_until).toBeNull();
+    expect((await repo.get(latest.id))?.checkpoint).toHaveLength(1);
+  });
   it("dispatch timeout after admitted work reports uncertainty once without replay or a false no-changes claim", async () => {
     const p = provider(), frames: any[] = [];
     let calls = 0, finish: () => void = () => {};
@@ -49,7 +81,7 @@ describe("Aoede owner lifecycle on Postgres", () => {
       finalizationMs: 5, appendTimeoutMs: 20,
       emit: (_owner, message, connection) => frames.push({ ...message, connection }),
       async dispatch(ctx) {
-        calls++; await ctx.record({ chat_id: "chat_admitted", run_id: "run_admitted" });
+        calls++; await ctx.record({ chat_id: (await repo.get(ctx.sessionId))!.chat_id!, run_id: "run_admitted" });
         await new Promise<void>(resolve => { finish = resolve; });
       },
     });
@@ -66,7 +98,7 @@ describe("Aoede owner lifecycle on Postgres", () => {
       expect(failure.message).not.toMatch(/not started|no changes/i);
       finish(); p.event(event); await new Promise(resolve => setTimeout(resolve, 50));
       expect(calls).toBe(1);
-      expect((await repo.delegations(a.sessionId))[0]).toMatchObject({ state: "uncertain", chat_id: "chat_admitted", run_id: "run_admitted" });
+      expect((await repo.delegations(a.sessionId))[0]).toMatchObject({ state: "uncertain", chat_id: (await repo.get(a.sessionId))!.chat_id, run_id: "run_admitted" });
     } finally { finish(); await service.shutdown(); }
   }, 40_000);
 
@@ -119,11 +151,11 @@ describe("Aoede owner lifecycle on Postgres", () => {
     } finally { await service.shutdown(); }
   });
 
-  it("fresh readiness restores saved task outcomes only to its bound shell without replaying the mutation", async () => {
+  it("explicit resume restores saved task outcomes only to its bound shell without replaying the mutation", async () => {
     const prior = (await repo.reserve(randomUUID(), "old-offer")).record;
     await repo.update(prior.id, { state: "active" });
     await repo.claim(prior.id, "del_saved");
-    await repo.delegationResult(prior.id, "del_saved", { state: "done", chat_id: "chat_saved" });
+    await repo.delegationResult(prior.id, "del_saved", { state: "done", chat_id: prior.chat_id });
     await repo.update(prior.id, { state: "closed" });
     const p = provider(), frames: any[] = [];
     const service = createAoedeSessionService({ repository: repo, platform: p.client, finalizationMs: 5,
@@ -133,13 +165,13 @@ describe("Aoede owner lifecycle on Postgres", () => {
           sessionId: ctx.sessionId, card: { id: binding.delegation_id, chatId: binding.chat_id!, title: "Saved task", status: "done" } });
       },
     });
-    const fresh = await service.start(principal, { clientRequestId: randomUUID(), sdp: "fresh-offer" });
+    const fresh = await service.start(principal, { clientRequestId: randomUUID(), sdp: "resume-offer", resumeSessionId: prior.id });
     const ready = service.onClientMessage(principal, "tab-a", { type: "aoede:ready", sessionId: fresh.sessionId });
     p.event({ type: "session.instructions.appended", client_event_id: p.sent[0].event_id }); await ready;
     await service.onClientMessage(principal, "tab-b", { type: "aoede:ready", sessionId: fresh.sessionId });
     expect(frames.filter(f => f.type === "aoede:card")).toEqual([{ type: "aoede:card", sessionId: fresh.sessionId,
-      card: { id: "del_saved", chatId: "chat_saved", title: "Saved task", status: "done" }, connection: "tab-a" }]);
-    expect((await repo.delegations(fresh.sessionId))).toEqual([]);
+      card: { id: "del_saved", chatId: prior.chat_id, title: "Saved task", status: "done" }, connection: "tab-a" }]);
+    expect((await repo.delegations(fresh.sessionId))[0].session_id).toBe(prior.id);
     expect((await repo.delegations(prior.id))[0].state).toBe("done");
     await service.shutdown();
   });
@@ -268,7 +300,7 @@ describe("Aoede owner lifecycle on Postgres", () => {
     }
   });
 
-  it("offers bounded saved text on a fresh session without replaying uncertain prior delegations", async () => {
+  it("fresh never offers saved text or old uncertain delegations", async () => {
     const p = provider();
     const service = createAoedeSessionService({ repository: repo, platform: p.client, finalizationMs: 5 });
     const a = await service.start(principal, { clientRequestId: randomUUID(), sdp: "offer" });
@@ -284,9 +316,41 @@ describe("Aoede owner lifecycle on Postgres", () => {
     expect((await fresh.snapshot(principal)).delegations.find((d) => d.delegation_id === "del_crash")?.state).toBe("uncertain");
     await fresh.start(principal, { clientRequestId: randomUUID(), sdp: "fresh offer" });
     p.event({ type: "session.delegation.created", offset_ms: 100, delegation: { id: "del_new", type: "delegation", target: "client" } });
-    await vi.waitFor(() => expect(contexts).toEqual(["create a note"]), { timeout: 2_000 });
-    expect((await fresh.snapshot(principal)).delegations.some((d) => d.delegation_id === "del_crash")).toBe(true);
+    await vi.waitFor(() => expect(contexts).toEqual([""]), { timeout: 2_000 });
+    expect((await fresh.snapshot(principal)).delegations.some((d) => d.delegation_id === "del_crash")).toBe(false);
     await fresh.shutdown();
+  });
+
+  it("reservation scopes repeated resume, legacy null association, concurrent fresh and payload conflicts", async () => {
+    const source = (await repo.reserve(randomUUID(), "source")).record;
+    await repo.update(source.id, { state: "active", chat_id: null }); // Legacy session with no delegated Chat yet.
+    await repo.claim(source.id, "legacy_pending");
+    const invocation = randomUUID();
+    const [a, duplicate] = await Promise.all([repo.reserve(invocation, "resume", source.id), repo.reserve(invocation, "resume", source.id)]);
+    expect(a.record.id).toBe(duplicate.record.id);
+    expect([a.created, duplicate.created].filter(Boolean)).toHaveLength(1);
+    expect(a.record.chat_id).toBe(`chat_aoede_${source.id}`);
+    const next = (await repo.reserve(randomUUID(), "resume-again", a.record.id)).record;
+    expect(next.chat_id).toBe(a.record.chat_id);
+    expect((await repo.delegations(next.id)).map(d => d.delegation_id)).toEqual(["legacy_pending"]);
+    const [fresh, another] = await Promise.all([repo.reserve(randomUUID(), "fresh"), repo.reserve(randomUUID(), "fresh")]);
+    expect(fresh.record.chat_id).not.toBe(another.record.chat_id);
+    expect(await repo.delegations(fresh.record.id)).toEqual([]);
+    await expect(repo.reserve(invocation, "changed-resume", source.id)).rejects.toThrow();
+    const foreign = createAoedeRepository(db.kysely, { ownerId: "foreign", runtimeId: repo.runtimeId });
+    await expect(foreign.reserve(randomUUID(), "stolen", source.id)).rejects.toThrow();
+    const runtime = createAoedeRepository(db.kysely, { ownerId, runtimeId: "other-runtime" });
+    await expect(runtime.reserve(randomUUID(), "stolen", source.id)).rejects.toThrow();
+    expect((await repo.delegations(source.id))[0].state).toBe("pending");
+  });
+
+  it("a delegation result cannot reassign the durable conversation", async () => {
+    const source = (await repo.reserve(randomUUID(), "source")).record;
+    await repo.update(source.id, { state: "active" });
+    await repo.claim(source.id, "delegation");
+    await expect(repo.delegationResult(source.id, "delegation", { chat_id: "unrelated_chat" })).rejects.toThrow();
+    expect((await repo.get(source.id))!.chat_id).toBe(source.chat_id);
+    expect((await repo.delegations(source.id))[0].chat_id).toBeNull();
   });
 
   it("bounds text and rejects uncorrelated append acknowledgements without retrying", async () => {
@@ -384,6 +448,8 @@ describe("Aoede owner lifecycle on Postgres", () => {
     expect(a).toEqual(b);
     expect(p.count()).toBe(1);
     await expect(service.start(principal, { ...input, sdp: "changed" })).rejects.toThrow();
+    await expect(service.start(principal, { ...input, resumeSessionId: a.sessionId })).rejects.toThrow();
+    expect(p.count()).toBe(1);
     await expect(service.start({ ...principal, userId: "other" }, input)).rejects.toThrow();
     const ready = service.onClientMessage(principal, "tab-a", { type: "aoede:ready", sessionId: a.sessionId });
     await new Promise((resolve) => setTimeout(resolve, 5));
