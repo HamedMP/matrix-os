@@ -157,12 +157,18 @@ export async function readTextFile(path: string, maxBytes: number, roomBytes = m
     if (again.ino !== stats.ino || again.dev !== stats.dev) return { kind: "gone" };
     if (stats.size > maxBytes) return { kind: "too_large" };
     if (stats.size > roomBytes) return { kind: "no_room" };
-    // Reads the size seen at open; bytes appended later wait for the next pass.
+    // Reads the size seen at open; bytes appended later wait for the next pass. A read may return fewer bytes than
+    // asked, so it repeats until that size or the end of the file (each round reads at least one byte).
     const buffer = Buffer.alloc(stats.size);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const bytes = buffer.subarray(0, bytesRead);
-    if (bytes.includes(0) || !isUtf8(bytes)) return { kind: "binary", bytes: bytesRead };
-    return { kind: "text", text: bytes.toString("utf8"), mtime: stats.mtime, bytes: bytesRead };
+    let filled = 0;
+    while (filled < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    const bytes = buffer.subarray(0, filled);
+    if (bytes.includes(0) || !isUtf8(bytes)) return { kind: "binary", bytes: filled };
+    return { kind: "text", text: bytes.toString("utf8"), mtime: stats.mtime, bytes: filled };
   } catch (error: unknown) {
     if (isGoneError(error)) return { kind: "gone" };
     throw error;
