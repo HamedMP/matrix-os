@@ -51,8 +51,8 @@ text files up to 256 KiB, 14 days each way. The gateway validates every config.
 
 ## States
 
-Every request shows loading, then its data, an empty state that says what to do next, or an error. Errors come only
-from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
+Every request shows loading, then its data, an empty state (an icon, a headline and what to do next), or an error.
+Errors come only from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
 offline, too slow, brain off (503 or an unknown server code), not found (the code's fixed text, or "not turned on yet"
 for a route that is not mounted), and refused (the code's fixed text). The not-connected codes add an "Open Sources"
 button. A reload keeps the previous data on screen until the new answer arrives.

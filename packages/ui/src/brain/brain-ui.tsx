@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
-import { ExternalLink, LoaderCircle, TriangleAlert } from "lucide-react";
+import { ExternalLink, Inbox, LoaderCircle, TriangleAlert } from "lucide-react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import { brainDay, brainErrorText, brainJobText, isBrainNotConnected } from "./brain-format.js";
@@ -40,11 +40,15 @@ export function BrainLoading({ label }: { readonly label: string }) {
   );
 }
 
+/** An empty state: a quiet icon, the headline and what to do next. */
 export function BrainEmpty({ title, children }: { readonly title: string; readonly children?: ReactNode }) {
   return (
-    <div className={`rounded-md border border-dashed p-4 text-sm ${BRAIN_TONE.border}`}>
-      <p className="font-medium">{title}</p>
-      {children && <div className="mt-2 text-muted-foreground">{children}</div>}
+    <div className={`flex items-start gap-3 rounded-md border border-dashed p-4 text-sm ${BRAIN_TONE.border}`}>
+      <Inbox className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{title}</p>
+        {children && <div className="mt-2 text-muted-foreground">{children}</div>}
+      </div>
     </div>
   );
 }
