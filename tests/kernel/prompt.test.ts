@@ -47,6 +47,7 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("mixed silhouettes");
     expect(prompt).toContain("transparent background");
     expect(prompt).toContain("~/system/icons/<slug>.png");
+    expect(prompt).toContain("loadIconStyle");
   });
 
   it("keeps product art direction separate from platform branding", () => {

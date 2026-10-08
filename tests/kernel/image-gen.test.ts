@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createImageClient,
   DEFAULT_ICON_STYLE,
+  loadIconStyle,
   generateIconBatch,
   type ImageClient,
   type ImageResult,
@@ -322,5 +323,32 @@ describe("DEFAULT_ICON_STYLE", () => {
     expect(DEFAULT_ICON_STYLE).toContain("Ubuntu/Yaru");
     expect(DEFAULT_ICON_STYLE).toContain("48 and 20 pixels");
     expect(DEFAULT_ICON_STYLE).not.toContain("puffy, inflated, toy-like");
+  });
+  it("ships the same icon style in the new-user desktop template", () => {
+    const desktop = JSON.parse(readFileSync("home/system/desktop.json", "utf8")) as { iconStyle: string };
+    expect(desktop.iconStyle).toBe(DEFAULT_ICON_STYLE);
+  });
+
+  it("uses the new default for an existing home with the exact retired clay default", () => {
+    const home = mkdtempSync(join(tmpdir(), "legacy-icon-style-"));
+    try {
+      mkdirSync(join(home, "system"));
+      const iconStyle = readFileSync("tests/fixtures/legacy-clay-icon-style.txt", "utf8").trim();
+      writeFileSync(join(home, "system/desktop.json"), JSON.stringify({ iconStyle }));
+      expect(loadIconStyle(home)).toBe(DEFAULT_ICON_STYLE);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a user's chosen icon style", () => {
+    const home = mkdtempSync(join(tmpdir(), "custom-icon-style-"));
+    try {
+      mkdirSync(join(home, "system"));
+      writeFileSync(join(home, "system/desktop.json"), JSON.stringify({ iconStyle: "my watercolor icons" }));
+      expect(loadIconStyle(home)).toBe("my watercolor icons");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

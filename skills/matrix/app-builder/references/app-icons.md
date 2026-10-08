@@ -1,6 +1,6 @@
 # Matrix app icons
 
-The owner’s `system/desktop.json` `iconStyle` always wins. Preserve owner-provided artwork. For a new app without a requested style, use the Matrix desktop icon family. Its reference is the variety and legibility of Ubuntu/Yaru icons, not any copied Ubuntu artwork or mark.
+Preserve owner-provided artwork and a custom `system/desktop.json` `iconStyle`. Resolve the effective style with the Matrix icon generator's `loadIconStyle`: it treats the exact retired shipped clay default in older homes as the current Matrix desktop style, without replacing owner choices. For a new app without a requested style, use the Matrix desktop icon family. Its reference is the variety and legibility of Ubuntu/Yaru icons, not any copied Ubuntu artwork or mark.
 
 ## Design recipe
 

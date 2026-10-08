@@ -18,6 +18,7 @@ describe("Gallery identity artwork", () => {
     const skill = readFileSync("skills/matrix/design-system/SKILL.md", "utf8");
     expect(skill).toContain("mixed silhouettes");
     expect(skill).toContain("owner's iconStyle");
+    expect(skill).toContain("loadIconStyle");
     expect(skill).not.toContain("light premium iOS/macOS skeuomorphic artwork");
   });
 
