@@ -181,6 +181,19 @@ describe("rules structure", () => {
     ))).toEqual([["invariant", null, "medium", "Real: the only claim."]]);
   });
 
+  it("hides an HTML comment opened anywhere on a line; no claim, statement or quote reaches into one", () => {
+    expect(rows(md("## Invariants", "- Visible text <!--", "- Hidden instruction", "  Hidden continuation", "-->",
+      "- Owner sessions only. <!-- inline note --> after the note", "- Runs are fenced <!-- open",
+      "  still hidden --> tail", "  - Nested after the note.", "- <!-- only a note -->",
+      "- **Source of truth:** <!-- x -->", "- Last <!-- a --> b <!-- c", "- Hidden again", "-->", "```", "a <!-- fenced",
+      "```", "## Risks <!-- x -->", "- Shown.",
+    ))).toEqual([
+      ["invariant", null, "medium", "Visible text"], ["invariant", null, "medium", "Owner sessions only."],
+      ["invariant", null, "medium", "Runs are fenced"], ["invariant", null, "medium", "Nested after the note."],
+      ["invariant", null, "medium", "Last"], ["risk", null, "high", "Shown."],
+    ]);
+  });
+
   it("reads bare headings and label lines; a separator ends a squash entry (e33656d400); literal escapes are text", () => {
     expect(rows(md("* chore(cli): bump", "", "Invariants", "", "Source of truth:", "The CLI package version.", "",
       "- Lock/transaction scope: no writes.", "", "---------", "", "* fix(cli): second", "", "Tests:",

@@ -1,9 +1,9 @@
 /**
  * The rules extractor (BRAIN_RULES_EXTRACTOR_ID, raise BRAIN_RULES_VERSION in types.ts whenever its decisions change):
  * deterministic claims from the sections and labels the team writes in pull request, commit and spec bodies
- * (Invariants labels, Deferred scope, Decisions, Risks, Next steps, kind prefixes). Fences, HTML comments, tables,
- * images and trailers are skipped. Every quote is a verbatim substring of the source text at its UTF-16 span, and each
- * quote gives at most one claim. Pure.
+ * (Invariants labels, Deferred scope, Decisions, Risks, Next steps, kind prefixes). Fences, HTML comments (from `<!--`
+ * anywhere on a line), tables, images and trailers are skipped. Every quote is a verbatim substring of the source text
+ * at its UTF-16 span, and each quote gives at most one claim. Pure.
  */
 import { fenceOf, headingOf, parseBrainGitFooter } from "../why.js";
 import {
@@ -66,6 +66,8 @@ const PLAIN_LABEL = /^([^:\n*`]{1,60}):(?=\s|$)/;
 const KIND_PREFIX = /^(\*\*)?(decisions?|risks?|follow[- ]?ups?|next steps?|todo)(:\*\*|\*\*:|:)(?=\s|$)/i;
 const SEPARATOR = /^(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const BULLET = /^( *)([-*+]|\d{1,3}[.)])\s+(\S.*)$/;
+/** A bullet marker with nothing after it, as left before a comment (`- <!-- note -->`): an empty line, not an item. */
+const MARKER_ONLY = /^ *(?:[-*+]|\d{1,3}[.)])\s*$/;
 const CHECKBOX = /^\[[ xX]\](?:\s|$)/;
 const SKIP_LINE = /^(?:\||!\[|co-authored-by:|signed-off-by:|\ud83e\udd16 generated|linear: |refs |claude-session:)/i;
 const TRIVIAL = /^(?:none(?: introduced)?|n\/?a|not applicable|unchanged|untouched|not touched|no changes?|nothing)\.?$/i;
@@ -169,6 +171,19 @@ function labelLine(trimmed: string): string | null {
   if (canonical !== null) return canonical;
   const bold = BOLD_LABEL.exec(trimmed);
   return bold !== null && bold[0].length === trimmed.length ? boldName(bold[1]!) : null;
+}
+
+/**
+ * Whether an HTML comment opened at or after `from` in the line is still open at its end. A comment runs from `<!--`
+ * anywhere on a line to the next `-->` after it, as verify.ts masks hidden text for model quotes.
+ */
+function commentOpenAtEnd(line: string, from: number): boolean {
+  for (let start = line.indexOf("<!--", from); start >= 0;) {
+    const close = line.indexOf("-->", start + 4);
+    if (close < 0) return true;
+    start = line.indexOf("<!--", close + 3);
+  }
+  return false;
 }
 
 const isBareHeading = (trimmed: string): boolean => BARE_HEADING.test(trimmed)
@@ -314,9 +329,23 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
       return;
     }
     if (comment) {
-      comment = !line.includes("-->");
+      const close = line.indexOf("-->");
+      if (close >= 0) comment = commentOpenAtEnd(line, close + 3);
       return;
     }
+    const cut = fenceOf(line) === null ? line.indexOf("<!--") : -1;
+    if (cut < 0) {
+      scanVisible(line, at);
+      return;
+    }
+    // A comment hides the rest of its line and ends the open item, so no statement or quote reaches into it.
+    const before = line.slice(0, cut);
+    scanVisible(MARKER_ONLY.test(before) ? "" : before, at);
+    closeItem();
+    comment = commentOpenAtEnd(line, cut);
+  }
+
+  function scanVisible(line: string, at: number): void {
     const trimmed = line.trim();
     const opening = fenceOf(line);
     const heading = opening === null ? headingOf(line) : null;
@@ -324,7 +353,7 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
     const atMargin = trimmed !== "" && line[0] === trimmed[0];
     const bare = atMargin && bullet === null && isBareHeading(trimmed);
     const separator = atMargin && SEPARATOR.test(line);
-    const skipped = trimmed.startsWith("<!--") || SKIP_LINE.test(trimmed);
+    const skipped = SKIP_LINE.test(trimmed);
     const plain = trimmed !== "" && opening === null && heading === null && !bare && !separator && !skipped;
     if (plain && bullet === null && open !== null && !(open.paragraph && leadOf(trimmed) !== NO_LEAD)) {
       open.end = at + line.trimEnd().length;
@@ -336,7 +365,6 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
     else if (heading !== null) enterHeading(heading.level, heading.text);
     else if (bare) enterBareHeading(trimmed);
     else if (separator) popSections(() => false);
-    else if (trimmed.startsWith("<!--")) comment = !trimmed.includes("-->", 4);
     else if (plain) startItem(line, at, bullet);
   }
 
