@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderWorkflowUIOperation, ProviderWorkflowUICapability, ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
 import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/HarnessWorkflowPanel";
+import { ProviderWorkflowClientError } from "../../packages/ui/src/agents-providers/provider-workflow-client";
 
 const browser = { id: "claude:anthropic:browser", providerId: "anthropic", authKind: "subscription", method: "browser", billingKind: "subscription", executionKind: "native", availability: "available" } as const;
 const key = { id: "claude:anthropic:key", providerId: "anthropic", authKind: "api_key", billingKind: "api_key", executionKind: "native", availability: "available" } as const;
@@ -26,6 +27,83 @@ function setup(authState: "unauthenticated" | "authenticated" = "unauthenticated
   return { response, operation, client, props, view };
 }
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+async function overlappingCompletionReads() {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const context = setup("authenticated");
+  const { response, operation, client, props, view } = context;
+  const poll = deferred<ProviderWorkflowUIOperation>();
+  const check = deferred<ProviderWorkflowUIOperation>();
+  const older = deferred<void>();
+  const latest = deferred<void>();
+  const onRefreshAfterLogin = vi.fn().mockImplementationOnce(() => older.promise).mockImplementationOnce(() => latest.promise);
+  const onStateChange = vi.fn();
+  view.rerender(<HarnessWorkflowPanel {...props} onRefreshAfterLogin={onRefreshAfterLogin} onStateChange={onStateChange} />);
+  fireEvent.click(screen.getByRole("button", { name: "Change account" }));
+  fireEvent.click(screen.getByRole("button", { name: /Sign in in browser/ }));
+  await act(async () => response.resolve(operation));
+  vi.mocked(client.get)
+    .mockRejectedValueOnce(new ProviderWorkflowClientError("unavailable"))
+    .mockImplementationOnce(() => poll.promise)
+    .mockImplementationOnce(() => check.promise);
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  await act(() => vi.advanceTimersByTimeAsync(4000));
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+  await act(async () => poll.resolve({ ...operation, state: "succeeded" }));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  await act(async () => check.resolve({ ...operation, state: "succeeded" }));
+  expect(onRefreshAfterLogin).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("status", { name: "Updating connection" })).toBeInTheDocument();
+  return { ...context, older, latest, onRefreshAfterLogin, onStateChange };
+}
+
+it("ignores an outdated completion-read failure after the newer replacement account refresh succeeds", async () => {
+  const { older, latest, onStateChange } = await overlappingCompletionReads();
+  await act(async () => latest.resolve());
+  expect(screen.queryByRole("status", { name: "Updating connection" })).not.toBeInTheDocument();
+  await act(async () => older.reject(new Error("outdated snapshot")));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(onStateChange).toHaveBeenLastCalledWith(null);
+});
+
+it.each(["success", "failure", "timeout"] as const)("keeps the latest account refresh spinner when the older read settles with %s", async mode => {
+  const { older, latest, onStateChange } = await overlappingCompletionReads();
+  if (mode === "success") await act(async () => older.resolve());
+  else if (mode === "failure") await act(async () => older.reject(new Error("outdated snapshot")));
+  else await act(() => vi.advanceTimersByTimeAsync(29_000));
+  expect(screen.getByRole("status", { name: "Updating connection" })).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(onStateChange).toHaveBeenLastCalledWith("Connecting");
+  expect(screen.getByRole("button", { name: "Change account" })).toBeDisabled();
+  await act(async () => latest.resolve());
+  expect(screen.queryByRole("status", { name: "Updating connection" })).not.toBeInTheDocument();
+  expect(onStateChange).toHaveBeenLastCalledWith(null);
+});
+
+it.each(["failure", "timeout"] as const)("preserves the latest replacement refresh %s even if the old read succeeds afterwards", async mode => {
+  const { older, latest, onStateChange } = await overlappingCompletionReads();
+  if (mode === "failure") await act(async () => latest.reject(new Error("current account unavailable")));
+  else await act(() => vi.advanceTimersByTimeAsync(30_000));
+  await act(async () => older.resolve());
+  expect(screen.queryByRole("status", { name: "Updating connection" })).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("Sign-in completed.");
+  expect(screen.getByRole("button", { name: "Check connection" })).toBeEnabled();
+  expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
+});
+
+it("does not revive the preceding completion error after starting another login", async () => {
+  const { older, latest, client, onStateChange } = await overlappingCompletionReads();
+  await act(async () => latest.reject(new Error("current account unavailable")));
+  fireEvent.click(screen.getByRole("button", { name: "Change account" }));
+  const next = deferred<ProviderWorkflowUIOperation>();
+  vi.mocked(client.startConnection!).mockImplementation(() => next.promise);
+  fireEvent.click(screen.getByRole("button", { name: /Sign in in browser/ }));
+  expect(screen.getByRole("status", { name: "Starting sign-in" })).toBeInTheDocument();
+  await act(async () => older.reject(new Error("previous operation outdated")));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(onStateChange).toHaveBeenLastCalledWith("Connecting");
+  expect(client.startConnection).toHaveBeenCalledTimes(2);
+});
 
 it("indicates both delayed start and URL preparation before offering the browser link", async () => {
   const { response, operation, client, props } = setup();

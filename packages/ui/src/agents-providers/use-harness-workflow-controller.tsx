@@ -98,9 +98,16 @@ export function useHarnessWorkflowController({
     }
   }, [connectRequest, method, operation, pending]);
   const scope = useRef<AbortController | null>(null);
+  const completionRefresh = useRef<object | null>(null);
   const refreshAfterLogin = async () => {
     const controller = scope.current;
     if (!controller || controller.signal.aborted) return;
+    // Poll recovery and a manual status check can complete the same receipt.
+    // Only the latest account read may settle foreground feedback.
+    const refresh = {};
+    completionRefresh.current = refresh;
+    const current = () => scope.current === controller && !controller.signal.aborted
+      && completionRefresh.current === refresh;
     setReconciling(true);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: () => void = () => undefined;
@@ -115,15 +122,19 @@ export function useHarnessWorkflowController({
         Promise.resolve(onRefreshAfterLogin ? onRefreshAfterLogin() : onRefresh()),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("refresh timeout")), 30_000); }),
       ]);
+      if (current()) setFailure(value => value === completionRefreshFailure ? null : value);
     } catch (error) {
-      if (scope.current === controller && !controller.signal.aborted) {
+      if (current()) {
         console.warn("[provider-settings] Connection refresh failed:", error instanceof Error ? error.name : "UnknownError");
         setFailure(completionRefreshFailure);
       }
     } finally {
       clearTimeout(timer);
       controller.signal.removeEventListener("abort", onAbort);
-      if (scope.current === controller && !controller.signal.aborted) setReconciling(false);
+      if (current()) {
+        completionRefresh.current = null;
+        setReconciling(false);
+      }
     }
   };
   const receiptScope = useRef({ client, harnessId: harness.id, accountId: harness.selectedAccountId, sourceId: source?.id });
@@ -143,6 +154,7 @@ export function useHarnessWorkflowController({
   useEffect(() => {
     const controller = new AbortController();
     scope.current = controller;
+    completionRefresh.current = null;
     pendingStart.current = null;
     setSelectedOption(null);
     setApiKey("");
@@ -213,6 +225,8 @@ export function useHarnessWorkflowController({
   const run = async (action: (signal: AbortSignal) => Promise<void>, context: "start" | "other" = "other") => {
     const controller = scope.current;
     if (!controller || pending || disabled) return;
+    completionRefresh.current = null;
+    setReconciling(false);
     setPending(true);
     setFailure(null);
     try {
@@ -378,6 +392,8 @@ export function useHarnessWorkflowController({
         ? "Claude"
         : harness.displayName;
   const back = () => {
+    completionRefresh.current = null;
+    setReconciling(false);
     pendingStart.current = null;
     onOperationId?.(null);
     setMethod(null);
