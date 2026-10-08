@@ -96,7 +96,8 @@
     "#chat-drive-project": "./src/chat-drive-project.ts",
     "#ai-credit-history": "./src/ai-credit-history.ts",
     "#provider-workflows": "./src/provider-workflows.ts",
-    "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts"
+    "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
+    "#app-capabilities": "./src/app-capabilities.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

@@ -26,6 +26,10 @@ async function readPolicy(homePath: string) {
   }
 }
 
+export async function isAppAiAllowed(homePath: string, app: string): Promise<boolean> {
+  return (await readPolicy(homePath))?.apps.includes(app) ?? false;
+}
+
 /** Owner-controlled allowlist; app manifests cannot grant themselves model access. */
 export function createRuntimeAppAiRoutes(options: {
   homePath: string;

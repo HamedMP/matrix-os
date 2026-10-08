@@ -24,6 +24,8 @@ export function createAppAiRoutes(options: Options): Hono {
     }
     const parsed = AppAiRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid app AI request" }, 400);
+    // This layer has no connected-route executor; never silently ignore selection.
+    if (parsed.data.route) return c.json({ error: "App AI is unavailable" }, 503);
     try {
       if (!await options.authorize(c, parsed.data.app)) return c.json({ error: "App AI access denied" }, 403);
       const now = Date.now();
