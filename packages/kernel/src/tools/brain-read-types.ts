@@ -121,7 +121,7 @@ export interface BrainImpactClaim {
 }
 export type BrainImpactNotice =
   | "changed_files_capped" | "dependents_capped" | "scan_capped" | "read_budget_exhausted" | "run_budget_exhausted"
-  | "no_git_source" | "brain_behind_head";
+  | "prior_capped" | "claims_capped" | "untested_capped" | "specs_capped" | "no_git_source" | "brain_behind_head";
 export interface BrainImpactView {
   readonly base: { readonly ref: string; readonly sha: string };
   readonly head: { readonly ref: string; readonly sha: string };

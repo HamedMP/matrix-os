@@ -77,6 +77,15 @@ describe("brain_impact answer text", () => {
     expect(text.split("\n").at(-1)).toMatch(/^\d+ more lines were left out for length\.$/);
   });
 
+  it("explains the notices of lists cut at their caps", () => {
+    const text = formatBrainImpact(view({ notices: ["prior_capped", "claims_capped", "untested_capped", "specs_capped"] }));
+    expect(text.split("\n")[1]).toBe(
+      "Notes: earlier pull requests are listed for only some changed files; more invariants or decisions apply, or " +
+        "name more changed files, than are listed; more changed sources lack a changed test than are listed; more " +
+        "specs, or more changed files in a spec, were touched than are listed.",
+    );
+  });
+
   it("answers an empty range and wraps through the handler", async () => {
     expect(renderBrainImpact(view({ changedTotal: 0, changedFiles: [] }))).toEqual({
       text: "No changes between main (aaaaaaaaaaaa) and feature/x (bbbbbbbbbbbb).", external: true,

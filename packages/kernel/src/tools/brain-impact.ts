@@ -32,6 +32,10 @@ const NOTICE_WORDS: Readonly<Record<string, string>> = {
   scan_capped: "the import scan stopped at its file cap",
   read_budget_exhausted: "the import scan stopped at its read budget",
   run_budget_exhausted: "the run stopped at its time budget",
+  prior_capped: "earlier pull requests are listed for only some changed files",
+  claims_capped: "more invariants or decisions apply, or name more changed files, than are listed",
+  untested_capped: "more changed sources lack a changed test than are listed",
+  specs_capped: "more specs, or more changed files in a spec, were touched than are listed",
   no_git_source: "the project has no git source, so there is no history",
   brain_behind_head: "the brain has not synced the newest commits yet",
 };
