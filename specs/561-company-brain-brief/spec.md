@@ -56,7 +56,8 @@ tests. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (a JSO
   GET never returns a stored copy that cites a document or names a source deleted since: it deletes the copy and
   rebuilds the date. Every scheduled pass and every `documents_changed` event (the bus routes it to `brief`)
   deletes all stored copies of the scope that cite a tombstoned or erased document. Builds and reads run read-only
-  with a 10 s statement deadline; at most two builds run at once (more: 503). The scheduled pass skips a project
+  with a 10 s statement deadline; at most two builds run at once (more: 503), scheduled ones included (a scope the
+  cap refuses counts as failed and the next pass retries it). The scheduled pass skips a project
   scope whose project no longer resolves.
 
 ## Conflicts
@@ -184,7 +185,7 @@ its filters, so a cursor from another query is `invalid_request`. `summary: true
 
 ## Integration test checkpoint
 
-- `pnpm exec vitest run tests/gateway/brain-brief-*.test.ts`: 43 tests over PGlite, fake timers and fakes; coverage of
+- `pnpm exec vitest run tests/gateway/brain-brief-*.test.ts`: 48 tests over PGlite, fake timers and fakes; coverage of
   `brain/brief/` is 100% statements and branches.
 - End to end in tests: a real service behind the routes builds, stores and serves a brief; conflicts and stale data
   are built from real claims written through extraction runs.
