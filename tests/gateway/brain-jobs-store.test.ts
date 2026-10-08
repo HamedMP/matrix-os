@@ -163,6 +163,27 @@ describe("brain job store", () => {
     expect(await store.claim("owner_a", W, LEASE)).toBeNull();
   });
 
+  it("finishes a job whose cancel landed before the final write as cancelled, keeping its progress", async () => {
+    const done = await store.enqueue(scopeA, "proj_a", sync);
+    harness.tick();
+    const failing = await store.enqueue(scopeB, "proj_b", sync);
+    const first = (await store.claim("owner_a", W, LEASE))!;
+    const second = (await store.claim("owner_a", W, LEASE))!;
+    expect([first.jobId, second.jobId]).toEqual([done.job.jobId, failing.job.jobId]);
+    await store.cancel(scopeA, first.jobId);
+    await store.cancel(scopeB, second.jobId);
+    harness.tick();
+    expect(await store.finish(first, W, { status: "succeeded", errorCode: null, steps: 2, result: { written: 4 } }))
+      .toBe(true);
+    expect(await store.finish(second, W, { status: "failed", errorCode: "time_limit", steps: 1, result: null }))
+      .toBe(true);
+    expect(await store.get(scopeA, first.jobId)).toMatchObject({
+      status: "cancelled", errorCode: null, cancelRequested: true, steps: 2, result: { written: 4 },
+      finishedAt: harness.iso(),
+    });
+    expect(await store.get(scopeB, second.jobId)).toMatchObject({ status: "cancelled", errorCode: null, steps: 1 });
+  });
+
   it("cancels queued jobs at once and asks running jobs to stop", async () => {
     const queued = await store.enqueue(scopeA, "proj_a", sync);
     harness.tick();
