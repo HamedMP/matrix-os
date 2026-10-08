@@ -1,6 +1,6 @@
 "use client";
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, Ref, SelectHTMLAttributes } from "react";
 import { BRAIN_TONE } from "./brain-tone.js";
 
 export type BrainButtonVariant = "primary" | "outline" | "ghost" | "secondary" | "link" | "destructive";
@@ -29,6 +29,7 @@ export interface BrainButtonProps extends ButtonHTMLAttributes<HTMLButtonElement
   readonly variant?: BrainButtonVariant;
   readonly size?: BrainButtonSize;
   readonly wrap?: boolean;
+  readonly ref?: Ref<HTMLButtonElement>;
 }
 
 /** The view's button, after the Electron Desktop primitives: medium weight, rounded, token colors. */
@@ -48,8 +49,10 @@ export function BrainButton({
 const FIELD = "h-9 rounded-md border px-2 text-sm placeholder:text-muted-foreground aria-invalid:border-destructive "
   + "disabled:opacity-50";
 
-/** A text field; every native prop passes through (`type`, `maxLength`, `aria-invalid`...). */
-export function BrainInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
+/** A text field; every native prop passes through (`type`, `maxLength`, `aria-invalid`, `ref`...). */
+export function BrainInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement> & {
+  readonly ref?: Ref<HTMLInputElement>;
+}) {
   return (
     <input className={[FIELD, "w-full min-w-0", BRAIN_TONE.field, BRAIN_TONE.focus, className].filter(Boolean).join(" ")}
       {...props} />
