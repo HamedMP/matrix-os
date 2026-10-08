@@ -379,6 +379,9 @@ or behind the documents it describes.
    for every upsert that is not rejected the stored set is compared first and
    replaced wholesale only when it differs. A refs-only change still counts as
    `unchanged` at the same revision. `applySyncBatch` is the only writer of refs.
+   Unlike `upsertDocument`, an `unchanged` upsert whose `sourceUpdatedAt` names
+   another instant records it in place (no revision, snapshot or `updated_at`
+   change), so an adapter that compares stamps does not plan it again.
 4. Each deletion runs `deleteDocument` semantics without CAS, only when the live
    row's `source_id` equals the batch source. A missing, tombstoned, or
    foreign-source id is silently skipped so replays are idempotent. `deleted`
