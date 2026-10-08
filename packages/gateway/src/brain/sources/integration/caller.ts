@@ -173,3 +173,106 @@ export function brainIntegrationTransport(deps: BrainIntegrationCallerDeps): "re
   if (deps.internalBaseUrl && deps.machineToken) return "remote";
   return deps.db && deps.pipedream ? "local" : null;
 }
+
+export function createBrainIntegrationCaller(deps: BrainIntegrationCallerDeps): BrainIntegrationCaller {
+  const registry: BrainIntegrationRegistry = deps.registry ?? { getService, getAction };
+  const timeoutMs = Math.min(Math.max(deps.timeoutMs ?? BRAIN_INTEGRATION_CALL_TIMEOUT_MS, 1), 30_000);
+  const fetcher = deps.fetch ?? fetch;
+  const now = deps.now ?? Date.now;
+  const labels = new Map<string, { readonly label: string; readonly expiresAt: number }>();
+  const baseUrl = deps.internalBaseUrl ? deps.internalBaseUrl.replace(/\/+$/, "") : null;
+
+  const remoteHeaders = (ownerId: string): Headers => brainRemoteIntegrationHeaders(ownerId, deps.machineToken!);
+
+  async function remoteLabel(ownerId: string, service: string, signal: AbortSignal): Promise<string | Outcome> {
+    const key = `${ownerId}\u0000${service}`;
+    const cached = labels.get(key);
+    if (cached !== undefined && cached.expiresAt > now()) return cached.label;
+    labels.delete(key);
+    const response = await fetcher(baseUrl!, { headers: remoteHeaders(ownerId), redirect: "error", signal });
+    if (!response.ok) return remoteFailure(response, signal);
+    const body = await readBoundedJson(response, CONNECTIONS_MAX_BYTES, signal);
+    const parsed = body.ok ? ConnectionsSchema.safeParse(body.value) : null;
+    if (parsed === null || !parsed.success) return UNAVAILABLE;
+    // Never "the first" of several accounts: a run without a pinned label needs the owner's only one.
+    const accounts = parsed.data.filter((connection) => connection.service === service);
+    if (accounts.length > 1) return { status: "invalid" };
+    const label = accounts[0]?.account_label;
+    if (label === undefined || !LABEL_PATTERN.test(label)) return { status: "not_connected" };
+    if (labels.size >= BRAIN_INTEGRATION_LABEL_CACHE_MAX) labels.delete(labels.keys().next().value!);
+    labels.set(key, { label, expiresAt: now() + BRAIN_INTEGRATION_LABEL_CACHE_TTL_MS });
+    return label;
+  }
+
+  async function remoteCall(ownerId: string, request: BrainIntegrationCallRequest, signal: AbortSignal): Promise<Outcome> {
+    const label = request.label ?? await remoteLabel(ownerId, request.service, signal);
+    if (typeof label !== "string") return label;
+    const headers = remoteHeaders(ownerId);
+    headers.set("content-type", "application/json");
+    const response = await fetcher(`${baseUrl}/read-call`, {
+      method: "POST", headers, redirect: "error", signal,
+      body: JSON.stringify({ service: request.service, action: request.action, label, params: request.params }),
+    });
+    if (!response.ok) return remoteFailure(response, signal);
+    const body = await readBoundedJson(response, BRAIN_INTEGRATION_RESPONSE_MAX_BYTES, signal);
+    const envelope = body.ok ? EnvelopeSchema.safeParse(body.value) : null;
+    if (envelope === null || !envelope.success || envelope.data.action !== request.action) return UNAVAILABLE;
+    return { status: "ok", data: envelope.data.data };
+  }
+
+  async function localCall(ownerId: string, request: BrainIntegrationCallRequest, signal: AbortSignal): Promise<Outcome> {
+    const db = deps.db!;
+    const user = await findBrainPlatformUser(db, ownerId, deps.env);
+    if (user === null) return { status: "not_connected" };
+    const selected = resolveIntegrationConnection(await db.listConnectedServices(user.id), request.service, request.label);
+    if (selected.kind === "missing") return { status: "not_connected" };
+    if (selected.kind === "ambiguous") return { status: "invalid" };
+    if (!user.pipedream_external_id) return UNAVAILABLE;
+    signal.throwIfAborted();
+    // A byte-capped raw read that the call's signal cancels (never the SDK's buffered parse).
+    const { data } = await executeIntegrationAction({
+      pipedream: deps.pipedream!, externalUserId: user.pipedream_external_id, connection: selected.connection,
+      def: registry.getService(request.service)!, actionDef: registry.getAction(request.service, request.action)!,
+      serviceId: request.service, actionId: request.action, params: { ...request.params }, signal,
+      maxResponseBytes: BRAIN_INTEGRATION_RESPONSE_MAX_BYTES,
+    });
+    return { status: "ok", data };
+  }
+
+  /**
+   * invalid: a bad owner, service, label or parameters (the caller's or the config's fault). unavailable: the
+   * registry lacks the service or action, or it is no Pipedream read (a gap in this server, never the owner's config).
+   */
+  function checkRequest(ownerId: string, request: BrainIntegrationCallRequest): Outcome | null {
+    if (!OWNER_ID_PATTERN.test(ownerId)) return { status: "invalid" };
+    if (!(BRAIN_INTEGRATION_SERVICES as readonly string[]).includes(request.service)) return { status: "invalid" };
+    if (request.label !== undefined && !LABEL_PATTERN.test(request.label)) return { status: "invalid" };
+    const service = registry.getService(request.service);
+    const action = registry.getAction(request.service, request.action);
+    if (service === undefined || action === undefined || action.risk !== "read" || service.connectorKind !== "pipedream") {
+      console.warn(`[brain-integration] ${request.service}/${request.action} is not a registered read action`);
+      return UNAVAILABLE;
+    }
+    return validateActionParams(action, { ...request.params }).valid ? null : { status: "invalid" };
+  }
+
+  return {
+    async call(ownerId, request, signal) {
+      signal.throwIfAborted();
+      const refused = checkRequest(ownerId, request);
+      if (refused !== null) return refused;
+      const transport = brainIntegrationTransport(deps);
+      if (transport === null) return UNAVAILABLE;
+      try {
+        return await boundedOperation((bounded) => transport === "local"
+          ? localCall(ownerId, request, bounded)
+          : remoteCall(ownerId, request, bounded), timeoutMs, signal);
+      } catch (error: unknown) {
+        if (signal.aborted) throw signal.reason;
+        logFailure(transport, request, error);
+        if (transport === "local" && !isTimeoutError(error)) return localFailure(error);
+        return UNAVAILABLE;
+      }
+    },
+  };
+}
