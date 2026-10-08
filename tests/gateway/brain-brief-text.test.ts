@@ -56,6 +56,20 @@ describe("text rules", () => {
       .toEqual([true, true, true, false, false]);
   });
 
+  it("reads future, imperative and conditional wording as planned work, not done", () => {
+    for (const planned of [
+      "Ensure the migration is completed by Friday.", "The export API will be shipped next week.",
+      "Docs to be merged after review.", "Complete the migration.", "Get the PR merged.",
+      "Make sure the login bug is fixed.", "The migration is completed by Friday.",
+      "Once the PR is merged, drop the flag.", "Needs to be resolved before launch.",
+    ]) expect([planned, commitmentState(planned, null)]).toEqual([planned, null]);
+    expect(commitmentState("Ensure the migration is completed by Friday.", "done")).toBe("done");
+    expect(commitmentState("The export API will not be shipped.", null)).toBe("deferred");
+    expect(commitmentState("Migration complete.", null)).toBe("done");
+    expect(commitmentState("Fixed by this PR.", null)).toBe("done");
+    expect(commitmentState("Docs merged; will write the guide next.", null)).toBe("done");
+  });
+
   it("finds a Draft status line near the top of a spec", () => {
     expect(draftStatusLine("# T\n\n**Status**: Draft  \r\n", 300)).toBe("**Status**: Draft");
     expect(draftStatusLine("- Status: draft for review", 10)).toBe("- Status: ");
