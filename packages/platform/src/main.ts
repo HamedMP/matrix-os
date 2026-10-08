@@ -1,4 +1,3 @@
-import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -655,8 +654,6 @@ export function createApp(deps: {
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
-
-  registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.

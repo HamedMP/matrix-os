@@ -164,10 +164,6 @@ recover_interrupted_update() {
 
 do_rollback() {
   local restore_release_metadata="${1:-true}" has_app_rollback=false
-  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json; then
-    log "ERROR: guarded funded configuration rollback and independent readback are required first"
-    return 1
-  fi
   if [ -d "$APP_DIR.rollback" ] && [ ! -L "$APP_DIR.rollback" ]; then
     has_app_rollback=true
   elif [ ! -f "$UPDATE_TRANSACTION_STATE" ] || [ -L "$UPDATE_TRANSACTION_STATE" ]; then

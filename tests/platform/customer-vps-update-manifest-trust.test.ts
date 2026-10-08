@@ -71,7 +71,7 @@ log() { :; }
 json_field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$2" <<< "$1"; }
 release_url_for_version() { printf 'https://platform.example/system-bundles/releases/%s.json\\n' "$1"; }
 fetch_manifest() { printf '%s' "$TRUSTED_JSON"; }
-sudo() { if [ "$1" = /usr/bin/test ]; then return 1; fi; :; }
+sudo() { :; }
 current_version() { printf 'v2026.09.27-1\\n'; }
 ensure_update_headroom() { :; }
 write_update_phase() { :; }
