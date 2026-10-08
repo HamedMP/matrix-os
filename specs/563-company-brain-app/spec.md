@@ -44,15 +44,15 @@ pause or resume, recent syncs, disconnect after a second click) and a connect fo
 kind with its availability ("Ready", "Connect the account in Settings", or "Not set up on this server" for
 `not_configured`, which covers every server-side gap, not only a missing integration key), offers the first page of the kind's options, or a typed value when the kind lists none (GitHub
 `owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note, Linear team keys,
-Google Drive folder ids, Google Calendar ids; the last three list no options yet, so they are always typed), and per-kind
-settings: GitHub and Linear item types (at least one; GitHub reviews only with pull requests), Matrix file endings (1 to 32) and largest file (64 KiB,
+Drive folder ids or calendar ids), and per-kind settings: GitHub and Linear item types (at least one; GitHub reviews
+need pull requests), Matrix file endings (1 to 32) and largest file (64 KiB,
 256 KiB or 1 MiB), calendar days back and ahead (0 to 90, no event bodies). Defaults: every item type, Markdown and
 text files up to 256 KiB, 14 days each way. The gateway validates every config.
 
 ## States
 
-Every request shows loading, then its data, an empty state (an icon, a headline and what to do next), or an error.
-Errors come only from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
+Every request shows loading, then its data, an empty state (icon, headline, next step), or an error. Errors come only
+from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
 offline, too slow, brain off (503 or an unknown server code), not found (the code's fixed text, or "not turned on yet"
 for a route that is not mounted), and refused (the code's fixed text). The not-connected codes add an "Open Sources"
 button. A reload keeps the previous data on screen until the new answer arrives.
@@ -133,8 +133,8 @@ shows the `search` image there. No environment variables and no new dependencies
 ## Resource management
 
 Lists keep at most 500 items (then Load more stops); pages are 20 (search, timeline, path history), 50 (claims,
-conflicts) and 10 (people, merge suggestions); a claims screen reads every conflict page up to 500 conflicts, so a
-claim on a later page is still flagged, and says when more were cut; 200 projects; 5 receipts; the first page of connect options (at most
+conflicts) and 10 (people, merge suggestions); claims are checked against up to 500 conflicts, and a cut is shown;
+200 projects; 5 receipts; the first page of connect options (at most
 100); 5 reasons per suggestion. One poll timer per followed job, cleared on unmount; no sockets or caches; every
 request ends with its timeout. The view sends nothing to a third party; a confirmed model run makes the gateway
 send project text to Anthropic (see Security architecture).
@@ -167,10 +167,10 @@ it, down to 360 px.
 
 A tab list with arrow keys (both axes, wrapping), Home and End, a roving tab stop and a labelled panel. Every control
 has a name; progress uses `role="status"`, errors `role="alert"`; the period buttons carry `aria-pressed`, the syncs
-toggle `aria-expanded`; the model confirm is a labelled dialog floating over the card (nothing moves when it opens)
-that its button, a click outside or Escape closes; an invalid typed value sets `aria-invalid`. A running job shows a
-labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose problem text
-describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
+toggle `aria-expanded`; the model confirm is a labelled dialog over the card that its button, Escape or a click
+outside closes; an invalid typed value sets `aria-invalid`. A running
+job shows a labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose
+problem text describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
 
 ## Integration test checkpoint
 
