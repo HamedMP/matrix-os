@@ -14,6 +14,7 @@ import type { BrainCiteView, BrainImpactClaim, BrainImpactPrior } from "../contr
 import { parseGitCursor } from "../git/cursor.js";
 import { selectCursor } from "../sync.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
+import type { ImpactCappedList } from "./paths.js";
 
 const PR_PROVENANCES = ["git_pr", "github_pr"];
 /** Claim rows read per kind before de-duplication across extractors and repeated statements. */
@@ -37,13 +38,13 @@ export async function findGitSource(
 }
 
 /**
- * Up to perFile pull requests per path, newest first, one per label (a git_pr and a github_pr of the same number are
- * the same pull request); paths in input order, only those with at least one, at most maxFiles.
+ * The newest perFile pull requests per path, one per label (a git_pr and a github_pr of the same number are the same
+ * pull request); paths in input order, only those with at least one, at most maxFiles (capped when more have one).
  */
 export async function priorPullRequests(
   db: Db, scope: BrainScopeKey, paths: readonly string[], perFile: number, maxFiles: number, asOf: string,
-): Promise<BrainImpactPrior[]> {
-  if (paths.length === 0) return [];
+): Promise<ImpactCappedList<BrainImpactPrior>> {
+  if (paths.length === 0) return { items: [], capped: false };
   const values = sql.join(paths.map((path) => sql`(${path}::text)`));
   const { rows } = await sql<{ path: string; document_id: string }>`
     SELECT p.path, m.document_id FROM (VALUES ${values}) AS p(path) CROSS JOIN LATERAL (
@@ -65,35 +66,44 @@ export async function priorPullRequests(
     if (items.length < perFile && !items.some((item) => item.label === cite.label)) items.push(cite);
     byPath.set(row.path, items);
   }
-  return paths.filter((path) => byPath.has(path)).slice(0, maxFiles)
-    .map((path) => ({ path, items: byPath.get(path)! }));
+  const found = paths.filter((path) => byPath.has(path));
+  return {
+    items: found.slice(0, maxFiles).map((path) => ({ path, items: byPath.get(path)! })),
+    capped: found.length > maxFiles,
+  };
 }
 
-/** Changed paths (bytewise order, at most IMPACT_CLAIM_PATHS_MAX) each document has a path ref for. */
+/**
+ * Changed paths (bytewise order, at most IMPACT_CLAIM_PATHS_MAX) each document has a path ref for; cut when a document
+ * has more.
+ */
 async function touchedPaths(
   db: Db, scope: BrainScopeKey, ids: readonly string[], paths: readonly string[],
-): Promise<Map<string, string[]>> {
+): Promise<{ readonly byDocument: Map<string, string[]>; readonly cut: boolean }> {
   const ranked = db.selectFrom("brain_document_refs").select([
     "document_id", "value", sql<number>`row_number() OVER (PARTITION BY document_id ORDER BY value)`.as("n"),
+    sql<number>`count(*) OVER (PARTITION BY document_id)::int`.as("total"),
   ]).where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
     .where("document_id", "in", [...ids]).where("kind", "=", "path").where("value", "in", [...paths]);
-  const rows = await db.selectFrom(ranked.as("x")).select(["x.document_id", "x.value"])
+  const rows = await db.selectFrom(ranked.as("x")).select(["x.document_id", "x.value", "x.total"])
     .where(sql<SqlBool>`${sql.ref("x.n")} <= ${IMPACT_CLAIM_PATHS_MAX}`)
     .orderBy("x.document_id").orderBy("x.value").execute();
   const byDocument = new Map(ids.map((id) => [id, [] as string[]]));
   for (const row of rows) byDocument.get(row.document_id)!.push(row.value);
-  return byDocument;
+  return { byDocument, cut: rows.some((row) => Number(row.total) > IMPACT_CLAIM_PATHS_MAX) };
 }
 
 /**
  * Current claims of one kind (claim revision and incarnation equal the live document's) whose document has a path ref
- * equal to one of `paths`; newest document first, then span. One per claim id and per normalized label and statement.
+ * equal to one of `paths`; newest document first, then span. One per claim id and per normalized label and statement,
+ * at most max; capped when more apply, when the row read stopped at CLAIM_ROWS_PER_KIND, or when a claim's changed
+ * paths were cut at IMPACT_CLAIM_PATHS_MAX.
  */
 export async function currentClaims(
   db: Db, scope: BrainScopeKey, paths: readonly string[], kind: BrainImpactClaim["kind"], max: number,
   asOf: string,
-): Promise<BrainImpactClaim[]> {
-  if (paths.length === 0) return [];
+): Promise<ImpactCappedList<BrainImpactClaim>> {
+  if (paths.length === 0) return { items: [], capped: false };
   const rows = await db.selectFrom("brain_claims as c")
     .innerJoin("brain_documents as d", (join) => join.onRef("d.owner_id", "=", "c.owner_id")
       .onRef("d.scope_id", "=", "c.scope_id").onRef("d.document_id", "=", "c.document_id"))
@@ -109,23 +119,28 @@ export async function currentClaims(
     .limit(CLAIM_ROWS_PER_KIND).execute();
   const kept: typeof rows = [];
   const seen = new Set<string>();
+  let capped = rows.length >= CLAIM_ROWS_PER_KIND;
   for (const row of rows) {
     const text = `${normalizeBrainClaimText(row.label ?? "")}\u0000${normalizeBrainClaimText(row.statement)}`;
     if (seen.has(row.claim_id) || seen.has(text)) continue;
+    if (kept.length >= max) {
+      capped = true;
+      break;
+    }
     seen.add(row.claim_id).add(text);
     kept.push(row);
-    if (kept.length >= max) break;
   }
-  if (kept.length === 0) return [];
+  if (kept.length === 0) return { items: [], capped };
   const ids = kept.map((row) => row.document_id);
   const [cites, touched] = await Promise.all([loadBrainCites(db, scope, ids), touchedPaths(db, scope, ids, paths)]);
-  return kept.flatMap((row) => {
+  const items = kept.flatMap((row) => {
     const cite = cites.get(row.document_id);
     return cite === undefined ? [] : [{
       claimId: row.claim_id, kind, label: row.label, statement: row.statement, quote: row.quote,
-      paths: touched.get(row.document_id)!, cite,
+      paths: touched.byDocument.get(row.document_id)!, cite,
     }];
   });
+  return { items, capped: capped || touched.cut };
 }
 
 /** Title suffix of part 2 or later of a spec file split into parts (git/specs.ts partTitle). */

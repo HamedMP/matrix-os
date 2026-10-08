@@ -207,22 +207,30 @@ describe("path rules", () => {
       change("src/gone.ts", "deleted"), change("src/lone.ts", "added"), change("docs/readme.md"),
       change("src/old-test.ts"), change("tests/old.test.ts", "deleted"),
     ];
-    expect(untestedFiles(changed, new Map(), 10)).toEqual([
-      { path: "pkg/core/src/e.ts" }, { path: "src/lone.ts" }, { path: "src/old-test.ts" }, { path: "tools/run.ts" },
-    ]);
-    expect(untestedFiles(changed, new Map(), 1)).toEqual([{ path: "pkg/core/src/e.ts" }]);
+    expect(untestedFiles(changed, new Map(), 10)).toEqual({
+      items: [{ path: "pkg/core/src/e.ts" }, { path: "src/lone.ts" }, { path: "src/old-test.ts" }, { path: "tools/run.ts" }],
+      capped: false,
+    });
+    expect(untestedFiles(changed, new Map(), 4).capped).toBe(false);
+    expect(untestedFiles(changed, new Map(), 1)).toEqual({ items: [{ path: "pkg/core/src/e.ts" }], capped: true });
     const imports = new Map([["tests/z.test.ts", new Set(["tools/run.ts", "pkg/core/src/e.ts"])]]);
-    expect(untestedFiles(changed, imports, 10)).toEqual([{ path: "src/lone.ts" }, { path: "src/old-test.ts" }]);
+    expect(untestedFiles(changed, imports, 10).items).toEqual([{ path: "src/lone.ts" }, { path: "src/old-test.ts" }]);
   });
 
   it("groups changed paths by spec folder", () => {
     const many = Array.from({ length: IMPACT_SPEC_PATHS_MAX + 2 }, (_, i) => change(`specs/002-b/f${i}.md`));
-    const specs = specsTouched([
+    const changed = [
       change("specs/003-c/spec.md", "renamed", "specs/001-a/spec.md"), change("src/a.ts"), ...many,
       change("specs/003-c/spec.md"),
-    ], 2);
-    expect(specs.map((spec) => spec.spec)).toEqual(["specs/001-a", "specs/002-b"]);
-    expect(specs[1]!.changedPaths).toHaveLength(IMPACT_SPEC_PATHS_MAX);
-    expect(specsTouched([change("specs/x")], 5)).toEqual([]);
+    ];
+    const specs = specsTouched(changed, 2);
+    expect(specs.items.map((spec) => spec.spec)).toEqual(["specs/001-a", "specs/002-b"]);
+    expect(specs.items[1]!.changedPaths).toHaveLength(IMPACT_SPEC_PATHS_MAX);
+    expect(specs.capped).toBe(true);
+    // Every folder listed, but one lost paths past its cap: still capped.
+    expect(specsTouched(changed, 3).capped).toBe(true);
+    const few = specsTouched([change("specs/003-c/spec.md", "renamed", "specs/001-a/spec.md"), change("specs/003-c/spec.md")], 2);
+    expect([few.items.map((spec) => spec.changedPaths), few.capped]).toEqual([[["specs/001-a/spec.md"], ["specs/003-c/spec.md"]], false]);
+    expect(specsTouched([change("specs/x")], 5)).toEqual({ items: [], capped: false });
   });
 });

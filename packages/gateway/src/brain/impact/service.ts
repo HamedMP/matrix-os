@@ -29,7 +29,7 @@ export const IMPACT_DEPTH_DEFAULT: 1 | 2 = BRAIN_IMPACT_LIMITS.depthDefault;
 const HEX_REV = /^(?:[0-9a-f]{7,40}|[0-9a-f]{64})$/;
 const NOTICE_ORDER: readonly BrainImpactNotice[] = [
   "changed_files_capped", "dependents_capped", "scan_capped", "read_budget_exhausted", "run_budget_exhausted",
-  "no_git_source", "brain_behind_head",
+  "prior_capped", "claims_capped", "untested_capped", "specs_capped", "no_git_source", "brain_behind_head",
 ];
 /** Repository states that make the checkout unusable for this brief. */
 const CHECKOUT_CODES: ReadonlySet<GitSyncErrorCode> = new Set([
@@ -102,23 +102,27 @@ export function createBrainImpactService(deps: BrainImpactServiceDeps): BrainImp
     const priorPaths = [...lookup.filter((path) => !isTestPath(path)), ...lookup.filter(isTestPath)]
       .slice(0, limits.filesWithPriorMax * 2);
     const touched = specsTouched(changed, limits.specsMax);
+    const untested = untestedFiles(changed, scan.testImports, limits.untestedMax);
     const asOf = await git.commitTime(mergeBase);
     const [source, prior, invariants, decisions, cites] = await withBrainRead(deps.repository.kysely, async (db) => [
       await findGitSource(db, scope),
       await priorPullRequests(db, scope, priorPaths, limits.priorPerFile, limits.filesWithPriorMax, asOf),
       await currentClaims(db, scope, lookup, "invariant", limits.claimsPerKindMax, asOf),
       await currentClaims(db, scope, lookup, "decision", limits.claimsPerKindMax, asOf),
-      await specCites(db, scope, touched.map((spec) => spec.spec)),
+      await specCites(db, scope, touched.items.map((spec) => spec.spec)),
     ] as const);
     if (source === null) notices.add("no_git_source");
     else if (await brainBehind(git, source.position, mergeBase)) notices.add("brain_behind_head");
+    if (priorPaths.length < lookup.length || prior.capped) notices.add("prior_capped");
+    if (invariants.capped || decisions.capped) notices.add("claims_capped");
+    if (untested.capped) notices.add("untested_capped");
+    if (touched.capped) notices.add("specs_capped");
     return {
       base, head, mergeBase,
       changedFiles: changed.map((file) => ({ ...file, isTest: isTestPath(file.path) })),
-      changedTotal: diff.total, dependents: scan.dependents, dependentTotals: scan.totals, approximate: true, prior,
-      invariants, decisions,
-      untested: untestedFiles(changed, scan.testImports, limits.untestedMax),
-      specs: touched.map((spec) => ({ ...spec, cite: cites.get(spec.spec) ?? null })),
+      changedTotal: diff.total, dependents: scan.dependents, dependentTotals: scan.totals, approximate: true,
+      prior: prior.items, invariants: invariants.items, decisions: decisions.items, untested: untested.items,
+      specs: touched.items.map((spec) => ({ ...spec, cite: cites.get(spec.spec) ?? null })),
       notices: NOTICE_ORDER.filter((notice) => notices.has(notice)),
     };
   }

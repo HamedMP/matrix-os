@@ -144,6 +144,16 @@ describe("comment", () => {
     }
   });
 
+  it("says when a list of the brief was cut at its cap", () => {
+    const { markdown } = formatBrainImpactComment(view({
+      notices: ["prior_capped", "claims_capped", "untested_capped", "specs_capped"],
+    }));
+    expect(markdown).toContain("#### Notes\n- Earlier pull requests are listed for only some of the changed files.\n"
+      + "- More invariants or decisions apply, or name more changed files, than are listed.\n"
+      + "- More changed code lacks a matching test change than is listed.\n"
+      + "- More specs, or more changed files in a spec, were touched than are listed.\n");
+  });
+
   it("states how many files import the changed files at each depth, beyond the listed ones", () => {
     const one = { path: "src/b.ts", depth: 1 as const, via: "src/a.ts" };
     const both = formatBrainImpactComment(view({

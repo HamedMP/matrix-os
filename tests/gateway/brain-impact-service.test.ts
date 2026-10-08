@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainApiError, brainProjectScope } from "../../packages/gateway/src/brain/api/types.js";
 import {
-  BrainFeatureError, type BrainImpactService, type BrainImpactView,
+  BRAIN_IMPACT_LIMITS, BrainFeatureError, type BrainImpactService, type BrainImpactView,
 } from "../../packages/gateway/src/brain/contracts.js";
 import { defaultGitRunner, syncGitSource } from "../../packages/gateway/src/brain/git/index.js";
 import { GitRunnerError, type GitRunner } from "../../packages/gateway/src/brain/git/types.js";
@@ -192,13 +192,19 @@ describe("impact brief", { timeout: 120_000 }, () => {
       spec: "specs/001-alpha", changedPaths: ["specs/001-alpha/spec.md"], cite: { kind: "spec", label: "specs/001-alpha" },
     }]);
     expect(view.notices).toEqual([]);
-    const one = await currentClaims(harness.db, IMPACT_SCOPE, ["packages/core/src/alpha.ts"], "invariant", 1, AS_OF);
-    expect(one.map((claim) => claim.statement)).toEqual(["Alpha stays bounded."]);
+    const alpha = ["packages/core/src/alpha.ts"];
+    const one = await currentClaims(harness.db, IMPACT_SCOPE, alpha, "invariant", 1, AS_OF);
+    expect([one.items.map((claim) => claim.statement), one.capped]).toEqual([["Alpha stays bounded."], false]);
+    const cut = await currentClaims(harness.db, IMPACT_SCOPE, [...alpha, "specs/001-alpha/spec.md"], "invariant", 1, AS_OF);
+    expect([cut.items.map((claim) => claim.statement), cut.capped]).toEqual([["Alpha stays bounded."], true]);
+    const priorPaths = ["packages/core/src/alpha.ts", "packages/core/src/util/strings.ts"];
+    const firstFile = await priorPullRequests(harness.db, IMPACT_SCOPE, priorPaths, 3, 1, AS_OF);
+    expect([firstFile.items.map((item) => item.path), firstFile.capped]).toEqual([["packages/core/src/alpha.ts"], true]);
+    expect((await priorPullRequests(harness.db, IMPACT_SCOPE, priorPaths, 3, 2, AS_OF)).capped).toBe(false);
     // A document tombstoned between a page read and its cite read is left out, never shown without a cite.
     const racing = harness.db.withPlugin(dropCites());
-    const alpha = ["packages/core/src/alpha.ts"];
-    expect(await currentClaims(racing, IMPACT_SCOPE, alpha, "invariant", 1, AS_OF)).toEqual([]);
-    expect(await priorPullRequests(racing, IMPACT_SCOPE, alpha, 2, 10, AS_OF)).toEqual([]);
+    expect(await currentClaims(racing, IMPACT_SCOPE, alpha, "invariant", 1, AS_OF)).toEqual({ items: [], capped: false });
+    expect(await priorPullRequests(racing, IMPACT_SCOPE, alpha, 2, 10, AS_OF)).toEqual({ items: [], capped: false });
     expect(await specCites(racing, IMPACT_SCOPE, ["specs/001-alpha"])).toEqual(new Map());
   });
 
@@ -320,15 +326,50 @@ describe("impact brief", { timeout: 120_000 }, () => {
     expect(same.head.ref).toBe(history.feature);
   });
 
-  it("caps changed files and stops the scan at the run budget", async () => {
-    const diff = Array.from({ length: 501 }, (_, i) => `A\u0000src/f${i}.ts\u0000`).join("");
+  it("caps changed files and every list, and stops the scan at the run budget", async () => {
+    const specs = Array.from({ length: 21 }, (_, i) => `specs/${String(i).padStart(3, "0")}-s/spec.md`);
+    const paths = [...specs, ...Array.from({ length: 480 }, (_, i) => `src/f${i}.ts`)];
+    const diff = paths.map((path) => `A\u0000${path}\u0000`).join("");
     const runner = fakeRunner(defaultGitRunner, (sub) => (sub[0] === "diff" ? gitRunResult(diff) : undefined));
     let clock = 0;
     const view = await service({ runner, now: () => (clock += 30_000) }).impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" });
     expect(view.changedFiles).toHaveLength(500);
     expect(view.changedTotal).toBe(501);
     expect(view.dependents).toEqual([]);
-    expect(view.notices).toEqual(["changed_files_capped", "run_budget_exhausted", "no_git_source"]);
+    expect([view.untested.length, view.specs.length]).toEqual([100, 20]);
+    expect(view.notices).toEqual([
+      "changed_files_capped", "run_budget_exhausted", "prior_capped", "untested_capped", "specs_capped", "no_git_source",
+    ]);
+  });
+
+  it("says when more invariants or decisions apply, or name more changed files, than are listed", async () => {
+    await connectAndSync();
+    const { source } = await harness.repository.createSource(IMPACT_SCOPE, { kind: "manual", externalRef: "m", label: "M" });
+    const rules = Array.from({ length: 51 }, (_, i) => `Rule ${i} holds.`);
+    const wide = Array.from({ length: 21 }, (_, i) => `src/w${String(i).padStart(2, "0")}.ts`);
+    const doc = (seed: string, body: string, refs: string[]) => ({
+      documentId: impactDocumentId(seed), title: seed, body, permalink: "", sourceUpdatedAt: "2026-08-01T00:00:00.000Z",
+      provenance: "manual", refs: refs.map((value) => ({ kind: "path", value })),
+    });
+    await harness.repository.applySyncBatch(IMPACT_SCOPE, {
+      sourceId: source.sourceId, expectedCursor: null, nextCursor: "c1", deletions: [], upserts: [
+        // Two documents: one holds at most BRAIN_CLAIMS_PER_DOCUMENT_MAX claims.
+        doc("rules-a", rules.slice(0, 26).join(" "), ["packages/core/src/beta.ts"]),
+        doc("rules-b", rules.slice(26).join(" "), ["packages/core/src/beta.ts"]), doc("wide", "Wide rule.", wide),
+      ],
+    });
+    await seedClaims(harness.repository, IMPACT_SCOPE, [
+      ...rules.map((quote, i) => ({ documentId: impactDocumentId(i < 26 ? "rules-a" : "rules-b"), kind: "invariant" as const, quote })),
+      { documentId: impactDocumentId("wide"), kind: "decision", quote: "Wide rule." },
+    ]);
+
+    const view = await service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" });
+    expect(view.invariants).toHaveLength(BRAIN_IMPACT_LIMITS.claimsPerKindMax);
+    expect(view.notices).toEqual(["claims_capped"]);
+    const all = await currentClaims(harness.db, IMPACT_SCOPE, wide, "decision", 50, AS_OF);
+    expect([all.items.map((claim) => claim.paths.length), all.capped]).toEqual([[20], true]);
+    const listed = await currentClaims(harness.db, IMPACT_SCOPE, wide.slice(0, 20), "decision", 50, AS_OF);
+    expect([listed.items.map((claim) => claim.paths), listed.capped]).toEqual([[wide.slice(0, 20)], false]);
   });
 });
 

@@ -72,7 +72,13 @@ Company Brain already knows about those files. Spec:
 - Limits (`BRAIN_IMPACT_LIMITS`): 500 changed files, 5,000 scanned files of at
   most 256 KiB, 32 MiB read per request, 300 dependents, 50 files with earlier
   pull requests (3 each), 50 claims per kind, 20 specs, 100 untested files,
-  60,000 comment characters, a 20 s scan budget. Every cap is a notice.
+  60,000 comment characters, a 20 s scan budget. Every list cut at its cap
+  carries a notice: `changed_files_capped`, `dependents_capped`,
+  `prior_capped`, `claims_capped` (also a claim's 20 changed paths),
+  `untested_capped`, `specs_capped` (also a spec's 20 changed paths), and
+  `scan_capped`, `read_budget_exhausted` or `run_budget_exhausted` for the
+  scan; a cut comment answers `truncated: true`. Earlier pull requests are the
+  newest 3 per file by design, not a cut list.
 - At most 4 briefs run at once per service (`IMPACT_MAX_CONCURRENT_BRIEFS`,
   route and agent tool together); one more answers `brain_unavailable` (503)
   and the count is released in `finally`.
