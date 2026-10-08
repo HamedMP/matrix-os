@@ -360,3 +360,90 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
     await expect(stopBrainServices(null)).resolves.toBeUndefined();
   });
 });
+
+describe("withBrainChangeEvents", () => {
+  const scope = brainProjectScope(OWNER, PROJECT.id);
+  const syncCounts = (written: number, deleted: number) => ({ read: 1, written, unchanged: 0, deleted, failed: 0 });
+  const extractCounts = (claimsWritten: number, claimsRemoved: number) => ({ claimsWritten, claimsRemoved });
+
+  function wrap(resolver?: Partial<BrainProjectResolver>) {
+    const events: BrainChangeEvent[] = [];
+    const project = {
+      sync: vi.fn(async () => ({ counts: syncCounts(0, 0) })),
+      extract: vi.fn(async () => ({ extractor: "rules/v1", counts: extractCounts(0, 0) })),
+      why: vi.fn(async () => ({ items: [] })),
+    } as unknown as BrainProjectService & { sync: ReturnType<typeof vi.fn>; extract: ReturnType<typeof vi.fn> };
+    const resolve = vi.fn(async () => ({ projectId: PROJECT.id, slug: PROJECT.slug, name: PROJECT.name, scope }));
+    const wrapped = withBrainChangeEvents(project, {
+      homePath: "/home", resolve, checkoutPath: vi.fn(), ...resolver,
+    } as BrainProjectResolver, { emit: (event) => { events.push(event); }, close: vi.fn() });
+    return { events, project, wrapped, resolve };
+  }
+
+  it("announces a sync that wrote or deleted documents and an extract that changed claims, nothing else", async () => {
+    const { events, project, wrapped, resolve } = wrap();
+    await wrapped.sync(OWNER, "widgets");
+    await wrapped.extract(OWNER, "widgets", { extractor: "rules" });
+    expect(events).toEqual([]);
+    expect(resolve).not.toHaveBeenCalled();
+    project.sync.mockResolvedValueOnce({ counts: syncCounts(0, 2) });
+    project.extract.mockResolvedValueOnce({ extractor: "rules/v1", counts: extractCounts(0, 3) });
+    expect(await wrapped.sync(OWNER, "widgets")).toEqual({ counts: syncCounts(0, 2) });
+    await wrapped.extract(OWNER, "widgets", { extractor: "rules" });
+    expect(events).toEqual([
+      { type: "documents_changed", scope, sourceId: null, documentIds: null, at: expect.any(String) },
+      { type: "claims_changed", scope, extractor: "rules/v1", documentIds: null, at: expect.any(String) },
+    ]);
+    expect(await wrapped.why(OWNER, "widgets", { path: "src/" })).toEqual({ items: [] });
+  });
+
+  it("returns the answer when the scope lookup fails, and announces nothing for a failed call", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { events, project, wrapped } = wrap({ resolve: vi.fn(async () => { throw new BrainApiError("brain_unavailable"); }) });
+    project.sync.mockResolvedValueOnce({ counts: syncCounts(4, 0) });
+    expect(await wrapped.sync(OWNER, "widgets")).toEqual({ counts: syncCounts(4, 0) });
+    expect(warn).toHaveBeenCalledWith("[brain] change event skipped; the next refresh repairs it:", "BrainApiError");
+    const odd = wrap({ resolve: vi.fn(() => Promise.reject("plain text")) });
+    odd.project.sync.mockResolvedValueOnce({ counts: syncCounts(1, 0) });
+    await odd.wrapped.sync(OWNER, "widgets");
+    expect(warn).toHaveBeenLastCalledWith("[brain] change event skipped; the next refresh repairs it:", "string");
+    project.extract.mockRejectedValueOnce(new BrainApiError("extraction_in_progress"));
+    await expect(wrapped.extract(OWNER, "widgets", { extractor: "rules" })).rejects.toMatchObject({
+      code: "extraction_in_progress",
+    });
+    expect(events).toEqual([]);
+    warn.mockRestore();
+  });
+});
+
+describe("createBrainProjectResolver", () => {
+  it("resolves ids and slugs of the owner to the project scope and finds the checkout without a second lookup", async () => {
+    const projects = lookup();
+    const resolver = createBrainProjectResolver({ projects, homePath: "/home" });
+    expect(resolver.homePath).toBe("/home");
+    const byId = await resolver.resolve(OWNER, PROJECT.id);
+    expect(byId).toEqual({
+      projectId: PROJECT.id, slug: "widgets", name: "Widgets", scope: brainProjectScope(OWNER, PROJECT.id),
+    });
+    expect(await resolver.resolve(OWNER, "widgets")).toEqual(byId);
+    expect(await resolver.checkoutPath(OWNER, byId)).toBe("/home/widgets");
+    expect(projects.getProjectById).toHaveBeenCalledTimes(1);
+    expect(await resolver.checkoutPath(OWNER, { ...byId })).toBe("/home/widgets");
+    expect(projects.getProjectById).toHaveBeenCalledTimes(2);
+    expect(projects.resolveProjectWorkingDirectory).toHaveBeenCalledWith(PROJECT);
+  });
+
+  it("answers project_not_found alike for foreign, missing and malformed refs, brain_unavailable for an outage", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const resolver = createBrainProjectResolver({ projects: lookup(), homePath: "/home" });
+    for (const [owner, ref] of [["owner_b", PROJECT.id], [OWNER, "proj_other"], [OWNER, "Not A Ref!"], [OWNER, "other"]]) {
+      await expect(resolver.resolve(owner!, ref!)).rejects.toMatchObject({ code: "project_not_found" });
+    }
+    await expect(createBrainProjectResolver({ projects: lookup(400), homePath: "/home" }).resolve(OWNER, "widgets"))
+      .rejects.toMatchObject({ code: "project_not_found" });
+    await expect(createBrainProjectResolver({ projects: lookup(503), homePath: "/home" }).resolve(OWNER, PROJECT.id))
+      .rejects.toMatchObject({ code: "brain_unavailable" });
+    expect(error).toHaveBeenCalledWith("[brain-api] project lookup unavailable:", 503);
+    error.mockRestore();
+  });
+});
