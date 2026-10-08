@@ -1,6 +1,6 @@
 /**
  * Search index guards over PGlite: embedding writes and marks fenced by the claims set, refresh limits and paid usage
- * per provider call, and restored documents' claims.
+ * per provider call, restored documents' claims, and orphaned vectors and chunks swept with no provider.
  */
 import { vector as pgvector } from "@electric-sql/pglite/vector";
 import { sql, type Kysely } from "kysely";
@@ -16,6 +16,7 @@ import {
   isLiveAt, markEmbedding, rebuildDocuments, selectEmbedPending, withSearchScopeWrite,
   type BrainSearchEmbedCandidate,
 } from "../../packages/gateway/src/brain/search/index-sql.js";
+import { createBrainSearchIndex } from "../../packages/gateway/src/brain/search/indexer.js";
 import { parseBrainSearchQuery } from "../../packages/gateway/src/brain/search/query.js";
 import { rankBrainTextHits } from "../../packages/gateway/src/brain/search/text.js";
 import type { BrainEmbeddingsUsage, BrainSearchVectorStore } from "../../packages/gateway/src/brain/search/types.js";
@@ -238,5 +239,35 @@ describe("brain search guards", { timeout: 60_000 }, () => {
     await h.rebuild(["a"]);
     expect(await claimHits("alpha")).toEqual([]);
     expect(await claimHits("gamma")).toEqual(["claim"]);
+  });
+
+  it.each([true, false])("sweeps tombstoned documents' vectors with no provider (pgvector: %s)", async (vector) => {
+    h = await createHarness({ vector });
+    expect(h.capability.vector).toBe(vector ? "provider_not_configured" : "extension_missing");
+    const index = createBrainSearchIndex({ db: h.db, meaning: null, now });
+    await h.sync([{ seed: "a" }, { seed: "b" }]);
+    expect(await index.refresh(SCOPE, {}, signal())).toEqual({ processed: 2, removed: 0, caughtUp: true });
+    const store = async (seed: string) => {
+      const { documentId, incarnation, revision } = await h!.document(seed);
+      const key = sql`${SCOPE.ownerId}, ${SCOPE.scopeId}, ${documentId}, 0, ${incarnation}, ${revision}, 'fake-embed'`;
+      await sql`INSERT INTO brain_search_vectors (owner_id, scope_id, document_id, chunk_index, incarnation, revision,
+        provider_id, dimensions, embedding) VALUES (${key}, 2, '{1,0}'::real[])`.execute(h!.db);
+      if (vector) {
+        await sql`INSERT INTO brain_search_chunks (owner_id, scope_id, document_id, chunk_index, incarnation, revision,
+          provider_id, span_start, span_end, dimensions, embedding) VALUES (${key}, 0, 4, 2, '[1,0]'::vector)`
+          .execute(h!.db);
+      }
+    };
+    // Vectors stored while a provider was on; the provider is off when both documents are deleted. b's rows were
+    // swept before a racing write stored its vectors, so only its vectors are left.
+    await store("a");
+    await store("b");
+    await h.sync([], ["a", "b"]);
+    await sql`DELETE FROM brain_search_documents WHERE document_id = ${brainDocumentId("b")}`.execute(h.db);
+    expect(await index.freshness(SCOPE)).toEqual({ caughtUp: false, pendingDocuments: 2, pendingCapped: false });
+    expect(await index.refresh(SCOPE, {}, signal())).toEqual({ processed: 0, removed: 2, caughtUp: true });
+    expect(await h.count("brain_search_vectors")).toBe(0);
+    if (vector) expect(await h.count("brain_search_chunks")).toBe(0);
+    expect(await h.count("brain_search_documents")).toBe(0);
   });
 });
