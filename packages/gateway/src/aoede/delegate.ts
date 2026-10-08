@@ -2,14 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { AoedeClientMessageSchema, canonicalChatApprovals, type AoedeClientMessage,
   type CanonicalChatApprovalView, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { AoedeActions, classify, type ActionOptions } from "./actions.js";
-import type { AoedeDispatchContext, AoedeSessionContext } from "./session.js";
+import { AoedeTaskNotStartedError, type AoedeDispatchContext, type AoedeSessionContext } from "./session.js";
 import type { AoedeRepository } from "./repository.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import { CanonicalChatOrchestrationError } from "../chat/orchestration-errors.js";
 import type { createCanonicalChatEventStream, CanonicalChatEventStreamSession } from "../chat/event-stream.js";
-import type { ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import { validateChatProviderSelection, type ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import type { AoedeReadiness } from "@matrix-os/contracts";
 
 const log = (error: unknown) => console.warn("[aoede/delegate] delivery failed", error instanceof Error ? error.name : "UnknownError");
 const bound = (text: string) => {
@@ -40,6 +41,19 @@ export function createAoedeDelegation(options: {
   const key = (ctx: Pick<AoedeDispatchContext, "sessionId" | "delegationId">) => `${ctx.sessionId}\0${ctx.delegationId}`;
   const auth = (principal: RequestPrincipal) => { if (principal.userId !== owner.ownerId) throw new Error("Owner authorization required"); };
   const active = (w: Watch) => !stopped && !w.ctx.signal.aborted;
+  const digest = createHash("sha256").update(`aoede:${owner.ownerId}`).digest("hex").slice(0, 32);
+  async function selectionReadiness(principal: RequestPrincipal) {
+    auth(principal);
+    const existing = await options.repository.get(owner, `chat_aoede_${digest}`);
+    const catalog = await options.catalog.getCatalog(principal, existing?.chat.currentSelection);
+    const selection = existing?.chat.currentSelection ?? catalog.instances.find(i =>
+      i.availability === "available" && i.supports.rootChat && i.defaultSelection)?.defaultSelection;
+    const validation = selection && validateChatProviderSelection({ catalog, selection,
+      ...(existing?.providerBinding ? { boundInstanceId: existing.providerBinding.instanceId } : {}) });
+    if (!validation || !validation.ok || !validation.instance.supports.rootChat)
+      throw new AoedeTaskNotStartedError();
+    return { existing, selection: validation.selection, instance: validation.instance };
+  }
   async function speak(ctx: DeliveryContext, text: string, kind: "thinking" | "commentary" = "commentary") {
     if (stopped || ctx.signal.aborted || !text) return;
     if ((await options.sessionRepository.get(ctx.sessionId))?.state === "active" && !stopped && !ctx.signal.aborted)
@@ -167,6 +181,18 @@ export function createAoedeDelegation(options: {
     return true; // Only the authenticated shell HTTP path submits; this is not an approval grant.
   }
   const service = {
+    async readiness(principal: RequestPrincipal): Promise<AoedeReadiness> {
+      auth(principal);
+      try {
+        await selectionReadiness(principal);
+        return { status: "ready", message: "Voice and delegated Chat tasks are ready." };
+      } catch (error) {
+        if (error instanceof AoedeTaskNotStartedError) return { status: "setup_required",
+          message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." };
+        log(error);
+        return { status: "error", message: "Voice is usable, but delegated task readiness could not be checked. Please try again later." };
+      }
+    },
     async dispatch(ctx: AoedeDispatchContext) {
       auth(ctx.principal);
       if (stopped || ctx.signal.aborted) return;
@@ -198,12 +224,7 @@ export function createAoedeDelegation(options: {
           } });
         const result = await actions.execute(action, ctx.sessionId); await speak(ctx, result.message); return;
       }
-      const digest = createHash("sha256").update(`aoede:${owner.ownerId}`).digest("hex").slice(0, 32);
-      const existing = await options.repository.get(owner, `chat_aoede_${digest}`);
-      const catalog = await options.catalog.getCatalog(ctx.principal, existing?.chat.currentSelection);
-      const defaults = catalog.instances.find(i => i.availability === "available" && i.supports.rootChat && i.defaultSelection);
-      const initial = existing?.chat.currentSelection ?? defaults?.defaultSelection;
-      if (!initial) throw new Error("Chat selection unavailable");
+      const { existing, selection: initial } = await selectionReadiness(ctx.principal);
       const created = existing ?? await options.repository.create(owner, { id: `chat_aoede_${digest}`,
         clientRequestId: `req_aoede_${digest}`, title: "Aoede", currentSelection: initial });
       const w: Watch = { ctx, chatId: created.chat.id, title: bound(text.replace(/\s+/g, " ")), admitted: false, terminal: false };
@@ -212,9 +233,7 @@ export function createAoedeDelegation(options: {
         for (let attempt = 0; attempt < 2; attempt++) {
           const current = await options.repository.get(owner, w.chatId);
           if (!current) throw new Error("Chat unavailable");
-          const selection = current.chat.currentSelection ?? initial;
-          const instance = catalog.instances.find(i => i.id === selection.instanceId && i.availability === "available");
-          if (!instance || !instance.supports.rootChat) throw new Error("Chat selection unavailable");
+          const { selection, instance } = await selectionReadiness(ctx.principal);
           const detail = await options.repository.getDetailPage(owner, w.chatId, { limit: 1 });
           const last = detail?.runs.at(-1);
           const mode = (allowed: string[], preferred?: string) => preferred && allowed.includes(preferred) ? preferred
@@ -233,6 +252,11 @@ export function createAoedeDelegation(options: {
             }
             break;
           } catch (error) {
+            // These canonical codes are returned by selection validation before turn/queue writes.
+            // Transport failures and all errors after admission remain uncertain.
+            if (error instanceof CanonicalChatOrchestrationError
+              && ["provider_unavailable", "model_unavailable", "capability_mismatch", "provider_instance_locked"].includes(error.safeError.code))
+              throw new AoedeTaskNotStartedError();
             if (!(error instanceof CanonicalChatOrchestrationError) || error.safeError.code !== "chat_conflict" || attempt) throw error;
           }
         }

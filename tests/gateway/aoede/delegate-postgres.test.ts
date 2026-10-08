@@ -89,6 +89,7 @@ beforeEach(async () => {
     record: result => sessions.delegationResult(record.id, claim.delegation_id, result) };
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   finish?.(); await delegate?.shutdown(); await orchestrator?.drain(); stream?.shutdown(); await orchestrator?.close();
   vi.useRealTimers();
   await repository?.kysely.destroy(); await storage?.db.destroy();
@@ -329,4 +330,47 @@ it("durable supersession fences old voice delivery even before its process recei
   await new Promise(resolve => setTimeout(resolve, 50));
   expect(speech.some(s => s.includes("Built the real timer"))).toBe(false);
   expect(frames.some(f => f.type === "aoede:card" && f.card.status === "done")).toBe(false);
+});
+
+it("missing root access discloses setup and never creates Chat or admits work", async () => {
+  vi.spyOn(catalog, "getCatalog").mockResolvedValueOnce({ revision: "empty", drivers: [], instances: [] })
+    .mockResolvedValueOnce({ revision: "empty", drivers: [], instances: [] });
+  const create = vi.spyOn(repository, "create"), admit = vi.spyOn(orchestrator, "admitTurn");
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "setup_required" });
+  await expect(delegate.dispatch(ctx)).rejects.toThrow("Delegated task setup required");
+  expect(create).not.toHaveBeenCalled(); expect(admit).not.toHaveBeenCalled();
+});
+
+it("advisory readiness cannot authorize a provider rejected at the actual admission boundary", async () => {
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "ready" });
+  const available = await catalog.getCatalog();
+  vi.spyOn(catalog, "getCatalog").mockResolvedValueOnce(available).mockResolvedValueOnce(available)
+    .mockResolvedValue({ revision: "revoked", drivers: [], instances: [] });
+  const write = vi.spyOn(repository, "admitTurn");
+  await expect(delegate.dispatch(ctx)).rejects.toThrow("Delegated task setup required");
+  expect(write).not.toHaveBeenCalled();
+});
+
+it.each(["instance", "model", "options"])("saved unavailable %s is not silently replaced by the available default", async kind => {
+  await delegate.dispatch(ctx);
+  const binding = (await sessions.delegations(ctx.sessionId))[0];
+  const current = await repository.get(owner, binding.chat_id!);
+  vi.spyOn(repository, "get").mockResolvedValue({ ...current!, chat: { ...current!.chat,
+    currentSelection: { ...selection, ...(kind === "model" ? { model: "missing-model" }
+      : kind === "instance" ? { instanceId: "missing-instance" }
+      : { options: [{ id: "unsupported", value: true }] }) } } });
+  expect(await delegate.readiness(principal)).toMatchObject({ status: "setup_required" });
+});
+
+it("readiness isolates owners and catalog read failures never leak provider errors", async () => {
+  const read = vi.spyOn(catalog, "getCatalog");
+  await expect(delegate.readiness({ ...principal, userId: "other" })).rejects.toThrow("Owner authorization required");
+  expect(read).not.toHaveBeenCalled();
+  read.mockRejectedValueOnce(new Error("secret provider failure"));
+  const result = await delegate.readiness(principal);
+  expect(result.status).toBe("error"); expect(result.message).not.toContain("secret");
+  read.mockRejectedValueOnce(new Error("catalog transport failed"));
+  const create = vi.spyOn(repository, "create"), admit = vi.spyOn(orchestrator, "admitTurn");
+  await expect(delegate.dispatch(ctx)).rejects.toThrow("catalog transport failed");
+  expect(create).not.toHaveBeenCalled(); expect(admit).not.toHaveBeenCalled();
 });

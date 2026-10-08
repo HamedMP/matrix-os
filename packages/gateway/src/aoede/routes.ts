@@ -1,13 +1,15 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
-import { AoedeCloseRequestSchema, AoedeStartRequestSchema } from "@matrix-os/contracts";
+import { AoedeCloseRequestSchema, AoedeStartRequestSchema, AoedeReadinessSchema, type AoedeReadiness } from "@matrix-os/contracts";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import { AoedeConflictError } from "./repository.js";
 import { AoedeSessionError, type AoedeSessionService } from "./session.js";
 
 // Mount at /api/aoede behind existing gateway authentication. No new token allowance.
-export function createAoedeGatewayRoutes(options: { service?: AoedeSessionService; getPrincipal(c: Context): RequestPrincipal }) {
+export function createAoedeGatewayRoutes(options: { service?: AoedeSessionService;
+  readiness?: (principal: RequestPrincipal) => Promise<AoedeReadiness>;
+  ownerId?: string; getPrincipal(c: Context): RequestPrincipal }) {
   const app = new Hono();
   const principals = new WeakMap<Context, RequestPrincipal>();
   function failure(error: unknown, c: Context) {
@@ -22,7 +24,8 @@ export function createAoedeGatewayRoutes(options: { service?: AoedeSessionServic
     c.header("Cache-Control", "no-store, private"); c.header("CDN-Cache-Control", "no-store");
     try {
       principals.set(c, options.getPrincipal(c));
-      if (!options.service) return c.json({ error: "Voice is unavailable" }, 503);
+      if (options.ownerId && principals.get(c)!.userId !== options.ownerId) throw new AoedeSessionError(403);
+      if (!options.service && c.req.path.split("/").at(-1) !== "readiness") return c.json({ error: "Voice is unavailable" }, 503);
       return await next();
     } finally { principals.delete(c); }
   });
@@ -31,6 +34,9 @@ export function createAoedeGatewayRoutes(options: { service?: AoedeSessionServic
     catch (error) { if (error instanceof SyntaxError) return null; throw error; }
   }
   const limit = (maxSize: number) => bodyLimit({ maxSize, onError: (c) => c.json({ error: "Invalid voice request" }, 413) });
+  app.get("/readiness", async (c) => c.json(AoedeReadinessSchema.parse(options.readiness
+    ? await options.readiness(principals.get(c)!)
+    : { status: "unavailable", message: "Voice is unavailable. Please try again later." })));
   app.post("/session", limit(64 * 1024), async (c) => {
     const input = AoedeStartRequestSchema.safeParse(await json(c));
     if (!input.success) return c.json({ error: "Invalid voice request" }, 400);

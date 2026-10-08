@@ -42,7 +42,8 @@ export async function createAoedeRuntime(options: {
   const platform = loadAoedePlatformClient(options.env);
   if (!platform || !options.database || !options.registry || !options.chat) {
     return {
-      routes: createAoedeGatewayRoutes({ getPrincipal: options.getPrincipal }),
+      routes: createAoedeGatewayRoutes({ getPrincipal: options.getPrincipal,
+        ownerId: platform?.ownerId ?? options.env.MATRIX_CLERK_USER_ID }),
       onClientMessage: async (_principal: RequestPrincipal, _connectionId: string, _raw: unknown) => { throw new AoedeSessionError(); },
       shutdown: async () => {},
     };
@@ -69,7 +70,8 @@ export async function createAoedeRuntime(options: {
     throw error;
   }
   return {
-    routes: createAoedeGatewayRoutes({ service, getPrincipal: options.getPrincipal }),
+    routes: createAoedeGatewayRoutes({ service, getPrincipal: options.getPrincipal,
+      ownerId: platform.ownerId, readiness: delegation.readiness }),
     onClientMessage: service.onClientMessage,
     async shutdown() { try { await service.shutdown(); } finally { await delegation.shutdown(); } },
   };

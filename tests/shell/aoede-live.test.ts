@@ -27,6 +27,19 @@ function setup() {
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("Aoede microphone and session ownership", () => {
+  it("mutes captured audio without pausing playback and unmutes the same track", async () => {
+    const s = setup();
+    const track = { kind: "audio", enabled: true, stop: s.stop };
+    vi.mocked(navigator.mediaDevices.getUserMedia).mockResolvedValue({ getTracks: () => [track] } as unknown as MediaStream);
+    await s.media.start();
+    s.media.setMuted(true);
+    expect(track.enabled).toBe(false);
+    expect(s.audio.pause).not.toHaveBeenCalled();
+    s.media.setMuted(false);
+    expect(track.enabled).toBe(true);
+    s.media.close();
+    expect(s.stop).toHaveBeenCalledOnce();
+  });
   it("does not mint when microphone permission is denied", async () => {
     const s = setup();
     vi.mocked(navigator.mediaDevices.getUserMedia).mockRejectedValue(new DOMException("Denied", "NotAllowedError"));

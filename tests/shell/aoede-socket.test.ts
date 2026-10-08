@@ -16,7 +16,7 @@ vi.mock("../../shell/src/aoede/media", () => ({ AoedeMedia: class {
   get microphoneStream() { return harness.microphoneStream; }
   constructor(options: { onEvent: (event: unknown) => void }) { harness.event = options.onEvent; }
   start = async () => { if (harness.startupError) throw harness.startupError; return this.sessionId; };
-  started = vi.fn(); close = harness.close;
+  started = vi.fn(); close = harness.close; setMuted = vi.fn();
 } }));
 import { useAoedeSession } from "../../shell/src/aoede/useAoedeSession";
 import { AoedeOverlay } from "../../shell/src/aoede/AoedeOverlay";
@@ -34,46 +34,25 @@ function start() {
 }
 function emit(frame: unknown) { act(() => harness.handler?.(frame)); }
 beforeEach(() => { harness.microphoneStream = undefined; harness.startupError = null; harness.connected = true; harness.epoch = 1; harness.send.mockClear(); harness.close.mockClear();
+  vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ session: null })))); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe("Aoede invoking-shell authority", () => {
-  it("keeps voice usable if cosmetic microphone metering cannot initialize", async () => {
+  it("keeps voice usable without creating a cosmetic audio graph", async () => {
     harness.microphoneStream = {} as MediaStream;
-    vi.stubGlobal("matchMedia", () => ({ matches: false }));
-    vi.stubGlobal("AudioContext", vi.fn(function () { throw new DOMException("Unavailable", "NotSupportedError"); }));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const audioContext = vi.fn(function () { throw new DOMException("Unavailable", "NotSupportedError"); });
+    vi.stubGlobal("AudioContext", audioContext);
     render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
     act(() => harness.event?.({ type: "session.started" }));
     expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
     expect(harness.close).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith("[aoede] Orb metering unavailable:", expect.any(String));
-    warn.mockRestore();
-  });
-  it("meters the existing stream and releases its audio graph when voice ends", async () => {
-    harness.microphoneStream = {} as MediaStream;
-    vi.stubGlobal("matchMedia", () => ({ matches: false }));
-    const source = { connect: vi.fn(), disconnect: vi.fn() };
-    const analyser = { fftSize: 0, getFloatTimeDomainData: vi.fn((samples: Float32Array) => samples.fill(.25)), disconnect: vi.fn() };
-    const context = { createMediaStreamSource: vi.fn(() => source), createAnalyser: () => analyser,
-      resume: vi.fn(async () => undefined), close: vi.fn(async () => undefined) };
-    vi.stubGlobal("AudioContext", vi.fn(function () { return context; }));
-    let tick!: FrameRequestCallback;
-    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { tick = callback; return 42; }));
-    const cancel = vi.fn(); vi.stubGlobal("cancelAnimationFrame", cancel);
-    render(React.createElement(AoedeOverlay, { active: true, onUi: () => ({ status: "failed" }) }));
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Start fresh session" })); });
-    act(() => harness.event?.({ type: "session.started" }));
-    expect(context.createMediaStreamSource).toHaveBeenCalledExactlyOnceWith(harness.microphoneStream);
-    act(() => tick(80));
-    const orb = document.querySelector<HTMLElement>(".aoede-orb")!;
-    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0.900");
+    expect(audioContext).not.toHaveBeenCalled();
+    expect(document.querySelector(".aoede-static-orb")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
-    expect(cancel).toHaveBeenCalledWith(42);
-    expect(source.disconnect).toHaveBeenCalledOnce();
-    expect(analyser.disconnect).toHaveBeenCalledOnce();
-    expect(context.close).toHaveBeenCalledOnce();
-    expect(orb.style.getPropertyValue("--aoede-level")).toBe("0");
+    expect(harness.close).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Start fresh session" })).toBeTruthy();
   });
   it("ignores another session and duplicate UI execution, then stops on supersession", () => {
     const hook = start();
@@ -94,12 +73,12 @@ describe("Aoede invoking-shell authority", () => {
     start(); emit({ type: "aoede:card", sessionId: harness.sessionId, card });
     await act(async () => { harness.handler?.(decision); });
     expect(harness.send).toHaveBeenCalledWith(expect.objectContaining({ type: "aoede:approval_result", accepted: true }));
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    const [url, request] = fetchFn.mock.calls[1] as unknown as [string, RequestInit];
+    expect(fetchFn).toHaveBeenCalledTimes(3); // readiness, recovery, deliberate approval
+    const [url, request] = fetchFn.mock.calls[2] as unknown as [string, RequestInit];
     expect(new URL(url).pathname).toBe("/api/chats/chat_1/runs/run_1/approvals/approval_1");
     expect(request.method).toBe("POST");
     expect(JSON.parse(String(request.body))).toEqual({ clientRequestId: `req_${decision.clientRequestId}`, decision: "approve" });
-    emit(decision); expect(fetchFn).toHaveBeenCalledTimes(2);
+    emit(decision); expect(fetchFn).toHaveBeenCalledTimes(3);
   });
   it.each(["high", "medium"])("refuses %s-risk spoken approval without any HTTP submission", (risk) => {
     const fetchFn = vi.mocked(fetch);
@@ -181,9 +160,9 @@ describe("Aoede invoking-shell authority", () => {
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     expect(harness.close).toHaveBeenCalledOnce();
     expect(screen.getByRole("dialog")).toBeTruthy();
-    fireEvent.click(screen.getByText("Conversation & privacy"));
-    expect(screen.getByRole("region", { name: "Full conversation captions" }).textContent).toContain("Earlier words");
-    expect(screen.getByRole("region", { name: "Voice captions" }).textContent).toContain("Latest words");
+    const transcript = screen.getByRole("region", { name: "Conversation transcript" });
+    expect(transcript.textContent).toContain("Earlier words");
+    expect(transcript.textContent).toContain("Latest words");
   });
   it("unlocks a failed approval and retries the same idempotent request", async () => {
     const fetchFn = vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(init.method === "POST"
@@ -226,7 +205,7 @@ describe("Aoede invoking-shell authority", () => {
     render(React.createElement(Host));
     expect(screen.getByRole("dialog").className).toContain("aoede-live");
     expect(screen.getByRole("button", { name: "Close Aoede" })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Voice tasks" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Voice tasks" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Start fresh session" }));
     await act(async () => { fireEvent.keyDown(document.activeElement!, { key: "Escape" }); });
     expect(harness.close).toHaveBeenCalledOnce();

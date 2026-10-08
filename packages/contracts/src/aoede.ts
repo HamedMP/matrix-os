@@ -2,6 +2,11 @@ import { z } from "zod/v4";
 
 const Id = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const SessionId = z.uuid();
+export const AoedeReadinessSchema = z.object({
+  status: z.enum(["ready", "setup_required", "unavailable", "error"]),
+  message: z.string().min(1).max(512),
+}).strict();
+export type AoedeReadiness = z.infer<typeof AoedeReadinessSchema>;
 export const AoedeStartRequestSchema = z.object({
   clientRequestId: SessionId,
   sdp: z.string().min(1).max(60_000),
@@ -27,6 +32,8 @@ const uiFields = {
   sessionId: SessionId, correlationId: SessionId, phase: z.enum(["resolve", "execute"]),
 };
 export const AoedeServerMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("aoede:task_error"), sessionId: SessionId, delegationId: Id,
+    outcome: z.enum(["not_started", "uncertain"]), message: z.string().min(1).max(512) }).strict(),
   z.object({ type: z.literal("aoede:state"), sessionId: SessionId,
     state: z.enum(["active", "closed", "interrupted", "superseded", "error"]) }).strict(),
   z.object({ type: z.literal("aoede:ui"), ...uiFields,

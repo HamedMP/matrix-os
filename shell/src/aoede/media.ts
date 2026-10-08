@@ -10,11 +10,17 @@ export class AoedeMedia {
   private channel?: RTCDataChannel;
   private deadline?: ReturnType<typeof setTimeout>;
   private hasStarted = false;
+  private muted = false;
   constructor(private options: {
     gatewayUrl: string; audio: HTMLAudioElement; fetchFn?: typeof fetch;
     onEvent: (event: CaptionEvent) => void; onFailure: () => void;
   }) {}
   get microphoneStream() { return this.disposed ? undefined : this.stream; }
+  setMuted(muted: boolean) {
+    if (this.disposed) return;
+    this.muted = muted;
+    this.stream?.getTracks().forEach((track) => { if (track.kind === "audio") track.enabled = !muted; });
+  }
   private current() { if (this.disposed) throw new Error("AoedeInvocationDismissed"); }
   private async endRemote(sessionId: string) {
     try {
@@ -30,6 +36,7 @@ export class AoedeMedia {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (this.disposed) { stream.getTracks().forEach((track) => track.stop()); this.current(); }
       this.stream = stream;
+      this.setMuted(this.muted);
       const peer = this.peer = new RTCPeerConnection();
       const channel = this.channel = peer.createDataChannel("oai-events");
       const fail = () => { if (!this.disposed) { this.close(); this.options.onFailure(); } };

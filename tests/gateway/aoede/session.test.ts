@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { beforeAll, beforeEach, afterAll, describe, it, expect, vi } from "vitest";
 import { createAppDb } from "../../../packages/gateway/src/app-db.js";
 import { createAoedeRepository } from "../../../packages/gateway/src/aoede/repository.js";
-import { createAoedeSessionService } from "../../../packages/gateway/src/aoede/session.js";
+import { AoedeTaskNotStartedError, createAoedeSessionService } from "../../../packages/gateway/src/aoede/session.js";
 import { createAoedeGatewayRoutes } from "../../../packages/gateway/src/aoede/routes.js";
 import { MissingRequestPrincipalError } from "../../../packages/gateway/src/request-principal.js";
 import type { AoedePlatformClient, AoedeSideband } from "../../../packages/gateway/src/aoede/platform-client.js";
@@ -42,6 +42,83 @@ function provider() {
 }
 
 describe("Aoede owner lifecycle on Postgres", () => {
+  it("dispatch timeout after admitted work reports uncertainty once without replay or a false no-changes claim", async () => {
+    const p = provider(), frames: any[] = [];
+    let calls = 0, finish: () => void = () => {};
+    const service = createAoedeSessionService({ repository: repo, platform: p.client, graceMs: 0,
+      finalizationMs: 5, appendTimeoutMs: 20,
+      emit: (_owner, message, connection) => frames.push({ ...message, connection }),
+      async dispatch(ctx) {
+        calls++; await ctx.record({ chat_id: "chat_admitted", run_id: "run_admitted" });
+        await new Promise<void>(resolve => { finish = resolve; });
+      },
+    });
+    try {
+      const a = await service.start(principal, { clientRequestId: randomUUID(), sdp: "offer" });
+      const ready = service.onClientMessage(principal, "tab-a", { type: "aoede:ready", sessionId: a.sessionId });
+      p.event({ type: "session.instructions.appended", client_event_id: p.sent[0].event_id }); await ready;
+      const event = { type: "session.delegation.created", offset_ms: 0,
+        delegation: { id: "del_timeout", target: "client", type: "delegation" } };
+      p.event(event);
+      await expect.poll(() => frames.find(f => f.type === "aoede:task_error"), { timeout: 35_000 }).toBeTruthy();
+      const failure = frames.find(f => f.type === "aoede:task_error");
+      expect(failure).toMatchObject({ sessionId: a.sessionId, delegationId: "del_timeout", outcome: "uncertain", connection: "tab-a" });
+      expect(failure.message).not.toMatch(/not started|no changes/i);
+      finish(); p.event(event); await new Promise(resolve => setTimeout(resolve, 50));
+      expect(calls).toBe(1);
+      expect((await repo.delegations(a.sessionId))[0]).toMatchObject({ state: "uncertain", chat_id: "chat_admitted", run_id: "run_admitted" });
+    } finally { finish(); await service.shutdown(); }
+  }, 40_000);
+
+  it("shutdown abort rejection never delivers stale task errors", async () => {
+    const p = provider(), frames: any[] = [];
+    let entered = false;
+    const service = createAoedeSessionService({ repository: repo, platform: p.client, graceMs: 0, finalizationMs: 5,
+      emit: (_owner, message) => frames.push(message),
+      async dispatch(ctx) {
+        entered = true;
+        await new Promise<void>((_resolve, reject) => ctx.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }));
+      },
+    });
+    const a = await service.start(principal, { clientRequestId: randomUUID(), sdp: "offer" });
+    const ready = service.onClientMessage(principal, "tab-a", { type: "aoede:ready", sessionId: a.sessionId });
+    p.event({ type: "session.instructions.appended", client_event_id: p.sent[0].event_id }); await ready;
+    p.event({ type: "session.delegation.created", offset_ms: 0, delegation: { id: "del_abort", target: "client", type: "delegation" } });
+    await expect.poll(() => entered).toBe(true);
+    await service.shutdown();
+    expect(frames.filter(f => f.type === "aoede:task_error")).toEqual([]);
+  });
+
+  it.each(["not_started", "uncertain"] as const)("claimed %s failure is visible only on the invoking live session and is never replayed", async outcome => {
+    const p = provider(), frames: any[] = [];
+    let calls = 0;
+    const service = createAoedeSessionService({ repository: repo, platform: p.client, graceMs: 0,
+      finalizationMs: 5, appendTimeoutMs: 20,
+      emit: (_owner, message, connection) => frames.push({ ...message, connection }),
+      async dispatch() { calls++; throw outcome === "not_started" ? new AoedeTaskNotStartedError() : new Error("secret mutation uncertainty"); },
+    });
+    try {
+      const a = await service.start(principal, { clientRequestId: randomUUID(), sdp: "offer" });
+      const ready = service.onClientMessage(principal, "tab-a", { type: "aoede:ready", sessionId: a.sessionId });
+      p.event({ type: "session.instructions.appended", client_event_id: p.sent[0].event_id }); await ready;
+      const event = { type: "session.delegation.created", offset_ms: 0,
+        delegation: { id: "del_error", target: "client", type: "delegation" } };
+      p.event(event);
+      await expect.poll(() => frames.find(f => f.type === "aoede:task_error")).toBeTruthy();
+      const failure = frames.find(f => f.type === "aoede:task_error");
+      expect(failure).toMatchObject({ sessionId: a.sessionId, delegationId: "del_error", outcome, connection: "tab-a" });
+      expect(failure.message).not.toContain("secret");
+      if (outcome === "uncertain") expect(failure.message).toContain("may already");
+      await expect.poll(() => p.sent.some(f => f.type === "session.commentary.append")).toBe(true);
+      const commentary = p.sent.find(f => f.type === "session.commentary.append")!;
+      p.event({ type: "session.commentary.appended", client_event_id: commentary.event_id });
+      p.event(event); await new Promise(resolve => setTimeout(resolve, 40));
+      expect(calls).toBe(1);
+      expect(frames.filter(f => f.type === "aoede:task_error")).toHaveLength(1);
+      expect((await repo.delegations(a.sessionId))[0].state).toBe("uncertain");
+    } finally { await service.shutdown(); }
+  });
+
   it("fresh readiness restores saved task outcomes only to its bound shell without replaying the mutation", async () => {
     const prior = (await repo.reserve(randomUUID(), "old-offer")).record;
     await repo.update(prior.id, { state: "active" });
@@ -70,14 +147,15 @@ describe("Aoede owner lifecycle on Postgres", () => {
   it("close during mint cannot orphan a provider that returns after the close request", async () => {
     const p = provider(); const mint = p.client.mint;
     let release!: () => void;
+    let entered!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    p.client.mint = async (input) => { await gate; return mint(input); };
+    const minting = new Promise<void>((resolve) => { entered = resolve; });
+    p.client.mint = async (input) => { entered(); await gate; return mint(input); };
     const service = createAoedeSessionService({ repository: repo, platform: p.client, finalizationMs: 5 });
     const starting = service.start(principal, { clientRequestId: randomUUID(), sdp: "offer" });
-    await new Promise((r) => setTimeout(r, 30));
+    await minting;
     const row = (await repo.latest())!;
     const closing = service.close(principal, row.id);
-    await new Promise((r) => setTimeout(r, 100));
     release();
     await Promise.allSettled([starting, closing]);
     expect(p.closed).toEqual(["live_1"]);
@@ -281,7 +359,7 @@ describe("Aoede owner lifecycle on Postgres", () => {
     p.event({ type: "session.instructions.appended", client_event_id: p.sent[0].event_id }); await ready;
     p.event({ type: "session.delegation.created", offset_ms: 0,
       delegation: { id: "del_ui", type: "delegation", target: "client" } });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await vi.waitFor(() => expect(frames.some((f) => f.phase === "resolve")).toBe(true));
     const resolve = frames.find((f) => f.phase === "resolve");
     expect(resolve.connection).toBe("tab-a");
     const ack = { type: "aoede:ui_result", sessionId: a.sessionId, correlationId: resolve.correlationId,
@@ -289,13 +367,12 @@ describe("Aoede owner lifecycle on Postgres", () => {
     await service.onClientMessage(principal, "tab-b", ack);
     expect(frames.some((f) => f.phase === "execute")).toBe(false);
     await service.onClientMessage(principal, "tab-a", ack);
-    await new Promise((r) => setTimeout(r, 5));
+    await vi.waitFor(() => expect(frames.some((f) => f.phase === "execute")).toBe(true));
     const execute = frames.find((f) => f.phase === "execute");
     await service.onClientMessage(principal, "tab-a", { ...ack, correlationId: execute.correlationId });
     expect(effects).toEqual([]);
     await service.onClientMessage(principal, "tab-a", { ...ack, correlationId: execute.correlationId, phase: "execute" });
-    await new Promise((r) => setTimeout(r, 10));
-    expect(effects).toEqual(["opened"]);
+    await vi.waitFor(() => expect(effects).toEqual(["opened"]));
     await service.shutdown();
   });
 

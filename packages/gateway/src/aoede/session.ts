@@ -12,6 +12,10 @@ export class AoedeSessionError extends Error {
   constructor(readonly status: 403 | 404 | 409 | 429 | 503 = 503) { super("Voice session unavailable"); }
 }
 class DelegationRejected extends AoedeSessionError {}
+/** Only throw after verified validation failure before task admission/mutation. */
+export class AoedeTaskNotStartedError extends Error {
+  constructor() { super("Delegated task setup required"); }
+}
 export type AppendKind = "instructions" | "thinking" | "commentary";
 export interface AoedeDispatchContext {
   principal: RequestPrincipal; sessionId: string; delegationId: string; requestId: string;
@@ -158,7 +162,22 @@ export function createAoedeSessionService(options: {
       await repo.delegationResult(s.row.id, delegationId, { state: "done" });
     } catch (error) {
       log(error);
-      if (claimed) await repo.delegationResult(s.row.id, delegationId, { state: "uncertain" });
+      if (claimed) {
+        // Retain the durable uncertainty fence even for known rejection: never replay a claim.
+        try { await repo.delegationResult(s.row.id, delegationId, { state: "uncertain" }); }
+        catch (persistError) { log(persistError); }
+        if (active(s) && !s.abort.signal.aborted && s.connectionId) {
+          const outcome = error instanceof AoedeTaskNotStartedError ? "not_started" : "uncertain";
+          const message = outcome === "not_started"
+            ? "The task was not started. Check your Chat provider setup. Voice is still usable."
+            : "The task outcome is uncertain. Check Chat before trying again; it may already be running or have made changes.";
+          try { emit(s, { type: "aoede:task_error", sessionId: s.row.id, delegationId, outcome, message }); }
+          catch (emitError) { log(emitError); }
+          // Use the live-session signal, not the expired dispatch signal. Acceptance is not playback.
+          try { await append(s, "commentary", message, delegationId); }
+          catch (commentaryError) { log(commentaryError); }
+        }
+      }
     } finally { clearTimeout(deadline); s.inFlight--; }
   }
   function event(s: Live, raw: unknown) {

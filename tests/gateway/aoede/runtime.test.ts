@@ -13,6 +13,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import WebSocket, { WebSocketServer } from "ws";
 import { expect, it } from "vitest";
 import { createAoedeRuntime } from "../../../packages/gateway/src/aoede/runtime.js";
+import { createAoedeGatewayRoutes } from "../../../packages/gateway/src/aoede/routes.js";
 import { createAppDb } from "../../../packages/gateway/src/app-db.js";
 import { createAppRegistry } from "../../../packages/gateway/src/app-db-registry.js";
 import { registerNativeAppStorage } from "../../../packages/gateway/src/native-app-storage.js";
@@ -23,6 +24,14 @@ import { createCanonicalChatEventStream } from "../../../packages/gateway/src/ch
 import { registerMainWebSocketRoutes } from "../../../packages/gateway/src/server/main-ws-routes.js";
 import { authMiddleware } from "../../../packages/gateway/src/auth.js";
 import { requireRequestPrincipal } from "../../../packages/gateway/src/request-principal.js";
+
+it("readiness owner authorization precedes catalog access even when service dependencies are absent", async () => {
+  let reads = 0;
+  const routes = createAoedeGatewayRoutes({ ownerId: "owner", getPrincipal: () => ({ userId: "other", source: "jwt" }),
+    readiness: async () => { reads++; return { status: "ready", message: "Ready." }; } });
+  expect((await routes.request("/readiness")).status).toBe(403);
+  expect(reads).toBe(0);
+});
 
 it("disabled composition authenticates before returning unavailable on the real HTTP listener", async () => {
   const app = new Hono(); app.use("*", authMiddleware("owner-token"));
@@ -38,6 +47,10 @@ it("disabled composition authenticates before returning unavailable on the real 
   try {
     expect((await fetch(url, { method: "POST", signal: AbortSignal.timeout(2000) })).status).toBe(401);
     expect((await fetch(url, { method: "POST", headers: { authorization: "Bearer owner-token" }, signal: AbortSignal.timeout(2000) })).status).toBe(503);
+    const readiness = await fetch(url.replace(/session$/, "readiness"), { headers: { authorization: "Bearer owner-token" }, signal: AbortSignal.timeout(2000) });
+    expect(readiness.status).toBe(200);
+    expect(readiness.headers.get("cache-control")).toContain("no-store");
+    expect(await readiness.json()).toEqual({ status: "unavailable", message: "Voice is unavailable. Please try again later." });
   } finally { await runtime.shutdown(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
@@ -94,6 +107,11 @@ it("real SQL and main socket admit only authenticated mint and fence UI acknowle
     const start = (token?: string, body = { clientRequestId: randomUUID(), sdp: "offer" }) => fetch(`${base}/api/aoede/session`, {
       method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(body), signal: AbortSignal.timeout(3000) });
+    const readiness = await fetch(`${base}/api/aoede/readiness`, { headers: { authorization: "Bearer owner-token" }, signal: AbortSignal.timeout(3000) });
+    expect(readiness.status).toBe(200); expect(readiness.headers.get("cache-control")).toContain("no-store");
+    expect(await readiness.json()).toEqual({ status: "setup_required",
+      message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." });
+    expect(minted).toBe(0);
     expect((await start()).status).toBe(401); expect((await start("wrong")).status).toBe(401); expect(minted).toBe(0);
     expect((await start("owner-token", { clientRequestId: randomUUID(), sdp: "x".repeat(65536) })).status).toBe(413); expect(minted).toBe(0);
     const response = await start("owner-token"); expect(response.status).toBe(200); const { sessionId } = await response.json();

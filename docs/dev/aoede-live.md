@@ -57,9 +57,11 @@ Set `NEXT_PUBLIC_AOEDE_LIVE_PREVIEW=1` **when starting the development shell or 
 ## Invocation and actions
 
 1. Sign in as the runtime owner and wait for the existing socket to connect.
-2. Click Aoede in the dock. Opening the overlay only probes recovery; it does not mint a session.
+2. Click Aoede in the dock. Opening the overlay probes recovery and execution readiness; it does not mint a session. Missing canonical Chat provider/model/binding access shows **Connect harness** before requesting work. This opens existing provider Settings after dismissing voice. **Recheck**, focus, and provider-settings changes refresh readiness without starting a paid session. Readiness is a configuration check, not proof of provider billing or a working live harness.
 3. Click **Start fresh session**. Browser microphone permission is requested before minting. Use a secure browser context (HTTPS or supported localhost), a working microphone and an allowed playback device.
-4. Wait for the listening state; speak and inspect captions. **End session**, the close button or Escape stops local capture/playback and requests remote closure. Focus returns to the prior control. Reduced motion uses static styling.
+4. Wait for the listening state; speak and inspect captions. **Mute** disables the existing microphone audio tracks; it does not end the session or stop assistant playback. **End session**, the close button or Escape stops local capture/playback and requests remote closure. Focus returns to the prior control.
+
+The overlay uses a borderless two-column shader surface, explicit spherical Nebula with green/red/blue gas, and real task/transcript data. Desktop actions and transcript scroll independently; controls stay outside the action list. Mobile conversation follows the dialog scroll. `shaders` is pinned to 3.2.475 under the repository's seven-day dependency policy; telemetry is disabled. Reduced motion, inactive/muted voice, and unavailable WebGPU use static multicolor orbital artwork. Cosmetic shader failure does not change session authority or microphone capture.
 
 No wake-word, automatic paid start or seamless reconnect is implemented. Do not document a Live keyboard/palette shortcut as qualified; the dock is the inspected entrypoint.
 
@@ -118,11 +120,12 @@ All gateway routes use the existing owner principal/auth boundary and no-store r
 | `POST /api/aoede/session` | Strict `{ clientRequestId: UUID, sdp: string }`; 64 KiB body, SDP ≤60,000 chars; returns `{ sessionId, providerSessionId, sdp }` |
 | `DELETE /api/aoede/session` | Strict `{ sessionId: UUID }`, 1 KiB; targeted/idempotent close, no stale-tab replacement close |
 | `GET /api/aoede/session` | Latest session state/timing/finalization, recovery, delegation metadata and warning |
+| `GET /api/aoede/readiness` | Owner-authenticated, no-store `{ status, message }`, with status `ready`, `setup_required`, `unavailable`, or `error`; validates current canonical Chat selection without minting or admitting work |
 | `DELETE /api/aoede/recovery` | 1 KiB body limit; owner checkpoint deletion |
 
 No client-supplied owner, funding, prompt or provider selection is accepted. Internal platform routes are `/internal/containers/:handle/aoede/session`, `/sessions/:id` for DELETE and `/sessions/:id/attach` for WS, with `runtimeSlot` query and speech bearer token. Attach also requires the persisted runtime/session binding and one controller claim; frames are capped at 512 KiB.
 
-Existing `/ws` carries bounded `aoede:state`, `aoede:ui`, `aoede:card`, `aoede:approval_decide` and correlated client ready/result/cancel frames. Browser readiness/transcripts cannot authorize execution or settle money. Browser provider data-channel authority is restricted to `session.close`; delegation/context append stays trusted-sideband only. Duplicate request IDs must not create another billable invocation; changed payload under an existing ID conflicts. The shell does not automatically retry failed minting.
+Existing `/ws` carries bounded `aoede:state`, `aoede:ui`, `aoede:card`, `aoede:approval_decide`, `aoede:task_error` and correlated client ready/result/cancel frames. Task errors distinguish verified pre-admission `not_started` rejection from `uncertain` dispatch outcomes. Uncertain work stays fenced against automatic replay; inspect Chat before retrying. Recovery-probe failure is visible without claiming saved text is available. Browser readiness/transcripts cannot authorize execution or settle money. Browser provider data-channel authority is restricted to `session.close`; delegation/context append stays trusted-sideband only. Duplicate request IDs must not create another billable invocation; changed payload under an existing ID conflicts. The shell does not automatically retry failed minting.
 
 ## Troubleshooting and qualification
 
