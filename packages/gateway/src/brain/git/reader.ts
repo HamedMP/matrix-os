@@ -173,3 +173,188 @@ const REPO_INFO_ARGS: readonly string[] = [
   "rev-parse", "--is-shallow-repository", "--show-object-format", "--show-toplevel",
   "--absolute-git-dir", "--path-format=absolute", "--git-common-dir",
 ];
+
+/**
+ * Opens a checkout strictly inside the Matrix home (never home itself, never
+ * a subdirectory of a repository, never a git directory outside home or in
+ * home's own `.git`), on git >= GIT_MIN_VERSION, not shallow.
+ */
+export async function openGitRepository(input: OpenGitRepositoryInput): Promise<GitRepository> {
+  assertInputPath(input.repoPath);
+  assertInputPath(input.homePath);
+  const timeoutMs = gitTimeoutMs(input.limits.gitTimeoutMs);
+  const bounds = await homeBounds(input.homePath);
+  const realRepo = await realDirectory(input.repoPath);
+  if (!isStrictlyInside(bounds.realHome, realRepo)) throw new GitSourceError("not_a_repository");
+  const context: ReaderContext = { runner: input.runner, root: realRepo, timeoutMs };
+  const version = parseGitVersion((await runGit(context, ["version"], SMALL)).stdout) ?? malformed();
+  if (!isSupportedGitVersion(version)) throw new GitSourceError("git_version_unsupported");
+  const info = await runGit(context, REPO_INFO_ARGS, { ...SMALL, okExits: [0, 128] });
+  if (info.exitCode === 128) {
+    logExit("not a repository", REPO_INFO_ARGS, info);
+    throw new GitSourceError("not_a_repository");
+  }
+  const parsed = parseRevParseInfo(info.stdout);
+  if ((await realDirectory(parsed.toplevel)) !== realRepo) throw new GitSourceError("not_a_repository");
+  await assertGitDirectoriesAllowed(bounds, parsed);
+  if (parsed.shallow) throw new GitSourceError("shallow_repository");
+  return createRepository(context, version, parsed.objectFormat);
+}
+
+function createRepository(context: ReaderContext, version: GitVersion, objectFormat: GitObjectFormat): GitRepository {
+  const shaPattern = GIT_SHA_PATTERN[objectFormat];
+  const sha = (value: string): string => (typeof value === "string" && shaPattern.test(value) ? value : callerBug());
+  const rangeArg = (range: GitCommitRange): string => (range.from === null ? sha(range.to) : `${sha(range.from)}..${sha(range.to)}`);
+  const git = (sub: readonly string[], call: GitCall = SMALL): Promise<GitRunResult> => runGit(context, sub, call);
+
+  async function resolveRef(ref: string): Promise<string | null> {
+    const args = ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`];
+    const result = await git(args, { ...SMALL, okExits: [0, 1, 128] });
+    if (result.exitCode !== 0) return null;
+    const lines = parseShaLines(result.stdout, shaPattern);
+    return lines.length === 1 ? lines[0] : malformed();
+  }
+
+  async function originHeadBranch(): Promise<string | null> {
+    const result = await git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], { ...SMALL, okExits: [0, 1, 128] });
+    if (result.exitCode !== 0) return null;
+    const target = textDecoder.decode(result.stdout).split("\n")[0].trim();
+    if (!target.startsWith(ORIGIN_REMOTE_PREFIX)) return null;
+    const branch = target.slice(ORIGIN_REMOTE_PREFIX.length);
+    return isSafeBranchName(branch) ? branch : null;
+  }
+
+  async function tipCandidates(branch: string | null): Promise<string[]> {
+    if (branch !== null) {
+      if (!isSafeBranchName(branch)) throw new GitSourceError("invalid_options");
+      return [`${ORIGIN_REMOTE_PREFIX}${branch}`, `refs/heads/${branch}`];
+    }
+    const candidates: string[] = [];
+    const originHead = await originHeadBranch();
+    if (originHead !== null) candidates.push(`${ORIGIN_REMOTE_PREFIX}${originHead}`);
+    for (const fallback of GIT_DEFAULT_BRANCH_FALLBACKS) {
+      for (const ref of [`${ORIGIN_REMOTE_PREFIX}${fallback}`, `refs/heads/${fallback}`]) {
+        if (!candidates.includes(ref)) candidates.push(ref);
+      }
+    }
+    return candidates;
+  }
+
+  /** The window log, or per-commit reads (overflow "truncate") when it is over its cap. */
+  async function readPerWindowOrCommit<T extends { sha: string }>(
+    windowArgs: readonly string[],
+    windowMaxBuffer: number,
+    shas: readonly string[],
+    commitArgs: (commitSha: string) => readonly string[],
+    commitMaxBuffer: number,
+    parse: (stdout: Uint8Array, truncated: boolean) => T[],
+  ): Promise<T[]> {
+    try {
+      return parse((await git(windowArgs, { maxBuffer: windowMaxBuffer })).stdout, false);
+    } catch (err: unknown) {
+      if (!(err instanceof GitSourceError) || err.code !== "git_output_too_large") throw err;
+    }
+    const records: T[] = [];
+    for (const commitSha of shas) {
+      const result = await git(commitArgs(commitSha), { maxBuffer: commitMaxBuffer, overflow: "truncate", okExits: [0, null] });
+      const parsed = parse(result.stdout, result.truncated);
+      if (parsed.length !== 1) malformed();
+      records.push(parsed[0]);
+    }
+    return records;
+  }
+
+  return {
+    root: context.root,
+    objectFormat,
+    shaPattern,
+    version,
+
+    async resolveTip(branch: string | null): Promise<GitResolvedTip> {
+      for (const ref of await tipCandidates(branch)) {
+        const resolved = await resolveRef(ref);
+        if (resolved !== null) return { ref, sha: resolved };
+      }
+      throw new GitSourceError("branch_unavailable");
+    },
+
+    async readOriginUrl(): Promise<string | null> {
+      const result = await git(["config", "--local", "--get", "remote.origin.url"], { ...SMALL, okExits: [0, 1] });
+      if (result.exitCode !== 0) return null;
+      const url = textDecoder.decode(result.stdout).split("\n")[0].trim();
+      if (url === "" || url.length > GIT_REMOTE_URL_MAX_CHARS || URL_CONTROL_CHARS.test(url)) return null;
+      return url;
+    },
+
+    async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+      const result = await git(["merge-base", "--is-ancestor", sha(ancestor), sha(descendant)], { ...SMALL, okExits: [0, 1, 128] });
+      return result.exitCode === 0;
+    },
+
+    async countFirstParent(range: GitCommitRange): Promise<number> {
+      return parseCount((await git(["rev-list", "--first-parent", "--count", rangeArg(range), "--"])).stdout);
+    },
+
+    async firstParentAt(range: GitCommitRange, skip: number): Promise<string> {
+      if (!Number.isSafeInteger(skip) || skip < 0) callerBug();
+      const args = ["rev-list", "--first-parent", `--skip=${skip}`, "--max-count=1", rangeArg(range), "--"];
+      const lines = parseShaLines((await git(args)).stdout, shaPattern);
+      return lines.length === 1 ? lines[0] : malformed();
+    },
+
+    async readCommits(range: GitCommitRange, options: GitReadCommitsOptions): Promise<readonly GitCommitRecord[]> {
+      const ceiling = GIT_SYNC_LIMIT_CEILINGS.commitsPerWindow;
+      const target = rangeArg(range);
+      const windowArgs = ["rev-list", "--first-parent", `--max-count=${ceiling + 1}`, target, "--"];
+      const shas = parseShaLines((await git(windowArgs)).stdout, shaPattern);
+      if (shas.length > ceiling) malformed();
+      if (shas.length === 0) return [];
+      const metadata: GitCommitMetadata[] = await readPerWindowOrCommit(
+        ["log", "--first-parent", "--no-color", "--no-show-signature", "-z", METADATA_FORMAT, target, "--"],
+        GIT_LOG_MAX_BYTES,
+        shas,
+        (commitSha) => ["log", "-1", "--no-color", "--no-show-signature", "-z", METADATA_FORMAT, commitSha, "--"],
+        GIT_COMMIT_MESSAGE_MAX_BYTES,
+        (stdout, truncated) => parseCommitMetadata(stdout, { shaPattern, truncated }),
+      );
+      const changes: Array<{ sha: string; changes: GitCommitChanges }> = await readPerWindowOrCommit(
+        ["log", "--first-parent", ...NAME_STATUS_FLAGS, target, "--"],
+        GIT_NAME_STATUS_MAX_BYTES,
+        shas,
+        (commitSha) => ["log", "-1", ...NAME_STATUS_FLAGS, commitSha, "--"],
+        GIT_COMMIT_PATHS_MAX_BYTES,
+        (stdout, truncated) => parseNameStatusLog(stdout, { shaPattern, isSpecPath: options.isSpecPath, truncated }),
+      );
+      if (metadata.length !== shas.length || changes.length !== shas.length) malformed();
+      const records = shas.map((commitSha, index): GitCommitRecord => {
+        if (metadata[index].sha !== commitSha || changes[index].sha !== commitSha) malformed();
+        return { ...metadata[index], changes: changes[index].changes };
+      });
+      return records.reverse();
+    },
+
+    async listTree(commit: string, paths: readonly string[]): Promise<readonly GitTreeEntry[]> {
+      if (paths.length > GIT_MAX_SPEC_FILES_PER_WINDOW || !paths.every(isIndexablePath)) callerBug();
+      if (paths.length === 0) return [];
+      // Not recursive, and --literal-pathspecs is global: one entry per existing path, whatever it holds.
+      const args = ["ls-tree", "-z", "-l", "--full-tree", sha(commit), "--", ...paths];
+      return parseLsTree((await git(args, { maxBuffer: GIT_LS_TREE_MAX_BYTES })).stdout, shaPattern);
+    },
+
+    async readBlob(oid: string, size: number): Promise<Uint8Array> {
+      if (!Number.isSafeInteger(size) || size < 0 || size > GIT_SPEC_FILE_MAX_BYTES) callerBug();
+      let result: GitRunResult;
+      try {
+        result = await git(["cat-file", "blob", sha(oid)], { maxBuffer: size + 1 });
+      } catch (err: unknown) {
+        // More bytes than ls-tree reported is a length mismatch, not a large output.
+        if (err instanceof GitSourceError && err.code === "git_output_too_large") {
+          throw new GitSourceError("git_output_malformed", { cause: err });
+        }
+        throw err;
+      }
+      if (result.stdout.length !== size) malformed();
+      return result.stdout;
+    },
+  };
+}
