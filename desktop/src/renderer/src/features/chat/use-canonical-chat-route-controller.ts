@@ -65,6 +65,7 @@ export function useCanonicalChatRouteController({
   autoSelectFirst = true,
   eventSource,
   onInvalidation,
+  createChat,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
@@ -73,6 +74,8 @@ export function useCanonicalChatRouteController({
   autoSelectFirst?: boolean;
   eventSource?: CanonicalChatEventConsumer;
   onInvalidation?: (event: CanonicalChatInvalidation) => void;
+  /** Makes a draft's Chat on its first send in place of POST /api/chats (a Company Brain thread). */
+  createChat?: (input: { clientRequestId: string; title: string }) => Promise<CanonicalChatRecord>;
 }) {
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
@@ -430,8 +433,9 @@ export function useCanonicalChatRouteController({
     try {
       let current = detail;
       if (!current) {
-        const record = await client.create({
-          clientRequestId: input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId(),
+        const clientRequestId = input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId();
+        const record = createChat ? await createChat({ clientRequestId, title }) : await client.create({
+          clientRequestId,
           title,
           ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
           currentSelection: input.selection,
@@ -481,7 +485,7 @@ export function useCanonicalChatRouteController({
       setError(canonicalChatSubmitFailureMessage(error));
       return null;
     }
-  }, [client, detail, projectId]);
+  }, [client, createChat, detail, projectId]);
 
   const cancelActiveRun = useCallback(async () => {
     const activeRun = detail?.record.activeRun;
