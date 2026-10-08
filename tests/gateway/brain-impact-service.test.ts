@@ -310,3 +310,72 @@ describe("impact brief", { timeout: 120_000 }, () => {
     expect(view.notices).toEqual(["changed_files_capped", "run_budget_exhausted", "no_git_source"]);
   });
 });
+
+describe("impact errors", { timeout: 120_000 }, () => {
+  it("rejects a bad query before any lookup", async () => {
+    for (const query of [{ head: "HEAD" }, { head: "a..b" }, { head: "main", depth: 3 }, { head: "main", extra: 1 }]) {
+      await expectCode(service().impact(IMPACT_OWNER, IMPACT_PROJECT, query as never), BrainApiError, "invalid_request");
+    }
+  });
+
+  it("maps unknown refs, unrelated history and a missing checkout", async () => {
+    await expectCode(service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "nope" }), BrainFeatureError, "git_ref_not_found");
+    await expectCode(service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature", base: "f".repeat(40) }),
+      BrainFeatureError, "git_ref_not_found");
+    await fixture.commit({ branch: "orphan", message: "orphan", files: { "x.txt": "x\n" } });
+    await expectCode(service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "orphan" }), BrainApiError, "invalid_request");
+    await expectCode(service({ checkout: null }).impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" }),
+      BrainApiError, "checkout_unavailable");
+    await expectCode(service({ checkout: fixture.homePath }).impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" }),
+      BrainApiError, "checkout_unavailable");
+    await expectCode(service().impact(IMPACT_OWNER, "proj_other", { head: "feature" }), BrainApiError, "project_not_found");
+  });
+
+  it("answers git_ref_not_found when there is no default branch", async () => {
+    await fixture.setBranch("trunk", history.mainTip);
+    await fixture.git(["update-ref", "-d", "refs/heads/main"]);
+    await expectCode(service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" }), BrainFeatureError, "git_ref_not_found");
+  });
+
+  it("refuses a brief while the most briefs are already running", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let waiting = 0;
+    let allWaiting!: () => void;
+    const full = new Promise<void>((resolve) => { allWaiting = resolve; });
+    const runner = fakeRunner(defaultGitRunner, async (sub) => {
+      if (sub[0] === "merge-base") {
+        waiting += 1;
+        if (waiting === IMPACT_MAX_CONCURRENT_BRIEFS) allWaiting();
+        await gate;
+      }
+      return undefined;
+    });
+    const impact = service({ runner });
+    const ask = () => impact.impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" });
+    const running = Array.from({ length: IMPACT_MAX_CONCURRENT_BRIEFS }, ask);
+    await full;
+    await expectCode(ask(), BrainApiError, "brain_unavailable");
+    release();
+    const views = await Promise.all(running);
+    expect(views.map((view) => view.head.sha)).toEqual(Array(IMPACT_MAX_CONCURRENT_BRIEFS).fill(history.feature));
+    const unknown = impact.impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "nope" });
+    await expectCode(unknown, BrainFeatureError, "git_ref_not_found");
+    expect((await ask()).head.sha).toBe(history.feature);
+  });
+
+  it("maps git failures to brain_unavailable and passes other errors through", async () => {
+    const timeout = fakeRunner(defaultGitRunner, (sub) => {
+      if (sub[0] === "diff") throw new GitRunnerError("timeout");
+      return undefined;
+    });
+    await expectCode(service({ runner: timeout }).impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" }),
+      BrainApiError, "brain_unavailable");
+    const broken = fakeRunner(defaultGitRunner, (sub) => {
+      if (sub[0] === "merge-base") throw new TypeError("boom");
+      return undefined;
+    });
+    await expect(service({ runner: broken }).impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" }))
+      .rejects.toThrow(TypeError);
+  });
+});
