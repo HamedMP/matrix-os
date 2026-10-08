@@ -219,6 +219,19 @@ describe("integration caller, local transport", () => {
     expect(await local({ proxyGet: async () => undefined }).caller.call("user_2abc", request, signal())).toEqual({ status: "ok", data: undefined });
   });
 
+  it("refuses an unlabeled read when the owner has several accounts of the service, never the first one", async () => {
+    const several = local({ connections: [connection("home"), connection("work")] });
+    expect(await several.caller.call("user_2abc", request, signal())).toEqual({ status: "invalid" });
+    expect(several.proxyGet).not.toHaveBeenCalled();
+    // Accounts of other services do not count, and a pinned label still picks its account.
+    const linear = { service: "linear", account_label: "l", pipedream_account_id: "apn_l" };
+    const only = local({ connections: [linear, connection("work")] });
+    expect(await only.caller.call("user_2abc", request, signal())).toEqual({ status: "ok", data: [{ number: 1 }] });
+    expect(only.proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_work" }), expect.any(AbortSignal));
+    expect(await several.caller.call("user_2abc", { ...request, label: "home" }, signal())).toEqual({ status: "ok", data: [{ number: 1 }] });
+    expect(several.proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_home" }), expect.any(AbortSignal));
+  });
+
   it.each([
     [statusError(429, { "retry-after": "12" }), { status: "rate_limited", retryAfterSeconds: 12 }],
     [statusError(401), { status: "unauthorized" }], [statusError(403), { status: "unauthorized" }],

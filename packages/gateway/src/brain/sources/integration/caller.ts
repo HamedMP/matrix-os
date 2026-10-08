@@ -6,7 +6,8 @@
  *   connections (GET {internalBaseUrl}) and takes the service's only one (several: invalid), cached briefly.
  * - local: a gateway that holds the platform database and Pipedream client (and no remote transport) runs
  *   executeIntegrationAction itself, for the platform user whose Clerk id (or platform id) is the owner id, as a
- *   byte-capped raw read (pipedream.boundedProxy) that the call's signal cancels.
+ *   byte-capped raw read (pipedream.boundedProxy) that the call's signal cancels. A call without a label takes the
+ *   service's only account here too (several: invalid).
  * Only registry actions with risk "read" on Pipedream services are callable; a missing one is unavailable (a server
  * gap), not invalid. Provider text never leaves this file.
  */
@@ -224,7 +225,12 @@ export function createBrainIntegrationCaller(deps: BrainIntegrationCallerDeps): 
     const db = deps.db!;
     const user = await findBrainPlatformUser(db, ownerId, deps.env);
     if (user === null) return { status: "not_connected" };
-    const selected = resolveIntegrationConnection(await db.listConnectedServices(user.id), request.service, request.label);
+    const connections = await db.listConnectedServices(user.id);
+    // Never "the first" of several accounts: a call without a label needs the owner's only one (as remoteLabel).
+    if (request.label === undefined && connections.filter((item) => item.service === request.service).length > 1) {
+      return { status: "invalid" };
+    }
+    const selected = resolveIntegrationConnection(connections, request.service, request.label);
     if (selected.kind === "missing") return { status: "not_connected" };
     if (selected.kind === "ambiguous") return { status: "invalid" };
     if (!user.pipedream_external_id) return UNAVAILABLE;
