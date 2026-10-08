@@ -253,3 +253,90 @@ export interface BrainProjectServiceDeps {
    */
   readonly modelSpendCapMicroUsd?: number;
 }
+
+/**
+ * Owner-scoped project brain. `projectRef` is a project id, or (for the agent
+ * tool) a slug. A missing project, another owner's, an archived one and a
+ * malformed reference all throw the same `project_not_found`.
+ */
+export interface BrainProjectService {
+  registerGitSource(
+    ownerId: string,
+    projectRef: string,
+    input: BrainRegisterGitSourceInput,
+  ): Promise<BrainRegisterGitSourceResult>;
+  /** Exactly one bounded syncGitSource run. */
+  sync(ownerId: string, projectRef: string): Promise<BrainSyncView>;
+  listReceipts(ownerId: string, projectRef: string, limit: number): Promise<BrainReceiptsView>;
+  /** Read-only; never syncs. */
+  why(ownerId: string, projectRef: string, query: BrainWhyQuery): Promise<BrainWhyResult>;
+  /**
+   * Exactly one bounded runBrainExtraction run. "model" needs a configured model (claimModels returning one), else
+   * extractor_not_configured. signal: the caller's stop (a background run's cancel, time cap or shutdown); the run
+   * makes no model call after it aborts and aborts the call in flight.
+   */
+  extract(ownerId: string, projectRef: string, input: BrainExtractInput, signal?: AbortSignal): Promise<BrainExtractView>;
+  /** Read-only; never extracts. */
+  listClaims(ownerId: string, projectRef: string, query: BrainClaimsQuery): Promise<BrainClaimsView>;
+}
+
+// Errors.
+
+export type BrainApiErrorCode =
+  | "invalid_request"
+  | "project_not_found"
+  | "git_source_missing"
+  | "git_source_conflict"
+  | "git_source_unavailable"
+  | "checkout_unavailable"
+  | "sync_in_progress"
+  | "extractor_not_configured"
+  | "extraction_in_progress"
+  | "brain_capacity"
+  | "body_too_large"
+  | "brain_unavailable";
+
+export type BrainApiErrorStatus = 400 | 404 | 409 | 413 | 503;
+
+/** The only client-facing error text; never a path, provider message or Postgres detail. */
+export const BRAIN_API_ERRORS: {
+  readonly [Code in BrainApiErrorCode]: { readonly status: BrainApiErrorStatus; readonly message: string };
+} = {
+  invalid_request: { status: 400, message: "Invalid brain request" },
+  project_not_found: { status: 404, message: "Project not found" },
+  git_source_missing: { status: 409, message: "Connect a git source for this project first" },
+  git_source_conflict: { status: 409, message: "This project already has a different git source" },
+  git_source_unavailable: { status: 409, message: "The project's git source is not active" },
+  checkout_unavailable: { status: 409, message: "The project checkout is unavailable" },
+  sync_in_progress: { status: 409, message: "A sync is already running for this project" },
+  extractor_not_configured: { status: 409, message: "No claim extraction model is configured" },
+  extraction_in_progress: { status: 409, message: "A claim extraction is already running for this project" },
+  brain_capacity: { status: 409, message: "The project brain is full" },
+  body_too_large: { status: 413, message: "Request body too large" },
+  brain_unavailable: { status: 503, message: "Company brain is unavailable" },
+};
+
+/** Store codes as API codes (routes and the agent adapter map BrainStoreError through this). */
+export const BRAIN_STORE_ERROR_API_CODES: { readonly [Code in BrainStoreErrorCode]: BrainApiErrorCode } = {
+  invalid: "invalid_request",
+  not_found: "git_source_missing",
+  forbidden: "git_source_missing",
+  conflict: "git_source_conflict",
+  capacity: "brain_capacity",
+};
+
+export interface BrainApiErrorBody {
+  readonly error: { readonly code: BrainApiErrorCode; readonly message: string };
+}
+
+export function brainApiErrorBody(code: BrainApiErrorCode): BrainApiErrorBody {
+  return { error: { code, message: BRAIN_API_ERRORS[code].message } };
+}
+
+/** Thrown by the service; the code is the only detail that leaves the gateway. */
+export class BrainApiError extends Error {
+  constructor(readonly code: BrainApiErrorCode, options?: ErrorOptions) {
+    super("Company brain request failed", options);
+    this.name = "BrainApiError";
+  }
+}
