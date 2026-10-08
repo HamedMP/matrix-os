@@ -1,0 +1,16 @@
+/* Generated from @matrix-os/brand. Run sync-brand-tokens.mjs; do not edit. */
+:root {
+  --brand-forest: #0E3422;
+  --brand-paper: #FCFCF8;
+  --brand-canvas: #F1F4E8;
+  --brand-muted: #F7F8F1;
+  --brand-border: #DCD9CC;
+  --brand-ink: #1F2D1D;
+  --brand-muted-fg: #536259;
+  --brand-green: #BED77B;
+  --brand-gold: #F1C379;
+  --brand-coral: #D06E53;
+  --brand-danger: #9F3F2C;
+  --brand-font-display: "Bricolage Grotesque", Geist, ui-sans-serif, system-ui, sans-serif;
+  --brand-font-sans: Geist, ui-sans-serif, system-ui, sans-serif;
+}

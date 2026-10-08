@@ -36,13 +36,13 @@ describe("gallery discovery and install races", () => {
       integrations: vi.fn().mockResolvedValueOnce([]).mockImplementationOnce(() => inventory.promise),
     });
     render(createElement(Gallery));
-    await screen.findByRole("button", { name: "Install" });
+    await screen.findByRole("button", { name: "Get" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh gallery and connections" }));
-    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get" }));
     await screen.findByRole("button", { name: "Open" });
     await act(async () => { inventory.resolve([]); });
     expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Get" })).toBeNull();
     expect((screen.getByRole("button", { name: "Refresh gallery and connections" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

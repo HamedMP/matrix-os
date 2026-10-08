@@ -1,4 +1,7 @@
+import React, { useState } from "react";
 import type { GalleryAppListing } from "./model";
+import { previewScreenshots } from "./preview-screenshots";
+import { galleryArtwork } from "./artwork";
 export function Glyph({ view, size = 24 }: { view: string; size?: number }) {
   const paths: Record<string, string> = {
     finance: "M5 3h14v18H5z M8 7h8 M8 11h3 M8 15h8",
@@ -55,216 +58,49 @@ export function Icon({
     </svg>
   );
 }
-export default function Preview({
-  app,
-  large = false,
-}: {
-  app: GalleryAppListing;
-  large?: boolean;
-}) {
-  const boardLabels = app.fields
-    .find((field) => field.kind === "select")
-    ?.options?.slice(0, 3) ?? ["Plan", "In progress", "Done"];
+
+/** Previews never read owner records or invoke an app's bridge. */
+export default function Preview({ app, large = false }: { app: GalleryAppListing; large?: boolean }) {
+  const [failedScreenshot, setFailedScreenshot] = useState<string | null>(null);
+  const screenshotKind = Object.hasOwn(previewScreenshots, app.id) ? previewScreenshots[app.id] : undefined;
+  const photographed = screenshotKind !== undefined && failedScreenshot !== app.id;
+  const exampleData = photographed && screenshotKind === "example";
+  const columns = app.fields.find(field => field.key === "status")?.options?.slice(0, 3) ?? ["Unclassified"];
+  const fields = app.fields.filter(field => field.kind !== "longtext").slice(0, 4);
   return (
-    <div
-      className={`preview preview-view-${app.view} ${large ? "preview-large" : ""}`}
-      aria-label={`Illustration of ${app.name}`}
-      role="img"
-    >
-      <div className="preview-window">
-        <div className="preview-rail">
-          <span />
-          <span />
-          <span />
-          <div />
-          <div />
-        </div>
-        <div className="preview-content">
-          <div className="preview-heading">
-            <span />
-            <i />
+    <div className={`preview app-identity preview-view-${app.view}${large ? " preview-large" : ""}${photographed ? " preview-photographed" : ""}`} data-app={app.id}
+      aria-label={`${photographed ? "Screenshot" : "Layout preview"} of ${app.name}${exampleData ? " with example data" : ", empty workspace"}`} role="img">
+      {photographed ? (
+        <img key={app.id} className="preview-screenshot" src={galleryArtwork(`previews/${app.id}.png`)} loading="lazy" decoding="async" alt="" onError={() => setFailedScreenshot(app.id)} />
+      ) : (
+        <div className="preview-window" aria-hidden="true">
+          <aside className="preview-rail">
+            <strong>{app.name}</strong>
+            <div className="preview-nav preview-nav-active">All records</div>
+            <div className="preview-nav">Personal</div>
+            <div className="preview-nav">Work</div>
+            <div className="preview-nav">Connections</div>
+          </aside>
+          <div className="preview-content">
+            <div className="preview-heading"><strong>{app.name}</strong><span className="preview-add">+ Add {app.entity}</span></div>
+            {app.view === "finance" && <>
+              <div className="preview-ledger"><span>Settled amounts</span><h3>No settled amounts</h3></div>
+              <div className="preview-field-headings">{fields.map(field => <span key={field.key}>{field.label}</span>)}</div>
+              <div className="preview-empty"><p>Your ledger starts with your first {app.entity}.</p></div>
+            </>}
+            {app.view === "board" && <div className="preview-board">{columns.map(label => (
+              <div className="preview-board-column" key={label}><strong>{label}</strong><p>No {app.entity}s here yet.</p><span>+ Add {app.entity}</span></div>
+            ))}</div>}
+            {app.view === "notes" && <div className="preview-note"><h3>Your next {app.entity}</h3><p>A blank page for your thoughts.</p><div className="preview-note-rule" /><div className="preview-note-rule" /></div>}
+            {app.view === "agenda" && <><div className="preview-calendar">{["M", "T", "W", "T", "F", "S", "S"].map((day, i) => <span key={i}>{day}</span>)}{Array.from({ length: 21 }, (_, i) => <i key={i} />)}</div><div className="preview-empty"><p>No {app.entity}s scheduled.</p></div></>}
+            {app.view === "library" && <><div className="preview-library"><div><Glyph view="library" size={24} /></div><div><Glyph view="notes" size={24} /></div></div><div className="preview-empty"><p>Add your first {app.entity}.</p></div></>}
+            {app.view === "habits" && <><div className="preview-habits">{Array.from({ length: 21 }, (_, i) => <span key={i} />)}</div><div className="preview-empty"><strong>No check-ins yet</strong><p>Log your first {app.entity} to begin.</p></div></>}
+            {app.view === "focus" && <><div className="preview-focus">25:00</div><p className="preview-focus-label">Ready for a focus session</p></>}
+            {app.view === "travel" && <><svg className="preview-map" viewBox="0 0 300 170" aria-hidden="true"><path d="m19 35 28-16 30 9 22 25-15 13 4 19-25 20-11-20-20-4Zm70 73 26 1 18 31-19 27-17-24Zm52-64 29-17 31 14 20-10 34 25-13 26-36 1-22-11-29 12-27-22Zm25 41 35 8 11 30-23 33-15-20-9-26Zm70 48 29-3 16 18-24 11-22-10Z" fill="currentColor" opacity=".18" /></svg><p className="preview-travel-label">Your journeys will appear here.</p></>}
           </div>
-          {app.view === "finance" && (
-            <>
-              <div className="preview-finance-top">
-                <span />
-                <span />
-                <span />
-              </div>
-              <svg
-                className="preview-chart"
-                viewBox="0 0 280 94"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path
-                  d="M0 24h280M0 54h280M0 84h280"
-                  stroke="currentColor"
-                  opacity=".12"
-                />
-                <path
-                  d="M0 76C22 76 22 55 45 57S75 70 94 48s35 18 57-4 36 12 57-13 42 3 72-24V94H0Z"
-                  fill="currentColor"
-                  opacity=".1"
-                />
-                <path
-                  d="M0 76C22 76 22 55 45 57S75 70 94 48s35 18 57-4 36 12 57-13 42 3 72-24"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                />
-              </svg>
-              <div className="preview-rows">
-                {[1, 2, 3].map((i) => (
-                  <div key={i}>
-                    <i />
-                    <span />
-                    <b />
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {app.view === "travel" && (
-            <svg
-              className="preview-map"
-              viewBox="0 0 300 170"
-              aria-hidden="true"
-            >
-              <path
-                d="m19 35 28-16 30 9 22 25-15 13 4 19-25 20-11-20-20-4Zm70 73 26 1 18 31-19 27-17-24Zm52-64 29-17 31 14 20-10 34 25-13 26-36 1-22-11-29 12-27-22Zm25 41 35 8 11 30-23 33-15-20-9-26Zm70 48 29-3 16 18-24 11-22-10Z"
-                fill="currentColor"
-                opacity=".12"
-              />
-              <path
-                d="M60 64Q128 0 177 58T247 74"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                strokeDasharray="4 5"
-              />
-              {[
-                [60, 64],
-                [177, 58],
-                [247, 74],
-              ].map(([cx, cy]) => (
-                <g key={cx}>
-                  <circle
-                    cx={cx}
-                    cy={cy}
-                    r="7"
-                    fill="currentColor"
-                    opacity=".14"
-                  />
-                  <circle cx={cx} cy={cy} r="3" fill="currentColor" />
-                </g>
-              ))}
-            </svg>
-          )}
-          {app.view === "agenda" && (
-            <div className="preview-agenda">
-              <div className="agenda-grid">
-                {Array.from({ length: 28 }, (_, i) => (
-                  <span
-                    className={i === 10 || i === 16 || i === 23 ? "marked" : ""}
-                    key={i}
-                  />
-                ))}
-              </div>
-              <div className="agenda-lines">
-                <i />
-                <span />
-                <i />
-                <span />
-                <i />
-                <span />
-              </div>
-            </div>
-          )}
-          {app.view === "board" && (
-            <div className="preview-board">
-              {boardLabels.map((label, i) => (
-                <div key={label}>
-                  <small>{label}</small>
-                  {Array.from({ length: 3 - (i % 2) }, (_, n) => (
-                    <span key={n}>
-                      <i />
-                      <i />
-                      <b />
-                    </span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-          {app.view === "library" && (
-            <div className="preview-library">
-              {app.fields.slice(0, 4).map((field, i) => (
-                <div key={field.key}>
-                  <span className={`book-cover book-${i}`}>
-                    <Glyph view={i % 2 ? "notes" : "library"} size={28} />
-                  </span>
-                  <i />
-                  <b />
-                </div>
-              ))}
-            </div>
-          )}
-          {app.view === "notes" && (
-            <div className="preview-note">
-              <div className="note-title" />
-              <div />
-              <div />
-              <div className="note-short" />
-              <blockquote />
-              <div />
-              <div className="note-short" />
-            </div>
-          )}
-          {app.view === "habits" && (
-            <div className="preview-habits">
-              <div className="habit-tree">
-                <Glyph view="habits" size={70} />
-              </div>
-              <div className="habit-grid">
-                {Array.from({ length: 28 }, (_, i) => (
-                  <span className={i % 5 === 0 ? "rest" : "filled"} key={i} />
-                ))}
-              </div>
-            </div>
-          )}
-          {app.view === "focus" && (
-            <div className="preview-focus">
-              <svg viewBox="0 0 120 120" aria-hidden="true">
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="44"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  opacity=".12"
-                />
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="44"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  strokeDasharray="195 277"
-                  transform="rotate(-90 60 60)"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="focus-center">
-                <Glyph view="focus" size={35} />
-              </div>
-              <div className="focus-line" />
-            </div>
-          )}
         </div>
-      </div>
-      <span className="illustration-label">Illustrative preview</span>
+      )}
+      <div className="preview-caption">{photographed ? <><span>App screenshot</span><span>{exampleData ? "Example data" : "Empty workspace"}</span></> : <><span>Layout preview</span><span>Starts empty</span></>}</div>
     </div>
   );
 }

@@ -27,3 +27,5 @@ for (const [name, target, header] of [
       throw new Error("Gallery contract snapshot unavailable");
   }
 }
+
+await import("./sync-brand-tokens.mjs");

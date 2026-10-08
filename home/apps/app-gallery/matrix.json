@@ -26,7 +26,10 @@
       "tsconfig.json",
       "pnpm-workspace.yaml",
       "../../../packages/contracts/src/app-gallery.ts",
-      "../../../packages/contracts/src/app-gallery-inventory.ts"
+      "../../../packages/contracts/src/app-gallery-inventory.ts",
+      "sync-brand-tokens.mjs",
+      "../../../packages/brand/src/tokens.ts",
+      "../_shared/app-identities.css"
     ]
   },
   "storage": {

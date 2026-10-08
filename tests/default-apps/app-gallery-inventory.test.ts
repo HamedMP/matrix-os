@@ -99,11 +99,15 @@ describe("canonical connected account inventory", () => {
   });
 });
 
-it("refreshes both generated parsers in a repository and retains them in portable owner copies", async () => {
+it("refreshes both generated parsers and gallery branding in a repository and retains portable owner snapshots", async () => {
   const temp = await mkdtemp(join(tmpdir(), "matrix-inventory-generation-"));
   try {
     const canonical = await readFile(
       "packages/contracts/src/app-gallery-inventory.ts",
+      "utf8",
+    );
+    const brandSnapshot = await readFile(
+      "home/apps/app-gallery/src/brand-tokens.css",
       "utf8",
     );
     const pairs = [
@@ -122,15 +126,24 @@ it("refreshes both generated parsers in a repository and retains them in portabl
         join(target, "src/generated-inventory.ts"),
         await readFile(join(app, "src/generated-inventory.ts"), "utf8"),
       );
-      if (app.endsWith("app-gallery"))
+      if (app.endsWith("app-gallery")) {
         await writeFile(
           join(target, "src/generated-contract.ts"),
           await readFile(join(app, "src/generated-contract.ts"), "utf8"),
         );
+        await writeFile(
+          join(target, "sync-brand-tokens.mjs"),
+          await readFile(join(app, "sync-brand-tokens.mjs"), "utf8"),
+        );
+        await writeFile(join(target, "src/brand-tokens.css"), brandSnapshot);
+      }
       execFileSync(process.execPath, [join(target, script)]);
       expect(
         await readFile(join(target, "src/generated-inventory.ts"), "utf8"),
       ).toContain(canonical);
+      if (app.endsWith("app-gallery"))
+        expect(await readFile(join(target, "src/brand-tokens.css"), "utf8"))
+          .toBe(brandSnapshot);
     }
     await mkdir(join(temp, "packages/contracts/src"), { recursive: true });
     await writeFile(
@@ -141,11 +154,20 @@ it("refreshes both generated parsers in a repository and retains them in portabl
       join(temp, "packages/contracts/src/app-gallery.ts"),
       await readFile("packages/contracts/src/app-gallery.ts", "utf8"),
     );
+    await mkdir(join(temp, "packages/brand/src"), { recursive: true });
+    await writeFile(
+      join(temp, "packages/brand/src/tokens.ts"),
+      (await readFile("packages/brand/src/tokens.ts", "utf8"))
+        .replace('"#0E3422"', '"#123456"'),
+    );
     for (const [app, script] of pairs) {
       execFileSync(process.execPath, [join(temp, app, script)]);
       expect(
         await readFile(join(temp, app, "src/generated-inventory.ts"), "utf8"),
       ).toContain("Refreshed from the canonical repository source.");
+      if (app.endsWith("app-gallery"))
+        expect(await readFile(join(temp, app, "src/brand-tokens.css"), "utf8"))
+          .toContain("--brand-forest: #123456;");
     }
   } finally {
     await rm(temp, { recursive: true, force: true });
