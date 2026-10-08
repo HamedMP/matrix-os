@@ -128,3 +128,128 @@ export interface BrainSyncView {
   readonly notices: readonly GitSyncNotice[];
   readonly receipt: BrainReceiptView | null;
 }
+
+// brain_why.
+
+export type BrainWhyDetail = "brief" | "full";
+/** No trailing "/": the path itself or anything under it. Trailing "/": only under it. */
+export type BrainWhyMatch = "file_or_folder" | "folder";
+/** From provenance: git_pr, git_commit, git_spec. */
+export type BrainWhyKind = "pr" | "commit" | "spec";
+/**
+ * How a pull request item got its number. explicit: a forge merge message
+ * (`Merge pull request #N from ...`, `See merge request ...!N`). inferred: the
+ * ` (#N)` subject suffix of a squash or titled merge, which the git adapter
+ * treats as a heuristic. none: commit and spec items.
+ */
+export type BrainWhyLink = "explicit" | "inferred" | "none";
+
+export interface BrainWhyExcerpt {
+  /** The heading as written ("Summary", "Validation and invariants"); null for the lead-paragraph fallback. */
+  readonly heading: string | null;
+  /** Verbatim section text without the heading line or surrounding blank lines, cut to the detail bound. */
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+export interface BrainWhyItem {
+  readonly documentId: string;
+  readonly kind: BrainWhyKind;
+  /** The shared cite label (brain/cite.ts): `#12`, `!12` (GitLab), a short sha, or a spec's first spec ref. */
+  readonly label: string;
+  /** Pull or merge request number; null for commit and spec items. */
+  readonly number: number | null;
+  /** Full commit sha from the document footer; null for spec items. */
+  readonly sha: string | null;
+  readonly title: string;
+  /** ISO-8601 committer date (source_updated_at). */
+  readonly date: string;
+  /** Canonical https link, or "" when the document has none. */
+  readonly permalink: string;
+  readonly link: BrainWhyLink;
+  readonly summary: BrainWhyExcerpt | null;
+  readonly invariants: BrainWhyExcerpt | null;
+  /** Spec directories the document references, at most BRAIN_WHY_SPECS_MAX[detail]. */
+  readonly specs: readonly string[];
+  /** Path refs that matched the query, at most BRAIN_WHY_MATCHED_PATHS_MAX[detail]. */
+  readonly matchedPaths: readonly string[];
+  /** Every matching path ref of the document (at most 200, the per-document ref cap). */
+  readonly matchedPathCount: number;
+}
+
+export interface BrainWhyQuery {
+  /** Repo-relative file or folder; one trailing "/" means folder only. */
+  readonly path: string;
+  readonly limit?: number;
+  /** Opaque, from a previous page. */
+  readonly cursor?: string | null;
+  readonly detail?: BrainWhyDetail;
+}
+
+/** Newest first by committer date, then document id. */
+export interface BrainWhyPage {
+  /** Normalized: no trailing "/". */
+  readonly path: string;
+  readonly match: BrainWhyMatch;
+  readonly detail: BrainWhyDetail;
+  readonly total: number;
+  readonly totalCapped: boolean;
+  readonly items: readonly BrainWhyItem[];
+  readonly nextCursor: string | null;
+}
+
+export interface BrainWhyLastSync {
+  readonly status: BrainSyncReceiptStatus;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly nextAction: string;
+  readonly errorCode: string | null;
+}
+
+export interface BrainWhySourceState {
+  readonly sourceId: string;
+  readonly webBase: string | null;
+  /** The newest receipt; null when the source was never synced. */
+  readonly lastSync: BrainWhyLastSync | null;
+}
+
+export interface BrainWhyResult extends BrainWhyPage {
+  /** Null when the project has no git source yet (items is then empty). */
+  readonly source: BrainWhySourceState | null;
+}
+
+// Service.
+
+export type BrainProjectLookup = Pick<
+  ReturnType<typeof createProjectManager>,
+  "getProjectById" | "getProject" | "resolveProjectWorkingDirectory"
+>;
+
+export type BrainGitSync = (options: GitSyncOptions) => Promise<GitSyncResult>;
+
+export interface BrainProjectServiceDeps {
+  readonly repository: BrainRepository;
+  readonly projects: BrainProjectLookup;
+  /** Resolved Matrix home; the same value the project manager was built with. */
+  readonly homePath: string;
+  /** Default: syncGitSource. */
+  readonly sync?: BrainGitSync;
+  /** Default: BRAIN_REQUEST_SYNC_LIMITS. */
+  readonly syncLimits?: Partial<GitSyncLimits>;
+  /** Default: runBrainExtraction. */
+  readonly extract?: (options: BrainExtractionOptions) => Promise<BrainExtractionResult>;
+  /** Default: BRAIN_REQUEST_EXTRACTION_LIMITS (rules runs; a model run takes its limits from claimModels). */
+  readonly extractionLimits?: Partial<BrainExtractionLimits>;
+  /** Default: none (model extraction is 409); startBrainProjectService supplies the Anthropic provider. */
+  readonly claimModels?: BrainClaimModelProvider;
+  /**
+   * Principals that may run the model extractor (the gateway owner, whose Anthropic key it uses); any other principal
+   * gets extractor_not_configured and modelSpend null. Absent: every principal (startBrainServices always sets it).
+   */
+  readonly modelOwnerIds?: readonly string[];
+  /**
+   * The model spend cap per owner over 30 days (MATRIX_BRAIN_MODEL_SPEND_MICROUSD_PER_30D) that GET .../claims
+   * reports in modelSpend; absent: modelSpend is null. startBrainProjectService sets it with its default provider.
+   */
+  readonly modelSpendCapMicroUsd?: number;
+}
