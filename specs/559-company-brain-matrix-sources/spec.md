@@ -111,7 +111,7 @@ at the last finished item.
 | Limit | Value | Enforced in |
 | --- | --- | --- |
 | notes per pass / per page / content read | 5,000 / 100 / 70,000 characters | `notes.ts`, SQL `left()` |
-| files: entries per page / per directory / bytes read per page (every outcome) / depth / path | 5,000 / 5,000 / 16 MiB / 12 / 512 bytes | `files-walk.ts`, `files.ts` |
+| files: entries per page / per directory / directory entries read per page (skipped ones too) / bytes read per page (every outcome) / depth / path | 5,000 / 5,000 / 65,000 / 16 MiB / 12 / 512 bytes | `files-walk.ts`, `files.ts` |
 | folder options: directory entries read | 5,000 | `files.ts` |
 | chats: messages read per page / per day / parts per day / part bytes / message characters | 4,200 / 2,000 / 8 / 60,000 / 8,000 | `chat-render.ts` |
 | sweep documents per page; options per page | 100 (or `maxDeletions`); 100 | `shared.ts`, handlers |

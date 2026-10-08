@@ -183,12 +183,41 @@ describe("matrix sources shared pieces", () => {
     const listing: FakeListing = { entries: [...hidden, { name: "z.md", kind: "file" }], read: 0 };
     faults.listings.set(join(home, "docs"), listing);
     const truncated = vi.fn();
-    const budget: WalkBudget = { entries: 10, pathBytes: 1_000, position: null, truncated };
+    const budget: WalkBudget = { entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated };
     const found: string[] = [];
     for await (const entry of walkFiles(join(home, "docs"), [], null, budget)) found.push(entry.path);
     expect(found).toEqual([]);
     expect(truncated).toHaveBeenCalledTimes(1);
     expect(listing.read).toBe(max + 1);
+  });
+
+  it("counts every folder read against the page's read budget and resumes where the page stopped", async () => {
+    const { dirEntriesMax: max, dirReadsPerPage, fileDepthMax } = BRAIN_MATRIX_LIMITS;
+    // A page that resumes deep in a tree must still have room to move on after reading its way back.
+    expect(dirReadsPerPage).toBeGreaterThan(fileDepthMax * max);
+    // 20 folders of one file and max - 1 hidden names each: 100,000 entries, more than one page may read.
+    const folders = Array.from({ length: 20 }, (_, index) => `d${String(index).padStart(2, "0")}`);
+    const hidden = Array.from({ length: max - 1 }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    const listings = folders.map((folder) => {
+      mkdirSync(join(home, "docs", folder), { recursive: true });
+      writeFileSync(join(home, "docs", folder, "x.md"), folder);
+      const listing: FakeListing = { entries: [...hidden, { name: "x.md", kind: "file" }], read: 0 };
+      faults.listings.set(join(home, "docs", folder), listing);
+      return listing;
+    });
+    const read = () => listings.reduce((sum, listing) => sum + listing.read, 0);
+    const adapter = createMatrixFilesAdapter(home);
+    const config = { roots: ["docs"], extensions: ["md"], maxFileBytes: 1_000 };
+    const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:x");
+    const first = await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config, { maxPages: 1 });
+    expect(first.caughtUp).toBe(false);
+    expect(first.written).toBeGreaterThan(0);
+    expect(first.written).toBeLessThan(folders.length);
+    // The page stops before the next folder once the budget is spent, so it reads at most one folder past it.
+    expect(read()).toBeLessThanOrEqual(dirReadsPerPage + max);
+    const rest = await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config);
+    expect(rest).toMatchObject({ caughtUp: true, written: folders.length - first.written });
+    expect(await liveTitles(harness, sourceId)).toEqual(folders.map((folder) => `docs/${folder}/x.md`));
   });
 
   it("reads a file to its end when a read returns fewer bytes than asked", async () => {
@@ -206,7 +235,7 @@ describe("matrix sources shared pieces", () => {
     for (const name of ["a.md", "b.md"]) writeFileSync(join(home, "docs/sub", name), name);
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "brain-matrix-outside-")));
     writeFileSync(join(outside, "b.md"), "OUTSIDE SECRET");
-    const budget: WalkBudget = { entries: 10, pathBytes: 1_000, position: null, truncated: () => undefined };
+    const budget: WalkBudget = { entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated: () => undefined };
     const texts: string[] = [];
     try {
       // The walk lists docs/sub, then the folder becomes a symlink to a folder outside home before b.md is read.
