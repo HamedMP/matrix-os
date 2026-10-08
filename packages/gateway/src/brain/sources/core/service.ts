@@ -4,8 +4,8 @@
  * missing, foreign, tombstoned or malformed source is source_not_found). Connect runs parseConfig, account pinning,
  * identify, checkConfig, createSource, saveConfig, and removes the new source again when anything after createSource
  * fails, so a refused config never leaves a live source. An update saves the config in the transaction that moves the
- * revision. Sync is exactly one bounded run of the shared runner (git sources delegate to gitSync). Holds no state
- * between calls; every call outside the store has a deadline.
+ * revision. Sync is exactly one bounded run of the shared runner (the project's git source delegates to gitSync).
+ * Holds no state between calls; every call outside the store has a deadline.
  */
 import { BrainApiError } from "../../api/types.js";
 import {
@@ -282,15 +282,19 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
   }
 
   /**
-   * A paused git source answers like the runner, without running; one paused or removed while the run started
-   * answers the same way.
+   * gitSync runs the project's git source: the oldest live one, as the project service picks it. Another git source (a
+   * registration race left two) is source_conflict, never synced under the wrong id. A paused one answers like the
+   * runner; one paused or removed while the run started answers the same way.
    */
   async function gitSyncView(
     ownerId: string, projectRef: string, scope: BrainScopeKey, source: KnownSource,
   ): Promise<BrainSourceSyncView> {
     const gitSync = deps.gitSync;
     if (gitSync === undefined) throw new BrainFeatureError("source_kind_unsupported");
-    if (source.status !== "active") return syncView(source.sourceId, INACTIVE);
+    const projectGit = (await scan(scope)).find((peer) => peer.kind === "git");
+    if (projectGit === undefined) throw new BrainFeatureError("source_not_found");
+    if (projectGit.sourceId !== source.sourceId) throw new BrainFeatureError("source_conflict");
+    if (projectGit.status !== "active") return syncView(source.sourceId, INACTIVE);
     try {
       return { ...(await gitSync(ownerId, projectRef)), sourceId: source.sourceId };
     } catch (error: unknown) {

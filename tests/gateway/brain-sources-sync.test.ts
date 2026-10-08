@@ -159,6 +159,22 @@ describe("sync", () => {
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_not_found");
   });
 
+  it("syncs only the project's git source, never another one a registration race left, under its id", async () => {
+    const older = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
+    harness.tick();
+    const newer = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "project:proj_a", label: "A" });
+    const gitView: BrainSyncView = {
+      status: "succeeded", errorCode: null, nextAction: "", caughtUp: true, commitsProcessed: 0, commitsRemaining: 0,
+      counts: zeroCounts, notices: [], receipt: null,
+    };
+    const project = { sync: vi.fn(async () => gitView) };
+    const sources = service([], { gitSync: createBrainGitSourceSync(project) });
+    expect(await codeOf(sources.sync(OWNER, "proj_a", newer.source.sourceId))).toBe("source_conflict");
+    expect(project.sync).not.toHaveBeenCalled();
+    expect(await sources.sync(OWNER, "proj_a", older.source.sourceId)).toMatchObject({ sourceId: older.source.sourceId, status: "succeeded" });
+    expect(project.sync).toHaveBeenCalledOnce();
+  });
+
   it("maps git codes onto the source vocabulary and keeps the git code on the receipt", () => {
     const base: BrainSyncView = {
       status: "failed", errorCode: "not_a_repository", nextAction: "fix_source", caughtUp: false, commitsProcessed: 0,
