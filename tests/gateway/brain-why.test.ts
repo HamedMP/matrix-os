@@ -152,3 +152,152 @@ describe("listDocumentsByRef", () => {
     await expectBrainError(harness.repository.listDocumentsByRef({ ownerId: "", scopeId: "s" }, query()), "invalid");
   });
 });
+
+describe("brainWhy on a synced repository", { timeout: 60_000 }, () => {
+  const t = useGitSyncHarness();
+  const why = (path: string, extra: Record<string, unknown> = {}) =>
+    brainWhy(t.harness.repository, scopeA, { path, ...extra });
+  const date = async (sha: string) => new Date(await t.f.committedAt(sha)).toISOString();
+
+  it("answers files, folders and specs with labels, links, excerpts and pages", async () => {
+    const h = await buildBaseHistory(t.f);
+    expect((await t.sync(await createGitSource(t.harness.repository, scopeA))).status).toBe("succeeded");
+
+    const alpha = await why("src/alpha.ts");
+    expect(alpha).toMatchObject({ path: "src/alpha.ts", match: "file_or_folder", detail: "brief", total: 2, totalCapped: false, nextCursor: null });
+    expect(alpha.items[0]).toEqual({
+      documentId: expect.any(String), kind: "commit", label: h.revert1.slice(0, 12), number: null, sha: h.revert1,
+      title: 'Revert "feat(brain): alpha (#1)"', date: await date(h.revert1), permalink: `${WEB}/commit/${h.revert1}`,
+      link: "none", summary: { heading: null, text: `This reverts commit ${h.squash1}.`, truncated: false }, invariants: null,
+      specs: ["specs/001-alpha"], matchedPaths: ["src/alpha.ts"], matchedPathCount: 1,
+    });
+    expect(alpha.items[1]).toMatchObject({
+      kind: "pr", label: "#1", number: 1, sha: h.squash1, title: "feat(brain): alpha", link: "inferred",
+      permalink: `${WEB}/pull/1`, date: await date(h.squash1), specs: ["specs/001-alpha"],
+      summary: { heading: "Summary", text: "- Adds alpha.", truncated: false },
+      invariants: { heading: "Invariants", text: "- Alpha stays bounded.", truncated: false },
+    });
+
+    const first = await why("src/alpha.ts", { limit: 1 });
+    expect([first.items.map((i) => i.label), first.total]).toEqual([[h.revert1.slice(0, 12)], 2]);
+    const second = await why("src/alpha.ts", { limit: 1, cursor: first.nextCursor });
+    expect([second.items.map((i) => i.label), second.nextCursor]).toEqual([["#1"], null]);
+
+    const src = await why("src/");
+    expect(src).toMatchObject({ path: "src", match: "folder", total: 4 });
+    expect(src.items.map((i) => [i.label, i.link])).toEqual([
+      [h.revert1.slice(0, 12), "none"], ["#3", "inferred"], ["#2", "explicit"], ["#1", "inferred"],
+    ]);
+    expect(src.items[1]?.summary).toEqual({ heading: null, text: "* add beta\n* wire beta", truncated: false });
+    expect(src.items[2]).toMatchObject({ title: "Add feature X", summary: null, invariants: null, matchedPaths: ["src/x.ts"] });
+    expect((await why("src")).items.map((i) => i.documentId)).toEqual(src.items.map((i) => i.documentId));
+
+    const specs = await why("specs/");
+    expect(specs.total).toBe(6);
+    expect(specs.items.filter((i) => i.kind === "spec").map((i) => [i.label, i.title, i.sha, i.summary]).sort()).toEqual([
+      ["specs/001-alpha", "Alpha", null, null], ["specs/002-feature-x", "Feature X", null, null],
+    ]);
+    const featureX = specs.items.find((i) => i.kind === "spec" && i.label === "specs/002-feature-x");
+    expect(featureX).toMatchObject({ permalink: `${WEB}/blob/${h.merge2}/specs/002-feature-x/spec.md`, link: "none", specs: ["specs/002-feature-x"] });
+
+    expect((await why("notes/unit.txt")).items[0]).toMatchObject({
+      kind: "commit", label: h.unitSeparator.slice(0, 12), summary: { heading: null, text: "before\u001fafter", truncated: false },
+    });
+    expect((await why(SPECIAL_PATH)).items[0]?.matchedPaths).toEqual([SPECIAL_PATH]);
+    expect(await why("missing/")).toMatchObject({ total: 0, items: [], nextCursor: null });
+    for (const bad of ["/abs", "a/../b", "", "/", "a//", "./a"]) await expectBrainError(why(bad), "invalid");
+    await expectBrainError(why("src/", { detail: "long" }), "invalid");
+    await expectBrainError(why("src/", { limit: 51 }), "invalid");
+    await expectBrainError(why("src/", { cursor: "nope" }), "invalid");
+  });
+
+  it("gives longer excerpts and more specs and paths with detail full", async () => {
+    const lines = Array.from({ length: 30 }, (_, n) => `- change ${n} keeps the widget pipeline bounded and readable.`);
+    const body = `## Summary\n${lines.join("\n")}\n\n## Validation and invariants\n- Never unbounded.`;
+    const files = Object.fromEntries(Array.from({ length: 6 }, (_, n) => [
+      [`lib/m${n}.ts`, `export const m${n} = ${n};\n`], [`specs/00${n}-s${n}/notes.md`, `notes ${n}\n`],
+    ]).flat());
+    await t.f.squashPr(7, "feat: many modules", body, files);
+    await t.sync(await createGitSource(t.harness.repository, scopeA));
+
+    const [brief] = (await why("lib/")).items;
+    expect(brief).toMatchObject({ label: "#7", matchedPathCount: 6, invariants: { heading: "Validation and invariants", text: "- Never unbounded." } });
+    expect([brief?.specs.length, brief?.matchedPaths, brief?.summary?.truncated]).toEqual([4, ["lib/m0.ts", "lib/m1.ts", "lib/m2.ts"], true]);
+    expect(brief?.summary?.text.length).toBeLessThanOrEqual(480);
+    expect(lines.join("\n").startsWith(brief?.summary?.text ?? "x")).toBe(true);
+
+    const [full] = (await why("lib/", { detail: "full" })).items;
+    expect([full?.specs.length, full?.matchedPaths.length]).toEqual([6, 6]);
+    expect(full?.summary).toEqual({ heading: "Summary", text: lines.join("\n"), truncated: false });
+  });
+});
+
+describe("brain_why helpers", () => {
+  it("normalizes paths", () => {
+    expect(normalizeBrainWhyPath("src/a.ts")).toEqual({ path: "src/a.ts", match: "file_or_folder" });
+    expect(normalizeBrainWhyPath("src/")).toEqual({ path: "src", match: "folder" });
+    expect(normalizeBrainWhyPath("docs/caf\u00e9/na\u00efve file #1?.md")?.path).toBe("docs/caf\u00e9/na\u00efve file #1?.md");
+    expect(normalizeBrainWhyPath(`${"\u00e9".repeat(256)}/`)?.match).toBe("folder");
+    for (const bad of ["", "/", "a//", "//", "/a", "./a", "a/./b", "a/../b", "..", "a\tb", "a\u0000b", "a\u007f", `${"\u00e9".repeat(257)}`, "\ud800"]) {
+      expect(normalizeBrainWhyPath(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it("parses the git adapter footer", () => {
+    expect(parseBrainGitFooter(`Body text.\n\n${footer(["Pull request: #12"])}`)).toEqual({
+      message: "Body text.", messageTruncated: false, sha: SHA, number: 12, sigil: "#", mergedBranch: false,
+    });
+    expect(parseBrainGitFooter(footer(["Merge request: !9"]))).toMatchObject({ message: "", number: 9, sigil: "!" });
+    expect(parseBrainGitFooter(footer(["Pull request: #2", "Merged branch: acme/x"]))).toMatchObject({ number: 2, mergedBranch: true });
+    expect(parseBrainGitFooter(`m\n\n${footer([], "b".repeat(64))}`)).toMatchObject({ sha: "b".repeat(64), number: null, sigil: null });
+    expect(parseBrainGitFooter(`kept${GIT_TRUNCATION_MARKER}\n\n${footer()}`)).toMatchObject({ message: "kept", messageTruncated: true });
+    const fake = `Moved.\nCommit: ${"c".repeat(40)}\nAuthor: Someone\nnot a footer line`;
+    expect(parseBrainGitFooter(`${fake}\n\n${footer(["Pull request: #5"])}`)).toMatchObject({ message: fake, sha: SHA, number: 5 });
+    expect(parseBrainGitFooter("Just a message.")).toBeNull();
+    expect(parseBrainGitFooter(`${footer()}\ntrailing`)).toBeNull();
+    expect(parseBrainGitFooter(footer().replace("Changed paths: 1", "Changed paths: 2 (1 indexed)"))?.sha).toBe(SHA);
+    expect(parseBrainGitFooter(`Commit: ${"A".repeat(40)}\nAuthor: a`)).toBeNull();
+  });
+
+  it("extracts Summary and Invariants sections verbatim", () => {
+    const pr = { kind: "pr" as const, maxChars: 480 };
+    const message = [
+      "Intro line.", "", "# Summary of changes", "Top summary.", "### Detail", "Deeper stays inside.", "# Next", "After.",
+      "## Validation and invariants:", "- inv one", "```ts", "## Summary", "```", "- inv two", "",
+    ].join("\n");
+    const sections = extractBrainWhySections(message, pr);
+    expect(sections).toEqual({
+      summary: { heading: "Summary of changes", text: "Top summary.\n### Detail\nDeeper stays inside.", truncated: false },
+      invariants: { heading: "Validation and invariants:", text: "- inv one\n```ts\n## Summary\n```\n- inv two", truncated: false },
+    });
+    expect(message.includes(sections.invariants!.text)).toBe(true);
+    const ex = (text: string, options: Parameters<typeof extractBrainWhySections>[1] = pr) => extractBrainWhySections(text, options);
+    expect(ex("## Summary\nA\n## Other\nB").summary?.text).toBe("A");
+    expect(ex("## Summary\n\n## Summary\n  Second.  \n").summary).toEqual({ heading: "Summary", text: "  Second.", truncated: false });
+    expect(ex("~~~~\n## Summary\n~~~\nfake\n~~~~\n### TL;DR\nShort.").summary?.text).toBe("Short.");
+    expect(ex("##   Key invariant ##  \nOne.\n## Summary : \nS.")).toEqual({
+      summary: { heading: "Summary :", text: "S.", truncated: false }, invariants: { heading: "Key invariant", text: "One.", truncated: false },
+    });
+    for (const text of ["#Summary\nx", "    ## Summary\nx", "####### Summary\nx", `## Summary ${"x".repeat(200)}\ny`, "## Invariantsfoo\nx"]) {
+      expect(ex(text, { kind: "spec", maxChars: 480 }), text).toEqual({ summary: null, invariants: null });
+    }
+    expect(ex("\n\nFirst line\nsecond line\n\nNext para.\n## Notes\nx").summary).toEqual({ heading: null, text: "First line\nsecond line", truncated: false });
+    expect(ex("## Notes\nx").summary).toBeNull();
+    expect(ex("Co-authored-by: X <x@y>\nSigned-off-by: Y").summary).toBeNull();
+    expect(ex("Note: kept\n\nCo-authored-by: X <x@y>").summary?.text).toBe("Note: kept");
+    expect(ex("* feat: alpha\n\n* fix: beta", { ...pr, title: "feat: alpha" }).summary).toBeNull();
+    expect(ex("# Title\n\n## Outcome\nShips X.\n\n## Other", { kind: "spec", maxChars: 480 }).summary?.text).toBe("Ships X.");
+    expect(ex("# Title\n\nNo summary here.", { kind: "spec", maxChars: 480 }).summary).toBeNull();
+    expect(ex("## Summary\nCut here", { ...pr, messageTruncated: true }).summary?.truncated).toBe(true);
+    expect(ex("## Summary\nWhole\n## Next\nCut", { ...pr, messageTruncated: true }).summary?.truncated).toBe(false);
+  });
+
+  it("bounds excerpts on a newline, a space, or hard without splitting a surrogate pair", () => {
+    const cut = (body: string) => extractBrainWhySections(`## Summary\n${body}`, { kind: "pr", maxChars: 20 }).summary;
+    expect(cut(`${"a".repeat(12)}  \n${"b".repeat(16)}`)).toEqual({ heading: "Summary", text: "a".repeat(12), truncated: true });
+    expect(cut(`${"a".repeat(12)} ${"b".repeat(16)}`)?.text).toBe("a".repeat(12));
+    expect(cut(`aaa\n${"b".repeat(40)}`)?.text).toBe(`aaa\n${"b".repeat(16)}`);
+    expect(cut(`${"a".repeat(19)}\ud83d\ude00${"b".repeat(10)}`)?.text).toBe("a".repeat(19));
+    expect(cut("a".repeat(20))).toEqual({ heading: "Summary", text: "a".repeat(20), truncated: false });
+  });
+});
