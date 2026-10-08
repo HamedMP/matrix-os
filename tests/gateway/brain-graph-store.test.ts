@@ -163,16 +163,20 @@ describe("brain graph store", { timeout: 60_000 }, () => {
     // Alice's name is still seen with one email (pr12), so the merge stands; then pr12 goes too.
     expect((await timeline("person:name:alice smith")).entity.key).toBe("email:alice@acme.dev");
     await harness.sync("git", [], [id("pr12")]);
-    expect(await harness.refresh()).toEqual({ processed: 0, removed: 1, caughtUp: true });
+    // The spec's decision quotes src/alpha.ts, which no live path ref names now, so the spec is re-derived without
+    // that file link and the sweep removes the file.
+    expect(await harness.refresh()).toEqual({ processed: 1, removed: 1, caughtUp: true });
+    await rejectsWith(timeline("file:src/alpha.ts"), BrainFeatureError, "entity_not_found");
     await rejectsWith(timeline("person:name:alice smith"), BrainFeatureError, "entity_not_found");
     await rejectsWith(timeline("person:name:bob jones"), BrainFeatureError, "entity_not_found");
+    expect(labels(await timeline("pull_request:12", { linkTypes: ["decided_in"] }))).toEqual([id("spec")]);
     // A revision is re-derived by id; claims_changed with null ids refreshes what the decision digest changed.
     await harness.sync("git", [{ ...FIXTURE.spec, body: `${FIXTURE.spec.body}
 - Decision: drop #40.` }]);
     await harness.graph.index.handle({ type: "documents_changed", scope: SCOPE, sourceId: null,
       documentIds: [id("spec")], at }, signal);
     expect(labels(await timeline("pull_request:40"))).toEqual([id("spec")]);
-    expect((await timeline("file:src/alpha.ts", { linkTypes: ["decided_in"] })).items).toEqual([]);
+    expect((await timeline("pull_request:12", { linkTypes: ["decided_in"] })).items).toEqual([]);
     await harness.decide(id("spec"), "Decision: drop #40.");
     expect((await harness.graph.index.freshness(SCOPE)).pendingDocuments).toBe(1);
     await harness.graph.index.handle({ type: "claims_changed", scope: SCOPE, extractor: "rules/v1", documentIds: null,
