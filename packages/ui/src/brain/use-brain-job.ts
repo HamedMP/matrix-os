@@ -121,3 +121,146 @@ export async function brainStartOrRun(api: BrainShellClient, projectId: string, 
     return { started: false, text: await direct() };
   }
 }
+
+/**
+ * Follows, once, a job that was still queued or running when the screen opened (`active`, from brainActiveJobs), so a
+ * reload or a reopen shows it and keeps the card's buttons off while it runs. `names` maps the card's slots to the
+ * run names it starts; the newest matching job wins. Nothing happens once the card already follows a job.
+ */
+export function useBrainJobResume(job: Pick<ReturnType<typeof useBrainJob>, "watch" | "start">,
+  active: BrainActiveJobs, names: Readonly<Record<string, string>>): void {
+  const done = useRef(false);
+  const resume = useEffectEvent((jobs: ReadonlyMap<string, BrainJobView>) => {
+    if (job.watch !== null) return;
+    for (const [key, view] of jobs) {
+      const name = Object.hasOwn(names, key) ? names[key] : undefined;
+      if (name !== undefined) {
+        job.start(name, view);
+        return;
+      }
+    }
+  });
+  useEffect(() => {
+    if (active === null || done.current) return;
+    done.current = true;
+    resume(active);
+  }, [active]);
+}
+
+function finishOnce(finished: { round: number; readonly onFinished: (name: string, view: BrainJobView) => void },
+  at: number, name: string, view: BrainJobView): void {
+  if (finished.round >= at) return;
+  finished.round = at;
+  finished.onFinished(name, view);
+}
+
+/** watching: polls run. finished: the job ended. stopped: polling gave up (`error`, or null after the poll cap). */
+export interface BrainJobWatch {
+  readonly name: string; readonly view: BrainJobView; readonly phase: "watching" | "finished" | "stopped";
+  readonly error: BrainShellErrorState | null;
+}
+interface WatchState extends BrainJobWatch {
+  readonly polls: number; readonly failures: number; readonly round: number; readonly cancelling: boolean;
+  readonly cancelError: BrainShellErrorState | null;
+}
+
+/**
+ * Follows one background job: polls with backoff until it ends, then calls `onFinished` once. A newer `start`
+ * replaces the job followed; an answer for a job or round the view has left is dropped. Unmounting stops the timer.
+ */
+export function useBrainJob({ poll, cancel, onFinished }: {
+  readonly poll: (jobId: string) => Promise<unknown>; readonly cancel: (jobId: string) => Promise<unknown>;
+  readonly onFinished: (name: string, view: BrainJobView) => void;
+}) {
+  const [watch, setWatch] = useState<WatchState | null>(null);
+  const pollJob = useEffectEvent(poll);
+  // onFinished runs once per round, whichever answer (a poll or the cancel) ends the job first.
+  const finished = useRef({ round: 0, onFinished });
+  useLayoutEffect(() => { finished.current.onFinished = onFinished; });
+  // Every start and every "Check again" gets a new round, so an answer meant for an earlier one is never applied.
+  const rounds = useRef(0);
+  const watching = watch?.phase === "watching";
+  const jobId = watching ? watch.view.jobId : null;
+  const name = watch?.name ?? "";
+  const polls = watch?.polls ?? 0;
+  const failures = watch?.failures ?? 0;
+  const round = watch?.round ?? 0;
+
+  // An answer is applied only while its round is the newest; a start or "Check again" in the same turn moves on
+  // synchronously, so a late answer is dropped before it is queued.
+  useEffect(() => {
+    if (jobId === null) return undefined;
+    let live = true;
+    const current = () => live && rounds.current === round;
+    const fail = (error: BrainShellErrorState) => {
+      const stop = failures + 1 >= BRAIN_JOB_MAX_FAILURES || !TRANSIENT.includes(error.kind)
+        || polls + 1 >= BRAIN_JOB_MAX_POLLS;
+      setWatch((previous) => ({
+        ...previous!, polls: polls + 1, failures: failures + 1, phase: stop ? "stopped" : "watching",
+        error: stop ? error : null,
+      }));
+    };
+    const timer = setTimeout(() => {
+      pollJob(jobId).then((value) => {
+        if (!current()) return;
+        const view = brainJobView(value);
+        if (view === null || view.jobId !== jobId) {
+          console.warn("[brain] job answer not readable");
+          fail({ kind: "unavailable" });
+          return;
+        }
+        const ended = brainJobFinished(view.status);
+        const capped = !ended && polls + 1 >= BRAIN_JOB_MAX_POLLS;
+        setWatch((previous) => ({
+          ...previous!, view, polls: polls + 1, failures: 0, error: null,
+          phase: ended ? "finished" : capped ? "stopped" : "watching",
+        }));
+        if (ended) finishOnce(finished.current, round, name, view);
+      }, (error: unknown) => { if (current()) fail(brainShellError(error)); });
+    }, brainJobPollDelay(polls));
+    return () => { live = false; clearTimeout(timer); };
+  }, [jobId, name, polls, failures, round]);
+
+  const start = (jobName: string, view: BrainJobView) => {
+    const at = rounds.current + 1;
+    rounds.current = at;
+    const ended = brainJobFinished(view.status);
+    setWatch({
+      name: jobName, view, phase: ended ? "finished" : "watching", error: null, polls: 0, failures: 0, round: at,
+      cancelling: false, cancelError: null,
+    });
+    if (ended) finishOnce(finished.current, at, jobName, view);
+  };
+
+  const checkAgain = () => {
+    if (watch?.phase !== "stopped") return;
+    const at = rounds.current + 1;
+    rounds.current = at;
+    setWatch({ ...watch, phase: "watching", error: null, polls: 0, failures: 0, round: at, cancelling: false });
+  };
+
+  const stop = () => {
+    if (!watching || watch.cancelling) return;
+    const { view: { jobId: id }, round: at } = watch;
+    setWatch({ ...watch, cancelling: true, cancelError: null });
+    cancel(id).then((value) => {
+      if (rounds.current !== at) return;
+      const view = brainJobView(value);
+      const ended = view !== null && view.jobId === id && brainJobFinished(view.status) ? view : null;
+      setWatch((previous) => ended === null ? { ...previous!, cancelling: false }
+        : { ...previous!, view: ended, phase: "finished", cancelling: false });
+      if (ended !== null) finishOnce(finished.current, at, name, ended);
+    }, (error: unknown) => {
+      if (rounds.current !== at) return;
+      const cancelError = brainShellError(error);
+      setWatch((previous) => ({ ...previous!, cancelling: false, cancelError }));
+    });
+  };
+
+  const view: BrainJobWatch | null = watch === null ? null
+    : { name: watch.name, view: watch.view, phase: watch.phase, error: watch.error };
+  return {
+    watch: view, running: watching, cancelling: watch?.cancelling === true, cancelError: watch?.cancelError ?? null,
+    start, checkAgain, stop,
+  };
+}
