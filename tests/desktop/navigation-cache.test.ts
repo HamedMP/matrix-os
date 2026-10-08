@@ -32,6 +32,7 @@ afterEach(async () => {
   await rm(dir, {
     recursive: true, force: true
   });
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 function fixture() {
@@ -189,6 +190,7 @@ describe("private reconstructable navigation snapshots", () => {
     const restarted = createNavigationCache({
       dir, getStatus: () => signedIn("primary", "user_a", 9), clock: () => 1100
     });
+    caches.push(restarted);
     const b = restarted.context();
     expect(b.scope).toBe(a.scope);
     expect(await restarted.load({
@@ -234,6 +236,7 @@ describe("private reconstructable navigation snapshots", () => {
     x.change({ signedIn: false, runtimeSlot: "preview", platformHost: "https://example.test", authGeneration: 2 });
     await x.cache.drain();
     const reopened = createNavigationCache({ dir, getStatus: () => signedIn(), clock: () => 1200 });
+    caches.push(reopened);
     const ctx = reopened.context();
     expect(await reopened.load({ scope: ctx.scope!, authGeneration: ctx.authGeneration })).toEqual({ snapshot: null });
     x.change(signedIn("preview", "user_a", 3));
@@ -333,6 +336,7 @@ describe("private reconstructable navigation snapshots", () => {
     const x = createNavigationCache({
       dir: bad, getStatus: () => signedIn()
     });
+    caches.push(x);
     const ctx = x.context();
     expect(await x.save({
       scope: ctx.scope!, authGeneration: ctx.authGeneration, snapshot
@@ -386,4 +390,30 @@ it('rejects and prunes truncated snapshots already on disk', async () => {
   expect(await x.cache.load(req)).toEqual({ snapshot: null });
   await x.cache.drain();
   await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it('sweeps abandoned files while idle, skips symlinks, and stops recurring work on drain', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const x = fixture();
+  const req = request(x);
+  await x.cache.save({ ...req, snapshot });
+  const temp = join(dir, 'navigation-cache', req.scope + '.abcdef123456.tmp');
+  const target = join(dir, 'owner-data');
+  const link = join(dir, 'navigation-cache', req.scope + '.abcdef123457.tmp');
+  await writeFile(target, 'preserve');
+  await symlink(target, link);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await writeFile(temp, 'abandoned');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () => { await expect(stat(temp)).rejects.toMatchObject({ code: 'ENOENT' }); });
+    expect(await readFile(target, 'utf8')).toBe('preserve');
+    expect(await readFile(link, 'utf8')).toBe('preserve');
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1));
+  }
+  await x.cache.drain();
+  expect(vi.getTimerCount()).toBe(0);
+  await writeFile(temp, 'after shutdown');
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(await readFile(temp, 'utf8')).toBe('after shutdown');
+  expect(vi.getTimerCount()).toBe(0);
 });

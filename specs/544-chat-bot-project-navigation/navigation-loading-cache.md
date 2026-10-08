@@ -1,7 +1,7 @@
 # Chat navigation loading and cache design
 
-Status: APPROVED for implementation by user: 可以 执行吧, 2026-10-08. ENG-177 / PR #2288.
-This approved extension supersedes the startup-shortcuts.md deferral of batch navigation reads and cross-reload metadata caching. Implementation and runtime acceptance are tracked in ENG-177 / PR #2288; performance budgets below are not achieved-result claims.
+Status: APPROVED for implementation by user: 可以 执行吧, 2026-10-08. ENG-177; implementation stack #2299 → #2300 → #2301 supersedes closed draft #2288.
+This approved extension supersedes the startup-shortcuts.md deferral of batch navigation reads and cross-reload metadata caching. Implementation and runtime acceptance are tracked in ENG-177 and its implementation stack; performance budgets below are not achieved-result claims.
 
 ## Outcome
 
@@ -56,6 +56,10 @@ Selection filters local data. Refresh on initial authenticated mount, meaningful
 
 Patch only from complete, revision-compatible authoritative results. A fetch started before a local mutation or newer event must not resurrect a deleted row or undo a rename/pin/move/read update. Preserve pending overlays; mark uncertain in-flight snapshots dirty and revalidate after mutations settle. Failure retains the last-good snapshot. All cancellation/publication checks include the current scope generation.
 
+Authority epochs fence retained unread/Project/Bot summaries, identity caches, queued updates and asynchronous rail mutations. Revocation discards old state before rendering; recovery establishes fresh data without reviving earlier callbacks. Web scope follows the validated runtime transport captured at mount, including its slot, even when Shared links rewrite browser history without replacing that transport.
+
+Stream overlays retain only monotonic metadata and independently versioned title/read clocks. Pin choices, completion acknowledgement and other server-owned fields remain authoritative; confirmed reconciliation resumes persistence. Automatically restored cached selection is distinct from explicit user choice: fresh complete exclusion or a confirmed not-found repairs only automatic selection; truncated absence alone proves nothing.
+
 ### 3. Reconstructable persistent snapshot
 
 Canonical data remains in owner Postgres. Persist only a disposable UI projection:
@@ -66,7 +70,7 @@ Canonical data remains in owner Postgres. Persist only a disposable UI projectio
 
 Key by verified user ID, platform identity, runtime handle/slot, ownership scope and schema version. Include any existing runtime-instance discriminator if available. Authentication generation fences outstanding reads/writes but is not part of the durable key, so ordinary token renewal/restart can reuse a snapshot. A renderer cannot supply another user's authority through a cache key.
 
-Defaults: 1,000 rows and 2 MiB per scope; at most three persisted scope snapshots, LRU eviction, 24-hour maximum age. Browser adapter may retain fewer entries if its bounded storage budget is reached, but must mark that cache as partial and must not publish partial ordinary cohorts as a complete list. Prefer retaining the previous complete snapshot or skipping persistence rather than writing a new partial snapshot. Sweep on load/write and delete expired/corrupt/version-incompatible files. Memory stores have the same bounded scope/row policy.
+Defaults: 1,000 rows and 2 MiB per scope; at most three persisted scope snapshots, LRU eviction, 24-hour maximum age. Browser adapter may retain fewer entries if its bounded storage budget is reached, but must mark that cache as partial and must not publish partial ordinary cohorts as a complete list. Prefer retaining the previous complete snapshot or skipping persistence rather than writing a new partial snapshot. Sweep on load/write and with bounded symlink-safe recurring maintenance; delete expired/corrupt/version-incompatible files. Serialize maintenance with cache operations, prevent timer backlog and stop its timer before draining on shutdown. Memory stores have the same bounded scope/row policy.
 
 Persist successful complete snapshots with a coalesced write after paint. Logout removes that user's snapshots and cancels pending writes; runtime switches hide the old scope before hydrating the new one. Authentication revocation clears/hides affected data. Delayed work cannot recreate signed-out data.
 
@@ -102,7 +106,7 @@ Test malformed/expired/oversized caches, quota/disk failures, logout during writ
 
 ## Delivery and rollback
 
-After design approval: update ENG-177 and draft PR #2288 scope in English, add failing tests, implement independent API/store/cache changes, and update the existing public docs companion PR. Backend changes require exact-version Preview VPS plus packaged Electron validation before Main computer acceptance. Do not silently deploy to Main computer during testing.
+After design approval: update ENG-177 and its implementation stack in English, add failing tests, implement independent API/store/cache changes, and update the existing public docs companion PR. Backend changes require exact-version Preview VPS plus packaged Electron validation before Main computer acceptance. Do not silently deploy to Main computer during testing.
 
 Supply an exact-head named App and manual review flow. Obtain user review, then run authorized fresh Greptile/CI gates before merge. Disable the navigation capability to fall back to the existing loader; deleting snapshots is safe because they are reconstructable. No user-data migration or provider-routing change is required.
 

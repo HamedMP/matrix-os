@@ -69,6 +69,8 @@ export function createNavigationCache(options: Options): NavigationCache {
   let tail: Promise<unknown> = Promise.resolve();
   let queued = 0;
   let cleanupQueued = false;
+  let maintenanceStopped = false;
+  let maintenanceTimer: ReturnType<typeof setTimeout> | undefined;
   function serial<T>(fn: () => Promise<T>, cleanup = false): Promise<T> {
     // One reserved coalesced account cleanup cannot be starved by IPC traffic.
     if (!cleanup && queued >= MAX_QUEUED_OPERATIONS) {
@@ -230,6 +232,19 @@ export function createNavigationCache(options: Options): NavigationCache {
   // Construction follows AuthService.init(). Revocation detected during that
   // startup has no preceding in-process identity for observe() to compare.
   if (!current) queueAccountCleanup();
+  // Re-arm only after the serialized sweep settles: idle cleanup cannot queue
+  // an interval backlog or race an atomic write's temporary file.
+  const scheduleMaintenance = () => {
+    if (maintenanceStopped) return;
+    maintenanceTimer = setTimeout(() => {
+      maintenanceTimer = undefined;
+      void serial(() => sweep()).catch(error => {
+        console.warn("[navigation-cache] maintenance unavailable", error instanceof Error ? error.name : "UnknownError");
+      }).finally(scheduleMaintenance);
+    }, 60_000);
+    maintenanceTimer.unref?.();
+  };
+  scheduleMaintenance();
 
   function context(): NavigationCacheContext {
     const status = options.getStatus();
@@ -364,6 +379,8 @@ export function createNavigationCache(options: Options): NavigationCache {
       }
     },
     async drain() {
+      maintenanceStopped = true;
+      if (maintenanceTimer !== undefined) clearTimeout(maintenanceTimer);
       // Loads may append their maintenance while the captured tail is running.
       let observed: Promise<unknown>;
       do { observed = tail; await observed; } while (observed !== tail);
