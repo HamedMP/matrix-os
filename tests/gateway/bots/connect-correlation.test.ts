@@ -1,11 +1,11 @@
-import type { BotEffect } from "@matrix-os/contracts";
+import { BotInteractionSchema, type BotEffect } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBotConnections } from "../../../packages/gateway/src/bots/connections.js";
 import type { OwnerBotDatabase } from "../../../packages/gateway/src/bots/database.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { BotIntegrationError, type BotIntegrationConnection } from "../../../packages/gateway/src/bots/integration-client.js";
-import { BotInteractionError } from "../../../packages/gateway/src/bots/interactions.js";
+import { BotInteractionError, createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotConnectRequestsRepository } from "../../../packages/gateway/src/bots/repositories/connect-requests.js";
 import { createBotGrantsRepository } from "../../../packages/gateway/src/bots/repositories/grants.js";
@@ -59,6 +59,15 @@ function setup(effects: BotEffect[] = ["read"]) {
 
 async function interaction(id = interactionId) {
   return db.selectFrom("bot_interactions").select(["kind", "status", "revision", "resolution"]).where("interaction_id", "=", id).executeTakeFirstOrThrow();
+}
+
+async function parsedChoices() {
+  const service = createBotInteractionService({
+    transact: createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>)),
+    handlers: { chooseAccount: vi.fn(async () => "unused"), decideApproval: vi.fn(async () => "unused") },
+    now: () => new Date(clock),
+  });
+  return (await service.listPending(OWNER, CHAT)).map((choice) => BotInteractionSchema.parse(choice));
 }
 
 async function grants() {
@@ -125,6 +134,7 @@ describe("bot connection requests", () => {
     expect(result.continuation).toBeUndefined();
     const [choice] = await db.selectFrom("bot_interactions").select(["kind", "status", "payload"]).where("kind", "=", "account_choice").execute();
     expect(choice).toMatchObject({ status: "pending", payload: expect.objectContaining({ access: ["read"], options: [{ connectionId: "conn_work", label: "Work" }, { connectionId: "conn_home", label: "Home" }] }) });
+    expect(await parsedChoices()).toEqual([expect.objectContaining({ kind: "account_choice", payload: expect.objectContaining({ access: ["read"] }) })]);
     expect(await grants()).toEqual([]);
   });
 
@@ -188,6 +198,7 @@ describe("bot connection requests", () => {
     await expect(connections.reconcile(OWNER)).resolves.toEqual([]);
     expect(await db.selectFrom("bot_interactions").select(["kind", "payload"]).where("status", "=", "pending").execute()).toEqual([expect.objectContaining({ kind: "account_choice", payload: expect.objectContaining({ access: ["read"] }) })]);
     expect((await db.selectFrom("bot_connect_requests").select("status").executeTakeFirstOrThrow()).status).toBe("ambiguous");
+    expect(await parsedChoices()).toEqual([expect.objectContaining({ kind: "account_choice", payload: expect.objectContaining({ access: ["read"] }) })]);
   });
 
   it("expires a started request after its deadline without granting", async () => {
