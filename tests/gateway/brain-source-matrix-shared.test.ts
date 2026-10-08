@@ -27,6 +27,8 @@ const faults = vi.hoisted(() => ({
   lstat: new Map<string, Error | "other-inode">(),
   afterOpen: null as (() => void) | null,
   listings: new Map<string, FakeListing>(),
+  /** Bytes the next opened file's first read returns at most. */
+  shortRead: null as number | null,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -55,6 +57,19 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
+      const short = faults.shortRead;
+      faults.shortRead = null;
+      if (short !== null) {
+        const read = handle.read.bind(handle) as (b: Buffer, o: number, l: number, p: number) => ReturnType<typeof handle.read>;
+        let first = true;
+        Object.assign(handle, {
+          read: (buffer: Buffer, offset: number, length: number, position: number) => {
+            const cap = first ? Math.min(length, short) : length;
+            first = false;
+            return read(buffer, offset, cap, position);
+          },
+        });
+      }
       const hook = faults.afterOpen;
       faults.afterOpen = null;
       hook?.();
@@ -78,6 +93,7 @@ afterEach(async () => {
   faults.realpath.clear();
   faults.lstat.clear();
   faults.listings.clear();
+  faults.shortRead = null;
   rmSync(home, { recursive: true, force: true });
   await harness.destroy();
 });
@@ -173,6 +189,16 @@ describe("matrix sources shared pieces", () => {
     expect(found).toEqual([]);
     expect(truncated).toHaveBeenCalledTimes(1);
     expect(listing.read).toBe(max + 1);
+  });
+
+  it("reads a file to its end when a read returns fewer bytes than asked", async () => {
+    writeFileSync(join(home, "a.md"), "a\u00e9 b");
+    // The first read stops inside the two bytes of "\u00e9".
+    faults.shortRead = 2;
+    expect(await readTextFile(join(home, "a.md"), 100)).toMatchObject({ kind: "text", text: "a\u00e9 b", bytes: 5 });
+    // A read of no bytes is the end of the file (it shrank since the open): the read stops with what it has.
+    faults.shortRead = 0;
+    expect(await readTextFile(join(home, "a.md"), 100)).toMatchObject({ kind: "text", text: "", bytes: 0 });
   });
 
   it("refuses a file whose folder is swapped for a symlink while the walk is reading", async () => {
