@@ -34,8 +34,17 @@ export const palette = {
   },
   neutral: {
     900: "#0D0C0C", 800: "#242323", 700: "#413E3E", 600: "#635F5F",
-    500: "#827D7D", 400: "#A8A4A4", 300: "#C8C6C6", 200: "#E1E0E0",
+    500: "#827D7D", 450: "#8A8686", 400: "#A8A4A4", 300: "#C8C6C6", 200: "#E1E0E0",
     100: "#F3F2F2", 50: "#FFFFFF", 25: "#FFFFFF",
+  },
+  // Warm paper surfaces: screens, sheets and the fills that sit on them.
+  paper: {
+    300: "#D6D3CF", 100: "#F2F2F0", 50: "#FAF9F7", 0: "#FFFEFC",
+  },
+  // Control greys shared with the desktop component kit (buttons and chips).
+  control: {
+    950: "#0A0A0A", 900: "#0D0D0D", 800: "#171717",
+    200: "#E5E5E5", 100: "#F5F5F5", 50: "#FAFAFA", 0: "#FFFFFF",
   },
 } as const;
 
@@ -63,11 +72,36 @@ export type SpacingSize = keyof typeof spacing;
 
 export const radius = {
   tag: 6,
+  badge: 8,
   control: 10,
   card: 12,
+  field: 14,
   modal: 16,
+  bubble: 18,
   container: 20,
+  composer: 22,
+  sheet: 24,
   full: 9999,
+} as const;
+
+// Spacing steps for the tab-based screens. Keys are the point values, so a
+// style can only use a step that exists here.
+export const space = {
+  1: 1, 2: 2, 4: 4, 6: 6, 8: 8, 10: 10, 12: 12, 14: 14, 16: 16, 18: 18, 20: 20, 24: 24,
+} as const;
+
+export type SpaceStep = keyof typeof space;
+
+export const size = {
+  tapTarget: 44,
+  topBar: 52,
+  control: 44,
+  controlLarge: 48,
+} as const;
+
+export const borderWidth = {
+  hairline: 1,
+  emphasis: 1.5,
 } as const;
 
 export const typography = {
@@ -86,14 +120,44 @@ export const typography = {
   },
 } as const;
 
-// Light semantics — conserved as-is from lib/theme.ts's `semanticColors`.
+// Text styles for the tab-based screens: ten sizes, one line height per size,
+// named by size with the weight as a suffix. `typography` above stays for the
+// screens that have not moved to this scale yet.
+export const text = {
+  title: { fontFamily: fonts.productSemiBold, fontSize: 30, lineHeight: 41 },
+  heading: { fontFamily: fonts.productSemiBold, fontSize: 24, lineHeight: 34 },
+  subheading: { fontFamily: fonts.productSemiBold, fontSize: 18, lineHeight: 25 },
+  headline: { fontFamily: fonts.productSemiBold, fontSize: 17, lineHeight: 25 },
+  headlineRegular: { fontFamily: fonts.product, fontSize: 17, lineHeight: 25 },
+  bodySemiBold: { fontFamily: fonts.productSemiBold, fontSize: 16, lineHeight: 22 },
+  bodyMedium: { fontFamily: fonts.productMedium, fontSize: 16, lineHeight: 22 },
+  body: { fontFamily: fonts.product, fontSize: 16, lineHeight: 22 },
+  calloutSemiBold: { fontFamily: fonts.productSemiBold, fontSize: 15, lineHeight: 22 },
+  callout: { fontFamily: fonts.product, fontSize: 15, lineHeight: 22 },
+  labelMedium: { fontFamily: fonts.productMedium, fontSize: 14, lineHeight: 20 },
+  label: { fontFamily: fonts.product, fontSize: 14, lineHeight: 20 },
+  captionMedium: { fontFamily: fonts.productMedium, fontSize: 13, lineHeight: 18 },
+  caption: { fontFamily: fonts.product, fontSize: 13, lineHeight: 18 },
+  footnoteMedium: { fontFamily: fonts.productMedium, fontSize: 12, lineHeight: 17 },
+  footnote: { fontFamily: fonts.product, fontSize: 12, lineHeight: 17 },
+  microSemiBold: { fontFamily: fonts.productSemiBold, fontSize: 11, lineHeight: 15 },
+  micro: { fontFamily: fonts.productMedium, fontSize: 11, lineHeight: 15 },
+} as const;
+
+export type TextStyleName = keyof typeof text;
+
 const semanticColorsLight = {
-  background: palette.green[50],
-  card: palette.neutral[100],
+  background: palette.paper[0],
+  card: palette.paper[50],
   accentSurface: palette.teal[50],
+  // The stronger line: outlines and dividers on screens that draw them.
   borderSubtle: palette.neutral[300],
+  // The quiet line: card edges, the composer and the tab bar.
+  borderHairline: palette.neutral[100],
   textDefault: palette.neutral[800],
   textSubtle: palette.neutral[600],
+  // Placeholders, section labels, times and counts.
+  textTertiary: palette.neutral[450],
   textInverse: palette.neutral[50],
   brand: palette.green[500],
   brandStrong: palette.green[700],
@@ -101,8 +165,21 @@ const semanticColorsLight = {
   success: palette.teal[500],
   highlight: palette.gold[400],
   info: palette.blue[500],
-  danger: palette.coral[600],
+  danger: palette.coral[500],
   disabledSurface: palette.neutral[300],
+  // Buttons: filled, secondary, outline and text-only.
+  controlPrimary: palette.control[800],
+  onControlPrimary: palette.control[50],
+  controlSecondary: palette.control[100],
+  onControlSecondary: palette.control[800],
+  controlOutline: palette.control[0],
+  controlOutlineBorder: palette.control[200],
+  onControl: palette.control[950],
+  chipSelected: palette.control[900],
+  onChipSelected: palette.control[0],
+  chip: palette.paper[100],
+  grabber: palette.paper[300],
+  scrim: "rgba(0, 0, 0, 0.3)",
 } as const;
 
 // Dark semantics — on-brand, built from the same palette families as light,
@@ -114,8 +191,10 @@ const semanticColorsDark = {
   card: palette.neutral[800],
   accentSurface: palette.teal[800],
   borderSubtle: palette.neutral[700],
+  borderHairline: palette.neutral[700],
   textDefault: palette.neutral[100],
   textSubtle: palette.neutral[400],
+  textTertiary: palette.neutral[500],
   textInverse: palette.neutral[50],
   brand: palette.green[400],
   brandStrong: palette.green[300],
@@ -123,8 +202,21 @@ const semanticColorsDark = {
   success: palette.teal[400],
   highlight: palette.gold[400],
   info: palette.blue[400],
-  danger: palette.coral[500],
+  danger: palette.coral[400],
   disabledSurface: palette.neutral[700],
+  // The design is light only; these mirror the light roles until dark frames exist.
+  controlPrimary: palette.control[50],
+  onControlPrimary: palette.control[800],
+  controlSecondary: palette.neutral[800],
+  onControlSecondary: palette.neutral[100],
+  controlOutline: palette.neutral[900],
+  controlOutlineBorder: palette.neutral[700],
+  onControl: palette.neutral[100],
+  chipSelected: palette.control[50],
+  onChipSelected: palette.control[900],
+  chip: palette.neutral[800],
+  grabber: palette.neutral[600],
+  scrim: "rgba(0, 0, 0, 0.5)",
 } as const;
 
 export const semanticColorsByMode = {
@@ -146,6 +238,8 @@ export const designShadows = {
   md: "0 4px 8px rgba(51, 46, 36, 0.08)",
   lg: "0 8px 16px rgba(51, 46, 36, 0.10)",
   lgShine: "inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 16px rgba(51, 46, 36, 0.10)",
+  composer: "0 4px 16px rgba(0, 0, 0, 0.06)",
+  panel: "8px 0 24px rgba(0, 0, 0, 0.12)",
 } as const;
 
 // Flattened aliases, per mode, for the common surface/text roles screens
