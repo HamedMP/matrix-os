@@ -111,16 +111,27 @@ suite("Electron Desktop branded account entry", () => {
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     const reopen = page.getByRole("button", { name: "Open browser again", exact: true });
     await reopen.click(); // Playwright scrolls the actual scroll container.
-    const geometry = await page.locator(".signin").evaluate((element) => ({
-      overflow: getComputedStyle(element).overflowY,
-      scroll: element.scrollHeight,
-      height: element.clientHeight,
-      width: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-    }));
+    const geometry = await page.locator(".signin").evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      const titlebar = document.querySelector<HTMLElement>(".signin-titlebar")!;
+      return {
+        overflow: getComputedStyle(element).overflowY,
+        scroll: element.scrollHeight,
+        scrollTop: element.scrollTop,
+        height: element.clientHeight,
+        width: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        titlebarTop: titlebar.getBoundingClientRect().top,
+        titlebarBackground: getComputedStyle(titlebar).backgroundColor,
+        paper: getComputedStyle(element).backgroundColor,
+      };
+    });
     expect(geometry.overflow).toBe("auto");
     expect(geometry.scroll).toBeGreaterThan(geometry.height);
     expect(geometry.scrollWidth).toBe(geometry.width);
+    expect(geometry.scrollTop).toBeGreaterThan(0);
+    expect(geometry.titlebarTop).toBe(0);
+    expect(geometry.titlebarBackground).toBe(geometry.paper);
     await page.screenshot({ path: join(output, "narrow-approval.png") });
   });
 });
