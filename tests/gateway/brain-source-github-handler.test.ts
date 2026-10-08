@@ -176,3 +176,144 @@ describe("github source config", () => {
     expect(await rows.lookup((100).toString(16).padStart(64, "0"))).toEqual({ etag: '"100"', lastModified: null });
   });
 });
+
+describe("github source adapters", () => {
+  it("token mode needs a token-shaped MATRIX_BRAIN_GITHUB_TOKEN and syncs through the REST client", async () => {
+    const tokenConfig = { ...githubConfig, mode: "token" as const };
+    expect(await handlerWith().createAdapter("owner_a", project, tokenConfig)).toEqual({ ok: false, code: "not_connected" });
+    expect(await handlerWith({ env: { MATRIX_BRAIN_GITHUB_TOKEN: "short" } }).createAdapter("owner_a", project, tokenConfig))
+      .toEqual({ ok: false, code: "not_connected" });
+    const fake = fakeFetch([
+      jsonResponse(githubFixture("issues-page")), jsonResponse(githubFixture("pull-12")),
+      jsonResponse(githubFixture("pull-12-commits")), jsonResponse(githubFixture("pull-12-reviews")),
+      jsonResponse(githubFixture("pull-12-comments")),
+    ]);
+    const handler = handlerWith({ env: { MATRIX_BRAIN_GITHUB_TOKEN: ` ${TOKEN} ` }, fetch: fake.fetch });
+    const resolution = await handler.createAdapter("owner_a", project, tokenConfig);
+    if (!resolution.ok) throw new Error("expected an adapter");
+    const sourceId = await newSource();
+    const result = await runGithubPages({
+      repository: harness.repository, scope: scopeA, sourceId, externalRef: REF, adapter: resolution.adapter, config: tokenConfig,
+    });
+    expect(result).toMatchObject({ status: "succeeded", written: 5 });
+    expect(fake.calls.map((call) => new URL(call.url).pathname)).toEqual([
+      "/repos/acme/widgets/issues", "/repos/acme/widgets/pulls/12", "/repos/acme/widgets/pulls/12/commits",
+      "/repos/acme/widgets/pulls/12/reviews", "/repos/acme/widgets/pulls/12/comments",
+    ]);
+    expect(await harness.repository.getDocument(scopeA, githubDocumentId(REF, "issue", 7))).not.toBeNull();
+  });
+
+  it("keeps the environment token to the gateway's own owner", async () => {
+    const tokenConfig = { ...githubConfig, mode: "token" as const };
+    const env = { MATRIX_BRAIN_GITHUB_TOKEN: TOKEN };
+    const shared = handlerWith({ env, integrations: caller({ status: "not_connected" }).integrations });
+    expect((await shared.createAdapter("owner_a", project, tokenConfig)).ok).toBe(true);
+    expect(await shared.createAdapter("owner_b", project, tokenConfig)).toEqual({ ok: false, code: "not_connected" });
+    expect(await shared.availability("owner_a")).toEqual({ available: true });
+    expect(await shared.availability("owner_b")).toEqual({ available: false, reason: "not_connected" });
+    const nobody = createBrainGithubSourceHandler({ kysely: harness.db, integrations: caller({ status: "not_connected" }).integrations, env });
+    expect(await nobody.createAdapter("owner_a", project, tokenConfig)).toEqual({ ok: false, code: "not_connected" });
+    expect(await nobody.availability("owner_a")).toEqual({ available: false, reason: "not_connected" });
+  });
+
+  it("integration mode calls the registry read actions for the owner with the account label", async () => {
+    const fake = caller((request) => {
+      const action = (request as { action: string }).action;
+      return { status: "ok", data: action === "list_issues_since" ? [] : {} };
+    });
+    const resolution = await handlerWith({ integrations: fake.integrations })
+      .createAdapter("owner_a", project, { ...githubConfig, accountLabel: "work" });
+    if (!resolution.ok) throw new Error("expected an adapter");
+    const sourceId = await newSource();
+    await runGithubPages({ repository: harness.repository, scope: scopeA, sourceId, externalRef: REF, adapter: resolution.adapter });
+    expect(fake.calls).toEqual([{
+      service: "github", action: "list_issues_since", label: "work",
+      params: { repo: "acme/widgets", since: "2026-01-01T00:00:00Z", page: 1, per_page: 50 },
+    }]);
+  });
+
+  it("integration mode without a label lets the caller choose the account; token mode works without a fetch", async () => {
+    const fake = caller({ status: "ok", data: [] });
+    const resolution = await handlerWith({ integrations: fake.integrations }).createAdapter("owner_a", project, githubConfig);
+    if (!resolution.ok) throw new Error("expected an adapter");
+    await runGithubPages({ repository: harness.repository, scope: scopeA, sourceId: await newSource(), externalRef: REF, adapter: resolution.adapter });
+    expect(fake.calls[0]).not.toHaveProperty("label");
+    const token = await handlerWith({ env: { MATRIX_BRAIN_GITHUB_TOKEN: TOKEN } }).createAdapter("owner_a", project, { ...githubConfig, mode: "token" });
+    expect(token.ok).toBe(true);
+    const fromProcess = createBrainGithubSourceHandler({ kysely: harness.db, integrations: caller({ status: "not_connected" }).integrations });
+    const saved = process.env.MATRIX_BRAIN_GITHUB_TOKEN;
+    delete process.env.MATRIX_BRAIN_GITHUB_TOKEN;
+    try {
+      expect(await fromProcess.availability("o")).toEqual({ available: false, reason: "not_connected" });
+    } finally {
+      if (saved !== undefined) process.env.MATRIX_BRAIN_GITHUB_TOKEN = saved;
+    }
+  });
+
+  it("maps integration outcomes to source codes", async () => {
+    const signal = new AbortController().signal;
+    const read = (outcome: BrainIntegrationCallOutcome, resource = { kind: "pull_reviews", number: 1, perPage: 2 } as const) =>
+      createGithubIntegrationClient({ caller: caller(outcome).integrations, ownerId: "o", repo: "a/b" }).read(resource, signal);
+    expect(await read({ status: "ok", data: [1, 2] })).toEqual({ ok: true, data: [1, 2], hasMore: true });
+    expect(await read({ status: "ok", data: [1] })).toEqual({ ok: true, data: [1], hasMore: false });
+    expect(await read({ status: "ok", data: {} }, { kind: "pull", number: 1 } as never)).toEqual({ ok: true, data: {}, hasMore: false });
+    expect(await read({ status: "rate_limited", retryAfterSeconds: 9 })).toEqual({ ok: false, code: "rate_limited", retryAfterSeconds: 9 });
+    expect(await read({ status: "not_connected" })).toEqual({ ok: false, code: "not_connected" });
+    expect(await read({ status: "unauthorized" })).toEqual({ ok: false, code: "auth_failed" });
+    expect(await read({ status: "not_found" })).toEqual({ ok: false, code: "remote_not_found" });
+    expect(await read({ status: "invalid" })).toEqual({ ok: false, code: "config_invalid" });
+    expect(await read({ status: "unavailable" })).toEqual({ ok: false, code: "provider_unavailable" });
+  });
+
+  it("answers provider_timeout when the run aborts a call and rethrows other failures", async () => {
+    const failing = (error: Error): BrainIntegrationCaller => ({ call: async () => { throw error; } });
+    const controller = new AbortController();
+    controller.abort();
+    const timed = createGithubIntegrationClient({ caller: failing(new Error("aborted")), ownerId: "o", repo: "a/b" });
+    expect(await timed.read({ kind: "pull", number: 1 }, controller.signal)).toEqual({ ok: false, code: "provider_timeout" });
+    const broken = createGithubIntegrationClient({ caller: failing(new RangeError("bug")), ownerId: "o", repo: "a/b" });
+    await expect(broken.read({ kind: "pull", number: 1 }, new AbortController().signal)).rejects.toThrow(RangeError);
+  });
+});
+
+describe("github availability", () => {
+  it("is available with a token or a connected account", async () => {
+    expect(await handlerWith({ env: { MATRIX_BRAIN_GITHUB_TOKEN: TOKEN } }).availability("owner_a")).toEqual({ available: true });
+    const connected = caller({ status: "ok", data: [] });
+    expect(await handlerWith({ integrations: connected.integrations }).availability("owner_a")).toEqual({ available: true });
+    expect(connected.calls).toEqual([{ service: "github", action: "list_repos", params: { per_page: 1 } }]);
+    expect(await handlerWith({ integrations: caller({ status: "rate_limited", retryAfterSeconds: 5 }).integrations }).availability("o"))
+      .toEqual({ available: true });
+  });
+
+  it("reports not_connected or not_configured otherwise", async () => {
+    expect(await handlerWith({ integrations: caller({ status: "not_connected" }).integrations }).availability("o"))
+      .toEqual({ available: false, reason: "not_connected" });
+    expect(await handlerWith({ integrations: caller({ status: "unauthorized" }).integrations }).availability("o"))
+      .toEqual({ available: false, reason: "not_connected" });
+    expect(await handlerWith().availability("o")).toEqual({ available: false, reason: "not_configured" });
+  });
+
+  it("asks the connection lookup instead of GitHub when one is given", async () => {
+    const probe = caller({ status: "ok", data: [] });
+    const lookups: string[] = [];
+    const isConnected = async (ownerId: string, service: string) => {
+      lookups.push(`${ownerId}/${service}`);
+      return ownerId === "owner_a";
+    };
+    const handler = createBrainGithubSourceHandler({ kysely: harness.db, integrations: probe.integrations, env: {}, isConnected });
+    expect(await handler.availability("owner_a")).toEqual({ available: true });
+    expect(await handler.availability("owner_b")).toEqual({ available: false, reason: "not_connected" });
+    expect(lookups).toEqual(["owner_a/github", "owner_b/github"]);
+    expect(probe.calls).toEqual([]);
+  });
+
+  it("treats a timed-out probe as not configured and rethrows other errors", async () => {
+    const hanging: BrainIntegrationCaller = {
+      call: (_owner, _request, signal) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason))),
+    };
+    expect(await handlerWith({ integrations: hanging }).availability("o")).toEqual({ available: false, reason: "not_configured" });
+    const broken: BrainIntegrationCaller = { call: async () => { throw new RangeError("bug"); } };
+    await expect(handlerWith({ integrations: broken }).availability("o")).rejects.toThrow(RangeError);
+  });
+});
