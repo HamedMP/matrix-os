@@ -200,12 +200,15 @@ export type BrainSearchChunkWrite = BrainVectorReplace["chunks"][number] & { rea
 
 /**
  * The search stores: replaceChunks also keeps text keys, and is skipped (nothing deleted or written) unless the
- * document is live at the input's (incarnation, revision). Optional: remaining() says how many more rows fit when
- * the listed documents' rows are replaced; storedVectors() returns kept vectors by text key.
+ * document is live at the input's (incarnation, revision) and, when the input carries a claims key, its search row
+ * still holds that claims set (isLiveAt, in the write's transaction). Optional: remaining() says how many more rows
+ * fit when the listed documents' rows are replaced; storedVectors() returns kept vectors by text key.
  */
 export interface BrainSearchVectorStore extends BrainVectorStore {
   replaceChunks(scope: BrainScopeKey, input: Omit<BrainVectorReplace, "chunks"> & {
     readonly chunks: readonly BrainSearchChunkWrite[];
+    /** brain_search_documents.claims_key the vectors were embedded for (32 hex characters). */
+    readonly claimsKey?: string;
   }): Promise<void>;
   remaining?(scope: BrainScopeKey, documentIds?: readonly string[]): Promise<number>;
   /** Vectors of these documents for this provider and size, by text key, for the listed keys only. */

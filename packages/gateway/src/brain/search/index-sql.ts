@@ -20,6 +20,8 @@ const idsFilter = (column: string, ids: readonly string[] | null): SqlFragment =
 
 /** A document id with the (incarnation, revision) a row was built from or is about. */
 export interface BrainSearchOrphan { readonly documentId: string; readonly incarnation: string; readonly revision: number }
+/** A row to embed, with the claims set it was built from: a claims change keeps the revision but not this key. */
+export interface BrainSearchEmbedCandidate extends BrainSearchOrphan { readonly claimsKey: string }
 type BuiltRow = { document_id: string; incarnation: string; revision: number };
 const asBuilt = (rows: readonly BuiltRow[]): BrainSearchOrphan[] =>
   rows.map((row) => ({ documentId: row.document_id, incarnation: row.incarnation, revision: row.revision }));
@@ -62,14 +64,17 @@ export async function selectPendingIds(
 export async function selectEmbedPending(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, embed: BrainSearchEmbedTarget, ids: readonly string[] | null,
   limit: number,
-): Promise<BrainSearchOrphan[]> {
-  const rows = await sql<BuiltRow>`SELECT s.document_id, s.incarnation, s.revision FROM brain_search_documents s
+): Promise<BrainSearchEmbedCandidate[]> {
+  const rows = await sql<BuiltRow & { claims_key: string }>`SELECT s.document_id, s.incarnation, s.revision,
+      s.claims_key
+    FROM brain_search_documents s
     JOIN brain_documents d ON d.owner_id = s.owner_id AND d.scope_id = s.scope_id AND d.document_id = s.document_id
       AND d.deleted_at IS NULL AND d.incarnation = s.incarnation AND d.revision = s.revision
     WHERE s.owner_id = ${scope.ownerId} AND s.scope_id = ${scope.scopeId} AND ${sendable(embed)}
       AND s.embedded_provider IS DISTINCT FROM ${embed.marker}${idsFilter("s.document_id", ids)}
     ORDER BY s.embed_failed_at ASC NULLS FIRST, s.document_id LIMIT ${limit}`.execute(db);
-  return asBuilt(rows.rows);
+  return rows.rows.map((row) => ({ documentId: row.document_id, incarnation: row.incarnation, revision: row.revision,
+    claimsKey: row.claims_key }));
 }
 
 /** Pending documents counted up to cap + 1. */
@@ -194,25 +199,35 @@ export async function rebuildDocuments(
 
 /**
  * Marks a row embedded under `marker` (store and provider), or (marker null) records a failed attempt at `now`, only
- * while the row still holds the (incarnation, revision) the attempt was for.
+ * while the row still holds the (incarnation, revision) and claims set the attempt was for: a slower pass for an older
+ * claims set never marks a row a newer pass rebuilt.
  */
 export async function markEmbedding(
-  trx: Transaction<BrainDatabase>, scope: BrainScopeKey, built: BrainSearchOrphan, marker: string | null, now: Date,
+  trx: Transaction<BrainDatabase>, scope: BrainScopeKey, built: BrainSearchEmbedCandidate, marker: string | null,
+  now: Date,
 ): Promise<void> {
   const set = marker === null ? sql`embed_failed_at = ${now}`
     : sql`embedded_provider = ${marker}, embed_failed_at = NULL`;
   await sql`UPDATE brain_search_documents SET ${set}
     WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id = ${built.documentId}
-      AND incarnation = ${built.incarnation}::uuid AND revision = ${built.revision}`.execute(trx);
+      AND incarnation = ${built.incarnation}::uuid AND revision = ${built.revision}
+      AND claims_key = ${built.claimsKey}`.execute(trx);
 }
 
-/** True while the document is live at (incarnation, revision): a vector write for anything else is skipped. */
+/**
+ * True while the document is live at (incarnation, revision) and, when a claims key is given, its search row still
+ * holds that claims set: a vector write for anything else is skipped.
+ */
 export async function isLiveAt(
-  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan,
+  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan & { readonly claimsKey?: string },
 ): Promise<boolean> {
-  const rows = await sql`SELECT 1 FROM brain_documents
-    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id = ${built.documentId}
-      AND deleted_at IS NULL AND incarnation = ${built.incarnation}::uuid AND revision = ${built.revision}`.execute(trx);
+  const claims = built.claimsKey === undefined ? sql`` : sql` AND EXISTS (SELECT 1 FROM brain_search_documents s
+    WHERE s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id
+      AND s.incarnation = d.incarnation AND s.revision = d.revision AND s.claims_key = ${built.claimsKey})`;
+  const rows = await sql`SELECT 1 FROM brain_documents d
+    WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.document_id = ${built.documentId}
+      AND d.deleted_at IS NULL AND d.incarnation = ${built.incarnation}::uuid
+      AND d.revision = ${built.revision}${claims}`.execute(trx);
   return rows.rows.length > 0;
 }
 
