@@ -228,3 +228,118 @@ export function orientCandidate(
   const aStays = kindRank(a.key) - kindRank(b.key) || linksOf(b.entityId) - linksOf(a.entityId);
   return aStays <= 0 ? { entity: a, alias: b } : { entity: b, alias: a };
 }
+
+// Cursors: base64url JSON {"v":1,"q":<fingerprint>,"s":<score in hundredths>,"n":<links>,"id":<suggestion id>}.
+
+const CURSOR_JSON = /^\{"v":1,"q":"([a-f0-9]{16})","s":([0-9]{1,3}),"n":([0-9]{1,9}),"id":"(sug_[a-f0-9]{32})"\}$/;
+const FINGERPRINT = queryFingerprint(["merge_suggestions"]);
+
+interface Position { readonly s: number; readonly n: number; readonly id: string }
+
+function encodeCursor(position: Position): string {
+  return Buffer.from(JSON.stringify({ v: 1, q: FINGERPRINT, ...position }), "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): Position {
+  const parts = /^[A-Za-z0-9_-]+$/.test(cursor) ? CURSOR_JSON.exec(Buffer.from(cursor, "base64url").toString("utf8"))
+    : null;
+  if (parts === null || parts[1] !== FINGERPRINT) throw new BrainApiError("invalid_request");
+  return { s: Number(parts[2]), n: Number(parts[3]), id: parts[4]! };
+}
+
+/** Sort order: score, then links, both descending, then id ascending. */
+function compare(x: Position, y: Position): number {
+  return y.s - x.s || y.n - x.n || x.id.localeCompare(y.id);
+}
+
+// Reads.
+
+/** The scan and ranking caps; tests pass smaller ones. */
+export type BrainMergeScanLimits = {
+  readonly [K in "personsScanned" | "splitsScanned" | "pairsScanned" | "suggestionsMax"]: number;
+};
+
+async function readInput(db: BrainGraphExecutor, scope: BrainScopeKey, limits: BrainMergeScanLimits) {
+  const persons = await db.selectFrom("brain_graph_entities as e")
+    .leftJoin("brain_graph_aliases as a", (join) => join.onRef("a.owner_id", "=", "e.owner_id")
+      .onRef("a.scope_id", "=", "e.scope_id").onRef("a.alias_entity_id", "=", "e.entity_id")
+      .on("a.state", "=", "merged"))
+    .select(["e.entity_id", "e.key", "e.display_name", "a.entity_id as root"])
+    .where("e.owner_id", "=", scope.ownerId).where("e.scope_id", "=", scope.scopeId).where("e.kind", "=", "person")
+    .orderBy("e.last_seen_at", "desc").orderBy("e.entity_id").limit(limits.personsScanned + 1).execute();
+  const splits = await db.selectFrom("brain_graph_aliases").select(["alias_entity_id", "entity_id"])
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("state", "=", "split")
+    .orderBy("alias_entity_id").limit(limits.splitsScanned + 1).execute();
+  const pairs = await sql<{ n: string; e: string; documents: number }>`
+    SELECT pair->>'n' AS n, pair->>'e' AS e, count(*)::int AS documents FROM brain_graph_state s
+    JOIN brain_documents d ON d.owner_id = s.owner_id AND d.scope_id = s.scope_id AND d.document_id = s.document_id
+    CROSS JOIN LATERAL jsonb_array_elements(s.identities) AS pair
+    WHERE s.owner_id = ${scope.ownerId} AND s.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
+    GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2 LIMIT ${limits.pairsScanned + 1}`.execute(db);
+  const truncated = persons.length > limits.personsScanned || splits.length > limits.splitsScanned
+    || pairs.rows.length > limits.pairsScanned;
+  const input: BrainMergeInput = {
+    persons: persons.slice(0, limits.personsScanned).map((row) => ({
+      entityId: row.entity_id, key: row.key, displayName: row.display_name, root: row.root ?? row.entity_id,
+    })),
+    splits: splits.slice(0, limits.splitsScanned).map((row) => ({ aliasId: row.alias_entity_id, entityId: row.entity_id })),
+    pairs: pairs.rows.slice(0, limits.pairsScanned),
+  };
+  return { input, truncated };
+}
+
+/** Stored links per entity id (persons only author, review or are mentioned). */
+async function linkCounts(db: BrainGraphExecutor, scope: BrainScopeKey, ids: readonly string[]) {
+  const counts = new Map(ids.map((id) => [id, 0]));
+  if (ids.length === 0) return counts;
+  const owner = sql`owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}`;
+  const result = await sql<{ id: string; n: number }>`SELECT id, count(*)::int AS n FROM (
+      SELECT from_entity_id AS id FROM brain_graph_links WHERE ${owner} AND from_entity_id IN (${sql.join(ids)})
+      UNION ALL SELECT to_entity_id FROM brain_graph_links WHERE ${owner} AND to_entity_id IN (${sql.join(ids)})
+    ) AS l GROUP BY id`.execute(db);
+  for (const row of result.rows) counts.set(row.id, Number(row.n));
+  return counts;
+}
+
+const refView = (person: BrainMergePerson): BrainEntityRefView => ({
+  entityId: person.entityId, kind: "person", key: person.key, displayName: person.displayName,
+});
+
+export async function listMergeSuggestions(
+  db: BrainGraphExecutor, scope: BrainScopeKey, query: z.output<typeof MergeSuggestionsQuerySchema>,
+  limits: BrainMergeScanLimits = BRAIN_MERGE_SUGGESTION_LIMITS,
+): Promise<BrainMergeSuggestionsView> {
+  const after = query.cursor === undefined ? null : decodeCursor(query.cursor);
+  const { input, truncated: scanTruncated } = await readInput(db, scope, limits);
+  const candidates = findMergeCandidates(input)
+    .sort((x, y) => y.score - x.score || x.a.entityId.localeCompare(y.a.entityId)
+      || x.b.entityId.localeCompare(y.b.entityId));
+  const ranked = candidates.slice(0, limits.suggestionsMax);
+  const members = new Map<string, string[]>();
+  for (const person of input.persons) members.set(person.root, [...members.get(person.root) ?? [], person.entityId]);
+  const roots = new Set(ranked.flatMap((candidate) => [candidate.a.entityId, candidate.b.entityId]));
+  const links = await linkCounts(db, scope, [...roots].flatMap((root) => members.get(root)!));
+  const linksOf = (root: string) => members.get(root)!.reduce((sum, id) => sum + links.get(id)!, 0);
+
+  const suggestions = ranked.map((candidate) => {
+    const { entity, alias } = orientCandidate(candidate, linksOf);
+    const [entityLinks, aliasLinks] = [linksOf(entity.entityId), linksOf(alias.entityId)];
+    const suggestionId = `sug_${createHash("sha256")
+      .update(JSON.stringify(["brain_merge_suggestion_v1", entity.entityId, alias.entityId]), "utf8")
+      .digest("hex").slice(0, 32)}`;
+    const view: BrainMergeSuggestionView = {
+      suggestionId, score: candidate.score, entity: refView(entity), alias: refView(alias),
+      aliasKey: `person:${alias.key}`, evidence: candidate.evidence,
+      counts: { entityLinks, aliasLinks, aliasEntities: members.get(alias.entityId)!.length },
+    };
+    return { view, position: { s: Math.round(candidate.score * 100), n: entityLinks + aliasLinks, id: suggestionId } };
+  }).sort((x, y) => compare(x.position, y.position));
+
+  const rest = after === null ? suggestions : suggestions.filter((item) => compare(item.position, after) > 0);
+  const page = rest.slice(0, query.limit);
+  const last = rest.length > query.limit ? page[page.length - 1]! : null;
+  return {
+    items: page.map((item) => item.view), nextCursor: last === null ? null : encodeCursor(last.position),
+    truncated: scanTruncated || candidates.length > ranked.length,
+  };
+}
