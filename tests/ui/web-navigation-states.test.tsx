@@ -25,6 +25,9 @@ it('keeps the full Web title visible to assistive technology and exposes ellipsi
   const title='Long descriptive Chat title '.repeat(5).trim();
   render(<RenameableConversationRow conversation={{id:'chat_fulltitle',title,preview:'',messageCount:1,updatedAt:1}} active mobile={false} editing={false} renamePending={false} onSelect={()=>{}} onRenameStart={()=>{}} onRenameCommit={()=>{}} onRenameCancel={()=>{}}/>);
   expect(screen.getByTitle(title).getAttribute('title')).toBe(title);
+  const row=screen.getByRole('button',{name:title});
+  expect(row.querySelector('svg')).toBeNull();
+  expect(row.firstElementChild?.classList.contains('matrix-web-chat-title')).toBe(true);
   fireEvent.keyDown(screen.getByRole('button',{name:`Actions for ${title}`}),{key:'Enter'});
   expect(await screen.findByRole('menuitem',{name:'Rename'})).toBeTruthy();
 });
