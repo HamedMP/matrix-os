@@ -365,3 +365,221 @@ Cross-package communication: none; no `globalThis`, no IPC; the repository and r
 injected. Config injection: `GitSyncOptions` (`config`, `limits`, `runner`, `now`), limits
 clamped to `GIT_SYNC_LIMIT_CEILINGS`. The adapter reads no environment variable; the default
 runner copies `PATH` and `HOME` into the child. Callers pass the same `config` on every run.
+
+## Failure modes
+
+- Timeouts: every git process has `timeout` (default 15 s, ceiling 60 s, SIGTERM), so a hung
+  git, a slow disk or a huge repository gives `git_timeout`, not a stalled run. The run budget
+  (default 120 s, ceiling 600 s) is checked before each window. Store transactions keep the 551
+  deadlines (5 s lock, 15 s statement). There is no `fetch`, so no `AbortSignal`.
+- Rewritten history: a force-push, a garbage-collected cursor object, a cursor off the
+  first-parent chain, or a stopped run's read-ahead tip that the branch no longer contains starts
+  a rescan from the root, bounded by `commitsPerRun` per run. Documents still on the new history
+  come out `unchanged` (same id and content hash), spec documents included, between runs as well
+  as at the end; the result is `succeeded` with `historyRewritten` and `errorCode:
+  "history_rewritten"`. Exceptions with extra revisions but the same final content: a PR number
+  named by two first-parent commits, and a spec file that changes and changes back across
+  windows. Documents of dropped commits stay live (Deferred).
+- Concurrent access: one run per source per process (guard set). Across processes the cursor
+  compare-and-set decides. A window's first batch moves the cursor to the run's in-progress
+  token, so a run that read the cursor before that fails on its first batch with
+  `cursor_conflict` and writes nothing; a run that read the token takes the window over the same
+  way, and the run it displaced fails on its next batch. A source paused or deleted mid-run gives
+  `source_inactive` or `source_unavailable`.
+- Crash recovery: each batch is one transaction. A crash mid-window leaves the in-progress token;
+  the next run takes it over and replays the window; replayed documents are `unchanged` and equal
+  ref sets are not rewritten. The next run closes the
+  `running` receipt as `interrupted` (spec 551). The adapter writes no files. Windows committed
+  before any failure stay, `cursorAfter` says where, and the next run resumes there.
+- Error propagation: every failure is returned as a result and closes the receipt `failed`; every
+  catch checks the error type and rethrows or logs it; no fire-and-forget promise.
+- Repository state: git missing or older than 2.32, shallow, not a top level, no branch, no web
+  base, or a mismatching remote each fail the run with a `fix_source` code.
+- Large content: long messages are truncated with the marker, paths over 200 are capped, big
+  spec files are split or stubbed, non-UTF-8 paths and spec files are dropped or stubbed with a
+  notice. None of these fails the run. The scope document or byte cap gives `brain_capacity`.
+- Moving refs: the tip is resolved once per run, so a push during a run is picked up next run. A
+  local-only commit (no remote-tracking ref) gets a permalink that works once it is pushed.
+- Shutdown: no timers or subscribers. A run in flight is abandoned; git children are not
+  detached and stop when their output pipe closes; the next run replays the window.
+
+## Resource management
+
+| Limit | Default (ceiling) | Enforced in |
+| --- | --- | --- |
+| commits per run / per window | 1,000 (10,000) / 50 (100) | sync loop; reader rejects a larger window |
+| upserts / refs per batch | 100 (200) / 5,000 (10,000) | batch packer; store schema |
+| git process timeout / run budget | 15 s (60 s) / 120 s (600 s) | runner / sync loop |
+| concurrent syncs per process | 16 | guard set, cleared in `finally` |
+| stderr kept / small command output | 4,096 bytes / 64 KiB | runner / reader |
+| window metadata and name-status logs | 16 MiB each, then per commit | reader |
+| one message / one commit's paths / `ls-tree` | 256 KiB / 1 MiB (truncated) / 1 MiB (at most 500 exact paths) | reader |
+| remote URL / author name | 2,048 / 200 chars | reader, parser |
+| paths per commit; refs per document | 200; 200 (`pr` 8, `spec` 16) | parser, documents |
+| ref value / spec globs | 512 bytes / 8 of 200 chars | parser and store / options schema |
+| spec part / parts per file / file read | 60,000 bytes / 8 / 400,000 bytes | specs |
+| spec files per window / rejected ids in a result | 500 / 100 | sync loop / result |
+
+- The 551 limits still apply (64 KiB per document, 300-char title, 2,048-char permalink, 200
+  upserts and 200 tombstones per batch, 10,000 documents and 256 MiB per scope); more
+  first-parent commits than the document cap stop with `brain_capacity`.
+- Memory per window: the raw logs (16 MiB each plus 1 MiB of `ls-tree`), one window of documents
+  and the touched spec files (worst case 500 files of 400,000 bytes). The only long-lived state
+  is the guard set (at most 16 keys). Files: none written. Child processes: one at a time.
+- Third-party data flow: none (permalinks are only text); messages, author names, paths and spec
+  text go only into the owner's Postgres scope.
+
+## Invariants
+
+- Source of truth: the repository's first-parent history on its default branch, read-only. The
+  documents and refs are a derived index a rescan rebuilds; the cursor is in the store only.
+- Lock and transaction scope: git runs outside any transaction. Each batch is one
+  `applySyncBatch` transaction under the 551 scope lock, where documents, refs and the cursor
+  commit together. No git process or network call runs inside a transaction.
+- Cursor: the sha of the last first-parent commit whose window was fully applied, with the
+  run's tip when the run stopped short of it, or the in-progress token of the run applying the
+  next window. Only a window's final batch moves the applied position.
+- Determinism: ids come from the identity tuple, never content; the same history gives the same
+  documents and refs however it is split. Only live documents have refs, exactly the last set.
+- Acceptable orphan states: documents of commits dropped by a force-push; an in-progress
+  cursor left by a crashed run (the next run takes it over); spec documents ahead of the cursor
+  (their content at a stopped run's tip); spec files over the per-window cap until touched again.
+- Auth source of truth: the caller-resolved scope key, `repoPath` and `homePath`; the adapter
+  re-checks containment and never widens either. Deferred scope: listed under Deferred.
+
+## Integration test checkpoint
+
+Fixture repositories are built in a temp Matrix home with git plumbing only (`commit-tree`,
+`update-ref`, ...), fixed identities and dates, so shas are deterministic; they never touch the
+matrix-os checkout. The store is the 551 PGlite harness.
+
+1. Parsers and reader: logs with `\x1f`, invalid UTF-8, an empty commit, a root commit, a
+   40-hex path, R/C statuses, 250 paths capped at 200, truncation and garbage; exact-path
+   `ls-tree`; every classification case; validators; hostile globs and a 256 KiB GitLab subject in
+   linear time; argv prefix, cwd, timeout, buffers and exit codes; per-commit fallback;
+   containment, including a `.git` file or symlink to a repository outside home or to home's own
+   `.git`, and alternates outside home; a planted `git` behind an empty `PATH` entry; a repo-local
+   `protocol.ext.allow` that `GIT_ALLOW_PROTOCOL` still blocks; shallow clone; tip selection never
+   reading `HEAD`.
+2. Mapping: every remote URL form (scp, ssh with port, https with credentials, http, git, nested
+   GitLab groups, enterprise host, `%`, three GitHub segments); permalinks with special
+   characters; ids recomputed by hand; the squash example byte for byte; a 70 KB body truncated
+   with the footer kept; refs order and caps; spec split, stubs, shrink; batch packing.
+3. Sync: the base history gives exact ids, titles, bodies, permalinks, provenance, dates and
+   refs (the merge PR has the paths of `merge^1..merge`), cursor at the tip, receipt
+   `succeeded`; a second sync makes zero `applySyncBatch` calls; one new commit creates one
+   document; a multi-run sync (`commitsPerRun: 2`, `commitsPerWindow: 1`) returns `run_again`
+   until caught up and equals a single run; a window spilled over batches holds the in-progress
+   cursor, and after a crash the next run takes it over and replays as `unchanged`; specs, branch
+   selection, GitLab merge requests, scope isolation and `eraseScope`.
+4. Failures: force-push, a rescan over several runs that leaves every document (specs
+   included) exactly as before between runs, read-ahead commits force-pushed away,
+   off-first-parent, a garbage-collected or unknown cursor, every fake-runner code, partial
+   progress then resume, web base, repository and source-state cases, concurrency in one process
+   and across two (the second run conflicts before it writes), capacity, a foreign document
+   (`partial`), a source paused mid-run.
+5. Store refs: lifecycle, replay, refs-only change, foreign reject, revive, `deleteSource`,
+   `eraseScope`, bounds (201 refs, duplicate, bad kind, NUL, 513 and 512 bytes), and the git
+   limits fit the store limits. Every spec 551 test still passes.
+
+End-to-end path: fixture repository, `createSource`, `syncGitSource` with real git through
+`defaultGitRunner`, `applySyncBatch` with refs, cursor and receipt, `listDocumentRefs`,
+`getDocument`, then a force-push and a resync. No route exists yet, so there is no HTTP test.
+
+```bash
+bun run typecheck
+bun run check:patterns
+pnpm exec vitest run tests/gateway/brain-git-*.test.ts tests/gateway/brain-store-refs.test.ts \
+  tests/gateway/brain-store.test.ts tests/gateway/brain-store-sync.test.ts
+MATRIX_TEST_POSTGRES_URL=postgresql://user:pass@localhost:5432/disposable \
+  pnpm exec vitest run tests/gateway/brain-store-postgres.test.ts
+```
+
+Manual verification: clone `https://github.com/HamedMP/matrix-os` with full history into a temp
+home, register it with that URL as `externalRef`, and sync into a disposable Postgres (the dev
+compose `postgres:16-alpine`) until `caughtUp`; about 2,000 first-parent commits take two runs.
+Check that a recent squash PR keeps its `## Summary` verbatim and links to `/pull/<n>`, that
+`listDocumentRefs` lists its files, that a spec links to a blob at a sha, and that a second run
+makes no batch. No image or compose change ships; the gateway host needs git 2.32 or newer.
+
+## Code review checklist
+
+- Every git call goes through the runner: `execFile` with an argv, no shell, `timeout`,
+  `maxBuffer`, `encoding: "buffer"`, the scrubbed env, the global args, `--` after revisions,
+  `--no-ext-diff --no-textconv` on diffs.
+- No value reaches an argv unvalidated (sha, branch, indexable spec path). `HEAD` and the working tree
+  are never read; nothing is written to the repository. Containment runs before any git call.
+- No `catch {`; every catch checks the type and rethrows or logs. `syncGitSource` never rejects,
+  and every failure after the receipt opens closes it. No stderr, path, remote URL or commit
+  text in a result, receipt or error message.
+- A window's first batch takes the cursor (in-progress token) and only its final batch advances
+  it; replays are no-ops; refs ride in the same transaction as their documents. Ids never hash
+  content.
+- Every buffer, list and map is bounded by a named `git/types.ts` constant; the guard set is
+  cleared in `finally`. Refs statements carry `(owner_id, scope_id)`; tombstones remove refs.
+- No `as` cast skips validation; Zod from `zod/v4`; relative imports end in `.js`; type-only
+  imports use `import type`. Files under `brain/` stay under 450 LOC, tests under 500. Nothing
+  touches `startup/`, `server.ts`, `onboarding/` or `company-brain/`.
+
+## Delivery and evidence
+
+- [ ] Five stacked PRs, each under the 3,000-addition limit (about 5,900 lines in all), each
+      with typecheck, pattern check and its brain tests green, the Invariants and the OS-view
+      surface matrix as N/A in the body, merged only after Greptile scores its current head 5/5:
+      1. This spec, its checklist and the spec 551 amendments (about 600).
+      2. The refs store extension: `document-refs.ts`; the `database.ts`, `types.ts`,
+         `schemas.ts`, `documents.ts`, `sources.ts` and `repository.ts` edits;
+         `brain-store-refs.test.ts`, the 551 test and helper edits, and the `brain/DOMAIN.md`
+         refs paragraph (about 400).
+      3. The pure adapter: `git/types.ts`, `parse.ts`, `permalinks.ts`, `documents.ts`,
+         `specs.ts`, `batches.ts`, `cursor.ts`, `helpers/brain-git-pure.ts` and the parse,
+         documents and mapping-edges tests (about 2,550).
+      4. Git reads: `reader.ts`, `containment.ts`, `helpers/brain-git-fixture.ts`, and the reader
+         and reader-containment tests (about 1,400).
+      5. The sync: `window-specs.ts`, `sync.ts`, `git/index.ts`, `helpers/brain-git-harness.ts`,
+         the three sync suites and the `brain/DOMAIN.md` adapter section (about 1,800).
+- [ ] Next: `brain_why(path)` over `brain_document_refs`, the brain service, startup wiring and
+      call sites, with an auth matrix for real routes and tools. Later: the scheduled sync.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`), separate, with the first
+      user-visible increment: a git source section (what is indexed, PR and spec documents,
+      permalinks, receipts, force-push behavior). Nothing is user-visible in this PR.
+
+## Relationship to existing work
+
+- Spec 551 (store): this increment writes only through `BrainRepository` (`getSource`,
+  `getSyncCursor`, `applySyncBatch`, receipts; `createSource` by the caller) and adds one table
+  with the same scope rules, CHECK mirroring, bootstrap and lock. As the first sync adapter it
+  takes on the duties 551 gives adapters: provider deadlines, codes instead of provider text,
+  nothing secret in cursors. Ids follow the 551 recipe. 551 counts five tables and four named
+  indexes; now there are six and five.
+- PR #2078 (`origin/codex/slack-company-brain-store`, `company-brain/`): untouched. Its
+  `company_brain_documents.provenance` CHECK allows only `manually_published` and `slack_thread`,
+  so the later bridge must map `git_pr`, `git_commit`, `git_spec` or extend it. Git permalinks are
+  credential-free https, as #2078 requires. #2078 has no refs table; refs stay in `brain_*`.
+- Spec 115 (`specs/115-knowledge-engine-demo/spec.md`, only on branch
+  `origin/115-knowledge-engine-demo`; main's `specs/115-*` is a different spec): GitHub is a
+  launch company and engineering source. For local git history this adapter provides FR-014 and
+  FR-015 (durable sync with progress, retries, deduplication, edits, deletions), FR-013 (direct
+  local source), FR-016 (bounded receipts), FR-006 and FR-018 (identity, permalink, observed
+  time, scope), FR-022 (deterministic cursor), FR-054 and FR-077 (no paths or raw errors),
+  FR-073 to FR-076 (bounds, timeouts, no remote access) and SC-004 (an unchanged resync writes
+  nothing). Forge data, permission changes, extraction state and FR-020 are not covered.
+
+## Deferred
+
+- Routes, agent tools, UI, startup wiring, the cron and `brain_why(path)`; fetching.
+- Tombstoning documents of commits dropped by a force-push (a cleanup can page
+  `listDocuments({ sourceId })` and diff against the recomputed id set).
+- Re-indexing when `specGlobs` changes (a change needs a new source); `#N` in commit bodies and
+  GitLab `!N` mentions as refs (a real history has hundreds of bodies naming other PRs); other
+  forges (Bitbucket, Gitea need an explicit base and get GitHub URL shapes); shallow
+  repositories (refused).
+- For `brain_why(path)`: a commit with more than 200 changed paths keeps only the first 200 in
+  git order as refs (a commit that adds `node_modules/` keeps 200 of those), so such commits are
+  missed for most of their paths; the footer still states the total.
+- Throughput: each window runs one `rev-list --skip` over the remaining range (quadratic in
+  windows on a very long history; one bounded `rev-list` per run would list every window end),
+  and each spec blob is one `cat-file` process (`cat-file --batch` would be cheaper). On a
+  2,000-commit history the store dominates the run time.
+- Secret scanning of commit messages and spec text (551 leaves secret stripping to adapters;
+  this one reads no diffs or source files, but messages and specs can still hold secrets).
