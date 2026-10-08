@@ -131,3 +131,145 @@ export function brainTypedValues(kind: BrainConnectableSourceKind, text: string)
   if (input === undefined) return values.length === 0 ? [] : null;
   return values.every((value) => input.pattern.test(value)) ? [...new Set(values)] : null;
 }
+
+/** Per-kind settings of the connect form; a kind reads only its own fields. A missing include key is on. */
+export interface BrainSourceSettings {
+  readonly include: Readonly<Record<string, boolean>>; readonly extensions: string; readonly maxFileBytes: number;
+  readonly pastDays: number; readonly futureDays: number;
+}
+export const BRAIN_SOURCE_DEFAULT_SETTINGS: BrainSourceSettings = {
+  include: {}, extensions: "md, txt", maxFileBytes: 262_144, pastDays: 14, futureDays: 14,
+};
+/** What a GitHub or Linear source reads; at least one stays on. */
+export const BRAIN_SOURCE_INCLUDE: Partial<Record<BrainConnectableSourceKind, readonly (readonly [string, string])[]>> = {
+  github: [["pullRequests", "Pull requests"], ["reviews", "Reviews"], ["issues", "Issues"]],
+  linear: [["issues", "Issues"], ["comments", "Comments"], ["projectUpdates", "Project updates"]],
+};
+/** Matrix files size choices, up to the gateway ceiling (1 MiB). */
+export const BRAIN_FILE_SIZE_CHOICES = [[65_536, "64 KiB"], [262_144, "256 KiB"], [1_048_576, "1 MiB"]] as const;
+/** The gateway's calendar window bound, each way. */
+export const BRAIN_CALENDAR_DAYS_MAX = 90;
+const EXTENSIONS_MAX = 32;
+
+/** File endings typed as "md, .txt": lowercased, de-duplicated; null unless 1 to 32 valid endings. */
+export function brainExtensions(text: string): readonly string[] | null {
+  const values = [...new Set(text.split(/[\s,]+/).map((value) => value.replace(/^\./, "").toLowerCase())
+    .filter((value) => value !== ""))];
+  return values.length > 0 && values.length <= EXTENSIONS_MAX && values.every((value) => /^[a-z0-9]{1,16}$/.test(value))
+    ? values : null;
+}
+
+const validDays = (days: number) => Number.isInteger(days) && days >= 0 && days <= BRAIN_CALENDAR_DAYS_MAX;
+
+/** Null when a kind's settings can be sent; else what to fix. */
+export function brainSourceSettingsProblem(kind: BrainConnectableSourceKind, settings: BrainSourceSettings): string | null {
+  const include = BRAIN_SOURCE_INCLUDE[kind];
+  if (include !== undefined && !include.some(([key]) => settings.include[key] ?? true)) return "Pick at least one.";
+  if (kind === "matrix_files" && brainExtensions(settings.extensions) === null) return "List 1 to 32 file endings.";
+  if (kind === "google_calendar" && !(validDays(settings.pastDays) && validDays(settings.futureDays))) {
+    return `Days run from 0 to ${BRAIN_CALENDAR_DAYS_MAX}.`;
+  }
+  return null;
+}
+
+/**
+ * The config a kind's handler expects, from the chosen option ids, typed values and the kind's settings. The gateway
+ * validates it (source_config_invalid). Defaults: every GitHub and Linear item type, Markdown and text files up to
+ * 256 KiB, calendar 14 days each way without event bodies. Matrix notes with no tags read every note.
+ */
+export function brainSourceConfig(kind: BrainConnectableSourceKind, ids: readonly string[],
+  settings: BrainSourceSettings = BRAIN_SOURCE_DEFAULT_SETTINGS): unknown {
+  const on = (key: string) => settings.include[key] ?? true;
+  switch (kind) {
+    case "github": return {
+      repo: ids[0], mode: "integration", include: { pullRequests: on("pullRequests"), reviews: on("reviews"), issues: on("issues") },
+    };
+    case "matrix_notes": return { folders: ids };
+    case "matrix_files": return {
+      roots: ids, extensions: brainExtensions(settings.extensions) ?? ["md", "txt"], maxFileBytes: settings.maxFileBytes,
+    };
+    case "matrix_chat": return { chatIds: ids };
+    case "linear": return {
+      teamKeys: ids, include: { issues: on("issues"), comments: on("comments"), projectUpdates: on("projectUpdates") },
+    };
+    case "google_drive": return { folderIds: ids };
+    case "google_calendar": return {
+      calendarIds: ids, includeEventBodies: false, pastDays: settings.pastDays, futureDays: settings.futureDays,
+    };
+    case "slack_bridge": return { companyScopeId: ids[0], channelIds: [] };
+  }
+}
+
+export function brainCountsText(counts: BrainSyncCounts): string {
+  return `${counts.written} written, ${counts.unchanged} unchanged, ${counts.deleted} removed, ${counts.failed} failed`;
+}
+
+/** One line about a finished sync run (git or another source). */
+export function brainSyncText(view: BrainSyncView | BrainSourceSyncView): string {
+  const next = brainNextActionText(view.nextAction);
+  const head = view.status === "failed" ? "Sync failed." : `Synced: ${brainCountsText(view.counts)}.`;
+  return next === "" ? head : `${head} ${next}`;
+}
+
+/** One line about a finished claim reading run. */
+export function brainExtractText(view: BrainExtractView): string {
+  const next = brainNextActionText(view.nextAction);
+  const head = view.status === "failed"
+    ? "Finding claims failed."
+    : `Read ${view.counts.documentsProcessed} documents and found ${view.counts.claimsWritten} claims.`;
+  return next === "" ? head : `${head} ${next}`;
+}
+
+/** The entity ref a typed value names: `file:`, `folder:` (trailing "/") or `spec:` (with the "specs/" prefix). */
+export function brainTimelineRef(kind: "file" | "spec", value: string): string {
+  if (kind === "spec") return `spec:${value.startsWith("specs/") ? value : `specs/${value}`}`;
+  return value.endsWith("/") ? `folder:${value.replace(/\/+$/, "")}` : `file:${value}`;
+}
+
+/** One line about a background run: where it is, and what to do next once it ended. */
+export function brainJobText(label: string, view: BrainJobView): string {
+  const steps = view.steps === null ? "" : `, ${view.steps} ${view.steps === 1 ? "step" : "steps"} done`;
+  const failed = view.errorCode === null ? "" : ` ${BRAIN_JOB_CODE_COPY[view.errorCode]}`;
+  const running = view.waiting === true ? `${label}: waiting for another run of this project to finish${steps}.`
+    : `${label}: running${steps}.`;
+  const head = {
+    queued: `${label}: waiting to start.`, running, succeeded: `${label}: done${steps}.`,
+    failed: `${label}: failed.${failed}`, cancelled: `${label}: stopped.`,
+  }[view.status];
+  const next = brainNextActionText(view.nextAction);
+  return next === "" ? head : `${head} ${next}`;
+}
+
+/**
+ * The repo path a question names, or null for words: no spaces and a "/" or a file ending (`why.ts`). A leading "./"
+ * is dropped; a leading "/", an empty segment, "." or ".." is not a repo path (the why route refuses them), so those
+ * and links are left to search. A trailing "/" (the folder only) is kept.
+ */
+export function brainAskPath(text: string): string | null {
+  const path = text.replace(/^(?:\.\/)+/, "");
+  if (/\s/.test(path) || path.includes("://")) return null;
+  if (!path.includes("/") && !/\.[A-Za-z][A-Za-z0-9]{0,15}$/.test(path)) return null;
+  const segments = (path.endsWith("/") ? path.slice(0, -1) : path).split("/");
+  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..") ? path : null;
+}
+
+/** "87% likely" from a 0..1 score. */
+export function brainScoreText(score: number): string {
+  return `${Math.round(Math.min(1, Math.max(0, score)) * 100)}% likely`;
+}
+
+const MERGE_DETAIL_MAX_CHARS = 200;
+/** One merge reason in fixed words around the login, name or email part it is about. */
+export function brainMergeEvidenceText(evidence: BrainMergeEvidenceView): string {
+  const detail = `"${evidence.detail.slice(0, MERGE_DETAIL_MAX_CHARS)}"`;
+  switch (evidence.signal) {
+    case "same_github_login": return `Same GitHub login ${detail}`;
+    case "name_matches_login": return `Name matches the GitHub login ${detail}`;
+    case "name_matches_email": return `Name matches the email ${detail}`;
+    case "name_seen_with_email": return evidence.documents === null
+      ? `Name ${detail} was seen with this email`
+      : `Name ${detail} was seen with this email in ${evidence.documents} documents`;
+    case "shared_name": return `Both go by ${detail}`;
+    default: return `Also seen as ${detail}`;
+  }
+}
