@@ -4,6 +4,7 @@ import { DESKTOP_Z_INDEX } from "../design/layering";
 
 export type DesktopSurfaceMode = "window" | "tab" | "minimized" | "closed";
 export type DesktopSurfaceRestoreMode = "window" | "tab";
+export type DesktopSiblingPresentation = "tab" | "source";
 
 export interface DesktopViewport {
   width: number;
@@ -127,7 +128,12 @@ interface DesktopSurfacesState {
   focusSurface(tabId: string): void;
   minimizeSurface(tabId: string): void;
   maximizeToTab(tabId: string): void;
-  openSiblingTab(sourceTabId: string, newTabId: string, retainedTabIds: readonly string[]): void;
+  openSiblingTab(
+    sourceTabId: string,
+    newTabId: string,
+    retainedTabIds: readonly string[],
+    presentation?: DesktopSiblingPresentation,
+  ): void;
   restoreSurface(tabId: string): void;
   restoreAsWindow(tabId: string): void;
   closeSurface(tabId: string): void;
@@ -333,31 +339,32 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
     workspaceView: "tabs",
   })),
 
-  openSiblingTab: (sourceTabId, newTabId, retainedTabIds) => set((state) => {
+  openSiblingTab: (sourceTabId, newTabId, retainedTabIds, presentation = "tab") => set((state) => {
     const retained = new Set(retainedTabIds);
     const prunedSurfaces = Object.fromEntries(
       Object.entries(state.surfaces).filter(([tabId]) => retained.has(tabId)),
     );
     const source = prunedSurfaces[sourceTabId];
     if (!source) return state;
+    const mode = presentation === "source" && source.mode === "window" ? "window" : "tab";
     const surfaces: Record<string, DesktopSurface> = {
       ...prunedSurfaces,
-      [sourceTabId]: {
+      [sourceTabId]: presentation === "source" ? source : {
         ...source,
-        mode: "tab",
-        restoreMode: "tab",
+        mode,
+        restoreMode: mode,
       },
       [newTabId]: {
         ...source,
         tabId: newTabId,
-        mode: "tab",
-        restoreMode: "tab",
+        mode,
+        restoreMode: mode,
+        // Reuse the source's existing placement, including its last floating
+        // size when maximized. Focus stacks the new independent app above it.
+        bounds: { ...source.bounds },
       },
     };
-    const focused = nextFocusedState({ surfaces, nextZIndex: state.nextZIndex }, newTabId, {
-      mode: "tab",
-      restoreMode: "tab",
-    });
+    const focused = nextFocusedState({ surfaces, nextZIndex: state.nextZIndex }, newTabId);
     return {
       ...focused,
       ...syncDesktopHiddenState(
@@ -366,7 +373,7 @@ export const useDesktopSurfaces = create<DesktopSurfacesState>()((set) => ({
         state.desktopHiddenSurfaceIds.filter((id) => id !== sourceTabId && id !== newTabId),
         state.desktopTransition?.surfaceIds.filter((id) => id !== sourceTabId && id !== newTabId),
       ),
-      workspaceView: "tabs",
+      workspaceView: mode === "tab" ? "tabs" : "desktop",
     };
   }),
 

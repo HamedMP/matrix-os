@@ -190,6 +190,7 @@ export function CanonicalChatWorkspace({
     active: live && !explicitSharedRoute,
     initialChatId,
     autoSelectFirst: false,
+    externalNavigation,
     eventSource,
     onInvalidation: onCredentialInvalidation,
   });

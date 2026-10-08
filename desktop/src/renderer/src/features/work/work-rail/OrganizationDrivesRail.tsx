@@ -1,11 +1,11 @@
-import type {CanonicalChatRecord} from "@matrix-os/contracts";
+import type {ChatNavigationRecord} from "@matrix-os/ui";
 import { useEffect, useState } from "react";
 import { companyDriveChatReference, OrganizationDrivesNavigation, useChatDriveProjects, type ChatAgentClient, type StartAgentChat, type CollaborationDirectApi } from "@matrix-os/ui";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../../lib/collaboration";
 import { useConnection } from "../../../stores/connection";
 import { useFilesNavigation } from "../../../stores/files-navigation";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../../stores/tabs";
-export function OrganizationDrivesRail({active,chats=[],client,onNewChat,onSelectChat,activeChatId}: {active: boolean;chats?:readonly CanonicalChatRecord[];client?:ChatAgentClient;onNewChat?:StartAgentChat;onSelectChat?(record:CanonicalChatRecord):void;activeChatId?:string}) {
+export function OrganizationDrivesRail({active,chats=[],client,onNewChat,onSelectChat,activeChatId}: {active: boolean;chats?:readonly ChatNavigationRecord[];client?:ChatAgentClient;onNewChat?:StartAgentChat;onSelectChat?(record:ChatNavigationRecord):void;activeChatId?:string}) {
   const host=useConnection(state => state.platformHost);
   const slot=useConnection(state => state.runtimeSlot);
   const generation=useConnection(state => state.authGeneration);

@@ -2,7 +2,7 @@ import { CollaborationDiscoveryItemSchema, type CollaborationProjectOverview } f
 import { z } from "zod/v4";
 import { subscribeCollaborationDiscoveryChanged, type CollaborationDirectApi } from "@matrix-os/ui";
 import { useEffect, useRef, useState } from "react";
-import { Folder, FolderOpen, MessageSquare, UsersIcon } from "@renderer/lib/hugeicons";
+import { Folder, FolderOpen, UsersIcon } from "@renderer/lib/hugeicons";
 import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../../lib/collaboration";
 import { useConnection } from "../../../stores/connection";
 import { useTabs } from "../../../stores/tabs";
@@ -191,7 +191,6 @@ export function SharedWorkRailProjectList({ projects, revealRequest }: {
                 closable: false,
               })}
             >
-              <MessageSquare size={15} aria-hidden className="shrink-0" style={{ color: current ? "var(--accent)" : "var(--text-tertiary)" }} />
               <span className="min-w-0 flex-1 truncate">{chat.title}</span>
             </button>;
           })}

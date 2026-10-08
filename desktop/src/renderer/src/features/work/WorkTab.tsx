@@ -1,3 +1,4 @@
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -513,7 +514,7 @@ function WorkTabContent({
     showChat(layout === "narrow");
     openWorkProjectDraft(project);
   }, [layout, showChat]);
-  const selectRailChat = useCallback((record: CanonicalChatRecord, project?: Project) => {
+  const selectRailChat = useCallback((record: ChatNavigationRecord, project?: Project) => {
     showChat(layout === "narrow");
     if (project) {
       openWorkProject(project, record.chat.id, record.chat.title);
@@ -529,7 +530,7 @@ function WorkTabContent({
       closable: false,
     });
   }, [layout, showChat]);
-  const handleRailChatDeleted = useCallback((record: CanonicalChatRecord, project?: Project) => {
+  const handleRailChatDeleted = useCallback((record: ChatNavigationRecord, project?: Project) => {
     if (record.chat.id !== initialChatId) return;
     if (project) {
       showChat(layout === "narrow");

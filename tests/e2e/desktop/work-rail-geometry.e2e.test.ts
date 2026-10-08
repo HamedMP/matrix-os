@@ -30,7 +30,7 @@ beforeAll(async () => {
 });
 afterAll(async () => browser?.close());
 
-it("aligns pinned/unpinned project icons and labels and contains disclosure/action hit targets", async () => {
+it("aligns pinned/unpinned Projects while Chat titles reclaim the icon origin and actions stay contained", async () => {
   const page = await browser.newPage({ viewport: {width:600,height:700} });
   const project = (pinned: boolean) => {
     const name = pinned ? "Pinned project with a long title" : "Ordinary project with a long title";
@@ -57,11 +57,13 @@ it("aligns pinned/unpinned project icons and labels and contains disclosure/acti
         const rect = row.getBoundingClientRect();
         return {iconX:icon.x,labelX:label.x,right:rect.right,disclosureRight:disclosure.right};
       }));
-      const chat = await page.locator(".work-rail-chat > button").evaluate(button => ({iconX:button.querySelector("svg")!.getBoundingClientRect().x,labelX:button.querySelector(".work-rail-chat-label")!.getBoundingClientRect().x}));
+      const chat = await page.locator(".work-rail-chat > button").evaluate(button => ({iconCount:button.querySelectorAll("svg").length,labelX:button.querySelector(".work-rail-chat-label")!.getBoundingClientRect().x,left:button.getBoundingClientRect().left}));
+      expect(chat.iconCount).toBe(0);
+      expect(chat.labelX).toBe(chat.left + 9);
       expect(result).toHaveLength(2);
       for (const row of result) {
-        expect(row.iconX).toBe(chat.iconX);
-        expect(row.labelX).toBe(chat.labelX);
+        expect(row.iconX).toBe(chat.labelX);
+        expect(row.labelX).toBe(result[0]!.labelX);
         expect(row.disclosureRight).toBeLessThanOrEqual(row.right - 8);
       }
       await page.evaluate(() => {
