@@ -5,7 +5,7 @@
  * anywhere on a line), tables, images and trailers are skipped. Every quote is a verbatim substring of the source text
  * at its UTF-16 span, and each quote gives at most one claim. Pure.
  */
-import { fenceOf, headingOf, parseBrainGitFooter } from "../why.js";
+import { closesFence, fenceOf, headingOf, parseBrainGitFooter } from "../why.js";
 import {
   BRAIN_CLAIMS_PER_DOCUMENT_MAX, BRAIN_CLAIM_FOOTER_PROVENANCES, BRAIN_CLAIM_LABEL_MAX_CHARS,
   BRAIN_CLAIM_QUOTE_MAX_CHARS, BRAIN_CLAIM_STATEMENT_MAX_CHARS, type BrainClaimConfidence, type BrainClaimDraft,
@@ -324,8 +324,7 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
 
   function scanLine(line: string, at: number): void {
     if (fence !== null) {
-      const closing = fenceOf(line);
-      if (closing !== null && closing.char === fence.char && closing.length >= fence.length) fence = null;
+      if (closesFence(fence, line)) fence = null;
       return;
     }
     if (comment) {

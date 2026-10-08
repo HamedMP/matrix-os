@@ -179,6 +179,9 @@ describe("rules structure", () => {
       "- [x] Source of truth: a validation checkbox", "- **Lock/transaction scope:** N/A",
       "- Greptile 5/5 on the exact head.", "- Real: the only claim.", "Co-authored-by: A <a@example.com>",
     ))).toEqual([["invariant", null, "medium", "Real: the only claim."]]);
+    // A closing fence takes only spaces or tabs after its run; "```example" inside a block is still code.
+    expect(rows(md("## Invariants", "```md", "```example", "- Never check permissions.", "```` \t", "- Real.")))
+      .toEqual([["invariant", null, "medium", "Real."]]);
   });
 
   it("hides an HTML comment opened anywhere on a line; no claim, statement or quote reaches into one", () => {

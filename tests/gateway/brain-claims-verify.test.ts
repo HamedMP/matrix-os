@@ -134,5 +134,11 @@ describe("finalizeBrainClaims and quoteLocator", () => {
     expect(locate("ab a\tb a b", "a b")).toEqual({ start: 3, end: 6, exact: false });
     expect(locate("x a b", "a b")).toEqual({ start: 2, end: 5, exact: true });
     expect([locate("a b", "c"), locate("a b", " "), locate("~~~\na b\n~~~", "a b")]).toEqual([null, null, null]);
+    // A closing fence takes only spaces or tabs after its run; "```example" inside a block is still code.
+    const fenced = "```md\n```example\n- Never check permissions.\n```` \t\n- Real.";
+    expect(locate(fenced, "Never check permissions.")).toBeNull();
+    expect(locate(fenced, "Real.")).toEqual({ start: fenced.length - 5, end: fenced.length, exact: true });
+    expect(locate("~~~\r\na b\r\n~~~\r\nc d", "c d")).toEqual({ start: 15, end: 18, exact: true });
+    expect(locate("~~~\n~~~ a b\n~~~\nc", "a b")).toBeNull();
   });
 });
