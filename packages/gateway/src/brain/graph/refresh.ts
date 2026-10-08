@@ -11,6 +11,7 @@ import {
   type BrainDerivedIndex, type BrainDerivedRefreshLimits, type BrainDerivedRefreshResult, type BrainIndexFreshness,
 } from "../contracts.js";
 import { BRAIN_PROJECT_SCOPE_PREFIX } from "../api/types.js";
+import { withBrainRead } from "../bounded.js";
 import type { BrainScopeKey } from "../types.js";
 import { cutText, isEntityKey, brainEntityId } from "./ids.js";
 import {
@@ -147,8 +148,10 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
     return withGraphLock(db, scope, (trx) => sweepEntities(trx, scope, now(), name, maxEntities));
   }
 
+  /** A read: read only, under the read statement deadline. */
   async function freshness(scope: BrainScopeKey): Promise<BrainIndexFreshness> {
-    const pending = (await pendingIds(db, scope, BRAIN_INDEX_PENDING_COUNT_CAP + 1)).length;
+    const pending = (await withBrainRead(db, (trx) => pendingIds(trx, scope, BRAIN_INDEX_PENDING_COUNT_CAP + 1)))
+      .length;
     return {
       caughtUp: pending === 0, pendingDocuments: Math.min(pending, BRAIN_INDEX_PENDING_COUNT_CAP),
       pendingCapped: pending > BRAIN_INDEX_PENDING_COUNT_CAP,

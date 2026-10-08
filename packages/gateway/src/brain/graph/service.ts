@@ -108,7 +108,7 @@ export function createBrainGraph(deps: BrainGraphServiceDeps): BrainGraphFeature
       const parsed = parse(AliasInputSchema, input);
       const scope = await scopeOf(ownerId, projectRef);
       const rootId = await withGraphLock(db, scope, (trx) => updateGraphAlias(trx, scope, entity, parsed, now()));
-      return getGraphEntity(db, scope, rootId);
+      return withBrainRead(db, (trx) => getGraphEntity(trx, scope, rootId));
     },
 
     async refresh(ownerId, projectRef) {
