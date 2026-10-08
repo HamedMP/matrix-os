@@ -93,6 +93,23 @@ describe("matrix notes source", () => {
     }
   });
 
+  it("selects a note by any of its tags, not only the twenty kept as refs", async () => {
+    await createNotesTable();
+    const tags = Array.from({ length: 25 }, (_, i) => `t${String(i).padStart(2, "0")}`);
+    await addNote(1, { title: "Many tags", content: "body", tags: tags.join(",") });
+    await addNote(2, { title: "Other", content: "body", tags: "other" });
+    const adapter = createMatrixNotesAdapter(createBrainMatrixNotesReader(appDb));
+    const sourceId = await createMatrixSource(harness, "matrix_notes", "matrix_notes");
+    expect((await runMatrixLoop(harness, sourceId, "matrix_notes", adapter, { folders: [] })).written).toBe(2);
+    // t24 is the 25th tag: the scan must keep the note and the sweep must not tombstone it.
+    const selected = await runMatrixLoop(harness, sourceId, "matrix_notes", adapter, { folders: ["t24"] });
+    expect(selected).toMatchObject({ caughtUp: true, deleted: 1, skipped: 1 });
+    expect(await liveTitles(harness, sourceId)).toEqual(["Many tags"]);
+    const doc = (await harness.repository.listDocuments(matrixScope, { sourceId })).items[0]!;
+    expect(await harness.repository.listDocumentRefs(matrixScope, doc.documentId))
+      .toEqual(tags.slice(0, 20).map((value) => ({ kind: "label", value })));
+  });
+
   it("treats a missing notes table as no notes and reports reader failures as provider_unavailable", async () => {
     const reader = createBrainMatrixNotesReader(appDb);
     expect(await reader.listNotes("", 10)).toEqual([]);
