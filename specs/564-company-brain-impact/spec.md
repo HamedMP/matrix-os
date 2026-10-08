@@ -56,7 +56,10 @@ languages' imports, organization scopes. OS-view surface matrix: N/A (a JSON API
   `plan.md`, `research.md`, `data-model.md` and `quickstart.md`), or null when the brain has none. For a file split
   into parts, the cite is part 1.
 - Cites follow the shared rule in `brain/cite.ts`; brain reads run read-only with a 10 s statement deadline. Notices: `changed_files_capped`, `dependents_capped`, `scan_capped`, `read_budget_exhausted`,
-  `run_budget_exhausted`, `no_git_source`, and `brain_behind_head` when the git sync has not applied the merge base.
+  `run_budget_exhausted`, `prior_capped` (paths not looked up, or more files with earlier pull requests than
+  listed), `claims_capped` (more claims, or more changed paths per claim), `untested_capped`, `specs_capped` (more
+  folders, or more paths per folder), `no_git_source`, and `brain_behind_head` when the git sync has not applied the
+  merge base. Every list cut at its cap carries its notice.
 
 ## Comment format
 
