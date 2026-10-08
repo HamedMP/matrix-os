@@ -8,6 +8,16 @@ import { ItemRow, SectionLabel } from "@/components/ui";
 
 import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
 import { ComponentsGallery } from "./ComponentsGallery";
+import { SidePanelOverScreen } from "./panel";
+
+/** Frame C2: the side panel open over the new chat. */
+function SidePanelOverChatFrame() {
+  return (
+    <SidePanelOverScreen>
+      <ChatHomeFrame />
+    </SidePanelOverScreen>
+  );
+}
 
 // Development only: app/design-preview/[frame].tsx loads this module behind
 // __DEV__, so nothing here reaches a production bundle.
@@ -16,6 +26,7 @@ const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "C1", Frame: ChatHomeFrame },
   { name: "C1b", Frame: ChatInProgressFrame },
   { name: "C1c", Frame: ChatTypingFrame },
+  { name: "C2", Frame: SidePanelOverChatFrame },
 ];
 
 export function DesignPreview({ frame }: { frame: string | undefined }) {

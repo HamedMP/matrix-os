@@ -1,18 +1,23 @@
 import { useAuth } from "@clerk/clerk-expo";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Keyboard } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
 import { useSegments } from "expo-router";
-import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
+import { Drawer, useDrawerStatus, type DrawerContentComponentProps } from "expo-router/drawer";
 
-import { DrawerContent } from "@/components/shell/DrawerContent";
+import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
-import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
+import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
+import { useAgents } from "@/lib/queries/use-agents";
+import { useCanonicalChatPages } from "@/lib/queries/use-canonical-chats";
+import { useChatSearch } from "@/lib/queries/use-chat-search";
 import { useProjects } from "@/lib/queries/use-projects";
 import { useSettingsSystemInfo } from "@/lib/queries/use-settings-system-info";
 import { fetchCollaborationInbox } from "@/lib/requests/collaboration";
 import { subscribeCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
-import { TABS_ROUTE, isChatScreen } from "@/lib/shell-routes";
+import { TABS_ROUTE, chatScreenParams, isChatScreen, sharedScreenParams } from "@/lib/shell-routes";
+import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
 
 function triggerDrawerHaptic() {
   void Promise.resolve(
@@ -25,27 +30,59 @@ function triggerDrawerHaptic() {
   });
 }
 
+/**
+ * Puts the keyboard away when the panel closes. The search field keeps it up
+ * while it has focus, and the navigator dismisses it for a swipe only: not for
+ * a press on a row or on the scrim.
+ */
+function DismissKeyboardOnClose() {
+  const status = useDrawerStatus();
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (status === "open") {
+      wasOpen.current = true;
+    } else if (wasOpen.current) {
+      wasOpen.current = false;
+      Keyboard.dismiss();
+    }
+  }, [status]);
+  return null;
+}
+
+// Opens Projects on top of the chat screen. Built on each call, like the
+// params in lib/shell-routes.ts: React Navigation ignores an object it has used.
+function projectsScreenParams() {
+  return { screen: "(chats)", params: { screen: "projects" } };
+}
+
 export default function DrawerLayout() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
-  const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
-  const { projects } = useProjects();
-  const { activeChatId, selectChat, startDraftChat } = useCanonicalChatSession();
+  const chatPages = useCanonicalChatPages();
+  const projects = useProjects();
+  const { agents } = useAgents();
+  const { statuses: agentStatuses } = useAgentStatuses(agents);
+  const [searchQuery, setSearchQuery] = useState("");
+  const search = useChatSearch(searchQuery);
+  const { selectChat, startDraftChat } = useCanonicalChatSession();
   const { systemInfo } = useSettingsSystemInfo();
   const { theme } = useUnistyles();
   // The side panel belongs to the chat screen: it lists chats and projects, and
   // every other screen keeps the swipe for its own lists and for going back.
   const chatScreenFocused = isChatScreen(useSegments());
-  const computerName = computer?.handle ?? (recentChatsLoading ? "Loading…" : "Not connected");
   const collaborationEnabled = systemInfo?.capabilities?.collaboration === true;
   const [pendingInvitationCount, setPendingInvitationCount] = useState(0);
 
+  // An agent's own conversation belongs to the Agents tab. Until the agents'
+  // chats are known there is nothing to leave out, so every chat is listed.
+  const agentChats = useMemo(() => agentChatIds(agentStatuses), [agentStatuses]);
+  const chats = useMemo(() => withoutAgentChats(chatPages.chats, agentChats), [chatPages.chats, agentChats]);
+  const searchResults = useMemo(() => withoutAgentChats(search.results, agentChats), [search.results, agentChats]);
+  const projectCountKnown = !projects.isPending && !(projects.isError && projects.projects.length === 0);
+
   useEffect(() => {
-    if (!collaborationEnabled) {
-      setPendingInvitationCount(0);
-      return;
-    }
+    if (!collaborationEnabled) return;
     let current = true;
     const load = () => void (async () => {
       try {
@@ -68,30 +105,69 @@ export default function DrawerLayout() {
         drawerOpen: triggerDrawerHaptic,
         drawerClose: triggerDrawerHaptic,
       }}
-      drawerContent={(props: DrawerContentComponentProps) => (
-        <DrawerContent
-          {...props}
-          computerName={computerName}
-          chatScreenFocused={chatScreenFocused}
-          collaborationEnabled={collaborationEnabled}
-          pendingInvitationCount={pendingInvitationCount}
-          recentChats={chats}
-          recentChatsLoading={recentChatsLoading}
-          projects={projects}
-          activeSessionId={activeChatId}
-          onSelectConversation={selectChat}
-          onNewConversation={startDraftChat}
-        />
-      )}
+      drawerContent={({ navigation }: DrawerContentComponentProps) => {
+        const showChatScreen = () => {
+          navigation.navigate(TABS_ROUTE, chatScreenParams());
+          navigation.closeDrawer();
+        };
+        return (
+          <>
+            <DismissKeyboardOnClose />
+            <SidePanel
+              chats={chats}
+              chatsLoading={chatPages.isPending}
+              chatsFailed={chatPages.isError}
+              projectCount={projectCountKnown ? projects.projects.length : undefined}
+              collaborationEnabled={collaborationEnabled}
+              pendingInvitationCount={collaborationEnabled ? pendingInvitationCount : 0}
+              searchQuery={searchQuery}
+              searchResults={searchResults}
+              searching={search.isSearching}
+              searchFailed={search.isError}
+              loadingMore={chatPages.isLoadingMore}
+              loadMoreFailed={chatPages.isLoadMoreError}
+              onSearchQueryChange={setSearchQuery}
+              onLoadMore={() => {
+                if (chatPages.hasMore && !chatPages.isLoadingMore) void chatPages.loadMore();
+              }}
+              onNewChat={() => {
+                startDraftChat();
+                showChatScreen();
+              }}
+              onSelectChat={(chatId) => {
+                selectChat(chatId);
+                showChatScreen();
+              }}
+              onOpenProjects={() => {
+                navigation.navigate(TABS_ROUTE, projectsScreenParams());
+                navigation.closeDrawer();
+              }}
+              onOpenShared={() => {
+                navigation.navigate(TABS_ROUTE, sharedScreenParams());
+                navigation.closeDrawer();
+              }}
+            />
+          </>
+        );
+      }}
       screenOptions={{
         headerShown: false,
         drawerPosition: "left",
-        drawerType: "slide",
-        drawerStyle: { width: "80%", backgroundColor: theme.v2.appColors.canvas },
-        overlayColor: "rgba(18, 20, 19, 0.24)",
+        // The panel slides over the screen, which stays where it is under the scrim.
+        drawerType: "front",
+        drawerStyle: {
+          width: theme.v2.size.sidePanel,
+          backgroundColor: theme.v2.colors.background,
+          boxShadow: theme.v2.designShadows.panel,
+          // The navigator rounds the open edge of a panel of this type by default.
+          borderTopRightRadius: 0,
+          borderBottomRightRadius: 0,
+        },
+        overlayColor: theme.v2.colors.scrim,
+        overlayAccessibilityLabel: "Close side panel",
         swipeEnabled: chatScreenFocused,
         swipeEdgeWidth: 800,
-        sceneStyle: { backgroundColor: theme.v2.appColors.canvas },
+        sceneStyle: { backgroundColor: theme.v2.colors.background },
       }}
     >
       <Drawer.Screen name={TABS_ROUTE} />

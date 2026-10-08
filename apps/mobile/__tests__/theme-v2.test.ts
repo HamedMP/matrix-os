@@ -127,6 +127,7 @@ describe("theme-v2 design tokens", () => {
       badge: 16,
       tabItemWidth: 70,
       tabIcon: 24,
+      sidePanel: 330,
     });
   });
 
