@@ -243,3 +243,73 @@ export const BRAIN_GOOGLE_DRIVE_ACTIONS: Record<string, ServiceAction> = {
     },
   },
 };
+
+// Google Calendar (API v3).
+
+// Never "." or "..": URL normalization would turn them into other API paths on the owner's token.
+const CALENDAR_ID_RE = /^(?!\.{1,2}$)[^\s\p{Cc}]+$/u;
+const CALENDAR_ID_MAX = 256;
+const calendarTime = z.iso.datetime({ offset: true });
+
+function encodeCalendarId(value: unknown): string {
+  if (typeof value !== "string" || value.length > CALENDAR_ID_MAX || !CALENDAR_ID_RE.test(value)) {
+    throw new Error("calendarId must be a calendar id");
+  }
+  return encodeURIComponent(value);
+}
+
+const CALENDAR_EVENT_FIELDS = "nextPageToken,items(id,status,htmlLink,summary,description,location,visibility,"
+  + "start,end,updated,organizer(email),attendees(email,responseStatus,resource))";
+
+export const BRAIN_GOOGLE_CALENDAR_ACTIONS: Record<string, ServiceAction> = {
+  // Calendar API v3: events.list over one calendar, recurring events expanded, cancelled events included so the
+  // caller can remove them. updatedMin narrows to events changed since then (Google then always includes deletions).
+  brain_list_events: {
+    description: "Company Brain: one page of a calendar's events in a time window, cancelled included; continue with nextPageToken",
+    risk: "read",
+    paramsSchema: z.strictObject({
+      calendarId: z.string().max(CALENDAR_ID_MAX).regex(CALENDAR_ID_RE),
+      timeMin: calendarTime,
+      timeMax: calendarTime,
+      updatedMin: calendarTime.optional(),
+      maxResults: z.number().int().min(1).max(250).optional(),
+      pageToken,
+    }).refine((p) => Date.parse(p.timeMin) < Date.parse(p.timeMax)),
+    params: {
+      calendarId: { type: "string", required: true },
+      timeMin: { type: "string", required: true },
+      timeMax: { type: "string", required: true },
+      updatedMin: { type: "string" },
+      maxResults: { type: "number" },
+      pageToken: { type: "string" },
+    },
+    directApi: {
+      method: "GET",
+      url: (p) => `https://www.googleapis.com/calendar/v3/calendars/${encodeCalendarId(p.calendarId)}/events`,
+      mapParams: (p) => ({
+        singleEvents: "true",
+        showDeleted: "true",
+        orderBy: "startTime",
+        maxAttendees: "50",
+        timeMin: String(p.timeMin),
+        timeMax: String(p.timeMax),
+        ...(p.updatedMin !== undefined ? { updatedMin: String(p.updatedMin) } : {}),
+        maxResults: String(cappedPositiveInt(p.maxResults, 250, 250)),
+        fields: CALENDAR_EVENT_FIELDS,
+        ...(p.pageToken !== undefined ? { pageToken: String(p.pageToken) } : {}),
+      }),
+    },
+  },
+};
+
+const BRAIN_READ_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  github: new Set(Object.keys(BRAIN_GITHUB_ACTIONS)),
+  linear: new Set(Object.keys(BRAIN_LINEAR_ACTIONS)),
+  google_drive: new Set(Object.keys(BRAIN_GOOGLE_DRIVE_ACTIONS)),
+  google_calendar: new Set(Object.keys(BRAIN_GOOGLE_CALENDAR_ACTIONS)),
+};
+
+/** One of the Company Brain reads above: /read-call runs these as byte-capped, cancellable raw reads. */
+export function isBrainReadAction(service: string, action: string): boolean {
+  return Object.hasOwn(BRAIN_READ_ACTIONS, service) && BRAIN_READ_ACTIONS[service]!.has(action);
+}
