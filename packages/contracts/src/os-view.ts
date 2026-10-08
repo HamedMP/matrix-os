@@ -66,6 +66,8 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     foreground: "white",
   },
   whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
+  // The brand green tile with forest ink (desktopPalette.green and .forest in @matrix-os/brand).
+  brain: { icon: "brain", iconSource: "fixed", background: "#BED77B", foreground: "#0E3422" },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {
@@ -94,6 +96,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   "apps/notes/dist/index.html": "notes",
   "apps/whiteboard/index.html": "whiteboard",
   "apps/whiteboard/dist/index.html": "whiteboard",
+  __brain__: "brain",
 };
 
 export function osViewFixedAppAppearanceForPath(path: string) {
