@@ -5,9 +5,9 @@
 import type { Kysely } from "kysely";
 import { brainCallCap } from "../bounded.js";
 import {
-  BRAIN_DERIVED_REFRESH_DEFAULTS, BRAIN_SEARCH_CANDIDATES_MAX, BrainFeatureError, type BrainSearchFeature,
-  type BrainSearchNotice, type BrainSearchQuery, type BrainSearchService, type BrainSearchServiceDeps,
-  type BrainSearchView,
+  BRAIN_DERIVED_REFRESH_DEFAULTS, BRAIN_SEARCH_CANDIDATES_MAX, BrainFeatureError, type BrainDerivedIndex,
+  type BrainSearchFeature, type BrainSearchNotice, type BrainSearchQuery, type BrainSearchService,
+  type BrainSearchServiceDeps, type BrainSearchView,
 } from "../contracts.js";
 import { BRAIN_MAX_REVISION, BRAIN_UUID_PATTERN, type BrainDatabase, type BrainScopeKey } from "../types.js";
 import { hydrateBrainHits } from "./hydrate.js";
@@ -73,7 +73,9 @@ async function vectorHits(
  * bootstrap found the extension, else the array store. A row counts as embedded only under the same store and
  * provider, so a switch of either embeds again. Off, the capability is exactly the text-only one. Only the owners in
  * deps.embeddingOwnerIds (the gateway owner, whose key the provider holds) get it: any other principal searches by
- * text, sees the text-only capability, and its queries and documents are never sent.
+ * text, sees the text-only capability, and its queries and documents are never sent. Every refresh entry point (the
+ * route, and the returned index the hook listener, job steps and index catch-up run) shares one cap of
+ * BRAIN_HEAVY_CALLS_MAX at once; past it they answer brain_unavailable. A scope erase only deletes rows: never refused.
  */
 export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeature {
   const db = deps.repository.kysely;
@@ -91,9 +93,16 @@ export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeat
       providerId: usable ? provider.providerId : null }
     : { fullText: true, vector: "available", providerId: meaning.provider.providerId, store };
   const ownerIds = deps.embeddingOwnerIds;
-  const index = createBrainSearchIndex({
+  const derived = createBrainSearchIndex({
     db, meaning, now: deps.now ?? (() => new Date()), ...(ownerIds === undefined ? {} : { ownerIds }),
   });
+  const refreshCap = brainCallCap("search refresh");
+  const index: BrainDerivedIndex = {
+    name: derived.name, freshness: derived.freshness,
+    refresh: (scope, limits, signal) => refreshCap(() => derived.refresh(scope, limits, signal)),
+    handle: (event, signal) => (event.type === "scope_erased" ? derived.handle(event, signal)
+      : refreshCap(() => derived.handle(event, signal))),
+  };
   // What a principal the provider does not serve sees: no provider for them, whatever the store.
   const textOnly: BrainSearchCapability = { fullText: true, vector: "provider_not_configured", providerId: null };
 
@@ -177,15 +186,14 @@ export function createBrainSearch(deps: BrainSearchServiceDeps): BrainSearchFeat
     return { q: query.q, mode, ...view, capability: active === null && meaning !== null ? textOnly : capability, notices };
   }
 
-  const refreshCap = brainCallCap("search refresh");
   const service: BrainSearchService = {
     search,
     async refresh(ownerId, projectRef) {
       const { scope } = await deps.resolver.resolve(ownerId, projectRef);
       return refreshCap(async () => {
         const signal = AbortSignal.timeout(BRAIN_DERIVED_REFRESH_DEFAULTS.budgetMs + BRAIN_SEARCH_EMBED_TIMEOUT_MS);
-        const result = await index.refresh(scope, BRAIN_DERIVED_REFRESH_DEFAULTS, signal);
-        return { index: "search" as const, ...result, freshness: await index.freshness(scope) };
+        const result = await derived.refresh(scope, BRAIN_DERIVED_REFRESH_DEFAULTS, signal);
+        return { index: "search" as const, ...result, freshness: await derived.freshness(scope) };
       });
     },
     capability: () => capability,
