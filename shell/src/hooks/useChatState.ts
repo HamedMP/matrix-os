@@ -1,7 +1,8 @@
 "use client";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
-import type { ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";
+import type { CanonicalChatEventSource, ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";
+import type { CanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useSocket, type ServerMessage } from "@/hooks/useSocket";
@@ -25,6 +26,8 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  /** The shell's one Chat client and event stream, for views of a single Chat (the Company Brain chat). */
+  chatRuntime?: { client: CanonicalShellChatClient; eventSource: CanonicalChatEventSource };
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
   openSharedProject?: (scopeId: string) => void;
