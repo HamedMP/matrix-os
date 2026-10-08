@@ -10,7 +10,7 @@ import {
 import { BrainStoreError } from "../../packages/gateway/src/brain/types.js";
 import { zeroCounts } from "./helpers/brain-store-helpers.js";
 import {
-  fakeDocumentId, fakeHandler, OWNER, SCOPE_A, sourcesHarness, type SourcesHarness,
+  fakeAdapter, fakeDocumentId, fakeHandler, OWNER, SCOPE_A, sourcesHarness, type SourcesHarness,
 } from "./helpers/brain-sources-fixture.js";
 
 let harness: SourcesHarness;
@@ -65,14 +65,23 @@ describe("sync", () => {
   });
 
   it("reports a paused source as a failed run without a receipt and refuses missing configs", async () => {
-    const handler = fakeHandler("linear");
+    let connected = true;
+    const handler = fakeHandler("linear", {
+      adapter: async () => (connected ? { ok: true, adapter: fakeAdapter("linear") } : { ok: false, code: "not_connected" }),
+    });
     const sources = service([handler]);
     const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
     await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, status: "paused" });
-    expect(await sources.sync(OWNER, "proj_a", source.sourceId)).toMatchObject({
-      status: "failed", errorCode: "source_inactive", nextAction: "fix_source", receipt: null,
-    });
+    // A paused source answers before its config or account is read: a disconnected account or a lost config never
+    // turns that answer into an error.
+    const paused = { status: "failed", errorCode: "source_inactive", nextAction: "fix_source", receipt: null };
+    connected = false;
+    handler.calls.length = 0;
+    expect(await sources.sync(OWNER, "proj_a", source.sourceId)).toMatchObject(paused);
     handler.configs.clear();
+    expect(await sources.sync(OWNER, "proj_a", source.sourceId)).toMatchObject(paused);
+    expect(handler.calls).toEqual([]);
+    await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 2, status: "active" });
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_config_invalid");
   });
 
