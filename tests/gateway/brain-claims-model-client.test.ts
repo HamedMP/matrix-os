@@ -2,10 +2,11 @@
  * The Claude claims client against a fake Messages endpoint (no network, synthetic key): request shape and caching,
  * structured output parsing, refusal, unusable output, SDK error mapping, abort and timeout, and skipped bodies.
  */
-import Anthropic from "@anthropic-ai/sdk";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+// The SDK error classes come through the client, so instanceof always checks the SDK copy that threw them.
 import {
+  AnthropicError, APIConnectionError, APIConnectionTimeoutError, APIError, APIUserAbortError,
   createAnthropicBrainClaimModel, withBoundedRetryWaits,
 } from "../../packages/gateway/src/brain/claims/model/client.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT } from "../../packages/gateway/src/brain/claims/model/prompt.js";
@@ -203,7 +204,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       expect(error).toBeInstanceOf(BrainModelError);
       expect((error as BrainModelError).code).toBe(code);
       expect((error as BrainModelError).message).toBe(code);
-      expect((error as BrainModelError).cause).toBeInstanceOf(Anthropic.APIError);
+      expect((error as BrainModelError).cause).toBeInstanceOf(APIError);
       expect(requests).toHaveLength(fetches);
       expect(String(error)).not.toContain(SYNTHETIC_KEY);
       expect(inspect(error, { depth: 8 })).not.toContain(SYNTHETIC_KEY);
@@ -220,7 +221,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       const started = performance.now();
       const error = await failure(run(model));
       expect((error as BrainModelError).code).toBe("model_unavailable");
-      expect((error as BrainModelError).cause).toBeInstanceOf(Anthropic.APIError);
+      expect((error as BrainModelError).cause).toBeInstanceOf(APIError);
       expect(requests).toHaveLength(1);
       expect(performance.now() - started).toBeLessThan(2_000);
     });
@@ -262,7 +263,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       const error = await failure(run(model));
       expect(error).toBeInstanceOf(BrainModelError);
       expect((error as BrainModelError).code).toBe("model_unavailable");
-      expect((error as BrainModelError).cause).toBeInstanceOf(Anthropic.APIConnectionError);
+      expect((error as BrainModelError).cause).toBeInstanceOf(APIConnectionError);
       expect(requests).toHaveLength(2);
       expect(inspect(error, { depth: 8 })).not.toContain(SYNTHETIC_KEY);
     });
@@ -272,7 +273,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
         new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }));
       const error = await failure(run(model));
       expect(error).toBeInstanceOf(SyntaxError);
-      expect(error).not.toBeInstanceOf(Anthropic.AnthropicError);
+      expect(error).not.toBeInstanceOf(AnthropicError);
       expect(requests).toHaveLength(1);
     });
 
@@ -300,7 +301,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       await vi.waitFor(() => expect(requests).toHaveLength(1));
       controller.abort();
       const error = await pending;
-      expect(error).toBeInstanceOf(Anthropic.APIUserAbortError);
+      expect(error).toBeInstanceOf(APIUserAbortError);
       expect(error).not.toBeInstanceOf(BrainModelError);
       expect(requests).toHaveLength(1);
       expect(requests[0]!.signal?.aborted).toBe(true);
@@ -309,7 +310,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
     it("never fetches when the caller signal is already aborted", async () => {
       const { model, requests } = setup(ok());
       const error = await failure(run(model, BODY, AbortSignal.abort()));
-      expect(error).toBeInstanceOf(Anthropic.APIUserAbortError);
+      expect(error).toBeInstanceOf(APIUserAbortError);
       expect(requests).toHaveLength(0);
     });
 
@@ -318,7 +319,7 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       const error = await failure(run(model));
       expect(error).toBeInstanceOf(BrainModelError);
       expect((error as BrainModelError).code).toBe("model_timeout");
-      expect((error as BrainModelError).cause).toBeInstanceOf(Anthropic.APIConnectionTimeoutError);
+      expect((error as BrainModelError).cause).toBeInstanceOf(APIConnectionTimeoutError);
       expect(requests).toHaveLength(2);
       expect(requests.every((request) => request.signal?.aborted === true)).toBe(true);
     });
