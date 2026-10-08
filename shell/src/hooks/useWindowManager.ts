@@ -7,6 +7,7 @@ import {
   TERMINAL_MIN_WINDOW_HEIGHT,
   TERMINAL_MIN_WINDOW_WIDTH,
 } from "@/lib/builtin-apps";
+import { BRAIN_SHELL_VIEW } from "@/components/brain";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { SHELL_WINDOW_Z_INDEX_MAX, SHELL_WINDOW_Z_INDEX_START } from "@/lib/shell-layering";
@@ -62,6 +63,7 @@ function isTerminalWindowPath(path: string): boolean {
 }
 
 function getMinimumWindowSize(path: string): { width: number; height: number } {
+  if (path === BRAIN_SHELL_VIEW.path) return { width: BRAIN_SHELL_VIEW.minWidth, height: BRAIN_SHELL_VIEW.minHeight };
   return isTerminalWindowPath(path)
     ? { width: TERMINAL_MIN_WINDOW_WIDTH, height: TERMINAL_MIN_WINDOW_HEIGHT }
     : { width: MIN_WIDTH, height: MIN_HEIGHT };

@@ -5,6 +5,7 @@ const BUILT_IN_APP_VALUES = [
   "__file-browser__",
   "__chat__",
   "__activity-monitor__",
+  "__brain__",
 ] as const;
 
 const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
@@ -35,6 +36,10 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["system-activity", "__activity-monitor__"],
   ["apps/activity-monitor/index.html", "__activity-monitor__"],
   ["/files/apps/activity-monitor/index.html", "__activity-monitor__"],
+  ["brain", "__brain__"],
+  ["company-brain", "__brain__"],
+  ["apps/brain/index.html", "__brain__"],
+  ["/files/apps/brain/index.html", "__brain__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
@@ -43,6 +48,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__file-browser__", "Files"],
   ["__chat__", "Hermes"],
   ["__activity-monitor__", "Activity Monitor"],
+  ["__brain__", "Company Brain"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {
