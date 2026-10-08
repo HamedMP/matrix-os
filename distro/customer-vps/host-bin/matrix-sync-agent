@@ -362,6 +362,11 @@ restore_rollback_release_metadata() {
   sudo mv -Tf "$RELEASE_ROLLBACK_FILE" "$RELEASE_FILE" || return 1
 }
 
+# BEGIN funded host bootstrap
+# Build replaces this fail-closed development placeholder with reviewed inline Python.
+funded_host_bootstrap() { return 1; }
+# END funded host bootstrap
+
 install_host_bin_payload() {
   local source_dir="$1" source name incoming destination protected_helper
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -723,6 +728,10 @@ cleanup_update_transaction() {
 # Keep the one-level rollback snapshot while the previous app bundle can still
 # be restored. The next update replaces both its rollback app and transaction.
 preserve_host_rollback_transaction() {
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/receipt.json; then
+    log "Preserved committed host artifacts for funded repair rollback"
+    return 0
+  fi
   if { [ -f "$UPDATE_TRANSACTION_DIR/systemd.present" ] &&
       grep -Fxq 'matrix-symphony.service' "$UPDATE_TRANSACTION_DIR/systemd.present"; } ||
     [ -f "$UPDATE_TRANSACTION_DIR/symphony.masked" ] ||
@@ -1380,6 +1389,17 @@ apply_update() {
   sha256="$(json_field "$manifest" sha256)"
   bundle_url="$(json_field "$manifest" url)"
   cur="$(current_version)"
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json \
+    && [ "$(compare_host_bundle_versions "$version" "$cur")" != newer ] && [ "$version" != "$cur" ]; then
+    # Retain current app; only the saved exact prior protected receipt can
+    # authorize narrow field rollback. Passive downgrades never schedule it.
+    if [ "$trigger_source" = explicit ]; then
+      reject_unchanged_update_request "$request_identity" || return 1
+      funded_host_bootstrap rollback "$cur" "$version" || log "WARN: funded rollback admission deferred"
+    fi
+    write_update_error "funded_rollback_required" "The previous funded configuration must be verified before this rollback." "$version" || true
+    return 1
+  fi
   log "Starting update from $cur to $version"
 
   sudo mkdir -p "$STAGING_DIR"
@@ -1688,9 +1708,14 @@ apply_update() {
     rm -rf "$extract_dir" "$bundle_file"
     return 1
   fi
+  rm -f -- "$UPDATE_PHASE_MARKER"
+  if [ "$trigger_source" = explicit ]; then
+    # The predecessor's first hop cannot retroactively invoke this hook.
+    # Explicit deployment requires an externally coordinated owner idle window.
+    funded_host_bootstrap schedule "$version" || log "WARN: funded host repair deferred"
+  fi
   rm -rf "$extract_dir" "$bundle_file"
   clean_staging || true
-  rm -f -- "$UPDATE_PHASE_MARKER"
   restart_sync_agent_after_update
 }
 
@@ -1895,6 +1920,11 @@ mkdir -p "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
+funded_installed_version="$(cat "$APP_DIR/BUNDLE_VERSION" 2>/dev/null || true)"
+if [[ "$funded_installed_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ ! -e "$UPDATE_PHASE_MARKER" ]; then
+  # Startup installs independently verified bytes only; it never stops a runtime.
+  funded_host_bootstrap install "$funded_installed_version" || log "WARN: funded host component installation deferred"
+fi
 reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"
