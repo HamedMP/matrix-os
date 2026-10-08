@@ -16,8 +16,10 @@ export const BRAIN_TONE = {
   /** The window surface: Electron Desktop paints app windows with --bg-surface. */
   surface: "bg-[var(--bg-surface,var(--background))] text-foreground",
   field: "border-[var(--border-default,var(--border))] bg-[var(--bg-surface,var(--background))] text-foreground",
-  /** A quiet box: the brief summary and the model confirm. */
+  /** A quiet box: the brief summary. */
   panel: "bg-[var(--bg-hover,var(--muted))]",
+  /** A surface floating over the content: the model confirm. */
+  overlay: "bg-[var(--bg-overlay,var(--background))] text-foreground shadow-lg",
   warn: "border-[color-mix(in_srgb,var(--warning)_45%,transparent)] bg-[var(--warning-muted,color-mix(in_srgb,var(--warning)_14%,transparent))] text-foreground",
   warnText: "text-warning",
   badgeWarn: "border-[color-mix(in_srgb,var(--warning)_45%,transparent)] text-warning",
