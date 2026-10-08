@@ -121,3 +121,126 @@ export function fenceOf(line: string): { readonly char: string; readonly length:
   while (line[end] === char) end += 1;
   return end - start >= MIN_FENCE_LENGTH ? { char, length: end - start } : null;
 }
+
+/** ATX only: up to 3 spaces, 1..6 `#`, then a space, tab or the line end; trailing spaces, tabs and `#` dropped. */
+export function headingOf(line: string): { readonly level: number; readonly text: string } | null {
+  const start = indentOf(line);
+  if (start > MAX_HEADING_INDENT) return null;
+  let level = 0;
+  while (level <= MAX_HEADING_LEVEL && line[start + level] === "#") level += 1;
+  if (level === 0 || level > MAX_HEADING_LEVEL) return null;
+  const rest = line.slice(start + level);
+  if (rest !== "" && rest[0] !== " " && rest[0] !== "\t") return null;
+  let end = rest.length;
+  while (end > 0 && " \t#\r".includes(rest[end - 1]!)) end -= 1;
+  let from = 0;
+  while (from < end && (rest[from] === " " || rest[from] === "\t")) from += 1;
+  return { level, text: rest.slice(from, end) };
+}
+
+/** Headings outside fenced code; a fence closes on the same character at least as long. */
+function scanHeadings(lines: readonly string[]): Heading[] {
+  const headings: Heading[] = [];
+  let open: { readonly char: string; readonly length: number } | null = null;
+  lines.forEach((line, index) => {
+    const fence = fenceOf(line);
+    if (open !== null) {
+      if (fence !== null && fence.char === open.char && fence.length >= open.length) open = null;
+      return;
+    }
+    if (fence !== null) {
+      open = fence;
+      return;
+    }
+    const heading = headingOf(line);
+    if (heading !== null) headings.push({ index, ...heading });
+  });
+  return headings;
+}
+
+function classifyHeading(text: string): "summary" | "invariants" | null {
+  if (text.length > HEADING_CLASSIFY_MAX_CHARS) return null;
+  let key = text.trim().toLowerCase();
+  if (key.endsWith(":")) key = key.slice(0, -1).trimEnd();
+  if (key === "summary" || key === "tl;dr" || key === "outcome" || key.startsWith("summary ")) return "summary";
+  return INVARIANTS_HEADING.test(key) ? "invariants" : null;
+}
+
+/** Cut at the last newline, else space, in the back half of the window; else hard, never splitting a surrogate pair. */
+function cutExcerpt(text: string, maxChars: number): string {
+  const window = text.slice(0, maxChars + 1);
+  let cut = window.lastIndexOf("\n");
+  if (cut <= maxChars / 2) cut = window.lastIndexOf(" ");
+  if (cut <= maxChars / 2) {
+    cut = maxChars;
+    const unit = text.charCodeAt(cut - 1);
+    if (unit >= 0xd800 && unit <= 0xdbff) cut -= 1;
+  }
+  return text.slice(0, cut).trimEnd();
+}
+
+function boundExcerpt(text: string, heading: string | null, maxChars: number, cutShort: boolean): BrainWhyExcerpt {
+  if (text.length <= maxChars) return { heading, text, truncated: cutShort };
+  return { heading, text: cutExcerpt(text, maxChars), truncated: true };
+}
+
+/** Lines [start, end) without surrounding blank lines or trailing whitespace; null when nothing is left. */
+function excerptOf(
+  lines: readonly string[],
+  range: { readonly start: number; readonly end: number },
+  heading: string | null,
+  options: BrainWhySectionOptions,
+): BrainWhyExcerpt | null {
+  let first = range.start;
+  let last = range.end;
+  while (first < last && isBlank(lines[first]!)) first += 1;
+  while (last > first && isBlank(lines[last - 1]!)) last -= 1;
+  if (first === last) return null;
+  const cutShort = range.end === lines.length && options.messageTruncated === true;
+  return boundExcerpt(lines.slice(first, last).join("\n").trimEnd(), heading, options.maxChars, cutShort);
+}
+
+/**
+ * The first paragraph before the first heading, for pr and commit items without a Summary section; none when it
+ * is only the message's closing git trailers or only repeats the title (a one-commit squash list entry).
+ */
+function leadParagraph(lines: readonly string[], end: number, options: BrainWhySectionOptions): BrainWhyExcerpt | null {
+  let first = 0;
+  while (first < end && isBlank(lines[first]!)) first += 1;
+  let last = first;
+  while (last < end && !isBlank(lines[last]!)) last += 1;
+  const paragraph = lines.slice(first, last);
+  const trailersOnly = paragraph.every((line) => GIT_TRAILER.test(line)) && lines.slice(last).every(isBlank);
+  const text = paragraph.join("\n").trim();
+  if (text === "" || trailersOnly || text.replace(/^\* /, "") === options.title) return null;
+  return boundExcerpt(text, null, options.maxChars, last === lines.length && options.messageTruncated === true);
+}
+
+/**
+ * The first non-empty Summary and Invariants sections: the lines after the heading up to the next heading of the same
+ * or a higher level outside fenced code. Text is a verbatim substring of `message`, cut to maxChars.
+ */
+export function extractBrainWhySections(
+  message: string,
+  options: BrainWhySectionOptions,
+): { summary: BrainWhyExcerpt | null; invariants: BrainWhyExcerpt | null } {
+  const lines = message.split("\n");
+  const headings = scanHeadings(lines);
+  let summary: BrainWhyExcerpt | null = null;
+  let invariants: BrainWhyExcerpt | null = null;
+  for (let at = 0; at < headings.length && (summary === null || invariants === null); at += 1) {
+    const heading = headings[at]!;
+    const kind = classifyHeading(heading.text);
+    if (kind === null || (kind === "summary" ? summary : invariants) !== null) continue;
+    let next = at + 1;
+    while (next < headings.length && headings[next]!.level > heading.level) next += 1;
+    const end = headings[next]?.index ?? lines.length;
+    const excerpt = excerptOf(lines, { start: heading.index + 1, end }, heading.text, options);
+    if (kind === "summary") summary = excerpt;
+    else invariants = excerpt;
+  }
+  if (summary === null && options.kind !== "spec") {
+    summary = leadParagraph(lines, headings[0]?.index ?? lines.length, options);
+  }
+  return { summary, invariants };
+}
