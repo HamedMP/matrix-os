@@ -275,6 +275,10 @@ describe("brain_why helpers", () => {
     expect(ex("## Summary\nA\n## Other\nB").summary?.text).toBe("A");
     expect(ex("## Summary\n\n## Summary\n  Second.  \n").summary).toEqual({ heading: "Summary", text: "  Second.", truncated: false });
     expect(ex("~~~~\n## Summary\n~~~\nfake\n~~~~\n### TL;DR\nShort.").summary?.text).toBe("Short.");
+    // A closing fence takes only spaces or tabs after its run; `~~~example` or "```ts" inside a block is code.
+    expect(ex("~~~\n~~~example\n## Summary\nfake\n~~~ \t\n## Summary\nReal.").summary?.text).toBe("Real.");
+    expect(ex("```\n```ts\n## Summary\nfake\n  ````\n## Summary\nReal.").summary?.text).toBe("Real.");
+    expect(ex("```\r\n## Summary\r\nfake\r\n```\r\n## Summary\r\nReal.").summary?.text).toBe("Real.");
     expect(ex("##   Key invariant ##  \nOne.\n## Summary : \nS.")).toEqual({
       summary: { heading: "Summary :", text: "S.", truncated: false }, invariants: { heading: "Key invariant", text: "One.", truncated: false },
     });
