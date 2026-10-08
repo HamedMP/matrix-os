@@ -95,6 +95,22 @@ describe("openGitRepository containment", { timeout: 30_000 }, () => {
     await expect(open(checkout)).resolves.toMatchObject({ root: await realpath(checkout) });
   });
 
+  it("refuses an objects directory linked outside home or into home's own history, and allows one inside home", async () => {
+    const linked = async (name: string, target: string): Promise<string> => {
+      const checkout = await project(name);
+      await rawGit(["init", "-q", checkout], f.homePath);
+      await rm(join(checkout, ".git", "objects"), { recursive: true });
+      await symlink(target, join(checkout, ".git", "objects"));
+      return checkout;
+    };
+    await expectRefused(await linked("objects-outside", join(outside.repoPath, ".git", "objects")));
+    await rawGit(["init", "-q", f.homePath], f.homePath);
+    await expectRefused(await linked("objects-home", join(f.homePath, ".git", "objects")));
+    const store = join(f.homePath, "object-stores", "shared");
+    await rawGit(["init", "-q", "--bare", store], f.homePath);
+    await expect(open(await linked("objects-inside", join(store, "objects")))).resolves.toMatchObject({ objectFormat: "sha1" });
+  });
+
   it("refuses object alternates outside home or quoted, also when nested, and allows them inside home", async () => {
     const alternates = join(f.repoPath, ".git", "objects", "info", "alternates");
     await mkdir(join(f.repoPath, ".git", "objects", "info"), { recursive: true });
