@@ -27,7 +27,8 @@ syncs and claim reading as runs and polls them (spec 563).
   default rules), `search_refresh`, `graph_refresh`, `brief` (`window` day or week, default day).
 - Statuses: `queued`, `running`, `succeeded`, `failed`, `cancelled`. A run holds a slot `(scope, kind, target)` while
   queued or running; target is the source id (or `git`), the extractor, the window, or empty. Asking for a held slot
-  returns the existing run with `deduped: true` (a unique partial index enforces it).
+  returns the existing run with `deduped: true` (a unique partial index enforces it; the insert is
+  `ON CONFLICT DO NOTHING` on that index, then the existing run is read).
 - Steps are injected: `BrainJobStep(context) -> { caughtUp, stopCode, summary }`. `createBrainJobSteps` builds them
   from the project service (sync, extract), the sources service, the search and graph indexes and the brief service;
   a kind whose service is off has no step and cannot be queued (`job_kind_unavailable`). A model extraction is
@@ -52,16 +53,20 @@ syncs and claim reading as runs and polls them (spec 563).
   when the step ignores the signal. The step's service call then ends on its own budget, and the heartbeat timer
   stops renewing the lease once the run is aborted.
 - Leases: a claim sets `lease_owner` and `lease_expires_at` (`leaseMs`) and adds one attempt; heartbeats every
-  `heartbeatMs` and after every step renew it. Every worker write is fenced by `status = 'running' AND lease_owner =
-  <worker>`, so a worker that lost its lease writes nothing. Each poll first recovers expired leases: queued again,
-  or `failed` with `attempts_exhausted` after `maxAttempts` claims, or `cancelled` when a cancel was asked. A paid
-  run (a model extract) is never queued again: it ends `failed` with `interrupted`, and the owner runs it again by
-  choice, so one confirmed click never pays for a second pass.
+  `heartbeatMs` (at most a third of `leaseMs`; a longer setting is shortened) and after every step renew it. Every
+  worker write is fenced by its claim, `status = 'running' AND lease_owner = <worker> AND attempts = <the claim's
+  attempts>`, so a run that lost its lease writes nothing, even after the same worker claimed the job again; that
+  worker also stops its old run of the job before it starts the new one. Each poll first recovers expired leases:
+  queued again, or `failed` with `attempts_exhausted` after `maxAttempts` claims, or `cancelled` when a cancel was
+  asked. A paid run (a model extract) is never queued again: it ends `failed` with `interrupted`, and the owner runs
+  it again by choice, so one confirmed click never pays for a second pass.
 - Concurrency: `concurrency` runs per gateway (default 2); claims use `FOR UPDATE SKIP LOCKED`, so two gateways never
   take the same run.
 - Cancel: a queued run is cancelled at once; a running run gets `cancelRequested`, and the service tells this
   gateway's worker, which stops it at once. A run held by another gateway stops at its next heartbeat or step.
-  Cancelling a finished run returns it unchanged.
+  A recorded cancel always wins: the final write, the shutdown hand-back and lease recovery all end such a run
+  `cancelled` (with its steps and summary so far), even when its last step had completed. Cancelling a finished run
+  returns it unchanged.
 - Shutdown: `stop()` aborts running steps and hands their runs back (queued, the claim not counted; `cancelled` when
   a cancel was asked; `failed` with `interrupted` for a paid run), waiting at most `stopWaitMs`. A claim still in
   flight when `stop()` runs is handed back the same way and its step never starts. Anything not handed back in time
@@ -70,7 +75,9 @@ syncs and claim reading as runs and polls them (spec 563).
   `job_kind_unavailable`, the list is empty and a run id is `job_not_found`, so the app runs the work through the
   direct routes.
 - Retention: at most 100 queued or running runs per owner (`jobs_full`); at most 50 finished runs per scope, older
-  ones pruned on enqueue. The stored request is at most 1 KiB, the result summary at most 16 keys and 8 KiB.
+  ones pruned on enqueue. The stored request is at most 1 KiB, the result summary at most 16 keys and 8 KiB as
+  stored: `clipBrainJobSummary` counts the bytes of the stored jsonb text (numbers in exponent form spelled out),
+  leaves out an entry that would pass 8 KiB, never splits a character and replaces lone surrogates.
 
 ## API
 
@@ -117,7 +124,8 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
   and waits at most `stopWaitMs`; what is not handed back in time is recovered by lease expiry.
 - Step error: the run fails with the step's code; busy codes wait and retry until the time cap instead.
 - Concurrency: one active run per `(scope, kind, target)` by a unique partial index; claims use
-  `FOR UPDATE SKIP LOCKED`; every worker write is fenced by `status = 'running' AND lease_owner = <worker>`.
+  `FOR UPDATE SKIP LOCKED`; every worker write is fenced by its claim (`status = 'running' AND lease_owner = <worker>
+  AND attempts = <the claim's attempts>`).
 - A run whose row was erased mid-step finds its lease gone and writes nothing.
 
 ## Resource management
@@ -128,7 +136,7 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
 | finished runs kept per scope | 50, older pruned on enqueue | store |
 | request / result summary | 1 KiB / 16 keys, 40-character keys, 200-character strings, 8 KiB | zod, SQL CHECK, `clipBrainJobSummary` |
 | runs at once per gateway | 2 (ceiling 8) | worker |
-| lease / heartbeat / poll / wall clock per claim | 60 s / 15 s / 5 s / 15 min (ceilings 10 min / 5 min / 5 min / 60 min) | worker |
+| lease / heartbeat / poll / wall clock per claim | 60 s / 15 s / 5 s / 15 min (ceilings 10 min / 5 min / 5 min / 60 min; heartbeat at most a third of the lease) | worker |
 | steps per run / claims per run | 500 / 3 (ceilings 5,000 / 10) | worker, SQL CHECK |
 | list page | 1 to 50, default 20 | route, store |
 | in memory | the running runs (at most `concurrency`), one poll timer, per run one abort controller, one heartbeat and one time-cap timer, all cleared when the run ends | worker |
@@ -138,9 +146,11 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
 - **Source of truth**: `brain_jobs` in owner Postgres; nothing about a run lives only in memory, so any gateway can
   pick up an expired run.
 - **Lock/transaction scope**: enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId),
-  hashtext('brain-jobs'))`; cancel is one statement fenced by status; every worker write is one statement fenced by
-  the lease (`status = 'running' AND lease_owner = <worker>`), so a worker that lost its lease can never overwrite
-  the run.
+  hashtext('brain-jobs'))`, and the insert is `ON CONFLICT DO NOTHING` on `brain_jobs_active_slot`; cancel is one
+  statement fenced by status; every worker write is one statement fenced by the claim (`status = 'running' AND
+  lease_owner = <worker> AND attempts = <the claim's attempts>`), so a run that lost its lease can never overwrite
+  the run of a later claim. Attempts only grows while a claim lives (release, the one write that lowers it, is that
+  claim's last), so no two claims of a job share it.
 - **Acceptable orphan states**: a `running` row of a dead gateway until its lease expires; finished runs beyond the
   newest 50 per scope until the next enqueue prunes them; runs of an erased project never (the erase deletes them).
 - **Auth source of truth**: the request principal resolved to its own project scope; the worker acts only as the
@@ -167,8 +177,9 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
 
 `pnpm exec vitest run tests/gateway/brain-jobs-*.test.ts` (PGlite and fakes; no network, no model calls).
 `MATRIX_TEST_POSTGRES_URL=<disposable server>` also runs `brain-jobs-postgres.test.ts`: concurrent enqueue dedupe,
-claims across connections and two workers running every run exactly once. `brain-start.test.ts` queues a run through
-the mounted routes and the worker the services start, and checks the stop order. Manual (dev Docker stack):
+an enqueue whose slot is taken after its check (`ON CONFLICT`), claims across connections and two workers running
+every run exactly once. `brain-start.test.ts` queues a run through the mounted routes and the worker the services
+start, and checks the stop order. Manual (dev Docker stack):
 `POST .../jobs {"kind":"sync"}` answers 202 with a queued run, `GET .../jobs/:jobId` moves to `running` then
 `succeeded` with a summary, a second POST while it runs answers `deduped: true`, and restarting the gateway mid-run
 hands the run back at once (queued again, or `interrupted` for a model extract); a killed gateway's run is queued
@@ -176,7 +187,7 @@ again after its lease expires.
 
 ## Code review checklist
 
-Every worker write is fenced by the lease; every list, loop, timer and map is bounded and cleared; no `catch {`;
+Every worker write is fenced by the claim; every list, loop, timer and map is bounded and cleared; no `catch {`;
 stored codes match the code pattern; bodies are strict zod under `bodyLimit`; no new dependency and no model call
 outside the existing extract step.
 
