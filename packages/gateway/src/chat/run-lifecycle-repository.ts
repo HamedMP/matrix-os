@@ -5,6 +5,8 @@ import {
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
+  CanonicalChatRunPolicySchema,
+  CanonicalChatRunSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
   type AgentAttachment,
@@ -53,6 +55,21 @@ function recoveredTextParts(text: string) {
 }
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
+
+/**
+ * Provenance for a selected native checkpoint. `historyBoundarySeq` is the
+ * producing run's admission boundary (seq the run's context window started
+ * after); `coveredThroughSeq` is the highest committed canonical message seq
+ * the native session provably contains (its turn's input plus emitted
+ * messages). Callers must reconcile committed history beyond that boundary —
+ * retain it when supported, otherwise refuse native resume — instead of
+ * silently rewinding canonical history.
+ */
+export interface ChatCheckpointProvenance {
+  runId: string;
+  historyBoundarySeq: number;
+  coveredThroughSeq: number;
+}
 
 function validateOwner(owner: ChatOwner): ChatOwner {
   return CanonicalOwnerScopeSchema.parse(owner);
@@ -175,9 +192,35 @@ export class ChatRunLifecycleRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
-  }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
+    /**
+     * Extra delivery-aware exclusions supplied by the caller (e.g. ids a live
+     * voice session knows were never delivered even though no durable row
+     * exists yet). The canonical `chat_voice_deliveries` predicate below is
+     * already enforced database-side; these hints are additive, bounded, and
+     * never subtract from it.
+     */
+    unheardResponses?: readonly string[];
+    /** Session-only callers never reuse a native checkpoint; the harness may
+     *  rebuild strictly from Matrix-owned state. */
+    sessionOnly?: boolean;
+  }): Promise<{
+    schemaVersion: number;
+    state: unknown;
+    executionRootFingerprint?: string;
+    /**
+     * Which checkpoint was selected and how far its native session covered
+     * canonical history: `historyBoundarySeq` is the producing run's admission
+     * boundary, `coveredThroughSeq` the last committed message seq that run
+     * consumed/produced. Callers resuming past `coveredThroughSeq` must retain
+     * the intervening canonical history themselves or not resume.
+     */
+    checkpoint: ChatCheckpointProvenance;
+  } | null> {
     const owner = validateOwner(ownerInput);
     [input.driverKind, input.instanceId].forEach(requireSafeRef);
+    // Disposable/session-only policy never resumes a native checkpoint.
+    if (input.sessionOnly) return null;
+    const unheard = (input.unheardResponses ?? []).slice(0, 100).map((entry) => requireSafeRef(entry));
     if (!await selectOwnedChat(this.kysely, owner, CanonicalChatIdSchema.parse(input.chatId))) return null;
     const row = await this.kysely.selectFrom("chat_run_adapter_state")
       .innerJoin("chat_runs", "chat_runs.id", "chat_run_adapter_state.run_id")
@@ -185,6 +228,21 @@ export class ChatRunLifecycleRepository {
         "chat_run_adapter_state.schema_version",
         "chat_run_adapter_state.state",
         "chat_runs.execution_root_fingerprint",
+        "chat_runs.id as checkpoint_run_id",
+        "chat_runs.history_boundary_seq",
+        // Coverage provenance: the highest committed seq this checkpoint's
+        // session provably contains — the turn's input message plus every
+        // message the producing run emitted. Anything committed after it is
+        // not in native context and must be retained or the checkpoint is
+        // ineligible for this turn.
+        sql<number>`COALESCE((
+          SELECT MAX(m.seq) FROM chat_messages m
+          WHERE m.chat_id = chat_runs.chat_id
+            AND m.state = 'committed'
+            AND (m.run_id = chat_runs.id
+                 OR m.id = (SELECT t.input_message_id FROM chat_turns t
+                            WHERE t.id = chat_runs.turn_id))
+        ), chat_runs.history_boundary_seq)`.as("covered_through_seq"),
       ])
       .where("chat_runs.chat_id", "=", input.chatId)
       .where("chat_runs.driver_kind", "=", input.driverKind)
@@ -197,6 +255,9 @@ export class ChatRunLifecycleRepository {
           AND agent_boundary.context_snapshot -> 'agent' IS NOT NULL
           AND agent_boundary.history_boundary_seq >= chat_runs.history_boundary_seq
       )`)
+      // Only explicitly reusable checkpoints qualify: a disposable or
+      // session-only policy forbids later native reuse of that state.
+      .where(sql<boolean>`(chat_runs.run_policy IS NULL OR chat_runs.run_policy ->> 'nativeCheckpointPolicy' = 'reusable')`)
       // Returning to a former root must not revive a session missing completed
       // work performed in another root. Interrupted-checkpoint fallback remains.
       .where(sql<boolean>`NOT EXISTS (
@@ -211,6 +272,36 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.status", "in", input.includeInterrupted
         ? ["completed", "failed", "aborted"]
         : ["completed"])
+      // Delivery-aware eligibility, resolved database-side inside the same
+      // query — no bounded id list, no materialized scan that can silently
+      // truncate. A run with an unresolved voice delivery (pending, playing,
+      // interrupted, unknown — anything not verified `complete`) may contain
+      // unheard text, so its checkpoint can never seed native context.
+      .where((eb) => eb.not(eb.exists(
+        eb.selectFrom("chat_voice_deliveries as unresolved_delivery")
+          .select("unresolved_delivery.response_id")
+          .whereRef("unresolved_delivery.chat_id", "=", "chat_runs.chat_id")
+          .where("unresolved_delivery.state", "<>", "complete")
+          .where((inner) => inner.or([
+            inner("unresolved_delivery.run_id", "=", inner.ref("chat_runs.id")),
+            inner.exists(
+              inner.selectFrom("chat_messages as unheard_message")
+                .select("unheard_message.id")
+                .whereRef("unheard_message.chat_id", "=", "chat_runs.chat_id")
+                .whereRef("unheard_message.run_id", "=", "chat_runs.id")
+                .whereRef("unheard_message.id", "=", "unresolved_delivery.message_id"),
+            ),
+          ])),
+      )))
+      // Runs whose output was never heard cannot seed the next native context.
+      .$if(unheard.length > 0, (query) => query
+        .where("chat_runs.id", "not in", unheard)
+        .where((eb) => eb.not(eb.exists(
+          eb.selectFrom("chat_messages as unheard_message")
+            .select("unheard_message.id")
+            .whereRef("unheard_message.run_id", "=", "chat_runs.id")
+            .where("unheard_message.id", "in", unheard),
+        ))))
       .where("chat_run_adapter_state.driver_kind", "=", input.driverKind)
       .where("chat_run_adapter_state.instance_id", "=", input.instanceId)
       .where("chat_run_adapter_state.schema_version", "=", input.schemaVersion)
@@ -225,6 +316,11 @@ export class ChatRunLifecycleRepository {
       ...(row.execution_root_fingerprint === null ? {} : {
         executionRootFingerprint: row.execution_root_fingerprint,
       }),
+      checkpoint: {
+        runId: row.checkpoint_run_id,
+        historyBoundarySeq: Number(row.history_boundary_seq),
+        coveredThroughSeq: Number(row.covered_through_seq),
+      },
     };
   }
 
@@ -252,10 +348,37 @@ export class ChatRunLifecycleRepository {
     chatId: string;
     runId: string;
     approvalId: string;
-  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+  }): Promise<(Extract<CanonicalChatRunActivity, { type: "approval.requested" }> & {
+    capabilitySnapshot?: CanonicalChatRun["capabilitySnapshot"];
+    runPolicy?: CanonicalChatRun["runPolicy"];
+  }) | null> {
     const owner = validateOwner(ownerInput);
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     [input.runId, input.approvalId].forEach(requireSafeRef);
+    const runRows = await this.kysely.selectFrom("chat_runs")
+      .innerJoin("chats", "chats.id", "chat_runs.chat_id")
+      .select(["chat_runs.capability_snapshot", "chat_runs.run_policy"])
+      .where("chats.owner_type", "=", owner.type)
+      .where("chats.owner_id", "=", owner.ownerId)
+      .where("chat_runs.chat_id", "=", chatId)
+      .where("chat_runs.id", "=", input.runId)
+      .where("chat_runs.status", "in", [...ACTIVE_RUNS])
+      .executeTakeFirst();
+    if (!runRows) return null;
+    // The capability snapshot authorizes this approval; corrupt or unreadable
+    // snapshots fail closed instead of silently skipping binding enforcement.
+    const capabilitySnapshot = runRows.capability_snapshot === null
+      ? undefined
+      : CanonicalChatRunSchema.shape.capabilitySnapshot.parse(
+        typeof runRows.capability_snapshot === "string"
+          ? JSON.parse(runRows.capability_snapshot)
+          : runRows.capability_snapshot,
+      );
+    const runPolicy = runRows.run_policy === null
+      ? undefined
+      : CanonicalChatRunPolicySchema.parse(
+        typeof runRows.run_policy === "string" ? JSON.parse(runRows.run_policy) : runRows.run_policy,
+      );
     const rows = await this.kysely.selectFrom("chat_run_events")
       .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
       .innerJoin("chats", "chats.id", "chat_runs.chat_id")
@@ -277,7 +400,11 @@ export class ChatRunLifecycleRepository {
       if (activity.data.type === "approval.requested") pending = activity.data;
       if (activity.data.type === "approval.resolved") pending = null;
     }
-    return pending;
+    return pending === null ? null : {
+      ...pending,
+      ...(capabilitySnapshot ? { capabilitySnapshot } : {}),
+      ...(runPolicy ? { runPolicy } : {}),
+    };
   }
 
   async markRunRunning(ownerInput: ChatOwner, input: {

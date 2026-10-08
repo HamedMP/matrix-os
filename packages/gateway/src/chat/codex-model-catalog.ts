@@ -6,7 +6,7 @@ import type { CodingModelCatalogProjection } from "./provider-catalog.js";
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MODELS = 64;
 const MAX_OPTIONS = 32;
-const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_CACHE_TTL_MS = 60_000;
 // A cold app-server start, one dropped handshake, or a momentary scheduling
 // hiccup are all ordinary and should not immediately degrade Codex to

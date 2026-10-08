@@ -1,14 +1,15 @@
 import { contextForChatSession } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
-import { admitCanonicalTurn } from "./turn-admission.js";
+import { admitCanonicalTurn, type TurnAdmissionExecutionHints } from "./turn-admission.js";
+import { truthfulCancellationGranularity } from "./argument-digest.js";
 import { contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -22,6 +23,7 @@ import {
   type CanonicalChatRunActivity,
   type CanonicalChatRunAdmissionResponse,
   type CanonicalChatQueueAdmissionResponse,
+  type ChatContextSnapshot,
   type CanonicalChatRunCancellationResponse,
   type CanonicalChatRunSteeringResponse,
   type CanonicalChatTurnAdmissionResponse,
@@ -40,7 +42,11 @@ import type {
   ChatExecutionRootResolver,
   ResolvedChatExecutionRoot,
 } from "./execution-root.js";
+import { revalidateActionPolicy, revalidateFrozenRunPolicy, revalidateQueuedSteerPolicy } from "./action-policy.js";
+import { CanonicalActionError } from "./action-repository.js";
 import {
+  validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
   type ChatProviderCatalogService,
 } from "./provider-catalog.js";
 import {
@@ -62,8 +68,10 @@ import {
   enqueueCanonicalQueuedTurn,
 } from "./queue-admission.js";
 import { recoverOrphanedRun } from "./orphaned-run-recovery.js";
-import { hasStoppingChatExecution } from "./dispatch-ownership.js";
-import { loadChatResumeState } from "./resume-checkpoint.js";
+import { retryAvailability } from "./retry-preflight.js";
+import { dispatchAdmissionKey, hasStoppingChatExecution } from "./dispatch-ownership.js";
+import { ChatResumeHistoryUnavailableError, loadChatResumeDecision } from "./resume-checkpoint.js";
+import { admissionPolicyForTurn, type VoiceSessionPolicyLookup } from "./voice-session-policy.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE, diagnoseChatRunFailure, type ChatRunFailureDiagnostic } from "./failure-diagnostic.js";
 import {
@@ -157,6 +165,7 @@ export class CanonicalChatOrchestrator {
   private readonly orderedControls = createOrderedRunControls();
 
   constructor(private readonly options: {
+    actions?: import("./action-authority.js").CanonicalActionAuthority;
     repository: Pick<ChatRepository,
       | "getDetailPage"
       | "get"
@@ -180,6 +189,7 @@ export class CanonicalChatOrchestrator {
       | "updateAdapterState"
       | "finishRun"
       | "getAdapterState"
+      | "kysely"
       | "getInputState"
       | "reopenInputSubmission"
       | "getPendingApproval"
@@ -193,6 +203,12 @@ export class CanonicalChatOrchestrator {
     adapters: CanonicalChatProviderRegistry;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
+    /**
+     * Optional live voice-session policy lookup. When present, a session
+     * owning a Chat stamps its frozen memory/checkpoint/permission policy
+     * onto every admitted or queued turn for that Chat.
+     */
+    voiceSessionPolicy?: VoiceSessionPolicyLookup;
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
@@ -293,6 +309,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
+    admissionHints?: TurnAdmissionExecutionHints,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,
@@ -304,7 +321,7 @@ export class CanonicalChatOrchestrator {
       atCapacity: (scope) => this.atCapacity(scope),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
-    }, principal, owner, chatId, inputValue);
+    }, principal, owner, chatId, inputValue, admissionHints);
   }
 
   async enqueueQueuedTurn(
@@ -326,6 +343,7 @@ export class CanonicalChatOrchestrator {
         catalog: this.options.catalog,
         adapters: this.options.adapters,
         ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
+        ...(this.options.voiceSessionPolicy ? { voiceSessionPolicy: this.options.voiceSessionPolicy } : {}),
         now: this.options.now ?? (() => new Date()),
       });
     } catch (error: unknown) {
@@ -363,10 +381,12 @@ export class CanonicalChatOrchestrator {
     admissionKey?: string,
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
+    retainedHistory?: ChatContextSnapshot,
   ): void {
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
+      retainedHistory,
     )
       .catch((error: unknown) => {
         console.error("[chat/orchestrator] Run dispatch failed:", error instanceof Error ? error.name : "UnknownError");
@@ -436,6 +456,7 @@ export class CanonicalChatOrchestrator {
         const adapter = this.options.adapters.get(claimed.run.driverKind);
         let resolvedRoot: ResolvedChatExecutionRoot | undefined;
         let resumeState: unknown;
+        let retainedHistory: ChatContextSnapshot | undefined;
         try {
           if (!adapter) throw new Error("Queued Provider adapter unavailable");
           if (claimed.run.executionRoot) {
@@ -445,12 +466,21 @@ export class CanonicalChatOrchestrator {
               throw new Error("Queued execution root provenance changed");
             }
           }
-          resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
+          const resumeDecision = claimed.run.context?.agent ? undefined : await loadChatResumeDecision({
             repository: this.options.repository, owner, chatId, adapter,
             instanceId: claimed.run.instanceId,
             executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
             mode: "follow_up",
+            retainedHistorySupported: true,
+            historyBoundarySeq: claimed.run.historyBoundarySeq,
+            ...(claimed.run.runPolicy ? { runPolicy: claimed.run.runPolicy } : {}),
           });
+          if (resumeDecision?.mode === "rebuild" && claimed.run.historyBoundarySeq > 0
+            && !resumeDecision.retainedHistory) {
+            throw new ChatResumeHistoryUnavailableError();
+          }
+          resumeState = resumeDecision?.resumeState;
+          retainedHistory = resumeDecision?.retainedHistory;
         } catch (error: unknown) {
           console.warn(
             "[chat/orchestrator] Queued Run preparation failed:",
@@ -468,10 +498,15 @@ export class CanonicalChatOrchestrator {
         this.startDispatch(
           owner,
           claimed.message,
-          { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState) },
+          { ...claimed.run, context: contextForChatSession(claimed.run.context, resumeState, Boolean(retainedHistory || claimed.run.runPolicy)) },
           adapter,
           resolvedRoot,
           resumeState,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          retainedHistory,
         );
         return;
       }
@@ -490,6 +525,7 @@ export class CanonicalChatOrchestrator {
     resumeState?: unknown,
     promptOverride?: string,
     sharedScopeId?: string,
+    retainedHistory?: ChatContextSnapshot,
   ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
@@ -507,6 +543,7 @@ export class CanonicalChatOrchestrator {
         };
         resolvedRoot = await this.options.executionRoots.revalidate(owner, provenance);
       }
+      await revalidateFrozenRunPolicy(adapter, run, this.options.voiceSessionPolicy);
       await this.options.repository.markRunRunning(owner, { chatId: run.chatId, runId: run.id, startedAt });
       await this.persistActivities(owner, run, [{ type: "run.status", status: "running" }, {
         type: "turn.status",
@@ -515,25 +552,38 @@ export class CanonicalChatOrchestrator {
       }], startedAt);
       await this.sharedExecution.notify(sharedScopeId);
 
+      const dispatchContext = retainedHistory
+        ? {
+            ...(run.context ?? {
+              version: 1 as const,
+              requestHash: createHash("sha256").update(run.id).digest("hex"),
+              chats: [],
+            }),
+            history: retainedHistory,
+          }
+        : run.context;
       const input: CanonicalProviderRunInput = {
         owner,
         chatId: run.chatId,
         turnId: run.turnId,
         runId: run.id,
-        ...(run.context ? { context: run.context } : {}),
-        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), run.context, {
+        ...(dispatchContext ? { context: dispatchContext } : {}),
+        prompt: contextPrompt(promptOverride ?? promptFor(message.parts), dispatchContext, {
           deferIntegrationGuidance: run.driverKind === "claude_code",
         }),
         parts: message.parts,
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,
+        ...(run.runPolicy ? { runPolicy: run.runPolicy } : {}),
         ...(sharedScopeId ? { sharedScopeId } : {}),
         ...(resolvedRoot ? { executionRoot: resolvedRoot.primaryWorkspaceRoot } : {}),
         ...(resolvedRoot?.projectSlug ? { projectSlug: resolvedRoot.projectSlug } : {}),
         ...(resolvedRoot?.ref.kind === "worktree" ? { worktreeId: resolvedRoot.ref.worktreeId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
         signal: controller.signal,
+        ...(this.options.actions ? { actions: this.options.actions } : {}),
+        onActionEvent: async (event) => { await this.persistActivities(owner, run, [event]); },
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
@@ -711,6 +761,16 @@ export class CanonicalChatOrchestrator {
     }
   }
 
+  /** Composition callback for the canonical authority; never a new approval service. */
+  async projectActionEvent(identity: import("./action-repository.js").ActionIdentity, event: CanonicalProviderRunEvent): Promise<void> {
+    if (!["approval.requested", "approval.resolved", "tool.progress", "tool.output", "resource.changed"].includes(event.type)) throw new Error("Invalid canonical action projection");
+    const row = await this.options.repository.kysely.selectFrom("chat_runs").select("turn_id").where("id", "=", identity.runId).where("chat_id", "=", identity.chatId).executeTakeFirst();
+    if (!row) throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
+    const context = await this.options.repository.getTurnRunContext(identity.owner, identity.chatId, row.turn_id);
+    if (!context || context.latestRun.id !== identity.runId) throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
+    await this.persistActivities(identity.owner, context.latestRun, [event]);
+  }
+
   private async persistActivities(
     owner: ChatOwner,
     run: CanonicalChatRun,
@@ -786,6 +846,9 @@ export class CanonicalChatOrchestrator {
       return {
         run: finished.run,
         cancellation: finished.transitioned ? "aborted" : "already_terminal",
+        // Truthful granularity: this path aborts the whole Run only; a tool
+        // level is never implied. Nothing applied when already terminal.
+        ...(finished.transitioned ? { granularity: "run" as const } : {}),
       };
     } catch (error: unknown) {
       return mapRepositoryError(error);
@@ -819,6 +882,9 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    const context = await this.options.repository.getTurnRunContext(owner, chatId, input.expectedTurnId);
+    if (!context || context.latestRun.id !== runId) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This Run cannot be steered."), 409);
+    await revalidateFrozenRunPolicy(active.adapter, context.latestRun, this.options.voiceSessionPolicy);
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     let begun;
     try {
@@ -925,6 +991,10 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    const context = await this.options.repository.getTurnRunContext(owner, chatId, input.expectedTurnId);
+    if (!context || context.latestRun.id !== runId) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This Run cannot be steered."), 409);
+    await revalidateFrozenRunPolicy(active.adapter, context.latestRun, this.options.voiceSessionPolicy);
+    await revalidateQueuedSteerPolicy(this.options.repository.kysely, chatId, queuedTurnId, context.latestRun.runPolicy);
     const timestamp = (this.options.now ?? (() => new Date()))().toISOString();
     let begun;
     try {
@@ -1031,6 +1101,20 @@ export class CanonicalChatOrchestrator {
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
+    if (approvalId.startsWith("action_") && this.options.actions) {
+      if (!input.argumentDigest) throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
+      try {
+        await this.options.actions.decide({ owner, chatId, runId, actionId: approvalId, argumentDigest: input.argumentDigest, decision: input.decision, clientRequestId: input.clientRequestId });
+      } catch (error: unknown) {
+        // A rejected canonical decision is a deterministic conflict — stale
+        // digest, already-decided, or dead run — never a transient 503.
+        if (error instanceof CanonicalActionError) {
+          throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "This approval is no longer available."), 409);
+        }
+        throw error;
+      }
+      return { approvalId, decision: input.decision, submission: "accepted" };
+    }
     const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
       || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
@@ -1046,6 +1130,18 @@ export class CanonicalChatOrchestrator {
         409,
       );
     }
+    // FR-021/FR-022: when the admitted snapshot binds approvals to argument
+    // digests, the decision must echo the exact digest the provider proposed.
+    // A bound proposal without a digest — or any mismatch — fails closed; the
+    // submitted digest is never trusted over the persisted proposal.
+    if (pending.capabilitySnapshot?.approvalBinding === "argument_digest") {
+      if (pending.argumentDigest === undefined || input.argumentDigest !== pending.argumentDigest) {
+        throw new CanonicalChatOrchestrationError(
+          safeError("capability_mismatch", "This approval is no longer available."),
+          409,
+        );
+      }
+    }
     const state = await this.options.repository.getAdapterState(owner, {
       runId,
       driverKind: active.adapter.driverKind,
@@ -1059,6 +1155,7 @@ export class CanonicalChatOrchestrator {
         approvalId,
         decision: input.decision,
         clientRequestId: input.clientRequestId,
+        ...(pending.argumentDigest !== undefined ? { argumentDigest: pending.argumentDigest } : {}),
         ...(provenance?.platformApprovalProof ? { platformApprovalProof: provenance.platformApprovalProof } : {}),
         ...(state ? { state: active.adapter.parseState(state.state) } : {}),
       });

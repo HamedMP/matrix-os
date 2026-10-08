@@ -1,0 +1,260 @@
+/**
+ * Screenshot runner for the standalone Aoede fixture.
+ *
+ * Boots the vite fixture (`dev:aoede:fixture` equivalent, strict localhost port),
+ * visits every scenario on both `web_canvas` and `web_desktop`, waits for the
+ * `[data-aoede-ready]` marker, asserts the standalone invariants (launcher
+ * present, panel visible where the scenario expects it, zero Chat DOM), and
+ * writes PNGs to `.amp/in/artifacts/aoede/<surface>-<scenario>.png`.
+ *
+ * Run: `pnpm exec tsx scripts/aoede-fixture-screenshots.ts` (or `bun`).
+ * Requires a Playwright chromium build (the bundled headless shell is enough).
+ */
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const FIXTURE_PORT = 5_199;
+const BASE_URL = `http://127.0.0.1:${FIXTURE_PORT}`;
+const OUT_DIR = path.join(REPO_ROOT, ".amp/in/artifacts/aoede");
+const SURFACES = ["web_canvas", "web_desktop"] as const;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function fixtureProblems(state: {
+  ready: string | null | undefined;
+  launcher: boolean;
+  host: boolean;
+  chatDom: boolean;
+  schemaIssues: string | null | undefined;
+  speechSeam: string | null | undefined;
+  canonicalSeam: string | null | undefined;
+}, closed: boolean): string[] {
+  const problems: string[] = [];
+  if (!state.launcher) problems.push("launcher missing");
+  if (state.chatDom) problems.push("Chat DOM marker detected — fixture must never render Chat");
+  if (state.ready !== "true") problems.push("driver did not settle successfully");
+  if (state.host === closed) problems.push("standalone host visibility mismatch");
+  if (state.schemaIssues !== "0") problems.push("fixture schema validation failed");
+  if (state.speechSeam !== "fake") problems.push("speech seam is not fake");
+  if (state.canonicalSeam !== "fake") problems.push("canonical provider seam is not fake");
+  return problems;
+}
+
+async function waitForServer(timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(BASE_URL, { signal: AbortSignal.timeout(2_000) });
+      if (response.ok) return;
+    } catch (error: unknown) {
+      console.debug("fixture server not ready:", error instanceof Error ? error.name : "UnknownError");
+    }
+    await sleep(250);
+  }
+  throw new Error(`fixture server did not start on ${BASE_URL}`);
+}
+
+async function main() {
+  const { chromium } = await import("playwright");
+  mkdirSync(OUT_DIR, { recursive: true });
+
+  const server: ChildProcess = spawn(
+    "pnpm",
+    ["exec", "vite", "--config", "tests/fixtures/aoede/ui-fixture/vite.config.ts", "--host", "127.0.0.1", "--port", String(FIXTURE_PORT), "--strictPort"],
+    { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  server.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+  server.stdout?.on("data", (chunk: Buffer) => {
+    const line = chunk.toString();
+    if (!/vite v|Local:|ready in/.test(line)) process.stdout.write(line);
+  });
+
+  const results: Array<{ surface: string; scenario: string; status: string; state: string; problems: string[] }> = [];
+  const writeStatus = (extra: Record<string, unknown> = {}) => {
+    writeFileSync(
+      path.join(OUT_DIR, "run-status.json"),
+      JSON.stringify({ at: new Date().toISOString(), baseUrl: BASE_URL, results, ...extra }, null, 2),
+    );
+  };
+
+  let failed = false;
+  try {
+    await waitForServer();
+    let browser;
+    try {
+      browser = await chromium.launch({ headless: true });
+    } catch (error) {
+      // Artifact honesty: record that no runnable chromium was found so callers
+      // and reviewers see a written status instead of a silent absence of PNGs.
+      writeStatus({ browser: "unavailable", reason: error instanceof Error ? error.message : String(error) });
+      console.warn(
+        "playwright chromium unavailable — wrote .amp/in/artifacts/aoede/run-status.json "
+        + "with browser=unavailable; no PNGs produced.",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    try {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+      const scenarioIds = await page.$$eval("[data-scenario-id]", (nodes) =>
+        nodes.map((node) => node.getAttribute("data-scenario-id")).filter(Boolean) as string[]);
+      if (scenarioIds.length === 0) throw new Error("fixture did not publish a scenario index");
+      console.log(`scenarios: ${scenarioIds.join(", ")}`);
+
+      for (const surface of SURFACES) {
+        for (const scenario of scenarioIds) {
+          const url = `${BASE_URL}/?surface=${surface}&scenario=${scenario}`;
+          await page.goto(url, { waitUntil: "domcontentloaded" });
+          await page.waitForSelector("[data-aoede-launcher]", { timeout: 15_000 });
+          await page.waitForFunction(
+            () => ["true", "error"].includes(document.querySelector("#aoede-fixture-ready")?.getAttribute("data-aoede-ready") ?? ""),
+            undefined,
+            { timeout: 30_000 },
+          );
+          const state = await page.evaluate(() => ({
+            ready: document.querySelector("#aoede-fixture-ready")?.getAttribute("data-aoede-ready"),
+            panelState: document.querySelector("#aoede-fixture-ready")?.getAttribute("data-aoede-state"),
+            launcher: Boolean(document.querySelector("[data-aoede-launcher]")),
+            host: Boolean(document.querySelector("[data-testid='aoede-host']")),
+            chatDom: Boolean(document.querySelector(
+              "[data-chat-root], .fixture-chat, article[data-app-path='__chat__'], [data-testid='chat-window'], [data-testid='chat-app']",
+            )),
+            schemaIssues: document.querySelector(".fixture-evidence")?.getAttribute("data-schema-issues"),
+            speechSeam: document.querySelector(".fixture-evidence")?.getAttribute("data-speech-seam"),
+            canonicalSeam: document.querySelector(".fixture-evidence")?.getAttribute("data-canonical-provider-seam"),
+          }));
+          const problems = fixtureProblems(state, scenario === "idle");
+          const name = `${surface}-${scenario}.png`;
+          await page.screenshot({ path: path.join(OUT_DIR, name), fullPage: true });
+          // Exercise controls after capturing the pending state. These checks
+          // prove real host/controller mutations and keyboard focus, not only
+          // canned-card visibility. The backend and speech remain fake.
+          try {
+            if (scenario === "idle") {
+              const launcher = page.locator("[data-aoede-launcher]");
+              await launcher.focus();
+              await launcher.press("Enter");
+              await page.getByRole("dialog", { name: "Aoede assistant" }).waitFor();
+              if (await page.getByRole("dialog").getAttribute("aria-modal") !== "false") throw new Error("assistant must be nonmodal");
+              await page.keyboard.press("Escape");
+              await page.waitForFunction(() => document.activeElement?.hasAttribute("data-aoede-launcher"));
+              const palette = page.locator("[data-fixture-command='app:__aoede__']");
+              await palette.focus();
+              await palette.press("Enter");
+              await page.getByRole("dialog", { name: "Aoede assistant" }).waitFor();
+              await page.keyboard.press("Escape");
+              await page.waitForFunction(() => document.activeElement?.getAttribute("data-fixture-command") === "app:__aoede__");
+              const media = await page.locator(".fixture-evidence").textContent();
+              // Dismissal records cleanup (`end`) even if Start was never used.
+              // Assert acquisition, not the absence of legitimate cleanup.
+              if (!media || media.includes("startVoice:")) throw new Error("launch started media");
+            } else if (scenario === "code-response") {
+              const typography = await page.locator('[data-streamdown="code-block-body"]').evaluate(body => {
+                const code = body.querySelector("code")!;
+                const pre = body.querySelector("pre")!;
+                pre.scrollLeft = 40;
+                return {
+                  font: getComputedStyle(code).fontSize,
+                  lineHeight: getComputedStyle(code).lineHeight,
+                  padding: getComputedStyle(body).padding,
+                  scrolled: pre.scrollLeft > 0,
+                  overflow: pre.scrollWidth > pre.clientWidth,
+                  proseFont: getComputedStyle(document.querySelector(".matrix-aoede__response p")!).fontSize,
+                };
+              });
+              if (typography.font !== "12px" || typography.lineHeight !== "18px" || typography.padding !== "8px") {
+                throw new Error(`code typography is not compact: ${JSON.stringify(typography)}`);
+              }
+              if (typography.proseFont !== "14px") throw new Error("code styling changed prose size");
+              if (!typography.overflow || !typography.scrolled) throw new Error("long code line is not horizontally scrollable");
+            } else if (scenario === "clarification") {
+              const choice = page.getByRole("radio").nth(1);
+              await choice.focus();
+              await choice.press("Space");
+              await page.getByRole("button", { name: "Submit answer", exact: true }).press("Enter");
+              await page.getByText("Answer submitted", { exact: true }).waitFor();
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-clarification-submitted.png`), fullPage: true });
+            } else if (scenario === "approval") {
+              const controls = await page.getByRole("group", { name: "Approval decision" }).getByRole("button").evaluateAll(nodes => nodes.map(node => {
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return { text: node.textContent, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+                  width: rect.width, height: rect.height, background: style.backgroundColor, color: style.color };
+              }));
+              if (controls.length !== 3 || controls.some(control => control.width < 44 || control.height < 44)) throw new Error("approval targets are missing or too small");
+              if (controls[0].background === "rgba(0, 0, 0, 0)" || controls[0].background === controls[0].color) throw new Error("Approve button lacks a visible primary background");
+              for (let index = 1; index < controls.length; index++) {
+                const previous = controls[index - 1]; const current = controls[index];
+                if (current.left - previous.right < 8 && current.top - previous.bottom < 8) throw new Error("approval targets lack separation");
+              }
+              const approve = page.getByRole("button", { name: "Approve", exact: true });
+              await approve.focus();
+              const focus = await approve.evaluate(node => ({ focused: document.activeElement === node, outline: getComputedStyle(node).outlineStyle }));
+              if (!focus.focused || focus.outline === "none") throw new Error("approval keyboard focus is not visible");
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-approval-focused.png`), fullPage: true });
+              await approve.press("Enter");
+              await page.getByText("Decision: Approve", { exact: true }).waitFor();
+            } else if (scenario === "navigation-artifact") {
+              await page.getByRole("button", { name: "Open timer", exact: true }).click();
+              await page.waitForFunction(() => document.querySelector(".fixture-evidence")?.textContent?.includes("navigation:timer:apps/timer"));
+              await page.getByRole("button", { name: "Open result: apps/timer/App.tsx", exact: true }).click();
+              await page.waitForFunction(() => document.querySelector(".fixture-evidence")?.textContent?.includes("result:apps/timer/App.tsx"));
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-results-scrolled.png`), fullPage: true });
+            } else if (scenario === "listening") {
+              await page.emulateMedia({ reducedMotion: "reduce" });
+              const animations = await page.locator(".matrix-aoede__rings span").evaluateAll(nodes =>
+                nodes.map(node => getComputedStyle(node).animationName));
+              if (animations.length !== 3 || animations.some(name => name !== "none")) throw new Error("reduced motion did not stop ambient animation");
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-reduced-motion.png`), fullPage: true });
+              await page.emulateMedia({ reducedMotion: "no-preference" });
+              await page.getByRole("button", { name: "Settings", exact: true }).click();
+              await page.getByRole("group", { name: "Devices", exact: true }).scrollIntoViewIfNeeded();
+              await page.screenshot({ path: path.join(OUT_DIR, `${surface}-settings.png`), fullPage: true });
+            } else if (scenario === "tool-activity" && await page.getByRole("button", { name: "Cancel action", exact: true }).count() !== 0) {
+              throw new Error("post-dispatch tool offers unsupported cancellation");
+            }
+            if (await page.locator(".fixture-evidence").getAttribute("data-schema-issues") !== "0") throw new Error("interaction produced schema issues");
+          } catch (error: unknown) {
+            problems.push(error instanceof Error ? error.message : "fixture interaction failed");
+          }
+          const status = problems.length ? "FAIL" : "ok";
+          results.push({ surface, scenario, status, state: state.panelState ?? "closed", problems });
+          console.log(`${status} ${name} state=${state.panelState ?? "closed"}${problems.length ? ` — ${problems.join("; ")}` : ""}`);
+          if (problems.length) failed = true;
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    server.kill("SIGTERM");
+    await sleep(300);
+    if (server.exitCode === null) server.kill("SIGKILL");
+  }
+  writeStatus({ browser: "ok", failed });
+  if (failed) {
+    console.error("\nSome scenarios failed their invariants — see FAIL lines above.");
+    process.exitCode = 1;
+  } else {
+    console.log(`\nScreenshots written to ${path.relative(REPO_ROOT, OUT_DIR)}/`);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) void main().catch((error: unknown) => {
+  // Even catastrophic failure leaves an artifact trail.
+  try {
+    mkdirSync(OUT_DIR, { recursive: true });
+    writeFileSync(
+      path.join(OUT_DIR, "run-status.json"),
+      JSON.stringify({ at: new Date().toISOString(), browser: "unknown", error: error instanceof Error ? error.message : String(error) }, null, 2),
+    );
+  } catch (artifactError: unknown) {
+    console.error("fixture failure artifact could not be written:", artifactError instanceof Error ? artifactError.name : "UnknownError");
+  }
+  console.error("aoede fixture screenshots failed:", error instanceof Error ? error.message : error);
+  process.exitCode = 1;
+});

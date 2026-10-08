@@ -12,7 +12,9 @@ const enabledEnv = {
   PLATFORM_SPEECH_ENABLED: 'true', MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'true',
   MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true', MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'false',
   MATRIX_FUNDED_AI_RELAY_URL: '', PLATFORM_SPEECH_PROVIDER: 'openai', PLATFORM_SPEECH_MODEL: 'gpt-4o-mini-transcribe',
+  PLATFORM_SPEECH_SYNTHESIS_MODEL: 'gpt-4o-mini-tts', PLATFORM_SPEECH_SYNTHESIS_VOICE: 'alloy',
   PLATFORM_SPEECH_POLICY_REVISION: 'speech-v1', PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '1000',
+  PLATFORM_SPEECH_SYNTHESIS_MICROUSD_PER_MINUTE: '1500',
   PLATFORM_SPEECH_FUNDING_SOURCES: 'promotional', PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: 'true',
   PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: '1000000',
   PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '1000000',
@@ -46,6 +48,8 @@ describe('production speech deployment contract', () => {
     expect(workflow).toContain("MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}");
     expect(workflow).toContain("MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}");
     expect(workflow).toContain("PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: ${{ vars.PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD || '1000000' }}");
+    expect(workflow).toContain("PLATFORM_SPEECH_SYNTHESIS_MODEL: ${{ vars.PLATFORM_SPEECH_SYNTHESIS_MODEL || 'gpt-4o-mini-tts' }}");
+    expect(workflow).toContain("PLATFORM_SPEECH_SYNTHESIS_VOICE: ${{ vars.PLATFORM_SPEECH_SYNTHESIS_VOICE || 'alloy' }}");
     expect(workflow).toContain('scripts/ci/platform-speech-production-env.sh validate');
   });
 
@@ -62,8 +66,10 @@ describe('production speech deployment contract', () => {
     for (const override of [
       { PLATFORM_SPEECH_ENABLED: 'yes' },
       { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '0' },
+      { PLATFORM_SPEECH_SYNTHESIS_MICROUSD_PER_MINUTE: '0' },
       { PLATFORM_SPEECH_FUNDING_SOURCES: 'free' },
       { PLATFORM_SPEECH_MODEL: 'model|injected' },
+      { PLATFORM_SPEECH_SYNTHESIS_VOICE: 'voice|injected' },
     ]) expect(() => run('validate', { ...enabledEnv, ...override })).toThrow();
     expect(() => run('validate', enabledEnv)).not.toThrow();
     expect(() => run('validate', {

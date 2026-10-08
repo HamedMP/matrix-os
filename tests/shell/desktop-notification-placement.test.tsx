@@ -8,7 +8,6 @@ import { Desktop } from "../../shell/src/components/Desktop.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config.js";
-import { useVocalStore } from "../../shell/src/stores/vocal.js";
 import { createShellQueryClient } from "../../shell/src/api/query-client.js";
 
 const originalConsoleError = console.error;
@@ -63,18 +62,6 @@ vi.mock("../../shell/src/components/canvas/CanvasRenderer.js", () => ({
 
 vi.mock("../../shell/src/components/canvas/CanvasToolbar.js", () => ({
   CanvasToolbar: () => null,
-}));
-
-vi.mock("@/hooks/useVocalSession", () => ({
-  useVocalSession: () => ({
-    voiceState: "idle",
-    subtitle: "",
-    error: "Aoede could not connect",
-    connected: false,
-    notifyDelegationComplete: vi.fn(),
-    notifyExecuteResult: vi.fn(),
-    pushDelegationStatus: vi.fn(),
-  }),
 }));
 
 vi.mock("../../shell/src/components/UserButton.js", () => ({
@@ -136,7 +123,6 @@ describe("Desktop shell notifications", () => {
         focusedWindowId: null,
         fullscreenWindowId: null,
       });
-      useVocalStore.setState({ active: true });
     });
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -149,9 +135,6 @@ describe("Desktop shell notifications", () => {
   });
 
   afterEach(() => {
-    act(() => {
-      useVocalStore.setState({ active: false });
-    });
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -167,12 +150,10 @@ describe("Desktop shell notifications", () => {
     const indicator = await screen.findByTestId("connection-indicator");
     const banner = screen.getByTestId("runtime-identity-banner");
     const stack = screen.getByTestId("shell-notification-stack");
-    const vocalError = await screen.findByRole("alert");
 
     await waitFor(() => {
       expect(stack.contains(indicator)).toBe(true);
       expect(stack.contains(banner)).toBe(true);
-      expect(stack.contains(vocalError)).toBe(true);
     });
 
     expect(screen.queryByRole("status", { name: "Matrix free trial" })).toBeNull();
@@ -180,6 +161,5 @@ describe("Desktop shell notifications", () => {
     const dock = document.querySelector("[data-dock]");
     expect(dock).toBeTruthy();
     expect(dock?.contains(indicator)).toBe(false);
-    expect(vocalError.textContent).toContain("Aoede could not connect");
   });
 });

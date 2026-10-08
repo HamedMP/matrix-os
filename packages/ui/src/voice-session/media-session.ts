@@ -1,0 +1,900 @@
+/**
+ * Media layer for a voice session: one capture owner, bounded base64
+ * `capture.audio` chunk production, and a per-response playback buffer that
+ * reports accurate `playback.segment_played` boundaries — including the true
+ * played position when a response is interrupted mid-segment.
+ *
+ * Platform dependencies live in `./media-web.js` (injected so the session
+ * runs under jsdom with fakes); wire codecs live in `./pcm-codec.js`.
+ */
+import {
+  VOICE_SESSION_LIMITS,
+  VoiceOutputAudioFormatSchema,
+  type AudioFormat,
+  type SafeVoiceError,
+  type VoiceOutputAudioFormat,
+  type VoicePlaybackAck,
+} from "@matrix-os/contracts/voice-session";
+import { voiceErrorForCode } from "./session-api.js";
+import {
+  decodeBase64,
+  encodeBase64,
+  floatToPcm16,
+  floatToPcmF32,
+  pcm16ToFloat,
+  pcmF32ToFloat,
+} from "./pcm-codec.js";
+import {
+  defaultMediaDevices,
+  VoiceMediaError,
+  webAudioContextFactory,
+  webCaptureFactory,
+  type VoiceAudioContextLike,
+  type VoiceCaptureFactory,
+  type VoiceCaptureHandle,
+  type VoiceMediaDevicesLike,
+  type VoiceMediaStreamLike,
+  type VoicePcmBuffer,
+  type VoicePlaybackSource,
+} from "./media-web.js";
+
+export { decodeBase64, encodeBase64, VoiceMediaError };
+export type {
+  VoiceAudioContextLike,
+  VoiceCaptureFactory,
+  VoiceCaptureHandle,
+  VoiceMediaDevicesLike,
+  VoiceMediaStreamLike,
+  VoiceMediaStreamTrackLike,
+  VoicePcmBuffer,
+  VoicePlaybackSource,
+} from "./media-web.js";
+
+const DEFAULT_MAX_IN_FLIGHT_MS = 2_000;
+const DEFAULT_MAX_RESPONSES = 16;
+const DEFAULT_MAX_QUEUED_SEGMENTS = 128;
+/** Gateway's 16 MiB s16 stream expands to at most 32 MiB of decoded f32 PCM. */
+const MAX_QUEUED_PLAYBACK_BYTES = 32 * 1024 * 1024;
+/** Bounded replay protection: seen segment ids for dedupe (oldest evicted). */
+const MAX_SEEN_SEGMENTS = 256;
+
+/**
+ * Capture is mono: the web pipeline reads one channel, so a configured
+ * stereo format is normalized rather than advertised dishonestly.
+ */
+function monoFormat(format: AudioFormat): AudioFormat {
+  return format.channels === 1 ? format : { ...format, channels: 1 };
+}
+
+/** Validates an optional wire-declared output format; malformed values fall back to the negotiated format. */
+function declaredFormat(
+  value: VoiceOutputAudioFormat | undefined,
+  fallback: AudioFormat,
+): VoiceOutputAudioFormat {
+  if (value === undefined) return fallback;
+  return VoiceOutputAudioFormatSchema.safeParse(value).success ? value : fallback;
+}
+
+/** Converts interleaved wire samples into the planar layout `createPcmBuffer` expects. */
+function deinterleave(interleaved: Float32Array, channels: number): Float32Array {
+  const frames = Math.floor(interleaved.length / channels);
+  const planar = new Float32Array(frames * channels);
+  for (let channel = 0; channel < channels; channel += 1) {
+    for (let index = 0; index < frames; index += 1) {
+      planar[channel * frames + index] = interleaved[index * channels + channel] as number;
+    }
+  }
+  return planar;
+}
+
+export interface VoiceMediaCallbacks {
+  /** Returns false while the transport cannot accept the chunk; the media queue retains it. */
+  onAudioChunk(chunk: { turnId: string; timestampMs: number; data: string }): boolean;
+  onSegmentPlayed(ack: VoicePlaybackAck): void;
+  onBackpressure?(droppedChunks: number): void;
+  onDeviceChanged?(change: { inputDeviceId?: string }): void;
+  onError?(error: SafeVoiceError): void;
+  /** Capture loudness (RMS, 0…1) while a turn is being captured; ~every 50 ms. Presentation only. */
+  onInputLevel?(level: number): void;
+}
+
+const INPUT_LEVEL_INTERVAL_MS = 50;
+
+/** Root-mean-square of one capture buffer, clamped to 0…1. */
+export function captureInputLevel(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index] as number;
+    sum += sample * sample;
+  }
+  const rms = Math.sqrt(sum / samples.length);
+  return Number.isFinite(rms) ? Math.min(1, rms) : 0;
+}
+
+export interface VoiceMediaSession {
+  readonly supported: boolean;
+  prepare(input?: { onRationale?: () => void | Promise<void>; inputDeviceId?: string }): Promise<void>;
+  /**
+   * Re-acquires the capture side on a different input device without
+   * disturbing playback. Optional: custom sessions without hot-swap support
+   * leave it absent — the client then stores the selection for next start.
+   */
+  switchInputDevice?(deviceId?: string): Promise<void>;
+  /**
+   * Routes playback to an output device (`null` = system default). Returns
+   * "applied" when the preference is in force (possibly deferred to the next
+   * playback-context creation), "unsupported" when the platform cannot set a
+   * sink, and "unavailable" when it failed. Optional for custom sessions.
+   */
+  setOutputDevice?(deviceId: string | null): Promise<"applied" | "unsupported" | "unavailable">;
+  startCapture(input: { turnId: string }): boolean;
+  stopCapture(): void;
+  /**
+   * Queues one response audio segment. `format` is an optional per-segment
+   * output format declared by the wire (e.g. 24 kHz synthesis vs 16 kHz
+   * input); when absent or malformed the negotiated session format decodes
+   * the data.
+   */
+  enqueueSegment(input: { responseId: string; segmentId: string; data: string; format?: VoiceOutputAudioFormat }): void;
+  /** Stops playout; returns the true heard boundary (ms) or null when unknown. */
+  interruptResponse(responseId: string): number | null;
+  /**
+   * Immediately stops every current and queued playback (transport loss).
+   * Sources are stopped and response queues dropped while the playback
+   * context is kept alive for post-resume audio.
+   */
+  stopPlayback(): void;
+  playedThroughMs(responseId: string): number | null;
+  pendingAudioMs(): number;
+  release(): Promise<void>;
+}
+
+interface PendingChunk {
+  turnId: string;
+  timestampMs: number;
+  data: string;
+}
+
+interface ResponsePlayback {
+  queue: { segmentId: string; buffer: VoicePcmBuffer; byteLength: number }[];
+  queuedMs: number;
+  queuedBytes: number;
+  current: { segmentId: string; source: VoicePlaybackSource; buffer: VoicePcmBuffer; startedAtSeconds: number } | null;
+  nextStartSeconds: number;
+  playedMs: number;
+  ackRevision: number;
+  stopping: boolean;
+  waitingForContext: boolean;
+  outputUnavailableReported: boolean;
+}
+
+export function createWebVoiceMediaSession(options: {
+  audio: AudioFormat;
+  callbacks: VoiceMediaCallbacks;
+  mediaDevices?: VoiceMediaDevicesLike | null;
+  createAudioContext?: () => VoiceAudioContextLike | null;
+  captureFactory?: VoiceCaptureFactory;
+  maxInFlightMs?: number;
+  maxResponses?: number;
+  maxQueuedSegments?: number;
+  now?: () => number;
+}): VoiceMediaSession {
+  // Capture and negotiated-format playback are mono-only; a configured stereo
+  // input format is normalized instead of producing silent-channel lies.
+  const audio = monoFormat(options.audio);
+  if (audio !== options.audio) {
+    console.warn("[voice-session] stereo capture is unsupported; using mono (channels: 1)");
+  }
+  const callbacks = options.callbacks;
+  const mediaDevices = options.mediaDevices === undefined ? defaultMediaDevices() : options.mediaDevices;
+  const createAudioContext = options.createAudioContext ?? webAudioContextFactory;
+  const captureFactory = options.captureFactory ?? webCaptureFactory;
+  const now = options.now ?? (() => Date.now());
+  const maxInFlightMs = Math.max(audio.frameDurationMs, options.maxInFlightMs ?? DEFAULT_MAX_IN_FLIGHT_MS);
+  const maxPendingChunks = Math.max(1, Math.floor(maxInFlightMs / audio.frameDurationMs));
+  const maxResponses = Math.max(1, Math.min(options.maxResponses ?? DEFAULT_MAX_RESPONSES, DEFAULT_MAX_RESPONSES));
+  const maxQueuedSegments = Math.max(1, Math.min(options.maxQueuedSegments ?? DEFAULT_MAX_QUEUED_SEGMENTS, VOICE_SESSION_LIMITS.maxSegments));
+
+  const supported = mediaDevices !== null
+    && typeof mediaDevices.getUserMedia === "function"
+    && (options.createAudioContext !== undefined || typeof AudioContext !== "undefined");
+
+  let stream: VoiceMediaStreamLike | null = null;
+  let capture: VoiceCaptureHandle | null = null;
+  let playbackContext: VoiceAudioContextLike | null = null;
+  let playbackContextReady: Promise<boolean> | null = null;
+  let outputGeneration = 0;
+  let sinkChange: Promise<boolean> = Promise.resolve(true);
+  /** Explicit output-device selection recorded before/without a live context; applied at every context creation. `undefined` = never set, `null` = explicit system default. */
+  let pendingOutputDeviceId: string | null | undefined;
+  let prepared = false;
+  let released = false;
+  let captureGeneration = 0;
+  let capturing = false;
+  let activeTurnId: string | null = null;
+  let droppedChunks = 0;
+  let invalidSegments = 0;
+  const trackedInputTracks = new Set<VoiceMediaStreamLike["getTracks"] extends () => (infer T)[] ? T : never>();
+
+  let pendingSamples = new Float32Array(0);
+  let resampleBuffer = new Float32Array(0);
+  let resamplePosition = 0;
+  let resampleSourceRateHz: number = audio.sampleRateHz;
+  const pendingChunks: PendingChunk[] = [];
+  const responses = new Map<string, ResponsePlayback>();
+  /**
+   * Replay protection for `response.audio` redelivery (post-reconnect or
+   * transport retries). `inFlight` covers segments queued or playing;
+   * `played` keeps the emitted ack so an at-least-once redelivery can be
+   * re-acked for server delivery bookkeeping without a second playout.
+   * Both are FIFO-bounded.
+   */
+  const inFlightSegments = new Set<string>();
+  const playedSegments = new Map<string, VoicePlaybackAck>();
+
+  const releaseInFlightResponse = (responseId: string) => {
+    const prefix = `${responseId}:`;
+    for (const key of inFlightSegments) {
+      if (key.startsWith(prefix)) inFlightSegments.delete(key);
+    }
+  };
+
+  const emitError = (error: SafeVoiceError) => {
+    try {
+      callbacks.onError?.(error);
+    } catch (listenerError: unknown) {
+      console.warn("[voice-session] media error listener failed:", listenerError instanceof Error ? listenerError.name : "UnknownError");
+    }
+  };
+
+  const encodeSamples = (samples: Float32Array): Uint8Array => {
+    if (audio.codec === "pcm_f32le") return floatToPcmF32(samples);
+    if (audio.codec === "pcm_s16le") return floatToPcm16(samples);
+    throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
+  };
+
+  const decodeBytes = (bytes: Uint8Array, format: VoiceOutputAudioFormat): Float32Array => {
+    if (format.codec === "pcm_f32le") return pcmF32ToFloat(bytes);
+    return pcm16ToFloat(bytes);
+  };
+
+  const drainChunks = () => {
+    while (pendingChunks.length > 0) {
+      const head = pendingChunks[0] as PendingChunk;
+      let accepted = false;
+      try {
+        accepted = callbacks.onAudioChunk(head) === true;
+      } catch (error: unknown) {
+        // A throwing transport rejected this frame permanently; drop rather
+        // than wedge the bounded queue behind it.
+        console.warn("[voice-session] audio chunk send failed:", error instanceof Error ? error.name : "UnknownError");
+        pendingChunks.shift();
+        droppedChunks += 1;
+        callbacks.onBackpressure?.(droppedChunks);
+        continue;
+      }
+      if (!accepted) return;
+      pendingChunks.shift();
+    }
+  };
+
+  const emitChunk = (samples: Float32Array) => {
+    if (activeTurnId === null || samples.length === 0) return;
+    let bytes: Uint8Array;
+    try {
+      bytes = encodeSamples(samples);
+    } catch (error: unknown) {
+      emitError(error instanceof VoiceMediaError ? error.safeError : voiceErrorForCode("internal_failure"));
+      return;
+    }
+    if (bytes.length === 0 || bytes.length > VOICE_SESSION_LIMITS.maxAudioFrameBytes) {
+      droppedChunks += 1;
+      callbacks.onBackpressure?.(droppedChunks);
+      return;
+    }
+    while (pendingChunks.length >= maxPendingChunks) {
+      pendingChunks.shift();
+      droppedChunks += 1;
+      callbacks.onBackpressure?.(droppedChunks);
+    }
+    pendingChunks.push({ turnId: activeTurnId, timestampMs: now(), data: encodeBase64(bytes) });
+    drainChunks();
+  };
+
+  const resetResampler = () => {
+    resampleBuffer = new Float32Array(0);
+    resamplePosition = 0;
+    resampleSourceRateHz = audio.sampleRateHz;
+  };
+
+  /** Streaming linear resampler: browser AudioContext may ignore the requested rate. */
+  const resampleCapture = (samples: Float32Array, sourceRateHz: number): Float32Array => {
+    if (sourceRateHz === audio.sampleRateHz) {
+      resetResampler();
+      return samples;
+    }
+    if (resampleSourceRateHz !== sourceRateHz) {
+      resampleBuffer = new Float32Array(0);
+      resamplePosition = 0;
+      resampleSourceRateHz = sourceRateHz;
+    }
+    const input = new Float32Array(resampleBuffer.length + samples.length);
+    input.set(resampleBuffer);
+    input.set(samples, resampleBuffer.length);
+    const step = sourceRateHz / audio.sampleRateHz;
+    const output: number[] = [];
+    while (resamplePosition + 1 < input.length) {
+      const index = Math.floor(resamplePosition);
+      const fraction = resamplePosition - index;
+      output.push(input[index]! + (input[index + 1]! - input[index]!) * fraction);
+      resamplePosition += step;
+    }
+    const consumed = Math.min(Math.floor(resamplePosition), Math.max(0, input.length - 1));
+    resampleBuffer = input.slice(consumed);
+    resamplePosition -= consumed;
+    return Float32Array.from(output);
+  };
+
+  let lastLevelAtMs = -Infinity;
+  const onSamples = (samples: Float32Array) => {
+    if (!capturing || samples.length === 0) return;
+    if (callbacks.onInputLevel) {
+      const at = now();
+      if (at - lastLevelAtMs >= INPUT_LEVEL_INTERVAL_MS) {
+        lastLevelAtMs = at;
+        callbacks.onInputLevel(captureInputLevel(samples));
+      }
+    }
+    const rateHz = Math.max(1, Math.floor(capture?.sampleRateHz ?? audio.sampleRateHz));
+    const wireSamples = resampleCapture(samples, rateHz);
+    if (wireSamples.length === 0) return;
+    const samplesPerChunk = Math.max(1, Math.round((audio.frameDurationMs * audio.sampleRateHz) / 1_000));
+    const merged = new Float32Array(pendingSamples.length + wireSamples.length);
+    merged.set(pendingSamples, 0);
+    merged.set(wireSamples, pendingSamples.length);
+    pendingSamples = merged;
+    while (pendingSamples.length >= samplesPerChunk) {
+      emitChunk(pendingSamples.subarray(0, samplesPerChunk));
+      pendingSamples = pendingSamples.subarray(samplesPerChunk);
+    }
+  };
+
+  const currentInputDeviceId = (): string | undefined => {
+    const track = stream?.getTracks()[0];
+    const deviceId = track?.getSettings?.().deviceId;
+    return typeof deviceId === "string" && deviceId.length > 0 && /^[A-Za-z0-9_-]+$/.test(deviceId)
+      ? deviceId
+      : undefined;
+  };
+
+  const onDeviceChange = () => {
+    if (released) return;
+    try {
+      const inputDeviceId = currentInputDeviceId();
+      callbacks.onDeviceChanged?.(inputDeviceId === undefined ? {} : { inputDeviceId });
+    } catch (error: unknown) {
+      console.warn("[voice-session] device-change listener failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  };
+
+  const onInputTrackEnded = () => {
+    if (released) return;
+    // Revocation and physical removal both end the live MediaStreamTrack.
+    // Stop accepting samples before surfacing a recoverable device error.
+    capturing = false;
+    activeTurnId = null;
+    pendingSamples = new Float32Array(0);
+    resetResampler();
+    pendingChunks.length = 0;
+    const endedCapture = capture;
+    capture = null;
+    void Promise.resolve(endedCapture?.stop()).catch((error: unknown) => {
+      console.warn("[voice-session] ended capture stop failed:", error instanceof Error ? error.name : "UnknownError");
+    });
+    emitError(voiceErrorForCode("input_unavailable"));
+  };
+
+  const routeOutput = (context: VoiceAudioContextLike, deviceId: string | null): Promise<boolean> => {
+    const revision = ++outputGeneration;
+    const current = () => !released && playbackContext === context && revision === outputGeneration;
+    // Serialize physical routing: a late old success must not undo a newer sink.
+    sinkChange = sinkChange.then(async () => {
+      if (!current()) return false;
+      if (typeof context.setSinkId !== "function") return deviceId === null;
+      try {
+        await context.setSinkId(deviceId ?? "");
+        return current();
+      } catch (error: unknown) {
+        console.warn("[voice-session] output sink apply failed:", error instanceof Error ? error.name : "UnknownError");
+        if (current()) emitError(voiceErrorForCode("output_unavailable"));
+        return false;
+      }
+    });
+    playbackContextReady = sinkChange;
+    return sinkChange;
+  };
+
+  const playbackCtx = (): VoiceAudioContextLike | null => {
+    if (playbackContext) return playbackContext;
+    try {
+      playbackContext = createAudioContext();
+    } catch (error: unknown) {
+      console.warn("[voice-session] playback context failed:", error instanceof Error ? error.name : "UnknownError");
+      playbackContext = null;
+    }
+    // A pending explicit output selection applies to every context created
+    // after it was recorded (e.g. re-created after release->prepare cycles).
+    if (playbackContext !== null && pendingOutputDeviceId !== undefined) {
+      void routeOutput(playbackContext, pendingOutputDeviceId);
+      if (typeof playbackContext.setSinkId !== "function" && pendingOutputDeviceId !== null) {
+        emitError(voiceErrorForCode("output_unavailable"));
+      }
+    }
+    if (playbackContext === null) emitError(voiceErrorForCode("output_unavailable"));
+    return playbackContext;
+  };
+
+  const scheduleNext = (responseId: string, playback: ResponsePlayback) => {
+    const context = playbackCtx();
+    if (context === null || playback.current !== null || playback.stopping) return;
+    if (playbackContextReady !== null) {
+      if (playback.waitingForContext) return;
+      playback.waitingForContext = true;
+      const readiness = playbackContextReady;
+      void readiness.then((ready) => {
+        playback.waitingForContext = false;
+        // A failed route stays blocked for later segments/responses until an
+        // explicit output selection succeeds. Clearing it would play the next
+        // segment on the unchanged default sink.
+        if (ready && playbackContextReady === readiness) playbackContextReady = null;
+        if (ready && !released && playbackContext === context) scheduleNext(responseId, playback);
+      });
+      return;
+    }
+    const segment = playback.queue.shift();
+    if (!segment) {
+      playback.queuedMs = 0;
+      return;
+    }
+    playback.queuedMs = Math.max(0, playback.queuedMs - segment.buffer.durationMs);
+    const source = context.createSource(segment.buffer);
+    const startedAtSeconds = Math.max(context.currentTimeSeconds, playback.nextStartSeconds);
+    playback.nextStartSeconds = startedAtSeconds + segment.buffer.durationMs / 1_000;
+    playback.current = { segmentId: segment.segmentId, source, buffer: segment.buffer, startedAtSeconds };
+    source.onended = () => {
+      if (playback.stopping) return;
+      playback.current = null;
+      // Retain the playing segment in the byte accounting until its source
+      // ends; AudioBuffer memory remains live while `current` references it.
+      playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
+      playback.playedMs += segment.buffer.durationMs;
+      playback.ackRevision += 1;
+      const ack: VoicePlaybackAck = {
+        responseId,
+        segmentId: segment.segmentId,
+        deliveryRevision: playback.ackRevision,
+        playedThroughMs: Math.round(playback.playedMs),
+      };
+      const dedupeKey = `${responseId}:${segment.segmentId}`;
+      inFlightSegments.delete(dedupeKey);
+      while (playedSegments.size >= MAX_SEEN_SEGMENTS) {
+        const oldest = playedSegments.keys().next().value;
+        if (oldest === undefined) break;
+        playedSegments.delete(oldest);
+      }
+      playedSegments.set(dedupeKey, ack);
+      try {
+        callbacks.onSegmentPlayed(ack);
+      } catch (error: unknown) {
+        console.warn("[voice-session] playback ack listener failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      scheduleNext(responseId, playback);
+    };
+    try {
+      const resumeResult = context.resume?.() as Promise<void> | undefined;
+      if (resumeResult && typeof resumeResult.then === "function") {
+        // `resume()` settling is the earliest reliable point to inspect the
+        // browser's state. A fulfilled promise can still leave policy-blocked
+        // playback suspended, where this source would otherwise never end.
+        void resumeResult.then(() => {
+          const state = (context as VoiceAudioContextLike & { readonly state?: string }).state;
+          if (state === "suspended" && !released && playbackContext === context
+            && !playback.outputUnavailableReported) {
+            playback.outputUnavailableReported = true;
+            emitError(voiceErrorForCode("output_unavailable"));
+          }
+        }, (resumeError: unknown) => {
+          console.warn("[voice-session] playback resume failed:", resumeError instanceof Error ? resumeError.name : "UnknownError");
+          if (!released && playbackContext === context && !playback.outputUnavailableReported) {
+            playback.outputUnavailableReported = true;
+            emitError(voiceErrorForCode("output_unavailable"));
+          }
+        });
+      }
+      source.start(startedAtSeconds);
+    } catch (error: unknown) {
+      console.warn("[voice-session] playback start failed:", error instanceof Error ? error.name : "UnknownError");
+      playback.current = null;
+      playback.queuedBytes = Math.max(0, playback.queuedBytes - segment.byteLength);
+      emitError(voiceErrorForCode("output_unavailable"));
+    }
+  };
+
+  const heardBoundaryMs = (playback: ResponsePlayback): number => {
+    let heard = playback.playedMs;
+    const current = playback.current;
+    if (current !== null && playbackContext !== null) {
+      const elapsed = playbackContext.currentTimeSeconds - current.startedAtSeconds;
+      heard += Math.max(0, Math.min(elapsed, current.buffer.durationMs / 1_000)) * 1_000;
+    }
+    return Math.round(heard);
+  };
+
+  /**
+   * Allocates the capture side (getUserMedia + capture pipeline + readiness).
+   * Shared by `prepare` (initial acquisition) and `switchInputDevice` (hot
+   * swap): never emits rationale — callers own that UX.
+   */
+  const acquireCapture = async (inputDeviceId: string | undefined, acquisition: number): Promise<void> => {
+    if (released || acquisition !== captureGeneration) {
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
+    let rawStream: unknown;
+    try {
+      rawStream = await mediaDevices!.getUserMedia({
+        audio: {
+          ...(inputDeviceId === undefined ? {} : { deviceId: { exact: inputDeviceId } }),
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (error: unknown) {
+      const name = error instanceof DOMException || error instanceof Error ? error.name : "";
+      const code = name === "NotAllowedError" || name === "SecurityError"
+        ? "permission_denied"
+        : "input_unavailable";
+      throw new VoiceMediaError(voiceErrorForCode(code));
+    }
+    const nextStream = rawStream as VoiceMediaStreamLike;
+    // A newer switch or release owns capture now. Dispose this request's
+    // result without touching the shared winner.
+    if (released || acquisition !== captureGeneration) {
+      for (const track of nextStream.getTracks()) track.stop();
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
+    let nextCapture: VoiceCaptureHandle;
+    try {
+      nextCapture = captureFactory({ stream: nextStream, sampleRateHz: audio.sampleRateHz, onSamples });
+    } catch (error: unknown) {
+      for (const track of nextStream.getTracks()) track.stop();
+      if (error instanceof VoiceMediaError) throw error;
+      console.warn("[voice-session] capture pipeline failed:", error instanceof Error ? error.name : "UnknownError");
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
+    // Observe capture-side AudioContext readiness while still inside the
+    // explicit Start gesture: a suspended/interrupted capture context
+    // produces silence forever, so readiness failure is surfaced as
+    // input_unavailable instead of leaving a dead-but-prepared session.
+    let readinessError: unknown;
+    try {
+      await nextCapture.ensureReady?.();
+    } catch (ensureError: unknown) {
+      readinessError = ensureError;
+    }
+    if (readinessError !== undefined) {
+      // Release everything this acquisition allocated — a failed acquisition
+      // must not leave a half-live mic or capture pipeline behind.
+      for (const track of nextStream.getTracks()) {
+        try {
+          track.stop();
+        } catch (trackError: unknown) {
+          console.warn("[voice-session] track stop after readiness failure failed:", trackError instanceof Error ? trackError.name : "UnknownError");
+        }
+      }
+      try {
+        await nextCapture.stop();
+      } catch (stopError: unknown) {
+        console.warn("[voice-session] unready capture stop failed:", stopError instanceof Error ? stopError.name : "UnknownError");
+      }
+      if (readinessError instanceof VoiceMediaError) throw readinessError;
+      console.warn("[voice-session] capture readiness failed:", readinessError instanceof Error ? readinessError.name : "UnknownError");
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
+    if (released || acquisition !== captureGeneration) {
+      for (const track of nextStream.getTracks()) track.stop();
+      try {
+        await nextCapture.stop();
+      } catch (stopError: unknown) {
+        console.warn("[voice-session] stale capture stop failed:", stopError instanceof Error ? stopError.name : "UnknownError");
+      }
+      throw new VoiceMediaError(voiceErrorForCode("input_unavailable"));
+    }
+    stream = nextStream;
+    capture = nextCapture;
+    prepared = true;
+    for (const track of nextStream.getTracks()) {
+      trackedInputTracks.add(track);
+      track.addEventListener?.("ended", onInputTrackEnded);
+    }
+  };
+
+  return {
+    supported,
+    async prepare(input) {
+      if (released) throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
+      if (!supported || mediaDevices === null) throw new VoiceMediaError(voiceErrorForCode("unsupported_surface"));
+      if (prepared) return;
+      const acquisition = ++captureGeneration;
+      await input?.onRationale?.();
+      await acquireCapture(input?.inputDeviceId, acquisition);
+      mediaDevices.addEventListener?.("devicechange", onDeviceChange);
+    },
+    async switchInputDevice(deviceId) {
+      if (released) throw new VoiceMediaError(voiceErrorForCode("internal_failure"));
+      if (!supported || mediaDevices === null) throw new VoiceMediaError(voiceErrorForCode("unsupported_surface"));
+      const acquisition = ++captureGeneration;
+      // Retire only the capture side; in-flight playback keeps its context.
+      capturing = false;
+      activeTurnId = null;
+      pendingSamples = new Float32Array(0);
+      resetResampler();
+      pendingChunks.length = 0;
+      const heldCapture = capture;
+      const heldStream = stream;
+      capture = null;
+      stream = null;
+      prepared = false;
+      for (const track of trackedInputTracks) {
+        track.removeEventListener?.("ended", onInputTrackEnded);
+      }
+      trackedInputTracks.clear();
+      try {
+        await heldCapture?.stop();
+      } catch (error: unknown) {
+        console.warn("[voice-session] capture swap stop failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      if (heldStream) {
+        for (const track of heldStream.getTracks()) {
+          try {
+            track.stop();
+          } catch (error: unknown) {
+            console.warn("[voice-session] swapped track stop failed:", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+      }
+      await acquireCapture(deviceId, acquisition);
+    },
+    async setOutputDevice(deviceId) {
+      if (released) return "unavailable";
+      if (deviceId !== null && (typeof deviceId !== "string" || !/^[A-Za-z0-9_-]{1,256}$/.test(deviceId))) {
+        return "unavailable";
+      }
+      pendingOutputDeviceId = deviceId;
+      const context = playbackContext;
+      // No live context: the preference is in force and applies when one is
+      // created (playback is lazy — the sink is bound at creation).
+      if (context === null) return "applied";
+      const supportedSink = typeof context.setSinkId === "function";
+      const readiness = routeOutput(context, deviceId);
+      const ready = await readiness;
+      if (ready && playbackContextReady === readiness) {
+        playbackContextReady = null;
+        // Recovery must wake existing queues, not wait for another segment.
+        for (const [responseId, playback] of responses) {
+          playback.waitingForContext = false;
+          scheduleNext(responseId, playback);
+        }
+      }
+      return ready ? "applied" : !supportedSink ? "unsupported" : "unavailable";
+    },
+    startCapture({ turnId }) {
+      if (released || !prepared) {
+        emitError(voiceErrorForCode("input_unavailable"));
+        return false;
+      }
+      if (capturing && activeTurnId === turnId) return true;
+      // One capture owner: a new turn supersedes any in-flight capture and its
+      // queued audio, which belongs to the superseded turn.
+      activeTurnId = turnId;
+      capturing = true;
+      pendingSamples = new Float32Array(0);
+      resetResampler();
+      pendingChunks.length = 0;
+      return true;
+    },
+    stopCapture() {
+      if (!capturing) return;
+      capturing = false;
+      // Flush the audio tail so trailing speech is not truncated mid-word;
+      // anything still queued afterwards belongs to the ended turn.
+      const tail = pendingSamples;
+      pendingSamples = new Float32Array(0);
+      if (tail.length > 0) emitChunk(tail);
+      resetResampler();
+      pendingChunks.length = 0;
+      activeTurnId = null;
+    },
+    enqueueSegment({ responseId, segmentId, data, format }) {
+      if (released) return;
+      // Per-segment wire-declared output format wins; fall back to the
+      // negotiated session format when absent or malformed.
+      const wireFormat = declaredFormat(format, audio);
+      if (wireFormat.codec === "opus") {
+        // PCM-only decoder: opus requires an encoded-audio pipeline the web
+        // layer does not provide; count and drop rather than mis-decode.
+        invalidSegments += 1;
+        return;
+      }
+      const dedupeKey = `${responseId}:${segmentId}`;
+      if (inFlightSegments.has(dedupeKey)) {
+        // Still queued or playing: the original playout emits the single ack.
+        return;
+      }
+      const replayAck = playedSegments.get(dedupeKey);
+      if (replayAck !== undefined) {
+        // At-least-once redelivery of an already-heard segment: re-emit the
+        // recorded ack so server delivery bookkeeping completes; the user
+        // never hears the segment twice.
+        try {
+          callbacks.onSegmentPlayed(replayAck);
+        } catch (error: unknown) {
+          console.warn("[voice-session] replay ack failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+        return;
+      }
+      let playback = responses.get(responseId);
+      if (!playback) {
+        while (responses.size >= maxResponses) {
+          const oldest = responses.keys().next().value;
+          if (oldest === undefined) break;
+          const stale = responses.get(oldest);
+          responses.delete(oldest);
+          if (stale) {
+            stale.stopping = true;
+            stale.current?.source.stop();
+            releaseInFlightResponse(oldest);
+          }
+        }
+        playback = { queue: [], queuedMs: 0, queuedBytes: 0, current: null, nextStartSeconds: 0, playedMs: 0, ackRevision: 0, stopping: false, waitingForContext: false, outputUnavailableReported: false };
+        responses.set(responseId, playback);
+      }
+      if (playback.stopping) {
+        invalidSegments += 1;
+        callbacks.onBackpressure?.(invalidSegments);
+        return;
+      }
+      const bytes = decodeBase64(data);
+      const context = playbackCtx();
+      if (bytes === null || bytes.length === 0 || context === null) return;
+      let samples = decodeBytes(bytes, wireFormat);
+      if (wireFormat.channels === 2) {
+        // Wire PCM is interleaved; the playback buffer takes planar channels.
+        samples = deinterleave(samples, 2);
+      }
+      const buffer = context.createPcmBuffer({
+        samples,
+        sampleRateHz: wireFormat.sampleRateHz,
+        channels: wireFormat.channels,
+      });
+      const decodedByteLength = samples.byteLength;
+      // `maxQueuedSegments` and maxQueuedAudioMs are pressure watermarks, not
+      // lossy playback limits. Fast synthesis routinely gets >10 seconds
+      // ahead of a real-time speaker on slow clients; dropping at either
+      // watermark permanently truncates the reply. The hard byte cap remains
+      // bounded to the gateway's per-response synthesis maximum.
+      if (playback.queuedBytes + decodedByteLength > MAX_QUEUED_PLAYBACK_BYTES) {
+        invalidSegments += 1;
+        callbacks.onBackpressure?.(invalidSegments);
+        return;
+      }
+      // Segment-count and duration watermarks intentionally do not signal
+      // transport backpressure: no audio was dropped. The byte cap above is
+      // the hard retained-memory bound and is the only playback drop signal.
+      while (inFlightSegments.size >= MAX_SEEN_SEGMENTS) {
+        const oldest = inFlightSegments.values().next().value;
+        if (oldest === undefined) break;
+        inFlightSegments.delete(oldest);
+      }
+      inFlightSegments.add(dedupeKey);
+      playback.queue.push({ segmentId, buffer, byteLength: decodedByteLength });
+      playback.queuedMs += buffer.durationMs;
+      playback.queuedBytes += decodedByteLength;
+      scheduleNext(responseId, playback);
+    },
+    interruptResponse(responseId) {
+      const playback = responses.get(responseId);
+      if (!playback) return null;
+      const boundary = heardBoundaryMs(playback);
+      playback.stopping = true;
+      playback.queue = [];
+      try {
+        playback.current?.source.stop();
+      } catch (error: unknown) {
+        console.warn("[voice-session] playback stop failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      playback.current = null;
+      responses.delete(responseId);
+      releaseInFlightResponse(responseId);
+      return boundary;
+    },
+    stopPlayback() {
+      // Transport loss: halt every current source and drop all queued
+      // segments. Unacked segments leave the dedupe set so post-resume
+      // redelivery can play again; already-acked segments keep their
+      // recorded ack so a replay only completes server bookkeeping.
+      for (const playback of responses.values()) {
+        playback.stopping = true;
+        playback.queue = [];
+        playback.queuedMs = 0;
+        playback.queuedBytes = 0;
+        try {
+          playback.current?.source.stop();
+        } catch (error: unknown) {
+          console.warn("[voice-session] playback stop failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+        playback.current = null;
+      }
+      responses.clear();
+      inFlightSegments.clear();
+    },
+    playedThroughMs(responseId) {
+      const playback = responses.get(responseId);
+      return playback ? heardBoundaryMs(playback) : null;
+    },
+    pendingAudioMs() {
+      return pendingChunks.length * audio.frameDurationMs + Math.round(pendingSamples.length / Math.max(1, audio.sampleRateHz) * 1_000);
+    },
+    async release() {
+      if (released) return;
+      released = true;
+      captureGeneration += 1;
+      capturing = false;
+      activeTurnId = null;
+      pendingSamples = new Float32Array(0);
+      resetResampler();
+      pendingChunks.length = 0;
+      mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
+      for (const track of trackedInputTracks) {
+        track.removeEventListener?.("ended", onInputTrackEnded);
+      }
+      trackedInputTracks.clear();
+      const heldCapture = capture;
+      const heldStream = stream;
+      const heldContext = playbackContext;
+      capture = null;
+      stream = null;
+      playbackContext = null;
+      playbackContextReady = null;
+      for (const playback of responses.values()) {
+        playback.stopping = true;
+        try {
+          playback.current?.source.stop();
+        } catch (error: unknown) {
+          console.warn("[voice-session] release playback stop failed:", error instanceof Error ? error.name : "UnknownError");
+        }
+      }
+      responses.clear();
+      try {
+        await heldCapture?.stop();
+      } catch (error: unknown) {
+        console.warn("[voice-session] capture release failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+      if (heldStream) {
+        for (const track of heldStream.getTracks()) {
+          try {
+            track.stop();
+          } catch (error: unknown) {
+            console.warn("[voice-session] track stop failed:", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+      }
+      try {
+        await heldContext?.close();
+      } catch (error: unknown) {
+        console.warn("[voice-session] playback context close failed:", error instanceof Error ? error.name : "UnknownError");
+      }
+    },
+  };
+}

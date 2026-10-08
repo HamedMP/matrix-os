@@ -1,10 +1,13 @@
 import { prepareChatSessionContext } from "./session-history.js";
-import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
+import { type ChatAgentContext, chatContextRequestHash } from "./agent-context.js";
+import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
+import { revalidateActionPolicy } from "./action-policy.js";
 import {
   CanonicalCreateChatTurnRequestSchema, CanonicalChatMessageSchema, CanonicalChatTurnSchema,
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
-  type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
+  ChatRunContextSchema,
+  type ChatContextSnapshot, type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
   canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
@@ -13,19 +16,34 @@ import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { ChatBusyError, ChatNotFoundError } from "./errors.js";
 import { dispatchAdmissionKey } from "./dispatch-ownership.js";
-import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
+import {
+  validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
+  type ChatProviderCatalogService,
+} from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry, CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./execution-root.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
-import { loadChatResumeState } from "./resume-checkpoint.js";
+import { loadChatResumeDecision } from "./resume-checkpoint.js";
+import {
+  admissionPolicyForTurn,
+  type ActiveVoiceSessionPolicy,
+  type VoiceSessionPolicyLookup,
+} from "./voice-session-policy.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export interface TurnAdmissionOptions {
-  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
+  repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun" | "kysely">;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  /**
+   * Optional live voice-session policy source. When a session owns the Chat
+   * its memory/checkpoint/permission policy is stamped onto the admitted run
+   * — spoken and typed turns alike — so canonical policy is never bypassed.
+   */
+  voiceSessionPolicy?: VoiceSessionPolicyLookup;
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -36,20 +54,55 @@ export interface TurnAdmissionOptions {
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
-    promptOverride?: string, admissionKey?: string): void;
+    promptOverride?: string, admissionKey?: string, sharedScopeId?: string, onComplete?: () => Promise<void>, retainedHistory?: ChatContextSnapshot): void;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 
+export interface TurnAdmissionExecutionHints {
+  /**
+   * Delivery awareness supplied by the caller (e.g. a voice session that knows
+   * which assistant responses were never heard). Checkpoints produced by those
+   * responses are ineligible for reuse.
+   */
+  deliveryContext?: { unheardResponses?: readonly string[] };
+  /**
+   * The admitting voice session's own frozen policy, supplied by the engine
+   * for its spoken finals. Falls back to the ambient lookup for typed turns
+   * on a session-owned Chat.
+   */
+  sessionPolicy?: ActiveVoiceSessionPolicy;
+}
+
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  admissionHints: TurnAdmissionExecutionHints = {},
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     await deps.reconcileActiveRuns(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
-    const requestHash = chatContextRequestHash(input);
+    // A live voice session owns this Chat's execution policy: its frozen
+    // memory/checkpoint/permission mode applies before hashing so dedup and
+    // the persisted record reflect exactly what will run.
+    let sessionPolicy: ActiveVoiceSessionPolicy | undefined;
+    try {
+      sessionPolicy = admissionHints.sessionPolicy
+        ?? deps.voiceSessionPolicy?.policyForChat(chatId);
+    } catch (error: unknown) {
+      // Fail closed — a lookup failure must not silently skip live policy.
+      console.warn("[chat] voice session policy lookup failed:", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(
+        safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
+    const admissionPolicy = admissionPolicyForTurn(input, sessionPolicy);
+    const requestHash = chatRequestHash(
+      { ...input, permissionMode: admissionPolicy.permissionMode },
+      admissionPolicy.runPolicy,
+    );
     try {
       const duplicate = await deps.repository.findTurnAdmission(owner, chatId, input.clientRequestId, requestHash);
       if (duplicate) return CanonicalChatTurnAdmissionResponseSchema.parse({ record: duplicate.chat,
@@ -64,15 +117,25 @@ export async function admitCanonicalTurn(
     let prepared;
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
-    const effective = { ...input, ...prepared };
+    // Server-selected bot modes remain authoritative unless a live session
+    // owns the Chat and supplies its stricter frozen execution policy.
+    const effective = { ...input, ...prepared,
+      ...(sessionPolicy ? { permissionMode: admissionPolicy.permissionMode } : {}) };
     const catalog = await deps.catalog.getCatalog(principal, effective.selection);
-    const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
-      part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
+    const requirements = requirementsFor({
+      ...effective,
+      parts: prepared ? input.parts.filter((part) =>
+        part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts,
+    });
     const validated = validateChatProviderSelection({
       catalog,
       selection: effective.selection,
       ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-      requirements,
+      requirements: {
+        ...requirements,
+        ...(admissionPolicy.runPolicy?.source === "voice" || admissionPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+        ...(admissionPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: admissionPolicy.runPolicy.executionPolicy } : {}),
+      },
     });
     if (!validated.ok) {
       const agentModeError = validated.error.code === "capability_mismatch"
@@ -86,6 +149,12 @@ export async function admitCanonicalTurn(
         safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
         503,
       );
+    }
+    try {
+      await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: effective.permissionMode }, admissionPolicy.runPolicy);
+    } catch (error: unknown) {
+      console.warn("[chat] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
     }
     // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
     // so no ordinary Chat can mount a bot's private files.
@@ -128,17 +197,42 @@ export async function admitCanonicalTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
+    const resumeDecision = prepared?.context?.agent ? undefined : await loadChatResumeDecision({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
+      retainedHistorySupported: true,
+      historyBoundarySeq: record.chat.messageCount,
+      ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
+      ...(admissionHints.deliveryContext ? { deliveryContext: admissionHints.deliveryContext } : {}),
     });
+    const resumeState = resumeDecision?.resumeState;
+    if (resumeDecision?.retainedHistory) {
+      // Retain canonical history the resumed session does not contain — or,
+      // on a rebuild decision, give the provider the heard-safe projection.
+      prepared = {
+        ...prepared,
+        context: ChatRunContextSchema.parse({
+          ...prepared?.context,
+          version: 1,
+          requestHash: chatContextRequestHash(input),
+          chats: prepared?.context?.chats ?? [],
+          history: resumeDecision.retainedHistory,
+        }),
+      };
+    } else if (resumeState !== undefined && prepared?.context?.history
+      && resumeDecision?.mode === "resume") {
+      // A clean-resume checkpoint already covers the prepared snapshot.
+      const { history: _history, ...context } = prepared.context;
+      prepared.context = context;
+    }
     let sessionContext: CanonicalChatRun["context"];
     try {
       sessionContext = await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
         requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
+        preserveHistory: Boolean(resumeDecision?.retainedHistory),
       });
     } catch (error: unknown) { return mapRepositoryError(error); }
     const adapterState = resumeState === undefined ? undefined : {
@@ -181,6 +275,7 @@ export async function admitCanonicalTurn(
       interactionMode: effective.interactionMode,
       ...(sessionContext ? { context: sessionContext } : {}),
       permissionMode: effective.permissionMode,
+      ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
         executionRootFingerprint: resolvedRoot.fingerprint,
@@ -196,7 +291,11 @@ export async function admitCanonicalTurn(
         approvals: validated.instance.supports.approvals,
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
-        cancellation: validated.instance.supports.cancellation,
+        // Snapshots only promise what the loaded adapter can actually honour.
+        cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+        ...(validated.instance.supports.approvalBinding
+          ? { approvalBinding: validated.instance.supports.approvalBinding }
+          : {}),
         steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,

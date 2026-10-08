@@ -5,6 +5,7 @@ import type { PlatformMigrationExecutor } from '../migration-types.js';
 export async function migrateSpeech(db: PlatformMigrationExecutor): Promise<void> {
   await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_audience_check`.execute(db);
   await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_scope_check`.execute(db);
+  await sql`ALTER TABLE ai_runtime_credentials DROP CONSTRAINT IF EXISTS ai_runtime_credentials_scope_v2_check`.execute(db);
   await sql`
     DO $$
     BEGIN
@@ -17,7 +18,7 @@ export async function migrateSpeech(db: PlatformMigrationExecutor): Promise<void
       BEGIN
         ALTER TABLE ai_runtime_credentials
           ADD CONSTRAINT ai_runtime_credentials_scope_v2_check
-          CHECK (scope IN ('ai:invoke', 'speech:transcribe'));
+          CHECK (scope IN ('ai:invoke', 'speech:transcribe', 'speech:synthesize'));
       EXCEPTION WHEN duplicate_object THEN NULL;
       END;
     END $$

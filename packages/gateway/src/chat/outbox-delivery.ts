@@ -1,25 +1,32 @@
 import type { ChatOutboxEvent, ChatOwner } from "./records.js";
 
 const MAX_PENDING_EVENTS_PER_TRANSACTION = 100;
+const MAX_SINKS = 8;
 
 export type ChatOutboxSink = (input: { owner: ChatOwner; event: ChatOutboxEvent }) => void;
 export type PendingChatOutboxEvent = { owner: ChatOwner; event: ChatOutboxEvent };
 
 export class ChatOutboxDelivery {
-  private sink: ChatOutboxSink | null = null;
+  private readonly sinks = new Set<ChatOutboxSink>();
   private released = false;
   private readonly pendingByExecutor = new WeakMap<object, PendingChatOutboxEvent[]>();
 
+  /**
+   * Bounded multi-sink registration: the canonical event stream and auxiliary
+   * projections (voice delivery, telemetry) each subscribe independently.
+   * Per-sink failures are isolated at flush so one consumer cannot starve the
+   * others; `release()` still detaches every subscriber at shutdown.
+   */
   registerSink(sink: ChatOutboxSink): { dispose(): void } {
     if (this.released) throw new Error("Chat outbox sink is unavailable");
-    if (this.sink) throw new Error("Chat outbox sink already registered");
-    this.sink = sink;
+    if (this.sinks.size >= MAX_SINKS) throw new Error("Chat outbox sink limit exceeded");
+    this.sinks.add(sink);
     let disposed = false;
     return {
       dispose: () => {
         if (disposed) return;
         disposed = true;
-        if (this.sink === sink) this.sink = null;
+        this.sinks.delete(sink);
       },
     };
   }
@@ -44,22 +51,23 @@ export class ChatOutboxDelivery {
   }
 
   flush(pending: PendingChatOutboxEvent[]): void {
-    const sink = this.released ? null : this.sink;
-    if (!sink) return;
+    if (this.released || this.sinks.size === 0) return;
     for (const event of pending) {
-      try {
-        sink(event);
-      } catch (error: unknown) {
-        console.warn(
-          "[chat/outbox-delivery] Sink delivery failed:",
-          error instanceof Error ? error.name : "UnknownError",
-        );
+      for (const sink of this.sinks) {
+        try {
+          sink(event);
+        } catch (error: unknown) {
+          console.warn(
+            "[chat/outbox-delivery] Sink delivery failed:",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
       }
     }
   }
 
   release(): void {
     this.released = true;
-    this.sink = null;
+    this.sinks.clear();
   }
 }

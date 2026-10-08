@@ -19,7 +19,12 @@ import type { CodexFailureReason } from "./codex-terminal-failure.mjs";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
 import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
-import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
+import {
+  CodingAgentCanonicalExecutionSchema,
+  type CodingAgentCanonicalActionRequest,
+  type CodingAgentCanonicalExecution,
+  type CodingAgentProviderEventBatch,
+} from "./provider-adapter.js";
 import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
@@ -29,8 +34,11 @@ const WatchInputSchema = z.object({
   startAtEnd: z.boolean().optional(),
   startOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
   checkpoint: z.boolean().optional(),
+  /** Server-internal launch grant bound to this watched session. Never request data. */
+  canonical: CodingAgentCanonicalExecutionSchema.optional(),
 }).strict();
 const MAX_WATCHERS = 100;
+const MAX_PENDING_CANONICAL_INVOCATIONS = 64;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_DRAIN_BYTES = 1024 * 1024;
 const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -56,6 +64,10 @@ type ProviderEventStore = {
 };
 type WatchEntry = {
   checkpoint?: boolean;
+  /** Frozen launch grant; the only identity/policy canonical requests may claim. */
+  canonical?: CodingAgentCanonicalExecution;
+  /** Live invocations owned by this watch; aborted when the watch ends. */
+  canonicalControllers?: Set<AbortController>;
   supervision: RuntimeSupervision;
   failureEvents?: AgentThreadEvent[];
   principal: RequestPrincipal;
@@ -141,6 +153,19 @@ export function createCodexEventBridge(options: {
   now?: () => Date;
   nowMs?: () => number;
   isRuntimeAlive?: (sessionId: string) => Promise<boolean>;
+  /**
+   * Live canonical action dispatch. Only requests from sessions launched with
+   * a bound grant reach this callback; the supplied identity/policy come from
+   * the watch entry, never from the journaled record. Invocation runs outside
+   * the serialized drain loop so a pending approval cannot stall other
+   * sessions; results travel back over the provider control channel.
+   */
+  onCanonicalActionRequest?: (input: {
+    request: CodingAgentCanonicalActionRequest;
+    sessionId: string;
+    canonical: CodingAgentCanonicalExecution;
+    signal: AbortSignal;
+  }) => Promise<void>;
 }) {
   const homePath = resolve(options.homePath);
   const eventDir = join(homePath, "system", "coding-agents", "provider-events");
@@ -157,13 +182,15 @@ export function createCodexEventBridge(options: {
   let queue: Promise<void> = Promise.resolve();
   let lastCleanupAt = 0;
   let versionCache: { ok: boolean; expiresAt: number } | undefined;
+  // The executable is fixed for the life of this process, so the last completed
+  // verdict stays meaningful after its cache entry expires. A probe that only
+  // ran out of a caller's time budget is not evidence that the install changed.
+  let lastCompletedVerdict: boolean | undefined;
+  let pendingProbe: Promise<boolean | undefined> | undefined;
 
-  async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
-    if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
-    const timeoutSignal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
-    const signal = parentSignal
-      ? AbortSignal.any([parentSignal, timeoutSignal])
-      : timeoutSignal;
+  // Resolves to the verdict, or undefined when the probe itself timed out.
+  async function runVersionProbe(): Promise<boolean | undefined> {
+    const signal = AbortSignal.timeout(VERSION_TIMEOUT_MS);
     let ok = false;
     try {
       const result = await runVersionCommand(codexExecutable, ["--version"], {
@@ -182,12 +209,36 @@ export function createCodexEventBridge(options: {
         signal.aborted ||
         (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
       ) {
-        return false;
+        return undefined;
       }
       console.warn("[coding-agents] Codex version check failed");
     }
     versionCache = { ok, expiresAt: nowMs() + VERSION_CACHE_TTL_MS };
+    lastCompletedVerdict = ok;
     return ok;
+  }
+
+  async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
+    if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
+    if (parentSignal?.aborted) return lastCompletedVerdict ?? false;
+    // Concurrent catalog reads share one child process. The probe keeps running
+    // after a caller gives up so its verdict is cached for the next read instead
+    // of every slow read re-spawning the CLI and timing out again.
+    if (!pendingProbe) {
+      pendingProbe = runVersionProbe().finally(() => {
+        pendingProbe = undefined;
+      });
+    }
+    const probe = pendingProbe;
+    const verdict = parentSignal
+      ? await Promise.race([
+        probe,
+        new Promise<undefined>((resolvePromise) => {
+          parentSignal.addEventListener("abort", () => resolvePromise(undefined), { once: true });
+        }),
+      ])
+      : await probe;
+    return verdict ?? lastCompletedVerdict ?? false;
   }
 
   async function ensureEventDirectory(): Promise<void> {
@@ -205,7 +256,7 @@ export function createCodexEventBridge(options: {
     for (const entry of watchers.values()) {
       if (!oldest || entry.lastTouchedAt < oldest.lastTouchedAt) oldest = entry;
     }
-    if (oldest) watchers.delete(oldest.sessionId);
+    if (oldest) removeWatch(oldest.sessionId);
   }
 
   async function cleanupOrphans(): Promise<void> {
@@ -236,6 +287,60 @@ export function createCodexEventBridge(options: {
     }
   }
 
+  const pendingCanonical = new Set<AbortController>();
+
+  function abortCanonical(entry: WatchEntry): void {
+    for (const controller of entry.canonicalControllers ?? []) controller.abort();
+    entry.canonicalControllers?.clear();
+  }
+
+  function removeWatch(sessionId: string): void {
+    const entry = watchers.get(sessionId);
+    if (entry) abortCanonical(entry);
+    watchers.delete(sessionId);
+  }
+
+  /** The request must claim exactly the launch grant bound to this watch. */
+  function canonicalRequestMatchesGrant(
+    request: CodingAgentCanonicalActionRequest,
+    canonical: CodingAgentCanonicalExecution,
+  ): boolean {
+    return request.chatId === canonical.identity.chatId
+      && request.runId === canonical.identity.runId
+      && JSON.stringify(request.owner) === JSON.stringify(canonical.identity.owner)
+      && JSON.stringify(request.executionPolicy) === JSON.stringify(canonical.executionPolicy);
+  }
+
+  function dispatchCanonicalAction(entry: WatchEntry, request: CodingAgentCanonicalActionRequest): void {
+    const dispatch = options.onCanonicalActionRequest;
+    // Fail closed: no bound grant or no live authority path means the request
+    // is dropped; the runner-side call times out and is reported as denied.
+    if (!entry.canonical || !dispatch || !canonicalRequestMatchesGrant(request, entry.canonical)) {
+      console.warn("[coding-agents] Dropping canonical action request without a bound grant");
+      return;
+    }
+    if (pendingCanonical.size >= MAX_PENDING_CANONICAL_INVOCATIONS) {
+      console.warn("[coding-agents] Dropping canonical action request over the pending cap");
+      return;
+    }
+    const controller = new AbortController();
+    pendingCanonical.add(controller);
+    (entry.canonicalControllers ??= new Set()).add(controller);
+    const canonical = entry.canonical;
+    void Promise.resolve()
+      .then(() => dispatch({
+        request,
+        sessionId: entry.sessionId,
+        canonical,
+        signal: controller.signal,
+      }))
+      .catch((error: unknown) => console.warn("[coding-agents] Canonical action invocation failed", error))
+      .finally(() => {
+        pendingCanonical.delete(controller);
+        entry.canonicalControllers?.delete(controller);
+      });
+  }
+
   async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<{ terminal: boolean; ready: boolean }> {
     if (!store) throw new Error("Codex event store is unavailable");
     const events: AgentThreadEvent[] = [];
@@ -258,7 +363,11 @@ export function createCodexEventBridge(options: {
         nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++),
       });
       events.push(...parsed.events);
-      ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome;
+      if (parsed.canonicalActionRequest) {
+        dispatchCanonicalAction(entry, parsed.canonicalActionRequest);
+      }
+      ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome
+        || !!parsed.canonicalActionRequest;
       if (parsed.providerThreadId) {
         if (providerThreadId && providerThreadId !== parsed.providerThreadId) {
           throw new Error("Codex provider conversation changed");
@@ -310,11 +419,11 @@ export function createCodexEventBridge(options: {
     try {
       const info = await lstat(entry.path);
       if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
-        watchers.delete(entry.sessionId);
+        removeWatch(entry.sessionId);
         return false;
       }
       if (info.size <= entry.offset) {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) removeWatch(entry.sessionId);
         return true;
       }
       const length = Math.min(info.size - entry.offset, MAX_DRAIN_BYTES);
@@ -324,7 +433,7 @@ export function createCodexEventBridge(options: {
       const data = bytes.subarray(0, read.bytesRead);
       const lastNewline = data.lastIndexOf(0x0a);
       if (lastNewline < 0) {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) removeWatch(entry.sessionId);
         return true;
       }
       const consumedBytes = lastNewline + 1;
@@ -335,11 +444,11 @@ export function createCodexEventBridge(options: {
       entry.supervision.terminal ||= terminal;
       entry.lastTouchedAt = nowMs();
       entry.pendingOccurredAt = undefined;
-      if (terminal && entry.stopRequestedAt !== undefined) watchers.delete(entry.sessionId);
+      if (terminal && entry.stopRequestedAt !== undefined) removeWatch(entry.sessionId);
       return info.size - entry.offset <= data.length - consumedBytes;
     } catch (error: unknown) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) removeWatch(entry.sessionId);
         return true;
       }
       console.warn("[coding-agents] Codex event ingestion will retry");
@@ -357,8 +466,13 @@ export function createCodexEventBridge(options: {
       await Promise.all(entries.slice(start, start + 10).map(async (entry) => {
         await drainEntry(entry);
         if (!store || !options.isRuntimeAlive || watchers.get(entry.sessionId) !== entry) return;
+        // Evidence the runtime is working since the last probe: it is blocked on our own
+        // canonical action, or it produced output we ingested. Under load the systemctl probe
+        // itself times out; that is unknown, not death.
+        const working = (entry.canonicalControllers?.size ?? 0) > 0
+          || entry.lastTouchedAt > (entry.supervision.lastProbeAt ?? entry.supervision.startedAt);
         if (!entry.failureEvents && !await runtimeUnavailable(entry.supervision,
-          () => options.isRuntimeAlive!(entry.sessionId), nowMs())) return;
+          () => options.isRuntimeAlive!(entry.sessionId), nowMs(), working)) return;
         if (closed || watchers.get(entry.sessionId) !== entry || entry.supervision.terminal) return;
         // A final batch may have arrived during the probe; give persisted output priority.
         if (!await drainEntry(entry)) return;
@@ -372,7 +486,7 @@ export function createCodexEventBridge(options: {
         });
         try {
           await store.ingestProviderEvents(entry.principal, entry.threadId, { events: entry.failureEvents });
-          if (watchers.get(entry.sessionId) === entry) watchers.delete(entry.sessionId);
+          if (watchers.get(entry.sessionId) === entry) removeWatch(entry.sessionId);
         } catch (error: unknown) {
           console.warn("[coding-agents] Runtime failure persistence will retry", {
             errorType: error instanceof Error ? error.name : "UnknownError",
@@ -404,7 +518,8 @@ export function createCodexEventBridge(options: {
       startAtEnd?: boolean;
       startOffset?: number;
       checkpoint?: boolean;
-    }): Promise<{ path: string; offset?: number }> {
+      canonical?: CodingAgentCanonicalExecution;
+    }): Promise<{ path: string; offset?: number; canonical: boolean }> {
       if (closed || !await versionIsVerified()) {
         throw new Error("Codex structured events are unavailable");
       }
@@ -414,6 +529,7 @@ export function createCodexEventBridge(options: {
         ...(input.startAtEnd !== undefined ? { startAtEnd: input.startAtEnd } : {}),
         ...(input.startOffset !== undefined ? { startOffset: input.startOffset } : {}),
         ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
+        ...(input.canonical !== undefined ? { canonical: input.canonical } : {}),
       });
       await ensureEventDirectory();
       const path = codexProviderEventPath(homePath, parsed.sessionId);
@@ -422,7 +538,23 @@ export function createCodexEventBridge(options: {
         if (existing.threadId !== parsed.threadId || existing.principal.userId !== input.principal.userId) {
           throw new Error("Codex event watcher identity mismatch");
         }
-        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, ...(parsed.checkpoint ? { offset: existing.offset } : {}) }; }
+        // A grant may only be bound at launch; a second watch must claim the
+        // identical frozen grant or none. A plain watch on a canonical entry
+        // is the resume/re-attach path and reports `canonical` so callers can
+        // fail closed.
+        if (parsed.canonical
+          && JSON.stringify(parsed.canonical) !== JSON.stringify(existing.canonical)) {
+          throw new Error("Codex event watcher canonical grant mismatch");
+        }
+        if (!parsed.startAtEnd) {
+          existing.lastTouchedAt = nowMs();
+          existing.checkpoint ||= parsed.checkpoint;
+          return { path, ...(parsed.checkpoint ? { offset: existing.offset } : {}),
+            canonical: existing.canonical !== undefined };
+        }
+        // `startAtEnd` on an existing entry renews supervision below; the
+        // grant is bound to the verified session/thread identity and carries
+        // over so canonical dispatch keeps working across the renewal.
       }
       if (!existing) evictIfNeeded();
       // Renew supervision without dropping bytes already owned by an active watcher.
@@ -442,6 +574,7 @@ export function createCodexEventBridge(options: {
       }
       watchers.set(parsed.sessionId, {
         checkpoint: parsed.checkpoint ?? existing?.checkpoint,
+        canonical: parsed.canonical ?? existing?.canonical,
         supervision: { startedAt: nowMs(), nextProbeAt: nowMs() + 10_000, failures: 0,
           ready: parsed.startOffset !== undefined, terminal: false },
         principal: input.principal,
@@ -451,15 +584,19 @@ export function createCodexEventBridge(options: {
         offset,
         lastTouchedAt: nowMs(),
       });
-      return { path, ...(parsed.checkpoint ? { offset } : {}) };
+      return { path, ...(parsed.checkpoint ? { offset } : {}),
+        canonical: (parsed.canonical ?? existing?.canonical) !== undefined };
     },
     unwatch(sessionId: string): void {
-      if (SessionIdSchema.safeParse(sessionId).success) watchers.delete(sessionId);
+      if (SessionIdSchema.safeParse(sessionId).success) removeWatch(sessionId);
     },
     markStopped(sessionId: string): void {
       if (!SessionIdSchema.safeParse(sessionId).success) return;
       const entry = watchers.get(sessionId);
       if (!entry) return;
+      // The session is stopping; in-flight invocations are cancelled so an
+      // approval cannot outlive the run that requested it.
+      abortCanonical(entry);
       entry.stopRequestedAt = nowMs();
       entry.lastTouchedAt = nowMs();
       queue = queue.then(drainAll, drainAll);
@@ -478,6 +615,7 @@ export function createCodexEventBridge(options: {
       queue = queue.then(drainAll, drainAll);
       await queue;
       closed = true;
+      for (const entry of watchers.values()) abortCanonical(entry);
       watchers.clear();
       store = undefined;
       versionCache = undefined;

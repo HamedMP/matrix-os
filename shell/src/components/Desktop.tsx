@@ -7,7 +7,6 @@ import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
 import { useDesktopMode } from "@/stores/desktop-mode";
-import { useVocalStore } from "@/stores/vocal";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { parseDesktopFirstRunStatus, type DesktopFirstRunStatus } from "@/lib/desktop-first-run";
@@ -30,20 +29,25 @@ import { XpDesktopIcons } from "./desktop/XpDesktopIcons";
 import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
-import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
-import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { getCodeEditorUrl } from "@/lib/feature-flags";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
+import {
+  AOEDE_APP_PATH,
+  aoedeEntrySupported,
+  revealShellAppWindow,
+} from "@/lib/aoede-shell";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
 import {
   createOsViewLayoutMemory,
   transitionOsViewLayout,
@@ -71,9 +75,8 @@ import {
 } from "@/lib/builtin-apps";
 import {
   DESKTOP_GATEWAY_FETCH_TIMEOUT_MS as GATEWAY_FETCH_TIMEOUT_MS,
-  findAppByName,
 } from "./desktop/desktop-app-routing";
-import { AoedeDockButton, DockIcon } from "./desktop/DesktopDockControls";
+import { DockIcon } from "./desktop/DesktopDockControls";
 import { useDesktopBootstrap } from "./desktop/useDesktopBootstrap";
 import { useDesktopChatStartup } from "./desktop/useDesktopChatStartup";
 import { DesktopWindow, hasActiveWindowInteraction } from "./desktop/DesktopWindow";
@@ -100,7 +103,7 @@ interface DesktopProps {
   cacheScope?: ShellSnapshotScope | null;
 }
 
-// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, vocalMounted, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
+// react-doctor-disable-next-line react-doctor/no-giant-component, react-doctor/prefer-useReducer -- no-giant-component: cohesive root shell component; extraction tracked separately. prefer-useReducer: the state values here (interacting, settingsOpen, minimizingIds, firstRunStatus, plus mode flags) are independent shell concerns, not one related state machine; collapsing them into a reducer would couple unrelated transitions and obscure behavior in the core shell component
 export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPalette, chat, cacheScope }: DesktopProps) {
   useCanvasTransformPersistence(GATEWAY_URL);
   const windows = useWindowManager((s) => s.windows);
@@ -134,7 +137,14 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     })),
     [apiApps],
   );
-  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
+  // Desktop mounts only on the non-mobile web surface, but the helper keeps
+  // the same aoedeEntrySupported contract the host uses, so a phone-width
+  // mount or missing mic capture still hides the entry (fail closed).
+  const aoedeSupported = aoedeEntrySupported(useMobileViewport());
+  const apps = useMemo(
+    () => buildWebDesktopIconApps(installedApps, { aoedeSupported }),
+    [installedApps, aoedeSupported],
+  );
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
@@ -404,6 +414,14 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       useDesktopMode.getState().setMode(builtInLaunch.mode);
       return;
     }
+    if (builtInLaunch?.kind === "aoede") {
+      // Standalone assistant: a shell-level singleton, never an OS window.
+      // Route through the registered "app:__aoede__" command so every icon
+      // converges on the one controller; retired-path guards make the raw
+      // window fallback a no-op for this path anyway.
+      revealShellAppWindow(AOEDE_APP_PATH, "Aoede");
+      return;
+    }
     focusOrOpen(name ?? apps.find((app) => app.path === path)?.name ?? "App", path);
   }, [apps, focusOrOpen]);
 
@@ -468,19 +486,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       window.removeEventListener(OPEN_PROVIDER_TERMINAL_EVENT, openProviderTerminal);
     };
   }, [openExistingProviderTerminal]);
-
-  // Vocal mode's open_app tool and auto-open-after-build both go through
-  // this. Fuzzy-matches `query` against the current apps list and focuses
-  // (or opens) the best match. Returns the result so the caller can
-  // report success/failure back to Gemini for accurate narration.
-  const openAppByName = (query: string): { success: boolean; resolvedName?: string } => {
-    const match = findAppByName(apps, query);
-    if (match) {
-      openAppOrFocus(match.path, match.name);
-      return { success: true, resolvedName: match.name };
-    }
-    return { success: false };
-  };
 
   const entryKey = JSON.stringify([cacheScope?.storageKey ?? null, getGatewayUrl()]);
   const { loadModules, settled, navigationChangedRef } = useDesktopBootstrap({
@@ -587,30 +592,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     if (desktopMode === "desktop") wmReconcileWindowsToViewport();
   }, [desktopMode, previousMode, wmReconcileWindowsToViewport]);
 
-  // Aoede is orthogonal to mode now — a pointer-events-none overlay that
-  // can ride on top of any mode. The dock button toggles it.
-  const vocalActive = useVocalStore((s) => s.active);
-  const toggleVocal = useVocalStore((s) => s.toggle);
-
-  // Delayed unmount for the vocal overlay so the exit animation has time
-  // to play. `active` flips instantly on toggle (so the mic/WS shut down),
-  // but the DOM lingers for ~950ms after to let the fade-out finish. The
-  // setState-in-effect lint warns about cascading renders but this is a
-  // legitimate delayed-unmount primitive — effect depends on vocalActive,
-  // not on vocalMounted, so there's no cascade loop.
-  const [vocalMounted, setVocalMounted] = useState(vocalActive);
-  // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- delayed-unmount animation primitive: mount immediately when active, defer unmount via a timer so the fade-out can play; the effect depends on vocalActive (not vocalMounted), so these setStates are timer-sequenced, not a cascade loop
-  useEffect(() => {
-    if (vocalActive) {
-      // react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- mount the overlay synchronously when activated; cannot be derived because the exit window is timer-driven (DOM lingers ~950ms after vocalActive flips false)
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- retain the mounted overlay during its timed exit animation
-      setVocalMounted(true);
-      return;
-    }
-    const t = setTimeout(() => setVocalMounted(false), 950);
-    return () => clearTimeout(t);
-  }, [vocalActive]);
-
   const toggleMcRef = useRef(() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); });
 
   // react-doctor-disable-next-line react-doctor/no-cascading-set-state -- false positive: the setState calls counted here (setDesktopMode, setSettingsOpen, setTaskBoardOpen) live inside command `execute` handlers that only fire on user invocation; this effect just registers/unregisters command-palette entries and runs no setState synchronously, so there is no render cascade
@@ -648,13 +629,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         group: "Actions",
         keywords: ["files", "finder", "browse", "explorer"],
         execute: () => openWindow("Files", "__file-browser__"),
-      },
-      {
-        id: "action:toggle-vocal",
-        label: "Toggle Aoede",
-        group: "Actions",
-        keywords: ["aoede", "vocal", "voice", "mic", "talk"],
-        execute: () => toggleVocal(),
       },
       ...modeCommands,
       // File menu commands
@@ -783,7 +757,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       "action:toggle-mc",
       "action:open-settings",
       "action:open-file-browser",
-      "action:toggle-vocal",
       "file:new-window",
       "file:close-window",
       "file:minimize-window",
@@ -797,19 +770,25 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       "view:fullscreen",
       ...visibleModes().map((m) => `mode:${m.id}`),
     ]);
-  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, toggleVocal, wmToggleFullscreen]);
+  }, [register, unregister, visibleModes, setDesktopMode, openWindow, animateMinimize, wmCloseWindow, wmToggleFullscreen]);
 
   useEffect(() => {
-    const appCommands = apps.map((app) => ({
-      id: `app:${app.path}`,
-      label: app.name,
-      group: "Apps" as const,
-      icon: app.iconUrl,
-      keywords: [app.path],
-      execute: () => openAppOrFocus(app.path, app.name),
-    }));
+    // Retired built-ins ("__aoede__", "__workspace__") are never windows; the
+    // assistant's own shell host registers "app:__aoede__" against the
+    // singleton controller — a duplicate registration here would overwrite
+    // it and route the command back into openAppOrFocus (re-entrant loop).
+    const appCommands = apps
+      .filter((app) => !isRetiredBuiltInAppPath(app.path))
+      .map((app) => ({
+        id: `app:${app.path}`,
+        label: app.name,
+        group: "Apps" as const,
+        icon: app.iconUrl,
+        keywords: [app.path],
+        execute: () => openAppOrFocus(app.path, app.name),
+      }));
     if (appCommands.length > 0) register(appCommands);
-    return () => unregister(apps.map((a) => `app:${a.path}`));
+    return () => unregister(apps.filter((a) => !isRetiredBuiltInAppPath(a.path)).map((a) => `app:${a.path}`));
   }, [apps, openAppOrFocus, register, unregister]);
 
   useEffect(() => {
@@ -839,8 +818,8 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   ) : null;
 
   const launcherApps = useMemo(
-    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
-    [installedApps, desktopMode],
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode, { aoedeSupported }),
+    [installedApps, desktopMode, aoedeSupported],
   );
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
@@ -1181,24 +1160,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
             );
           })()}
 
-          {/* Aoede lives on its own line below the system cluster. It's
-              not an app or a setting — it's an ambient presence that can
-              ride on top of any mode, so it gets a distinct circular
-              shape and a primary-glow halo instead of the square dock
-              icons. The active state breathes to echo the vocal overlay. */}
-          {!VOICE_HIDDEN && (
-            <>
-              <div
-                className={isHorizontal
-                  ? "h-6 w-px bg-border/40 mx-1.5"
-                  : "w-6 h-px bg-border/40 my-1.5"
-                }
-                aria-hidden
-              />
-              <AoedeDockButton size={dock.iconSize} variant="desktop" tooltipSide={tooltipSide} />
-            </>
-          )}
-
         </aside>
         </div>}
 
@@ -1229,8 +1190,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
             >
               <SettingsIcon className="size-4" />
             </button>
-            <div className="h-6 w-px bg-border/40 mx-0.5 shrink-0" aria-hidden />
-            {!VOICE_HIDDEN && <AoedeDockButton size={36} variant="mobile" />}
             <div className="shrink-0">
               <UserButton />
             </div>
@@ -1266,6 +1225,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               windows={windows}
               fullscreenWindowId={fullscreenWindowId}
               launcherOpen={taskBoardOpen}
+              aoedeSupported={aoedeSupported}
               onOpenApp={openAppOrFocus}
               onOpenLauncher={() => {
                 setTaskBoardOpen((open) => !open);
@@ -1326,14 +1286,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           />
 
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
-
-          {vocalMounted && (
-            <VocalPanel
-              active={vocalActive}
-              chat={chat}
-              onOpenApp={openAppByName}
-            />
-          )}
 
           {desktopMode !== "canvas" && windows.filter((w) => !w.minimized).length === 0 &&
             apps.length === 0 && (

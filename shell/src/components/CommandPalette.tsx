@@ -34,11 +34,26 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const [category, setCategory] = useState<"all" | "apps" | "actions" | "settings">("all");
   const [query, setQuery] = useState("");
+  // The element focused before the palette captured focus. The dialog's own
+  // mount-focus beats any open-transition capture, so the last external focus
+  // target is tracked continuously instead.
+  const invokerRef = useRef<HTMLElement | undefined>(undefined);
   const handleInputChange = () => {
     requestAnimationFrame(() => {
       listRef.current?.scrollTo({ top: 0 });
     });
   };
+
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.closest("[data-matrix-command-palette]")) return;
+      invokerRef.current = target;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +63,11 @@ export function CommandPalette({
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
+
+  const runCommand = (cmd: Command) => {
+    cmd.execute({ invoker: invokerRef.current });
+    onOpenChange(false);
+  };
 
   const { apps, actions, settings } = (() => {
     const apps: Command[] = [];
@@ -71,6 +91,7 @@ export function CommandPalette({
       onOpenChange={onOpenChange}
       showCloseButton={false}
       className="top-[8%] translate-y-0 z-[60] max-w-[760px] rounded-2xl"
+      contentProps={{ "data-matrix-command-palette": "" }}
     >
       <div className="relative">
         <CommandInput
@@ -118,10 +139,7 @@ export function CommandPalette({
                 data-instant-list-hover
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
-                onSelect={() => {
-                  cmd.execute();
-                  onOpenChange(false);
-                }}
+                onSelect={() => runCommand(cmd)}
               >
                 {cmd.icon ? (
                   // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
@@ -146,10 +164,7 @@ export function CommandPalette({
                 data-instant-list-hover
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
-                onSelect={() => {
-                  cmd.execute();
-                  onOpenChange(false);
-                }}
+                onSelect={() => runCommand(cmd)}
               >
                 <span>{cmd.label}</span>
                 {cmd.shortcut && (
@@ -166,10 +181,7 @@ export function CommandPalette({
                 data-instant-list-hover
                 key={cmd.id}
                 value={[cmd.label, ...(cmd.keywords ?? [])].join(" ")}
-                onSelect={() => {
-                  cmd.execute();
-                  onOpenChange(false);
-                }}
+                onSelect={() => runCommand(cmd)}
               >
                 <span>{cmd.label}</span>
                 {cmd.shortcut && <CommandShortcut>{formatShortcut(cmd.shortcut)}</CommandShortcut>}

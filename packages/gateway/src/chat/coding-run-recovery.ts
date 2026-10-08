@@ -24,14 +24,17 @@ function recoveryControl(event: AgentThreadEvent): RecoveredControlActivity | un
 export const CodingChatStateSchema = CodingAgentProviderResumeStateSchema.extend({
   runId: z.string().regex(/^run_[A-Za-z0-9_-]+$/).optional(),
   replayAfter: z.string().min(1).max(512).optional(),
+  /** One immutable constrained turn; native resume/steer/input paths stay closed. */
+  canonical: z.literal(true).optional(),
 });
 export type CodingChatState = z.infer<typeof CodingChatStateSchema>;
 
-export function recoveryState(conversationId: string, runId: string, events: AgentThreadEvent[]): CodingChatState {
+export function recoveryState(conversationId: string, runId: string, events: AgentThreadEvent[], canonical = false): CodingChatState {
   const requestId = `req_${runId.slice(4)}`;
   const boundary = events.find((event) =>
     (event.type === "user.message" || event.type === "turn.accepted") && event.clientRequestId === requestId);
-  return { conversationId, runId, ...(boundary ? { replayAfter: boundary.eventId } : {}) };
+  return { conversationId, runId, ...(boundary ? { replayAfter: boundary.eventId } : {}),
+    ...(canonical ? { canonical: true as const } : {}) };
 }
 
 export async function recoverCodingRun(input: {

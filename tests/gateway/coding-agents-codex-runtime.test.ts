@@ -292,13 +292,77 @@ describe("Codex structured event runtime", () => {
         sessionId: "sess_version_retry_1",
       })).resolves.toEqual({
         path: codexProviderEventPath(homePath, "sess_version_retry_1"),
+        canonical: false,
       });
-      expect(runVersionCommand).toHaveBeenCalledTimes(2);
+      // An already-aborted caller never spawns the CLI; the later watch probes.
+      expect(runVersionCommand).toHaveBeenCalledTimes(1);
       expect(runVersionCommand).toHaveBeenLastCalledWith(
         codexExecutable,
         ["--version"],
         expect.any(Object),
       );
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a slow Codex version probe running past the caller's deadline and caches its verdict", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
+    let finishProbe!: () => void;
+    const runVersionCommand = vi.fn(() => new Promise<{ stdout: string; stderr: string }>((resolvePromise) => {
+      finishProbe = () => resolvePromise({ stdout: "codex-cli 0.144.3\n", stderr: "" });
+    }));
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      runVersionCommand,
+    });
+    try {
+      const slowCaller = new AbortController();
+      const first = bridge.healthCheck(slowCaller.signal);
+      const second = bridge.healthCheck(new AbortController().signal);
+      slowCaller.abort();
+      // No completed verdict exists yet, so the impatient caller fails closed.
+      await expect(first).resolves.toEqual({ ok: false });
+      finishProbe();
+      // The concurrent caller shared the same child process and saw it complete.
+      await expect(second).resolves.toEqual({ ok: true });
+      await expect(bridge.healthCheck()).resolves.toEqual({ ok: true });
+      expect(runVersionCommand).toHaveBeenCalledTimes(1);
+    } finally {
+      await bridge.shutdown();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("answers an expired-cache probe that misses the caller's deadline with the last completed verdict", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-codex-bridge-"));
+    let clock = 1_000_000;
+    let finishProbe: (() => void) | undefined;
+    const runVersionCommand = vi.fn(() => new Promise<{ stdout: string; stderr: string }>((resolvePromise) => {
+      finishProbe = () => resolvePromise({ stdout: "codex-cli 0.144.3\n", stderr: "" });
+    }));
+    const bridge = createCodexEventBridge({
+      homePath,
+      pollIntervalMs: 60_000,
+      nowMs: () => clock,
+      runVersionCommand,
+    });
+    try {
+      const warm = bridge.healthCheck();
+      finishProbe!();
+      await expect(warm).resolves.toEqual({ ok: true });
+      // Past the 30 s cache TTL the bridge re-probes; the CLI is slow this time.
+      clock += 31_000;
+      const caller = new AbortController();
+      const stale = bridge.healthCheck(caller.signal);
+      caller.abort();
+      await expect(stale).resolves.toEqual({ ok: true });
+      expect(runVersionCommand).toHaveBeenCalledTimes(2);
+      finishProbe!();
+      await expect(bridge.healthCheck()).resolves.toEqual({ ok: true });
+      expect(runVersionCommand).toHaveBeenCalledTimes(2);
     } finally {
       await bridge.shutdown();
       await rm(homePath, { recursive: true, force: true });

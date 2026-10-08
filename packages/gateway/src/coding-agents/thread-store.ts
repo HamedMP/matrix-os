@@ -62,6 +62,7 @@ import {
   type CodingAgentProviderAdapter,
   type CodingAgentProviderEventBatch,
   type CodingAgentProviderResumeState,
+  type CodingAgentCanonicalExecution,
 } from "./provider-adapter.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { createCodingAgentTurnDispatcher } from "./turn-dispatcher.js";
@@ -165,6 +166,7 @@ type ThreadCreateMutationResult = ThreadCreateResult & {
     thread: StoredThread;
     request: CreateAgentThreadRequest;
     provider: CodingAgentProviderAdapter;
+    canonicalExecution?: CodingAgentCanonicalExecution;
   };
 };
 type TerminalTabStoppedReconciliation = z.infer<typeof TerminalTabStoppedReconciliationSchema>;
@@ -189,7 +191,11 @@ export interface CodingAgentThreadStoreOptions {
 
 export interface CodingAgentThreadStore {
   withIdleWorkspace(sessionId: string, cutoff: number, action: (identity: IdleWorkspaceIdentity) => Promise<boolean>): Promise<boolean>;
-  createThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
+  createThread(
+    principal: RequestPrincipal,
+    request: CreateAgentThreadRequest,
+    internal?: { canonicalExecution?: CodingAgentCanonicalExecution },
+  ): Promise<ThreadCreateResult>;
   createShellThread(principal: RequestPrincipal, request: CreateAgentThreadRequest): Promise<ThreadCreateResult>;
   adoptLegacyThread(
     principal: RequestPrincipal,
@@ -1065,6 +1071,7 @@ export function createCodingAgentThreadStore(
       principal: input.principal,
       thread: stripOwner(input.thread),
       request: input.request,
+      ...(input.canonicalExecution ? { canonicalExecution: input.canonicalExecution } : {}),
       signal: combinedSignal,
       now,
       nextEventId,
@@ -1124,6 +1131,7 @@ export function createCodingAgentThreadStore(
     principal: RequestPrincipal,
     request: CreateAgentThreadRequest,
     relationValidator?: CodingAgentThreadRelationValidator,
+    internal?: { canonicalExecution?: CodingAgentCanonicalExecution },
   ): Promise<ThreadCreateResult> {
     const result = await mutate(async (state) => {
       const existing = state.threads.find((thread) =>
@@ -1190,6 +1198,7 @@ export function createCodingAgentThreadStore(
             principal,
             thread: stripOwner(thread),
             request,
+            ...(internal?.canonicalExecution ? { canonicalExecution: internal.canonicalExecution } : {}),
             signal: AbortSignal.timeout(initialRunTimeoutMs),
             now,
             nextEventId,
@@ -1228,7 +1237,8 @@ export function createCodingAgentThreadStore(
         existing: false,
         eventsToPublish: events,
         ...(background ? {
-          backgroundDispatch: { principal, thread, request, provider },
+          backgroundDispatch: { principal, thread, request, provider,
+            ...(internal?.canonicalExecution ? { canonicalExecution: internal.canonicalExecution } : {}) },
         } : {}),
       };
       return { state: nextState, result };
@@ -1241,8 +1251,8 @@ export function createCodingAgentThreadStore(
   }
 
   return {
-    createThread(principal, request) {
-      return createThreadInternal(principal, request);
+    createThread(principal, request, internal) {
+      return createThreadInternal(principal, request, undefined, internal);
     },
     async withIdleWorkspace(sessionId, cutoff, action) {
       return inspect((state) => withIdleWorkspaceState(state, sessionId, cutoff, action));

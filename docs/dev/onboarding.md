@@ -88,25 +88,112 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 | `.env` | Local dev without Docker (copy from `.env.example`) |
 | `shell/.env` | Shell-specific (Clerk keys, copy from `shell/.env.example`) |
 
-## Source/HMR Development
+## Production-parity development
 
-Use this path when changing the gateway, proxy, or shell and you want host-side
-watchers and HMR. It does **not** start platform, PostgreSQL, or MinIO.
+`bun run dev:full` is the canonical local setup. On Apple Silicon it creates a
+disposable **Ubuntu 24.04 amd64 QEMU VM**, builds the real host bundle inside a
+faster OrbStack/Rosetta Linux builder, and boots the runtime from the production
+cloud-init configuration via a NoCloud seed. A real VM is required because
+OrbStack Linux machines share a host kernel and cannot load the production
+AppArmor profile. Lima documents the same [Intel-on-ARM QEMU requirement](https://lima-vm.io/docs/config/multi-arch/).
+This is the path for reproducing VPS failures, including Files, Terminal/Zellij
+generations, restart behavior, AppArmor, nginx TLS/WebSockets, the local owner
+Postgres container, restore gate, code services, and updater wiring.
+
+Prerequisites on macOS:
+
+- OrbStack with Linux machines enabled for the disposable bundle builder and
+  Docker dependencies.
+- QEMU (`brew install qemu`). The runtime deliberately uses slower TCG system
+  emulation rather than Rosetta userspace emulation so the kernel architecture
+  and security facilities match production.
+- OpenSSL (`brew install openssl`) for the local TLS-wrapped object-store
+  endpoint used by the unchanged production backup broker.
+- A 6 GiB OrbStack shared memory limit (`orb config set memory_mib 6144`, then
+  `orb stop` to apply it). The bundle builder uses 4 GiB; the remainder is for
+  platform PostgreSQL and object storage. The QEMU runtime separately uses 4 GiB.
+- Rosetta 2 (`softwareupdate --install-rosetta --agree-to-license`). Production
+  bundles contain x86_64 Node/Zellij assets; an arm64 guest is not parity.
+- A `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in `.env` so the bundled shell matches
+  the selected Clerk instance. The launcher fetches that instance's public JWKS
+  for local token verification, so a personal Clerk development instance can be
+  used when production workspace access is unavailable. A matching, valid
+  `CLERK_SECRET_KEY` is optional: without it browser auth returns a bounded
+  unavailable response while the VM, Files synchronization, Terminal runtime,
+  and other credential-free services start.
+- `MATRIX_LOCAL_CLERK_USER_ID` in `.env`, set to the Clerk user that will sign
+  in. The local platform database maps that identity to the disposable machine.
+- One explicitly approved host-network setup step. Add the RFC 5737 fixture
+  address once with
+  `sudo ifconfig lo0 alias 192.0.2.2 netmask 255.255.255.255`. The launcher
+  verifies but never takes ownership of that host setting. It does own and
+  remove the Docker bridge process on `dev:parity:down`. Production registration
+  still validates a public-style address and all HTTPS/WebSocket traffic still
+  uses port 443.
+
+```bash
+bun run dev:full                 # build bundle, provision machine, run platform
+bun run dev:parity:status       # production units and failed-unit summary
+bun run dev:parity:logs         # cloud-init and Matrix service logs
+bun run dev:parity:down         # delete the disposable machine; preserve infra volumes
+```
+
+The command starts platform Postgres and object storage as external local
+dependencies. Presigned backup traffic reaches that object store through a
+loopback-only, launcher-owned TLS endpoint trusted only by the disposable guest;
+the production broker's HTTPS requirement is unchanged. `dev:parity:down` removes
+only QEMU and labeled bridge containers owned by this checkout. It deliberately
+leaves the shared PostgreSQL and object-storage containers running for source
+development; stop those separately with `bun run dev:infra:stop` when they are no
+longer needed. The platform uses normal customer-VPS routing and registration
+path; it does **not** enable legacy container routing. Keep the foreground command
+running because it serves the working-tree bundle and local provider-metadata
+adapter during provisioning and updates. Provider-backed AI, billing, speech,
+and integrations still require their normal credentials and should fail with
+their bounded unavailable states when those credentials are absent.
+
+Open `https://192.0.2.2` after provisioning. Generated state, the cached Ubuntu
+image, and bundles live under ignored `.amp/in/local-production-parity/`.
+Use `--reuse-bundle` only when the working tree has not changed:
+
+```bash
+pnpm node scripts/dev-production-parity.mjs up --reuse-bundle
+```
+
+## Source/HMR development (non-parity)
+
+Use this path when changing the application and you want host-side watchers and
+HMR, with PostgreSQL and object storage in Docker. The narrower `bun run dev`
+command does not start platform or either stateful dependency.
 
 ```bash
 cp .env.example .env
 cp shell/.env.example shell/.env
 # Fill in ANTHROPIC_API_KEY in .env
-# Fill in Clerk keys in shell/.env
+# Optional: add provider keys to .env for AI-backed features
 
-bun run dev
+bun run dev:source
 ```
 
-`bun run dev` starts exactly three source processes: gateway (`:4000`), proxy
-(`:8080`), and shell (`:3000`). The shell uses webpack HMR because Next 16
-Turbopack cannot resolve its own package through pnpm's intentional global
-virtual store when the Turbopack root spans the workspace. Keep
-`enableGlobalVirtualStore: true`.
+`bun run dev:source` starts PostgreSQL and the local S3-compatible object store in
+Docker, waits for both to be ready, initializes the sync bucket, and then starts
+gateway (`:4000`), proxy (`:8080`), platform (`:9000`), and shell (`:3000`) from
+source. Local auth bypass is enabled explicitly, so this path does not require
+Clerk credentials or initialize Clerk. Press Ctrl-C to stop the source processes; infrastructure
+continues in Docker and can be stopped with `bun run dev:infra:stop`.
+
+Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
+The narrower `bun run dev` command still starts exactly three source processes:
+gateway, proxy, and shell; it assumes any required infrastructure is already
+running. The shell uses Next.js's default Turbopack development server. pnpm's
+content-addressed package cache remains shared, while each checkout
+keeps its own virtual store and builds approved native addons locally so a
+project running another Node ABI cannot replace them.
+
+Host source development does not launch the production Linux user-systemd
+terminal runtime and therefore cannot reproduce production Terminal lifecycle,
+cgroup, generation, restart, or upgrade behavior. Use `bun run dev:full` for
+those checks; a portable supervisor is deliberately not an acceptance target.
 
 The source proxy uses an in-memory usage database unless `PROXY_DB_PATH` is
 set. To run platform separately, first start a PostgreSQL instance containing
@@ -125,7 +212,7 @@ curl --fail http://localhost:4000/health
 curl --fail http://localhost:8080/health
 ```
 
-For the complete local topology, use `bun run docker:full` instead.
+Docker and source-HMR modes are convenience loops, not production topology.
 
 ## Project Structure
 
@@ -195,6 +282,10 @@ When your PR changes `shell/` files, the Screenshots CI runs Playwright and comm
 ## Docker Commands
 
 ```bash
+bun run dev:infra       # Ready PostgreSQL + object storage in Docker
+bun run dev:infra:stop  # Stop local infrastructure without deleting data
+bun run dev:full        # Production host bundle in an amd64 Ubuntu QEMU VM
+bun run dev:source      # Non-parity infra + HTTP services from source with HMR
 bun run docker          # Dev (gateway + shell)
 bun run docker:full     # + proxy and platform
 bun run docker:full:smoke # build, health-check the full stack, then stop it

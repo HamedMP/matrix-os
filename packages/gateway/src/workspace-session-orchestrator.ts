@@ -7,6 +7,7 @@ import type {
   createAgentSessionManager,
 } from "./agent-session-manager.js";
 import type { AgentLaunchSandbox, SupportedAgent } from "./agent-launcher.js";
+import type { CodingAgentCanonicalExecution } from "./coding-agents/provider-adapter.js";
 import type { WorkspaceError } from "./project-manager.js";
 import type { OwnerScope } from "./state-ops.js";
 import type { createAgentSandbox } from "./agent-sandbox.js";
@@ -71,6 +72,12 @@ export interface StartWorkspaceSessionInput {
   request: StartWorkspaceSessionRequest;
   /** Internal only: authenticated provider-thread recovery, never request-body data. */
   recoveryThreadId?: string;
+  /**
+   * Server-internal canonical execution grant for a constrained Codex
+   * app-server launch. Never part of the request body — public routes cannot
+   * reach it; only canonical provider plumbing supplies it.
+   */
+  canonicalExecution?: CodingAgentCanonicalExecution;
 }
 
 function failure(status: number, code: string, message: string): Failure {
@@ -132,6 +139,8 @@ async function resolveAgentSandbox(options: {
   sessionId: string;
   workspacePath: string;
   reuseCodexScratch?: boolean;
+  /** Constrained canonical executions never widen past a read-only sandbox. */
+  canonical?: boolean;
 }): Promise<{ ok: true; sandbox?: AgentLaunchSandbox } | Failure> {
   const preflight = await options.agentSandbox.preflight({
     agent: options.agent,
@@ -153,7 +162,7 @@ async function resolveAgentSandbox(options: {
   }
   if (
     preflight.sandbox?.enabled &&
-    (options.request.sandboxMode === "read_only" ||
+    (options.canonical || options.request.sandboxMode === "read_only" ||
       (options.agent === "claude" && (options.request.mode === "plan" || options.request.mode === "review")))
   ) {
     return { ok: true, sandbox: { ...preflight.sandbox, mode: "read-only", writableRoots: [] } };
@@ -424,6 +433,7 @@ export function createWorkspaceSessionOrchestrator(options: {
           sessionId,
           workspacePath,
           reuseCodexScratch,
+          ...(input.canonicalExecution ? { canonical: true } : {}),
         });
         if (!preflight.ok) {
           if (ownsRootWorkspace) await cleanupRootWorkspace?.(sessionId);
@@ -437,6 +447,7 @@ export function createWorkspaceSessionOrchestrator(options: {
         sessionId,
         ownerId: input.ownerScope.id,
         sandbox,
+        ...(input.canonicalExecution ? { canonicalExecution: input.canonicalExecution } : {}),
       });
       if (!result.ok) {
         if (result.error.code === "runtime_ownership_retained") return result;

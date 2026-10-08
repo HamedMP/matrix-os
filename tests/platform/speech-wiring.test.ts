@@ -83,7 +83,7 @@ describe("platform speech startup wiring", () => {
       PLATFORM_SPEECH_ENABLED: "true",
       PLATFORM_SPEECH_PROVIDER: "openai",
       PLATFORM_SPEECH_OPENAI_API_KEY: "platform-openai-key-123456",
-      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_MODEL: "gpt-transcribe",
       PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
       PLATFORM_SPEECH_SECRET: "s".repeat(32),
       PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
@@ -95,17 +95,50 @@ describe("platform speech startup wiring", () => {
       headers: { "content-type": "application/json" },
     }));
     const service = createConfiguredPlatformSpeechService({ db, config, fetchImpl, now: () => now });
+    expect(service.capabilities().fileTranscription).toMatchObject({ dictation: { languageHints: true } });
     await expect(service.transcribe({
       identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
       requestId: `sp_${now.getTime()}_previewtranscript`,
       sourceKind: "dictation",
       audio: oneSecondWav(),
       mediaType: "audio/wav",
+      languageHints: ["en"],
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ outcome: "transcript", text: "Preview transcript" });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const form = fetchImpl.mock.calls[0]![1]!.body as FormData;
+    expect(form.get("model")).toBe("gpt-transcribe");
+    expect(form.getAll("languages[]")).toEqual(["en"]);
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual([]);
     expect(await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute()).toEqual([]);
+    await service.shutdown();
+  });
+
+  it("applies preview expiry to synthesis before provider dispatch", async () => {
+    const now = new Date("2026-09-14T00:00:00.000Z");
+    const config = loadPlatformSpeechConfig({
+      NODE_ENV: "production",
+      PLATFORM_PREVIEW: "true",
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "openai",
+      PLATFORM_SPEECH_OPENAI_API_KEY: "platform-openai-key-123456",
+      PLATFORM_SPEECH_MODEL: "gpt-4o-mini-transcribe",
+      PLATFORM_SPEECH_POLICY_REVISION: "preview-speech-1",
+      PLATFORM_SPEECH_SECRET: "s".repeat(32),
+      PLATFORM_SPEECH_PREVIEW_NO_CHARGE: "true",
+      PLATFORM_SPEECH_PREVIEW_MAX_OPERATIONS_PER_RUNTIME: "25",
+      PLATFORM_SPEECH_PREVIEW_NOT_AFTER: now.toISOString(),
+    });
+    const fetchImpl = vi.fn();
+    const service = createConfiguredPlatformSpeechService({ db, config, fetchImpl, now: () => now });
+
+    await expect(service.synthesize({
+      identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      requestId: `sp_${now.getTime()}_previewsynthesis`,
+      text: "Do not dispatch",
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "rate_limited" });
+    expect(fetchImpl).not.toHaveBeenCalled();
     await service.shutdown();
   });
 });

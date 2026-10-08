@@ -8,6 +8,7 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-run-wire";
 export * from "#chat-event-wire";
 export * from "#bots";
 export * from "#chat-artifacts";
@@ -35,7 +36,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.156.1";
+export const CODEX_VERIFIED_VERSION = "0.161.0";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -45,6 +46,8 @@ export * from "#ai-provider";
 export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
+export * from "#aoede";
+export * from "#canonical-action";
 export * from "#canonical-chat";
 export * from "#chat-agents";
 export * from "#chat-agent-context";
@@ -80,6 +83,8 @@ export * from "#jev";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#speech";
+export * from "#speech-stream";
+export * from "#voice-session";
 export * from "#support-chat-properties";
 export * from "#sync";
 export * from "#terminal-clipboard";

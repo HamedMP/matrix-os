@@ -18,6 +18,15 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { createShellSnapshotScope } from "@/lib/shell-snapshot-cache";
+import { useDesktopMode } from "@/stores/desktop-mode";
+import { ShellAoedeHost } from "@/components/ShellAoedeHost";
+import {
+  aoedeEntrySupported,
+  aoedeSurfaceForDesktopMode,
+  openAoedeHistory,
+  openAoedeNavigation,
+  openAoedeResult,
+} from "@/lib/aoede-shell";
 import { isSelfHostedRuntime, SELF_HOSTED_SHELL_USER_ID } from "@/lib/self-host-mode";
 
 const LAUNCHABLE_BUILT_IN_PATHS = new Set([
@@ -53,36 +62,25 @@ function readRuntimeSlotFromLocation(): string | null {
 
 type ShellHomeProps = { initialCollaborationView?: ChatCollaborationView };
 
-export function ShellHome({ initialCollaborationView }: ShellHomeProps = {}) {
-  // Self-hosted documents render without ClerkProvider, so useAuth must never run there.
-  // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
-  if (isSelfHostedRuntime()) {
-    return (
-      <ShellHomeBody
-        userId={SELF_HOSTED_SHELL_USER_ID}
-        sessionId={null}
-        initialCollaborationView={initialCollaborationView}
-      />
-    );
+const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
+
+export function ShellHome(props: ShellHomeProps = {}) {
+  if (localAuthBypass || isSelfHostedRuntime()) {
+    return <ShellHomeContent {...props} userId={isSelfHostedRuntime() ? SELF_HOSTED_SHELL_USER_ID : null} sessionId={null} />;
   }
-  return <ClerkShellHome initialCollaborationView={initialCollaborationView} />;
+
+  return <ManagedShellHome {...props} />;
 }
 
-function ClerkShellHome({ initialCollaborationView }: ShellHomeProps) {
+function ManagedShellHome(props: ShellHomeProps) {
   const { userId, sessionId } = useAuth();
-  return (
-    <ShellHomeBody
-      userId={userId}
-      sessionId={sessionId}
-      initialCollaborationView={initialCollaborationView}
-    />
-  );
+  return <ShellHomeContent {...props} userId={userId} sessionId={sessionId} />;
 }
 
-function ShellHomeBody({
+function ShellHomeContent({
+  initialCollaborationView,
   userId,
   sessionId,
-  initialCollaborationView,
 }: ShellHomeProps & { userId: string | null | undefined; sessionId: string | null | undefined }) {
   const isMobile = useMobileViewport();
   const cachePathname = typeof window === "undefined" ? "/" : window.location.pathname;
@@ -114,6 +112,14 @@ function ShellHomeBody({
 
   const register = useCommandStore((s) => s.register);
   const unregister = useCommandStore((s) => s.unregister);
+  const desktopMode = useDesktopMode((s) => s.mode);
+  const switchConversation = chat.switchConversation;
+  // "View history" selects the backing record in canonical Chat state and
+  // reveals its real window; Aoede never retargets to another conversation.
+  const handleAoedeHistory = useCallback(
+    (chatId: string) => openAoedeHistory(chatId, switchConversation),
+    [switchConversation],
+  );
 
   useEffect(() => {
     register([
@@ -140,6 +146,15 @@ function ShellHomeBody({
   return (
     <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
     <ChatProvider value={chat}>
+      <ShellAoedeHost
+        userId={userId}
+        runtimeSlot={runtimeSlot}
+        surface={aoedeSurfaceForDesktopMode(desktopMode)}
+        supported={aoedeEntrySupported(isMobile)}
+        onOpenHistory={handleAoedeHistory}
+        onOpenResult={openAoedeResult}
+        onOpenNavigation={openAoedeNavigation}
+      >
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="relative flex min-h-0 flex-1 flex-col">
@@ -165,6 +180,7 @@ function ShellHomeBody({
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
         <ApprovalDialog />
       </div>
+      </ShellAoedeHost>
     </ChatProvider>
     </GettingStartedVisibilityProvider>
   );

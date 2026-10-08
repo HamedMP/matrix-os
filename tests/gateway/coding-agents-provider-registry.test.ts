@@ -68,6 +68,22 @@ function adapter(overrides: Partial<CodingAgentProviderAdapter> = {}): CodingAge
 }
 
 describe("coding-agent provider registry", () => {
+  it("bounds a preferred-provider read without probing unrelated harnesses", async () => {
+    const codex = adapter();
+    const pi = adapter({ providerId: "pi", getSummary: vi.fn(({ now }) => ({
+      ...codex.getSummary({ principal: owner, now: () => now(), signal: AbortSignal.timeout(1_000) }),
+      id: "pi", displayName: "Pi", kind: "pi",
+    })) });
+    const codexSummary = vi.spyOn(codex, "getSummary");
+    const piSummary = vi.spyOn(pi, "getSummary");
+    const registry = createCodingAgentProviderRegistry({ providers: [codex, pi] });
+
+    const summaries = await registry.listProviders(owner, ["codex"]);
+
+    expect(summaries.map((summary) => summary.id)).toEqual(["codex"]);
+    expect(codexSummary).toHaveBeenCalledOnce();
+    expect(piSummary).not.toHaveBeenCalled();
+  });
   it("keeps locally configured Codex attemptable without claiming remote authentication", async () => {
     const registry = createCodingAgentProviderRegistry({
       providers: [adapter()], agentCredentials: credentialService("available"), now: () => baseNow,

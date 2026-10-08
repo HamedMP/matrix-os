@@ -1,6 +1,6 @@
+import { chatRequestHash } from "./argument-digest.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
-import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
 import {
@@ -11,6 +11,7 @@ import {
   CanonicalChatQueuedTurnIdSchema,
   CanonicalChatQueuedTurnSchema,
   CanonicalChatRequestIdSchema,
+  CanonicalChatRunPolicySchema,
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
@@ -20,6 +21,7 @@ import {
   type CanonicalChatQueuedTurn,
   type CanonicalChatMessage,
   type CanonicalChatRun,
+  type CanonicalChatRunPolicy,
   type CanonicalChatTurn,
   type CanonicalProviderDriverKind,
   type CanonicalQueueChatTurnRequest,
@@ -74,6 +76,8 @@ export interface EnqueueQueuedTurnInput {
   executionRootFingerprint?: string;
   capabilitySnapshot: CanonicalChatRun["capabilitySnapshot"];
   context?: CanonicalChatRun["context"];
+  /** Immutable execution policy snapshotted at queue admission (FR-037). */
+  runPolicy?: CanonicalChatRunPolicy;
   createdAt: string;
 }
 
@@ -216,6 +220,7 @@ export function toQueuedTurn(row: Selectable<ChatQueuedTurnsTable>): CanonicalCh
     interactionMode: row.interaction_mode,
     permissionMode: row.permission_mode,
     ...(row.execution_root === null ? {} : { executionRoot: parseJson(row.execution_root) }),
+    ...(row.run_policy === null ? {} : { runPolicy: parseJson(row.run_policy) }),
     createdAt: asIso(row.created_at),
     updatedAt: asIso(row.updated_at),
   });
@@ -265,7 +270,7 @@ export class ChatQueueRepository {
         .where("chat_id", "=", chatId).where("client_request_id", "=", clientRequestId).executeTakeFirst();
       if (!row) return null;
       const queuedTurn = toQueuedTurn(row);
-      if (!["queued", "claimed"].includes(row.status) || (requestHash !== undefined && (row.request_hash ?? queuedTurn.context?.requestHash ?? chatContextRequestHash(queuedTurn)) !== requestHash)) {
+      if (!["queued", "claimed"].includes(row.status) || (requestHash !== undefined && (row.request_hash ?? queuedTurn.context?.requestHash ?? chatRequestHash(queuedTurn, queuedTurn.runPolicy)) !== requestHash)) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       return { queuedTurn, queueDepth: await this.queueDepth(trx, chatId), alreadyQueued: true, ...(row.status === "claimed" ? { alreadyClaimed: true } : {}) };
@@ -404,6 +409,7 @@ export class ChatQueueRepository {
         execution_root: null,
         execution_root_fingerprint: null,
         capability_snapshot: jsonb(capabilitySnapshot),
+        run_policy: input.runPolicy ? jsonb(CanonicalChatRunPolicySchema.parse(input.runPolicy)) : null,
         claimed_turn_id: null,
         claimed_run_id: null,
         cancelled_at: null,
@@ -515,7 +521,8 @@ export class ChatQueueRepository {
       input.capabilitySnapshot,
     );
     const context = ChatRunContextSchema.optional().parse(input.context);
-    const requestHash = input.requestHash ?? context?.requestHash ?? chatContextRequestHash(input);
+    const runPolicy = CanonicalChatRunPolicySchema.optional().parse(input.runPolicy);
+    const requestHash = input.requestHash ?? context?.requestHash ?? chatRequestHash(input, runPolicy);
     validateQueuedAgentDriver(context, input.driverKind, chatId, input.baseRevision);
     const createdAt = new Date(input.createdAt).toISOString();
 
@@ -527,11 +534,12 @@ export class ChatQueueRepository {
         .where("client_request_id", "=", clientRequestId)
         .executeTakeFirst();
       if (duplicate) {
-        if (!["queued", "claimed"].includes(duplicate.status) || (duplicate.request_hash ?? toQueuedTurn(duplicate).context?.requestHash ?? chatContextRequestHash(toQueuedTurn(duplicate))) !== requestHash) {
+        const duplicateTurn = toQueuedTurn(duplicate);
+        if (!["queued", "claimed"].includes(duplicate.status) || (duplicate.request_hash ?? duplicateTurn.context?.requestHash ?? chatRequestHash(duplicateTurn, duplicateTurn.runPolicy)) !== requestHash) {
           throw new ChatConflictError(chatId, Number(chat.revision));
         }
         const depth = await this.queueDepth(trx, chatId);
-        return { queuedTurn: toQueuedTurn(duplicate), queueDepth: depth, alreadyQueued: true, ...(duplicate.status === "claimed" ? { alreadyClaimed: true } : {}) };
+        return { queuedTurn: duplicateTurn, queueDepth: depth, alreadyQueued: true, ...(duplicate.status === "claimed" ? { alreadyClaimed: true } : {}) };
       }
       // Both admission paths hold this same Chat lock. A request ID belongs to
       // one operation; rejecting here prevents a duplicate from blocking claim.
@@ -571,6 +579,7 @@ export class ChatQueueRepository {
         context_snapshot: context ? jsonb(context) : null,
         request_hash: requestHash,
         capability_snapshot: jsonb(capabilitySnapshot),
+        run_policy: runPolicy ? jsonb(runPolicy) : null,
         claimed_turn_id: null,
         claimed_run_id: null,
         cancelled_at: null,
@@ -1031,6 +1040,7 @@ export class ChatQueueRepository {
         }),
         status: "accepted",
         historyBoundarySeq: Number(chat.message_count),
+        ...(row.run_policy === null ? {} : { runPolicy: parseJson(row.run_policy) }),
         capabilitySnapshot,
         ...(context ? { context } : {}),
         createdAt: claimedAt,
@@ -1093,6 +1103,7 @@ export class ChatQueueRepository {
         history_boundary_seq: run.historyBoundarySeq,
         context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
+        run_policy: run.runPolicy ? jsonb(run.runPolicy) : null,
         created_at: claimedAt,
         updated_at: claimedAt,
       }).execute();

@@ -7,6 +7,34 @@ import {
 const audio = new Uint8Array([82, 73, 70, 70]);
 
 describe("OpenAI file transcription adapter", () => {
+  it.each([
+    ["gpt-transcribe", ["en-US", "ur"], "languages[]", ["en", "ur"]],
+    ["gpt-4o-transcribe", ["en-US"], "language", ["en"]],
+    ["gpt-4o-mini-transcribe", ["fr"], "language", ["fr"]],
+  ] as const)("sends the documented language field for %s", async (model, languageHints, field, expected) => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ text: "Hello", languages: [] })));
+    const adapter = createOpenAiFileTranscriptionAdapter({ apiKey: "test-platform-key", model, fetchImpl });
+    await expect(adapter.transcribe({ audio, mediaType: "audio/wav", languageHints, signal: new AbortController().signal }))
+      .resolves.toEqual({ text: "Hello" });
+    const body = fetchImpl.mock.calls[0]![1]!.body as FormData;
+    expect(body.getAll(field)).toEqual(expected);
+    expect(body.has(field === "language" ? "languages[]" : "language")).toBe(false);
+    expect(body.get("model")).toBe(model);
+  });
+
+  it.each([
+    ["gpt-transcribe", ["en\nignore"]],
+    ["gpt-transcribe", Array(9).fill("en")],
+    ["gpt-4o-transcribe", ["en", "fr"]],
+    ["unverified-model", ["en"]],
+  ])("rejects unsupported hints before dispatch for %s", async (model, languageHints) => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const adapter = createOpenAiFileTranscriptionAdapter({ apiKey: "test-platform-key", model, fetchImpl });
+    await expect(adapter.transcribe({ audio, mediaType: "audio/wav", languageHints, signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "unsupported_options" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("uses a fixed endpoint, no redirects, one request and a bounded final response", async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ text: "hello" }), {
       status: 200,
@@ -27,6 +55,9 @@ describe("OpenAI file transcription adapter", () => {
     expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({ method: "POST", redirect: "error" });
     expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     expect(String(fetchImpl.mock.calls[0]?.[1]?.headers)).not.toContain("test-platform-key");
+    const body = fetchImpl.mock.calls[0]?.[1]?.body as FormData;
+    expect(body.has("language")).toBe(false);
+    expect(body.has("languages[]")).toBe(false);
   });
 
   it("normalizes empty speech and provider failures without exposing response bodies", async () => {
@@ -237,7 +268,7 @@ describe("OpenAI file transcription adapter", () => {
     })).rejects.toMatchObject({ code: "timeout" });
   });
 
-  it("rejects unverified language hints and oversized upstream bodies", async () => {
+  it("rejects oversized upstream bodies even with valid language hints", async () => {
     const adapter = createOpenAiFileTranscriptionAdapter({
       apiKey: "test-platform-key",
       model: "gpt-transcribe",
@@ -249,7 +280,7 @@ describe("OpenAI file transcription adapter", () => {
       mediaType: "audio/wav",
       languageHints: ["en"],
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({ code: "unsupported_options" });
+    })).rejects.toMatchObject({ code: "invalid_response" });
     await expect(adapter.transcribe({
       audio,
       mediaType: "audio/wav",

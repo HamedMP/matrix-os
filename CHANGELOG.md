@@ -8,6 +8,21 @@ Format:
 - Commit hashes point at the source of truth.
 - Large features may also have feature-specific changelogs under `specs/<NNN>-<feature>/`.
 
+## 2026-10-01
+
+### Aoede Voice Assistant Reliability And Presentation
+
+Made the standalone Aoede assistant usable on slow hosts and reworked its panel.
+
+Highlights:
+
+- Opening Aoede starts a fresh conversation (bootstrap intent `new`); reopening within the same shell session continues it, and earlier conversations stay in View history (spec 535 AO-03 updated).
+- One-click Start; header actions are icons; fixed-height panel whose transcript scrolls internally and follows streaming only while the reader is at the bottom; assistant responses render markdown.
+- Siri-style orb driven by capture level and session state.
+- Playback no longer drops audio at queue watermarks (hard 32 MiB cap only) and reports a suspended AudioContext instead of silently stalling; retryable media warnings are hidden while the session is live and shown once paused or ended.
+- Barge-in requires 250 ms of speech, and 600 ms at an elevated level while the assistant is audibly speaking, so speaker echo no longer cuts replies short.
+- Bootstrap retries once on timeout with the same request id; readiness reads are reused for 15 s (2 s when the provider is unavailable) so a cold catalog no longer fails or sticks Start disabled.
+
 ## 2026-05-26
 
 ### CLI 0.3.0 Release Prep

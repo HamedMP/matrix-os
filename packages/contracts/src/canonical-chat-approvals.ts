@@ -10,6 +10,8 @@ export interface CanonicalChatApprovalView {
   title: string;
   description: string;
   risk: "low" | "medium" | "high";
+  /** Normalized argument digest the decision is bound to, when declared. */
+  argumentDigest?: string;
   allowedDecisions: CanonicalChatApprovalDecision[];
   pending: boolean;
   decision?: CanonicalChatApprovalDecision;
@@ -44,6 +46,7 @@ export function canonicalChatApprovals(detail: Pick<CanonicalChatDetailResponse,
     approvals.set(identity, {
       id: activity.id, runId: activity.runId, approvalId: activity.approvalId,
       ...canonicalChatApprovalDisplay(activity.title, activity.safeDescription ?? "The agent is waiting for your decision."),
+      ...(activity.argumentDigest ? { argumentDigest: activity.argumentDigest } : {}),
       risk: activity.risk, allowedDecisions: activity.allowedDecisions,
       pending: false, timestamp: Date.parse(activity.occurredAt),
     });

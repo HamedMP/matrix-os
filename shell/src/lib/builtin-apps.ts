@@ -5,9 +5,14 @@ const BUILT_IN_APP_VALUES = [
   "__file-browser__",
   "__chat__",
   "__activity-monitor__",
+  "__aoede__",
 ] as const;
 
-const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__"]);
+// "__aoede__" is a known built-in identifier but never an OS window: the
+// standalone assistant is a shell-level singleton revealed by the launcher
+// icon / command palette. Keeping it retired blocks every surface (layout
+// restore, openWindow, deep links) from spawning a second, empty instance.
+const RETIRED_BUILT_IN_APP_PATHS = new Set(["__workspace__", "__aoede__"]);
 
 export const DEFAULT_PINNED_APPS = Object.freeze([] as string[]);
 export const TERMINAL_DEFAULT_WINDOW_WIDTH = 1040;
@@ -35,6 +40,10 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["system-activity", "__activity-monitor__"],
   ["apps/activity-monitor/index.html", "__activity-monitor__"],
   ["/files/apps/activity-monitor/index.html", "__activity-monitor__"],
+  ["aoede", "__aoede__"],
+  ["assistant", "__aoede__"],
+  ["apps/aoede/index.html", "__aoede__"],
+  ["/files/apps/aoede/index.html", "__aoede__"],
 ]);
 
 const BUILT_IN_APP_TITLES = new Map<string, string>([
@@ -43,6 +52,7 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
   ["__file-browser__", "Files"],
   ["__chat__", "Hermes"],
   ["__activity-monitor__", "Activity Monitor"],
+  ["__aoede__", "Aoede"],
 ]);
 
 export function normalizeBuiltInAppPath(path: string): string {

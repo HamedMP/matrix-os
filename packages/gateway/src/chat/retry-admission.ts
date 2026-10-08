@@ -1,7 +1,10 @@
+import { admissionPolicyForTurn } from "./voice-session-policy.js";
+import { revalidateActionPolicy } from "./action-policy.js";
+import { truthfulCancellationGranularity } from "./argument-digest.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import { prepareChatSessionContext } from "./session-history.js";
 import { randomUUID } from "node:crypto";
-import { CanonicalRetryChatTurnRequestSchema, CanonicalChatRunSchema, CanonicalChatRunAdmissionResponseSchema,
+import { CanonicalRetryChatTurnRequestSchema, CanonicalChatRunSchema, ChatRunContextSchema, CanonicalChatRunAdmissionResponseSchema,
   type CanonicalRetryChatTurnRequest, type CanonicalChatRunAdmissionResponse, type CanonicalChatRun } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -10,9 +13,9 @@ import type { ResolvedChatExecutionRoot } from "./execution-root.js";
 import type { TurnAdmissionOptions } from "./turn-admission.js";
 import { ChatBusyError } from "./errors.js";
 import { dispatchAdmissionKey } from "./dispatch-ownership.js";
-import { validateChatProviderSelection } from "./provider-catalog.js";
+import { validateChatProviderSelection, voiceProviderSelectionRequirements } from "./provider-catalog.js";
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, retryPromptFor } from "./orchestration-input.js";
-import { loadChatResumeState } from "./resume-checkpoint.js";
+import { loadChatResumeDecision, ChatResumeHistoryUnavailableError } from "./resume-checkpoint.js";
 import { retryAvailability } from "./retry-preflight.js";
 
 interface RetryAdmissionOptions extends Omit<TurnAdmissionOptions, "repository"> {
@@ -43,6 +46,18 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     }
     try { await deps.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
+    let sessionPolicy;
+    try {
+      sessionPolicy = deps.voiceSessionPolicy?.policyForChat(chatId);
+    } catch (error: unknown) {
+      console.warn("[chat/orchestrator] Voice session policy lookup failed during retry:", error instanceof Error ? error.name : "UnknownError");
+      throw new CanonicalChatOrchestrationError(
+        safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+        503,
+      );
+    }
+    const persistedPolicy = { permissionMode: context.latestRun.permissionMode, ...(context.latestRun.runPolicy ? { runPolicy: context.latestRun.runPolicy } : {}) };
+    const retryPolicy = sessionPolicy ? admissionPolicyForTurn(persistedPolicy, sessionPolicy) : persistedPolicy;
     const catalog = await deps.catalog.getCatalog(principal, context.latestRun.selection);
     const validated = validateChatProviderSelection({
       catalog,
@@ -51,8 +66,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
       requirements: {
         resources: context.latestRun.context?.drives?.length ? ["organization_drive"] : [],
         interactionMode: context.latestRun.interactionMode,
-        permissionMode: context.latestRun.permissionMode,
+        permissionMode: retryPolicy.permissionMode,
         worktree: context.latestRun.executionRoot?.kind === "worktree",
+        ...(retryPolicy.runPolicy?.source === "voice" || retryPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+        ...(retryPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: retryPolicy.runPolicy.executionPolicy } : {}),
       },
     });
     if (!validated.ok) throw new CanonicalChatOrchestrationError(validated.error, 400);
@@ -63,6 +80,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         503,
       );
     }
+    await revalidateActionPolicy(adapter, { driverKind: context.latestRun.driverKind, selection: validated.selection, permissionMode: retryPolicy.permissionMode }, retryPolicy.runPolicy);
     let resolvedRoot: ResolvedChatExecutionRoot | undefined;
     if (context.latestRun.executionRoot) {
       if (!deps.executionRoots) {
@@ -81,22 +99,39 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         );
       }
     }
-    const resumeState = context.latestRun.context?.agent ? undefined : await loadChatResumeState({
+    const resumeDecision = await loadChatResumeDecision({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "retry",
+      retainedHistorySupported: true,
+      historyBoundarySeq: context.turn.baseMessageSeq,
+      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
+    });
+    if (resumeDecision?.mode === "rebuild" && context.turn.baseMessageSeq > 0
+      && !resumeDecision.retainedHistory) {
+      throw new ChatResumeHistoryUnavailableError();
+    }
+    const resumeState = resumeDecision?.resumeState;
+    // A prior run may carry only the gap beyond a native checkpoint. Preserve
+    // that gap when the same checkpoint remains eligible; a rebuild decision
+    // supplies a full heard-safe projection and replaces it.
+    const retainedHistory = resumeDecision?.retainedHistory
+      ?? context.latestRun.context?.history;
+    const requestHash = context.latestRun.context?.requestHash ?? chatContextRequestHash({
+      parts: context.message.parts, selection: context.latestRun.selection,
+      interactionMode: context.latestRun.interactionMode, permissionMode: context.latestRun.permissionMode,
+      executionRoot: context.latestRun.executionRoot,
     });
     let sessionContext: CanonicalChatRun["context"];
     try {
       sessionContext = await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: context.turn.baseMessageSeq,
-        requestHash: context.latestRun.context?.requestHash ?? chatContextRequestHash({
-          parts: context.message.parts, selection: context.latestRun.selection,
-          interactionMode: context.latestRun.interactionMode, permissionMode: context.latestRun.permissionMode,
-          executionRoot: context.latestRun.executionRoot,
-        }),
-        instanceId: context.latestRun.instanceId, resumeState, context: context.latestRun.context,
+        requestHash, instanceId: context.latestRun.instanceId, resumeState,
+        context: retainedHistory ? ChatRunContextSchema.parse({
+          version: 1, requestHash, chats: [], ...context.latestRun.context, history: retainedHistory,
+        }) : context.latestRun.context,
+        preserveHistory: Boolean(retainedHistory),
       });
     } catch (error: unknown) { return mapRepositoryError(error); }
     const availability = await retryAvailability(adapter, owner, resumeState, () => deps.repository.getAdapterState(owner, {
@@ -122,7 +157,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: context.latestRun.interactionMode,
-      permissionMode: context.latestRun.permissionMode,
+      permissionMode: retryPolicy.permissionMode,
+      // A live voice session may tighten the previous policy for this retry;
+      // the repository allows only that provenance-bound transition.
+      ...(retryPolicy.runPolicy ? { runPolicy: retryPolicy.runPolicy } : {}),
       ...(sessionContext ? { context: sessionContext } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,
@@ -139,7 +177,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         approvals: validated.instance.supports.approvals,
         userInput: validated.instance.supports.userInput,
         resume: validated.instance.supports.resume,
-        cancellation: validated.instance.supports.cancellation,
+        cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+        ...(validated.instance.supports.approvalBinding
+          ? { approvalBinding: validated.instance.supports.approvalBinding }
+          : {}),
         steering: validated.instance.supports.steering ?? "none",
         worktrees: validated.instance.supports.worktrees,
         interactionModes: validated.instance.supports.interactionModes,
@@ -189,6 +230,9 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
           resumeState,
           retryPromptFor(context.userMessages),
           admissionKey,
+          undefined,
+          undefined,
+          retainedHistory,
         );
       }
       return CanonicalChatRunAdmissionResponseSchema.parse({

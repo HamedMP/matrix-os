@@ -2,6 +2,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createNote, shouldApplyExternalContent } from "../../home/apps/notes/src/notes-model";
 
 // The Tiptap rich editor ships its own React copy under the app's node_modules,
 // which collides with the root React in the jsdom runtime ("Invalid hook call").
@@ -40,12 +41,14 @@ type FakeDb = {
   update: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   onChange: ReturnType<typeof vi.fn>;
+  emitChange: () => void;
   rows: DbRow[];
 };
 
 function installMatrixDb(initial: DbRow[] = []): FakeDb {
   const rows: DbRow[] = [...initial];
   let seq = 0;
+  let changeListener: (() => void) | undefined;
   const db = {
     rows,
     find: vi.fn(async () => rows.map((row) => ({ ...row }))),
@@ -65,7 +68,11 @@ function installMatrixDb(initial: DbRow[] = []): FakeDb {
       if (idx >= 0) rows.splice(idx, 1);
       return { ok: true };
     }),
-    onChange: vi.fn(() => () => undefined),
+    onChange: vi.fn((_table: string, listener: () => void) => {
+      changeListener = listener;
+      return () => { changeListener = undefined; };
+    }),
+    emitChange: () => changeListener?.(),
   };
   Object.defineProperty(window, "MatrixOS", {
     configurable: true,
@@ -587,5 +594,36 @@ describe("Notes app", () => {
     });
 
     expect(screen.getByText("1 min ago")).toBeTruthy();
+  });
+
+  it("refreshes an externally changed active note without clobbering pending local typing", async () => {
+    const db = installMatrixDb([{
+      id: "n-1",
+      title: "Initial title",
+      content: "Initial body",
+      content_json: { type: "doc", content: [] },
+      pinned: false,
+      tags: "",
+      updated_at: "2026-05-31T10:00:00.000Z",
+    }]);
+    render(<App />);
+    const title = await screen.findByLabelText("Note title");
+
+    Object.assign(db.rows[0]!, { title: "External title", content: "External body" });
+    await act(async () => db.emitChange());
+    await waitFor(() => expect((title as HTMLInputElement).value).toBe("External title"));
+    expect(screen.getByTestId("rich-editor-mock").textContent).toBe("External body");
+
+    vi.useFakeTimers();
+    fireEvent.change(title, { target: { value: "Local draft" } });
+    Object.assign(db.rows[0]!, { title: "Second external title", content: "Second external body" });
+    await act(async () => db.emitChange());
+    expect((title as HTMLInputElement).value).toBe("Local draft");
+  });
+
+  it("recognizes same-note external editor content without replaying echoed local content", () => {
+    const note = createNote({ id: "n-1", content: "Initial" });
+    expect(shouldApplyExternalContent(note.id, note.id, "External tail", "Initial")).toBe(true);
+    expect(shouldApplyExternalContent(note.id, note.id, note.content, "Initial")).toBe(false);
   });
 });

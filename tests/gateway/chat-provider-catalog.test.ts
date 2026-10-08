@@ -20,6 +20,7 @@ import {
   ProviderCatalogUnavailableError,
   createChatProviderCatalogService,
   validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
 } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
 import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
@@ -1602,6 +1603,200 @@ describe("canonical Chat Provider catalog", () => {
     expect(openclaw.setupActions.some((action) => action.id === "openclaw_install")).toBe(false);
   });
 
+  it("shares one in-flight read and reuses a clean result until the window closes", async () => {
+    let now = Date.parse("2026-08-30T10:00:00.000Z");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const listProviders = vi.fn(async () => { await gate; return [codingProvider()]; });
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date(now),
+      cacheTtlMs: 10_000,
+    });
+    const other: RequestPrincipal = { userId: "owner_2", source: "jwt" };
+
+    const first = service.getCatalog(principal);
+    const second = service.getCatalog(principal);
+    const elsewhere = service.getCatalog(other);
+    release();
+    expect(await first).toBe(await second);
+    expect(await elsewhere).not.toBe(await first);
+    // Two owners → two reads; the second owner never joins the first owner's read.
+    expect(listProviders).toHaveBeenCalledTimes(2);
+
+    now += 9_999;
+    expect(await service.getCatalog(principal)).toBe(await first);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+
+    now += 1;
+    await service.getCatalog(principal);
+    expect(listProviders).toHaveBeenCalledTimes(3);
+  });
+
+  it("refresh re-reads inside the reuse window and replaces the remembered result", async () => {
+    const providers = [codingProvider({ authStatus: "unauthenticated", availability: "unavailable" })];
+    const listProviders = vi.fn(async () => providers.slice());
+    const invalidate = vi.fn();
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const before = await service.getCatalog(principal);
+    expect(before.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("unavailable");
+
+    providers[0] = codingProvider();
+    const refreshed = await service.refresh(principal);
+    expect(invalidate).toHaveBeenCalledWith(principal.userId);
+    expect(refreshed.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
+    // Subsequent plain reads see the refreshed catalog, not the pre-refresh one.
+    expect(await service.getCatalog(principal)).toBe(refreshed);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-reads an unavailable catalog after the short negative window", async () => {
+    let now = Date.parse("2026-08-30T10:00:00.000Z");
+    const providers = [codingProvider({ authStatus: "unauthenticated", availability: "unavailable" })];
+    const listProviders = vi.fn(async () => providers.slice());
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: async () => { throw new Error("not ready"); },
+      now: () => new Date(now),
+      cacheTtlMs: 15_000,
+    });
+
+    const unavailable = await service.getCatalog(principal);
+    providers[0] = codingProvider();
+    now += 3_000;
+    const available = await service.getCatalog(principal);
+
+    expect(available).not.toBe(unavailable);
+    expect(available.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
+    expect(listProviders).toHaveBeenCalledTimes(2);
+    warning.mockRestore();
+  });
+
+  it("reuses an available catalog for the full readiness window", async () => {
+    let now = Date.parse("2026-08-30T10:00:00.000Z");
+    const listProviders = vi.fn(async () => [codingProvider()]);
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date(now),
+      cacheTtlMs: 15_000,
+    });
+
+    const available = await service.getCatalog(principal);
+    now += 10_000;
+    expect(await service.getCatalog(principal)).toBe(available);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses an unavailable catalog inside the short negative window", async () => {
+    let now = Date.parse("2026-08-30T10:00:00.000Z");
+    const listProviders = vi.fn(async () => [codingProvider({ authStatus: "unauthenticated", availability: "unavailable" })]);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: async () => { throw new Error("not ready"); },
+      now: () => new Date(now),
+      cacheTtlMs: 15_000,
+    });
+
+    const unavailable = await service.getCatalog(principal);
+    now += 1_000;
+    expect(await service.getCatalog(principal)).toBe(unavailable);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    warning.mockRestore();
+  });
+
+  it("does not let a pre-refresh read overwrite the refreshed cache", async () => {
+    let releaseFirst!: (providers: AgentProviderSummary[]) => void;
+    const firstProviders = new Promise<AgentProviderSummary[]>(resolve => { releaseFirst = resolve; });
+    const listProviders = vi.fn()
+      .mockImplementationOnce(async () => firstProviders)
+      .mockResolvedValueOnce([codingProvider()]);
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      cacheTtlMs: 15_000,
+    });
+
+    const staleRead = service.getCatalog(principal);
+    const refreshed = await service.refresh(principal);
+    releaseFirst([codingProvider({ authStatus: "unauthenticated", availability: "unavailable" })]);
+    await staleRead;
+
+    expect(refreshed.instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
+    expect(await service.getCatalog(principal)).toBe(refreshed);
+    expect(listProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses a read shaped by a failed inventory probe inside the window; refresh re-reads at once", async () => {
+    let fail = true;
+    const listProviders = vi.fn(async () => { if (fail) throw new Error("probe lost"); return [codingProvider()]; });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders, invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const codex = (catalog: CanonicalProviderCatalog) => catalog.instances.find(instance => instance.driverKind === "codex");
+    const degraded = await service.getCatalog(principal);
+    expect(codex(degraded)?.availability).not.toBe("available");
+    fail = false;
+    // A slow host times out probes on most reads; re-probing every reader is
+    // what the window prevents, so the degraded shape is served until refresh.
+    expect(await service.getCatalog(principal)).toBe(degraded);
+    expect(listProviders).toHaveBeenCalledTimes(1);
+    expect(codex(await service.refresh(principal))?.availability).toBe("available");
+    expect(listProviders).toHaveBeenCalledTimes(2);
+    warning.mockRestore();
+  });
+
+  it("does not remember a read that threw", async () => {
+    let fail = true;
+    const service = createChatProviderCatalogService({
+      codingProviders: { listProviders: async () => [codingProvider()], invalidate: vi.fn() },
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot: async () => { if (fail) throw new ProviderSettingsStoreError("runtime_unavailable", 503); return undefined; } } as never,
+      now: () => new Date("2026-08-30T10:00:00.000Z"),
+      cacheTtlMs: 10_000,
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(service.getCatalog(principal)).rejects.toBeInstanceOf(ProviderCatalogUnavailableError);
+    fail = false;
+    expect((await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")?.availability).toBe("available");
+    warning.mockRestore();
+  });
+
+  it.each(["timeout", "empty"])("does not invent a runnable Codex default after live discovery %s", async failure => {
+    let recovered = false;
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: async () => {
+        if (!recovered) {
+          if (failure === "timeout") throw new DOMException("private detail", "TimeoutError");
+          return null;
+        }
+        return { models: [{ id: "real-model", displayName: "Real model", capabilities: ["tools"],
+          supportsVision: false, supportsToolUse: true }], options: [], defaultModel: "real-model" };
+      },
+    });
+    const unavailable = (await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")!;
+    expect(unavailable.availability).toBe("unavailable");
+    expect(unavailable.models).toEqual([]);
+    expect(unavailable.defaultSelection).toBeUndefined();
+    recovered = true;
+    const available = (await service.getCatalog(principal)).instances.find(instance => instance.driverKind === "codex")!;
+    expect(available.models.map(model => model.id)).toEqual(["real-model"]);
+    expect(available.defaultSelection?.model).toBe("real-model");
+  });
   it("uses the authenticated harness model catalog instead of a generic Provider default", async () => {
     const service = createChatProviderCatalogService({
       codingProviders: codingRegistry([codingProvider({ defaultModel: undefined })]),
@@ -2090,6 +2285,58 @@ describe("canonical Provider selection policy", () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  it("does not grant tool-capable voice eligibility from an environment simulator flag", () => {
+    const input = {
+      catalog: selectionCatalog(),
+      selection: { instanceId: "codex_default", model: "gpt-5.4" },
+    };
+
+    expect(validateChatProviderSelection({
+      ...input,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+    vi.stubEnv("MATRIX_VOICE_SIMULATOR", "1");
+    expect(validateChatProviderSelection({
+      ...input,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+
+    const otherHarness = selectionCatalog();
+    otherHarness.drivers[0]!.kind = "opencode";
+    otherHarness.instances[0]!.driverKind = "opencode";
+    expect(validateChatProviderSelection({
+      catalog: otherHarness,
+      selection: input.selection,
+      requirements: voiceProviderSelectionRequirements(),
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+  });
+
+  it("a conversation_only qualified policy cannot bypass the tool-less voice route check", () => {
+    const selection = { instanceId: "codex_default", model: "gpt-5.4" };
+    // The pinned conversation-only sentinel grants nothing: it must not
+    // admit a tool-capable Provider to a voice conversation.
+    const conversationOnly = { revision: "voice_conversation_only_v1", actionMode: "conversation_only" as const, workspaceScope: "apps", tools: [], delegation: false };
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: conversationOnly },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+    // A canonical_actions qualification is a real grant — the tool-capable
+    // Provider may carry the voice route under it.
+    const canonicalActions = { revision: "policy_v1", actionMode: "canonical_actions" as const, workspaceScope: "apps", tools: ["matrix_list_apps"], delegation: false };
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: canonicalActions },
+    })).toMatchObject({ ok: true });
+    // An empty tool inventory grants nothing either — treated as absent.
+    expect(validateChatProviderSelection({
+      catalog: selectionCatalog(),
+      selection,
+      requirements: { ...voiceProviderSelectionRequirements(), qualifiedPolicy: { ...canonicalActions, tools: [] } },
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
   });
 
   it("returns the canonical locked error for a cross-Instance change", () => {

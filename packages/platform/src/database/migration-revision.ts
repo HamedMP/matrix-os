@@ -6,6 +6,6 @@
  * refreshing the fingerprint at their generation would fail closed on startup.
  * Dependent branches must rebase and allocate a new generation after landing. */
 export const PLATFORM_SCHEMA_REVISION = {
-  generation: 14,
-  fingerprint: "d5f4cba6cafb18bf74fa30cc097032f8c9ae7ac83bcead2aaf70b7252d207ef4",
+  generation: 15,
+  fingerprint: "c8ae79e3d365a70548fba1de45bf84b58d259e43bd0a255c2d2476bc564e4950",
 } as const;

@@ -72,6 +72,55 @@ describe("Codex runtime supervision", () => {
     } finally { await f.close(); warn.mockRestore(); }
   });
 
+  it("does not fail a run on unanswered probes while the runtime awaits a gateway canonical action or keeps producing output", async () => {
+    // Live failure: on a saturated 2-vCPU VM, `systemctl --user show` probes timed out 3x in ~25s
+    // while Codex was blocked waiting on the gateway's own matrix_open_app execution. The run
+    // was declared failed although the runtime was never observed dead.
+    const policy = { revision: "r1", actionMode: "canonical_actions" as const, workspaceScope: "apps" as const, tools: ["matrix_open_app" as const], delegation: false as const };
+    const identity = { owner: { type: "personal" as const, ownerId: "owner" }, chatId: "chat_1", runId: "run_1" };
+    const canonical = { executionPolicy: policy, identity, inventory: [{ toolId: "matrix_open_app" as const, schemaRevision: "v1", description: "Open app",
+      effect: "navigation" as const, inputSchema: { type: "object" } }] };
+    const request = { ...identity, type: "matrix.codex.action.requested", executionPolicy: policy, actionId: `action_${"a".repeat(32)}`,
+      argumentDigest: "b".repeat(64), inventoryDigest: "c".repeat(64), toolCallId: `codex_item_${"d".repeat(32)}`,
+      nativeThreadId: "native1", nativeTurnId: "turn1", nativeCallId: "call1", toolId: "matrix_open_app", schemaRevision: "v1", arguments: { app: "notes" } };
+    const homePath = await mkdtemp(join(tmpdir(), "codex-supervision-"));
+    let now = 0;
+    let finishAction!: () => void;
+    const actionPending = new Promise<void>((resolve) => { finishAction = resolve; });
+    const ingestProviderEvents = vi.fn(async (..._args: unknown[]) => ({}));
+    const onCanonicalActionRequest = vi.fn(async () => { await actionPending; });
+    const bridge = createCodexEventBridge({ homePath, nowMs: () => now, pollIntervalMs: 60_000,
+      runVersionCommand: async () => ({ stdout: `codex-cli ${CODEX_VERIFIED_VERSION}`, stderr: "" }),
+      isRuntimeAlive: async () => { throw new Error("systemctl timed out"); },
+      onCanonicalActionRequest,
+    });
+    bridge.attachThreadStore({ ingestProviderEvents });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const path = codexProviderEventPath(homePath, "sess_test");
+    const tick = async (time: number) => { now = time; await bridge.drain(); };
+    const failed = () => ingestProviderEvents.mock.calls.some((call) => (call as unknown as [unknown, unknown, { events: Array<{ outcome?: string }> }])[2]
+      .events.some((event) => event.outcome === "failed"));
+    try {
+      await bridge.watch({ principal: { userId: "owner", source: "jwt" }, threadId: "thread_test", sessionId: "sess_test", canonical });
+      await writeFile(path, '{"type":"turn.started"}\n' + JSON.stringify(request) + "\n");
+      await tick(1_000);
+      expect(onCanonicalActionRequest).toHaveBeenCalledTimes(1);
+      // Four consecutive unanswered probes while our own action is in flight: still Working.
+      for (const time of [10_000, 20_000, 30_000, 40_000]) await tick(time);
+      expect(failed()).toBe(false);
+      finishAction();
+      await actionPending;
+      // Runtime output after the action also counts as liveness evidence.
+      await appendFile(path, '{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"Opened Notes"}}\n');
+      for (const time of [50_000, 60_000]) await tick(time);
+      expect(failed()).toBe(false);
+      // Only a silent runtime with repeated unanswered probes ends the run.
+      for (const time of [70_000, 80_000, 90_000]) await tick(time);
+      expect(failed()).toBe(true);
+      expect(bridge.watcherCount()).toBe(0);
+    } finally { await bridge.shutdown(); await rm(homePath, { recursive: true, force: true }); warn.mockRestore(); }
+  });
+
   it("fences a stale liveness probe after the watcher is replaced for a new turn", async () => {
     let resolveProbe!: (alive: boolean) => void;
     let entered!: () => void;

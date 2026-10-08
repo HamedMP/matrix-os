@@ -4,7 +4,7 @@ This package is the only managed speech admission boundary. Runtime callers auth
 
 ## Source-of-truth invariants
 
-- `speech_operations` is the durable source of truth for execution and cancellation metadata. It deliberately contains no audio, transcript, provider response, or chat context.
+- `speech_operations` is the durable source of truth for file-transcription and synthesis execution, dispatch ownership, cancellation, and terminal metadata in every funding mode. Managed synthesis remains synchronous and non-replayable; rows persist only fingerprints and coarse dispatch/outcome metadata—never text, audio, or provider responses. Preview lifetime accounting counts every admitted row independently of whether that row is still active.
 - The existing machine/runtime funded-AI balance and ledger remain the only monetary source of truth. The production `SpeechFundingPort` reserves and settles that wallet with an explicit operator allowlist of promotional and/or add-on sources; it is not a second balance.
 - `speech_runtime_allowances` is the speech-only monthly cap and usage-counter source of truth. It does not enable or mutate `ai_funded_runtime_policies`, and speech reservations do not consume those text-model monthly counters. Monthly promotional grants remain visible in the shared monetary ledger under the `platform-speech-monthly:<UTC month>` source namespace so a later move to the customer's Matrix AI allowance has an explicit accounting boundary.
 - Allowance and grant terms are frozen per machine for the active UTC month; changed operator defaults take effect on the next UTC-month reconciliation. Reservation settlement and release follow the funding policy stored on the reservation so pre-rollout holds finish against their original counters.
@@ -22,7 +22,7 @@ This package is the only managed speech admission boundary. Runtime callers auth
 
 - The route body and decoded WAV duration are independently bounded. Initial media support is PCM WAV only; compressed formats require a bounded decoder spike before policy expansion.
 - The service admits at most four active media/provider operations per process and holds no unbounded registry. A transaction-scoped Postgres advisory lock serializes deployment-wide active, per-owner active, and rolling owner-rate checks before wallet reservation.
-- External adapter calls use a fixed URL, reject redirects, have a hard timeout, bound response bytes, and perform no hidden retry.
+- External adapter calls use fixed URLs, reject redirects, have hard timeouts, bound response bytes, and perform no hidden retry. Synthesis accepts at most 4,096 characters and returns at most 8 MiB of raw 24 kHz mono PCM; the Gateway never receives the provider credential.
 - Logs contain only coarse error classes. Never log keys, bearer credentials, owner/machine identifiers, audio, transcript text, request bodies, or raw provider errors.
 
 ## Operational gates

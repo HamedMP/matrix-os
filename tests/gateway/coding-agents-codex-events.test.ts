@@ -20,7 +20,7 @@ const context = {
 
 describe("Codex structured event normalization", () => {
   it("gates runtime parsing against exact verified CLI versions", () => {
-    expect(CODEX_VERIFIED_VERSION).toBe("0.156.1");
+    expect(CODEX_VERIFIED_VERSION).toBe("0.161.0");
     expect(CODEX_EXEC_CONTRACT).toMatchObject({
       latestVerifiedVersion: "0.161.0",
       verifiedVersions: {

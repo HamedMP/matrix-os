@@ -1,5 +1,7 @@
-import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
+import { type ChatAgentContext } from "./agent-context.js";
+import { chatRequestHash, truthfulCancellationGranularity } from "./argument-digest.js";
 import { randomUUID } from "node:crypto";
+import { revalidateActionPolicy } from "./action-policy.js";
 import {
   CanonicalChatQueueAdmissionResponseSchema,
   CanonicalChatSafeErrorSchema,
@@ -13,11 +15,13 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import {
   validateChatProviderSelection,
+  voiceProviderSelectionRequirements,
   type ChatProviderCatalogService,
 } from "./provider-catalog.js";
 import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import { admissionPolicyForTurn, type VoiceSessionPolicyLookup } from "./voice-session-policy.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 
 export class CanonicalQueueAdmissionError extends Error {
@@ -65,9 +69,30 @@ export async function enqueueCanonicalQueuedTurn(options: {
   adapters: Pick<CanonicalChatProviderRegistry, "get">;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  /**
+   * Optional live voice-session policy source. A session that owns the Chat
+   * stamps its frozen memory/checkpoint/permission policy onto the queued
+   * row — the policy survives claim, steer, and promotion verbatim.
+   */
+  voiceSessionPolicy?: VoiceSessionPolicyLookup;
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
+  // A live voice session owns this Chat's execution policy: fold it in
+  // before hashing so dedup and the persisted queued row match the policy
+  // that will actually run.
+  let sessionPolicy;
+  try {
+    sessionPolicy = options.voiceSessionPolicy?.policyForChat(options.chatId);
+  } catch (error: unknown) {
+    // Fail closed — a lookup failure must not silently skip live policy.
+    console.warn("[chat/queue] voice session policy lookup failed:", error instanceof Error ? error.name : "UnknownError");
+    throw new CanonicalQueueAdmissionError(
+      safeError("service_unavailable", "Chat admission is temporarily unavailable.", true, ["retry"]),
+      503,
+    );
+  }
+  const admissionPolicy = admissionPolicyForTurn(input, sessionPolicy);
   const record = await options.repository.get(options.owner, options.chatId);
   if (!record) {
     throw new CanonicalQueueAdmissionError(
@@ -76,7 +101,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const duplicate = await options.repository.findQueuedAdmission(options.owner, options.chatId, input.clientRequestId,
-    chatContextRequestHash(input));
+    chatRequestHash({ ...input, permissionMode: admissionPolicy.permissionMode }, admissionPolicy.runPolicy));
   if (duplicate) return CanonicalChatQueueAdmissionResponseSchema.parse({ queuedTurn: duplicate.queuedTurn, queueDepth: duplicate.queueDepth, ...(duplicate.alreadyClaimed ? { alreadyClaimed: true } : {}) });
   if (!record.activeRun) {
     throw new CanonicalQueueAdmissionError(
@@ -85,7 +110,10 @@ export async function enqueueCanonicalQueuedTurn(options: {
     );
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
-  const effective = { ...input, ...prepared };
+  // A server-selected bot mode must survive ordinary admission; only the
+  // owning live session can override it with its frozen execution policy.
+  const effective = { ...input, ...prepared,
+    ...(sessionPolicy ? { permissionMode: admissionPolicy.permissionMode } : {}) };
   const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
   const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
     part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
@@ -93,7 +121,11 @@ export async function enqueueCanonicalQueuedTurn(options: {
     catalog,
     selection: effective.selection,
     ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
-    requirements,
+    requirements: {
+      ...requirements,
+      ...(admissionPolicy.runPolicy?.source === "voice" || admissionPolicy.runPolicy?.voiceSessionId ? voiceProviderSelectionRequirements() : {}),
+      ...(admissionPolicy.runPolicy?.executionPolicy ? { qualifiedPolicy: admissionPolicy.runPolicy.executionPolicy } : {}),
+    },
   });
   if (!validated.ok) {
     const agentModeError = validated.error.code === "capability_mismatch"
@@ -104,11 +136,18 @@ export async function enqueueCanonicalQueuedTurn(options: {
       validated.error.code === "provider_instance_locked" ? 409 : 400,
     );
   }
-  if (!options.adapters.get(validated.instance.driverKind)) {
+  const adapter = options.adapters.get(validated.instance.driverKind);
+  if (!adapter) {
     throw new CanonicalQueueAdmissionError(
       safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
       503,
     );
+  }
+  try {
+    await revalidateActionPolicy(adapter, { driverKind: validated.instance.driverKind, selection: validated.selection, permissionMode: effective.permissionMode }, admissionPolicy.runPolicy);
+  } catch (error: unknown) {
+    console.warn("[chat/queue] action policy qualification failed", error instanceof Error ? error.name : "UnknownError");
+    throw new CanonicalQueueAdmissionError(safeError("capability_mismatch", "The selected Provider cannot enforce this execution policy."), 400);
   }
   // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
   // so no ordinary Chat can mount a bot's private files.
@@ -159,12 +198,16 @@ export async function enqueueCanonicalQueuedTurn(options: {
     baseRevision: input.baseRevision,
     queuedTurnId: `qturn_${randomUUID().replaceAll("-", "")}`,
     clientRequestId: input.clientRequestId,
-    requestHash: chatContextRequestHash(input),
+    requestHash: chatRequestHash(
+      { ...input, permissionMode: admissionPolicy.permissionMode },
+      admissionPolicy.runPolicy,
+    ),
     parts: input.parts,
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
     permissionMode: effective.permissionMode,
+    ...(admissionPolicy.runPolicy ? { runPolicy: admissionPolicy.runPolicy } : {}),
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,
@@ -179,7 +222,11 @@ export async function enqueueCanonicalQueuedTurn(options: {
       approvals: validated.instance.supports.approvals,
       userInput: validated.instance.supports.userInput,
       resume: validated.instance.supports.resume,
-      cancellation: validated.instance.supports.cancellation,
+      // Queued snapshots carry the same truthful granularity as live ones.
+      cancellation: truthfulCancellationGranularity(validated.instance.supports.cancellation, adapter),
+      ...(validated.instance.supports.approvalBinding
+        ? { approvalBinding: validated.instance.supports.approvalBinding }
+        : {}),
       steering: validated.instance.supports.steering ?? "none",
       worktrees: validated.instance.supports.worktrees,
       interactionModes: validated.instance.supports.interactionModes,

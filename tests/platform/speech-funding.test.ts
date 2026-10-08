@@ -121,8 +121,9 @@ describe("funded AI speech wallet adapter", () => {
       identity,
       requestId: `sp_${now.getTime()}_monthlycleanupaa`,
       policyRevision: "speech-1",
-      modelId: "gpt-4o-transcribe",
+      modelId: "gpt-4o-mini-tts",
       maximumCostMicrousd: 80,
+      capability: "synthesis",
     }));
     await db.transaction((trx) => funding.start(trx.executor, reservation.reservationId));
     clock = new Date(clock.getTime() + 31 * 60_000);
@@ -136,6 +137,11 @@ describe("funded AI speech wallet adapter", () => {
       .select(["month_spent_microusd", "month_reserved_microusd"])
       .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow())
       .toEqual({ month_spent_microusd: 77, month_reserved_microusd: 11 });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select("settlement_response").where("reservation_id", "=", reservation.reservationId)
+      .executeTakeFirstOrThrow()).toMatchObject({
+        settlement_response: expect.stringContaining('"capability":"speech:synthesize"'),
+      });
   });
 
   it("does not treat a general promotional grant as monthly speech credit", async () => {
@@ -469,5 +475,43 @@ describe("funded AI speech wallet adapter", () => {
       maximumCostMicrousd: 40,
     }))).resolves.toEqual({ reservationId: "speech_funding_rotated", reservedMicrousd: 40 });
     expect(await db.executor.selectFrom("ai_runtime_credentials").select("token_id").execute()).toHaveLength(2);
+  });
+
+  it("runs the real synthesis reservation lifecycle against its persisted capability", async () => {
+    await funded.grantCredit({
+      entryId: "addon_synthesis",
+      identity,
+      kind: "addon_grant",
+      amountMicrousd: 300,
+      sourceReference: "invoice_synthesis",
+    });
+    const funding = port(["addon"]);
+    const reservation = await db.transaction((trx) => funding.reserve(trx.executor, {
+      identity,
+      requestId: `sp_${now.getTime()}_synthesisfunding`,
+      policyRevision: "speech-tts-1",
+      modelId: "gpt-4o-mini-tts",
+      maximumCostMicrousd: 80,
+      capability: "synthesis",
+    }));
+
+    await db.transaction((trx) => funding.start(trx.executor, reservation.reservationId));
+    await db.transaction((trx) => funding.settle(trx.executor, reservation.reservationId, {
+      mode: "exact",
+      actualCostMicrousd: 30,
+    }));
+
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["authorization_response", "start_response", "settlement_response", "status"])
+      .where("reservation_id", "=", reservation.reservationId).executeTakeFirstOrThrow())
+      .toMatchObject({
+        status: "settled",
+        authorization_response: expect.stringContaining('"capability":"speech:synthesize"'),
+        start_response: expect.stringContaining('"capability":"speech:synthesize"'),
+        settlement_response: expect.stringContaining('"capability":"speech:synthesize"'),
+      });
+    expect(await db.executor.selectFrom("ai_funded_runtime_balances")
+      .select("reserved_microusd").where("machine_id", "=", identity.machineId)
+      .executeTakeFirstOrThrow()).toEqual({ reserved_microusd: 0 });
   });
 });

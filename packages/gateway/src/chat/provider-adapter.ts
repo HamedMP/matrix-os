@@ -5,13 +5,16 @@ import {
   type CanonicalSubmitChatInputRequest,
   CanonicalChatAgentActivityPayloadSchema,
   CanonicalChatApprovalDecisionSchema,
+  CanonicalChatArgumentDigestSchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessagePart,
   type CanonicalChatApprovalDecision,
+  type CanonicalChatArgumentDigest,
   type CanonicalChatModelSelection,
+  type CanonicalChatRunPolicy,
   type CanonicalChatSafeError,
   type CanonicalOwnerScope,
   type CanonicalProviderDriverKind,
@@ -78,6 +81,12 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+    /**
+     * Digest of the provider's normalized argument payload for this action.
+     * Required at admission when the run snapshot binds approvals to
+     * argument digests; it is the only value a decision may execute against.
+     */
+    argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("approval.resolved"),
@@ -128,6 +137,14 @@ export interface CanonicalProviderRunInput<State = unknown> {
   selection: CanonicalChatModelSelection;
   interactionMode: string;
   permissionMode: string;
+  /**
+   * Immutable execution policy snapshotted at admission. Adapters must treat
+   * session-only/disposable policies structurally — never as a prompt hint.
+   */
+  runPolicy?: CanonicalChatRunPolicy;
+  /** Server-injected canonical authority. Never serialized in provider state or accepted from clients. */
+  actions?: import("./action-authority.js").CanonicalActionAuthority;
+  onActionEvent?: (event: CanonicalProviderRunEvent) => Promise<void>;
   executionRoot?: string;
   /** Persisted collaboration admission, never inferred from model text. */
   sharedScopeId?: string;
@@ -146,6 +163,8 @@ export interface CanonicalProviderRunInput<State = unknown> {
 export interface CanonicalChatProviderAdapter<State = unknown> {
   readonly driverKind: CanonicalProviderDriverKind;
   readonly stateSchemaVersion: number;
+  /** Server-owned structural tool/config isolation attestation; native arbitrary commands never qualify. */
+  qualifyPolicy?(input: import("./action-policy.js").ActionQualificationInput): Promise<import("@matrix-os/contracts").CanonicalExecutionPolicy | undefined>;
   /** Native execution survives a gateway restart; detach only after identity is durable. */
   readonly detachOnShutdown?: boolean;
   parseState(value: unknown): State;
@@ -166,6 +185,18 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
   start(input: CanonicalProviderRunInput<State>): AsyncIterable<CanonicalProviderRunEvent>;
   resume?(input: CanonicalProviderRunInput<State> & { resumeState: State }): AsyncIterable<CanonicalProviderRunEvent>;
   cancel?(input: { owner: CanonicalOwnerScope; chatId: string; runId: string; state?: State }): Promise<void>;
+  /**
+   * Per-tool cancellation below run granularity. The run snapshot only
+   * reports "tool" cancellation when this hook exists; absence caps the
+   * truthful granularity at "run".
+   */
+  cancelTool?(input: {
+    owner: CanonicalOwnerScope;
+    chatId: string;
+    runId: string;
+    toolCallId: string;
+    state?: State;
+  }): Promise<void>;
   steer?(input: {
     owner: CanonicalOwnerScope;
     chatId: string;
@@ -191,6 +222,8 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     approvalId: string;
     decision: CanonicalChatApprovalDecision;
     clientRequestId: string;
+    /** Verified digest carried through after orchestrator enforcement; never re-trusted from the client. */
+    argumentDigest?: CanonicalChatArgumentDigest;
     platformApprovalProof?: string;
     state?: State;
   }): Promise<void>;

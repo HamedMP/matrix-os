@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { CanonicalChatMessageSchema } from "@matrix-os/contracts";
-import { withChatSessionHistory, prepareChatSessionContext } from "../../packages/gateway/src/chat/session-history.js";
+import { withChatSessionHistory, prepareChatSessionContext, contextForChatSession } from "../../packages/gateway/src/chat/session-history.js";
 const owner = { type: "personal" as const, ownerId: "owner_history" };
 const message = (seq: number, role = "user", state = "committed", parts = [{ type: "text", text: `TEXT_${seq}` }]) =>
   CanonicalChatMessageSchema.parse({ id: `msg_history_${seq}`, chatId: "chat_history", seq, role, state, parts, createdAt: "2026-10-05T00:00:00Z" });
@@ -32,4 +32,24 @@ it("fails closed when the owner-scoped history is missing or shared", async () =
       chatId: "chat_history", instanceId: "codex_default", throughSeq: 4, requestHash: "a".repeat(64), resumeState: undefined,
     })).rejects.toThrow("context_unavailable");
   }
+});
+
+it("preserves a delivery-filtered gap alongside native resume instead of replaying unheard text", async () => {
+  const context = withChatSessionHistory({ chatId: "chat_history", title: "History", throughSeq: 4,
+    requestHash: "a".repeat(64), truncated: false, messages: [message(4, "assistant", "committed", [{ type: "text", text: "HEARD_ONLY" }])] });
+  const repository = { getDetailPage: async () => { throw new Error("Must not replace delivery-filtered history"); } };
+  expect(contextForChatSession(context, { sessionId: "native" }, true)).toEqual(context);
+  await expect(prepareChatSessionContext({ repository, owner, chatId: "chat_history", instanceId: "codex_default",
+    throughSeq: 4, requestHash: "a".repeat(64), resumeState: { sessionId: "native" }, context, preserveHistory: true,
+  })).resolves.toEqual(context);
+  expect(contextForChatSession(context, { sessionId: "native" })?.history).toBeUndefined();
+});
+
+it("preserves a truncated delivery-filtered rebuild when the current boundary is newer", async () => {
+  const context = withChatSessionHistory({ chatId: "chat_history", title: "History", throughSeq: 40,
+    requestHash: "a".repeat(64), truncated: true, messages: [message(40, "assistant", "committed", [{ type: "text", text: "HEARD_ONLY" }])] });
+  const repository = { getDetailPage: async () => { throw new Error("Must not reload unfiltered assistant text"); } };
+  await expect(prepareChatSessionContext({ repository, owner, chatId: "chat_history", instanceId: "codex_default",
+    throughSeq: 80, requestHash: "a".repeat(64), resumeState: undefined, context, preserveHistory: true,
+  })).resolves.toEqual(context);
 });

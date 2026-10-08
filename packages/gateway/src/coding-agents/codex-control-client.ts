@@ -13,6 +13,7 @@ import {
 import { codexProviderEventPath } from "./codex-event-bridge.js";
 import { CodexHibernateControlSchema } from "./codex-idle-hibernation.mjs";
 import { CodexDeferredInputControlSchema } from "./codex-deferred-input.mjs";
+import { CodingAgentCanonicalToolResultSchema, type CodingAgentCanonicalToolResult } from "./provider-adapter.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
@@ -61,6 +62,7 @@ const ControlFrameSchema = z.discriminatedUnion("type", [
   ApprovalFrameSchema,
   InputFrameSchema,
   CodexDeferredInputControlSchema,
+  CodingAgentCanonicalToolResultSchema,
 ]);
 const ControlResponseSchema = z.union([
   z.object({ ok: z.literal(true), replayed: z.boolean().optional() }).strict(),
@@ -77,6 +79,8 @@ const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  /** Internal authority result channel; never used by an approval route. */
+  submitCanonicalToolResult?(input: { sessionId: string; frame: CodingAgentCanonicalToolResult }): Promise<void>;
   deferInput(input: { sessionId: string; inputRequestId: string; clientRequestId: string }): Promise<void>;
   hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
   submitTurn(input: {
@@ -117,7 +121,7 @@ export function codexProviderControlPath(homePath: string, sessionId: string): s
 export function createCodexControlClient(options: {
   homePath: string;
   timeoutMs?: number;
-}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate">> {
+}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate" | "submitCanonicalToolResult">> {
   const homePath = resolve(options.homePath);
   const requestedTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
@@ -188,6 +192,9 @@ export function createCodexControlClient(options: {
   }
 
   return {
+    submitCanonicalToolResult(input) {
+      return send(input.sessionId, CodingAgentCanonicalToolResultSchema.parse(input.frame));
+    },
     hibernate(input) {
       return send(input.sessionId, { type: "hibernate", providerThreadId: input.providerThreadId,
         clientRequestId: input.clientRequestId }, Math.min(timeoutMs, 2_000));

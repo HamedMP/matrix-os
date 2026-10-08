@@ -6,9 +6,13 @@ import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { deleteExpiredPriorityClaims } from "./ai-funded-priority-claims.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
-import { isSpeechMonthlyAuthorization } from "./speech/reservation-policy.js";
+import {
+  isSpeechMonthlyAuthorization,
+  speechReservationCapability,
+} from "./speech/reservation-policy.js";
 
 const MAX_EXPIRED_CLAIM_DELETES = 500;
+
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export interface AiFundedReservationCleanupOptions {
@@ -152,6 +156,8 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
             !speechMonthly,
           );
           if (speechMonthly) {
+            const capability = speechReservationCapability(reservation.authorization_response);
+            if (!capability) throw new Error("Funded AI speech capability invariant violated");
             const allowance = await trx.executor.updateTable("speech_runtime_allowances").set({
               period_reserved_microusd: sql<number>`CASE WHEN period_start = ${reservation.period_start}
                 THEN period_reserved_microusd - ${reserved} ELSE period_reserved_microusd END`,
@@ -168,7 +174,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
               status: "settled", actual_microusd: reserved, settled_at: checkedAt,
               finalization_mode: "conservative",
               settlement_response: JSON.stringify({
-                capability: "speech:transcribe",
+                capability,
                 actualCostMicrousd: reserved,
               }),
             }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")

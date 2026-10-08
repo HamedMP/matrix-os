@@ -27,11 +27,13 @@ const ReserveSchema = z.object({
   policyRevision: ReferenceSchema,
   modelId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/),
   maximumCostMicrousd: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  capability: z.enum(["transcription", "synthesis"]).default("transcription"),
 }).strict();
 const ReservationIdSchema = ReferenceSchema;
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const ACTIVE_SPEECH_AUDIENCE = "matrix-platform-speech";
 const ACTIVE_SPEECH_SCOPE = "speech:transcribe";
+const SpeechCapabilitySchema = z.enum(["speech:transcribe", "speech:synthesize"]);
 
 export class SpeechFundingError extends Error {
   constructor(readonly code: "unavailable" | "allowance_exhausted") {
@@ -50,9 +52,13 @@ function utcMonthStart(at: Date): string {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
 }
 
-function platformCredentialId(identity: z.output<typeof IdentitySchema>, secret: string): string {
+function platformCredentialId(
+  identity: z.output<typeof IdentitySchema>,
+  secret: string,
+  capability: "transcription" | "synthesis",
+): string {
   const digest = createHmac("sha256", secret)
-    .update(`${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
+    .update(`${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}\0${capability}`)
     .digest("hex")
     .slice(0, 48);
   return `speech_${digest}`;
@@ -65,7 +71,14 @@ function payloadHash(input: z.output<typeof ReserveSchema>): string {
     policyRevision: input.policyRevision,
     modelId: input.modelId,
     maximumCostMicrousd: input.maximumCostMicrousd,
+    capability: input.capability,
   })).digest("hex");
+}
+
+function reservationCapability(authorizationResponse: string): z.output<typeof SpeechCapabilitySchema> {
+  const parsed = z.object({ capability: SpeechCapabilitySchema }).passthrough()
+    .parse(JSON.parse(authorizationResponse));
+  return parsed.capability;
 }
 
 function mapFundingError(error: unknown): never {
@@ -129,9 +142,10 @@ export function createAiFundedSpeechFundingPort(options: {
   async function ensurePlatformCredential(
     trx: Transaction<PlatformDatabase>,
     identity: z.output<typeof IdentitySchema>,
+    capability: "transcription" | "synthesis",
     checkedAt: string,
   ): Promise<string> {
-    const tokenId = platformCredentialId(identity, options.credentialHashSecret);
+    const tokenId = platformCredentialId(identity, options.credentialHashSecret, capability);
     const tokenHash = createHmac("sha256", options.credentialHashSecret)
       .update(`${tokenId}\0${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
       .digest("hex");
@@ -143,7 +157,7 @@ export function createAiFundedSpeechFundingPort(options: {
       machine_id: identity.machineId,
       runtime_slot: identity.runtimeSlot,
       audience: ACTIVE_SPEECH_AUDIENCE,
-      scope: ACTIVE_SPEECH_SCOPE,
+      scope: capability === "synthesis" ? "speech:synthesize" : ACTIVE_SPEECH_SCOPE,
       issued_at: checkedAt,
       expires_at: expiresAt,
       revoked_at: null,
@@ -152,7 +166,8 @@ export function createAiFundedSpeechFundingPort(options: {
       .where("token_id", "=", tokenId).executeTakeFirstOrThrow();
     if (stored.token_hash !== tokenHash || stored.owner_id !== identity.ownerId
       || stored.machine_id !== identity.machineId || stored.runtime_slot !== identity.runtimeSlot
-      || stored.audience !== ACTIVE_SPEECH_AUDIENCE || stored.scope !== ACTIVE_SPEECH_SCOPE
+      || stored.audience !== ACTIVE_SPEECH_AUDIENCE
+      || stored.scope !== (capability === "synthesis" ? "speech:synthesize" : ACTIVE_SPEECH_SCOPE)
       || stored.revoked_at !== null) {
       throw new SpeechFundingError("unavailable");
     }
@@ -199,7 +214,7 @@ export function createAiFundedSpeechFundingPort(options: {
         || restriction?.frozen === true || exactInteger(restriction?.debt_microusd ?? 0) > 0) {
         throw new SpeechFundingError("unavailable");
       }
-      const tokenId = await ensurePlatformCredential(trx, input.identity, checkedAt);
+      const tokenId = await ensurePlatformCredential(trx, input.identity, input.capability, checkedAt);
       const hash = payloadHash(input);
       const existing = await trx.selectFrom("ai_funded_usage_reservations")
         .select(["reservation_id", "payload_hash", "reserved_microusd"])
@@ -274,7 +289,7 @@ export function createAiFundedSpeechFundingPort(options: {
         request_id: input.requestId,
         payload_hash: hash,
         authorization_response: JSON.stringify({
-          capability: ACTIVE_SPEECH_SCOPE,
+          capability: input.capability === "synthesis" ? "speech:synthesize" : ACTIVE_SPEECH_SCOPE,
           policyRevision: input.policyRevision,
           ...(allowance ? { fundingPolicy: "speech_monthly_v1" } : {}),
         }),
@@ -325,14 +340,23 @@ export function createAiFundedSpeechFundingPort(options: {
     let query = trx.selectFrom("ai_funded_usage_reservations as reservation")
       .innerJoin("ai_runtime_credentials as credential", "credential.token_id", "reservation.token_id")
       .selectAll("reservation")
+      .select("credential.scope as credential_scope")
       .where("reservation.reservation_id", "=", ReservationIdSchema.parse(reservationId))
-      .where("credential.audience", "=", ACTIVE_SPEECH_AUDIENCE)
-      .where("credential.scope", "=", ACTIVE_SPEECH_SCOPE);
+      .where("credential.audience", "=", ACTIVE_SPEECH_AUDIENCE);
     if (activeAt !== undefined) {
       query = query.where("credential.revoked_at", "is", null)
         .where("credential.expires_at", ">", activeAt);
     }
-    return query.forUpdate().executeTakeFirst();
+    const row = await query.forUpdate().executeTakeFirst();
+    if (!row) return undefined;
+    let capability: z.output<typeof SpeechCapabilitySchema>;
+    try {
+      capability = reservationCapability(row.authorization_response);
+    } catch (_error: unknown) {
+      throw new SpeechFundingError("unavailable");
+    }
+    if (row.credential_scope !== capability) throw new SpeechFundingError("unavailable");
+    return { ...row, capability };
   }
 
   async function start(trx: Transaction<PlatformDatabase>, reservationId: string): Promise<void> {
@@ -348,7 +372,7 @@ export function createAiFundedSpeechFundingPort(options: {
       status: "in_flight",
       started_at: checkedAt,
       expires_at: new Date(checked.getTime() + inFlightTtlMs).toISOString(),
-      start_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, startedAt: checkedAt }),
+      start_response: JSON.stringify({ capability: row.capability, startedAt: checkedAt }),
     }).where("reservation_id", "=", row.reservation_id).where("status", "=", "reserved")
       .returning("reservation_id").executeTakeFirst();
     if (!updated) throw new SpeechFundingError("unavailable");
@@ -407,7 +431,7 @@ export function createAiFundedSpeechFundingPort(options: {
       status: "settled",
       actual_microusd: actual,
       finalization_mode: input.mode,
-      settlement_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, actualCostMicrousd: actual }),
+      settlement_response: JSON.stringify({ capability: row.capability, actualCostMicrousd: actual }),
       settled_at: checkedAt,
     }).where("reservation_id", "=", row.reservation_id).where("status", "=", "in_flight")
       .executeTakeFirstOrThrow();
@@ -448,7 +472,7 @@ export function createAiFundedSpeechFundingPort(options: {
     await trx.updateTable("ai_funded_usage_reservations").set({
       status: "released",
       release_reason: "cancelled",
-      release_response: JSON.stringify({ capability: ACTIVE_SPEECH_SCOPE, releasedMicrousd: reserved }),
+      release_response: JSON.stringify({ capability: row.capability, releasedMicrousd: reserved }),
       released_at: checkedAt,
     }).where("reservation_id", "=", row.reservation_id).where("status", "=", "reserved")
       .executeTakeFirstOrThrow();

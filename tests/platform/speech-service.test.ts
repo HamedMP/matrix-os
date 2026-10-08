@@ -77,6 +77,7 @@ describe("platform speech service", () => {
     funding?: SpeechFundingPort;
     adapter?: FileTranscriptionAdapter;
     policy?: PlatformSpeechPolicy;
+    synthesisAdapter?: NonNullable<Parameters<typeof createPlatformSpeechService>[0]["synthesisAdapter"]>;
     cleanupIntervalMs?: number;
     cleanupBatchSize?: number;
   } = {}) {
@@ -96,6 +97,7 @@ describe("platform speech service", () => {
         operations,
         funding,
         adapter,
+        ...(options.synthesisAdapter ? { synthesisAdapter: options.synthesisAdapter } : {}),
         fingerprintSecret: "f".repeat(32),
         policy: options.policy ?? policy,
         cleanupIntervalMs: options.cleanupIntervalMs,
@@ -131,6 +133,208 @@ describe("platform speech service", () => {
     });
     await expect(speech.cancel(identity, requestId)).rejects.toMatchObject({
       code: "result_not_replayable",
+    });
+  });
+
+  it("funds managed synthesis and returns bounded 24kHz PCM", async () => {
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const synthesisAdapter = {
+      id: "openai-speech",
+      synthesize: vi.fn(async () => new Uint8Array(4_800)),
+    };
+    const { speech } = service({
+      funding,
+      synthesisAdapter,
+      policy: {
+        ...policy,
+        synthesis: {
+          enabled: true,
+          modelId: "gpt-4o-mini-tts",
+          microusdPerMinute: 60,
+          maxInputChars: 4_096,
+          maxDurationMs: 600_000,
+        },
+      },
+    });
+    await expect(speech.synthesize({
+      identity,
+      requestId,
+      text: "hello aloud",
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({
+      requestId,
+      format: "pcm_s16le_24000_mono",
+      durationMs: 100,
+    });
+    expect(funding.reserve).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      capability: "synthesis",
+      modelId: "gpt-4o-mini-tts",
+    }));
+    expect(funding.start).toHaveBeenCalledWith(expect.anything(), "synthesis_1");
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", {
+      mode: "exact",
+      actualCostMicrousd: 1,
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({ executionState: "succeeded" });
+  });
+
+  it("admits concurrent identical synthesis once and gives one caller the dispatch claim", async () => {
+    const adapterStarted = Promise.withResolvers<void>();
+    const finishAdapter = Promise.withResolvers<void>();
+    const synthesisAdapter = {
+      id: "openai-speech",
+      synthesize: vi.fn(async () => {
+        adapterStarted.resolve();
+        await finishAdapter.promise;
+        return new Uint8Array(4_800);
+      }),
+    };
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech } = service({
+      funding,
+      synthesisAdapter,
+      policy: { ...policy, synthesis: { enabled: true, modelId: "gpt-4o-mini-tts", microusdPerMinute: 60, maxInputChars: 4_096, maxDurationMs: 600_000 } },
+    });
+    const input = { identity, requestId, text: "one durable phrase", signal: new AbortController().signal };
+    const first = speech.synthesize(input);
+    await adapterStarted.promise;
+    const replay = speech.synthesize(input);
+    await expect(replay).rejects.toMatchObject({ code: "result_not_replayable" });
+    finishAdapter.resolve();
+    await expect(first).resolves.toMatchObject({ status: "succeeded" });
+    expect(synthesisAdapter.synthesize).toHaveBeenCalledTimes(1);
+    expect(funding.reserve).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", {
+      mode: "exact",
+      actualCostMicrousd: 1,
+    });
+    expect(await speech.status(identity, requestId)).toMatchObject({ executionState: "succeeded" });
+    expect(await db.executor.selectFrom("speech_operations").selectAll().execute()).toHaveLength(1);
+  });
+
+  it("terminalizes synthesis provider failure conservatively", async () => {
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech } = service({
+      funding,
+      synthesisAdapter: { id: "openai-speech", synthesize: vi.fn(async () => { throw new SpeechAdapterError("provider_failure", "failed"); }) },
+      policy: { ...policy, synthesis: { enabled: true, modelId: "gpt-4o-mini-tts", microusdPerMinute: 60, maxInputChars: 4_096, maxDurationMs: 600_000 } },
+    });
+    await expect(speech.synthesize({ identity, requestId, text: "fail", signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "synthesis_failed" });
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", { mode: "conservative" });
+    expect(await speech.status(identity, requestId)).toMatchObject({ executionState: "uncertain", outcomeCode: "provider_failure" });
+  });
+
+  it("terminalizes synthesis cancellation conservatively after dispatch", async () => {
+    const controller = new AbortController();
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech } = service({
+      funding,
+      synthesisAdapter: {
+        id: "openai-speech",
+        synthesize: vi.fn(async ({ signal }) => {
+          controller.abort();
+          if (signal.aborted) throw new SpeechAdapterError("cancelled", "cancelled");
+          return new Uint8Array(4_800);
+        }),
+      },
+      policy: { ...policy, synthesis: { enabled: true, modelId: "gpt-4o-mini-tts", microusdPerMinute: 60, maxInputChars: 4_096, maxDurationMs: 600_000 } },
+    });
+    await expect(speech.synthesize({ identity, requestId, text: "cancel", signal: controller.signal }))
+      .rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", { mode: "conservative" });
+    expect(await speech.status(identity, requestId)).toMatchObject({ executionState: "uncertain", outcomeCode: "cancelled" });
+  });
+
+  it("service cancellation aborts an in-flight synthesis and settles it once", async () => {
+    const started = Promise.withResolvers<void>();
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech } = service({
+      funding,
+      synthesisAdapter: {
+        id: "openai-speech",
+        synthesize: vi.fn(({ signal }) => new Promise<Uint8Array>((_resolve, reject) => {
+          started.resolve();
+          signal.addEventListener("abort", () => reject(new SpeechAdapterError("cancelled", "cancelled")), { once: true });
+        })),
+      },
+      policy: { ...policy, synthesis: { enabled: true, modelId: "gpt-4o-mini-tts", microusdPerMinute: 60, maxInputChars: 4_096, maxDurationMs: 600_000 } },
+    });
+    const synthesis = speech.synthesize({
+      identity, requestId, text: "cancel locally", signal: new AbortController().signal,
+    });
+    await started.promise;
+
+    await expect(speech.cancel(identity, requestId)).resolves.toMatchObject({ cancellationRequested: true });
+    await expect(synthesis).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", { mode: "conservative" });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      outcomeCode: "cancelled",
+    });
+  });
+
+  it("honors cross-process durable cancellation before synthesis completion", async () => {
+    const started = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const funding: SpeechFundingPort = {
+      reserve: vi.fn(async () => ({ reservationId: "synthesis_1", reservedMicrousd: 600 })),
+      start: vi.fn(async () => undefined),
+      settle: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined),
+    };
+    const { speech, operations } = service({
+      funding,
+      synthesisAdapter: {
+        id: "openai-speech",
+        synthesize: vi.fn(async () => {
+          started.resolve();
+          await finish.promise;
+          return new Uint8Array(4_800);
+        }),
+      },
+      policy: { ...policy, synthesis: { enabled: true, modelId: "gpt-4o-mini-tts", microusdPerMinute: 60, maxInputChars: 4_096, maxDurationMs: 600_000 } },
+    });
+    const synthesis = speech.synthesize({
+      identity, requestId, text: "cancel durably", signal: new AbortController().signal,
+    });
+    await started.promise;
+    await operations.cancel(identity, requestId, async () => undefined);
+    finish.resolve();
+
+    await expect(synthesis).rejects.toMatchObject({ code: "cancelled" });
+    expect(funding.settle).toHaveBeenCalledTimes(1);
+    expect(funding.settle).toHaveBeenCalledWith(expect.anything(), "synthesis_1", { mode: "conservative" });
+    expect(await speech.status(identity, requestId)).toMatchObject({
+      executionState: "uncertain",
+      outcomeCode: "cancelled",
     });
   });
 

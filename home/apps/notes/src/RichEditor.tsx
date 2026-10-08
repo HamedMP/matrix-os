@@ -15,7 +15,7 @@ import {
   Strikethrough,
 } from "lucide-react";
 import { htmlToMarkdown, markdownToHtml } from "./markdown";
-import { emptyTiptapDoc, type Note, type TiptapDoc } from "./notes-model";
+import { emptyTiptapDoc, shouldApplyExternalContent, type Note, type TiptapDoc } from "./notes-model";
 
 type SlashCommand = {
   id: string;
@@ -70,10 +70,10 @@ export default function RichEditor({ note, onChange }: RichEditorProps) {
   });
 
   useEffect(() => {
-    if (!editor || lastAppliedNoteIdRef.current === note.id) return;
+    if (!editor) return;
     const previousNoteId = lastAppliedNoteIdRef.current;
     lastAppliedNoteIdRef.current = note.id;
-    if (previousNoteId?.startsWith("note-") && !note.id.startsWith("note-")) return;
+    if (!shouldApplyExternalContent(previousNoteId, note.id, note.content, htmlToMarkdown(editor.getHTML()))) return;
     closeSlash();
     editor.commands.setContent(
       note.content_json.content?.length ? note.content_json : markdownToHtml(note.content),

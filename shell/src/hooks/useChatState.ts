@@ -44,7 +44,7 @@ export interface ChatState {
   /** Cancellable run from the selected canonical Chat detail, separate from admission/loading. */
   activeRunId?: string;
   /** Name of the currently-running tool, or null when the agent is just
-      generating text. Drives the global AgentStatusCard's stage label. */
+      generating text. Available for agent-busy indicators' stage label. */
   currentTool: string | null;
   connected: boolean;
   queue: QueuedMessage[];

@@ -5,10 +5,6 @@
 // routing or persisted windows.
 export const HERMES_CHAT_HIDDEN = false;
 
-// Voice (Aoede) dock button is hidden for now while the voice experience is
-// out of the minimal flow. The vocal store/overlay wiring stays intact.
-export const VOICE_HIDDEN = true;
-
 import { isSelfHostedDocument } from "./self-host-mode";
 
 // VSCode (code-server) editor -- opened from a dock icon. Managed Matrix Cloud

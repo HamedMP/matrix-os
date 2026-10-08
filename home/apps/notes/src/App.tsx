@@ -169,6 +169,8 @@ function App() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const notesRef = useRef<Note[]>([]);
+  const pendingLocalNoteIdRef = useRef<string | null>(null);
+  const localEditRevisionRef = useRef(0);
   const pendingCreatesRef = useRef<Map<string, Promise<Note>>>(new Map());
   const resolvedCreatesRef = useRef<Map<string, string>>(new Map());
   const deletedCreatesRef = useRef<Map<string, true>>(new Map());
@@ -181,7 +183,13 @@ function App() {
     setError(null);
     loadNotes()
       .then((nextNotes) => {
-        setNotes(nextNotes);
+        const pendingId = pendingLocalNoteIdRef.current;
+        const localPendingNote = pendingId
+          ? notesRef.current.find((note) => note.id === pendingId)
+          : undefined;
+        setNotes(localPendingNote
+          ? nextNotes.map((note) => note.id === pendingId ? localPendingNote : note)
+          : nextNotes);
         setActiveId((current) => current ?? nextNotes[0]?.id ?? null);
       })
       .catch((err: unknown) => {
@@ -336,12 +344,17 @@ function App() {
         updated_at: new Date().toISOString(),
       });
       const nextNotes = notes.map((note) => (note.id === activeNote.id ? nextNote : note));
+      pendingLocalNoteIdRef.current = activeNote.id;
+      const editRevision = ++localEditRevisionRef.current;
       setNotes(nextNotes);
       setSaveState("saving");
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         persistWhenReady(nextNote)
           .then((saved) => {
+            if (localEditRevisionRef.current === editRevision) {
+              pendingLocalNoteIdRef.current = null;
+            }
             const savedNotes = notesRef.current.map((note) =>
               note.id === saved.id || note.id === nextNote.id ? saved : note,
             );

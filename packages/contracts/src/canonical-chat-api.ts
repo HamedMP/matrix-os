@@ -1,6 +1,8 @@
 import { ChatRunContextSchema } from "#chat-agent-context";
 import { z } from "zod/v4";
 import {
+  CanonicalChatArgumentDigestSchema,
+  CanonicalChatCancellationGranularitySchema,
   CanonicalChatMessagePartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatApprovalDecisionSchema,
@@ -8,6 +10,7 @@ import {
   CanonicalChatRequestIdSchema,
   CanonicalChatRunActivitySchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatRunPolicySchema,
   CanonicalChatRunSchema,
   CanonicalChatSchema,
   CanonicalChatTurnSchema,
@@ -22,6 +25,7 @@ import {
 } from "#canonical-chat-surface";
 import { IsoTimestampSchema } from "#contract-primitives";
 import { SafeClientErrorSchema } from "#safe-client-error";
+import { CanonicalActionIdSchema, CanonicalOperationViewSchema } from "#canonical-action";
 
 export const CanonicalChatApiCursorSchema = z.string()
   .min(9)
@@ -119,6 +123,16 @@ export const CanonicalUpdateChatUserStateRequestSchema = z.object({
   pinned: z.boolean(),
 }).strict();
 
+/**
+ * Persisted provider/model selection for a Chat. The instance is immutable once
+ * a run has bound the Chat (`providerBinding`), so an update may only change the
+ * model/options inside the bound instance. Revision-guarded like other updates.
+ */
+export const CanonicalUpdateChatSelectionRequestSchema = z.object({
+  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  selection: CanonicalChatModelSelectionSchema,
+}).strict();
+
 const USER_INPUT_PART_TYPES = new Set([
   "text",
   "attachment_reference",
@@ -152,6 +166,8 @@ export const CanonicalCreateChatTurnRequestSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  /** Immutable execution policy for this turn (voice/session-only); replay binds to it. */
+  runPolicy: CanonicalChatRunPolicySchema.optional(),
 }).strict();
 
 export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
@@ -206,6 +222,8 @@ export const CanonicalChatQueuedTurnSchema = z.object({
   interactionMode: canonicalReferenceId(80),
   permissionMode: canonicalReferenceId(80),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
+  /** Immutable execution policy carried from queue admission into the claimed Run. */
+  runPolicy: CanonicalChatRunPolicySchema.optional(),
   createdAt: IsoTimestampSchema,
   updatedAt: IsoTimestampSchema,
 }).strict();
@@ -264,6 +282,8 @@ export type CanonicalChatInputSubmissionResponse = z.infer<typeof CanonicalChatI
 export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   decision: CanonicalChatApprovalDecisionSchema,
+  /** Echo of the normalized argument digest shown at proposal time (FR-022/FR-023). */
+  argumentDigest: CanonicalChatArgumentDigestSchema.optional(),
 }).strict();
 
 export const CanonicalRetryChatTurnRequestSchema = z.object({
@@ -327,6 +347,12 @@ export const CanonicalChatDetailResponseSchema = z.object({
   turns: z.array(CanonicalChatTurnSchema).max(100),
   runs: z.array(CanonicalChatRunSchema).max(100),
   activities: z.array(CanonicalChatRunActivitySchema).max(500),
+  /**
+   * Safe projections of the canonical action operations owned by the visible
+   * runs — never raw arguments, raw tool output, or claim tokens. Absent when
+   * the page covers no runs with persisted operations.
+   */
+  operations: z.array(CanonicalOperationViewSchema).max(200).optional(),
   queuedTurns: z.array(CanonicalChatQueuedTurnSchema).max(20).optional(),
   terminalSessionIds: z.array(canonicalReferenceId(128)).max(100).optional(),
   nextCursor: CanonicalChatApiCursorSchema.optional(),
@@ -337,6 +363,7 @@ export const CanonicalChatDetailResponseSchema = z.object({
     ["turns", detail.turns],
     ["runs", detail.runs],
     ["activities", detail.activities],
+    ["operations", detail.operations ?? []],
   ] as const) {
     values.forEach((value, index) => {
       if (value.chatId !== chatId) {
@@ -369,12 +396,31 @@ export const CanonicalChatTurnAdmissionResponseSchema = z.object({
 export const CanonicalChatRunCancellationResponseSchema = z.object({
   run: CanonicalChatRunSchema,
   cancellation: z.enum(["aborted", "already_terminal"]),
+  /**
+   * Truthful granularity of the cancellation actually applied (FR-023/FR-024):
+   * "run" for a whole-run abort, "tool" when only a tool call was cancelled,
+   * absent when the run was already terminal and nothing was cancelled.
+   */
+  granularity: CanonicalChatCancellationGranularitySchema.optional(),
 }).strict();
 
 export const CanonicalChatApprovalSubmissionResponseSchema = z.object({
   approvalId: canonicalReferenceId(128),
   decision: CanonicalChatApprovalDecisionSchema,
   submission: z.literal("accepted"),
+}).strict();
+
+/**
+ * Truthful result of a targeted action cancellation request. "cancelled" means
+ * the operation transitioned to the cancelled state; "requested" means the
+ * cancellation intent was durably recorded but the in-flight effect could not
+ * be aborted (it may still resolve); "already_terminal" means nothing changed;
+ * "unknown" means the request raced concurrent writes persistently enough that
+ * no intent could be proven recorded — nothing was claimed.
+ */
+export const CanonicalChatActionCancellationResponseSchema = z.object({
+  operation: CanonicalOperationViewSchema,
+  cancellation: z.enum(["cancelled", "requested", "already_terminal", "unknown"]),
 }).strict();
 
 export const CanonicalChatRunAdmissionResponseSchema = z.object({
@@ -396,6 +442,8 @@ export type CanonicalChatOutboxEventType = z.infer<typeof CanonicalChatOutboxEve
 export type CanonicalChatStreamEvent = z.infer<typeof CanonicalChatStreamEventSchema>;
 export type CanonicalChatStreamServerFrame = z.infer<typeof CanonicalChatStreamServerFrameSchema>;
 export type CanonicalUpdateChatProjectRequest = z.infer<typeof CanonicalUpdateChatProjectRequestSchema>;
+export type CanonicalUpdateChatSelectionRequest = z.infer<typeof CanonicalUpdateChatSelectionRequestSchema>;
+export type CanonicalChatActionCancellationResponse = z.infer<typeof CanonicalChatActionCancellationResponseSchema>;
 export type CanonicalUpdateChatTitleRequest = z.infer<typeof CanonicalUpdateChatTitleRequestSchema>;
 export type CanonicalUpdateChatUserStateRequest = z.infer<typeof CanonicalUpdateChatUserStateRequestSchema>;
 export type CanonicalCreateChatTurnRequest = z.infer<typeof CanonicalCreateChatTurnRequestSchema>;

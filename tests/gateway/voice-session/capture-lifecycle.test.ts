@@ -1,0 +1,200 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { VoiceSessionController } from "../../../packages/ui/src/voice-session/controller.js";
+import { enqueueSessionTask, type VoiceSessionRecord } from "../../../packages/gateway/src/voice-session/session-runtime.js";
+import { clientFrame, flush, listeningSession, makeRig, makeSink, PRINCIPAL, resetFrameSeq, type VoiceTestRig } from "./fakes.js";
+
+let rig: VoiceTestRig;
+beforeEach(() => { resetFrameSeq(); rig = makeRig(); });
+afterEach(async () => { await rig.engine.close(); });
+
+it.each(["thinking", "using_tool"])("keeps user pause through %s progress, output and terminal events", async state => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_pause", mode: "hands_free" }));
+  rig.adapter.emit({ type: "transcript.final", turnId: "vturn_pause", finalityId: "vfinal_pause", text: "List apps" });
+  await flush(rig, s.sessionId);
+  if (state === "using_tool") {
+    rig.events.emit({ type: "operation.status", runId: "run_1", label: "Listing", state: "running" });
+    await flush(rig, s.sessionId);
+  }
+  const client = new VoiceSessionController({ sessionId: s.sessionId, initialEpoch: s.epoch });
+  for (const frame of s.sink.frames) client.receive(frame);
+  client.pause();
+  const boundary = s.sink.frames.length;
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "session.pause" }));
+  rig.events.emit({ type: "operation.status", runId: "run_1", label: "Listing", state: "running" });
+  rig.events.emit({ type: "assistant.text", runId: "run_1", text: "Listed apps.", textStart: 0, textEnd: 12 });
+  rig.events.emit({ type: "run.terminal", runId: "run_1", state: "succeeded" });
+  await flush(rig, s.sessionId);
+  const emitted = s.sink.frames.slice(boundary);
+  expect(emitted.filter(frame => frame.type === "session.state").map(frame => frame.state)).toEqual(["paused"]);
+  for (const frame of emitted) client.receive(frame);
+  expect(client.getState()).toMatchObject({ state: "paused", muted: true });
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_blocked", mode: "hands_free" }));
+  expect(rig.adapter.sessions[0].captures).not.toContainEqual(expect.objectContaining({ turnId: "vturn_blocked" }));
+  client.resume();
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "session.resume" }));
+  client.receive(s.sink.frames.at(-1));
+  expect(client.getState()).toMatchObject({ state: "listening", muted: false });
+});
+
+it.each([false, true])("preserves paused reconnect and admits the replacement epoch (progress=%s)", async progress => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_reconnect", mode: "hands_free" }));
+  rig.adapter.emit({ type: "transcript.final", turnId: "vturn_reconnect", finalityId: "vfinal_reconnect", text: "List apps" });
+  await flush(rig, s.sessionId);
+  const client = new VoiceSessionController({ sessionId: s.sessionId, initialEpoch: s.epoch });
+  for (const frame of s.sink.frames) client.receive(frame);
+  client.pause();
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "session.pause" }));
+  s.handle.transportClosed();
+  const reconnect = rig.engine.reconnectSession({ principal: PRINCIPAL, chatId: s.chatId, sessionId: s.sessionId });
+  if (progress) {
+    rig.events.emit({ type: "operation.status", runId: "run_1", label: "Listing", state: "running" });
+    await flush(rig, s.sessionId);
+  }
+  const consumed = rig.tickets.consume(reconnect.lease.ticket, { path: reconnect.lease.path, sessionId: s.sessionId, chatId: s.chatId });
+  const sink = makeSink();
+  const handle = rig.engine.attachTransport({ sessionId: s.sessionId, chatId: s.chatId,
+    principalId: PRINCIPAL.userId, generation: consumed.binding.generation }, sink);
+  expect(sink.frames[0]).toMatchObject({ type: "session.resumed", epoch: 2, state: "paused" });
+  expect(client.receive(sink.frames[0])).toBe(true);
+  expect(client.getState()).toMatchObject({ state: "paused", muted: true, epoch: 2 });
+  client.resume();
+  await handle.receive(clientFrame(s.sessionId, 2, { type: "session.resume" }));
+  expect(client.receive(sink.frames.at(-1))).toBe(true);
+  expect(client.getState()).toMatchObject({ state: "listening", muted: false });
+});
+
+it("restores listening when an unpaused run finishes before replacement attach", async () => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_terminal", mode: "hands_free" }));
+  rig.adapter.emit({ type: "transcript.final", turnId: "vturn_terminal", finalityId: "vfinal_terminal", text: "List apps" });
+  await flush(rig, s.sessionId);
+  s.handle.transportClosed();
+  const reconnect = rig.engine.reconnectSession({ principal: PRINCIPAL, chatId: s.chatId, sessionId: s.sessionId });
+  rig.events.emit({ type: "run.terminal", runId: "run_1", state: "succeeded" });
+  await flush(rig, s.sessionId);
+  const consumed = rig.tickets.consume(reconnect.lease.ticket, { path: reconnect.lease.path, sessionId: s.sessionId, chatId: s.chatId });
+  const sink = makeSink();
+  rig.engine.attachTransport({ sessionId: s.sessionId, chatId: s.chatId,
+    principalId: PRINCIPAL.userId, generation: consumed.binding.generation }, sink);
+  expect(sink.frames[0]).toMatchObject({ type: "session.resumed", epoch: 2, state: "listening" });
+});
+
+it.each(["AAAA", "AQAB"])("does not count drained capture %s as backlog", async data => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_long", mode: "hands_free" }));
+  for (let index = 0; index < 600; index++) await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_long", timestampMs: index * 20, data,
+  }));
+  expect(rig.adapter.sessions[0].audios).toHaveLength(600);
+  expect(s.sink.frames.filter(frame => frame.type === "session.error")).toEqual([]);
+  rig.adapter.emit({ type: "transcript.final", turnId: "vturn_long", finalityId: "vfinal_long", text: "Speech after capture" });
+  await flush(rig, s.sessionId);
+  expect(rig.admission.calls[0].transcript).toBe("Speech after capture");
+});
+
+it("drops finalized-turn audio without backpressure while admission is stalled", async () => {
+  rig = makeRig({ limits: { maxQueuedAudioMs: 40 } });
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, { type: "capture.start", turnId: "vturn_stall", mode: "hands_free" }));
+  let release!: () => void;
+  vi.spyOn(rig.admission, "admitFinalTranscript").mockImplementation(() => new Promise(resolve => {
+    release = () => resolve({ outcome: "sent", runId: "run_1", canonicalTurnId: "cturn_1", revision: 1 });
+  }));
+  rig.adapter.emit({ type: "transcript.final", turnId: "vturn_stall", finalityId: "vfinal_stall", text: "Work" });
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const frames = Array.from({ length: 300 }, (_, index) => s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_stall", timestampMs: index * 20, data: "AAAA",
+  })));
+  try {
+    expect(s.sink.frames).toContainEqual(expect.objectContaining({ type: "session.state", state: "thinking" }));
+    expect(s.sink.frames).not.toContainEqual(expect.objectContaining({ type: "session.error", code: "audio_backpressure" }));
+    expect(s.sink.frames).not.toContainEqual(expect.objectContaining({ type: "session.error", code: "session_limit_reached" }));
+    expect(rig.logs.filter(entry => entry.fields.kind === "audio_for_inactive_turn")).toHaveLength(300);
+    expect(rig.logs.filter(entry => entry.event === "voice.session.mutation_overflow")).toHaveLength(0);
+  } finally {
+    release();
+    await Promise.all(frames); await flush(rig, s.sessionId);
+  }
+});
+
+it("delivers active capture audio synchronously past a stalled mutation", async () => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_active", mode: "hands_free",
+  }));
+  const record = (rig.engine as unknown as { sessions: Map<string, VoiceSessionRecord> }).sessions.get(s.sessionId)!;
+  let release!: () => void;
+  const blocker = enqueueSessionTask(record, () => new Promise<void>(resolve => { release = resolve; }));
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const pendingBefore = record.pendingMutationTasks;
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_active", timestampMs: 20, data: "AAAA",
+  }));
+
+  expect(rig.adapter.sessions[0].audios).toContainEqual({
+    turnId: "vturn_active", timestampMs: 20, data: "AAAA", playbackActive: false,
+  });
+  expect(record.pendingMutationTasks).toBe(pendingBefore);
+  release();
+  await blocker;
+});
+
+it("keeps audio ordered behind a pending capture start", async () => {
+  const s = await listeningSession(rig);
+  const record = (rig.engine as unknown as { sessions: Map<string, VoiceSessionRecord> }).sessions.get(s.sessionId)!;
+  let release!: () => void;
+  const blocker = enqueueSessionTask(record, () => new Promise<void>(resolve => { release = resolve; }));
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const start = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_pending", mode: "hands_free",
+  }));
+  const audio = s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_pending", timestampMs: 0, data: "AQAB",
+  }));
+  expect(rig.adapter.sessions[0].audios).toEqual([]);
+
+  release();
+  await Promise.all([blocker, start, audio]);
+  expect(rig.adapter.sessions[0].captures).toContainEqual({ turnId: "vturn_pending", mode: "hands_free" });
+  expect(rig.adapter.sessions[0].audios).toEqual([
+    { turnId: "vturn_pending", timestampMs: 0, data: "AQAB", playbackActive: false },
+  ]);
+});
+
+it("marks capture audio playback-active only until delivered audio is acknowledged", async () => {
+  const s = await listeningSession(rig);
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_prompt", mode: "hands_free",
+  }));
+  rig.adapter.emit({
+    type: "transcript.final", turnId: "vturn_prompt", finalityId: "vfinal_prompt", text: "Speak",
+  });
+  await flush(rig, s.sessionId);
+  rig.events.emit({ type: "assistant.text", runId: "run_1", text: "Reply.", textStart: 0, textEnd: 6 });
+  await flush(rig, s.sessionId);
+  const responseId = rig.adapter.sessions[0].synths[0]!.responseId;
+  const segmentId = rig.adapter.sessions[0].synths[0]!.segmentId;
+  rig.adapter.emit({
+    type: "synthesis.audio", responseId, segmentId, startMs: 0, durationMs: 100, data: "AAAA",
+  });
+  await flush(rig, s.sessionId);
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.start", turnId: "vturn_barge", mode: "hands_free",
+  }));
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_barge", timestampMs: 0, data: "AAAA",
+  }));
+  expect(rig.adapter.sessions[0].audios.at(-1)?.playbackActive).toBe(true);
+
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "playback.segment_played", responseId, segmentId, deliveryRevision: 1, playedThroughMs: 100,
+  }));
+  await s.handle.receive(clientFrame(s.sessionId, s.epoch, {
+    type: "capture.audio", turnId: "vturn_barge", timestampMs: 20, data: "AAAA",
+  }));
+  expect(rig.adapter.sessions[0].audios.at(-1)?.playbackActive).toBe(false);
+});

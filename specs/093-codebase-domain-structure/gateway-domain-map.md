@@ -51,8 +51,8 @@ packages/gateway/src/
 `social.ts` · `social-activity.ts` · `leaderboard.ts` · `social-connectors/` · `messages/`
 ⚠︎ `matrix-client.ts` (Matrix-protocol client — social/messaging vs identity)
 
-### `domains/voice/` — voice & vocal
-`voice.ts` · `voice/` · `vocal/`
+### `domains/voice/` — voice
+`voice.ts` · `voice/` · `voice-session/`
 
 ### `domains/identity/` — auth & request principal
 `auth.ts` · `auth-jwt.ts` · `request-principal.ts` · `security/`

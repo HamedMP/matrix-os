@@ -242,9 +242,16 @@ export function createWorkspaceCodingAgentProvider(
     buildSetupAction(): SafeSetupAction[] {
       return providerSetupActions(agent);
     },
-    async startThread({ principal, thread, request, now, nextEventId }) {
+    async startThread({ principal, thread, request, canonicalExecution, now, nextEventId }) {
       if (!runnable) {
         throw new Error("Workspace provider execution unavailable");
+      }
+      // A canonical grant is only transportable by the isolated Codex
+      // app-server runner with a live event watch and control channel. Any
+      // other agent or missing plumbing fails closed before session launch.
+      if (canonicalExecution
+        && (agent !== "codex" || !options.codexEvents || !options.codexControl)) {
+        throw new Error("Canonical coding Provider execution is unavailable");
       }
       const sessionId = sessionIdForThread(thread.id);
       if (agent === "codex" && options.codexEvents) {
@@ -253,12 +260,14 @@ export function createWorkspaceCodingAgentProvider(
           threadId: thread.id,
           sessionId,
           ...(options.codexControl ? { checkpoint: true } : {}),
+          ...(canonicalExecution ? { canonical: canonicalExecution } : {}),
         });
       }
       let result;
       try {
         result = await options.runtime.startSession({
           ownerScope: { type: "user", id: principal.userId },
+          ...(canonicalExecution ? { canonicalExecution } : {}),
           request: {
             sessionId,
             kind: "agent",
@@ -327,6 +336,11 @@ export function createWorkspaceCodingAgentProvider(
           startAtEnd: true,
           checkpoint: true,
         });
+        // Canonical sessions cannot accept native turn input; the constrained
+        // runner rejects it too, but the provider fails closed first.
+        if (observation.canonical) {
+          throw new Error("Canonical coding Provider turn resume is unavailable");
+        }
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         try {
           await options.codexControl.submitTurn({

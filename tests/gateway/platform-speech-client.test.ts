@@ -160,6 +160,33 @@ describe("platform speech runtime client", () => {
     await expect(client.capabilities()).rejects.toBeInstanceOf(PlatformSpeechClientError);
   });
 
+  it("sends bounded synthesis JSON and accepts managed PCM", async () => {
+    const requestId = "sp_1788998400000_abcdefghijklmnop";
+    const audio = Buffer.alloc(4_800, 3).toString("base64");
+    const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({ "content-type": "application/json" });
+      expect(JSON.parse(String(init?.body))).toEqual({ requestId, text: "hello" });
+      return new Response(JSON.stringify({
+        contractVersion: 1,
+        requestId,
+        status: "succeeded",
+        format: "pcm_s16le_24000_mono",
+        durationMs: 100,
+        audio,
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const client = createPlatformSpeechClient(loadPlatformSpeechRuntimeConfig(runtimeEnv)!, { fetchFn });
+    await expect(client.synthesize({
+      requestId,
+      text: "hello",
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ format: "pcm_s16le_24000_mono", durationMs: 100, audio });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://platform.internal/internal/containers/alice/speech/syntheses?runtimeSlot=primary",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("normalizes upstream runtime authentication failures as internal unavailability", async () => {
     const client = createPlatformSpeechClient(loadPlatformSpeechRuntimeConfig(runtimeEnv)!, {
       fetchFn: vi.fn(async () => new Response(JSON.stringify({

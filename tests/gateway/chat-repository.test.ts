@@ -209,6 +209,7 @@ describe("ChatRepository", () => {
       .execute();
 
     expect(tables.map((row) => row.table_name).sort()).toEqual([
+      "chat_action_operations",
       "chat_approval_outcomes",
       "chat_attachments",
       "chat_credentials",
@@ -230,6 +231,7 @@ describe("ChatRepository", () => {
       "chat_terminal_bindings",
       "chat_turns",
       "chat_user_state",
+      "chat_voice_deliveries",
       "chats",
     ]);
     const activityIndex = await sql<{ indexname: string }>`
@@ -312,8 +314,15 @@ describe("ChatRepository", () => {
     })).rejects.toThrow("force rollback");
     expect(delivered).toHaveLength(2);
 
+    // The outbox is a bounded multi-sink fan-out (canonical event stream,
+    // voice sessions, telemetry): registration only fails at the cap.
+    const extras: { dispose(): void }[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      extras.push(events.registerOutboxSink(() => undefined));
+    }
     expect(() => events.registerOutboxSink(() => undefined))
-      .toThrow(/sink|registered/i);
+      .toThrow(/sink|registered|limit/i);
+    for (const extra of extras) extra.dispose();
     registration.dispose();
     const replacement = events.registerOutboxSink(() => undefined);
     replacement.dispose();
@@ -2518,6 +2527,119 @@ describe("ChatRepository", () => {
     expect(older?.nextBeforeSeq).toBeUndefined();
     await expect(repository.getDetailPage(otherOwner, created.chat.id, { limit: 2 }))
       .resolves.toBeNull();
+  });
+
+  it("projects only safe operation views for visible runs and drops malformed rows", async () => {
+    const admitted = await admitChat(repository, "detail_ops");
+    const policy = {
+      revision: "detail_ops_v1",
+      actionMode: "canonical_actions",
+      workspaceScope: "apps",
+      tools: ["matrix_open_app"],
+      delegation: false,
+    };
+    const persisted = {
+      id: "action_detail_visible",
+      owner,
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      workspaceScope: "apps",
+      policyRevision: policy.revision,
+      executionPolicy: policy,
+      toolId: "matrix_open_app",
+      schemaRevision: "canonical_apps_v1",
+      arguments: { app: "timer", secret: "hidden" },
+      argumentDigest: "a".repeat(64),
+      state: "succeeded",
+      revision: 1,
+      claimToken: "claim_hidden",
+      result: {
+        app: "timer",
+        files: [{ path: "src/main.tsx", sha256: "b".repeat(64), text: "file body" }],
+        navigation: { kind: "open_app", app: "timer", path: "apps/timer" },
+      },
+      cancellationRequested: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const insert = (row: {
+      id: string; chatId: string; runId: string; ownerId: string;
+      state: string; operation: unknown;
+    }) => repository.kysely.insertInto("chat_action_operations" as never).values({
+      id: row.id,
+      chat_id: row.chatId,
+      run_id: row.runId,
+      owner_type: "personal",
+      owner_id: row.ownerId,
+      state: row.state,
+      revision: 1,
+      operation: row.operation,
+      decision_request_id: null,
+      decision: null,
+    } as never).execute();
+
+    await insert({ id: persisted.id, chatId: admitted.chatId, runId: admitted.runId, ownerId: owner.ownerId, state: "succeeded", operation: persisted });
+    await insert({ id: "action_detail_malformed", chatId: admitted.chatId, runId: admitted.runId, ownerId: owner.ownerId, state: "running", operation: { not: "an operation" } });
+    await insert({ id: "action_detail_other_owner", chatId: admitted.chatId, runId: admitted.runId, ownerId: "user_b", state: "running", operation: { ...persisted, id: "action_detail_other_owner", owner: otherOwner } });
+    const other = await admitChat(repository, "detail_ops_other_run");
+    await insert({ id: "action_detail_other_run", chatId: other.chatId, runId: other.runId, ownerId: owner.ownerId, state: "running", operation: { ...persisted, id: "action_detail_other_run", chatId: other.chatId, runId: other.runId } });
+
+    const detail = await repository.getDetailPage(owner, admitted.chatId, { limit: 200 });
+
+    expect(detail?.operations).toHaveLength(1);
+    const view = detail?.operations?.[0];
+    expect(view).toMatchObject({
+      id: "action_detail_visible",
+      chatId: admitted.chatId,
+      runId: admitted.runId,
+      toolId: "matrix_open_app",
+      state: "succeeded",
+      result: { navigation: { kind: "open_app", app: "timer", path: "apps/timer" } },
+    });
+    expect(view).not.toHaveProperty("arguments");
+    expect(view).not.toHaveProperty("claimToken");
+    expect(JSON.stringify(view)).not.toContain("hidden");
+    expect(JSON.stringify(view)).not.toContain("file body");
+
+    const otherDetail = await repository.getDetailPage(owner, other.chatId, { limit: 200 });
+    expect(otherDetail?.operations?.map((op) => op.id)).toEqual(["action_detail_other_run"]);
+  });
+
+  it("keeps the newest 200 operations with deterministic ordering at tied timestamps", async () => {
+    const admitted = await admitChat(repository, "detail_operation_bound");
+    const rows = Array.from({ length: 203 }, (_, index) => {
+      const id = `action_bound_${String(index).padStart(3, "0")}`;
+      const createdAt = index < 3 ? "2026-08-24T00:00:00.000Z" : now;
+      return {
+        id, chat_id: admitted.chatId, run_id: admitted.runId,
+        owner_type: "personal", owner_id: owner.ownerId,
+        state: "succeeded", revision: 1, decision_request_id: null, decision: null,
+        operation: {
+          id, owner, chatId: admitted.chatId, runId: admitted.runId,
+          workspaceScope: "apps", policyRevision: "bound_v1",
+          executionPolicy: { revision: "bound_v1", actionMode: "canonical_actions",
+            workspaceScope: "apps", tools: ["matrix_open_app"], delegation: false },
+          toolId: "matrix_open_app", schemaRevision: "canonical_apps_v1",
+          arguments: { app: "timer" }, argumentDigest: "a".repeat(64),
+          state: "succeeded", revision: 1, cancellationRequested: false,
+          createdAt, updatedAt: createdAt,
+        },
+      };
+    });
+    // Insert in reverse order so neither row order nor timestamp alone can pass.
+    await repository.kysely.insertInto("chat_action_operations" as never)
+      .values(rows.reverse() as never).execute();
+    const detail = await repository.getDetailPage(owner, admitted.chatId, { limit: 200 });
+    expect(detail?.operations?.map(operation => operation.id)).toEqual(
+      Array.from({ length: 200 }, (_, index) => `action_bound_${String(index + 3).padStart(3, "0")}`),
+    );
+  });
+
+  it("omits the operations field when the page covers no persisted operations", async () => {
+    const admitted = await admitChat(repository, "detail_no_ops");
+    const detail = await repository.getDetailPage(owner, admitted.chatId, { limit: 200 });
+    expect(detail).not.toBeNull();
+    expect(detail?.operations).toBeUndefined();
   });
 
   it("loads legacy Chat detail while omitting an unverifiable terminal binding activity", async () => {

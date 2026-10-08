@@ -21,8 +21,8 @@ export function withChatSessionHistory(input: {
 }
 
 /** A native continuation already has its canonical prefix; replay only on fresh starts. */
-export function contextForChatSession(context: ChatRunContext | undefined, resumeState: unknown): ChatRunContext | undefined {
-  if (resumeState === undefined || !context?.history || context.agent) return context;
+export function contextForChatSession(context: ChatRunContext | undefined, resumeState: unknown, preserveHistory = false): ChatRunContext | undefined {
+  if (preserveHistory || resumeState === undefined || !context?.history || context.agent) return context;
   const rest = { ...context };
   delete rest.history;
   return rest;
@@ -32,9 +32,10 @@ export function contextForChatSession(context: ChatRunContext | undefined, resum
 export async function prepareChatSessionContext(input: {
   repository: Pick<ChatRepository, "getDetailPage">; owner: ChatOwner; chatId: string;
   throughSeq: number; requestHash: string; instanceId: string;
-  resumeState: unknown; context?: ChatRunContext;
+  resumeState: unknown; context?: ChatRunContext; preserveHistory?: boolean;
 }): Promise<ChatRunContext | undefined> {
-  const context = contextForChatSession(input.context, input.resumeState);
+  const context = contextForChatSession(input.context, input.resumeState, input.preserveHistory);
+  if (input.preserveHistory && context?.history) return context;
   if (input.resumeState !== undefined || input.instanceId === MATRIX_BOT_INSTANCE_ID || input.throughSeq === 0) return context;
   // Retry preserves the original admitted history, not replies from its failed attempt.
   if (context?.history && context.history.throughSeq === input.throughSeq) return context;

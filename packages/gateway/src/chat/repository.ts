@@ -17,6 +17,7 @@ import {
   CanonicalChatModelSelectionSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatRunPolicySchema,
   CanonicalChatRunSchema,
   CanonicalChatTurnSchema,
   CanonicalOwnerScopeSchema,
@@ -66,6 +67,7 @@ import {
   type ChatRecord,
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
+import { canonicalJsonStringify } from "./argument-digest.js";
 import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   reconcileProviderBindings,
@@ -1316,6 +1318,29 @@ export class ChatRepository {
         || run.driverKind !== latest.driver_kind || run.instanceId !== latest.instance_id) {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
+      // Retries preserve policy verbatim except when a live voice session
+      // stamps provenance and keeps or tightens memory/checkpoint behavior.
+      const previousPolicy = latest.run_policy === null
+        ? null
+        : CanonicalChatRunPolicySchema.parse(parseJson(latest.run_policy));
+      const nextPolicy = run.runPolicy ?? null;
+      const voiceSessionTransition = nextPolicy?.voiceSessionId !== undefined
+        && previousPolicy?.memoryMode !== "session_only"
+        && (() => {
+          const expected = {
+            ...(previousPolicy ?? {}),
+            memoryMode: nextPolicy.memoryMode,
+            nativeCheckpointPolicy: nextPolicy.nativeCheckpointPolicy,
+            source: previousPolicy?.source ?? nextPolicy.source,
+            voiceSessionId: nextPolicy.voiceSessionId,
+          };
+          if (nextPolicy.memoryMode === "session_only") delete expected.memoryTools;
+          return canonicalJsonStringify(expected) === canonicalJsonStringify(nextPolicy);
+        })();
+      if (canonicalJsonStringify(previousPolicy) !== canonicalJsonStringify(nextPolicy)
+        && !voiceSessionTransition) {
+        throw new ChatConflictError(chatId, Number(current.revision));
+      }
       if (!run.context?.agent && (current.bound_driver_kind !== run.driverKind || current.bound_instance_id !== run.instanceId)) {
         throw new ChatProviderInstanceLockedError(chatId);
       }
@@ -1339,6 +1364,7 @@ export class ChatRepository {
         history_boundary_seq: run.historyBoundarySeq,
         context_snapshot: run.context ? jsonb(run.context) : null,
         capability_snapshot: jsonb(run.capabilitySnapshot),
+        run_policy: run.runPolicy ? jsonb(run.runPolicy) : null,
         created_at: run.createdAt,
         updated_at: run.updatedAt,
       }).execute();
@@ -1484,7 +1510,10 @@ export class ChatRepository {
     chatId: string;
     runId: string;
     approvalId: string;
-  }): Promise<Extract<CanonicalChatRunActivity, { type: "approval.requested" }> | null> {
+  }): Promise<(Extract<CanonicalChatRunActivity, { type: "approval.requested" }> & {
+    capabilitySnapshot?: CanonicalChatRun["capabilitySnapshot"];
+    runPolicy?: CanonicalChatRun["runPolicy"];
+  }) | null> {
     return this.runLifecycle.getPendingApproval(ownerInput, input);
   }
 
@@ -1495,6 +1524,8 @@ export class ChatRepository {
     schemaVersion: number;
     executionRootFingerprint: string | null;
     includeInterrupted?: boolean;
+    unheardResponses?: readonly string[];
+    sessionOnly?: boolean;
   }): Promise<{ schemaVersion: number; state: unknown; executionRootFingerprint?: string } | null> {
     return this.runLifecycle.getLatestAdapterStateForChat(ownerInput, input);
   }

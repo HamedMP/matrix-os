@@ -1,3 +1,4 @@
+import { createCatalogReadinessCache } from "./catalog-readiness-cache.js";
 import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
@@ -39,6 +40,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { unavailableInstance } from "./configured-harness-catalog.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -519,13 +521,32 @@ export function createChatProviderCatalogService(options: {
     principal: RequestPrincipal,
   ) => Promise<CodingModelCatalogProjection | null>;
   invalidateCodingModelCatalog?: (principal: RequestPrincipal) => void;
+  /**
+   * Per-owner reuse window for clean reads. Off by default: a plain read must
+   * reflect a changed credential context at once. Readers that only need
+   * route availability (voice readiness) opt in; one read fans out to every
+   * provider CLI and runtime probe, ~10 s on a slow host, and concurrent
+   * opted-in readers share a single in-flight read.
+   */
+  cacheTtlMs?: number;
+  /** Build a bounded coding-harness view for latency-sensitive readiness. */
+  preferredCodingProviderId?: string;
 }): ChatProviderCatalogService {
+  const nowMs = () => (options.now?.() ?? new Date()).getTime();
+  // Matrix funding must be re-observed on every read, even with readiness reuse enabled.
+  const reuseReadiness = !options.aiProviderSource && (options.cacheTtlMs ?? 0) > 0;
+  const readinessCache = createCatalogReadinessCache<CanonicalProviderCatalog>({
+    ttlMs: reuseReadiness ? options.cacheTtlMs ?? 0 : 0, now: nowMs,
+    usable: (catalog) => catalog.instances.some((instance) => instance.defaultSelection
+      && validateChatProviderSelection({ catalog, selection: instance.defaultSelection }).ok),
+  });
+
   // Project one current AI observation per catalog read. Explicit refresh used
   // to discard its receipt, then take a second sequential funded observation.
   // Keep refresh mode local to this call; never cache owner/funding authority.
   async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
-    const scope = chatCatalogDiscoveryScope(selection);
+    const scope = chatCatalogDiscoveryScope(selection ?? (options.preferredCodingProviderId === "codex" ? { instanceId: "codex_default", model: "unused" } : undefined));
     const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
@@ -537,7 +558,7 @@ export function createChatProviderCatalogService(options: {
       }
     }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.coding.length > 0 ? options.codingProviders.listProviders(principal, options.preferredCodingProviderId ? [options.preferredCodingProviderId] : undefined) : Promise.resolve([]),
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
       options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
@@ -578,7 +599,9 @@ export function createChatProviderCatalogService(options: {
           console.warn("[chat-providers] Coding model catalog unavailable");
         }
       }
-      return codingInstance(provider, skills, projectedCatalog);
+      const projected = codingInstance(provider, skills, projectedCatalog);
+      return projected && options.codingModelCatalogSource && projectedCatalog === null && projected.driverKind === "codex"
+        ? unavailableInstance(projected, "runtime_unavailable") : projected;
     }));
     for (const instance of projectedInstances) {
       if (instance === null) continue;
@@ -684,12 +707,14 @@ export function createChatProviderCatalogService(options: {
       for (const source of Object.values(options.systemRuntimeSources ?? {})) {
         source?.invalidate?.();
       }
-      return readCatalog(principal, readOptions, true);
+      return reuseReadiness && !readOptions ? readinessCache.refresh(principal.userId, () => readCatalog(principal)) : readCatalog(principal, readOptions, true);
     },
     getCatalog(principal, selection, readOptions) {
+      if (reuseReadiness && !selection && !readOptions) return readinessCache.get(principal.userId, () => readCatalog(principal));
       return readCatalog(principal, readOptions, false, selection);
     },
   };
+
   return service;
 }
 
@@ -701,6 +726,14 @@ export interface ProviderSelectionRequirements {
   approvals?: boolean;
   userInput?: boolean;
   worktree?: boolean;
+  /** Voice conversation-only runs cannot enter coding or tool-capable harnesses. */
+  voiceConversationOnly?: boolean;
+  /** Server-owned qualification, not a client grant. Admission also verifies the loaded adapter. */
+  qualifiedPolicy?: import("@matrix-os/contracts").CanonicalExecutionPolicy;
+}
+
+export function voiceProviderSelectionRequirements(): ProviderSelectionRequirements {
+  return { voiceConversationOnly: true };
 }
 
 type ProviderSelectionValidation =
@@ -790,6 +823,25 @@ export function validateChatProviderSelection(input: {
   const model = instance.models.find((candidate) => candidate.id === selection.data.model);
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+  }
+  // A conversation-only frozen policy is the pinned self-enforcing floor, not
+  // a qualification: it grants no tools, so it must not bypass the tool-less
+  // route check below and admit a tool-capable Provider to a voice route.
+  const qualifiedPolicy = input.requirements?.qualifiedPolicy;
+  const qualifiedGrant = qualifiedPolicy !== undefined
+    && qualifiedPolicy.actionMode !== "conversation_only"
+    && qualifiedPolicy.tools.length > 0;
+  if (input.requirements?.voiceConversationOnly && !qualifiedGrant) {
+    const driver = input.catalog.drivers.find((candidate) => candidate.kind === instance.driverKind);
+    if (driver?.capabilityClass !== "system_agent"
+      || model.supportsToolUse
+      || instance.supports.tools.length > 0) {
+      return selectionError(
+        "capability_mismatch",
+        "The selected Provider is not eligible for a voice conversation.",
+        ["select_provider"],
+      );
+    }
   }
   if (!optionsMatch(selection.data, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

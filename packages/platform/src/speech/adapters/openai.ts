@@ -1,11 +1,24 @@
 import { z } from "zod/v4";
-import { SPEECH_MAX_TRANSCRIPT_CHARS, type SpeechMediaType } from "@matrix-os/contracts";
+import {
+  SPEECH_MAX_SYNTHESIS_AUDIO_BYTES,
+  SPEECH_MAX_TRANSCRIPT_CHARS,
+  type SpeechMediaType,
+} from "@matrix-os/contracts";
 
 const TRANSCRIPTIONS_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions";
+const SPEECH_ENDPOINT = "https://api.openai.com/v1/audio/speech";
 const DEFAULT_TIMEOUT_MS = 55_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 128 * 1024;
 const ModelSchema = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const ResponseSchema = z.object({ text: z.string().max(SPEECH_MAX_TRANSCRIPT_CHARS) }).passthrough();
+const LanguageHintsSchema = z.array(z.string().max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}$/)).max(8);
+
+/** Shared by admission and dispatch so capability never promises an unsupported field. */
+export function openAiTranscriptionLanguageField(model: string): "languages[]" | "language" | null {
+  if (model === "gpt-transcribe") return "languages[]";
+  if (model === "whisper-1" || /^gpt-4o-(?:mini-)?transcribe(?:-\d{4}-\d{2}-\d{2})?$/.test(model)) return "language";
+  return null;
+}
 
 export type SpeechAdapterErrorCode =
   | "misconfigured"
@@ -32,6 +45,109 @@ export interface FileTranscriptionInput {
 export interface FileTranscriptionAdapter {
   readonly id: string;
   transcribe(input: FileTranscriptionInput): Promise<{ text: string }>;
+}
+
+export interface SpeechSynthesisAdapter {
+  readonly id: string;
+  synthesize(input: { text: string; signal: AbortSignal }): Promise<Uint8Array>;
+  /** Real incremental provider PCM, never a rechunked completed payload. */
+  stream?(input: { text: string; signal: AbortSignal }): AsyncIterable<Uint8Array>;
+}
+
+/** Abort races also bound fake/custom readers that do not honor fetch's signal. */
+async function readSpeechChunk(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal) {
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try { return await Promise.race([reader.read(), aborted]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+}
+
+export function createOpenAiSpeechSynthesisAdapter(options: {
+  apiKey: string;
+  model: string;
+  voice: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}): SpeechSynthesisAdapter {
+  if (options.apiKey.trim().length < 16 || !ModelSchema.safeParse(options.model).success
+    || !/^[A-Za-z0-9_-]{1,64}$/.test(options.voice)) {
+    throw new SpeechAdapterError("misconfigured", "Speech synthesis adapter is misconfigured");
+  }
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 65_000) {
+    throw new SpeechAdapterError("misconfigured", "Speech adapter limits are invalid");
+  }
+  async function* stream(input: { text: string; signal: AbortSignal }): AsyncGenerator<Uint8Array> {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const local = new AbortController();
+    const signal = AbortSignal.any([input.signal, timeout, local.signal]);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let finished = false;
+    try {
+      signal.throwIfAborted();
+      const response = await fetchImpl(SPEECH_ENDPOINT, {
+        method: "POST", redirect: "error",
+        headers: { authorization: `Bearer ${options.apiKey}`, "content-type": "application/json" },
+        // `stream_format: "audio"` pins the raw-bytes chunked stream; an SSE
+        // response would deliver event text this reader must not parse as PCM.
+        body: JSON.stringify({ model: options.model, voice: options.voice, input: input.text, response_format: "pcm", stream_format: "audio" }),
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        if (response.body) startBestEffortCleanup(() => response.body!.cancel());
+        throw new SpeechAdapterError("request_failed", "Synthesis request failed");
+      }
+      reader = response.body.getReader();
+      let total = 0;
+      let carry: number | undefined;
+      for (;;) {
+        const next = await readSpeechChunk(reader, signal);
+        if (next.done) break;
+        total += next.value.byteLength;
+        if (total > SPEECH_MAX_SYNTHESIS_AUDIO_BYTES) throw new SpeechAdapterError("invalid_response", "Synthesis response exceeded its limit");
+        let offset = 0;
+        if (carry !== undefined && next.value.byteLength > 0) {
+          yield new Uint8Array([carry, next.value[0]!]);
+          carry = undefined;
+          offset = 1;
+        }
+        const evenEnd = offset + Math.floor((next.value.byteLength - offset) / 2) * 2;
+        for (; offset < evenEnd; offset += 65_536) {
+          signal.throwIfAborted();
+          yield next.value.slice(offset, Math.min(offset + 65_536, evenEnd));
+        }
+        if (evenEnd < next.value.byteLength) carry = next.value[evenEnd];
+      }
+      signal.throwIfAborted();
+      if (total < 2 || carry !== undefined) throw new SpeechAdapterError("invalid_response", "Synthesis response was invalid");
+      finished = true;
+    } catch (error: unknown) {
+      if (input.signal.aborted) throw new SpeechAdapterError("cancelled", "Synthesis was cancelled");
+      if (timeout.aborted) throw new SpeechAdapterError("timeout", "Synthesis timed out");
+      if (error instanceof SpeechAdapterError) throw error;
+      throw new SpeechAdapterError("request_failed", "Synthesis request failed");
+    } finally {
+      local.abort();
+      if (reader) {
+        if (!finished) startBestEffortCleanup(() => reader!.cancel());
+        reader.releaseLock();
+      }
+    }
+  }
+  return {
+    id: "openai-speech", stream,
+    async synthesize(input) {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream(input)) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    },
+  };
 }
 
 function startBestEffortCleanup(cleanup: () => Promise<void>): void {
@@ -95,16 +211,19 @@ export function createOpenAiFileTranscriptionAdapter(options: {
     throw new SpeechAdapterError("misconfigured", "Speech adapter limits are invalid");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
+  const languageField = openAiTranscriptionLanguageField(options.model);
   return {
     id: "openai-file",
     async transcribe(input) {
       if (input.signal.aborted) {
         throw new SpeechAdapterError("cancelled", "Transcription was cancelled");
       }
-      if (input.languageHints && input.languageHints.length > 0) {
+      const hints = LanguageHintsSchema.safeParse(input.languageHints ?? []);
+      if (!hints.success || (hints.data.length > 0 && !languageField)
+        || (languageField === "language" && hints.data.length > 1)) {
         throw new SpeechAdapterError(
           "unsupported_options",
-          "Language hints require a validated adapter contract",
+          "Language hints are unsupported",
         );
       }
       const deadlineSignal = AbortSignal.timeout(timeoutMs);
@@ -124,6 +243,11 @@ export function createOpenAiFileTranscriptionAdapter(options: {
         const form = new FormData();
         form.set("model", options.model);
         form.set("file", new Blob([Uint8Array.from(input.audio)], { type: input.mediaType }), "recording.wav");
+        if (languageField) {
+          // Voice-session locales can include a region; use the base input
+          // language accepted by both API generations, never both fields.
+          for (const hint of hints.data) form.append(languageField, hint.split("-")[0]!.toLowerCase());
+        }
         let response: Response;
         try {
           response = await fetchImpl(TRANSCRIPTIONS_ENDPOINT, {

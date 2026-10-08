@@ -81,7 +81,7 @@ export default function RootLayout({
     </html>
   );
 
-  if (selfHostedMode) {
+  if (selfHostedMode || process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1") {
     return renderDocument(false, (
       <OrganizationStateProvider value={{ status: "none", organizationId: null }}>
         {app}

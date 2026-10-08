@@ -34,6 +34,16 @@ export interface NoteInput {
   tags?: string[] | string | null;
 }
 
+export function shouldApplyExternalContent(
+  previousNoteId: string | null,
+  noteId: string,
+  noteContent: string,
+  editorMarkdown: string,
+): boolean {
+  if (previousNoteId?.startsWith("note-") && !noteId.startsWith("note-")) return false;
+  return previousNoteId !== noteId || editorMarkdown !== noteContent;
+}
+
 let sequence = 0;
 
 function nextIsoTimestamp(): string {

@@ -5,6 +5,7 @@ import {
   CanonicalChatQueuedTurnSchema,
   CanonicalChatRequestIdSchema,
   CanonicalChatRunIdSchema,
+  CanonicalChatRunPolicySchema,
   CanonicalChatTurnIdSchema,
   CanonicalOwnerScopeSchema,
   type CanonicalChatMessage,
@@ -59,6 +60,18 @@ export type BegunQueuedTurnSteer =
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
   return text?.type === "text" ? text.text.slice(0, 280) : null;
+}
+
+/**
+ * Steered work executes inside the target Run, so the queued turn's immutable
+ * memory policy must match the Run's exactly. An absent policy is "ordinary";
+ * a session-only turn may never join an ordinary Run's memory context (or the
+ * reverse). Corrupt stored policy fails the steer rather than skipping it.
+ */
+function policyMemoryMode(runPolicy: unknown): "ordinary" | "session_only" {
+  if (runPolicy === null || runPolicy === undefined) return "ordinary";
+  const value = typeof runPolicy === "string" ? JSON.parse(runPolicy) : runPolicy;
+  return CanonicalChatRunPolicySchema.parse(value).memoryMode;
 }
 
 export class ChatSteeringRepository {
@@ -216,6 +229,9 @@ export class ChatSteeringRepository {
         ? JSON.parse(run.capability_snapshot) as { steering?: unknown }
         : run.capability_snapshot as { steering?: unknown };
       if (capability.steering !== "same_run") {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
+      if (policyMemoryMode(queued.run_policy) !== policyMemoryMode(run.run_policy)) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
       const parts = CanonicalChatQueuedTurnSchema.shape.parts.parse(
