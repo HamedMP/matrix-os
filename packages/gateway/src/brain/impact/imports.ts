@@ -101,3 +101,130 @@ function firstExisting(base: string, files: ReadonlySet<string>): string | null 
   }
   return candidates.find((candidate) => files.has(candidate)) ?? null;
 }
+
+function exportTargets(pkg: WorkspacePackage, subpath: string): readonly string[] {
+  const exports = pkg.exports!;
+  const exact = exports.get(subpath);
+  if (exact !== undefined) return exact;
+  for (const [key, targets] of exports) {
+    const star = key.indexOf("*");
+    if (star === -1) continue;
+    const prefix = key.slice(0, star);
+    const suffix = key.slice(star + 1);
+    if (subpath.length < key.length - 1 || !subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+    const middle = subpath.slice(prefix.length, subpath.length - suffix.length);
+    return targets.map((target) => target.replace("*", middle));
+  }
+  return [];
+}
+
+function resolvePackage(
+  specifier: string, packages: readonly WorkspacePackage[], files: ReadonlySet<string>,
+): string | null {
+  const pkg = packages.find((item) => specifier === item.name || specifier.startsWith(`${item.name}/`));
+  if (pkg === undefined) return null;
+  const subpath = `.${specifier.slice(pkg.name.length)}`;
+  if (pkg.exports !== null) {
+    for (const target of exportTargets(pkg, subpath)) {
+      const found = firstExisting(target, files);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  const base = subpath === "." ? pkg.main ?? joinRepo(pkg.root, "index") : joinRepo(pkg.root, subpath);
+  return base === null ? null : firstExisting(base, files);
+}
+
+/**
+ * The repo file a specifier in `from` names, or null. `packages` must be ordered longest name first so a nested name
+ * wins over its prefix.
+ */
+export function resolveSpecifier(
+  from: string, specifier: string, files: ReadonlySet<string>, packages: readonly WorkspacePackage[],
+): string | null {
+  if (specifier === "." || specifier === ".." || specifier.startsWith("./") || specifier.startsWith("../")) {
+    const base = joinRepo(posix.dirname(from), specifier);
+    return base === null ? null : firstExisting(base, files);
+  }
+  return resolvePackage(specifier, packages, files);
+}
+
+export function createImportGraph(): ImportGraph {
+  return { importers: new Map(), edges: 0, capped: false };
+}
+
+/** Adds the importer -> target edge of each grep match; stops adding (capped) at maxEdges distinct edges. */
+export function addImports(
+  graph: ImportGraph, matches: Iterable<{ readonly path: string; readonly text: string }>,
+  files: ReadonlySet<string>, packages: readonly WorkspacePackage[], maxEdges: number,
+): void {
+  for (const match of matches) {
+    const specifier = specifierOf(match.text);
+    const target = specifier === null ? null : resolveSpecifier(match.path, specifier, files, packages);
+    if (target === null || target === match.path) continue;
+    const set = graph.importers.get(target) ?? new Set<string>();
+    if (set.has(match.path)) continue;
+    if (graph.edges >= maxEdges) {
+      graph.capped = true;
+      return;
+    }
+    set.add(match.path);
+    graph.importers.set(target, set);
+    graph.edges += 1;
+  }
+}
+
+/** Files found per import depth before the dependents cap; depth2 is null when only depth 1 was asked for. */
+export type ImpactDependentTotals = BrainImpactDependentTotals;
+
+export interface ImpactDependentsFound {
+  readonly dependents: readonly BrainImpactDependent[]; readonly totals: ImpactDependentTotals;
+  readonly capped: boolean;
+}
+
+interface Ranked { readonly path: string; readonly depth: 1 | 2; readonly via: string; count: number }
+
+const byRank = (a: Ranked, b: Ranked): number => b.count - a.count || (a.path < b.path ? -1 : 1);
+
+/** One ring: each importer of `ring` that is not changed and not seen, with how many files of `ring` it imports. */
+function nextRing(
+  graph: Pick<ImportGraph, "importers">, ring: readonly string[], changed: ReadonlySet<string>,
+  seen: Map<string, Ranked>, depth: 1 | 2,
+): Ranked[] {
+  const found: Ranked[] = [];
+  for (const target of ring) {
+    for (const importer of graph.importers.get(target) ?? []) {
+      if (changed.has(importer)) continue;
+      const item = seen.get(importer);
+      if (item === undefined) {
+        const added: Ranked = { path: importer, depth, via: target, count: 1 };
+        seen.set(importer, added);
+        found.push(added);
+      } else if (item.depth === depth) {
+        item.count += 1;
+      }
+    }
+  }
+  return found.sort(byRank);
+}
+
+/**
+ * Files importing a changed file (depth 1) and files importing those (depth 2), never a changed file itself, ranked by
+ * depth, then by how many files of the ring before they import (changed files for depth 1, depth-1 files for depth 2),
+ * then by path. `targets` are the importable changed paths (head, deleted and renamed-from paths). `via` is the first
+ * target in path order for depth 1 and the best-ranked depth-1 file for depth 2. Work is bounded by the graph's edges.
+ */
+export function findDependents(
+  graph: Pick<ImportGraph, "importers">, targets: readonly string[], changed: ReadonlySet<string>, depth: 1 | 2,
+  max: number,
+): ImpactDependentsFound {
+  const seen = new Map<string, Ranked>();
+  const first = nextRing(graph, [...new Set(targets)].sort(), changed, seen, 1);
+  const second = depth === 2 ? nextRing(graph, first.map((item) => item.path), changed, seen, 2) : [];
+  const all = [...first, ...second];
+  return {
+    dependents: all.slice(0, max).map((item) => ({ path: item.path, depth: item.depth, via: item.via })),
+    totals: { depth1: first.length, depth2: depth === 2 ? second.length : null },
+    capped: all.length > max,
+  };
+}
