@@ -113,3 +113,112 @@ function advance(cursor: BrainGithubCursor, updatedAt: string, number: number, p
   if (cursor.done.length < GITHUB_LIMITS.doneMax) return { since: cursor.since, page: cursor.page, done: [...cursor.done, number] };
   return skipSecond(cursor, page);
 }
+
+export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAdapter<BrainGithubSourceConfig> {
+  let rows: ReturnType<typeof githubConditionalRows> | null = null;
+  const pending: { key: string; validators: BrainGithubValidators }[] = [];
+  const client = deps.createClient({
+    lookup: (key) => rows === null ? Promise.resolve(null) : rows.lookup(key),
+    remember: (key, validators) => {
+      if (pending.length < GITHUB_LIMITS.conditionalRowsPerSource) pending.push({ key, validators });
+    },
+  });
+
+  async function readItem(
+    context: BrainSourceReadContext<BrainGithubSourceConfig>, doc: GithubDocumentContext, issue: GithubIssue,
+  ): Promise<{ ok: true; documents: GithubItemDocuments | null } | { ok: false; code: BrainSourceErrorCode; retryAfterSeconds?: number }> {
+    const isPull = issue.pull_request !== undefined;
+    const include = context.config.include;
+    if (isPull ? !include.pullRequests : !include.issues) return { ok: true, documents: null };
+    if (!isPull) {
+      const built = issueDocument(doc, issue);
+      const notices: BrainSourceNotice[] = built.truncated ? ["body_truncated"] : [];
+      return { ok: true, documents: { upserts: [built.upsert], deletions: [], notices, skipped: 0 } };
+    }
+    const result = await readPullRequest({ kysely: deps.kysely, client, doc, context, issue });
+    // A pull request that vanished between the listing and its reads is passed over, not retried forever.
+    if (!result.ok && result.code === "remote_not_found") return { ok: true, documents: null };
+    return result;
+  }
+
+  return {
+    kind: "github",
+    async readPage(context) {
+      if (githubExternalRef(context.config.repo) !== context.externalRef) return fail("config_invalid");
+      const doc: GithubDocumentContext = { externalRef: context.externalRef, repo: context.config.repo };
+      const stored = context.cursor === null ? null : decodeGithubCursor(context.cursor);
+      if (context.cursor !== null && stored === null) return fail("cursor_invalid");
+      let cursor: BrainGithubCursor = stored ?? { since: initialSince(context.config, context.now()), page: 1, done: [] };
+      const startedAt = context.now().getTime();
+      const conditional = githubConditionalRows(deps.kysely, context.scope, context.sourceId);
+      rows = conditional;
+      pending.length = 0;
+      if (context.cursor !== null && client.mode === "token") await conditional.confirm(hashCursor(context.cursor));
+      const request = { since: cursor.since, page: cursor.page };
+      const listing = await client.read({ kind: "issues", ...request, perPage: GITHUB_LIMITS.listPerPage }, context.signal);
+      if (!listing.ok) return fail(listing.code, listing.retryAfterSeconds);
+      const page = new PageCollector(context.limits);
+      if ("notModified" in listing) {
+        page.notice("not_modified");
+        const nextCursor = context.cursor ?? encodeGithubCursor(cursor);
+        return { ok: true, page: { upserts: [], deletions: [], nextCursor, caughtUp: true, skipped: 0, notices: page.notices } };
+      }
+      const parsed = GithubIssueListSchema.safeParse(listing.data);
+      if (!parsed.success) return fail("provider_output_invalid");
+      const full = listing.hasMore || parsed.data.length >= GITHUB_LIMITS.listPerPage;
+      const callsLimit = GITHUB_LIMITS.callsPerPage[client.mode];
+      let calls = 1;
+      let items = 0;
+      let stopped = false;
+      let progressed = false;
+      for (const issue of parsed.data) {
+        const updatedAt = toGithubTime(Date.parse(issue.updated_at));
+        if (updatedAt < cursor.since || (updatedAt === cursor.since && cursor.done.includes(issue.number))) continue;
+        // Children already written on earlier pages, while the pull request has not changed since.
+        const skip = cursor.open?.number === issue.number && cursor.open.updatedAt === updatedAt ? cursor.open.written : 0;
+        const cost = issue.pull_request !== undefined && context.config.include.pullRequests ? pullRequestCalls(context.config) : 0;
+        const overBudget = items >= GITHUB_LIMITS.itemsPerPage || calls + cost > callsLimit
+          || context.now().getTime() - startedAt > GITHUB_LIMITS.pageSoftBudgetMs;
+        if (context.signal.aborted || (items > 0 && overBudget)) {
+          stopped = true;
+          break;
+        }
+        const item = await readItem(context, doc, issue);
+        if (!item.ok) {
+          if (page.empty) return fail(item.code, item.retryAfterSeconds);
+          stopped = true;
+          break;
+        }
+        calls += cost;
+        items += 1;
+        if (item.documents === null) page.skipped += 1;
+        const added = item.documents === null ? DONE : page.add(item.documents, skip);
+        if (added !== null && !added.done) {
+          // Too big for one page: the watermark stays before it and the cursor keeps it open.
+          const open = { number: issue.number, updatedAt, written: added.written };
+          cursor = { since: cursor.since, page: cursor.page, done: cursor.done, open };
+        }
+        if (added === null || !added.done) {
+          stopped = true;
+          break;
+        }
+        cursor = advance(cursor, updatedAt, issue.number, page);
+        progressed = true;
+      }
+      if (!stopped && full && !progressed) {
+        // Every item on this page is tied at the watermark and already applied: look at the next page of ties.
+        cursor = cursor.page < GITHUB_LIMITS.tiePagesMax
+          ? { since: cursor.since, page: cursor.page + 1, done: cursor.done } : skipSecond(cursor, page);
+      }
+      const caughtUp = !stopped && !full;
+      const nextCursor = encodeGithubCursor(cursor);
+      if (caughtUp && pending.length > 0 && cursor.since === request.since && cursor.page === request.page) {
+        await conditional.persist(pending, hashCursor(nextCursor), nextCursor === context.cursor, context.now());
+      }
+      return {
+        ok: true,
+        page: { upserts: page.upserts, deletions: page.deletions, nextCursor, caughtUp, skipped: page.skipped, notices: page.notices },
+      };
+    },
+  };
+}
