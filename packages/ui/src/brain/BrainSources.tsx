@@ -7,7 +7,9 @@ import {
   BRAIN_RECEIPTS_SHOWN, BRAIN_SOURCE_KIND_LABELS, brainDay, brainNextActionText, brainSyncText,
 } from "./brain-format.js";
 import type { BrainJobView, BrainSourceView } from "./brain-types.js";
-import { BrainBadge, BrainError, BrainJobProgress, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import {
+  BrainBadge, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
+} from "./brain-ui.js";
 import { BrainReceipts, BrainRepositoryCard } from "./BrainRepositoryCard.js";
 import { BrainSourceConnect } from "./BrainSourceConnect.js";
 import {
@@ -47,7 +49,11 @@ function OtherSources({ api, projectId, active }: Pick<BrainScreenProps, "api" |
           const others = view.items.filter((source) => source.kind !== "git");
           return (
             <div className="grid gap-3">
-              {others.length === 0 ? <p className="text-sm text-muted-foreground">No other sources yet.</p> : (
+              {others.length === 0 ? (
+                <BrainEmpty title="No other sources yet.">
+                  Connect one below to add its documents to this project's brain.
+                </BrainEmpty>
+              ) : (
                 <ul aria-label="Connected sources" className="grid gap-3">
                   {others.map((source) => (
                     <SourceRow key={source.sourceId} api={api} projectId={projectId} source={source} active={active}

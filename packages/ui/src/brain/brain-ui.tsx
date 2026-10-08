@@ -61,12 +61,12 @@ export function BrainLoading({ label }: { readonly label: string }) {
   );
 }
 
-/** An empty state: icon, headline, and (children) what to do next. */
+/** An empty state: a quiet icon, the headline and what to do next. */
 export function BrainEmpty({ title, children }: { readonly title: string; readonly children?: ReactNode }) {
   return (
     <div data-slot="brain-empty" className={`flex items-start gap-3 p-4 ${BRAIN_TONE.fill} ${BRAIN_TYPE.label}`}>
-      <Inbox className={`mt-0.5 size-5 shrink-0 ${BRAIN_TONE.secondary}`} aria-hidden="true" />
-      <div className="min-w-0">
+      <Inbox className={`mt-0.5 size-4 shrink-0 ${BRAIN_TONE.secondary}`} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
         <p className={`font-semibold ${BRAIN_TYPE.callout}`}>{title}</p>
         {children && <div className={`mt-1.5 ${BRAIN_TONE.secondary}`}>{children}</div>}
       </div>

@@ -179,7 +179,9 @@ describe("Connect a source", () => {
       sourceOptions: vi.fn(async () => ({ kind: "matrix_files", nextCursor: "c2", items: roots })),
       connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
     });
-    expect(await screen.findByText("No other sources yet.")).toBeTruthy();
+    const empty = (await screen.findByText("No other sources yet.")).closest(".border-dashed");
+    expect(empty?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    expect(empty).toHaveTextContent(/Connect one below/);
     const kind = screen.getByRole("combobox", { name: "Kind" });
     expect(within(kind).getAllByRole("option").map((option) => option.textContent)).toEqual([
       "Choose a kind", "GitHub", "Linear", "Matrix files", "Matrix chats (Connect the account in Settings)",

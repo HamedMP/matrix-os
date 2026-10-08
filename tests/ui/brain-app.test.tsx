@@ -53,7 +53,10 @@ describe("BrainApp", () => {
     render(<BrainApp api={fakeBrainApi()} loadProjects={loadProjects} />);
     expect(await screen.findByRole("alert")).toHaveTextContent("You do not have access");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("No projects yet.")).toBeTruthy();
+    const empty = (await screen.findByText("No projects yet.")).closest(".border-dashed");
+    // An empty state is onboarding: an icon, the headline and what to do next.
+    expect(empty?.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+    expect(empty).toHaveTextContent(/Add a project from Files or Terminal/);
   });
 
   it("opens on the project this browser picked last, and remembers a new pick", async () => {
