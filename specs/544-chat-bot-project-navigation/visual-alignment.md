@@ -104,3 +104,7 @@ The user reviewed the actual Main-computer Electron package and requires these c
 - Agent ellipsis Details must open the actual Bot Chat and its Details panel. Rail and pane must share the correctly authenticated canonical client; never weaken the strict client/Chat/Agent fence to accept a cross-owner request.
 
 Repeat focused regressions, production build and exact-head real Electron Main-computer acceptance before returning to Human Review. Signed-out-provider fixture validation must be identified separately from actual Main provider state; do not disconnect owner providers to manufacture a test.
+
+## Ordinary Chat row icon correction — ENG-177 (October 8)
+
+Per the latest design review, ordinary sidebar Chat rows have no leading decorative conversation icon or reserved icon slot, including Pinned, lifecycle sections, Project children, shared Project children and inline rename. Preserve Project hierarchy indentation, folder icons, Agent rabbit avatars, unread/activity indicators and supported trailing actions. Quiet titles reclaim the removed icon and gap width; hover/focus scrolling and action-space behavior stay unchanged. Applicable Web rows already use this icon-free presentation. This explicit correction supersedes the earlier instruction to align Project and Chat icon/text columns.

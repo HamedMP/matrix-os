@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
 import { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference, type RailOrderPreference, type RailSortMode } from "./rail-order";
 
-export function useWorkRailOrder(records: readonly CanonicalChatRecord[], projects: readonly Project[]) {
+export function useWorkRailOrder(records: readonly ChatNavigationRecord[], projects: readonly Project[]) {
   const userId = useConnection(state=>state.userId);
   const host = useConnection(state=>state.platformHost);
   const slot = useConnection(state=>state.runtimeSlot);

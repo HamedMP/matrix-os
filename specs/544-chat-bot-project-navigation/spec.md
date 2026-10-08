@@ -100,3 +100,9 @@ Acceptance includes windowed and maximized Electron pixels, refresh/send list co
 - New recipe and Daily Brief creation require an explicit non-null model selection; every create payload includes it. Deliberate supported Automatic is allowed, while missing intent and loading catalogs cannot submit. Existing saved routes retain their identity.
 - Library metadata failures must preserve ordinary Chats whose authenticated binding resolves to null. Failed unknown bindings remain unresolved; known Bots remain separate with a fallback name when metadata is unavailable.
 - Repeated sidebar/header consumers share bounded authenticated-client summary reads with a common concurrency budget. Cache identity separately from current approval attention so focus/polling does not repeatedly resolve the entire historical Chat list; event/focus refreshes coalesce without losing a newer refresh.
+
+## Project navigation reuse (ENG-177)
+
+Project overview cards filter the shared authenticated navigation projection by stable Project ID or legacy slug, including only explicitly ordinary Chats. A complete snapshot is reused across Project selection and remount without scoped list or per-Chat Bot classification requests. Lean display records do not substitute for canonical detail: selecting a card still opens through the existing authenticated detail and provider admission path.
+
+An explicitly truncated global snapshot retains the bounded Project-scoped history fallback so older Project Chats outside the newest 1,000 global rows remain accessible. Its pending reads and last-good cards are fenced by client, verified navigation authority and Project identity. Transient failures preserve same-scope cards; revocation or authority replacement clears them. Inactive consumers do not start fallback reads, and unknown Bot bindings remain excluded until classified.

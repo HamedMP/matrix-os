@@ -50,8 +50,8 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
       </div>
     </div>
   ) : (
-    <div className={cn("flex min-h-0 flex-1 flex-col pb-5", PROJECT_LANDING_CONTENT_CLASS)}>
-      <div data-slot="chat-project-draft-scroll" className="flex min-h-0 flex-1 flex-col overflow-y-auto"><ChatProviderOnboarding><div className="flex-1" /></ChatProviderOnboarding></div>
+    <div className={cn("flex min-h-0 flex-col pb-5", PROJECT_LANDING_CONTENT_CLASS)}>
+      <div data-slot="chat-project-draft-scroll" className="min-h-0 overflow-y-auto"><ChatProviderOnboarding /></div>
       <div className="shrink-0">{composer}</div>
     </div>
   );
