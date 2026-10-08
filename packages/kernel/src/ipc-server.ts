@@ -32,10 +32,7 @@ import {
   createTranscribeAudioToolHandler,
   type OwnerAudioTranscriber,
 } from "./tools/transcribe-audio.js";
-import {
-  BRAIN_WHY_DESCRIPTION, BRAIN_WHY_INPUT_SHAPE, createBrainWhyToolHandler, type BrainAgentTools,
-} from "./tools/brain-why.js";
-import { brainReadToolDefinitions, type BrainAgentReadTools } from "./tools/brain-read-tools.js";
+import { createBrainIpcTools, type BrainAgentReadTools, type BrainAgentTools } from "./tools/brain-ipc-tools.js";
 import {
   connectServiceHandler,
   callServiceHandler,
@@ -1101,10 +1098,7 @@ export async function createIpcServer(
         ),
       ] : []),
 
-      ...(brainTools ? [tool("brain_why", BRAIN_WHY_DESCRIPTION, BRAIN_WHY_INPUT_SHAPE, createBrainWhyToolHandler(brainTools),
-        { annotations: { readOnlyHint: true } })] : []),
-      ...(brainReadTools ? brainReadToolDefinitions(brainReadTools).map((definition) => tool(definition.name,
-        definition.description, definition.inputShape, definition.handler, { annotations: { readOnlyHint: true } })) : []),
+      ...createBrainIpcTools(tool, brainTools, brainReadTools),
 
       ...(await createWebTools(homePath, tool)),
 
