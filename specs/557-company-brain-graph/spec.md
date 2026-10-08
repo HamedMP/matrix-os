@@ -89,12 +89,12 @@ like one human and scores each pair from these signals:
   held by more than 4 entities give no signal (a common name matches no login or email either). The score is `1 - product(1 - weight)`, at most 0.99.
 - The entity that stays is the email, then the GitHub login, then the side with more stored links. Each suggestion
   names both entities, the `aliasKey` to post, up to 8 pieces of evidence and the counts it would merge (stored links
-  of each side over its merged aliases, and how many entities move).
+  of live documents of each side over its merged aliases, and how many entities move).
 - Never merges by itself. Accepting is `POST entities/:entityId/aliases` with `{ action: "merge", aliasKey }`; a pair
   the owner split is never suggested again; a merged pair stops showing; an unmerged pair shows again.
 - Order: score, then links of both sides, both descending, then suggestion id; keyset paged by a cursor bound to the
-  query. One read scans at most 5,000 person entities, split rows and name and email pairs and ranks at most 500
-  pairs; past a cap the answer says `truncated`.
+  query. One read scans at most 5,000 person entities (those `GET /entities` would list), their split rows and name
+  and email pairs and ranks at most 500 pairs; past a cap the answer says `truncated`.
 - Measured on the matrix-os project graph (30 persons, 20 suggestions): the top committer's four entities
   (`name:hamed`, `name:hamedmp`, `email:hamedmp@users.noreply.github.com`,
   `email:3755031+hamedmp@users.noreply.github.com`) are joined by suggestions scored 0.75 to 0.99.
@@ -110,7 +110,7 @@ zod, `Cache-Control: private, no-store` on every answer, no `app.use`.
 | GET `/timeline` | `entity` (id or ref), `linkTypes` (comma list), `from`, `to` (date or ISO instant), `limit` 1..50 (20), `cursor` | `BrainTimelineView` with freshness |
 | GET `/entities` | `kind`, `q` (case-insensitive prefix of key or name, a spec number or a file name; 200 chars), `limit` 1..50 (20), `cursor` | `BrainEntitiesView`: exact matches first, then newest last seen; merged aliases left out, and so is any entity no live document backs (no link from a live document, no live path ref; the project always lists) |
 | GET `/entities/merge-suggestions` | `limit` 1..50 (20), `cursor` | `{ items, nextCursor, truncated }`, see Person merge suggestions; registered before `/entities/:entityId` |
-| GET `/entities/:entityId` | none | `BrainEntityView`: aliases, seen times over merged aliases, link count (with a file's or folder's changes) capped at 10,000 |
+| GET `/entities/:entityId` | none | `BrainEntityView`: aliases, seen times over merged aliases, link count (links of live documents, with a file's or folder's changes) capped at 10,000 |
 | GET `/entities/:entityId/links` | `hops` 1 or 2, `types`, `direction` out, in or both, `limit` 1..200 (50), `cursor` | `BrainNeighbourhoodView` |
 | POST `/entities/:entityId/aliases` | bodyLimit 2 KiB; `{ action: merge, split or unmerge, aliasKey }` | `BrainEntityView` |
 | POST `/graph/refresh` | bodyLimit 1 KiB; empty or `{}` | `BrainRefreshView` |
