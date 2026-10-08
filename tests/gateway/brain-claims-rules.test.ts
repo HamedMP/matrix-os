@@ -104,3 +104,145 @@ describe("rules on real pull request bodies", () => {
     expect(rows(md("## Decisions", "", "One store per owner."))).toEqual([["decision", null, "high", "One store per owner."]]);
   });
 });
+
+describe("rules decisions under design-note sub-headings", () => {
+  it("keeps a sub-heading's item only when it states a choice (specs 057, 084, 033); own labels and prefixes stay", () => {
+    expect(rows(md("## Key Design Decisions", "", "### Canvas Title Bars",
+      "- Two styles: macOS glass pill (default) and Win98 raised bevel (neumorphic)",
+      "- `isFocused` uses scalar `maxZ` selector to avoid O(n) work per window per store tick",
+      "### Neumorphic Theme System", "- Neumorphic CSS rules use `[data-theme-style=\"neumorphic\"]` selectors in globals.css",
+      "### Stripe Surface", "- Checkout: Stripe Checkout Sessions, `mode: \"subscription\"`.",
+      "- API keys: prefer restricted API keys (`rk_`) per environment and per service where permissions allow it.",
+      "- Do not pass `payment_method_types`; allow dynamic payment methods from Stripe Dashboard configuration.",
+      "- Use Azure Artifact Signing with GitHub OIDC as the primary signer.",
+      "- Folders-inside-packages chosen over package-per-domain.", "- The gateway will own the catalog.",
+      "- Matrix MUST keep a platform-owned runtime catalog.", "- Plans never resize machines.",
+      "- Matrix does not add an extra-runtime item instead of a new subscription.",
+      "- A separate checkout rather than a second item.", "- Decision: one subscription per computer.",
+      "### Source Of Truth", "- **Identity**: Clerk user ID.", "### Middleware unaffected",
+      "The existing `proxy.ts` only protects `/dashboard` and `/admin` routes. `/docs` is public by default.",
+      "### Explicit Decision: No Running Warm Pool in V1", "- Clones start cold.",
+    ), "git_spec")).toEqual([
+      ["decision", "Stripe Surface", "high",
+        "API keys: prefer restricted API keys (`rk_`) per environment and per service where permissions allow it."],
+      ["decision", "Stripe Surface", "high",
+        "Do not pass `payment_method_types`; allow dynamic payment methods from Stripe Dashboard configuration."],
+      ["decision", "Stripe Surface", "high", "Use Azure Artifact Signing with GitHub OIDC as the primary signer."],
+      ["decision", "Stripe Surface", "high", "Folders-inside-packages chosen over package-per-domain."],
+      ["decision", "Stripe Surface", "high", "The gateway will own the catalog."],
+      ["decision", "Stripe Surface", "high", "Matrix MUST keep a platform-owned runtime catalog."],
+      ["decision", "Stripe Surface", "high", "Plans never resize machines."],
+      ["decision", "Stripe Surface", "high", "Matrix does not add an extra-runtime item instead of a new subscription."],
+      ["decision", "Stripe Surface", "high", "A separate checkout rather than a second item."],
+      ["decision", null, "high", "one subscription per computer."],
+      ["decision", "Identity", "high", "Clerk user ID."],
+      ["decision", "Explicit Decision: No Running Warm Pool in V1", "high", "Clones start cold."],
+    ]);
+  });
+
+  it("keeps items placed directly under a Decisions heading, and checks nested sub-headings (specs 107, 093)", () => {
+    expect(rows(md("## Decisions", "", "- Every project owns exactly one terminal workspace backed by one Zellij session.",
+      "### Window Management", "#### Dock", "- Minimized windows render as animated dock icons.", "- We decided on one dock.",
+      "## Risks", "### Storage", "- The disk can fill.",
+    ), "git_spec")).toEqual([
+      ["decision", null, "high", "Every project owns exactly one terminal workspace backed by one Zellij session."],
+      ["decision", "Dock", "high", "We decided on one dock."], ["risk", "Storage", "high", "The disk can fill."],
+    ]);
+  });
+
+  it("never reads open questions or decisions as claims, under any claim section or label", () => {
+    expect(rows(md("## Decisions", "- One pool per owner.", "### Open questions",
+      "- Should we use one pool per owner?", "#### Pools", "- Must pools be shared?", "### Storage",
+      "- We decided on one store.", "## Invariants", "### Open decisions", "- Must the lock be per scope?",
+      "## Deferred scope", "### Open questions", "- Whether invoices land later.", "## Risks",
+      "- **Open questions:** whether the disk fills.", "- **Open question:**", "  - Must the sweep lag?",
+      "- Decision: one sweep per scope.", "## Decisions", "**Open questions:**", "- Should we use one pool per owner?",
+    ), "git_spec")).toEqual([
+      ["decision", null, "high", "One pool per owner."], ["decision", "Storage", "high", "We decided on one store."],
+      ["decision", null, "high", "one sweep per scope."],
+    ]);
+  });
+});
+
+describe("rules structure", () => {
+  it("stops before the git footer and truncation marker, and skips fences, comments, checkboxes and trailers", () => {
+    const message = md("## Invariants", "", "### Deferred scope", "", "Sharing a Private Preview.");
+    const body = `${message}${GIT_TRUNCATION_MARKER}\n\n${FOOTER}`;
+    expect(claimSourceText({ provenance: "git_pr", body })).toBe(message);
+    expect(claimSourceText({ provenance: "git_spec", body })).toBe(body);
+    expect(rows(body)).toEqual([["invariant", "Deferred scope", "high", "Sharing a Private Preview."]]);
+    expect(rows(`${message}\n\n${FOOTER}`, "git_commit").map((row) => row[0])).toEqual(["invariant"]);
+    expect(kinds(`${message}\n\n${FOOTER}`, "manual")).toContain("commitment:Deferred scope");
+    // Code fences, HTML comments, checkboxes, trailers, trivial and process lines.
+    expect(rows(md("## Summary", "", "```md", "## Invariants", "- **Source of truth:** fenced", "```", "",
+      "## Invariants", "<!-- - **Source of truth:** template", "-->", "~~~", "- **Lock/transaction scope:** fenced", "~~~",
+      "- [x] Source of truth: a validation checkbox", "- **Lock/transaction scope:** N/A",
+      "- Greptile 5/5 on the exact head.", "- Real: the only claim.", "Co-authored-by: A <a@example.com>",
+    ))).toEqual([["invariant", null, "medium", "Real: the only claim."]]);
+  });
+
+  it("reads bare headings and label lines; a separator ends a squash entry (e33656d400); literal escapes are text", () => {
+    expect(rows(md("* chore(cli): bump", "", "Invariants", "", "Source of truth:", "The CLI package version.", "",
+      "- Lock/transaction scope: no writes.", "", "---------", "", "* fix(cli): second", "", "Tests:",
+      "- Source of truth: not an invariant."), "git_commit")).toEqual([
+      ["invariant", "Source of truth", "high", "The CLI package version."],
+      ["invariant", "Lock/transaction scope", "high", "no writes."],
+    ]);
+    expect(rows("## Invariants\\n- **Source of truth:** one line with literal escapes")).toEqual([]);
+  });
+
+  it("reads spec decisions and non-goals and kind prefixes anywhere; titles and in-scope headings open nothing", () => {
+    expect(rows(md("# Spec 124", "", "**Decision:** Postgres is the only store for claims.", "", "## Non-goals", "",
+      "- A claims UI (follow-up spec).", "- Organization scopes.", "", "## Summary", "", "- Risk: the sweep may lag.", "",
+      "Follow-up: wire the kernel tool."), "git_spec")).toEqual([
+      ["decision", null, "high", "Postgres is the only store for claims."],
+      ["commitment", "Deferred scope", "medium", "A claims UI (follow-up spec)."],
+      ["invariant", "Deferred scope", "high", "Organization scopes."], ["risk", null, "high", "the sweep may lag."],
+      ["commitment", null, "high", "wire the kernel tool."],
+    ]);
+    // A title, in-scope or bare auth heading opens no section (specs 534, 067, 109, 008).
+    expect(rows(md("# Safe approval details and recorded decisions", "## Problem and scope", "- Presentation only.",
+      "## Goals / Non-Goals", "### Goals", "1. `matrix onboard` interactive flow.", "### Non-Goals",
+      "- **Billing / paid tiers.** v1 is free only.", "## Scope and Decisions", "### In Scope",
+      "- A sanitized golden snapshot.", "### Explicit Decision: No Running Warm Pool in V1", "- Clones start cold.",
+      "## Part B: Multi-Tenant Hackathon Platform (NEW)", "### Authentication", "- Passwordless, phishing-resistant",
+      "## Invariants", "### Authentication", "- Owner sessions only.", "### Scope", "- Ship it.", "## Deferred scope",
+      "### Billing", "- Invoices land later."), "git_spec")).toEqual([
+      ["invariant", "Deferred scope", "high", "**Billing / paid tiers.** v1 is free only."],
+      ["decision", "Explicit Decision: No Running Warm Pool in V1", "high", "Clones start cold."],
+      ["invariant", "Auth source of truth", "high", "Owner sessions only."],
+      ["commitment", "Deferred scope", "medium", "Invoices land later."],
+    ]);
+  });
+
+  it("bounds claims per document and statement length; spans stay exact", () => {
+    const many = md("## Invariants", ...Array.from({ length: 210 }, (_, n) => `- Bullet number ${n} holds.`));
+    const capped = run(many);
+    expect(capped.claims).toHaveLength(50);
+    expect(capped.claimsRejected).toBe(160);
+    // Unlabelled paragraphs wait for the section's end; at most 200 are held.
+    const held = run(md("## Decisions", ...Array.from({ length: 201 }, (_, n) => `\nParagraph ${n} holds.`)));
+    expect([held.claims.length, held.claimsRejected]).toEqual([50, 150]);
+    expect(run(many, "git_pr", 3).claims.map((claim) => claim.statement)).toEqual(
+      ["Bullet number 0 holds.", "Bullet number 1 holds.", "Bullet number 2 holds."]);
+    const long = run(md("## Invariants", `- ${"word ".repeat(300)}\ud83e\udd16`)).claims[0]!;
+    expect(long.statement.length).toBeLessThanOrEqual(1_000);
+    expect(long.quote).toBe(`${"word ".repeat(300)}\ud83e\udd16`);
+    expect(run("").claims).toEqual([]);
+  });
+
+  it("labels from sub-headings and label lines, ignores prose headings, reads CRLF, keeps surrogate pairs whole", () => {
+    const pair = `${"a".repeat(999)}\ud83e\udd16${"b".repeat(998)}\ud83e\udd16c`;
+    const body = md("## Invariants", "### Process table", "- One owner.", "### Non-goals", "- No UI.",
+      `### ${"x".repeat(201)}`, "- **One two three four five six seven:** words.", "**Notes:**", "- A note.",
+      "**Notes:** Stack:", "- Ignored.", "Invariants", "Validation:", "- Ignored too.", `## ${"Invariants ".repeat(20)}`,
+      "- Ignored prose.", "## Invariants\r", `- ${pair}\r`, `- ${"z".repeat(1_001)}`);
+    expect(rows(body)).toEqual([
+      ["invariant", "Process table", "medium", "One owner."], ["invariant", "Deferred scope", "high", "No UI."],
+      ["invariant", null, "medium", "**One two three four five six seven:** words."],
+      ["invariant", "Notes", "medium", "A note."], ["invariant", null, "medium", "a".repeat(999)],
+      ["invariant", null, "medium", "z".repeat(1_000)],
+    ]);
+    expect(run(body).claims.map((claim) => claim.quote.length).slice(-2)).toEqual([1_999, 1_001]);
+  });
+});
