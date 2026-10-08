@@ -208,12 +208,15 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
 
   function launch(job: BrainClaimedJob): void {
     const key = runKey(job.scope, job.jobId);
+    // A new claim of a job this worker still runs (its lease expired and was recovered): the old run lost the job, so
+    // it stops now (its writes are fenced by its claim anyway) and only the new run can be reached by cancel.
+    running.get(key)?.abort("lease_lost");
     const controller = new AbortController();
     running.set(key, controller);
     const task: Promise<void> = runJob(job, controller)
       .catch((error: unknown) => console.error("[brain-jobs] Job run failed:", errorName(error)))
       .finally(() => {
-        running.delete(key);
+        if (running.get(key) === controller) running.delete(key);
         tasks.delete(task);
         if (started) pump();
       });

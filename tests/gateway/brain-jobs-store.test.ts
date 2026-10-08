@@ -121,6 +121,24 @@ describe("brain job store", () => {
     expect((await store.enqueue(scopeA, "proj_a", sync)).created).toBe(true);
   });
 
+  it("fences worker writes by the claim, even when the same worker claims the job again", async () => {
+    await store.enqueue(scopeA, "proj_a", sync);
+    const stale = (await store.claim("owner_a", W, LEASE))!;
+    harness.tick(LEASE + 1);
+    expect(await store.recover("owner_a", 3)).toEqual({ requeued: 1, closed: 0 });
+    const fresh = (await store.claim("owner_a", W, LEASE))!;
+    expect(fresh).toMatchObject({ jobId: stale.jobId, attempts: 2 });
+    expect(await store.heartbeat(stale, W, LEASE, { steps: 9, result: { stale: true } }))
+      .toEqual({ owned: false, cancelRequested: false });
+    expect(await store.finish(stale, W, { status: "failed", errorCode: "x", steps: 9, result: null })).toBe(false);
+    expect(await store.release(stale, W, { steps: 9, result: null })).toBe(false);
+    expect(await store.get(scopeA, fresh.jobId)).toMatchObject({ status: "running", attempts: 2, steps: 0, result: null });
+    expect(await store.heartbeat(fresh, W, LEASE, { steps: 1, result: { n: 1 } }))
+      .toEqual({ owned: true, cancelRequested: false });
+    expect(await store.finish(fresh, W, { status: "succeeded", errorCode: null, steps: 1, result: { n: 1 } })).toBe(true);
+    expect(await store.get(scopeA, fresh.jobId)).toMatchObject({ status: "succeeded", attempts: 2, steps: 1 });
+  });
+
   it("releases a job without counting the claim, keeping the stored result when none is given", async () => {
     await store.enqueue(scopeA, "proj_a", sync);
     const job = (await store.claim("owner_a", W, LEASE))!;

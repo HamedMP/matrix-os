@@ -101,6 +101,30 @@ describe("brain job worker stops", () => {
     expect(w.cancel(scopeA, `job_${"0".repeat(32)}`)).toBe(false);
   });
 
+  it("stops its old run of a job it claims again after the lease expired, and cancels only the new run", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const job = await queue("sync");
+    const signals: AbortSignal[] = [];
+    const w = start({ sync: (context) => {
+      signals.push(context.signal);
+      return blocking(context);
+    } }, { concurrency: 2 });
+    await vi.waitFor(() => expect(signals).toHaveLength(1));
+    // The heartbeats were missed (a stalled database): this worker's next poll recovers the lease and claims it again.
+    harness.tick(60_001);
+    w.wake();
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0]!.reason).toBe("lease_lost");
+    expect(signals[1]!.aborted).toBe(false);
+    expect(await store.get(scopeA, job)).toMatchObject({ status: "running", attempts: 2, steps: 0 });
+    // The old run has ended by now; its end must not drop the new run from cancel.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await store.cancel(scopeA, job);
+    expect(w.cancel(scopeA, job)).toBe(true);
+    expect(await settled(job, "cancelled")).toMatchObject({ attempts: 2, steps: 0, cancelRequested: true });
+    expect(warn).toHaveBeenCalledWith("[brain-jobs] Expired leases: 1 queued again, 0 closed");
+  });
+
   it("ends a busy run whose wait note finds it cancelled or gone, without retrying", async () => {
     const cancelled = await queue("graph_refresh");
     let calls = 0;
