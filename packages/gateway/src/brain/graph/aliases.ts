@@ -61,33 +61,47 @@ async function mergedCount(trx: Trx, scope: BrainScopeKey, entityId: string): Pr
   return Number(row.n);
 }
 
+/** Moves the merged aliases of `aliasId` to `root`, each keeping the entity it came in through (returnCarried). */
+async function carryAliases(trx: Trx, scope: BrainScopeKey, aliasId: string, root: string, at: string): Promise<void> {
+  await trx.updateTable("brain_graph_aliases")
+    .set({ entity_id: root, via_entity_id: sql<string>`coalesce(via_entity_id, entity_id)`, updated_at: at })
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where("entity_id", "=", aliasId).where("state", "=", "merged").execute();
+}
+
 /**
- * Re-decides the automatic alias of each `name:` key (manual and split rows are never touched). An entity holds at
- * most aliasesPerEntity merged aliases, automatic ones too: past that the name stays its own person.
+ * Re-decides the automatic alias of each `name:` key (manual and split rows are never touched). Like a manual merge,
+ * an automatic one carries the name's own aliases along, and they go back to it when it is dropped or moves. An
+ * entity holds at most aliasesPerEntity merged aliases, automatic ones and carried ones too: past that the name stays
+ * its own person.
  */
 export async function reconcileNameAliases(
   trx: Trx, scope: BrainScopeKey, nameKeys: readonly string[], now: Date,
 ): Promise<void> {
+  const at = now.toISOString();
   for (const nameKey of nameKeys) {
     const aliasId = brainEntityId("person", nameKey);
     const existing = await aliases(trx, scope).select(["entity_id", "via_entity_id", "reason", "state"])
       .where("alias_entity_id", "=", aliasId).executeTakeFirst();
     if (existing !== undefined && (existing.state === "split" || existing.reason === "manual")) continue;
     const emails = await emailsSeenWith(trx, scope, nameKey);
+    let target: { readonly id: string; readonly via: string | null } | null = null;
     if (emails.length === 1) {
       const email = brainEntityId("person", emails[0]!);
-      const target = await rootOf(trx, scope, email);
-      const via = target === email ? null : email;
-      if (target === aliasId || (existing?.entity_id === target && existing.via_entity_id === via)) continue;
-      if (existing?.entity_id === target
-        || await mergedCount(trx, scope, target) < BRAIN_GRAPH_LIMITS.aliasesPerEntity) {
-        await writeAlias(trx, scope, `person:${nameKey}`, target, via, "single_email_for_name", now);
-        continue;
-      }
+      const id = await rootOf(trx, scope, email);
+      const via = id === email ? null : email;
+      if (id === aliasId || (existing?.entity_id === id && existing.via_entity_id === via)) continue;
+      target = { id, via };
     }
     if (existing !== undefined) {
       await trx.deleteFrom("brain_graph_aliases").where("owner_id", "=", scope.ownerId)
         .where("scope_id", "=", scope.scopeId).where("alias_entity_id", "=", aliasId).execute();
+      await returnCarried(trx, scope, existing.entity_id, aliasId, at);
+    }
+    if (target !== null && await mergedCount(trx, scope, target.id) + await mergedCount(trx, scope, aliasId) + 1
+      <= BRAIN_GRAPH_LIMITS.aliasesPerEntity) {
+      await carryAliases(trx, scope, aliasId, target.id, at);
+      await writeAlias(trx, scope, `person:${nameKey}`, target.id, target.via, "single_email_for_name", now);
     }
   }
 }
@@ -151,10 +165,7 @@ export async function updateGraphAlias(
   if (Number(counts.n) + (mergedHere ? 0 : 1) > BRAIN_GRAPH_LIMITS.aliasesPerEntity) {
     throw new BrainApiError("brain_capacity");
   }
-  await trx.updateTable("brain_graph_aliases")
-    .set({ entity_id: root.entity_id, via_entity_id: sql<string>`coalesce(via_entity_id, entity_id)`, updated_at: at })
-    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
-    .where("entity_id", "=", alias.entityId).where("state", "=", "merged").execute();
+  await carryAliases(trx, scope, alias.entityId, root.entity_id, at);
   await writeAlias(trx, scope, input.aliasKey, root.entity_id, null, "manual", now);
   return root.entity_id;
 }
