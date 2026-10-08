@@ -50,3 +50,7 @@ Keep display-only local expiry rerenders and canonical admission. Expired histor
 Initial identity-scoped reads, explicit Refresh, connection revalidation and bounded active login/workflow completion keep their existing safe transport and request/revision/identity fences. Only these actual accepted snapshots may trigger their normal workflow capabilities or expanded connection reads. Idle expiry must retain expanded rows, scroll and enabled controls without global busy transitions or secondary network fanout.
 
 Regression evidence must cover fresh successive short-TTL responses, hidden mounted Chat, truthful expiry, one explicit refresh, and stale-identity cancellation. Required production Electron coverage observes idle Settings beyond two complete TTLs and manual Refresh without rearming a timer. Fixture and live QA evidence are separate facts. Deliver ENG-178's implementation PR and a separate public documentation PR; stop at Human Review before Greptile or merge.
+
+### Provider icon contrast
+
+Agents & providers keeps the white upstream OpenCode and Pi artwork on the matching canonical `CODING_AGENT_ARTWORK` background in both appearances, using the shared `HarnessIcon` across Web Canvas, Web Desktop and Electron Desktop. Keep the original shipped assets and other harness icons unchanged. Verify the actual PNG glyph pixels against their rendered background at contrast ≥3 across native/Web light/dark token mappings; transparent padding is excluded from glyph measurements.
