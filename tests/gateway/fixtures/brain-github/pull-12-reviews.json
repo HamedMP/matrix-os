@@ -1,0 +1,5 @@
+[
+  {"id": 501, "user": {"login": "Bob", "id": 15}, "body": "Looks good. This must stay behind the flag.", "state": "APPROVED", "submitted_at": "2026-03-03T11:00:00Z", "html_url": "https://github.com/acme/widgets/pull/12#pullrequestreview-501"},
+  {"id": 502, "user": {"login": "erin", "id": 14}, "body": "", "state": "COMMENTED", "submitted_at": "2026-03-03T11:05:00Z"},
+  {"id": 503, "user": {"login": "erin", "id": 14}, "body": "draft", "state": "PENDING"}
+]
