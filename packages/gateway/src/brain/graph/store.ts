@@ -13,8 +13,8 @@ import { reconcileNameAliases } from "./aliases.js";
 import { deriveBrainGraph, describedFor, quotedPaths } from "./derive.js";
 import { brainEntityId, brainLinkId, personDisplay } from "./ids.js";
 import {
-  BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT, BRAIN_GRAPH_NUDGE_MAX, type BrainEntityDraft, type BrainGraphDatabase,
-  type BrainGraphExecutor, type BrainIdentityPair,
+  BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT, type BrainEntityDraft, type BrainGraphDatabase, type BrainGraphExecutor,
+  type BrainIdentityPair,
 } from "./types.js";
 
 /** Entities a batch may still add before the scope is full; derivation stops (capacity) at zero. */
@@ -134,35 +134,38 @@ async function commitPullRequests(trx: BrainGraphExecutor, scope: BrainScopeKey,
  * Marks outdated (state row kept) the documents that read this one, only when what they read changed: children naming
  * it in a `parent` ref (never itself) when what it describes changed and, for a github_pr, git_commit documents (ids
  * from the scope's git source identity) whose `part_of` link to its pull request disagrees with its `commit` refs.
+ * Each set is one write, never a capped list, so no dependent keeps a stale link once its own row reads as current.
  */
 async function nudgeDependents(
   trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, documentId: string, provenance: string,
   before: readonly string[], after: readonly string[], shas: readonly string[],
 ): Promise<void> {
-  const ids: string[] = [];
+  const outdated = () => trx.updateTable("brain_graph_state").set({ claims_digest: OUTDATED_DIGEST })
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId);
+  const commitLinks = (targets: readonly string[]) => trx.selectFrom("brain_graph_links").select("document_id")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("type", "=", "part_of")
+    .where("ref_kind", "=", "commit").where("to_entity_id", "in", targets);
   if (before.length !== after.length || before.some((entityId) => !after.includes(entityId))) {
-    const children = await trx.selectFrom("brain_document_refs").select("document_id")
-      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "parent")
-      .where("value", "=", documentId).where("document_id", "<>", documentId).limit(BRAIN_GRAPH_NUDGE_MAX).execute();
-    ids.push(...children.map((row) => row.document_id));
+    await outdated().where("document_id", "<>", documentId).where("document_id", "in", trx
+      .selectFrom("brain_document_refs").select("document_id").where("owner_id", "=", scope.ownerId)
+      .where("scope_id", "=", scope.scopeId).where("kind", "=", "parent").where("value", "=", documentId)).execute();
   }
   const watched = [...new Set([...before, ...after])];
-  if (provenance === "github_pr" && watched.length > 0) {
-    const sources = await trx.selectFrom("brain_sources").select("external_ref")
-      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "git")
-      .where("deleted_at", "is", null).limit(1).execute();
-    const wanted = new Set(sources.flatMap((source) => shas.map((sha) => commitDocumentId(source.external_ref, sha))));
-    const linked = await trx.selectFrom("brain_graph_links").select(["document_id", "to_entity_id"])
-      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("type", "=", "part_of")
-      .where("ref_kind", "=", "commit").where("to_entity_id", "in", watched).limit(2 * BRAIN_GRAPH_NUDGE_MAX).execute();
-    const current = new Set(linked.filter((row) => after.includes(row.to_entity_id)).map((row) => row.document_id));
-    ids.push(...[...wanted].filter((id) => !current.has(id)));
-    ids.push(...linked.map((row) => row.document_id).filter((id) => !wanted.has(id)));
-  }
-  if (ids.length === 0) return;
-  await trx.updateTable("brain_graph_state").set({ claims_digest: OUTDATED_DIGEST })
-    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
-    .where("document_id", "in", [...new Set(ids)].slice(0, 2 * BRAIN_GRAPH_NUDGE_MAX)).execute();
+  if (provenance !== "github_pr" || watched.length === 0) return;
+  const sources = await trx.selectFrom("brain_sources").select("external_ref")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "git")
+    .where("deleted_at", "is", null).limit(1).execute();
+  // At most one id per `commit` ref of the pull request (BRAIN_DOCUMENT_REFS_MAX).
+  const wanted = [...new Set(sources.flatMap(({ external_ref: identity }) =>
+    shas.map((sha) => commitDocumentId(identity, sha))))];
+  // Commits linked to the pull request that its commit refs no longer name, then named commits not linked to it.
+  let stale = outdated().where("document_id", "in", commitLinks(watched));
+  if (wanted.length > 0) stale = stale.where("document_id", "not in", wanted);
+  await stale.execute();
+  if (wanted.length === 0) return;
+  let unlinked = outdated().where("document_id", "in", wanted);
+  if (after.length > 0) unlinked = unlinked.where("document_id", "not in", commitLinks(after));
+  await unlinked.execute();
 }
 
 /** Inserts new entities (counted against capacity) and widens first/last seen of existing ones. */
