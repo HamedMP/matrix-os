@@ -11,20 +11,21 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - Opens on Chat (spec 567): tabs Chat, Today, Decisions, Timeline, Search and Sources sit in one row next to the
   project picker, Chat first and in bold. Older ids still open: `ask` is Search, `commitments` and `risks` open
   Decisions on that kind; Decisions switches between decisions, commitments and risks.
-- Chat (`BrainChat.tsx`) is an ordinary Matrix Chat run by the owner's Company Brain Bot, never a second chat
-  system: no stream, request, transcript or composer of its own. It first checks that the project has a source (none:
-  "Connect this project's repository in Sources first."; a brain that is off shows its error). It finds the Bot
-  (`company-brain-bot.ts`; the library lists active Bots only. Bots off, or a 503 from the recipe, Start or thread
-  list calls, reads as not running; none shows a one-time Start card that creates it with no model, so the server
-  picks Automatic, and a request id fixed per recipe version; a Start whose Bot is not listed as active, a replay of
-  one archived since, says it was archived and cannot start here), lists the project's brain chats
-  (`use-brain-threads.ts`, 50 a page, "Show more" pages kept through a reload; on open, on focus, when a thread is
-  created and after every admitted turn the view reports) and hands the surface's chat view a slot
-  (`BrainChatHost.render`) with the empty chat's heading and line. Opening order: the chat this viewer had open last
-  for the project if it is still listed, else the newest, else a draft; the chat it opens is remembered. A draft saves
-  nothing until its first send, which makes one thread however often the view asks, and the slot shows it at once.
-  Rows (`BrainChatList.tsx`) rename and delete through `ChatContextMenu` and the host's `rows`. Narrow screens fold
-  the list behind a "Chats" button, with focus moved in and back. Open in Chat shows the same Chat in the Chat app.
+- Chat (`BrainChat.tsx`) is an ordinary Matrix Chat run by the owner's Company Brain Bot, never a second chat system: no
+  stream, request, transcript or composer of its own. It finds the Bot (`company-brain-bot.ts`; the library lists active
+  Bots only. Bots off, no brain recipe (a gateway with no runtime host lists none), or a 503 from the recipe, Start or
+  thread list calls, reads as not running; none shows a one-time Start card that creates it with no model, so the server
+  picks Automatic, and a request id fixed per recipe version; a Start whose Bot is not listed as active, a replay of one
+  archived since, says it was archived and cannot start here), lists the project's brain chats (`use-brain-threads.ts`,
+  50 a page, "Show more" pages kept through a reload; on open, on focus, when a thread is created and after every
+  admitted turn the view reports) and hands the surface's chat view a slot (`BrainChatHost.render`) with the empty
+  chat's heading and line. Opening order: the chat this viewer had open last for the project if it is still listed, else
+  the newest, else a draft; the chat it opens is remembered. A draft saves nothing until its first send, which makes one
+  thread however often the view asks, and the slot shows it at once. A project with no source shows "Connect this
+  project's repository in Sources first." in place of a new chat, and a brain that is off shows its error there; saved
+  chats still list and open. Rows (`BrainChatList.tsx`) rename and delete through `ChatContextMenu` and the host's
+  `rows`. Narrow screens fold the list behind a "Chats" button, with focus moved in and back. Open in Chat shows the
+  same Chat in the Chat app.
 - View logic only: request order, polling, wording and layout. Every rule about what the brain holds (storage, sync,
   extraction, ranking, merges, budgets) lives in the gateway (`packages/gateway/src/brain/`).
 - Search (once Ask) shows a path's history (the why route) when the question is a repo path: no spaces and a "/" or a file ending,
