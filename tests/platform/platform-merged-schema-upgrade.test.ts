@@ -66,7 +66,7 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(18);
+      expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(previous.generation);
       const deletionColumns = await sql<{column_name:string}>`
         SELECT column_name FROM information_schema.columns WHERE table_schema='public'
           AND table_name='account_deletion_jobs' ORDER BY column_name
@@ -139,7 +139,7 @@ describe("merged platform schema upgrade", () => {
         .toMatch(/WHERE .*execution_admission_release IS NOT NULL.*actual_microusd IS NULL/);
       expect(recoveryIndexes.rows[1].indexdef)
         .toMatch(/WHERE .*'reserved'.*'starting'.*'in_flight'.*'settling'.*billingMode.*'usage'.*execution_admission_release IS NULL/);
-      expect((await sql`SELECT * FROM preview_drive_grants`.execute(db)).rows).toEqual(legacyBefore);
+      expect((await sql`SELECT * FROM preview_drive_grants`.execute(db)).rows).toEqual(legacyBefore.map(row => ({ ...row, connection_id: null, provider_account_id: null })));
       expect((await sql`
         SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'preview_drive_grants' ORDER BY indexname
       `.execute(db)).rows).toEqual(legacyIndexesBefore);

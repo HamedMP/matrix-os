@@ -16,6 +16,7 @@ import {
   type CanonicalChatApprovalDecision,
   type CanonicalSubmitChatInputRequest,
   type CanonicalChatDetailResponse,
+  canonicalChatApprovals,
 } from "@matrix-os/contracts";
 import {
   createChatMentionRequestTracker,
@@ -626,12 +627,15 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       return false;
     }
     try {
+      const approval = canonicalChatApprovals(current).find(item =>
+        item.pending && item.runId === runId && item.approvalId === approvalId);
       await client.submitApproval(
         current.record.chat.id,
         runId,
         approvalId,
         decision,
         requestId(),
+        approval?.actionDigest,
       );
       if (!isCurrent()) return false;
       await loadDetail(current.record.chat.id);

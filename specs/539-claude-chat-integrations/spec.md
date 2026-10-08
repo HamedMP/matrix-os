@@ -96,3 +96,52 @@ fresh Greptile 5/5, and owner runtime testing using the owner's existing Claude
 subscription. A tool checkpoint alone is not a visible Chat continuation pass.
 No provider credentials, OAuth tokens, owner data, or update channel are copied
 between machines. Public-site documentation is outside this support-fix scope.
+
+## Preview Platform and optional approval protocol
+
+Authenticated Preview turn requests mint short-lived body-bound actor proofs.
+Platform grant redemption, inventory, exact-action issuance and execution use
+stored actor/handle/run identity. Only google_drive.list_files with an explicit
+label and maxResults from 1 to 3 is permitted. Account-deletion admission locks
+the signed actor; provider failure consumes the one-use action grant. Nonces and
+grants have TTL cleanup. Machine bearer or unsigned actor headers alone never
+select a personal connection. Owner approvals may omit the new digest.
+
+Action grants bind the selected immutable connection ID and provider account ID
+at issuance. Execution revalidates both IDs, active owner scope and the unchanged
+approved label at provider dispatch; same-label reconnections and legacy unbound
+grants are denied. The actor deletion transaction also holds the run row lock
+through discovery, grant issuance and consumption/provider execution. Revocation
+uses that same lock and marks rows consumed, retaining proof nonce uniqueness
+until the existing expiry. Operations admitted before revocation may finish;
+operations serialized behind revocation are denied.
+
+Signed turn and approval proof expiry is rechecked after admission/row-lock waits
+before issuing new authority; an admitted provider call may finish.
+Generation 17 adds nullable binding columns while preserving the deployed
+generation 16 fingerprint, nonce rows and unrelated owner data.
+Tests cover proof replay/expiry/body binding, transactional grant consumption,
+actor deletion and shared Web/Electron/Mobile optional-digest parity. The runtime
+consumer is deliberately absent in this layer; Preview remains denied until it
+is deployed with the separate run-capability layer and explicit scoped policy.
+
+### Preview endpoint authorization matrix
+
+Every route below is mounted at `/internal/containers/:handle/preview-drive`
+and requires the handle-derived machine bearer plus a current running Preview
+machine record. The bearer supplies transport authentication, not actor authority.
+All request bodies use the shared 4000-byte limit and strict per-action schemas.
+
+| Method and route | Personal account authority | Admission and execution boundary |
+| --- | --- | --- |
+| POST /turn/redeem | Fresh Platform-signed browser actor, Chat and body proof | Current Preview access; actor deletion lock; atomic one-use nonce redemption |
+| POST /discover | Opaque actor/handle/Chat/run grant | Current actor access and deletion lock; Drive inventory/schema only |
+| POST /grants | Run grant and signed browser approval bound to exact action digest | Current actor access and deletion lock; explicit connected label; one-use approval nonce |
+| POST /execute | Run grant and one-use exact action grant | Current actor access and deletion lock; atomic consumption before bounded metadata read; failure still consumes grant |
+| POST /revoke | Exact run grant, handle, Chat and run | Cleanup only; allowed while actor deletion is pending; revokes run and unused action grants |
+
+Machine-only requests, unsigned actor headers, session-wide approvals, other
+services, account management and Custom MCP cannot authorize a Drive read.
+Run grants expire after 35 minutes; action grants after 90 seconds. A recurring
+Platform sweep removes expired rows. Returned metadata remains visible to shared
+Terminal users under the account owner's explicitly accepted test boundary.
