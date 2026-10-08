@@ -63,6 +63,7 @@ import { createBotToolDispatcher, sweepBotWorkspaceSaves } from "../bots/tool-di
 import { createBotProviderConnections, type BotProviderConnectionsService } from '../bots/provider-connections.js';
 import { createClaudeTaskObserver } from '../bots/claude-task-observation.js';
 import { createNativeBotTasks } from '../bots/native-task-service.js';
+import { createBotExecutorReadiness } from '../bots/executor-readiness.js';
 import type { NativeProviderProfileGuard } from '../ai-providers/native-provider-profile-guard.js';
 
 /** Passes before the first run is admitted; any rest is finished in the background. */
@@ -342,13 +343,12 @@ export async function startBots(options: {
       lifetime: lifetime.signal,
       ...(process.env.MATRIX_BOT_CODEX_MODEL !== undefined ? { codexModel: process.env.MATRIX_BOT_CODEX_MODEL } : {}),
     }),
-    executorReady: async (ownerId, botId) => {
-      if (!options.runtimeOwnerId || !options.computerId) return false;
-      const selected = await providerConnections.execution(ownerId, botId);
-      if (!selected.connectionId) return false;
-      await providerConnections.admit(ownerId, botId, 'interactive');
-      return Boolean(nativeTasks);
-    },
+    executorReady: createBotExecutorReadiness({
+      runtimeOwnerId: options.runtimeOwnerId,
+      computerId: options.computerId,
+      connections: providerConnections,
+      nativeTasks: Boolean(nativeTasks),
+    }),
     admission,
     registry,
     client: host.client,

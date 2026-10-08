@@ -25,6 +25,7 @@ Existing read-only Inbox Bots continue resolving their saved version without new
 - No legacy permission, binding or batch is silently imported into a native Bot. Existing agents remain available for compatibility; a newly created Pi Bot obtains fresh consent.
 - Reuse the existing server-discovered evidence, funded Jev evaluation, deterministic classification policy, label-only execution and Gmail readback. No main-model claims substitute for actual Jev results or confirmed label writes.
 - Jev uses the existing Matrix AI Gateway owner funding route. Main-model credentials remain governed by the owned Pi route resolver. No Hermes Python SDK or launch check applies to a Pi run.
+- Native task execution is optional. An authenticated shared-runtime reviewer can run an authorized Pi Bot with coordinator tools without accessing the runtime owner's native provider connections. Such a run never advertises `agent.task`. Owner runs with a saved native executor still require fresh admission; revoked or unavailable saved authorization blocks the run instead of silently dropping it.
 
 ## Authentication and resource boundaries
 
