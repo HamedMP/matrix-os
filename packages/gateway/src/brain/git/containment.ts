@@ -1,10 +1,11 @@
 /**
  * Company Brain git adapter: where a repository may live. A checkout is
  * accepted only when its real path, its real git directory, its real common
- * directory and every object alternates entry are strictly inside the real
- * Matrix home and never inside home's own `.git`. So a `.git` file or
- * symlink, a linked worktree or an alternates file cannot lead git to history
- * outside home, or to Matrix home's own history. Read-only filesystem checks,
+ * directory, its real objects directory and every object alternates entry are
+ * strictly inside the real Matrix home and never inside home's own `.git`. So
+ * a `.git` file or symlink, a linked worktree, a linked objects directory or
+ * an alternates file cannot lead git to history outside home, or to Matrix
+ * home's own history. Read-only filesystem checks,
  * each bounded; repository files are opened non-blocking and read only when
  * regular, so a FIFO cannot stall them; any refusal is
  * GitSourceError("not_a_repository").
@@ -124,8 +125,8 @@ async function readRegularFile(path: string, maxBytes: number): Promise<string |
  * recursively) must be allowed too, or an object store outside home could
  * stand in for the checkout's history. Quoted entries are refused.
  */
-async function assertAlternatesAllowed(bounds: GitHomeBounds, commonDir: string): Promise<void> {
-  const pending: Array<{ objectsDir: string; depth: number }> = [{ objectsDir: join(commonDir, "objects"), depth: 0 }];
+async function assertAlternatesAllowed(bounds: GitHomeBounds, objectsDir: string): Promise<void> {
+  const pending: Array<{ objectsDir: string; depth: number }> = [{ objectsDir, depth: 0 }];
   let checked = 0;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     const text = await readRegularFile(join(next.objectsDir, "info", "alternates"), ALTERNATES_MAX_BYTES);
@@ -140,12 +141,17 @@ async function assertAlternatesAllowed(bounds: GitHomeBounds, commonDir: string)
   }
 }
 
-/** The checkout's git directories, as git reports them, must stay inside home and outside home's own `.git`. */
+/**
+ * The checkout's git directories, as git reports them, and the objects
+ * directory git reads its history from must stay inside home and outside
+ * home's own `.git`.
+ */
 export async function assertGitDirectoriesAllowed(
   bounds: GitHomeBounds,
   dirs: { readonly gitDir: string; readonly commonDir: string },
 ): Promise<void> {
   await allowedDirectory(bounds, dirs.gitDir);
   const commonDir = await allowedDirectory(bounds, dirs.commonDir);
-  await assertAlternatesAllowed(bounds, commonDir);
+  const objectsDir = await allowedDirectory(bounds, join(commonDir, "objects"));
+  await assertAlternatesAllowed(bounds, objectsDir);
 }
