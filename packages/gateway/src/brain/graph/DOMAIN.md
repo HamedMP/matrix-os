@@ -59,8 +59,9 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   a document count, a wall-clock budget and the abort signal), re-reads pending until empty, then sweeps up to 1,000
   unreferenced entities. A foreign-key violation (document erased mid-write) skips that document.
 - Deriving or removing a document marks outdated the documents that read it, only when what they read changed
-  (children through `parent` refs, never itself; git commits whose link disagrees with a github_pr's `commit` refs).
-  Their state row stays, so refresh re-derives a live one and removes a tombstoned one.
+  (children through `parent` refs, never itself; git commits whose link disagrees with a github_pr's `commit` refs),
+  each set marked in one write, never a capped list. Their state row stays, so refresh re-derives a live one and
+  removes a tombstoned one.
 - Acceptable orphan states: entities first and last seen only widen; an entity whose last link went stays until the
   next refresh sweep, but `GET entities` never lists it: the list keeps only the project, document entities of live
   documents, files and folders a live path ref names, and entities (or keys merged into them) at an end of a link

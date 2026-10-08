@@ -21,8 +21,6 @@ export const BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT = 32;
 export const BRAIN_GRAPH_FOLDERS_PER_DOCUMENT = 400;
 /** Text mentions and decided_in links per document, each. */
 export const BRAIN_GRAPH_TEXT_LINKS_MAX = 16;
-/** Documents nudged (marked outdated, so the next pass re-derives them) after one document is derived or removed. */
-export const BRAIN_GRAPH_NUDGE_MAX = 100;
 /** Orphan entities removed per refresh call. */
 export const BRAIN_GRAPH_ORPHAN_SWEEP_MAX = 1_000;
 export const BRAIN_GRAPH_LINK_COUNT_CAP = 10_000;
