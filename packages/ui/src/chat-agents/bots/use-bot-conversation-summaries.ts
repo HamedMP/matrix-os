@@ -6,6 +6,7 @@ export type BotConversationSummary = { chatId: string; agentId: string; name: st
 export type BotConversationSummaries = { conversations: BotConversationSummary[]; unresolvedChatIds: string[]; loading: boolean; error: string | null };
 const MAX_RECORDS = 1000;
 const empty: BotConversationSummaries = { conversations: [], unresolvedChatIds: [], loading: false, error: null };
+type Snapshot = { client: ChatAgentClient; key: string; value: BotConversationSummaries };
 type Binding = { agentId: string; name: string };
 function cachedIdentities(reads: ReturnType<typeof botSummaryReads>, ids: readonly string[]) {
   const bindings = new Map<string, Binding>();
@@ -33,7 +34,24 @@ async function bounded<T>(values: readonly T[], work: (value: T) => Promise<void
 export function useBotConversationSummaries(client: ChatAgentClient | undefined, recordIds: readonly string[], active = true, refreshKey?: number): BotConversationSummaries {
   const idsKey = JSON.stringify([...new Set(recordIds)]);
   const refreshRevision = useRef<{ client: ChatAgentClient; key: number | undefined } | null>(null);
-  const [snapshot, setSnapshot] = useState<{ client: ChatAgentClient; key: string; value: BotConversationSummaries } | null>(null);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [baseline, setBaseline] = useState<Snapshot | null>(null);
+  const committed = useRef<Snapshot | null>(null);
+  let projection = empty;
+  if (active && client?.bots) {
+    if (snapshot?.client === client && snapshot.key === idsKey) projection = snapshot.value;
+    else if (baseline?.client === client && baseline.key === idsKey) projection = baseline.value;
+    else {
+      // React owns this render adjustment: an abandoned concurrent render must
+      // not mutate the committed cohort used by a live refresh.
+      const next = { client, key: idsKey, value: retainedIdentities(snapshot, client, recordIds) };
+      setBaseline(next);
+      projection = next.value;
+    }
+  }
+  useEffect(() => {
+    committed.current = active && client?.bots ? { client, key: idsKey, value: projection } : null;
+  }, [active, client, idsKey, projection]);
   useEffect(() => {
     if (!active || !client?.bots) return;
     const reads = botSummaryReads(client);
@@ -51,6 +69,11 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
       let failed = false;
       const { bindings, unresolved } = cachedIdentities(reads, allIds);
       const checking = new Set(ids);
+      // Ordinary results stay staged even when a Bot update publishes first.
+      // The baseline is captured once per cohort, never from a live partial cache.
+      const staged = new Set(committed.current?.client === client && committed.current.key === idsKey
+        ? committed.current.value.unresolvedChatIds : allIds);
+      for (const chatId of bindings.keys()) staged.delete(chatId);
       const publishIdentities = () => {
         if (current) setSnapshot(previous => {
           const known = previous?.client === client ? previous : null;
@@ -66,11 +89,13 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
             conversations: [...visibleBindings].map(([chatId, bot]) => ({ chatId, ...bot,
               pendingApprovalCount: known?.value.conversations.find(item => item.chatId === chatId && item.agentId === bot.agentId)?.pendingApprovalCount ?? 0,
             })),
-            unresolvedChatIds: [...unresolved].filter(id => !checking.has(id) || !verified.has(id) || priorUnknown.has(id)),
+            unresolvedChatIds: allIds.filter(id => (unresolved.has(id) || staged.has(id))
+              && (!checking.has(id) || !verified.has(id) || priorUnknown.has(id))),
             loading: true, error: null,
           } };
         });
       };
+      publishIdentities();
       try {
         let agents: Awaited<ReturnType<ChatAgentClient['list']>>['agents'] = [];
         try { agents = (await reads.library(token)).agents; }
@@ -84,6 +109,7 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
               checking.delete(chatId);
               const known = bindings.get(chatId);
               bindings.set(chatId, { agentId: agent.id, name: agent.name });
+              staged.delete(chatId);
               if (unresolved.delete(chatId) || known?.agentId !== agent.id || known?.name !== agent.name) publishIdentities();
             }
           }
@@ -97,11 +123,18 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
             checking.delete(chatId);
             const wasUnresolved = unresolved.delete(chatId);
             const known = bindings.get(chatId);
-            if (agentId) bindings.set(chatId, { agentId, name: agents.find(agent => agent.id === agentId)?.name ?? 'Your bot' });
-            else bindings.delete(chatId);
-            if (wasUnresolved || (known?.agentId ?? null) !== agentId) publishIdentities();
+            if (agentId) {
+              bindings.set(chatId, { agentId, name: agents.find(agent => agent.id === agentId)?.name ?? 'Your bot' });
+              staged.delete(chatId);
+            } else bindings.delete(chatId);
+            if (agentId && (wasUnresolved || known?.agentId !== agentId)) publishIdentities();
           } catch (error: unknown) { checking.delete(chatId); failed = true; unresolved.add(chatId); console.warn('[bots] Identity unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
         });
+        // Commit the identity cohort before potentially slow approval reads.
+        if (!current) return;
+        reads.publishOrdinaryIdentities(ids.filter(id => !unresolved.has(id) && !bindings.has(id)));
+        staged.clear();
+        publishIdentities();
         const conversations = [...bindings].map(([chatId, bot]) => ({ chatId, ...bot, pendingApprovalCount: 0 }));
         await bounded(conversations, async conversation => {
           if (!current || !agents.find(agent => agent.id === conversation.agentId)?.recipeRef) return;
@@ -135,10 +168,11 @@ export function useBotConversationSummaries(client: ChatAgentClient | undefined,
     window.addEventListener('focus', focus);
     return () => { current = false; window.clearInterval(timer); window.removeEventListener('focus', focus); };
   }, [client, idsKey, active, refreshKey]);
-  if (!active || !client?.bots) return empty;
-  if (snapshot?.client === client && snapshot.key === idsKey) return snapshot.value;
-  // A changed list is a background refresh within this authenticated client.
-  // Keep verified identities visible; only new/unverified IDs wait for binding lookup.
+  return projection;
+}
+
+/** Capture once on a changed list/remount; rerenders must not reveal staged cache writes. */
+function retainedIdentities(snapshot: Snapshot | null, client: ChatAgentClient, recordIds: readonly string[]): BotConversationSummaries {
   const previous = snapshot?.client === client ? snapshot.value : empty;
   const verifiedIds = new Set(snapshot?.client === client ? JSON.parse(snapshot.key) as string[] : []);
   const { bindings, unresolved } = cachedIdentities(botSummaryReads(client), [...new Set(recordIds)]);

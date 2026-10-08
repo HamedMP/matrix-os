@@ -21,7 +21,7 @@ export function ProjectLanding({ project, children, showMetadata = true, records
   const actions = useProjectActions(project);
   const editButtonRef = useRef<HTMLButtonElement>(null);
   return <div className="@container/project-landing flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
-    {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} min-h-0 max-h-[60%] shrink-0 overflow-y-auto pb-2 pt-[68px]`}>
+    {showMetadata ? <header className={`${PROJECT_LANDING_CONTENT_CLASS} min-h-0 flex-1 overflow-y-auto pb-2 pt-[68px]`}>
       <div className="mb-5 flex items-center gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-[8px]" style={{ background: "var(--bg-hover)", color: "var(--text-primary)" }}><FolderOpen size={20} aria-hidden /></span>
         <h1 className="truncate text-[26px] font-medium leading-[31px]" style={{ color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>{project.name}</h1>
@@ -51,7 +51,9 @@ export function ProjectLanding({ project, children, showMetadata = true, records
       {loaded.error ? <p role="alert" className="mt-2 text-xs">Project chats could not be refreshed. Try again.</p> : null}
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
     </header> : null}
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
+    {/* Metadata owns spare height; the draft uses its content height and may
+        shrink for scrollable provider guidance in a short window. */}
+    <div className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${showMetadata ? "shrink" : "flex-1"}`}>{children}</div>
     {actions.dialog === "edit" ? <ProjectEditDialog project={project} returnFocusRef={editButtonRef} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
   </div>;
 }

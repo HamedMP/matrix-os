@@ -151,6 +151,25 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("displays ordinary Chats as one identity cohort despite out-of-order results and rerenders", async () => {
+    const slow=record("chat_slow", "Slow fixture", {updatedAt:"2026-08-28T09:00:00.000Z"});
+    let finish!: (value:string|null)=>void;
+    const client={list:vi.fn(async()=>({items:[recent,slow]})),agents:{
+      list:vi.fn(async()=>({enabled:true,agents:[]})),
+      bots:{directChat:vi.fn(async()=>null),directBot:vi.fn(id=>id===slow.chat.id?new Promise<string|null>(resolve=>{finish=resolve}):Promise.resolve(null)),interactions:vi.fn(async()=>[])},
+    }} as unknown as CanonicalChatClient;
+    const actions={onNewGlobalChat:vi.fn(),onCreateProject:vi.fn(),onNewProjectChat:vi.fn(),onSelectChat:vi.fn(),onCollapse:vi.fn()};
+    const {rerender,container}=render(<WorkRail client={client} projects={[]} active {...actions}/>);
+    await waitFor(()=>expect(finish).toBeTypeOf("function"));
+    await act(async()=>{await Promise.resolve();});
+    rerender(<WorkRail client={client} projects={[]} active {...actions}/>);
+    expect(container.querySelectorAll(".work-rail-chat")).toHaveLength(0);
+    await act(async()=>finish(null));
+    await waitFor(()=>expect(container.querySelectorAll(".work-rail-chat")).toHaveLength(2));
+    expect(screen.getByRole("button",{name:"Recent global"})).toBeTruthy();
+    expect(screen.getByRole("button",{name:"Slow fixture"})).toBeTruthy();
+  });
+
   it("refreshes shared project discovery immediately after a canonical Chat is created", async () => {
     const events = eventHarness();
     const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
