@@ -24,6 +24,12 @@ function rawGit(args: readonly string[], cwd: string): Promise<void> {
   });
 }
 
+function mkfifo(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile("mkfifo", [path], { timeout: 10_000 }, (error) => (error === null ? resolve() : reject(error)));
+  });
+}
+
 async function exists(path: string): Promise<boolean> {
   return access(path).then(() => true, (error: unknown) => {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
@@ -134,6 +140,13 @@ describe("openGitRepository containment", { timeout: 30_000 }, () => {
     await expectRefused(f.repoPath);
     await rm(info, { recursive: true });
     await writeFile(info, "not a directory\n");
+    await expectRefused(f.repoPath);
+  });
+
+  it("refuses an alternates FIFO without waiting for a writer", { timeout: 10_000 }, async () => {
+    const info = join(f.repoPath, ".git", "objects", "info");
+    await mkdir(info, { recursive: true });
+    await mkfifo(join(info, "alternates"));
     await expectRefused(f.repoPath);
   });
 });
