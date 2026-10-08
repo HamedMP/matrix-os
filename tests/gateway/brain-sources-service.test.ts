@@ -167,3 +167,191 @@ describe("connect", () => {
       .toBe("source_config_invalid");
   });
 });
+
+describe("account pinning", () => {
+  it("pins the owner's only account, keeps a named one and refuses none, unknown or several", async () => {
+    const handler = fakeHandler("linear");
+    const one = accountsOf(["work"]);
+    const pinned = await service([handler], { accounts: one }).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["eng"] } });
+    expect(one).toHaveBeenCalledWith(OWNER, "linear");
+    expect(pinned.source.config).toEqual({ items: ["eng"], accountLabel: "work" });
+    const several = service([handler], { accounts: accountsOf(["work", "home"]) });
+    expect(await codeOf(several.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["ops"] } }))).toBe("source_config_invalid");
+    const named = await several.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["ops"], accountLabel: "home" } });
+    expect(named.source.config).toEqual({ items: ["ops"], accountLabel: "home" });
+    expect(await codeOf(several.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["ops"], accountLabel: "gone" } })))
+      .toBe("source_not_connected");
+    const none = service([handler], { accounts: accountsOf([]) });
+    expect(await codeOf(none.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } }))).toBe("source_not_connected");
+  });
+
+  it("skips kinds without an account and GitHub token mode, and bounds the lookup", async () => {
+    const accounts = accountsOf(["a", "b"]);
+    await service([fakeHandler("matrix_notes")], { accounts }).connect(OWNER, "proj_a", { kind: "matrix_notes", config: { items: ["n"] } });
+    await service([fakeHandler("github")], { accounts }).connect(OWNER, "proj_a", { kind: "github", config: { items: ["r"], mode: "token" } });
+    expect(accounts).not.toHaveBeenCalled();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const hanging = service([fakeHandler("linear")], { accounts: () => new Promise(() => undefined), callTimeoutMs: 100 });
+    expect(await codeOf(hanging.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } }))).toBe("brain_unavailable");
+  });
+});
+
+describe("update and remove", () => {
+  it("changes label and status under the revision and refuses a stale one", async () => {
+    const sources = service([fakeHandler("linear")]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    const paused = await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, status: "paused", label: "Mine" });
+    expect(paused).toMatchObject({ status: "paused", label: "Mine", revision: 2, config: { items: ["a"] } });
+    expect(await codeOf(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, status: "active" }))).toBe("revision_conflict");
+    expect(await codeOf(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 2 }))).toBe("invalid_request");
+  });
+
+  it("saves a new config that keeps the identity and the pinned account, and refuses one that changes it", async () => {
+    const handler = fakeHandler("linear");
+    const sources = service([handler], { accounts: accountsOf(["work"]) });
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    const updated = await sources.update(OWNER, "proj_a", source.sourceId, {
+      expectedRevision: 1, config: { items: ["a"], includeEventBodies: true },
+    });
+    expect(updated).toMatchObject({ sourceId: source.sourceId, revision: 2, config: { items: ["a"], accountLabel: "work" } });
+    expect([...handler.configs.values()]).toEqual([{ items: ["a"], includeEventBodies: true, accountLabel: "work" }]);
+    expect(await codeOf(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 2, config: { items: ["b"] } })))
+      .toBe("source_config_invalid");
+    expect(await codeOf(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 2, config: { nope: 1 } })))
+      .toBe("source_config_invalid");
+  });
+
+  it("saves the config of a kind without an account as given, with or without an account lookup", async () => {
+    const handler = fakeHandler("matrix_notes");
+    const sources = service([handler], { accounts: accountsOf(["work"]) });
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "matrix_notes", config: { items: ["n"] } });
+    const updated = await sources.update(OWNER, "proj_a", source.sourceId, {
+      expectedRevision: 1, config: { items: ["n"], includeEventBodies: true },
+    });
+    expect(updated).toMatchObject({ revision: 2, config: { items: ["n"], accountLabel: null } });
+    expect([...handler.configs.values()]).toEqual([{ items: ["n"], includeEventBodies: true }]);
+  });
+
+  it("replaces a config the schema now refuses and refuses config for git and kinds without a handler", async () => {
+    const handler = fakeHandler("linear", { refuseStored: true });
+    const sources = service([handler]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    expect((await sources.list(OWNER, "proj_a")).items[0]!.config).toBeNull();
+    expect(warn).toHaveBeenCalledWith("[brain-sources] stored config refused:", "linear");
+    expect((await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, config: { items: ["a"] } })).revision).toBe(2);
+    const git = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
+    expect(await codeOf(sources.update(OWNER, "proj_a", git.source.sourceId, { expectedRevision: 1, config: {} })))
+      .toBe("source_kind_unsupported");
+    expect((await sources.update(OWNER, "proj_a", git.source.sourceId, { expectedRevision: 1, status: "paused" })).status).toBe("paused");
+  });
+
+  it("removes and reconnects a calendar source when event bodies are turned off", async () => {
+    const handler = fakeHandler("google_calendar");
+    const sources = service([handler]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "google_calendar", config: { items: ["c"], includeEventBodies: true } });
+    const kept = await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, config: { items: ["c"], includeEventBodies: true } });
+    expect(kept.sourceId).toBe(source.sourceId);
+    const fresh = await sources.update(OWNER, "proj_a", source.sourceId, {
+      expectedRevision: 2, status: "paused", config: { items: ["c"], includeEventBodies: false },
+    });
+    expect(fresh).toMatchObject({ status: "paused", revision: 1, label: source.label });
+    expect(fresh.sourceId).not.toBe(source.sourceId);
+    expect((await harness.liveSources()).map((live) => live.sourceId)).toEqual([fresh.sourceId]);
+    expect(harness.hooks.events).toEqual([expect.objectContaining({ type: "documents_changed", sourceId: source.sourceId, documentIds: null })]);
+  });
+
+  it("hands the caller's signal to the run, so a background run's stop ends it between pages", async () => {
+    const runner = vi.fn(runBrainSourceSync);
+    const sources = service([fakeHandler("linear")], { runner: runner as never });
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    const controller = new AbortController();
+    await sources.sync(OWNER, "proj_a", source.sourceId, controller.signal);
+    expect(runner.mock.lastCall?.[0]).toMatchObject({ signal: controller.signal });
+    await sources.sync(OWNER, "proj_a", source.sourceId);
+    expect(runner.mock.lastCall?.[0]).not.toHaveProperty("signal");
+  });
+
+  it("removes a source with its revision, tombstones its documents and announces it", async () => {
+    const sources = service([fakeHandler("linear")]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a", "b"] } });
+    expect((await sources.sync(OWNER, "proj_a", source.sourceId)).counts.written).toBe(2);
+    expect((await harness.repository.listDocuments(SCOPE_A, { sourceId: source.sourceId })).items).toHaveLength(2);
+    expect(await codeOf(sources.remove(OWNER, "proj_a", source.sourceId, 9))).toBe("conflict");
+    const removed = await sources.remove(OWNER, "proj_a", source.sourceId, 1);
+    expect(removed).toMatchObject({ sourceId: source.sourceId, revision: 2, config: null, lastSync: null });
+    expect((await harness.repository.listDocuments(SCOPE_A, { sourceId: source.sourceId })).items).toEqual([]);
+    expect(harness.hooks.events.at(-1)).toMatchObject({ type: "documents_changed", sourceId: source.sourceId, documentIds: null });
+    expect(await codeOf(sources.remove(OWNER, "proj_a", source.sourceId, 2))).toBe("source_not_found");
+  });
+});
+
+describe("list and not found", () => {
+  it("lists live sources oldest first with config, last sync and every kind's availability", async () => {
+    const handlers = [
+      fakeHandler("linear"),
+      fakeHandler("google_drive", { availability: async () => ({ available: false, reason: "not_connected" }) }),
+      fakeHandler("google_calendar", { availability: async () => { throw new TypeError("lookup"); } }),
+      fakeHandler("matrix_notes", { availability: () => new Promise(() => undefined) }),
+    ];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const sources = service(handlers, { callTimeoutMs: 100, gitSync: vi.fn() });
+    await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
+    harness.tick();
+    await harness.repository.createSource(SCOPE_A, { kind: "slack", externalRef: "T/C", label: "Other system" });
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    await sources.sync(OWNER, "proj_a", source.sourceId);
+    const view = await sources.list(OWNER, "proj_a");
+    expect(view.items.map((item) => [item.kind, item.externalRef])).toEqual([["git", "https://github.com/acme/app"], ["linear", null]]);
+    expect(view.items[1]).toMatchObject({ config: { items: ["a"] }, lastSync: { status: "succeeded", nextAction: "", errorCode: null } });
+    expect(view.kinds).toEqual([
+      { kind: "git", available: true, reason: null }, { kind: "github", available: false, reason: "not_configured" },
+      { kind: "matrix_notes", available: false, reason: "not_configured" },
+      { kind: "matrix_files", available: false, reason: "not_configured" },
+      { kind: "matrix_chat", available: false, reason: "not_configured" }, { kind: "linear", available: true, reason: null },
+      { kind: "google_drive", available: false, reason: "not_connected" },
+      { kind: "google_calendar", available: false, reason: "not_configured" },
+      { kind: "slack_bridge", available: false, reason: "not_configured" },
+    ]);
+    expect(warn).toHaveBeenCalledWith("[brain-sources] google_calendar availability failed:", "TypeError");
+    expect(warn).toHaveBeenCalledWith("[brain-sources] matrix_notes availability failed:", "BrainSourcesDeadlineError");
+    expect((await service([]).list(OWNER, "proj_a")).kinds[0]).toEqual({ kind: "git", available: false, reason: "not_configured" });
+  });
+
+  it("orders by creation time then id, reads every page of sources and lets store failures through", async () => {
+    const sources = service([fakeHandler("linear")]);
+    const first = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    const second = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["b"] } });
+    harness.tick();
+    const third = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["c"] } });
+    const sameTime = [first.source.sourceId, second.source.sourceId].sort();
+    expect((await sources.list(OWNER, "proj_a")).items.map((item) => item.sourceId)).toEqual([...sameTime, third.source.sourceId]);
+    const listSources = harness.repository.listSources.bind(harness.repository);
+    const spy = vi.spyOn(harness.repository, "listSources")
+      .mockImplementation((scope, options) => listSources(scope, { ...options, limit: 1 }));
+    expect((await sources.list(OWNER, "proj_a")).items).toHaveLength(3);
+    expect(spy).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
+    const broken = service([fakeHandler("linear", { loadError: new TypeError("store down") })]);
+    await expect(broken.list(OWNER, "proj_a")).rejects.toThrow("store down");
+  });
+
+  it("answers project_not_found and source_not_found the same way whatever the cause", async () => {
+    const sources = service([fakeHandler("linear")]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    for (const [owner, project] of [["owner_b", "proj_a"], [OWNER, "proj_zz"], [OWNER, "Bad Ref"], ["owner_b", "alpha"]]) {
+      expect(await codeOf(sources.list(owner!, project!))).toBe("project_not_found");
+      expect(await codeOf(sources.sync(owner!, project!, source.sourceId))).toBe("project_not_found");
+    }
+    const unknown = await harness.repository.createSource(SCOPE_A, { kind: "slack", externalRef: "T/C", label: "x" });
+    const removed = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["gone"] } });
+    await sources.remove(OWNER, "proj_a", removed.source.sourceId, 1);
+    for (const id of [`src_${"0".repeat(32)}`, "src_bad", "", unknown.source.sourceId, removed.source.sourceId]) {
+      expect(await codeOf(sources.sync(OWNER, "proj_a", id))).toBe("source_not_found");
+      expect(await codeOf(sources.receipts(OWNER, "proj_a", id, 5))).toBe("source_not_found");
+      expect(await codeOf(sources.update(OWNER, "proj_a", id, { expectedRevision: 1, label: "x" }))).toBe("source_not_found");
+      expect(await codeOf(sources.remove(OWNER, "proj_a", id, 1))).toBe("source_not_found");
+    }
+    expect(await codeOf(sources.sync(OWNER, "proj_b", source.sourceId))).toBe("source_not_found");
+  });
+});
