@@ -1,8 +1,9 @@
 /**
- * The only reader and writer of brain_jobs. Enqueue and erase take the owner's job lock; worker writes (claim,
- * heartbeat, finish, release) are fenced by `status = 'running' AND lease_owner = <worker>` instead, so a worker that
- * lost its lease can never overwrite the job. Claims use FOR UPDATE SKIP LOCKED, so gateways never take the same job.
- * Every write sets lock_timeout and statement_timeout; reads run through withBrainRead.
+ * The only reader and writer of brain_jobs. Enqueue and erase take the owner's job lock; worker writes (heartbeat,
+ * finish, release) are fenced by their claim instead (`status = 'running' AND lease_owner = <worker> AND attempts =
+ * <the claim's attempts>`), so a run that lost its lease can never overwrite the job, not even after the same worker
+ * claimed it again. Claims use FOR UPDATE SKIP LOCKED, so gateways never take the same job. Every write sets
+ * lock_timeout and statement_timeout; reads run through withBrainRead.
  */
 import { randomBytes } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
@@ -171,7 +172,11 @@ export class BrainJobStore {
     return { requeued, closed: rows.length - requeued };
   }
 
-  /** Takes the owner's oldest queued job for `workerId` (attempts + 1), or null when none is queued. */
+  /**
+   * Takes the owner's oldest queued job for `workerId` (attempts + 1), or null when none is queued. The claim's
+   * attempts fence its writes: attempts only grows while a claim lives (release, the one write that lowers it, is that
+   * claim's last), so no later claim of the job, even by the same worker, has the same attempts.
+   */
   async claim(ownerId: string, workerId: string, leaseMs: number): Promise<BrainClaimedJob | null> {
     const now = this.now();
     const row = await this.write(async (trx) => {
@@ -192,7 +197,7 @@ export class BrainJobStore {
     };
   }
 
-  /** Renews the lease (and records progress when given); owned false when the job is no longer this worker's. */
+  /** Renews the lease (and records progress when given); owned false when the job is no longer this claim's. */
   async heartbeat(
     job: BrainClaimedJob, workerId: string, leaseMs: number, progress?: BrainJobProgress,
   ): Promise<BrainJobHeartbeat> {
@@ -202,11 +207,12 @@ export class BrainJobStore {
       ...(progress === undefined ? {} : { steps: progress.steps, result: json(progress.result) }),
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
       .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
+      .where("attempts", "=", job.attempts)
       .returning("cancel_requested").executeTakeFirst());
     return { owned: row !== undefined, cancelRequested: row?.cancel_requested === true };
   }
 
-  /** Writes the final status; false when the job is no longer this worker's (nothing is written). */
+  /** Writes the final status; false when the job is no longer this claim's (nothing is written). */
   async finish(job: BrainClaimedJob, workerId: string, outcome: BrainJobOutcome): Promise<boolean> {
     const now = this.now();
     const row = await this.write((trx) => trx.updateTable("brain_jobs").set({
@@ -214,6 +220,7 @@ export class BrainJobStore {
       lease_owner: null, lease_expires_at: null, finished_at: now, updated_at: now,
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
       .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
+      .where("attempts", "=", job.attempts)
       .returning("job_id").executeTakeFirst());
     return row !== undefined;
   }
@@ -233,6 +240,7 @@ export class BrainJobStore {
       result: sql`COALESCE(${json(progress.result)}::jsonb, result)`, updated_at: now,
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
       .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
+      .where("attempts", "=", job.attempts)
       .returning("job_id").executeTakeFirst());
     return row !== undefined;
   }
