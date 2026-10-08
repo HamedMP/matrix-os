@@ -236,3 +236,103 @@ async function createLiveRow(
   context.capacity.count += 1;
   return inserted;
 }
+
+export async function applyUpsert(
+  context: BrainWriteContext,
+  input: BrainApplyUpsertInput,
+  options: { readonly onForeignSource: "conflict" },
+): Promise<BrainUpsertDocumentResult>;
+export async function applyUpsert(
+  context: BrainWriteContext,
+  input: BrainApplyUpsertInput,
+  options: { readonly onForeignSource: "reject" },
+): Promise<BrainApplyUpsertResult>;
+export async function applyUpsert(
+  context: BrainWriteContext,
+  input: BrainApplyUpsertInput,
+  options: { readonly onForeignSource: "conflict" | "reject" },
+): Promise<BrainApplyUpsertResult> {
+  const row = await loadDocumentForUpdate(context.db, context.scope, input.documentId);
+  const live = row !== undefined && row.deleted_at === null ? row : null;
+  if (input.expectedRevision === 0 && live) throw conflict();
+  if (input.expectedRevision !== undefined && input.expectedRevision > 0
+    && (!live || live.revision !== input.expectedRevision)) {
+    throw conflict();
+  }
+  if (live && live.source_id !== input.sourceId) {
+    if (options.onForeignSource === "reject") return { outcome: "rejected" };
+    throw conflict();
+  }
+  const contentHash = computeBrainContentHash(input.title, input.body);
+  if (live && live.content_hash === contentHash && live.permalink === input.permalink) {
+    return { outcome: "unchanged", document: toBrainDocument(live) };
+  }
+  const byteCount = brainByteCount(input.title, input.body);
+  if (!row && context.capacity.count >= context.limits.maxDocumentsPerScope) {
+    throw new BrainStoreError("capacity");
+  }
+  assertByteCapacity(context, live ? live.byte_count : 0, byteCount);
+  if (live) {
+    return { outcome: "updated", document: toBrainDocument(await replaceLiveRow(context, live, input)) };
+  }
+  const created = await createLiveRow(context, row, input, contentHash, byteCount);
+  context.capacity.bytes += byteCount;
+  return { outcome: "created", document: toBrainDocument(created) };
+}
+
+export async function applyRevise(context: BrainWriteContext, input: BrainApplyReviseInput): Promise<BrainDocument> {
+  const row = await loadDocumentForUpdate(context.db, context.scope, input.documentId);
+  if (!row || row.deleted_at !== null) throw new BrainStoreError("not_found");
+  if (row.revision !== input.expectedRevision) throw conflict();
+  const next: NextContent = {
+    title: input.title ?? row.title,
+    body: input.body ?? row.body,
+    permalink: input.permalink ?? row.permalink,
+    provenance: row.provenance,
+    sourceUpdatedAt: input.sourceUpdatedAt ?? new Date(row.source_updated_at).toISOString(),
+  };
+  const byteCount = brainByteCount(next.title, next.body);
+  if (byteCount > BRAIN_DOCUMENT_MAX_BYTES) throw new BrainStoreError("invalid");
+  assertByteCapacity(context, row.byte_count, byteCount);
+  return toBrainDocument(await replaceLiveRow(context, row, next));
+}
+
+/**
+ * Tombstones one live document. With `ownedBySourceId`, a missing, tombstoned
+ * or foreign-source row is skipped (returns null) so sync replays stay idempotent.
+ */
+export async function applyDelete(context: BrainWriteContext, input: BrainApplyDeleteInput): Promise<BrainDocument>;
+export async function applyDelete(
+  context: BrainWriteContext,
+  input: BrainApplyDeleteInput,
+  options: { readonly ownedBySourceId: string },
+): Promise<BrainDocument | null>;
+export async function applyDelete(
+  context: BrainWriteContext,
+  input: BrainApplyDeleteInput,
+  options: { readonly ownedBySourceId?: string } = {},
+): Promise<BrainDocument | null> {
+  const { db, scope, now } = context;
+  const row = await loadDocumentForUpdate(db, scope, input.documentId);
+  const skippable = options.ownedBySourceId !== undefined;
+  if (!row || row.deleted_at !== null) {
+    if (skippable) return null;
+    throw new BrainStoreError("not_found");
+  }
+  if (skippable && row.source_id !== options.ownedBySourceId) return null;
+  if (input.expectedRevision !== undefined && row.revision !== input.expectedRevision) throw conflict();
+  await snapshotAndPrune(db, row, "deleted", now);
+  const tombstone = await db.updateTable("brain_documents")
+    .set({ ...tombstoneFields(now), revision: row.revision + 1 })
+    .where("owner_id", "=", scope.ownerId)
+    .where("scope_id", "=", scope.scopeId)
+    .where("document_id", "=", input.documentId)
+    .where("revision", "=", row.revision)
+    .where("deleted_at", "is", null)
+    .returningAll()
+    .executeTakeFirstOrThrow(conflict);
+  await deleteDocumentRefs(db, scope, input.documentId);
+  await deleteClaimData(db, scope, { documentId: input.documentId });
+  context.capacity.bytes -= row.byte_count;
+  return toBrainDocument(tombstone);
+}
