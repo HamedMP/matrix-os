@@ -9,12 +9,18 @@ export const BRAIN_SHELL_VIEW = {
   path: "__brain__", title: "Company Brain", aliases: ["brain", "company-brain", "apps/brain/index.html"],
   defaultWidth: 1100, defaultHeight: 720, minWidth: 360, minHeight: 420,
 } as const;
+/** The tabs, in order: Chat first, the rest secondary. */
 export const BRAIN_SHELL_SCREENS = [
-  "ask", "today", "decisions", "commitments", "risks", "timeline", "sources",
+  "chat", "today", "decisions", "timeline", "search", "sources",
 ] as const;
 export type BrainShellScreen = (typeof BRAIN_SHELL_SCREENS)[number];
+/** Older screen ids still open: Ask is now Search, and Commitments and Risks are kinds on Decisions. */
+export const BRAIN_SHELL_SCREEN_ALIASES = { ask: "search", commitments: "decisions", risks: "decisions" } as const;
+export type BrainShellScreenId = BrainShellScreen | keyof typeof BRAIN_SHELL_SCREEN_ALIASES;
 /** Words that find "Open Company Brain" in the command palette of every surface. */
-export const BRAIN_APP_KEYWORDS = ["brain", "company", "decisions", "commitments", "risks", "why", "search"] as const;
+export const BRAIN_APP_KEYWORDS = [
+  "brain", "company", "chat", "ask", "decisions", "commitments", "risks", "why", "search",
+] as const;
 
 export type BrainShellErrorState =
   | { readonly kind: "unauthorized" } | { readonly kind: "offline" } | { readonly kind: "timeout" }
