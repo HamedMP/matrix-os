@@ -61,7 +61,8 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   wait on the graph.
 - Hooks are nudges. `refresh` drops rows of tombstoned documents, derives missing or outdated documents (bounded by
   a document count, a wall-clock budget and the abort signal), re-reads pending until empty, then sweeps up to 1,000
-  unreferenced entities; a document refused at the entity limit makes it sweep first and go on when that made room.
+  unreferenced entities; a document refused at the entity limit stays pending while the pass goes on (one that adds
+  no entity may free some), then refresh sweeps and goes on when that made room.
   A foreign-key violation (document erased mid-write) skips that document.
 - Deriving or removing a document marks outdated the documents that read it, only when what they read changed
   (children through `parent` refs, never itself; git commits whose link disagrees with a github_pr's `commit` refs),

@@ -107,13 +107,14 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
     BRAIN_GRAPH_LIMITS.entitiesPerScope);
 
   /**
-   * Derives ids in order until done, aborted, out of budget or out of entity capacity (each document checks the limit
-   * under the graph lock). attempted counts the ids tried, the one refused for capacity included.
+   * Derives ids in order until done, aborted or out of budget. Each document checks the entity limit under the graph
+   * lock; one refused for it stays pending (full) and the rest still run, since one that adds no entity always fits
+   * and may free what the sweep needs. attempted counts the ids tried, refused ones included.
    */
   async function run(scope: BrainScopeKey, ids: readonly string[], deadline: number, signal: AbortSignal) {
-    let [processed, removed, attempted] = [0, 0, 0];
+    let [processed, removed, attempted, full] = [0, 0, 0, false];
     for (const id of ids) {
-      if (signal.aborted || clock() >= deadline) return { processed, removed, attempted, stopped: true, full: false };
+      if (signal.aborted || clock() >= deadline) return { processed, removed, attempted, stopped: true, full };
       attempted += 1;
       let outcome: string;
       try {
@@ -123,13 +124,13 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
         outcome = "skipped";
       }
       if (outcome === "capacity") {
-        console.warn("[brain-graph] entity limit reached; derivation stopped");
-        return { processed, removed, attempted, stopped: true, full: true };
+        if (!full) console.warn("[brain-graph] entity limit reached; documents left pending");
+        full = true;
       }
       if (outcome === "derived") processed += 1;
       if (outcome === "removed") removed += 1;
     }
-    return { processed, removed, attempted, stopped: false, full: false };
+    return { processed, removed, attempted, stopped: false, full };
   }
 
   /** A failed lookup (a deleted project, a lookup outage) keeps the stored name; logged by error name. */
@@ -177,7 +178,7 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       if (pass.full && await sweep(scope) === 0) {
         return { processed, removed, caughtUp: false, stopReason: "graph_capacity" };
       }
-      if (pass.stopped && !pass.full) return { processed, removed, caughtUp: false };
+      if (pass.stopped) return { processed, removed, caughtUp: false };
     }
     const swept = await sweep(scope);
     return { processed, removed, caughtUp: swept < BRAIN_GRAPH_ORPHAN_SWEEP_MAX && (await freshness(scope)).caughtUp };
