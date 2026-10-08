@@ -1,5 +1,6 @@
 import { markChatNavigation } from "./metrics.js";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationItem, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { mergeChatNavigationRecord, type ChatNavigationRecord } from "./projection.js";
+import { CanonicalChatNavigationItemSchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationItem, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 export interface ChatNavigationPersistence {
   load(): Promise<CanonicalChatNavigationResponse | null>;
   save(snapshot: CanonicalChatNavigationResponse): Promise<void>;
@@ -34,6 +35,13 @@ export function createChatNavigationStore(options: {
   const listeners = new Set<() => void>(); // capped subscriptions, explicitly removed
   let generation = 0;
   let revision = 0;
+  let patchVersion = 0;
+  // At most the current 1,000 known rows; authoritative removal evicts overlays.
+  const patches = new Map<string, CanonicalChatNavigationItem>();
+  const prunePatches = (items: CanonicalChatNavigationItem[]) => {
+    const ids = new Set(items.map(item => item.chat.id));
+    for (const id of patches.keys()) if (!ids.has(id)) patches.delete(id);
+  };
   let disposed = false;
   let revoked = false;
   let cacheClear: Promise<void> = Promise.resolve();
@@ -62,6 +70,7 @@ export function createChatNavigationStore(options: {
     if (disposed) return;
     generation++;
     revoked = true;
+    patches.clear();
     dirty = false;
     // A new authenticated read may proceed without waiting for superseded I/O.
     inFlight = undefined;
@@ -72,7 +81,8 @@ export function createChatNavigationStore(options: {
     publish({ ...EMPTY_CHAT_NAVIGATION, status: "error", error: "Your session has expired. Please sign in again." });
   };
   const persist = (value: CanonicalChatNavigationResponse, fence: number, version: number) => {
-    if (!persistence || value.truncated) {
+    const liveVersion = patchVersion;
+    if (!persistence || value.truncated || patches.size) {
       return;
     }
     if (writeTimer !== undefined) {
@@ -80,13 +90,13 @@ export function createChatNavigationStore(options: {
     }
     writeTimer = setTimeout(() => {
       writeTimer = undefined;
-      if (disposed || generation !== fence || revision !== version) {
+      if (disposed || generation !== fence || revision !== version || patchVersion !== liveVersion) {
         return;
       }
       // Membership-sensitive rows are never reconstructed from a local file.
       const personal = { ...value, items: value.items.filter(item => item.persistence === "personal") };
       void cacheClear.then(async () => {
-        if (disposed || generation !== fence || revision !== version) return;
+        if (disposed || generation !== fence || revision !== version || patchVersion !== liveVersion) return;
         await persistence?.save(personal);
       }).catch(error => warn("Cache save failed", error));
     }, 0);
@@ -144,7 +154,18 @@ export function createChatNavigationStore(options: {
           }
           revoked = false;
           markChatNavigation("snapshot-ready", value.items.length);
-          publish({ items: value.items, status: "ready", fresh: true, truncated: value.truncated, updatedAt: now(), error: null });
+          const items = value.items.map(item => {
+            const patch = patches.get(item.chat.id);
+            if (!patch) return item;
+            const merged = CanonicalChatNavigationItemSchema.parse(mergeChatNavigationRecord(item, patch));
+            // Persist only when the server has independently caught up. Live
+            // overlays cannot add membership or replace classification policy.
+            if (JSON.stringify(merged) === JSON.stringify(item)) patches.delete(item.chat.id);
+            else patches.set(item.chat.id, merged);
+            return merged;
+          });
+          prunePatches(items);
+          publish({ items, status: "ready", fresh: true, truncated: value.truncated, updatedAt: now(), error: null });
           persist(value, fence, version);
         }
         catch (error: unknown) {
@@ -169,6 +190,17 @@ export function createChatNavigationStore(options: {
   };
   return {
     getSnapshot: () => state,
+    getAuthorityEpoch: () => generation,
+    patch(record: ChatNavigationRecord) {
+      if (disposed || revoked) return;
+      const current = state.items.find(item => item.chat.id === record.chat.id);
+      if (!current) return;
+      const merged = mergeChatNavigationRecord(current, record);
+      patches.set(record.chat.id, merged);
+      patchVersion++;
+      publish({ ...state, items: state.items.map(item => item === current ? merged : item) });
+      // Metadata events neither invalidate nor restart an in-flight list read.
+    },
     subscribe(listener: () => void) {
       if (listeners.size >= 64) {
         throw new Error("NavigationSubscriberLimit");
@@ -200,6 +232,7 @@ export function createChatNavigationStore(options: {
       }
       const items = updated.length > 1000 ? updated.slice(0, 1000) : updated;
       revision++;
+      prunePatches(items);
       if (inFlight) {
         dirty = true;
       }
@@ -215,6 +248,7 @@ export function createChatNavigationStore(options: {
     },
     dispose(clear = false) {
       disposed = true;
+      patches.clear();
       generation++;
       dirty = false;
       if (writeTimer !== undefined) {

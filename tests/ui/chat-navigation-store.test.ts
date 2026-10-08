@@ -168,3 +168,74 @@ it('fences revoked reads without letting their completion detach a new single fl
   await store.ensure();
   expect(load).toHaveBeenCalledTimes(2);
 });
+
+it('ignores unknown live patches during cold loading without restarting the request', async () => {
+  const pending = deferred<CanonicalChatNavigationResponse>();
+  const load = vi.fn(() => pending.promise);
+  const store = createChatNavigationStore({ load });
+  const request = store.ensure();
+  store.patch(snapshot('Unknown live Chat').items[0]!);
+  expect(store.getSnapshot().items).toEqual([]);
+  pending.resolve(snapshot());
+  await request;
+  expect(load).toHaveBeenCalledOnce();
+  expect(store.getSnapshot().items[0]?.chat.title).toBe('Saved');
+});
+it('keeps live known metadata through stale reads without restarting or persisting partial state', async () => {
+  const pending = deferred<CanonicalChatNavigationResponse>();
+  const live = snapshot('Live');
+  live.items[0]!.chat = { ...live.items[0]!.chat, revision: 2, titleVersion: 2, messageCount: 3,
+    activityAt: '2026-10-08T01:00:00Z', updatedAt: '2026-10-08T01:00:00Z' };
+  live.items[0]!.readState = { ...live.items[0]!.readState, version: 2, latestIncomingSeq: 3, unread: true };
+  const load = vi.fn().mockResolvedValueOnce(snapshot()).mockReturnValueOnce(pending.promise).mockResolvedValue(live);
+  const save = vi.fn(async () => {});
+  const store = createChatNavigationStore({ load, persistence: { load: async () => null, save, clear: async () => {} } });
+  await store.ensure();
+  const request = store.refresh();
+  store.patch(live.items[0]!);
+  expect(store.getSnapshot().items[0]).toMatchObject(live.items[0]!);
+  expect(store.ensure()).toBe(request);
+  pending.resolve(snapshot());
+  await request;
+  expect(load).toHaveBeenCalledTimes(2);
+  expect(store.getSnapshot().items[0]).toMatchObject(live.items[0]!);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(save).not.toHaveBeenCalled();
+  await store.refresh();
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith(live));
+});
+it('takes membership and classification from the server and never resurrects removed patched rows', async () => {
+  const load = vi.fn(async () => snapshot());
+  const store = createChatNavigationStore({ load });
+  await store.ensure();
+  const live = snapshot('Live').items[0]!;
+  live.chat = { ...live.chat, revision: 3, titleVersion: 3 };
+  store.patch(live);
+  const changed = snapshot();
+  changed.items[0]!.classification = { kind: 'bot', agentId: 'bot_known001' };
+  changed.items[0]!.persistence = 'membership';
+  load.mockResolvedValue(changed);
+  await store.refresh();
+  expect(store.getSnapshot().items[0]).toMatchObject({ chat: { title: 'Live' }, classification: changed.items[0]!.classification, persistence: 'membership' });
+  load.mockResolvedValue({ ...changed, items: [] });
+  await store.refresh();
+  store.patch(live);
+  expect(store.getSnapshot().items).toEqual([]);
+  load.mockResolvedValue(snapshot('Recreated'));
+  await store.refresh();
+  expect(store.getSnapshot().items[0]?.chat.title).toBe('Recreated');
+});
+it('exposes authority epochs and ignores revoked or disposed live patches', async () => {
+  const store = createChatNavigationStore({ load: async () => snapshot() });
+  await store.ensure();
+  const epoch = store.getAuthorityEpoch();
+  store.revoke();
+  expect(store.getAuthorityEpoch()).toBe(epoch + 1);
+  store.patch(snapshot('Late revoked').items[0]!);
+  expect(store.getSnapshot().items).toEqual([]);
+  await store.ensure();
+  store.dispose();
+  expect(store.getAuthorityEpoch()).toBe(epoch + 2);
+  store.patch(snapshot('Late disposed').items[0]!);
+  expect(store.getSnapshot().items).toEqual([]);
+});
