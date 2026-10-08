@@ -323,9 +323,10 @@ indexes or triggers them; core writes go through `BrainRepository`. Each owns ta
   started, each under its own lock, and `brain_jobs` through its store; `createBrainProjectCleanup`, the project
   deletion step: the brain's `eraseProject` when it is on, the same erase straight on the owner database when the
   brain is off or deferred, and a throw, so the deletion is retried, when the owner database is configured but down),
-  `api/index-repair.ts` (the one-shot index catch-up 30 s after start, which refreshes each index that is behind in up
-  to 200 scopes that have or had a source, because a change event emitted while the gateway shuts down is dropped;
-  and the purge that drops a removed source's derived rows before `/sources` answers) and `api/feature-routes.ts`
+  `api/index-repair.ts` (the one-shot index catch-up 30 s after start, which refreshes every index in up to 200
+  scopes that have or had a source, because a change event emitted while the gateway shuts down is dropped and a
+  graph sweep a shutdown cut short leaves entities no freshness counts; and the purge that drops a removed source's
+  derived rows before `/sources` answers) and `api/feature-routes.ts`
   (`createBrainApiRoutes`, every router under `/api/brain`, each 503 while the brain or its feature is off). Every
   route takes a project id or slug.
 - Shared by the features: `cite.ts` (the one cite label rule and loader), `bounded.ts` (reads in a READ ONLY

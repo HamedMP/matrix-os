@@ -248,11 +248,10 @@ describe("brain start repairs", { timeout: 60_000 }, () => {
   it("counts and logs a failing index without stopping the pass, and stops when aborted", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await harness.repository.createSource(SCOPE, { kind: "linear", externalRef: "linear:eng", label: "L" });
-    const refresh = vi.fn(async () => ({ processed: 0, removed: 0, caughtUp: true }));
-    const index = (name: "search" | "graph", freshness: () => Promise<never> | Promise<object>) =>
-      ({ name, handle: vi.fn(), refresh, freshness }) as unknown as BrainDerivedIndex;
+    const index = (name: "search" | "graph", refresh: () => Promise<never> | Promise<object>) =>
+      ({ name, handle: vi.fn(), refresh, freshness: vi.fn() }) as unknown as BrainDerivedIndex;
     const broken = index("search", async () => { throw new RangeError("down"); });
-    const behind = index("graph", async () => ({ caughtUp: false, pendingDocuments: 1, pendingCapped: false }));
+    const behind = index("graph", async () => ({ processed: 1, removed: 0, caughtUp: true }));
     expect(await runBrainIndexCatchUp(harness.db, [broken, behind], AbortSignal.timeout(10_000)))
       .toEqual({ scopes: 1, refreshed: 1, failed: 1 });
     expect(error).toHaveBeenCalledWith("[brain] index catch-up of search failed:", "RangeError");
@@ -265,7 +264,7 @@ describe("brain start repairs", { timeout: 60_000 }, () => {
     error.mockRestore();
   });
 
-  it("bounds the scope list, skips caught-up indexes and stops between indexes once aborted", async () => {
+  it("bounds the scope list, refreshes caught-up indexes too and stops between indexes once aborted", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await harness.repository.createSource(SCOPE, { kind: "linear", externalRef: "linear:eng", label: "L" });
     const other = brainProjectScope(OWNER, "proj_other");
@@ -273,13 +272,16 @@ describe("brain start repairs", { timeout: 60_000 }, () => {
     expect(await listBrainSourceScopes(harness.db, 0)).toHaveLength(1);
     expect(await listBrainSourceScopes(harness.db, Number.NaN)).toHaveLength(1);
     expect(await listBrainSourceScopes(harness.db, 5)).toHaveLength(2);
+    const caughtUp = async () => ({ caughtUp: true, pendingDocuments: 0, pendingCapped: false });
+    const index = (name: "search" | "graph", refresh: () => Promise<object>) =>
+      ({ name, handle: vi.fn(), refresh, freshness: vi.fn(caughtUp) }) as unknown as BrainDerivedIndex;
+    // Freshness counts documents, not the entities a sweep cut short left, so a caught-up index is refreshed too.
     const refresh = vi.fn(async () => ({ processed: 0, removed: 0, caughtUp: true }));
-    const index = (name: "search" | "graph", freshness: () => Promise<object>) =>
-      ({ name, handle: vi.fn(), refresh, freshness }) as unknown as BrainDerivedIndex;
-    const fresh = index("graph", async () => ({ caughtUp: true, pendingDocuments: 0, pendingCapped: false }));
+    const fresh = index("graph", refresh);
     expect(await runBrainIndexCatchUp(harness.db, [fresh], AbortSignal.timeout(10_000)))
-      .toEqual({ scopes: 2, refreshed: 0, failed: 0 });
-    expect(refresh).not.toHaveBeenCalled();
+      .toEqual({ scopes: 2, refreshed: 2, failed: 0 });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(fresh.freshness).not.toHaveBeenCalled();
     // A failure that is not an Error is logged by its type.
     const odd = index("search", async () => { throw "down"; });
     expect(await runBrainIndexCatchUp(harness.db, [odd], AbortSignal.timeout(10_000)))
@@ -292,7 +294,7 @@ describe("brain start repairs", { timeout: 60_000 }, () => {
       controller.abort();
       throw new Error("stopped");
     });
-    const later = vi.fn(async () => ({ caughtUp: false, pendingDocuments: 1, pendingCapped: false }));
+    const later = vi.fn(async () => ({ processed: 0, removed: 0, caughtUp: true }));
     expect(await runBrainIndexCatchUp(harness.db, [stopping, index("graph", later)], controller.signal))
       .toEqual({ scopes: 1, refreshed: 0, failed: 1 });
     expect(later).not.toHaveBeenCalled();
