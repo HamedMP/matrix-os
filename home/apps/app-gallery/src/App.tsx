@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { galleryArtwork } from "./artwork";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   deriveGalleryReadiness,
   visibleApps,
@@ -11,7 +12,8 @@ import {
   type GalleryFilters,
   type GalleryReadinessStatus,
 } from "./model";
-import Preview, { Glyph, Icon } from "./Preview";
+import Preview, { Icon } from "./Preview";
+import AppIdentity from "./AppIdentity";
 import GalleryResults from "./GalleryResults";
 declare global {
   interface Window {
@@ -55,9 +57,7 @@ function Detail({
     >
       <div className="detail-inner">
         <header className="detail-header">
-          <div className="app-symbol">
-            <Glyph view={app.view} size={30} />
-          </div>
+          <AppIdentity app={app} />
           <div>
             <p>
               {app.collection === "personal" ? "Personal" : "Business"} /{" "}
@@ -127,14 +127,7 @@ function Detail({
               </div>
             ))}
           </section>
-          <p className="owner-note">
-            Installed apps start empty. Your records stay in your own Matrix
-            database.{" "}
-            {app.collection === "business"
-              ? "Business is a collection on your computer. "
-              : ""}
-            Imports happen only when you ask Matrix.
-          </p>
+          <p className="owner-note">Apps start empty. Records stay in your Matrix database. Imports happen only when you ask Matrix.</p>
         </div>
         <footer className="detail-footer">
           <div aria-live="polite">
@@ -159,8 +152,7 @@ function Detail({
                 ? "Open app"
                 : error
                   ? "Retry installation"
-                  : "Install app"}
-            <Icon name="arrow" />
+                  : "Get app"}
           </button>
         </footer>
       </div>
@@ -168,6 +160,7 @@ function Detail({
   );
 }
 export default function App() {
+  const [logoStage, setLogoStage] = useState<0 | 1 | 2>(0);
   const [apps, setApps] = useState<GalleryAppListing[]>([]),
     [connections, setConnections] = useState<GalleryConnection[] | null>(null),
     [loading, setLoading] = useState(true),
@@ -283,10 +276,10 @@ export default function App() {
     <main className="gallery">
       <header className="gallery-header">
         <div className="gallery-brand">
-          <span className="gallery-logo">
-            <Icon name="grid" />
+          <span className="gallery-logo" aria-hidden="true">
+            {logoStage === 2 ? <Icon name="grid" /> : <img key={logoStage} src={galleryArtwork(logoStage === 0 ? "app-gallery-v2.png" : "app-gallery.svg")} alt="" onError={() => setLogoStage(logoStage === 0 ? 1 : 2)} />}
           </span>
-          <span>App Gallery</span>
+          <span>Made by Matrix OS</span>
         </div>
         <button
           className="icon-button"
@@ -300,8 +293,8 @@ export default function App() {
       <div className="gallery-content">
         <section className="heading">
           <div>
-            <h1>Good tools. More possibilities.</h1>
-            <p>Thoughtfully designed apps for your life and work.</p>
+            <h1>App Gallery</h1>
+            <p>Install a workspace for life or work.</p>
           </div>
           <div
             className="collections"
@@ -345,7 +338,7 @@ export default function App() {
               aria-label="Search apps"
               maxLength={200}
               value={filters.query}
-              placeholder="Find your next useful app"
+              placeholder="Search apps"
               onChange={(event) =>
                 setFilters((current) => ({
                   ...current,
@@ -390,8 +383,8 @@ export default function App() {
         <div className="collection-description">
           <span>
             {filters.collection === "personal"
-              ? "Make everyday life feel a little more organized."
-              : "A focused workspace for the way you do business."}
+              ? "Personal apps"
+              : "Business apps"}
           </span>
           <span>
             {!loading &&
@@ -432,8 +425,8 @@ export default function App() {
           }
         />
         <footer className="gallery-footer">
-          <span>Built for your own computer.</span>
-          <span>Preview illustrations contain no personal data.</span>
+          <span>Apps for your Matrix computer.</span>
+          <span>App screenshots. Example data is labeled. Apps start empty.</span>
         </footer>
       </div>
       {active && (
