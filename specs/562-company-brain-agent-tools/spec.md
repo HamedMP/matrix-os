@@ -14,10 +14,10 @@ is short plain text with a permalink per cited document, bounded in length, and 
 
 ## Scope of this increment
 
-In scope: the kernel tool files (`brain-read-tools.ts`, `brain-read-types.ts`, `brain-read-format.ts` and one file
-per tool), the gateway adapter `brain/agent/` (`createBrainAgentReadTools`), the integrations-mcp file
-`brain-tools.ts` (`registerBrainTools`), tests, and the edits to the shared files (kernel `ipc-server.ts` and
-`options.ts`, gateway `dispatcher.ts` and `server.ts`, integrations-mcp `server.ts`). Out of scope (no stubs):
+In scope: the kernel tool files (`brain-ipc-tools.ts`, `brain-read-tools.ts`, `brain-read-types.ts`,
+`brain-read-format.ts` and one file per tool), the gateway adapter `brain/agent/` (`createBrainAgentReadTools`), the
+integrations-mcp file `brain-tools.ts` (`registerBrainTools`), tests, and the edits to the shared files (kernel
+`ipc-server.ts` and `options.ts`, gateway `dispatcher.ts` and `server.ts`, integrations-mcp `server.ts`). Out of scope (no stubs):
 the feature services and routes (specs 556, 557, 561, 564), any write tool, posting impact comments, and the MCP
 run-capability path rules. OS-view surface matrix: N/A (no UI; tools answer in
 chat on every surface).
@@ -89,9 +89,10 @@ which stores the brief it builds when none is stored or the stored one is out of
 ## Integration wiring
 
 - Kernel: `KernelConfig.brainReadTools?: BrainAgentReadTools`; `createIpcServer` spreads
-  `brainReadToolDefinitions(brainReadTools)` as `tool(name, description, inputShape, handler, { annotations: {
-  readOnlyHint: true } })`; `options.ts` adds `brainReadIpcToolNames(config.brainReadTools)` to `allowedTools`;
-  `index.ts` exports the types.
+  `createBrainIpcTools(tool, brainTools, brainReadTools)` (`tools/brain-ipc-tools.ts`), which registers `brain_why`
+  and `brainReadToolDefinitions(brainReadTools)` as `tool(name, description, inputShape, handler, { annotations: {
+  readOnlyHint: true } })`, so `ipc-server.ts` only composes them; `options.ts` adds
+  `brainReadIpcToolNames(config.brainReadTools)` to `allowedTools`; `index.ts` exports the types.
 - Gateway: where the kernel is configured, `createBrainAgentReadTools({ ownerId: resolveBrainAgentOwnerId(), project,
   search, graph, brief, impact })` from the started brain services; `undefined` registers nothing.
 - integrations-mcp: one line in `server.ts`, `if (full) registerBrainTools(server, fetcher);`.
