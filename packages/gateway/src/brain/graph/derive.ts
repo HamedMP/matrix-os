@@ -149,3 +149,124 @@ function personLinks(
   }
   return [...identities.values()];
 }
+
+function refLinks(
+  out: Collector, doc: BrainEntityDraft, input: BrainGraphDocumentInput, refs: Refs, own: readonly BrainDescribed[],
+): void {
+  const ownKeys = new Set(own.map((described) => `${described.entity.kind}:${described.entity.key}`));
+  for (const dir of input.provenance === "git_spec" ? [] : (refs.get("spec") ?? []).filter(isIndexablePath)) {
+    out.add("implements_spec", "explicit", doc, spec(dir), "spec", null);
+  }
+  for (const key of (refs.get("issue") ?? []).filter((value) => BRAIN_ISSUE_KEY_PATTERN.test(value))) {
+    if (!ownKeys.has(`issue:${key}`)) out.add("references_issue", "explicit", doc, issue(key), "issue", null);
+  }
+  const prMode = GIT_PROVENANCES.has(input.provenance) ? "inferred" : "explicit";
+  for (const number of (refs.get("pr") ?? []).filter((value) => BRAIN_PR_NUMBER_PATTERN.test(value))) {
+    if (ownKeys.has(`pull_request:${number}`)) continue;
+    if (REVIEW_PROVENANCES.has(input.provenance)) out.add("part_of", "explicit", doc, pullRequest(number), "pr", null);
+    else out.add("mentions", prMode, doc, pullRequest(number), "pr", null);
+  }
+  for (const target of input.parentTargets) out.add("part_of", "explicit", doc, target, "parent", null);
+  for (const number of input.commitPullRequests) {
+    out.add("part_of", "explicit", doc, pullRequest(number), "commit", null);
+  }
+}
+
+function lineAt(text: string, index: number): string {
+  const end = text.indexOf("\n", index);
+  return text.slice(text.lastIndexOf("\n", index) + 1, end === -1 ? text.length : end);
+}
+
+function textLinks(
+  out: Collector, doc: BrainEntityDraft, text: string, hashIsIssue: boolean, refs: Refs,
+  own: readonly BrainDescribed[],
+): void {
+  // Numbers a ref already states (own record, pr, issue such as a `Linked issues: #5` footer) are not text mentions.
+  const stated = [...own.map((described) => described.entity.key), ...(refs.get("issue") ?? []),
+    ...(refs.get("pr") ?? []), ...(refs.get("spec") ?? [])];
+  const skip = new Set(stated.map((key) => key.replace(/^#/, "")));
+  let count = 0;
+  for (const match of text.matchAll(HASH_NUMBER)) {
+    if (count >= BRAIN_GRAPH_TEXT_LINKS_MAX) break;
+    if (skip.has(match[1]!)) continue;
+    count += 1;
+    const quote = lineAt(text, match.index);
+    if (hashIsIssue || CLOSING_BEFORE.test(text.slice(Math.max(0, match.index - 24), match.index))) {
+      out.add("references_issue", "inferred", doc, issue(`#${match[1]}`), null, quote);
+    } else {
+      out.add("mentions", "inferred", doc, pullRequest(match[1]!), null, quote);
+    }
+  }
+  count = 0;
+  for (const match of text.matchAll(SPEC_DIR)) {
+    if (count >= BRAIN_GRAPH_TEXT_LINKS_MAX) break;
+    if (skip.has(match[1]!)) continue;
+    count += 1;
+    out.add("mentions", "inferred", doc, spec(match[1]!), null, lineAt(text, match.index));
+  }
+}
+
+/** Indexable path tokens quoted in decision quotes (the candidates for decided_in file links). */
+export function quotedPaths(quotes: readonly string[]): string[] {
+  return [...new Set(quotes.flatMap((quote) => [...quote.matchAll(PATH_TOKEN)].map((match) => match[1]!)))]
+    .filter(isIndexablePath);
+}
+
+/**
+ * Entities a decision quote names: #N, spec directories, the document's own issue keys, and paths that are path refs
+ * of the scope (an import path or a partial path quoted in a spec is not a repository file).
+ */
+function decidedIn(
+  out: Collector, doc: BrainEntityDraft, quotes: readonly string[], hashIsIssue: boolean,
+  issueKeys: ReadonlySet<string>, knownPaths: ReadonlySet<string>,
+): void {
+  let count = 0;
+  const add = (entity: BrainEntityDraft, quote: string): void => {
+    if (count >= BRAIN_GRAPH_TEXT_LINKS_MAX) return;
+    count += 1;
+    out.add("decided_in", "inferred", entity, doc, null, quote);
+  };
+  for (const quote of quotes) {
+    for (const match of quote.matchAll(HASH_NUMBER)) {
+      add(hashIsIssue ? issue(`#${match[1]}`) : pullRequest(match[1]!), quote);
+    }
+    for (const match of quote.matchAll(SPEC_DIR)) add(spec(match[1]!), quote);
+    for (const match of quote.matchAll(TRACKER_KEY)) if (issueKeys.has(match[1]!)) add(issue(match[1]!), quote);
+    for (const match of quote.matchAll(PATH_TOKEN)) {
+      if (knownPaths.has(match[1]!)) add(entityDraft("file", match[1]!, match[1]!), quote);
+    }
+  }
+}
+
+/** File entities for path refs and folder entities for their ancestors (bounded per document). */
+function pathEntities(out: Collector, paths: readonly string[]): void {
+  let folders = 0;
+  for (const path of paths.filter(isIndexablePath)) {
+    out.entity(entityDraft("file", path, path));
+    const segments = path.split("/");
+    for (let depth = 1; depth < segments.length && folders < BRAIN_GRAPH_FOLDERS_PER_DOCUMENT; depth += 1) {
+      const folder = segments.slice(0, depth).join("/");
+      if (out.entities.has(`folder:${folder}`)) continue;
+      folders += 1;
+      out.entity(entityDraft("folder", folder, folder));
+    }
+  }
+}
+
+export function deriveBrainGraph(input: BrainGraphDocumentInput): BrainGraphDerivation {
+  const out = new Collector();
+  const doc = entityDraft("document", input.documentId, input.title);
+  out.entity(doc);
+  const refs = groupRefs(input.refs);
+  const footer = graphFooter(input.provenance, input.body);
+  const own = describedEntities(input.provenance, footer, refs);
+  for (const described of own) out.add("describes", described.mode, doc, described.entity, described.refKind, null);
+  const identities = personLinks(out, doc, input.body, footer, refs);
+  refLinks(out, doc, input, refs, own);
+  const hashIsIssue = footer?.sigil === "!";
+  textLinks(out, doc, `${input.title}\n${footer?.message ?? input.body}`, hashIsIssue, refs, own);
+  const issueKeys = new Set([...(refs.get("issue") ?? []), ...(refs.get("handle") ?? [])]);
+  decidedIn(out, doc, input.decisionQuotes, hashIsIssue, issueKeys, input.knownPaths ?? new Set());
+  pathEntities(out, refs.get("path") ?? []);
+  return { entities: [...out.entities.values()], links: out.links, identities };
+}
