@@ -1,18 +1,36 @@
 /** The graph over PGlite: derivation from synced documents and claims, timelines, entities, aliases and cleanup. */
-import { sql } from "kysely";
+import {
+  sql, type KyselyPlugin, type PluginTransformQueryArgs, type PluginTransformResultArgs, type QueryResult,
+  type RootOperationNode, type UnknownRow,
+} from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { BrainFeatureError, type BrainTimelineView } from "../../packages/gateway/src/brain/contracts.js";
 import {
-  bootstrapBrainGraphDatabase, createBrainGraph, type BrainGraphTables,
+  bootstrapBrainGraphDatabase, brainEntityId, createBrainGraph, type BrainGraphTables,
 } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
+import { BrainRepository } from "../../packages/gateway/src/brain/index.js";
 import {
   FIXTURE, OWNER, PROJECT, SCOPE, createGraphHarness, id, rejectsWith, resolver, seedProject, type GraphHarness,
 } from "./helpers/brain-graph-fixtures.js";
 
 const labels = (view: BrainTimelineView) => view.items.map((item) => item.cite.documentId);
 const GRAPH_TABLES = ["brain_graph_entities", "brain_graph_links", "brain_graph_state", "brain_graph_aliases"] as const;
+
+/** Records the [ownerId, key] of every per-scope advisory lock taken through the plugged Kysely. */
+function recordLocks(locks: string[][]): KyselyPlugin {
+  return {
+    transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+      const raw = args.node as { kind: string; sqlFragments?: readonly string[]; parameters?: readonly unknown[] };
+      if (raw.kind === "RawNode" && (raw.sqlFragments ?? []).join("").includes("pg_advisory_xact_lock")) {
+        locks.push((raw.parameters ?? []).map((node) => String((node as { value?: unknown }).value)));
+      }
+      return args.node;
+    },
+    transformResult: async (args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>> => args.result,
+  };
+}
 
 describe("brain graph store", { timeout: 60_000 }, () => {
   let harness: GraphHarness;
@@ -32,6 +50,34 @@ describe("brain graph store", { timeout: 60_000 }, () => {
     expect(fresh).toEqual({ caughtUp: true, pendingDocuments: 0, pendingCapped: false });
     expect(await count("brain_graph_state")).toBe(7);
     expect(await harness.refresh()).toEqual({ processed: 0, removed: 0, caughtUp: true });
+  });
+
+  it("takes the brain-graph scope lock for refresh, hooks and alias changes, never the core lock", async () => {
+    const locks: string[][] = [];
+    const repository = new BrainRepository(harness.db.withPlugin(recordLocks(locks)), { now: harness.now });
+    const graph = createBrainGraph({ repository, resolver, now: harness.now });
+    const graphLock = [OWNER, `brain-graph:${SCOPE.scopeId}`];
+    const taken = () => {
+      const keys = locks.splice(0);
+      expect(keys.length).toBeGreaterThan(0);
+      return keys.filter((key) => key.join("|") !== graphLock.join("|"));
+    };
+    const signal = new AbortController().signal;
+    await harness.sync("git", [FIXTURE.pr12, FIXTURE.commitB, FIXTURE.spec]);
+    await harness.sync("github", [FIXTURE.githubPr]);
+    expect(await graph.index.refresh(SCOPE, {}, signal)).toMatchObject({ caughtUp: true });
+    expect(taken()).toEqual([]);
+    await graph.index.handle({ type: "documents_changed", scope: SCOPE, sourceId: null, documentIds: [id("pr12")],
+      at: harness.iso() }, signal);
+    expect(taken()).toEqual([]);
+    await graph.service.updateAlias(OWNER, PROJECT, brainEntityId("person", "email:alice@acme.dev"),
+      { action: "merge", aliasKey: "person:github:alice" });
+    expect(taken()).toEqual([]);
+    await graph.index.handle({ type: "scope_erased", scope: SCOPE, at: harness.iso() }, signal);
+    expect(taken()).toEqual([]);
+    // The recorder sees the core key when a core write takes it.
+    await repository.eraseScope(SCOPE);
+    expect(locks).toEqual([[OWNER, `brain:${SCOPE.scopeId}`]]);
   });
 
   it("answers file, folder, person, pull request, spec and issue timelines newest first", async () => {
