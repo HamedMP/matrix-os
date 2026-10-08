@@ -75,9 +75,10 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
   `BRAIN_BOOTSTRAP_ORDER` (the three bootstraps one by one; a failed group leaves only its kinds off), then, inside
   its per-feature guard, `createBrainSourcesService({ repository, resolver, runner: runBrainSourceSync, hooks,
   gitSync: createBrainGitSourceSync(project), handlers: createBrainSourceHandlers({ kysely, integrations,
-  isConnected, accounts, homePath, notes, chats, githubTokenOwnerIds }, readyGroups), accounts, limits })`; the
-  service goes into `BrainServices.sources`. `project` is the project service wrapped to emit `documents_changed`,
-  so a git sync through `/sources` announces its changes too. `startBrainSourcesService` does the same in one call.
+  isConnected, accounts, homePath, homeOwnerIds, notes, chats, githubTokenOwnerIds }, readyGroups), accounts,
+  limits })`; the service goes into `BrainServices.sources`. `project` is the project service wrapped to emit
+  `documents_changed`, so a git sync through `/sources` announces its changes too. `startBrainSourcesService` does the
+  same in one call.
 - Routes: `createBrainApiRoutes` mounts `createBrainSourcesRoutes({ service: services?.sources ?? null,
   getPrincipal })` in place of the 503 placeholder.
 - Cross-package: none; the kernel and the MCP server do not call `/sources`. Config injection: the integration
