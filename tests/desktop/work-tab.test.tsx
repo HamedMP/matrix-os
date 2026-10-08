@@ -2,7 +2,7 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import { CanonicalChatNavigationResponseSchema, type CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
@@ -316,10 +316,26 @@ describe("WorkTab rail integration", () => {
     });
     globalThis.ResizeObserver = WorkResizeObserver;
     const get = vi.fn(async (path: string) => {
+      if (path === "/api/chat-navigation?version=1&limit=1000") {
+        return CanonicalChatNavigationResponseSchema.parse({
+          version: 1,
+          truncated: false,
+          items: [projectChat, globalChat].map(record => {
+            const { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt } = record.chat;
+            return {
+              chat: { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt },
+              projectId: record.projectId,
+              readState: { version: 0, unread: false, markedUnread: false, latestIncomingSeq: 0, readThroughSeq: 0 },
+              classification: { kind: "ordinary" },
+              persistence: "personal",
+            };
+          }),
+        });
+      }
       if (path === "/api/chat-agents") return { enabled: true, agents: [] };
       if (/^\/api\/chats\/[^/]+\/bot$/.test(path)) return { agentId: null };
-      if (path === "/api/chats/chat_global?limit=200&messageVersion=2&inputVersion=1&readStateVersion=1") return {
-        record: globalChat,
+      if (/^\/api\/chats\/(?:chat_global|chat_alpha)\?/.test(path)) return {
+        record: path.startsWith("/api/chats/chat_alpha?") ? projectChat : globalChat,
         messages: [],
         turns: [],
         runs: [],
@@ -564,23 +580,23 @@ describe("WorkTab rail integration", () => {
     await showGlobalChatRow();
 
     fireEvent.click(screen.getByRole("button", { name: "Global chat" }));
-    expect(activeWorkTab()).toMatchObject({
+    await waitFor(() => expect(activeWorkTab()).toMatchObject({
       kind: "work",
       workRoute: "chat",
       chatId: "chat_global",
       chatView: "conversation",
       projectSlug: undefined,
-    });
+    }));
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
-    expect(activeWorkTab()).toMatchObject({
+    await waitFor(() => expect(activeWorkTab()).toMatchObject({
       kind: "work",
       workRoute: "project",
       projectSlug: "alpha",
       chatId: "chat_alpha",
       chatView: "conversation",
-    });
+    }));
     expect(useProjectView.getState().viewFor("alpha")).toBe("chats");
     expect(useTabs.getState().tabs).toHaveLength(1);
   });

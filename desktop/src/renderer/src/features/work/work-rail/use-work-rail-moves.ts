@@ -1,5 +1,5 @@
 import { useRef, useState, type Dispatch, type SetStateAction, type RefObject } from "react";
-import { mergeCanonicalChatRecord } from "@matrix-os/ui";
+import { mergeChatNavigationRecord, type ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "../../../stores/board";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
@@ -8,7 +8,7 @@ import { createProjectForChat, projectMoveAuthorityKey } from "./new-project-cha
 type Scope = {client: CanonicalChatClient | null; key: string; generation: number};
 export function useWorkRailMoves({client,projects,routeScopeRef,setRecords,setExpandedProjects,onChatMoved}: {
   client: CanonicalChatClient | null; projects: Project[]; routeScopeRef: RefObject<Scope>;
-  setRecords: Dispatch<SetStateAction<CanonicalChatRecord[]>>;
+  setRecords: Dispatch<SetStateAction<ChatNavigationRecord[]>>;
   setExpandedProjects: Dispatch<SetStateAction<Record<string,boolean>>>;
   onChatMoved?: (record: CanonicalChatRecord, project?: Project) => void;
 }) {
@@ -16,7 +16,7 @@ export function useWorkRailMoves({client,projects,routeScopeRef,setRecords,setEx
   const moving = useRef<CanonicalChatClient | null>(null);
   const movingChatId = state?.client === client && state.authorityKey === projectMoveAuthorityKey() ? state?.movingChatId ?? null : null;
   const error = state?.client === client && state.authorityKey === projectMoveAuthorityKey() ? state?.error ?? null : null;
-  const moveChat = async (record: CanonicalChatRecord, project: Project) => {
+  const moveChat = async (record: ChatNavigationRecord, project: Project) => {
     if (!client || moving.current === client || record.activeRun) return;
     const scope = routeScopeRef.current;
     const authorityKey = projectMoveAuthorityKey();
@@ -25,7 +25,7 @@ export function useWorkRailMoves({client,projects,routeScopeRef,setRecords,setEx
     try {
       const updated = await client.updateProject(record.chat.id, {baseRevision:record.chat.revision,projectId:project.id ?? project.slug});
       if (routeScopeRef.current.client !== scope.client || authorityKey !== projectMoveAuthorityKey()) return;
-      setRecords(previous => previous.map(item => item.chat.id === updated.chat.id ? mergeCanonicalChatRecord(item,updated) : item));
+      setRecords(previous => previous.map(item => item.chat.id === updated.chat.id ? mergeChatNavigationRecord(item,updated) : item));
       setExpandedProjects(previous => ({...previous,[project.id ?? project.slug]:true}));
       if (routeScopeRef.current.generation === scope.generation) onChatMoved?.(updated,project);
     } catch (failure: unknown) {
@@ -36,7 +36,7 @@ export function useWorkRailMoves({client,projects,routeScopeRef,setRecords,setEx
       if (routeScopeRef.current.client === scope.client) setState(previous => previous?.client === client ? {...previous,movingChatId:null} : previous);
     }
   };
-  return {movingChatId,error,moveItems:(record:CanonicalChatRecord) => [
+  return {movingChatId,error,moveItems:(record:ChatNavigationRecord) => [
     ...projects.map(project => ({label:project.name,disabled:Boolean(record.activeRun) || movingChatId !== null || record.projectId === (project.id ?? project.slug) || record.projectId === project.slug,onSelect:() => {void moveChat(record,project);}})),
     {label:"New project",disabled:Boolean(record.activeRun) || movingChatId !== null,onSelect:() => createProjectForChat(record)},
   ]};

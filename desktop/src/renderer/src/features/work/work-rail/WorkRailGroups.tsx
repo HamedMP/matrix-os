@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { CanonicalChatRecord, CollaborationProjectOverview } from "@matrix-os/contracts";
+import type { CollaborationProjectOverview } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { AgentAvatar, type BotConversationSummary } from "@matrix-os/ui";
 import type { WorkRailModel, WorkRailProjectGroup } from "../work-rail-model";
 import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
@@ -14,7 +15,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
   onToggle: (key: WorkRailSectionKey) => void;
   onCreateProject: () => void;
   renderProject: (group: WorkRailProjectGroup) => ReactNode;
-  renderChat: (record: CanonicalChatRecord, placement: "pinned" | "recent") => ReactNode;
+  renderChat: (record: ChatNavigationRecord, placement: "pinned" | "recent") => ReactNode;
   bots: BotConversationSummary[];
   onOpenBotChat?: (chatId: string) => void;
   organizationDrives: ReactNode;
