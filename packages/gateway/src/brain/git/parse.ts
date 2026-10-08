@@ -16,8 +16,12 @@ import {
   type GitVersion,
 } from "./types.js";
 
-const NUL = 0x00, TAB = 0x09, UNIT_SEPARATOR = 0x1f;
-const METADATA_HEADER_FIELDS = 5;
+const NUL = 0x00, TAB = 0x09, LF = 0x0a, UNIT_SEPARATOR = 0x1f;
+/**
+ * The byte that ends each metadata header field. The author name ends in %n:
+ * a commit header line cannot hold a newline, while git keeps %x1f in a name.
+ */
+const METADATA_FIELD_ENDS = [UNIT_SEPARATOR, UNIT_SEPARATOR, UNIT_SEPARATOR, UNIT_SEPARATOR, LF] as const;
 const MAX_PARENTS = 64, MAX_OID_CHARS = 64, MAX_DATE_CHARS = 32;
 const MAX_STATUS_TOKEN_CHARS = 5, MAX_LS_TREE_HEADER_CHARS = 128;
 
@@ -140,12 +144,15 @@ export function parseCount(stdout: Uint8Array): number {
   return Number.parseInt(text, 10);
 }
 
-// Metadata log: `%H%x1f%P%x1f%cI%x1f%aI%x1f%an%x1f%B` with -z.
+// Metadata log: GIT_COMMIT_METADATA_FORMAT with -z.
+
+/** The `git log -z --format=` string parseCommitMetadata reads. */
+export const GIT_COMMIT_METADATA_FORMAT = "%H%x1f%P%x1f%cI%x1f%aI%x1f%an%n%B";
 
 /**
  * Records end in NUL. With `truncated` (the per-commit fallback hit its
  * maxBuffer) a final record without its NUL is kept when its five header
- * separators are present, and is marked messageTruncated.
+ * field ends are present, and is marked messageTruncated.
  */
 export function parseCommitMetadata(stdout: Uint8Array, options: { shaPattern: RegExp; truncated: boolean }): GitCommitMetadata[] {
   const { tokens, tail } = splitNul(stdout);
@@ -156,11 +163,12 @@ export function parseCommitMetadata(stdout: Uint8Array, options: { shaPattern: R
   return records;
 }
 
-/** Offsets of the five header separators; null when the record has fewer. */
+/** Offsets of the five header field ends; null when the record has fewer. */
 function headerCuts(record: Uint8Array): number[] | null {
   const cuts: number[] = [];
-  for (let from = 0; cuts.length < METADATA_HEADER_FIELDS;) {
-    const at = record.indexOf(UNIT_SEPARATOR, from);
+  let from = 0;
+  for (const end of METADATA_FIELD_ENDS) {
+    const at = record.indexOf(end, from);
     if (at === -1) return null;
     cuts.push(at);
     from = at + 1;
@@ -179,7 +187,7 @@ function parseMetadataRecord(
   if (!shaPattern.test(sha) || !ISO_DATE.test(committedAt) || !ISO_DATE.test(authoredAt)) malformed();
   const parents = parentsText === "" ? [] : parentsText.split(" ");
   if (parents.length > MAX_PARENTS || !parents.every((parent) => shaPattern.test(parent))) malformed();
-  let message = record.subarray(cuts[METADATA_HEADER_FIELDS - 1] + 1);
+  let message = record.subarray(cuts[METADATA_FIELD_ENDS.length - 1] + 1);
   let messageTruncated = partial;
   if (partial) message = dropIncompleteTail(message);
   if (message.length > GIT_COMMIT_MESSAGE_MAX_BYTES) {

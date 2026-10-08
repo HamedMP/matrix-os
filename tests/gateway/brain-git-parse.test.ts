@@ -31,7 +31,7 @@ interface MetaFields { sha?: string; parents?: string; cI?: string; aI?: string;
 
 function metaRecord(fields: MetaFields): Uint8Array {
   const { sha = A, parents = "", cI = DATE, aI = DATE, author = "Fixture Author", message } = fields;
-  return bytes(sha, US, parents, US, cI, US, aI, US, author, US, message);
+  return bytes(sha, US, parents, US, cI, US, aI, US, author, "\n", message);
 }
 
 describe("small command outputs", () => {
@@ -101,6 +101,11 @@ describe("parseCommitMetadata", () => {
     expect(record.body).toBe(`body${US} here`);
   });
 
+  it("ends the author name at its newline, so a unit separator in it never moves the message", () => {
+    const [record] = meta(bytes(metaRecord({ author: `Ann${US}Lee`, message: `real${US}subject\n\nbody\n` }), "\0"));
+    expect(record).toMatchObject({ authorName: "AnnLee", subject: `real${US}subject`, body: "body" });
+  });
+
   it("splits messages with git %s / %b semantics", () => {
     expect(splitCommitMessage("line one\n  line two \n\nbody\n")).toEqual({ subject: "line one line two", body: "body" });
     expect(splitCommitMessage("subject only\n")).toEqual({ subject: "subject only", body: "" });
@@ -134,6 +139,7 @@ describe("parseCommitMetadata", () => {
     malformed(() => meta(bytes(metaRecord({ parents: Array(65).fill(B).join(" "), message: "m" }), "\0")));
     malformed(() => meta(bytes(metaRecord({ parents: `${B}  ${C}`, message: "m" }), "\0")));
     malformed(() => meta(bytes(`${A}${US}${US}${DATE}${US}${DATE}\0`)));
+    malformed(() => meta(bytes(`${A}${US}${US}${DATE}${US}${DATE}${US}Ann${US}message\0`)));
     malformed(() => meta(bytes(metaRecord({ message: "no terminator" }))));
     malformed(() => meta(bytes(metaRecord({ message: "m" }), "\0\0")));
     expect(meta(bytes(metaRecord({ parents: Array(64).fill(B).join(" "), message: "m" }), "\0"))[0].parents).toHaveLength(64);
@@ -145,6 +151,7 @@ describe("parseCommitMetadata", () => {
     const [cut] = meta(bytes(metaRecord({ message: "s\n\ncaf" }), [0xc3]), true);
     expect(cut.body).toBe("caf");
     expect(meta(bytes(`${A}${US}${US}${DATE}`), true)).toEqual([]);
+    expect(meta(bytes(`${A}${US}${US}${DATE}${US}${DATE}${US}Ann${US}Le`), true)).toEqual([]);
     const [complete] = meta(bytes(metaRecord({ message: "whole\n" }), "\0"), true);
     expect(complete.messageTruncated).toBe(false);
   });
