@@ -18,8 +18,16 @@ import {
   type BrainModelUsage, type BrainModelWireOutput,
 } from "./types.js";
 
+/**
+ * The SDK error classes this client maps, from the gateway's own copy of the SDK: with hoisting another package's copy
+ * can be a different version whose classes fail instanceof against errors thrown here.
+ */
+export {
+  AnthropicError, APIConnectionError, APIConnectionTimeoutError, APIError, APIUserAbortError,
+} from "@anthropic-ai/sdk";
+
 /** Built once at module load: the schema bytes, part of every request, never change between calls. */
-const WIRE_FORMAT = betaZodOutputFormat(BrainModelWireOutputSchema);
+export const BRAIN_MODEL_WIRE_FORMAT = betaZodOutputFormat(BrainModelWireOutputSchema);
 const ZERO_USAGE: BrainModelUsage = {
   inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 0,
 };
@@ -83,7 +91,7 @@ export function createAnthropicBrainClaimModel(options: BrainAnthropicModelOptio
           fallbacks: "default",
           system: [{ type: "text", text: BRAIN_MODEL_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
           messages: [{ role: "user", content: brainModelUserContent(input) }],
-          output_config: { effort: options.effort, format: WIRE_FORMAT },
+          output_config: { effort: options.effort, format: BRAIN_MODEL_WIRE_FORMAT },
         }, { signal });
       } catch (error) {
         throw callError(error, signal);
@@ -137,7 +145,7 @@ function readMessage(message: Anthropic.Beta.BetaMessage, modelId: string): Brai
   if (texts.length !== 1) return invalid;
   let output: BrainModelWireOutput;
   try {
-    output = WIRE_FORMAT.parse(texts[0].text);
+    output = BRAIN_MODEL_WIRE_FORMAT.parse(texts[0].text);
   } catch (error) {
     // SyntaxError: not JSON. AnthropicError: JSON of the wrong shape.
     if (error instanceof SyntaxError || error instanceof Anthropic.AnthropicError) return invalid;

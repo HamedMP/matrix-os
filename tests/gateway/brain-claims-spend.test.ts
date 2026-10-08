@@ -10,14 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PostgresDialect } from "kysely";
 import pg from "pg";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import {
   BRAIN_EXTRACTION_DEFAULT_LIMITS, BRAIN_EXTRACTION_RUN_LEASE_MS, BRAIN_MODEL_MAX_RETRIES, BRAIN_MODEL_MAX_TOKENS,
-  BRAIN_MODEL_SPEND_BILLED_RUNS_MAX, BRAIN_MODEL_SPEND_WINDOW_MS, BRAIN_RETIRED_RUNS_SCOPE_ID, BrainModelWireOutputSchema,
-  runBrainExtraction,
+  BRAIN_MODEL_SPEND_BILLED_RUNS_MAX, BRAIN_MODEL_SPEND_WINDOW_MS, BRAIN_RETIRED_RUNS_SCOPE_ID, runBrainExtraction,
   type BrainClaimModel, type BrainExtractionOptions, type BrainExtractionStore,
 } from "../../packages/gateway/src/brain/claims/index.js";
+import { BRAIN_MODEL_WIRE_FORMAT } from "../../packages/gateway/src/brain/claims/model/client.js";
 import { createBrainClaimModelProvider, parseBrainModelConfig } from "../../packages/gateway/src/brain/claims/model/config.js";
 import { BRAIN_MODEL_PRICES, brainModelUsage } from "../../packages/gateway/src/brain/claims/model/pricing.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT, brainModelUserContent } from "../../packages/gateway/src/brain/claims/model/prompt.js";
@@ -76,7 +75,7 @@ describe("brain model spend cap", { timeout: 60_000 }, () => {
   describe("the worst case of one call and the stop rule", () => {
     it("prices every billed attempt at the dearest rates, with a prompt allowance above the fixed request text", () => {
       // A token is at least one byte: the system prompt, the output schema and the tags around the title and body.
-      const fixed = bytes(BRAIN_MODEL_SYSTEM_PROMPT) + bytes(JSON.stringify(betaZodOutputFormat(BrainModelWireOutputSchema)))
+      const fixed = bytes(BRAIN_MODEL_SYSTEM_PROMPT) + bytes(JSON.stringify(BRAIN_MODEL_WIRE_FORMAT))
         + brainModelUserContent({ title: "", body: "" }).reduce((sum, block) => sum + bytes(block.text), 0);
       expect(fixed).toBeLessThan(BRAIN_MODEL_PROMPT_OVERHEAD_TOKENS);
       // Two SDK attempts, each up to three models: the requested one, then its two default fallbacks in turn.
