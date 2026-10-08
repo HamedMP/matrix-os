@@ -92,6 +92,36 @@ describe("shared coding execution (S09)", () => {
       expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toEqual([]);
     });
 
+    it("lets a Contributor prompt the owner's configured AI without another per-member opt-in", async () => {
+      const requestDispatch = vi.fn(async () => undefined);
+      const adapter = new CollaborationChatExecutionAdapter({
+        repository, commands: createCommands(),
+        resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+        resolveEligibility: async () => collaborationExecutionEligibility(),
+        resolveResourceRevision: async () => 1,
+        resolveEffectiveSubmitMode: async () => "members",
+        resolveOwnerSourceAdmission: async () => "ready",
+        requestDispatch,
+        createQueuedTurnId: () => "qturn_default_contributor_prompt",
+      });
+
+      await expect(adapter.submit({
+        ...readContext(collaborationActors.editor),
+        capability: "request_ai",
+        role: "editor",
+      }, {
+        clientRequestId: uuid(68), expectedRevision: "1", text: "Use the owner's AI",
+      })).resolves.toMatchObject({
+        request: {
+          id: "qturn_default_contributor_prompt",
+          actor: { actorId: collaborationActors.editor },
+          state: "queued",
+          text: "Use the owner's AI",
+        },
+      });
+      expect(requestDispatch).toHaveBeenCalledWith(collaborationIds.scope, collaborationIds.chat);
+    });
+
     it("lets a directly granted project contributor queue and control an inherited Chat prompt", async () => {
       const parentId = "79000000-0000-4000-8000-000000000999";
       await fixture.db.insertInto("collaboration_scopes").values({

@@ -265,17 +265,17 @@ describe("organization ready-to-work presentation", () => {
     render(<AudienceGrantPicker api={api} scope={scope} />);
     expect(await screen.findByRole("option", { name: "Ada" })).toBeVisible();
     expect(screen.queryByPlaceholderText(/email|username/i)).toBeNull();
+    expect(screen.getByLabelText("Access preset")).toHaveValue("contributor");
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
-    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      audience: { kind: "member", actorId: "user_ada" }, preset: "viewer", expectedRevision: "4",
+      audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", expectedRevision: "4",
     })));
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "organization" } });
-    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "contributor" } });
+    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      audience: { kind: "organization" }, preset: "contributor",
+      audience: { kind: "organization" }, preset: "viewer",
     })));
   });
 

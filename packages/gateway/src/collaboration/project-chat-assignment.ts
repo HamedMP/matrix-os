@@ -1,8 +1,10 @@
 import { sql, type Kysely, type Transaction } from "kysely";
+import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
 import type { ChatOwner, ChatOutboxEvent, ChatRecord } from "../chat/records.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { createProjectInheritanceResolver, ProjectInheritanceError } from "./project-inheritance.js";
+import { publishProjectChatRoutes } from "./project-chat-routes.js";
 import { appendMutationRecords, type ScopeRow } from "./repository-shared.js";
 
 const MAX_BACKFILL_BATCH = 200;
@@ -26,6 +28,10 @@ interface ReconciliationEffects {
 interface BoundChat {
   bindingId: string;
   projectScopeId: string;
+  bindingAuthorityRuntimeId: string;
+  bindingAuthorityGeneration: number;
+  bindingRevision: number;
+  bindingReadiness: "ready" | "blocked";
   scope: ScopeRow;
 }
 
@@ -88,6 +94,10 @@ export function createProjectChatAssignmentCoordinator(options: {
       .select([
         "binding.id as binding_id",
         "binding.project_scope_id",
+        "binding.authority_runtime_id as binding_authority_runtime_id",
+        "binding.authority_generation as binding_authority_generation",
+        "binding.revision as binding_revision",
+        "binding.readiness as binding_readiness",
         "child.id",
         "child.owner_type",
         "child.owner_id",
@@ -117,13 +127,104 @@ export function createProjectChatAssignmentCoordinator(options: {
       .where("child.deleted_at", "is", null)
       .orderBy("child.id", "asc")
       .limit(2)
-      .forUpdate("child")
+      .forUpdate(["binding", "child"])
       .execute();
     if (rows.length > 1) throw new ProjectInheritanceError("conflict");
     const row = rows[0];
     if (!row) return null;
-    const { binding_id: bindingId, project_scope_id: projectScopeId, ...scope } = row;
-    return { bindingId, projectScopeId, scope };
+    const {
+      binding_id: bindingId,
+      project_scope_id: projectScopeId,
+      binding_authority_runtime_id: bindingAuthorityRuntimeId,
+      binding_authority_generation: bindingAuthorityGeneration,
+      binding_revision: bindingRevision,
+      binding_readiness: bindingReadiness,
+      ...scope
+    } = row;
+    return {
+      bindingId,
+      projectScopeId,
+      bindingAuthorityRuntimeId,
+      bindingAuthorityGeneration: Number(bindingAuthorityGeneration),
+      bindingRevision: Number(bindingRevision),
+      bindingReadiness,
+      scope,
+    };
+  }
+
+  function bindingMatchesProject(current: BoundChat, target: ScopeRow): boolean {
+    return current.projectScopeId === target.id
+      && current.bindingAuthorityRuntimeId === target.authority_runtime_id
+      && current.bindingAuthorityGeneration === Number(target.authority_generation)
+      && current.bindingReadiness === "ready"
+      && current.scope.parent_scope_id === target.id
+      && current.scope.organization_id === target.organization_id
+      && current.scope.lifecycle === target.lifecycle
+      && current.scope.authority_runtime_id === target.authority_runtime_id
+      && Number(current.scope.authority_generation) === Number(target.authority_generation);
+  }
+
+  async function repairSameProjectBinding(
+    trx: CollaborationTransaction,
+    owner: ChatOwner,
+    record: ChatRecord,
+    current: BoundChat,
+    target: ScopeRow,
+    at: Date,
+  ): Promise<string> {
+    if (!target.organization_id || current.scope.kind !== "chat"
+      || current.scope.resource_id !== record.chat.id) {
+      throw new ProjectInheritanceError("conflict");
+    }
+    if (await hasCompanyDriveMaterial(trx, record.chat.id)) {
+      throw new ProjectInheritanceError("resource_blocked");
+    }
+    const updatedScope = await trx.updateTable("collaboration_scopes").set({
+      parent_scope_id: target.id,
+      organization_id: target.organization_id,
+      lifecycle: target.lifecycle,
+      revision: Number(current.scope.revision) + 1,
+      auth_epoch: Number(current.scope.auth_epoch) + 1,
+      authority_runtime_id: target.authority_runtime_id,
+      authority_generation: Number(target.authority_generation),
+      updated_at: at,
+    }).where("id", "=", current.scope.id)
+      .where("membership_mode", "=", "inherited")
+      .where("revision", "=", Number(current.scope.revision))
+      .where("auth_epoch", "=", Number(current.scope.auth_epoch))
+      .where("deleted_at", "is", null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!updatedScope) throw new ProjectInheritanceError("conflict");
+    const updatedBinding = await trx.updateTable("collaboration_resource_bindings").set({
+      authority_runtime_id: target.authority_runtime_id,
+      authority_generation: Number(target.authority_generation),
+      revision: record.chat.revision,
+      readiness: "ready",
+      blocker: null,
+      updated_at: at,
+    }).where("id", "=", current.bindingId)
+      .where("project_scope_id", "=", target.id)
+      .where("resource_scope_id", "=", current.scope.id)
+      .where("authority_runtime_id", "=", current.bindingAuthorityRuntimeId)
+      .where("authority_generation", "=", current.bindingAuthorityGeneration)
+      .where("revision", "=", current.bindingRevision)
+      .where("readiness", "=", current.bindingReadiness)
+      .returning("id")
+      .executeTakeFirst();
+    if (!updatedBinding) throw new ProjectInheritanceError("conflict");
+    await appendMutationRecords(trx, {
+      scope: updatedScope,
+      actorId: owner.ownerId,
+      action: "project.item_binding.repaired",
+      recipients: [],
+      discoveryState: "accepted",
+      publishDirectory: false,
+      now: at.toISOString(),
+      reasonCode: "project_inheritance_repaired",
+    });
+    await publishProjectChatRoutes(trx, { projectScopeId: target.id, now: at });
+    return updatedScope.id;
   }
 
   async function cancelScopeQueuedTurns(
@@ -276,6 +377,16 @@ export function createProjectChatAssignmentCoordinator(options: {
     if (current && current.projectScopeId !== target?.id) {
       effects.scopeIdsToRevokeSessions.push(await endBinding(trx, current, at));
     }
+    if (target && current?.projectScopeId === target.id && !bindingMatchesProject(current, target)) {
+      effects.scopeIdsToRevokeSessions.push(await repairSameProjectBinding(
+        trx,
+        owner,
+        record,
+        current,
+        target,
+        at,
+      ));
+    }
     if (target && current?.projectScopeId !== target.id) {
       const reparentedScopeId = await reparentDirectChatScope(trx, owner, record.chat.id, target, at);
       if (reparentedScopeId) effects.scopeIdsToRevokeSessions.push(reparentedScopeId);
@@ -359,8 +470,21 @@ export function createProjectChatAssignmentCoordinator(options: {
           .onRef("binding.project_scope_id", "=", "project.id")
           .on("binding.resource_kind", "=", "chat")
           .onRef("binding.resource_id", "=", "chat.id"))
+        .leftJoin("collaboration_scopes as child", "child.id", "binding.resource_scope_id")
         .select(["chat.id", "chat.owner_type", "chat.owner_id"])
-        .where("binding.id", "is", null);
+        .where((expression) => expression.or([
+          expression("binding.id", "is", null),
+          expression("binding.readiness", "!=", "ready"),
+          expression("binding.authority_runtime_id", "!=", expression.ref("project.authority_runtime_id")),
+          expression("binding.authority_generation", "!=", expression.ref("project.authority_generation")),
+          expression("child.parent_scope_id", "is", null),
+          expression("child.parent_scope_id", "!=", expression.ref("project.id")),
+          expression("child.organization_id", "is", null),
+          expression("child.organization_id", "!=", expression.ref("project.organization_id")),
+          expression("child.lifecycle", "!=", "shared"),
+          expression("child.authority_runtime_id", "!=", expression.ref("project.authority_runtime_id")),
+          expression("child.authority_generation", "!=", expression.ref("project.authority_generation")),
+        ]));
       if (cursor) candidates = candidates.where("chat.id", ">", cursor);
       const rows = await candidates.orderBy("chat.id", "asc").limit(MAX_BACKFILL_BATCH).execute();
       if (rows.length === 0) return reconciled;
@@ -396,11 +520,15 @@ export function createProjectChatAssignmentCoordinator(options: {
               .where("resource_kind", "=", "chat")
               .where("resource_id", "=", chat.id)
               .executeTakeFirst();
-            return { effects, bound: binding !== undefined };
+            return {
+              effects,
+              repaired: binding !== undefined
+                && (effects.chatEvents.length > 0 || effects.scopeIdsToRevokeSessions.length > 0),
+            };
           });
           if (repaired) {
             publishEffects(owner, repaired.effects);
-            if (repaired.bound) reconciled += 1;
+            if (repaired.repaired) reconciled += 1;
           }
         } catch (error: unknown) {
           if (!(error instanceof ProjectInheritanceError)) throw error;
