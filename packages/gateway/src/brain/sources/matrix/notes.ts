@@ -35,8 +35,8 @@ const START: NotesCursor = { v: 1, phase: "scan", after: "", seen: 0 };
 const NOTE_REFS_MAX = 20;
 
 /**
- * Every tag as the Notes app writes them: comma or space separated, lowercase, without "#". Selection checks all of
- * them; only the refs are capped at NOTE_REFS_MAX.
+ * Every tag as the Notes app writes them: comma or space separated, lowercase, without "#". These become the label
+ * refs (at most NOTE_REFS_MAX); selection does not use them, as the tags read may be cut (see the reader).
  */
 export function noteTags(tags: string | null): string[] {
   const out = new Set<string>();
@@ -47,9 +47,9 @@ export function noteTags(tags: string | null): string[] {
   return [...out];
 }
 
-function selected(config: BrainMatrixNotesSourceConfig, tags: string | null): boolean {
-  if (config.folders.length === 0) return true;
-  return noteTags(tags).some((tag) => config.folders.includes(tag));
+/** Every note without folders; otherwise the reader's match of the folders against all of the note's tags. */
+function selected(config: BrainMatrixNotesSourceConfig, note: { readonly selected: boolean }): boolean {
+  return config.folders.length === 0 || note.selected;
 }
 
 function noteDocument(externalRef: string, note: BrainMatrixNoteRow) {
@@ -74,11 +74,12 @@ async function scan(
   const draft = new MatrixPageDraft(context);
   const room = BRAIN_MATRIX_LIMITS.notesPerPass - cursor.seen;
   const limit = Math.min(BRAIN_MATRIX_LIMITS.notesPageMax, context.limits.maxUpserts, room);
-  const rows = limit > 0 ? await readThrough("notes read", () => reader.listNotes(cursor.after, limit)) : [];
+  const { folders } = context.config;
+  const rows = limit > 0 ? await readThrough("notes read", () => reader.listNotes(cursor.after, limit, folders)) : [];
   let after = cursor.after;
   let done = 0;
   for (const note of rows) {
-    if (selected(context.config, note.tags)) {
+    if (selected(context.config, note)) {
       const { cut, document } = noteDocument(context.externalRef, note);
       // The next page starts at this note; readPage makes sure the first note of a page always fits.
       if (!draft.fits(1, document.refs.length)) break;
@@ -104,9 +105,11 @@ async function selectedIds(context: BrainSourceReadContext<BrainMatrixNotesSourc
   let after = "";
   for (let read = 0; read < BRAIN_MATRIX_LIMITS.notesPerPass;) {
     const limit = Math.min(1_000, BRAIN_MATRIX_LIMITS.notesPerPass - read);
-    const keys: readonly BrainMatrixNoteKey[] = await readThrough("notes keys", () => reader.listNoteKeys(after, limit));
+    const keys: readonly BrainMatrixNoteKey[] = await readThrough(
+      "notes keys", () => reader.listNoteKeys(after, limit, context.config.folders),
+    );
     for (const key of keys) {
-      if (selected(context.config, key.tags)) ids.add(matrixDocumentId(KIND, context.externalRef, [key.id]));
+      if (selected(context.config, key)) ids.add(matrixDocumentId(KIND, context.externalRef, [key.id]));
     }
     read += keys.length;
     if (keys.length < limit) break;
@@ -162,31 +165,36 @@ export function createBrainMatrixNotesReader(appDb: RawAppDb): BrainMatrixNotesR
   }
   const max = BRAIN_MATRIX_LIMITS.noteContentReadMaxChars;
   const tags = `left(tags, ${TAGS_READ_MAX_CHARS}) AS tags, char_length(tags) > ${TAGS_READ_MAX_CHARS} AS tags_cut`;
+  // Folders ($1, comma-joined) are matched against every tag of the column, not only the part read, split as
+  // noteTags does. $1 comes first in the text: AppDb.raw on PGlite binds parameters in the order they appear.
+  const selectedSql = `EXISTS (SELECT 1
+    FROM regexp_split_to_table(lower(COALESCE(tags, '')), '[,[:space:]]+') AS part(tag)
+    WHERE regexp_replace(tag, '^#', '') = ANY(string_to_array($1, ','))) AS selected`;
   return {
-    async listNotes(after, limit) {
+    async listNotes(after, limit, folders) {
       const rows = await query(`SELECT id::text AS id, left(title, 1000) AS title, left(content, ${max}) AS content,
-        char_length(content) > ${max} AS content_cut, ${tags},
+        char_length(content) > ${max} AS content_cut, ${tags}, ${selectedSql},
         COALESCE(updated_at, created_at) AS updated_at
-        FROM "notes"."notes" WHERE id::text > $1 ORDER BY id::text LIMIT $2`, [after, limit]);
+        FROM "notes"."notes" WHERE id::text > $2 ORDER BY id::text LIMIT $3`, [folders.join(","), after, limit]);
       return rows.flatMap((row) => {
         const id = String(row.id);
         if (!NOTE_ID.test(id)) return [];
         return [{
           id, title: typeof row.title === "string" ? row.title : null,
           content: typeof row.content === "string" ? row.content : null, contentCut: row.content_cut === true,
-          tags: readTags(row),
+          tags: readTags(row), selected: row.selected === true,
           updatedAt: isoInstant(row.updated_at) ?? "1970-01-01T00:00:00.000Z",
         }];
       });
     },
-    async listNoteKeys(after, limit) {
+    async listNoteKeys(after, limit, folders) {
       const rows = await query(
-        `SELECT id::text AS id, ${tags} FROM "notes"."notes" WHERE id::text > $1 ORDER BY id::text LIMIT $2`,
-        [after, limit],
+        `SELECT id::text AS id, ${selectedSql} FROM "notes"."notes" WHERE id::text > $2 ORDER BY id::text LIMIT $3`,
+        [folders.join(","), after, limit],
       );
       return rows.flatMap((row) => {
         const id = String(row.id);
-        return NOTE_ID.test(id) ? [{ id, tags: readTags(row) }] : [];
+        return NOTE_ID.test(id) ? [{ id, selected: row.selected === true }] : [];
       });
     },
   };

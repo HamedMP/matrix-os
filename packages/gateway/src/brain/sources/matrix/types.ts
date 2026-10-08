@@ -11,18 +11,20 @@ export interface BrainMatrixNoteRow {
   readonly id: string;
   readonly title: string | null;
   readonly content: string | null;
-  /** Comma-joined tags as the Notes app stores them. */
+  /** Comma-joined tags as the Notes app stores them, cut to the reader's tags bound (label refs only). */
   readonly tags: string | null;
+  /** Whether any tag of the whole column, past the tags bound too, is one of the folders asked for. */
+  readonly selected: boolean;
   readonly updatedAt: string;
   /** True when content was longer than what the reader returned. */
   readonly contentCut: boolean;
 }
-export interface BrainMatrixNoteKey { readonly id: string; readonly tags: string | null }
+export interface BrainMatrixNoteKey { readonly id: string; readonly selected: boolean }
 
-/** Reads the owner's Notes app rows, ordered by id, never more than `limit`. */
+/** Reads the owner's Notes app rows, ordered by id, never more than `limit`; `folders` decides `selected`. */
 export interface BrainMatrixNotesReader {
-  listNotes(after: string, limit: number): Promise<readonly BrainMatrixNoteRow[]>;
-  listNoteKeys(after: string, limit: number): Promise<readonly BrainMatrixNoteKey[]>;
+  listNotes(after: string, limit: number, folders: readonly string[]): Promise<readonly BrainMatrixNoteRow[]>;
+  listNoteKeys(after: string, limit: number, folders: readonly string[]): Promise<readonly BrainMatrixNoteKey[]>;
 }
 
 /** The subset of a committed chat message the chat adapter reads. */
