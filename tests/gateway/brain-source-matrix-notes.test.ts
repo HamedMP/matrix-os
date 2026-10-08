@@ -110,6 +110,20 @@ describe("matrix notes source", () => {
       .toEqual(tags.slice(0, 20).map((value) => ({ kind: "label", value })));
   });
 
+  it("drops the tag cut off by the tags read bound instead of reading a part of it", async () => {
+    await createNotesTable();
+    // 2,005 characters: the reader keeps 2,000, which ends inside "project".
+    await addNote(1, { title: "Cut tags", content: "body", tags: `${"ab,".repeat(666)}project` });
+    const reader = createBrainMatrixNotesReader(appDb);
+    const [row] = await reader.listNotes("", 10);
+    const [key] = await reader.listNoteKeys("", 10);
+    expect(noteTags(row!.tags)).toEqual(["ab"]);
+    expect(noteTags(key!.tags)).toEqual(["ab"]);
+    const sourceId = await createMatrixSource(harness, "matrix_notes", "matrix_notes");
+    expect(await runMatrixLoop(harness, sourceId, "matrix_notes", createMatrixNotesAdapter(reader), { folders: ["pr"] }))
+      .toMatchObject({ caughtUp: true, written: 0, skipped: 1 });
+  });
+
   it("treats a missing notes table as no notes and reports reader failures as provider_unavailable", async () => {
     const reader = createBrainMatrixNotesReader(appDb);
     expect(await reader.listNotes("", 10)).toEqual([]);
