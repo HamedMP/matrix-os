@@ -39,6 +39,10 @@ export async function bootstrapBrainGraphDatabase(db: Kysely<BrainDatabase>): Pr
         ${DOCUMENT_FK}
       )
     `.execute(trx);
+    // md5 of the document's refs it was derived from: a sync can replace refs and keep the revision. The default
+    // matches no digest, so a row written before the column reads as pending.
+    await sql`ALTER TABLE brain_graph_state ADD COLUMN IF NOT EXISTS
+      refs_digest TEXT NOT NULL DEFAULT ${sql.lit("0".repeat(32))} CHECK (refs_digest ~ '^[a-f0-9]{32}$')`.execute(trx);
 
     // Document entities carry document_id (cascade); every other kind leaves it null (the FK is then not checked).
     await sql`

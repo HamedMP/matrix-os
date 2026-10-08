@@ -31,7 +31,7 @@ export const BRAIN_GRAPH_LINK_ID_PATTERN = /^lnk_[a-f0-9]{32}$/;
 
 export interface BrainGraphStateTable {
   owner_id: string; scope_id: string; document_id: string; incarnation: string; revision: number;
-  claims_digest: string; identities: JsonValue; link_count: number; derived_at: Timestamp;
+  claims_digest: string; identities: JsonValue; link_count: number; derived_at: Timestamp; refs_digest: string;
 }
 
 export interface BrainGraphEntitiesTable {

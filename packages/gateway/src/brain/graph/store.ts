@@ -47,6 +47,14 @@ export function claimsDigestSql(d: string) {
     AND c.revision = ${ref("revision")})`;
 }
 
+/** md5 of the refs of document `d` (a sync replaces refs without a new revision when the content is unchanged). */
+export function refsDigestSql(d: string) {
+  const ref = (column: string) => sql.ref(`${d}.${column}`);
+  return sql<string>`(SELECT md5(coalesce(jsonb_agg(jsonb_build_array(r.kind, r.value) ORDER BY r.kind, r.value)::text,
+    '')) FROM brain_document_refs r WHERE r.owner_id = ${ref("owner_id")} AND r.scope_id = ${ref("scope_id")}
+    AND r.document_id = ${ref("document_id")})`;
+}
+
 async function readIdentities(trx: BrainGraphExecutor, scope: BrainScopeKey, documentId: string): Promise<string[]> {
   const row = await trx.selectFrom("brain_graph_state").select("identities")
     .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", documentId)
@@ -190,8 +198,8 @@ export async function deriveGraphDocument(
 ): Promise<BrainGraphDeriveOutcome> {
   const document = await trx.selectFrom("brain_documents as d")
     .select(["d.document_id", "d.incarnation", "d.revision", "d.provenance", "d.title", "d.body", "d.deleted_at",
-      claimsDigestSql("d").as("claims_digest"), sql<string>`to_char(d.source_updated_at AT TIME ZONE 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("at")])
+      claimsDigestSql("d").as("claims_digest"), refsDigestSql("d").as("refs_digest"),
+      sql<string>`to_char(d.source_updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("at")])
     .where("d.owner_id", "=", scope.ownerId).where("d.scope_id", "=", scope.scopeId)
     .where("d.document_id", "=", documentId).executeTakeFirst();
   if (document === undefined || document.deleted_at !== null) {
@@ -237,8 +245,8 @@ export async function deriveGraphDocument(
   const identities = derivation.identities.slice(0, BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT);
   const state = {
     incarnation: document.incarnation, revision: document.revision, claims_digest: document.claims_digest,
-    identities: sql`${JSON.stringify(identities)}::jsonb`, link_count: derivation.links.length,
-    derived_at: now.toISOString(),
+    refs_digest: document.refs_digest, identities: sql`${JSON.stringify(identities)}::jsonb`,
+    link_count: derivation.links.length, derived_at: now.toISOString(),
   };
   await trx.insertInto("brain_graph_state")
     .values({ owner_id: scope.ownerId, scope_id: scope.scopeId, document_id: documentId, ...state })

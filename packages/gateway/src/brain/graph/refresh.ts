@@ -1,7 +1,7 @@
 /**
  * The graph as a derived index (hook listener "graph"). A hook only nudges: correctness comes from refresh, which
  * removes rows of tombstoned documents, derives live documents that are missing, at another (incarnation, revision)
- * or whose current decision claims changed, then sweeps entities nothing references. Every pass is bounded by a
+ * or whose refs or current decision claims changed, then sweeps entities nothing references. Every pass is bounded by a
  * document count, a wall-clock budget and the abort signal.
  */
 import { sql, type Kysely } from "kysely";
@@ -13,7 +13,9 @@ import {
 import { BRAIN_PROJECT_SCOPE_PREFIX } from "../api/types.js";
 import type { BrainScopeKey } from "../types.js";
 import { cutText, isEntityKey, brainEntityId } from "./ids.js";
-import { claimsDigestSql, deriveGraphDocument, withGraphLock, type BrainGraphCapacity } from "./store.js";
+import {
+  claimsDigestSql, deriveGraphDocument, refsDigestSql, withGraphLock, type BrainGraphCapacity,
+} from "./store.js";
 import { BRAIN_GRAPH_ORPHAN_SWEEP_MAX, type BrainGraphDatabase, type BrainGraphExecutor } from "./types.js";
 
 export interface BrainGraphIndexDeps {
@@ -50,7 +52,7 @@ async function pendingIds(db: BrainGraphExecutor, scope: BrainScopeKey, limit: n
       ON s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id
     WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
       AND (s.document_id IS NULL OR s.incarnation <> d.incarnation OR s.revision <> d.revision
-        OR s.claims_digest <> ${claimsDigestSql("d")})
+        OR s.claims_digest <> ${claimsDigestSql("d")} OR s.refs_digest <> ${refsDigestSql("d")})
     ORDER BY d.document_id LIMIT ${limit}`.execute(db);
   return [...orphans.rows, ...missing.rows].map((row) => row.document_id).slice(0, limit);
 }
