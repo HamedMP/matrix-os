@@ -209,7 +209,7 @@ export function createBrainMatrixFilesHandler(
     kind: KIND,
     parseConfig: parseFilesConfig,
     identify: (_project, config) => identifyFiles(config),
-    saveConfig: (scope, sourceId, config) => saveMatrixConfig(deps.kysely, KIND, scope, sourceId, config, now()),
+    saveConfig: (scope, sourceId, config, db = deps.kysely) => saveMatrixConfig(db, KIND, scope, sourceId, config, now()),
     async loadConfig(scope, sourceId) {
       const raw = await loadMatrixConfig(deps.kysely, KIND, scope, sourceId);
       return raw === null ? null : parseFilesConfig(raw);

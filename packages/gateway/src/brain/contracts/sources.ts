@@ -4,10 +4,11 @@
  * ids from an identity tuple, a cursor advanced in the same transaction as each batch, one receipt per run, stable
  * error codes, no provider text past server logs. Types and constants only.
  */
+import type { Kysely } from "kysely";
 import type { BrainReceiptView } from "../api/types.js";
 import type { BrainRepository } from "../repository.js";
 import type {
-  BrainScopeKey, BrainSourceStatus, BrainSyncCounts, BrainSyncReceipt, BrainSyncUpsertInput,
+  BrainDatabase, BrainScopeKey, BrainSourceStatus, BrainSyncCounts, BrainSyncReceipt, BrainSyncUpsertInput,
 } from "../types.js";
 import type {
   BrainConnectableSourceKind, BrainProjectResolver, BrainResolvedProject, BrainSourceKind,
@@ -253,7 +254,8 @@ export const BRAIN_SOURCE_OPTIONS_MAX = 100;
  * brain_sources ON DELETE CASCADE. parseConfig throws BrainFeatureError("source_config_invalid"). identify never
  * touches the network. createAdapter reads credentials per run and never keeps them. The sources service connects in
  * this order: parseConfig, checkConfig, createSource, saveConfig, and deleteSource when saveConfig still throws, so a
- * refused config never leaves a live brain_sources row.
+ * refused config never leaves a live brain_sources row. A config update saves inside the transaction that moves the
+ * source revision (saveConfig's `db`), so the config and the revision commit together or not at all.
  */
 export interface BrainSourceKindHandler<TConfig> {
   readonly kind: BrainConnectableSourceKind;
@@ -261,7 +263,8 @@ export interface BrainSourceKindHandler<TConfig> {
   /** Refuses a config before the source row is created (for example source_conflict); never writes. */
   checkConfig?(scope: BrainScopeKey, config: TConfig): Promise<void>;
   identify(project: BrainResolvedProject, config: TConfig): { readonly externalRef: string; readonly label: string };
-  saveConfig(scope: BrainScopeKey, sourceId: string, config: TConfig): Promise<void>;
+  /** db: the open transaction to write in (the handler's lock is taken inside it); absent, its own transaction. */
+  saveConfig(scope: BrainScopeKey, sourceId: string, config: TConfig, db?: Kysely<BrainDatabase>): Promise<void>;
   loadConfig(scope: BrainScopeKey, sourceId: string): Promise<TConfig | null>;
   createAdapter(ownerId: string, project: BrainResolvedProject, config: TConfig): Promise<BrainSourceAdapterResolution<TConfig>>;
   viewConfig(config: TConfig): BrainSourceConfigView;
