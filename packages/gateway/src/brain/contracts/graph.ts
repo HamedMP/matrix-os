@@ -142,3 +142,91 @@ export interface BrainNeighbourhoodView {
   readonly center: BrainEntityRefView; readonly hops: 1 | 2; readonly nodes: readonly BrainEntityRefView[];
   readonly links: readonly BrainLinkView[]; readonly truncated: boolean; readonly nextCursor: string | null;
 }
+
+// Queries.
+
+/**
+ * entity: an entity id or an entity ref (`file:packages/gateway/src/brain/why.ts`, `person:email:a@b.co`,
+ * `folder:packages/gateway/src/brain`, `pull_request:2078`, `issue:ENG-42`, `spec:specs/551-company-brain-store`).
+ * A merged alias key resolves to its entity. linkTypes: only items reached through these.
+ */
+export interface BrainTimelineQuery {
+  readonly entity: string; readonly linkTypes?: readonly BrainLinkType[];
+  readonly from?: string; readonly to?: string; readonly limit?: number; readonly cursor?: string;
+}
+/** q: case-insensitive prefix of the key or display name. */
+export interface BrainEntitiesQuery {
+  readonly kind?: BrainEntityKind; readonly q?: string; readonly limit?: number; readonly cursor?: string;
+}
+export interface BrainLinksQuery {
+  readonly hops?: 1 | 2; readonly types?: readonly BrainLinkType[]; readonly direction?: "out" | "in" | "both";
+  readonly limit?: number; readonly cursor?: string;
+}
+/** merge: aliasKey (an entity ref of the same kind) now resolves to the entity. split: undo a merge of aliasKey. */
+/**
+ * merge: the alias now resolves to the entity. split: "not the same person", kept, so the pair is never merged or
+ * suggested again. unmerge: Undo of a manual merge, which leaves nothing behind (the pair can be suggested again).
+ */
+export interface BrainAliasInput { readonly action: "merge" | "split" | "unmerge"; readonly aliasKey: string }
+
+// Person merge suggestions (graph/merge-suggestions.ts): read only; accepting one is updateAlias with its aliasKey.
+
+export const BRAIN_MERGE_SUGGESTION_PAGE = { pageDefault: 20, pageMax: 50 } as const;
+
+/**
+ * same_github_login: two GitHub noreply emails (`12345+login@users.noreply.github.com`, `login@...`) or a `github:`
+ * key with the same login. name_matches_login / name_matches_email: a name equals a GitHub login or an email's local
+ * part, ignoring case, spaces and punctuation. name_seen_with_email: git trailers paired the name with the email.
+ * shared_name: the same name was seen with both (display names or trailer pairs).
+ */
+export type BrainMergeSignal =
+  | "same_github_login" | "name_matches_login" | "name_matches_email" | "name_seen_with_email" | "shared_name";
+
+/** detail: the login, local part or name; documents: how many live documents showed it (trailer pairs only). */
+export interface BrainMergeEvidenceView {
+  readonly signal: BrainMergeSignal; readonly detail: string; readonly documents: number | null;
+}
+
+/**
+ * entity: the entity that stays; alias: the entity that would merge into it, with its own merged aliases. score: 0..1.
+ * counts: stored links of each side (over its merged aliases) and how many entities would move.
+ */
+export interface BrainMergeSuggestionView {
+  readonly suggestionId: string; readonly score: number;
+  readonly entity: BrainEntityRefView; readonly alias: BrainEntityRefView; readonly aliasKey: string;
+  readonly evidence: readonly BrainMergeEvidenceView[];
+  readonly counts: { readonly entityLinks: number; readonly aliasLinks: number; readonly aliasEntities: number };
+}
+
+/** Highest score first, then most links, then suggestion id; truncated: a scan cap was hit. */
+export interface BrainMergeSuggestionsView {
+  readonly items: readonly BrainMergeSuggestionView[]; readonly nextCursor: string | null;
+  readonly truncated: boolean;
+}
+
+/** limit: 1..BRAIN_MERGE_SUGGESTION_PAGE.pageMax, default pageDefault. */
+export interface BrainMergeSuggestionsQuery { readonly limit?: number; readonly cursor?: string }
+
+// Service.
+
+export interface BrainGraphServiceDeps {
+  readonly repository: BrainRepository; readonly resolver: BrainProjectResolver; readonly now?: () => Date;
+}
+
+/** Owner-scoped; reads never refresh the graph. */
+export interface BrainGraphService {
+  timeline(ownerId: string, projectRef: string, query: BrainTimelineQuery): Promise<BrainTimelineView>;
+  listEntities(ownerId: string, projectRef: string, query: BrainEntitiesQuery): Promise<BrainEntitiesView>;
+  getEntity(ownerId: string, projectRef: string, entityId: string): Promise<BrainEntityView>;
+  links(ownerId: string, projectRef: string, entityId: string, query: BrainLinksQuery): Promise<BrainNeighbourhoodView>;
+  /** Person entities only; alias_conflict when the alias belongs to another merged entity. */
+  updateAlias(ownerId: string, projectRef: string, entityId: string, input: BrainAliasInput): Promise<BrainEntityView>;
+  /** Pairs of person entities that are likely one human; never merges and never refreshes. */
+  mergeSuggestions(
+    ownerId: string, projectRef: string, query: BrainMergeSuggestionsQuery,
+  ): Promise<BrainMergeSuggestionsView>;
+  refresh(ownerId: string, projectRef: string): Promise<BrainRefreshView>;
+}
+
+/** graph/index.ts creates both from one deps object; the index is the hook listener named "graph". */
+export interface BrainGraphFeature { readonly service: BrainGraphService; readonly index: BrainDerivedIndex }
