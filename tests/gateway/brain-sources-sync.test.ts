@@ -130,6 +130,35 @@ describe("sync", () => {
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("checkout_unavailable");
   });
 
+  it("answers a paused git source like any other kind, also when it is paused or removed as the run starts", async () => {
+    const { source } = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "project:proj_a", label: "A" });
+    const setStatus = (expectedRevision: number, status: "active" | "paused") =>
+      harness.repository.updateSource(SCOPE_A, { sourceId: source.sourceId, expectedRevision, status });
+    await setStatus(1, "paused");
+    const project = { sync: vi.fn(async (): Promise<BrainSyncView> => { throw new BrainApiError("git_source_unavailable"); }) };
+    const sources = service([], { gitSync: createBrainGitSourceSync(project) });
+    const paused = {
+      sourceId: source.sourceId, status: "failed", errorCode: "source_inactive", nextAction: "fix_source", caughtUp: false,
+      pages: 0, counts: zeroCounts, notices: [], retryAfterSeconds: null, receipt: null,
+    };
+    expect(await sources.sync(OWNER, "proj_a", source.sourceId)).toEqual(paused);
+    expect(project.sync).not.toHaveBeenCalled();
+    await setStatus(2, "active");
+    project.sync.mockImplementationOnce(async () => {
+      await setStatus(3, "paused");
+      throw new BrainApiError("git_source_unavailable");
+    });
+    expect(await sources.sync(OWNER, "proj_a", source.sourceId)).toEqual(paused);
+    await setStatus(4, "active");
+    // Still active: the project service's refusal stands.
+    expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("git_source_unavailable");
+    project.sync.mockImplementationOnce(async () => {
+      await harness.repository.deleteSource(SCOPE_A, { sourceId: source.sourceId, expectedRevision: 5 });
+      throw new BrainApiError("git_source_missing");
+    });
+    expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_not_found");
+  });
+
   it("maps git codes onto the source vocabulary and keeps the git code on the receipt", () => {
     const base: BrainSyncView = {
       status: "failed", errorCode: "not_a_repository", nextAction: "fix_source", caughtUp: false, commitsProcessed: 0,
