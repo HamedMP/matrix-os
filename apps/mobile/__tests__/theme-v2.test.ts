@@ -116,6 +116,18 @@ describe("theme-v2 design tokens", () => {
     expect(borderWidth).toEqual({ hairline: 1, emphasis: 1.5 });
   });
 
+  it("sizes the shared controls that have a fixed dimension", () => {
+    expect(size).toMatchObject({
+      chip: 36,
+      field: 54,
+      searchField: 45,
+      grabberWidth: 36,
+      grabberHeight: 5,
+      statusDot: 8,
+      badge: 16,
+    });
+  });
+
   it("adds the composer and side panel shadows", () => {
     expect(designShadows.composer).toBe("0 4px 16px rgba(0, 0, 0, 0.06)");
     expect(designShadows.panel).toBe("8px 0 24px rgba(0, 0, 0, 0.12)");
