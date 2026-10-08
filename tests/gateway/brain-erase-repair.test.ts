@@ -1,17 +1,21 @@
 /**
  * The project erase and the removed source purge over PGlite with the graph: a refresh already running when the
  * project is erased writes nothing back, and a purge drops the derived rows of every tombstoned document of the
- * removed source, whenever it was tombstoned.
+ * removed source, whenever it was tombstoned, and leaves no person only that source named readable.
  */
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eraseBrainScopeRows } from "../../packages/gateway/src/brain/api/erase.js";
 import { purgeBrainRemovedSource } from "../../packages/gateway/src/brain/api/index-repair.js";
+import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
 import type { BrainGraphTables } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
-import { SCOPE, createGraphHarness, id, seedProject, type GraphHarness } from "./helpers/brain-graph-fixtures.js";
+import {
+  OWNER, PROJECT, SCOPE, createGraphHarness, id, rejectsWith, seedProject, type GraphHarness,
+} from "./helpers/brain-graph-fixtures.js";
 
 const GRAPH_TABLES = ["brain_graph_entities", "brain_graph_links", "brain_graph_state", "brain_graph_aliases"] as const;
+const DANA = "person:email:dana@acme.dev";
 
 describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
   let harness: GraphHarness;
@@ -54,5 +58,16 @@ describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
       .toEqual([0, 0]);
     expect([await rows("brain_graph_state", id("issue")), await rows("brain_graph_links", id("issue"))])
       .toEqual([0, 0]);
+  });
+
+  it("leaves no person of the removed source readable once the purge reports done", async () => {
+    await seedProject(harness);
+    expect(await harness.graph.service.getEntity(OWNER, PROJECT, DANA)).toMatchObject({ kind: "person" });
+    const removed = await removeLinear();
+    expect(await purgeBrainRemovedSource(harness.db, [harness.graph.index], SCOPE, removed)).toBe(true);
+    await rejectsWith(harness.graph.service.getEntity(OWNER, PROJECT, DANA), BrainFeatureError, "entity_not_found");
+    // People other sources still name stay.
+    expect(await harness.graph.service.getEntity(OWNER, PROJECT, "person:github:carol"))
+      .toMatchObject({ kind: "person" });
   });
 });
