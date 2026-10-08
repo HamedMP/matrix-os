@@ -9,7 +9,8 @@
  */
 import { BrainApiError } from "../../api/types.js";
 import {
-  BRAIN_FEATURE_CURSOR_MAX_CHARS, BRAIN_SOURCE_CONFIG_LIMITS, BRAIN_SOURCE_OPTIONS_MAX, BRAIN_SOURCES_PER_KIND_MAX,
+  BRAIN_FEATURE_CURSOR_MAX_CHARS, BRAIN_SOURCE_CONFIG_LIMITS, BRAIN_SOURCE_NEXT_ACTIONS, BRAIN_SOURCE_OPTIONS_MAX,
+  BRAIN_SOURCES_PER_KIND_MAX,
   BrainFeatureError, type BrainAnySourceKindHandler, type BrainConnectableSourceKind, type BrainResolvedProject,
   type BrainSourceConfigView, type BrainSourceKind, type BrainSourceKindView, type BrainSourceOptionsView,
   type BrainSourcesService, type BrainSourcesServiceDeps, type BrainSourceSyncResult, type BrainSourceSyncView,
@@ -52,6 +53,12 @@ const ADAPTER_ERRORS = {
   not_connected: "source_not_connected", auth_failed: "source_auth_failed", config_invalid: "source_config_invalid",
 } as const;
 const LIMITS = BRAIN_SOURCES_SERVICE_LIMITS;
+/** What the runner answers for a source that is not active; a paused git source answers the same. */
+const INACTIVE: BrainSourceSyncResult = {
+  status: "failed", errorCode: "source_inactive", nextAction: BRAIN_SOURCE_NEXT_ACTIONS.source_inactive, receipt: null,
+  counts: { read: 0, written: 0, unchanged: 0, deleted: 0, failed: 0 }, caughtUp: false, pages: 0, skipped: 0,
+  retryAfterSeconds: null, rejectedDocumentIds: [], notices: [],
+};
 
 function isKnown(source: BrainSource): source is KnownSource {
   return isBrainSourceKind(source.kind);
@@ -274,6 +281,28 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     return toSourceSyncView(sourceId, result);
   }
 
+  /**
+   * A paused git source answers like the runner, without running; one paused or removed while the run started
+   * answers the same way.
+   */
+  async function gitSyncView(
+    ownerId: string, projectRef: string, scope: BrainScopeKey, source: KnownSource,
+  ): Promise<BrainSourceSyncView> {
+    const gitSync = deps.gitSync;
+    if (gitSync === undefined) throw new BrainFeatureError("source_kind_unsupported");
+    if (source.status !== "active") return syncView(source.sourceId, INACTIVE);
+    try {
+      return { ...(await gitSync(ownerId, projectRef)), sourceId: source.sourceId };
+    } catch (error: unknown) {
+      if (!(error instanceof BrainApiError)
+        || (error.code !== "git_source_unavailable" && error.code !== "git_source_missing")) throw error;
+      const current = await repository.getSource(scope, source.sourceId);
+      if (current === null) throw new BrainFeatureError("source_not_found", { cause: error });
+      if (current.status !== "active") return syncView(source.sourceId, INACTIVE);
+      throw error;
+    }
+  }
+
   async function updateConfig(
     ownerId: string, project: BrainResolvedProject, source: KnownSource, input: Parameters<BrainSourcesService["update"]>[3],
   ): Promise<BrainSourceView> {
@@ -374,10 +403,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
       const project = await deps.resolver.resolve(ownerId, projectRef);
       const scope = project.scope;
       const source = await liveSource(scope, sourceId);
-      if (source.kind === "git") {
-        if (deps.gitSync === undefined) throw new BrainFeatureError("source_kind_unsupported");
-        return { ...(await deps.gitSync(ownerId, projectRef)), sourceId };
-      }
+      if (source.kind === "git") return gitSyncView(ownerId, projectRef, scope, source);
       const handler = handlerOf(source.kind);
       const config: unknown = await handler.loadConfig(scope, sourceId);
       if (config === null) throw new BrainFeatureError("source_config_invalid");
