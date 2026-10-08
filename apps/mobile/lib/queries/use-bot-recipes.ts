@@ -18,10 +18,14 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
     recipes: query.data ?? [],
     isPending: query.isPending,
     isError: query.isError,
-    create: async (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection) => {
+    /** `name` is what the person calls the new agent; without one it takes the template's name. */
+    create: async (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection, name?: string) => {
       const token = await getToken();
       if (!token || !gatewayUrl) throw new Error("Bot could not be created.");
-      return (await instantiateNativeBot(token, gatewayUrl, { recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId;
+      const chosenName = name?.trim();
+      return (await instantiateNativeBot(token, gatewayUrl, {
+        recipe, clientRequestId, ...(selection ? { selection } : {}), ...(chosenName ? { name: chosenName } : {}),
+      })).chatId;
     },
   };
 }

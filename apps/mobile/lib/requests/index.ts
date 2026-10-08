@@ -19,13 +19,30 @@ export {
 } from "./apps";
 export { fetchActiveComputer, fetchComputers } from "./computers";
 export {
+  AgentRequestError,
+  archiveAgent,
+  ensureAgentDirectChat,
+  fetchAgentDirectChat,
+  fetchAgentInteractions,
+  fetchAgents,
+  fetchAgentTasks,
+  type AgentRequestFailure,
+} from "./bots";
+export {
   admitChatTurn,
+  cancelChatRun,
   canonicalChatRequestId,
   canonicalChatTitle,
+  chatActivityAt,
   createChat,
   fetchChatDetail,
   fetchChatProviderCatalog,
   fetchChats,
+  fetchProjectChats,
+  isChatUnread,
+  searchChats,
+  type ChatPageOptions,
+  type ChatSearchOptions,
 } from "./canonical-chat";
 export {
   createFile,
@@ -64,7 +81,17 @@ export {
   type MobileBillingStatus,
   type MobileSystemInfo,
 } from "./settings";
-export { fetchProjects, type ProjectSummary } from "./projects";
+export { fetchMatrixCreditBalance, formatMicrousd } from "./matrix-credit";
+export {
+  archiveProject,
+  createProject,
+  fetchProjects,
+  ProjectRequestError,
+  renameProject,
+  type CreateProjectInput,
+  type ProjectRequestFailure,
+  type ProjectSummary,
+} from "./projects";
 export { mobileQueryKeys } from "./query-keys";
 export {
   acceptCollaborationInvitation,
