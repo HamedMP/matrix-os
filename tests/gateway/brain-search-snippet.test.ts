@@ -147,9 +147,10 @@ describe("brain search meaning helpers", () => {
   });
 
   it("ranks vector documents once and fuses lists with normalized reciprocal ranks", () => {
-    expect(rankBrainVectorDocuments([{ documentId: "b", chunkIndex: 2, distance: 0.1 },
-      { documentId: "a", chunkIndex: 0, distance: 0.2 }, { documentId: "b", chunkIndex: 0, distance: 0.3 }]))
-      .toEqual([{ documentId: "b", chunkIndex: 2 }, { documentId: "a", chunkIndex: 0 }]);
+    const at = (documentId: string, revision: number) => ({ documentId, incarnation: "i", revision });
+    expect(rankBrainVectorDocuments([{ ...at("b", 2), chunkIndex: 2, distance: 0.1 },
+      { ...at("a", 1), chunkIndex: 0, distance: 0.2 }, { ...at("b", 2), chunkIndex: 0, distance: 0.3 }]))
+      .toEqual([{ ...at("b", 2), chunkIndex: 2 }, { ...at("a", 1), chunkIndex: 0 }]);
     const hit = (hitId: string, by: "text" | "vector", chunkIndex: number | null = null): BrainRankedHit => ({
       type: "document", hitId, documentId: hitId, claimId: null, extractor: null, score: "0.000000",
       matchedBy: [by], chunkIndex });
