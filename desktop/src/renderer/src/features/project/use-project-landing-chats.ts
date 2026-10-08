@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useBotConversationSummaries, mergeCanonicalChatRecord, compareCanonicalChatActivity, type ChatNavigationRecord } from "@matrix-os/ui";
+import { useBotConversationSummaries, mergeCanonicalChatRecord, mergeChatNavigationRecord, compareCanonicalChatActivity, type ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { AppError } from "../../../../shared/app-error";
@@ -93,19 +93,31 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
   const bots = useBotConversationSummaries(botAuthority.client, ids, active && scoped && ids.length > 0, undefined, authoritative);
   const chats = useMemo<ChatNavigationRecord[]>(() => {
     if (!client) return [];
-    const matchesProject = (record: ChatNavigationRecord) => record.projectId === project.id || record.projectId === project.slug;
+    const matchesProject = (record: ChatNavigationRecord) => (Boolean(project.id) && record.projectId === project.id) || record.projectId === project.slug;
     if (!scoped) return navigation.items.filter(item => item.classification.kind === "ordinary" && matchesProject(item));
     // An inactive identity hook carries no classification; do not expose its Bot rows.
     if (!active) return [];
-    if (!client.agents?.bots) {
-      // An unavailable binding reader cannot prove older scoped rows ordinary.
-      // The authenticated global projection can still prove the rows it contains.
-      const ordinaryIds = new Set(navigation.items.filter(item => item.classification.kind === "ordinary").map(item => item.chat.id));
-      return records.filter(record => matchesProject(record) && ordinaryIds.has(record.chat.id));
+    // Global membership/classification is authoritative for every known row.
+    // Retain confirmed cards while scoped history loads; older responses must
+    // never move a known Chat back into this Project or turn a Bot ordinary.
+    const known = new Map(navigation.items.map(item => [item.chat.id, item]));
+    const cohort = new Map<string, ChatNavigationRecord>(navigation.items
+      .filter(item => item.classification.kind === "ordinary" && matchesProject(item))
+      .map(item => [item.chat.id, item])); // at most 1,000 global + 1,000 scoped rows
+    for (const record of records) {
+      const authoritative = known.get(record.chat.id);
+      if (authoritative) {
+        if (cohort.has(record.chat.id)) cohort.set(record.chat.id, {
+          ...mergeChatNavigationRecord(authoritative, record), projectId: authoritative.projectId,
+        });
+        continue;
+      }
+      if (!client.agents?.bots || !matchesProject(record)
+        || bots.unresolvedChatIds.includes(record.chat.id)
+        || bots.conversations.some(bot => bot.chatId === record.chat.id)) continue;
+      cohort.set(record.chat.id, record);
     }
-    return records.filter(record => matchesProject(record)
-      && !bots.unresolvedChatIds.includes(record.chat.id)
-      && !bots.conversations.some(bot => bot.chatId === record.chat.id));
+    return [...cohort.values()].sort(compareCanonicalChatActivity).slice(0, 1000);
   }, [client, scoped, active, navigation.items, records, project.id, project.slug, bots.unresolvedChatIds, bots.conversations]);
   const scopedError = scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey && snapshot.error;
   return { chats, error: Boolean(navigation.error || scopedError) };

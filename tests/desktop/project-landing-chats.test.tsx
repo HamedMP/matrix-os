@@ -254,3 +254,80 @@ it("revokes shared navigation on a scoped Project authorization rejection", asyn
   expect(navigation.store!.getSnapshot().items).toEqual([]);
   expect(hook.result.current.chats).toEqual([]);
 });
+
+it.each([false, true])("matches a Project without an ID only by its valid slug (truncated=%s)", async truncated => {
+  const selected = { ...project, id: undefined };
+  const global = { ...item("chat_global"), projectId: undefined };
+  navigation.items = [global, item("chat_slug", selected.slug)];
+  navigation.truncated = truncated;
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [{ ...record("chat_global"), projectId: undefined }, record("chat_slug", selected.slug)] });
+  const hook = renderHook(() => useProjectLandingChats(selected, client));
+  if (truncated) await waitFor(() => expect(client.list).toHaveBeenCalledOnce());
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_slug"]);
+});
+
+it.each([true, false])("retains confirmed global Project cards through pending and failed scoped reads (binding reader=%s)", async hasReader => {
+  navigation.truncated = true;
+  navigation.items = [item("chat_confirmed"), item("chat_bot", project.id, "bot"), item("chat_elsewhere", "other")];
+  const deferred = pending<{ items: CanonicalChatRecord[] }>();
+  const client = hasReader ? clientWithBots() : { list: vi.fn() } as unknown as CanonicalChatClient;
+  vi.mocked(client.list).mockImplementation(() => deferred.promise);
+  const hook = renderHook(() => useProjectLandingChats(project, client));
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_confirmed"]);
+  await act(async () => deferred.reject(new AppError("server")));
+  await waitFor(() => expect(hook.result.current.error).toBe(true));
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_confirmed"]);
+});
+
+it("merges scoped older cards with confirmed global cards without stale membership or classification leaks", async () => {
+  navigation.truncated = true;
+  const newest = { ...item("chat_recent"), chat: { ...item("chat_recent").chat, revision: 2, activityAt: "2026-10-08T00:00:00Z" } };
+  navigation.items = [newest, item("chat_moved", "other"), item("chat_bot", project.id, "bot")];
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [
+    { ...record("chat_recent"), chat: { ...record("chat_recent").chat, revision: 1, title: "Stale title" } },
+    record("chat_moved"), record("chat_bot"), record("chat_older"), record("chat_unknown"),
+  ] });
+  vi.mocked(client.agents!.bots!.directBot).mockImplementation(async id => {
+    if (id === "chat_unknown") throw new AppError("server");
+    return null;
+  });
+  const hook = renderHook(() => useProjectLandingChats(project, client));
+  await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledWith("chat_older"));
+  await waitFor(() => expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_recent", "chat_older"]));
+  expect(hook.result.current.chats[0]?.chat.title).toBe("chat_recent");
+  expect(client.agents!.bots!.directBot).not.toHaveBeenCalledWith("chat_bot");
+});
+
+it("caps the activity-sorted global and scoped Project cohort at 1000 unique cards", async () => {
+  navigation.truncated = true;
+  navigation.items = Array.from({ length: 1000 }, (_, index) => item(`chat_global_${String(index).padStart(4, "0")}`));
+  const client = clientWithBots();
+  const latest = record("chat_latest"); latest.chat.activityAt = "2026-10-08T00:00:00Z";
+  vi.mocked(client.list).mockResolvedValue({ items: [latest] });
+  const hook = renderHook(() => useProjectLandingChats(project, client));
+  await waitFor(() => expect(hook.result.current.chats[0]?.chat.id).toBe("chat_latest"));
+  expect(hook.result.current.chats).toHaveLength(1000);
+  expect(new Set(hook.result.current.chats.map(row => row.chat.id)).size).toBe(1000);
+});
+
+it("retains only newly authorized global cards during failed truncated recovery", async () => {
+  navigation.truncated = true;
+  navigation.items = [item("chat_old_global")];
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [record("chat_old_scoped")] });
+  const hook = renderHook(() => useProjectLandingChats({ ...project, slug: project.id }, client));
+  await waitFor(() => expect(hook.result.current.chats).toHaveLength(2));
+  act(() => {
+    navigation.store!.revoke(); navigation.items = []; navigation.truncated = false; hook.rerender();
+  });
+  expect(hook.result.current.chats).toEqual([]);
+  const recovery = pending<{ items: CanonicalChatRecord[] }>();
+  vi.mocked(client.list).mockImplementation(() => recovery.promise);
+  navigation.items = [item("chat_new_global")]; navigation.truncated = true; hook.rerender();
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_new_global"]);
+  await act(async () => recovery.reject(new AppError("server")));
+  await waitFor(() => expect(hook.result.current.error).toBe(true));
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_new_global"]);
+});
