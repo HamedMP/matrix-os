@@ -171,6 +171,17 @@ describe("integrations-mcp brain tools", () => {
     } finally { await f.close(); }
   });
 
+  it("keeps the notices of impact lists cut at their caps", async () => {
+    const f = await connect(json({ ...IMPACT, notices: ["prior_capped", "claims_capped", "untested_capped", "specs_capped"] }));
+    try {
+      expect((await f.call("brain_impact", { project: "p", head: "main" })).text).toContain(
+        "Notes: earlier pull requests are listed for only some changed files; more invariants or decisions apply, or " +
+          "name more changed files, than are listed; more changed sources lack a changed test than are listed; more " +
+          "specs, or more changed files in a spec, were touched than are listed.",
+      );
+    } finally { await f.close(); }
+  });
+
   it("accepts a commitment assignee as long as a stored ref, which the brief copies unchanged", async () => {
     const assignee = `name:${"a".repeat(507)}`;
     const f = await connect(json({ date: "2026-10-01", window: "day", truncated: false, summary: null,

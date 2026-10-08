@@ -43,7 +43,7 @@ const SEARCH_NOTICES = [
 ] as const satisfies readonly BrainSearchNotice[];
 const IMPACT_NOTICES = [
   "changed_files_capped", "dependents_capped", "scan_capped", "read_budget_exhausted", "run_budget_exhausted",
-  "no_git_source", "brain_behind_head",
+  "prior_capped", "claims_capped", "untested_capped", "specs_capped", "no_git_source", "brain_behind_head",
 ] as const satisfies readonly BrainImpactNotice[];
 const RULES = ["label_disagreement", "draft_spec_shipped", "commitment_reversed"] as const satisfies
   readonly BrainConflictRule[];
