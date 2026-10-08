@@ -27,6 +27,7 @@ describe("installed gallery app presentation", () => {
     expect(main).toContain('import "./styles/gallery-light.css"');
     expect(css).toContain("color-scheme: light");
     expect(css).toContain("--bg: #f7f8fb");
+    expect(css).toContain("--matrix-bg: #f7f8fb");
     expect(css).toContain("--card: #ffffff");
     const sidebar = readFileSync("home/app-templates/connected-starter/src/Sidebar.tsx", "utf8");
     expect(sidebar).toContain("app.iconDataUrl");

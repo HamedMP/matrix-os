@@ -2,6 +2,11 @@
 :root { color-scheme: light; background: #f7f8fb; color: #202939; }
 .workbench[data-app] {
   color-scheme: light;
+  --matrix-bg: #f7f8fb;
+  --matrix-fg: #202939;
+  --matrix-card: #ffffff;
+  --matrix-muted-fg: #647184;
+  --matrix-border: #e2e7ef;
   --bg: #f7f8fb;
   --fg: #202939;
   --card: #ffffff;
