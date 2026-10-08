@@ -110,3 +110,144 @@ async function commitPullRequests(trx: BrainGraphExecutor, scope: BrainScopeKey,
     .where("p.kind", "=", "pr").orderBy("p.value").limit(8).execute();
   return rows.map((row) => row.value);
 }
+
+/**
+ * Marks outdated (state row kept) the documents that read this one, only when what they read changed: children naming
+ * it in a `parent` ref (never itself) when what it describes changed and, for a github_pr, git_commit documents (ids
+ * from the scope's git source identity) whose `part_of` link to its pull request disagrees with its `commit` refs.
+ */
+async function nudgeDependents(
+  trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, documentId: string, provenance: string,
+  before: readonly string[], after: readonly string[], shas: readonly string[],
+): Promise<void> {
+  const ids: string[] = [];
+  if (before.length !== after.length || before.some((entityId) => !after.includes(entityId))) {
+    const children = await trx.selectFrom("brain_document_refs").select("document_id")
+      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "parent")
+      .where("value", "=", documentId).where("document_id", "<>", documentId).limit(BRAIN_GRAPH_NUDGE_MAX).execute();
+    ids.push(...children.map((row) => row.document_id));
+  }
+  const watched = [...new Set([...before, ...after])];
+  if (provenance === "github_pr" && watched.length > 0) {
+    const sources = await trx.selectFrom("brain_sources").select("external_ref")
+      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "git")
+      .where("deleted_at", "is", null).limit(1).execute();
+    const wanted = new Set(sources.flatMap((source) => shas.map((sha) => commitDocumentId(source.external_ref, sha))));
+    const linked = await trx.selectFrom("brain_graph_links").select(["document_id", "to_entity_id"])
+      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("type", "=", "part_of")
+      .where("ref_kind", "=", "commit").where("to_entity_id", "in", watched).limit(2 * BRAIN_GRAPH_NUDGE_MAX).execute();
+    const current = new Set(linked.filter((row) => after.includes(row.to_entity_id)).map((row) => row.document_id));
+    ids.push(...[...wanted].filter((id) => !current.has(id)));
+    ids.push(...linked.map((row) => row.document_id).filter((id) => !wanted.has(id)));
+  }
+  if (ids.length === 0) return;
+  await trx.updateTable("brain_graph_state").set({ claims_digest: OUTDATED_DIGEST })
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where("document_id", "in", [...new Set(ids)].slice(0, 2 * BRAIN_GRAPH_NUDGE_MAX)).execute();
+}
+
+/** Inserts new entities (counted against capacity) and widens first/last seen of existing ones. */
+async function writeEntities(
+  trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, entities: readonly BrainEntityDraft[],
+  documentId: string, at: string,
+): Promise<number> {
+  const rows = entities.map((entity) => ({
+    owner_id: scope.ownerId, scope_id: scope.scopeId, entity_id: brainEntityId(entity.kind, entity.key),
+    kind: entity.kind, key: entity.key, display_name: entity.displayName,
+    document_id: entity.kind === "document" ? documentId : null, first_seen_at: at, last_seen_at: at,
+  }));
+  const document = rows.find((row) => row.kind === "document")!;
+  await trx.insertInto("brain_graph_entities").values(document)
+    .onConflict((conflict) => conflict.columns(["owner_id", "scope_id", "entity_id"]).doUpdateSet({
+      display_name: document.display_name, first_seen_at: at, last_seen_at: at,
+    })).execute();
+  const others = rows.filter((row) => row !== document);
+  if (others.length === 0) return 0;
+  const inserted = await trx.insertInto("brain_graph_entities").values(others)
+    .onConflict((conflict) => conflict.doNothing()).returning("entity_id").execute();
+  await trx.updateTable("brain_graph_entities")
+    .set({
+      first_seen_at: sql`LEAST(first_seen_at, ${at}::timestamptz)`,
+      last_seen_at: sql`GREATEST(last_seen_at, ${at}::timestamptz)`,
+    })
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where("entity_id", "in", others.map((row) => row.entity_id))
+    .where((eb) => eb.or([eb("first_seen_at", ">", at), eb("last_seen_at", "<", at)])).execute();
+  // A person first seen as a bare identity (a ref) takes the first real name seen with it (a trailer or footer).
+  const named = others.filter((other) => other.kind === "person" && other.display_name !== personDisplay(other.key));
+  for (const row of named) {
+    await trx.updateTable("brain_graph_entities").set({ display_name: row.display_name })
+      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+      .where("entity_id", "=", row.entity_id).where("display_name", "=", personDisplay(row.key)).execute();
+  }
+  return inserted.length;
+}
+
+/** Re-derives one document, or removes its graph rows when it is tombstoned or gone. */
+export async function deriveGraphDocument(
+  trx: Transaction<BrainGraphDatabase>, scope: BrainScopeKey, documentId: string, now: Date,
+  capacity: BrainGraphCapacity,
+): Promise<BrainGraphDeriveOutcome> {
+  const document = await trx.selectFrom("brain_documents as d")
+    .select(["d.document_id", "d.incarnation", "d.revision", "d.provenance", "d.title", "d.body", "d.deleted_at",
+      claimsDigestSql("d").as("claims_digest"), sql<string>`to_char(d.source_updated_at AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("at")])
+    .where("d.owner_id", "=", scope.ownerId).where("d.scope_id", "=", scope.scopeId)
+    .where("d.document_id", "=", documentId).executeTakeFirst();
+  if (document === undefined || document.deleted_at !== null) {
+    await removeDocument(trx, scope, documentId, document?.provenance ?? "", now);
+    return "removed";
+  }
+  if (capacity.remaining <= 0) return "capacity";
+  const refs = await trx.selectFrom("brain_document_refs").select(["kind", "value"])
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", documentId)
+    .orderBy("kind").orderBy("value").limit(200).execute();
+  const claims = await trx.selectFrom("brain_claims").select("quote")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", documentId)
+    .where("kind", "=", "decision").where("incarnation", "=", document.incarnation)
+    .where("revision", "=", document.revision).orderBy("span_start").orderBy("claim_id").orderBy("extractor")
+    .limit(100).execute();
+  const decisionQuotes = claims.map((claim) => claim.quote);
+  const candidates = quotedPaths(decisionQuotes).slice(0, 100);
+  const known = candidates.length === 0 ? [] : await trx.selectFrom("brain_document_refs").select("value").distinct()
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "path")
+    .where("value", "in", candidates).execute();
+  const derivation = deriveBrainGraph({
+    documentId, provenance: document.provenance, title: document.title, body: document.body, refs,
+    decisionQuotes, knownPaths: new Set(known.map((row) => row.value)),
+    parentTargets: await parentTargets(trx, scope, refs),
+    commitPullRequests: document.provenance === "git_commit" ? await commitPullRequests(trx, scope, document.body) : [],
+  });
+  const previousNames = await readIdentities(trx, scope, documentId);
+  const before = await describedIds(trx, scope, documentId);
+  await trx.deleteFrom("brain_graph_links").where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where("document_id", "=", documentId).execute();
+  capacity.remaining -= await writeEntities(trx, scope, derivation.entities, documentId, document.at);
+  if (derivation.links.length > 0) {
+    await trx.insertInto("brain_graph_links").values(derivation.links.map((link) => {
+      const fromId = brainEntityId(link.from.kind, link.from.key);
+      const toId = brainEntityId(link.to.kind, link.to.key);
+      return {
+        owner_id: scope.ownerId, scope_id: scope.scopeId, link_id: brainLinkId(documentId, link.type, fromId, toId),
+        document_id: documentId, type: link.type, mode: link.mode, from_entity_id: fromId, to_entity_id: toId,
+        ref_kind: link.refKind, quote: link.quote, at: document.at,
+      };
+    })).execute();
+  }
+  const identities = derivation.identities.slice(0, BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT);
+  const state = {
+    incarnation: document.incarnation, revision: document.revision, claims_digest: document.claims_digest,
+    identities: sql`${JSON.stringify(identities)}::jsonb`, link_count: derivation.links.length,
+    derived_at: now.toISOString(),
+  };
+  await trx.insertInto("brain_graph_state")
+    .values({ owner_id: scope.ownerId, scope_id: scope.scopeId, document_id: documentId, ...state })
+    .onConflict((conflict) => conflict.columns(["owner_id", "scope_id", "document_id"]).doUpdateSet(state)).execute();
+  const names = new Set([...previousNames, ...identities.map((pair) => pair.n)]);
+  await reconcileNameAliases(trx, scope, [...names], now);
+  const after = derivation.links.filter((link) => link.type === "describes")
+    .map((link) => brainEntityId(link.to.kind, link.to.key));
+  const shas = refs.filter((ref) => ref.kind === "commit").map((ref) => ref.value);
+  await nudgeDependents(trx, scope, documentId, document.provenance, before, after, shas);
+  return "derived";
+}
