@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
-import { Drawer, type DrawerContentComponentProps } from "expo-router/drawer";
+import { Drawer, getDrawerStatusFromState, type DrawerContentComponentProps } from "expo-router/drawer";
 
 import { Icon } from "@/components/ui";
 import { DrawerContent } from "@/components/shell/DrawerContent";
@@ -29,6 +29,7 @@ function triggerDrawerHaptic() {
 export default function DrawerLayout() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
+  const drawerStatusRef = useRef<ReturnType<typeof getDrawerStatusFromState> | null>(null);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const { computer, chats, isPending: recentChatsLoading } = useCanonicalChats();
   const { projects } = useProjects();
@@ -62,9 +63,19 @@ export default function DrawerLayout() {
 
   return (
     <Drawer
-      screenListeners={{
-        drawerOpen: triggerDrawerHaptic,
-        drawerClose: triggerDrawerHaptic,
+      screenListeners={({ navigation }) => {
+        // Seed restored state without buzzing; shared state events can reach
+        // multiple screens, so only an actual status change triggers feedback.
+        drawerStatusRef.current ??= getDrawerStatusFromState(navigation.getState());
+        return {
+          state: ({ data }) => {
+            const status = getDrawerStatusFromState(data.state);
+            if (status !== drawerStatusRef.current) {
+              drawerStatusRef.current = status;
+              triggerDrawerHaptic();
+            }
+          },
+        };
       }}
       drawerContent={(props: DrawerContentComponentProps) => (
         <DrawerContent
@@ -80,7 +91,7 @@ export default function DrawerLayout() {
           onNewConversation={startDraftChat}
         />
       )}
-      screenOptions={({ navigation }: { navigation: DrawerContentComponentProps["navigation"] }) => ({
+      screenOptions={({ navigation }) => ({
         drawerPosition: "left",
         drawerType: "slide",
         drawerStyle: { width: "80%", backgroundColor: theme.v2.appColors.canvas },
@@ -110,15 +121,15 @@ export default function DrawerLayout() {
         sceneStyle: { backgroundColor: theme.v2.appColors.canvas },
       })}
     >
-      <Drawer.Screen name="index" options={{ title: null, drawerLabel: "Home" }} />
-      <Drawer.Screen name="files" options={{ title: null, drawerLabel: "Files" }} />
-      <Drawer.Screen name="terminal" options={{ title: null, drawerLabel: "Terminal" }} />
-      <Drawer.Screen name="integrations" options={{ title: null, drawerLabel: "Connect Apps" }} />
-      <Drawer.Screen name="apps" options={{ title: null, drawerLabel: "Apps" }} />
+      <Drawer.Screen name="index" options={{ title: "", drawerLabel: "Home" }} />
+      <Drawer.Screen name="files" options={{ title: "", drawerLabel: "Files" }} />
+      <Drawer.Screen name="terminal" options={{ title: "", drawerLabel: "Terminal" }} />
+      <Drawer.Screen name="integrations" options={{ title: "", drawerLabel: "Connect Apps" }} />
+      <Drawer.Screen name="apps" options={{ title: "", drawerLabel: "Apps" }} />
       {collaborationEnabled
-        ? <Drawer.Screen name="shared" options={{ title: null, drawerLabel: "Shared with me" }} />
+        ? <Drawer.Screen name="shared" options={{ title: "", drawerLabel: "Shared with me" }} />
         : null}
-      <Drawer.Screen name="settings" options={{ title: null, drawerLabel: "Settings" }} />
+      <Drawer.Screen name="settings" options={{ title: "", drawerLabel: "Settings" }} />
     </Drawer>
   );
 }

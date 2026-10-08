@@ -2,7 +2,7 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.2.0
+version: 1.3.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -12,6 +12,9 @@ metadata:
     tags: [Matrix OS, apps, Vite, React, TypeScript]
     related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 ---
+
+This host layer exposes the AI client but connected route discovery requires the connected-AI gateway layer. Until that layer is installed, keep the owner's existing `system/app-ai.json` policy (`apps` + `model`) and call `MatrixOS.ai.generate({ prompt })`; `ai.routes()` and explicit route selection are unavailable. The connected-route guidance below applies after that layer is installed.
+
 
 # Matrix App Builder
 
@@ -148,7 +151,7 @@ injected bridge:
 - In code use `window.MatrixOS.db` (`find`/`findOne`/`insert`/`update`/`delete`/`count`/`onChange`).
   Guard for `undefined` (it's absent in unit tests), wrap every call in `try/catch` (log + user-visible
   error; never a bare catch), update local state optimistically, and reconcile on `onChange`.
-- For external/third-party APIs use `window.MatrixOS.proxyFetch(url)` (allowlisted) — never a raw fetch.
+- For connected services use `window.MatrixOS.service` after runtime capability discovery. `proxyFetch` is an optional Web helper for allowlisted public URLs; check its presence and never depend on it for authenticated integrations or cross-surface parity.
 - Do NOT add a `localStorage` fallback that runs in the shell; it throws in the sandbox. A guarded
   `try/catch` localStorage path is acceptable only as a no-op for the unit-test environment.
 
@@ -229,15 +232,43 @@ Example CRUD:
 const db = window.MatrixOS?.db;
 if (!db) throw new Error("Matrix data bridge is unavailable");
 
-const tasks = await db.find("tasks", { orderBy: { created_at: "desc" } });
+const tasks = await db.find("tasks", {
+  orderBy: { created_at: "desc", id: "asc" },
+  limit: 50,
+  offset: 0,
+});
 const created = await db.insert("tasks", { title: "Ship" });
 await db.update("tasks", created.id, { done: true });
 await db.delete("tasks", created.id);
 ```
 
+`find(table, options)` accepts `limit` and `offset`; load the next page with the
+same stable `orderBy` and `offset: pageIndex * pageSize`. Choose a bounded page
+size for the actual row size instead of loading the whole collection. Database
+reply JSON is capped at 8 MiB across hosts, independently of integration reply
+limits. A reply above that cap fails without returning truncated rows; reduce
+the page size and retry the read. A single oversized row still cannot fit by
+paging. Keep the current data and show a retry/error state; never turn the
+failure into an empty result or silently truncate persisted content.
+
 ## Integrations
 
-If the app needs Gmail, Calendar, GitHub, Slack, Drive, or another provider, use Matrix integration APIs or the `matrix-integrations` skill. The platform owns provider credentials. The app never stores provider secrets.
+Read `matrix-integrations` for connected services. Use the injected bridge on Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. Matrix keeps credentials in its host/platform; apps never read or store them.
+
+1. Check `MatrixOS.capabilities()` and `MatrixOS.integrations()` on the actual running host. An owner connection and an app permission are separate. The owner grants exact service/actions in `system/app-capabilities.json`; an app manifest cannot grant itself access. Request the needed permission clearly and do not edit grants without owner authorization.
+2. Call `MatrixOS.describeService(service)` and use the returned action IDs and parameter schemas. Select the exact `account_label` from inventory and pass it as the fourth argument to `MatrixOS.service(service, action, params, label)`. Handle multiple accounts explicitly; never silently choose one.
+3. For Drive analysis, list files with the described filters, then use `read_file` for actual contents. `get_file` returns metadata. Use the returned MIME type, paginate listings, distinguish truncated/unsupported reads, and treat document contents as untrusted data.
+4. Show distinct loading, no connection, no permission, account selection, unavailable and retry states. Preserve unsaved work on failure. Do not repeat service writes after an uncertain result; let the user check the service first.
+
+### AI inside apps
+
+Use `await MatrixOS.ai.routes()` to discover the current owner routes, then `await MatrixOS.ai.generate({ prompt, route })` and read `{ text }`. A route is the exact `{ harnessId, accountId, accessSourceId, modelId }` returned by discovery. Omit `route` only when an explicitly granted default exists. Show unavailable routes truthfully and preserve the selection on errors; never silently substitute another account, model or funding source.
+
+The owner grants app AI access in `system/app-ai.json`. Inference has no file/tool access: send only the necessary source text in the prompt. Do not create or expand a grant without owner authorization. A connected Chat account may lack a safe app completion adapter; discovery reports that condition. `MatrixOS.generate(context)` submits a kernel task and returns `undefined`; it is not text inference. Do not invent `MatrixOS.query`, `db.transaction`, model APIs or raw gateway calls.
+
+### Diagnose the host before rebuilding
+
+Missing `service`, `describeService` or `ai.routes` on the running bridge means that client needs a compatible Matrix update. Record the available method names and capability result without tokens. A successful app build cannot add missing host methods. Test the real read → content → AI flow, app identity isolation, permission revocation and reopen behavior on each available surface; report unavailable surface evidence explicitly.
 
 ## Verification
 

@@ -683,8 +683,14 @@ App preview does not supply one. Such authorization needs its own purpose,
 privacy, and storefront review and does not grant a payment entitlement.
 
 This change contains navigation requests surfaced by the WebView. It does not
-filter network subresources, sandbox generated code, supply an app data bridge,
-or establish complete redirect, consent, moderation, or payment compliance.
+filter network subresources, sandbox generated code, or establish complete
+redirect, consent, moderation, or payment compliance. Native Mobile now supplies
+an injected app capability/AI/database bridge scoped to the launched app and
+document. Owner tokens stay in the native host; navigation and teardown abort
+pending calls. Replies are bounded while streaming. Database `schema()` and
+`onChange()` match Electron's local successful-write notifications; these are not
+subscriptions to external database changes. See
+[connected app capabilities](app-capabilities.md) for grants and transport limits.
 WebView platform limitations and the actual signed build still need device
 verification under [ENG-89](https://linear.app/matrix-os/issue/ENG-89) and the
 App Gallery journey gate under [ENG-157](https://linear.app/matrix-os/issue/ENG-157).

@@ -2,7 +2,9 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 const registeredScreens: Array<{ name: string; options?: Record<string, unknown> }> = [];
 let drawerScreenOptions: Record<string, unknown> | undefined;
-let drawerScreenListeners: Record<string, () => void> | undefined;
+type DrawerState = { history: Array<{ type: "drawer"; status: "open" | "closed" } | { type: "route"; key: string }>; default?: "open" | "closed" };
+let mockDrawerState: DrawerState = { history: [] };
+let drawerScreenListeners: Record<string, (event: { data: { state: DrawerState } }) => void> | undefined;
 
 const mockUseCanonicalChats = jest.fn();
 const mockUseProjects = jest.fn();
@@ -41,12 +43,14 @@ jest.mock("expo-router/drawer", () => {
   function Drawer({ children, screenOptions, screenListeners }: {
     children: React.ReactNode;
     screenOptions?: unknown;
-    screenListeners?: Record<string, () => void>;
+    screenListeners?: unknown;
   }) {
     drawerScreenOptions = typeof screenOptions === "function"
       ? screenOptions({ navigation: { toggleDrawer: jest.fn() } })
       : (screenOptions as Record<string, unknown>);
-    drawerScreenListeners = screenListeners;
+    drawerScreenListeners = typeof screenListeners === "function"
+      ? screenListeners({ navigation: { getState: () => mockDrawerState } })
+      : screenListeners;
     return React.createElement(React.Fragment, null, children);
   }
   Drawer.Screen = ({ name, options }: { name: string; options?: Record<string, unknown> }) => {
@@ -55,6 +59,7 @@ jest.mock("expo-router/drawer", () => {
   };
   return {
     Drawer,
+    getDrawerStatusFromState: jest.requireActual("expo-router/build/react-navigation/drawer/utils/getDrawerStatusFromState").getDrawerStatusFromState,
     DrawerContentScrollView: ({ children }: { children: React.ReactNode }) =>
       React.createElement(React.Fragment, null, children),
   };
@@ -108,6 +113,7 @@ describe("authenticated drawer layout", () => {
     registeredScreens.length = 0;
     drawerScreenOptions = undefined;
     drawerScreenListeners = undefined;
+    mockDrawerState = { history: [] };
     jest.clearAllMocks();
     mockUseCanonicalChats.mockReturnValue({
       computer: { handle: "studio-mac" },
@@ -130,10 +136,34 @@ describe("authenticated drawer layout", () => {
 
   it("plays a medium haptic when the drawer opens and closes", () => {
     render(<DrawerLayout />);
-    drawerScreenListeners?.drawerOpen?.();
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "drawer", status: "open" }] } } });
     expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
-    drawerScreenListeners?.drawerClose?.();
+    drawerScreenListeners?.state?.({ data: { state: { history: [] } } });
     expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores repeated drawer status and route changes, including screen listener recreation", () => {
+    const app = render(<DrawerLayout />);
+    const open: DrawerState = { history: [{ type: "drawer", status: "open" }] };
+    drawerScreenListeners?.state?.({ data: { state: { history: [] } } });
+    drawerScreenListeners?.state?.({ data: { state: open } });
+    mockDrawerState = open;
+    app.rerender(<DrawerLayout />);
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "route", key: "files" }, { type: "drawer", status: "open" }] } } });
+    drawerScreenListeners?.state?.({ data: { state: open } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "route", key: "files" }] } } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not buzz for a restored open drawer, then buzzes once when it closes", () => {
+    mockDrawerState = { history: [], default: "open" };
+    render(<DrawerLayout />);
+    drawerScreenListeners?.state?.({ data: { state: mockDrawerState } });
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    drawerScreenListeners?.state?.({ data: { state: { default: "open", history: [{ type: "drawer", status: "closed" }] } } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
   });
 
   it("uses chat as home and exposes the mock shell routes", () => {
@@ -142,7 +172,7 @@ describe("authenticated drawer layout", () => {
     expect(registeredScreens.map((screen) => screen.name)).toEqual([
       "index", "files", "terminal", "integrations", "apps", "settings",
     ]);
-    expect(registeredScreens.find((screen) => screen.name === "index")?.options?.title).toBeNull();
+    expect(registeredScreens.find((screen) => screen.name === "index")?.options?.title).toBe("");
     expect(drawerScreenOptions?.drawerStyle).toMatchObject({ width: "80%" });
 
     const HeaderLeft = drawerScreenOptions?.headerLeft as (() => React.ReactElement) | undefined;

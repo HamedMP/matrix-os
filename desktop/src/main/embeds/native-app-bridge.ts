@@ -1,5 +1,7 @@
-import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_AI_TIMEOUT_MS, AppAiInputSchema, AppAiResultSchema, type AppAiInput } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
+import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
+export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import {
@@ -18,7 +20,6 @@ import {
 const SAFE_APP_IDENTITY = /^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*$/;
 const MAX_APP_IDENTITY_LENGTH = 256;
 const DEFAULT_MAX_SENDERS = 64;
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 const JsonRecordSchema = z.record(z.string(), z.json());
@@ -59,13 +60,29 @@ function isSafeAppIdentity(value: string): boolean {
 interface NativeAppBridgeOptions {
   authGeneration: () => number;
   generate: (app: string, context: string) => void;
-  aiRequest: (slug: string, input: AppAiInput) => Promise<unknown>;
+  aiRequest: (slug: string, input: AppAiInput, signal?: AbortSignal) => Promise<unknown>;
+  capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
+  aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
   request: (slug: string, query: NativeAppQuery) => Promise<unknown>;
   gatewayRequest: (slug: string, request: NativeAppGatewayRequest) => Promise<unknown>;
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
   maxSenders?: number;
+  getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
+}
+
+interface NativeAppDocumentLifecycle {
+  isDestroyed(): boolean;
+  on(event: "did-start-navigation", listener: (details: { isMainFrame: boolean; isSameDocument: boolean }) => void): unknown;
+  on(event: "destroyed", listener: () => void): unknown;
+  removeListener(event: "did-start-navigation", listener: (details: { isMainFrame: boolean; isSameDocument: boolean }) => void): unknown;
+  removeListener(event: "destroyed", listener: () => void): unknown;
+}
+
+interface NativeAppRegistration {
+  appIdentity: string; routeSlug: string; gatewayOrigin: string; authGeneration: number;
+  controller: AbortController; openWindow: number; openCount: number; dispose?: () => void;
 }
 
 export interface NativeAppSender {
@@ -81,7 +98,7 @@ interface NativeAppQueryRequesterOptions {
 
 export async function readBoundedJson(response: Response): Promise<unknown> {
   const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES) {
+  if (Number.isFinite(contentLength) && contentLength > MAX_APP_DATABASE_REPLY_BYTES) {
     throw new Error("database response too large");
   }
   if (!response.body) return null;
@@ -89,12 +106,17 @@ export async function readBoundedJson(response: Response): Promise<unknown> {
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let chunkCount = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (++chunkCount > MAX_APP_RESPONSE_CHUNKS) {
+        await reader.cancel();
+        throw new Error("too many database response chunks");
+      }
       length += value.byteLength;
-      if (length > MAX_RESPONSE_BYTES) {
+      if (length > MAX_APP_DATABASE_REPLY_BYTES) {
         await reader.cancel();
         throw new Error("database response too large");
       }
@@ -126,6 +148,8 @@ export function createNativeAppQueryRequester(
     if (origin.protocol !== "https:" && origin.protocol !== "http:") {
       throw new Error("invalid gateway origin");
     }
+    const body = JSON.stringify({ app: slug, ...query });
+    if (new TextEncoder().encode(body).byteLength > MAX_APP_DATABASE_REQUEST_BYTES) throw new Error("database request too large");
 
     const response = await fetchFn(new URL("/api/bridge/query", origin).toString(), {
       method: "POST",
@@ -134,7 +158,7 @@ export function createNativeAppQueryRequester(
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ app: slug, ...query }),
+      body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`database request failed (${response.status})`);
@@ -166,26 +190,6 @@ export function createNativeAppGatewayRequester(
   };
 }
 
-export function createNativeAppAiRequester(options: NativeAppQueryRequesterOptions) {
-  const fetchFn = options.fetchFn ?? fetch;
-  return async (slug: string, rawInput: AppAiInput) => {
-    if (!isSafeAppIdentity(slug)) throw new Error("invalid app identity");
-    const input = AppAiInputSchema.parse(rawInput);
-    const token = options.getToken();
-    if (!token) throw new Error("desktop authentication required");
-    const origin = new URL(options.getGatewayOrigin());
-    if (!["https:", "http:"].includes(origin.protocol)) throw new Error("invalid gateway origin");
-    const response = await fetchFn(new URL("/api/bridge/ai", origin).toString(), {
-      method: "POST", redirect: "error",
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ app: slug, ...input }),
-      signal: AbortSignal.timeout(APP_AI_TIMEOUT_MS + 2_000),
-    });
-    if (!response.ok) throw new Error("App AI is unavailable");
-    return AppAiResultSchema.parse(await readBoundedJson(response));
-  };
-}
-
 function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): boolean {
   try {
     const url = new URL(sender.url);
@@ -197,10 +201,11 @@ function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): b
 }
 
 export class NativeAppBridge {
-  private readonly senders = new Map<number, { appIdentity: string; routeSlug: string; authGeneration: number; openWindow: number; openCount: number }>();
+  private readonly senders = new Map<number, NativeAppRegistration>();
   private generateWindow = 0;
   private generateCount = 0;
   private pendingOpens = 0;
+  private pendingCapabilities = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
 
@@ -221,21 +226,46 @@ export class NativeAppBridge {
     ) {
       throw new Error("invalid app bridge identity");
     }
-    this.senders.delete(senderId);
-    this.senders.set(senderId, { appIdentity, routeSlug, authGeneration: this.options.authGeneration(), openWindow: 0, openCount: 0 });
+    this.unregister(senderId);
+    const lifetime = this.options.getSenderLifecycle?.(senderId);
+    if (this.options.getSenderLifecycle && (!lifetime || lifetime.isDestroyed())) throw new Error("App document is unavailable");
+    const identity: NativeAppRegistration = { appIdentity, routeSlug, gatewayOrigin: new URL(this.options.gatewayOrigin()).origin, authGeneration: this.options.authGeneration(), controller: new AbortController(), openWindow: 0, openCount: 0 };
+    if (lifetime) {
+      const navigation = (details: { isMainFrame: boolean; isSameDocument: boolean }) => {
+        if (!details.isMainFrame || details.isSameDocument) return;
+        const previous = this.senders.get(senderId);
+        if (!previous || previous.dispose !== dispose) return;
+        previous.controller.abort();
+        // Keep the trusted app registration, but never share cancellation or
+        // late-result authority between documents. Pending slots drain normally.
+        this.senders.set(senderId, { ...previous, controller: new AbortController() });
+      };
+      const destroyed = () => this.unregister(senderId);
+      const dispose = () => {
+        lifetime.removeListener("did-start-navigation", navigation);
+        lifetime.removeListener("destroyed", destroyed);
+      };
+      identity.dispose = dispose;
+      lifetime.on("did-start-navigation", navigation);
+      lifetime.on("destroyed", destroyed);
+    }
+    this.senders.set(senderId, identity);
     while (this.senders.size > this.maxSenders) {
       const oldest = this.senders.keys().next().value as number | undefined;
       if (oldest === undefined) break;
-      this.senders.delete(oldest);
+      this.unregister(oldest);
     }
   }
 
   unregister(senderId: number): void {
+    const identity = this.senders.get(senderId);
+    identity?.controller.abort();
+    identity?.dispose?.();
     this.senders.delete(senderId);
   }
 
   clear(): void {
-    this.senders.clear();
+    for (const senderId of this.senders.keys()) this.unregister(senderId);
   }
 
   async query(sender: NativeAppSender, rawQuery: unknown): Promise<unknown> {
@@ -260,11 +290,48 @@ export class NativeAppBridge {
   }
 
   async aiGenerate(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
+    const identity = this.authorizeCapability(sender);
+    const input = AppAiInputSchema.parse(rawInput);
+    if (this.pendingCapabilities >= 32) throw new Error("App requests are busy");
+    this.pendingCapabilities++;
+    try {
+      const result = await this.options.aiRequest(identity.appIdentity, input, identity.controller.signal);
+      if (this.authorizeCapability(sender) !== identity) throw new Error("not authorized");
+      return result;
+    } finally { this.pendingCapabilities--; }
+  }
+
+  private authorizeCapability(sender: NativeAppSender) {
     const identity = this.senders.get(sender.id);
-    if (!identity || identity.authGeneration !== this.options.authGeneration() || !isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug)) {
-      throw new Error("not authorized");
-    }
-    return this.options.aiRequest(identity.appIdentity, AppAiInputSchema.parse(rawInput));
+    if (!identity || identity.authGeneration !== this.options.authGeneration()
+      || identity.gatewayOrigin !== new URL(this.options.gatewayOrigin()).origin
+      || !isSenderAtApp(sender, identity.gatewayOrigin, identity.routeSlug)) throw new Error("not authorized");
+    return identity;
+  }
+
+  async capability(sender: NativeAppSender, rawInput: unknown): Promise<unknown> {
+    const identity = this.authorizeCapability(sender);
+    if (!this.options.capabilityRequest) throw new Error("Capability requester is required");
+    const input = AppCapabilityInputSchema.parse(rawInput);
+    if (this.pendingCapabilities >= 32) throw new Error("App requests are busy");
+    this.pendingCapabilities++;
+    try {
+      const result = await this.options.capabilityRequest(identity.appIdentity, input, identity.controller.signal);
+      if (this.authorizeCapability(sender) !== identity) throw new Error("not authorized");
+      return result;
+    } finally { this.pendingCapabilities--; }
+  }
+
+  async aiRoutes(sender: NativeAppSender): Promise<unknown> {
+    const identity = this.authorizeCapability(sender);
+    if (!this.options.aiRoutesRequest) throw new Error("AI route requester is required");
+    if (this.pendingCapabilities >= 32) throw new Error("App requests are busy");
+    this.pendingCapabilities++;
+    try {
+      const result = await this.options.aiRoutesRequest(identity.appIdentity, identity.controller.signal);
+      if (this.authorizeCapability(sender) !== identity) throw new Error("not authorized");
+      return result;
+    } finally { this.pendingCapabilities--; }
   }
 
   generate(sender: NativeAppSender, rawContext: unknown): void {
@@ -303,6 +370,13 @@ export class NativeAppBridge {
   }
 
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    if (this.options.capabilityRequest || this.options.aiRoutesRequest) {
+      if (!this.options.capabilityRequest || !this.options.aiRoutesRequest) throw new Error("App capability dependencies are required");
+      registerNativeAppCapabilityIpc(ipcMain, {
+        capability: (sender, input) => this.capability(sender, input),
+        aiRoutes: (sender) => this.aiRoutes(sender),
+      });
+    }
     if (this.options.resolveApp || this.options.openApp) {
       if (!this.options.resolveApp || !this.options.openApp) throw new Error("App launch dependencies are required");
       ipcMain.handle(NATIVE_APP_OPEN_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
@@ -332,7 +406,10 @@ export class NativeAppBridge {
     ipcMain.handle(APP_AI_CHANNEL, async (event: IpcMainInvokeEvent, rawInput: unknown) => {
       try {
         if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
-        return await this.aiGenerate({ id: event.sender.id, url: event.sender.getURL() }, rawInput);
+        return await this.aiGenerate({ id: event.sender.id, get url() {
+          if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+          return event.sender.getURL();
+        } }, rawInput);
       } catch (error) {
         console.warn("[native-app-bridge] AI request failed:", error instanceof Error ? error.name : "UnknownError");
         throw new Error("App AI is unavailable");
