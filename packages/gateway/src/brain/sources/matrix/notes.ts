@@ -140,6 +140,16 @@ function isMissingTable(error: unknown): boolean {
   return error instanceof Error && "code" in error && UNDEFINED_TABLE_CODES.has(error.code);
 }
 
+const TAGS_READ_MAX_CHARS = 2_000;
+/** Tags as read; when the column was longer than TAGS_READ_MAX_CHARS its last tag may be cut, so it is dropped. */
+function readTags(row: Record<string, unknown>): string | null {
+  if (typeof row.tags !== "string") return null;
+  if (row.tags_cut !== true) return row.tags;
+  let end = row.tags.length;
+  while (end > 0 && !/[,\s]/.test(row.tags[end - 1]!)) end -= 1;
+  return row.tags.slice(0, end);
+}
+
 /** The notes reader over the owner app database (AppDb.raw): fixed SQL, bound parameters, bounded columns. */
 export function createBrainMatrixNotesReader(appDb: RawAppDb): BrainMatrixNotesReader {
   async function query(text: string, params: unknown[]): Promise<Record<string, unknown>[]> {
@@ -151,10 +161,11 @@ export function createBrainMatrixNotesReader(appDb: RawAppDb): BrainMatrixNotesR
     }
   }
   const max = BRAIN_MATRIX_LIMITS.noteContentReadMaxChars;
+  const tags = `left(tags, ${TAGS_READ_MAX_CHARS}) AS tags, char_length(tags) > ${TAGS_READ_MAX_CHARS} AS tags_cut`;
   return {
     async listNotes(after, limit) {
       const rows = await query(`SELECT id::text AS id, left(title, 1000) AS title, left(content, ${max}) AS content,
-        char_length(content) > ${max} AS content_cut, left(tags, 2000) AS tags,
+        char_length(content) > ${max} AS content_cut, ${tags},
         COALESCE(updated_at, created_at) AS updated_at
         FROM "notes"."notes" WHERE id::text > $1 ORDER BY id::text LIMIT $2`, [after, limit]);
       return rows.flatMap((row) => {
@@ -163,19 +174,19 @@ export function createBrainMatrixNotesReader(appDb: RawAppDb): BrainMatrixNotesR
         return [{
           id, title: typeof row.title === "string" ? row.title : null,
           content: typeof row.content === "string" ? row.content : null, contentCut: row.content_cut === true,
-          tags: typeof row.tags === "string" ? row.tags : null,
+          tags: readTags(row),
           updatedAt: isoInstant(row.updated_at) ?? "1970-01-01T00:00:00.000Z",
         }];
       });
     },
     async listNoteKeys(after, limit) {
       const rows = await query(
-        `SELECT id::text AS id, left(tags, 2000) AS tags FROM "notes"."notes" WHERE id::text > $1 ORDER BY id::text LIMIT $2`,
+        `SELECT id::text AS id, ${tags} FROM "notes"."notes" WHERE id::text > $1 ORDER BY id::text LIMIT $2`,
         [after, limit],
       );
       return rows.flatMap((row) => {
         const id = String(row.id);
-        return NOTE_ID.test(id) ? [{ id, tags: typeof row.tags === "string" ? row.tags : null }] : [];
+        return NOTE_ID.test(id) ? [{ id, tags: readTags(row) }] : [];
       });
     },
   };
