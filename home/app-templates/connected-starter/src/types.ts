@@ -13,6 +13,7 @@ export interface Definition {
   description: string;
   tagline: string;
   icon: string;
+  iconDataUrl?: string;
   accent: string;
   view:
     | "finance"

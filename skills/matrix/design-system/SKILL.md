@@ -131,7 +131,7 @@ border: 1px solid rgba(214, 211, 200, 0.35);
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-Generated launcher icons use the gateway/kernel icon style. The owner's iconStyle in `system/desktop.json` takes precedence. Otherwise use the approved Matrix front-facing matte clay family: one recognisable puffy object on a softly tinted brand-colour tile, a contrasting object accent, top-left lighting, gentle contact shadow and consistent scale. Keep each app's colours distinct. No gloss, glass, metal, text, logos or watermarks. Preserve supplied Figma assets unchanged. The shell owns the final corner radius; do not bake in an outer frame. See `../app-builder/references/clay-icons.md` for the full recipe.
+Generated launcher icons use the gateway/kernel icon style. The owner's iconStyle in `system/desktop.json` takes precedence. Otherwise use the Matrix desktop family: mixed silhouettes on transparent backgrounds, strong app-specific pictograms, varied rich colors, controlled depth and shadows. The family takes inspiration from Ubuntu/Yaru's visual variety without copying any third-party artwork. Avoid a repeated beige square tile, generic controller, text, logos or watermarks. Preserve owner-provided assets unchanged. See `../app-builder/references/app-icons.md` for the full recipe.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

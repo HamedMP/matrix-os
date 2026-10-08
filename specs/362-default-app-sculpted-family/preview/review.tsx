@@ -29,6 +29,17 @@ if (requested === "gallery") {
   };
   await import("../../../home/app-templates/connected-starter/src/style.css");
   await import("../../../home/app-templates/connected-starter/src/styles/app-identities.css");
+  await import("../../../home/app-templates/connected-starter/src/styles/gallery-light.css");
+  const icons = import.meta.glob("../../../home/apps/app-gallery/src/assets/icons/*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+  const iconUrl = Object.entries(icons).find(([name]) => name.endsWith(`/${app.id}.png`))?.[1];
+  const iconDataUrl = iconUrl && await new Promise<string>((resolve, reject) => {
+    fetch(iconUrl).then(response => response.blob()).then(blob => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    }).catch(reject);
+  });
   const { default: App } = await import("../../../home/app-templates/connected-starter/src/App");
-  root.render(<App app={app as any} />);
+  root.render(<App app={{ ...app, iconDataUrl } as any} />);
 }

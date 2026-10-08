@@ -15,6 +15,10 @@ function props(id: string, records: OwnerRecord[]) {
   return { app: catalog.apps.find(app => app.id === id) as Definition, records, onEdit: vi.fn(), onEvidence: vi.fn(), onAdd: vi.fn(), onSave: vi.fn(async () => {}) };
 }
 describe("connected app subject-specific interactions", () => {
+  it("starts with compact controls even while an app connection is unavailable", () => {
+    render(createElement(Sidebar, { ...props("subscriptions", []), count: null, canUseRecords: false, canImport: false, accounts: [], query: "", setQuery: vi.fn(), scope: "all", setScope: vi.fn(), account: "", setAccount: vi.fn(), onImport: vi.fn() }));
+    expect(screen.getByText("Filters & connections").closest("details")!.open).toBe(false);
+  });
   it("keeps the filter panel open while clearing a search", () => {
     function Filters() {
       const [query, setQuery] = useState("Lisbon");

@@ -70,13 +70,13 @@ describe("curated gallery presentation", () => {
 });
 
 describe("gallery packaged artwork", () => {
-  it("tries the Figma clay icon, PNG, SVG and glyph, resetting for a different app", () => {
+  it("tries the installed PNG first, then historical SVG and glyph fallbacks", () => {
     const { container, rerender } = render(<AppIdentity app={apps[0]} />);
     let image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[0].id}.svg`));
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].id}.png`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].id}.png`));
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[0].id}.svg`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].icon}.svg`));
@@ -85,10 +85,10 @@ describe("gallery packaged artwork", () => {
     expect(container.querySelector("svg")).toBeTruthy();
     rerender(<AppIdentity app={apps[1]} />);
     image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[1].id}.svg`));
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].id}.png`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].id}.png`));
+    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[1].id}.svg`));
     fireEvent.error(image);
     expect(container.querySelector("img")!.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].icon}.svg`));
   });

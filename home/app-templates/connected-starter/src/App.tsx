@@ -114,6 +114,8 @@ export default function App({ app }: { app: Definition }) {
           onEdit={setEditor}
           onEvidence={setEvidence}
           onAdd={() => setEditor(null)}
+          onImport={() => setImporting(true)}
+          canImport={canImport}
           onSave={save}
         />
       </div>

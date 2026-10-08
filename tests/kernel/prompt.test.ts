@@ -44,8 +44,8 @@ describe("buildSystemPrompt", () => {
   it("includes launcher app logo guidance in the app design prompt", () => {
     const prompt = buildSystemPrompt(homePath);
     expect(prompt).toContain("Launcher app logos");
-    expect(prompt).toContain("Figma clay icon family");
-    expect(prompt).toContain("one puffy toy-like object");
+    expect(prompt).toContain("mixed silhouettes");
+    expect(prompt).toContain("transparent background");
     expect(prompt).toContain("~/system/icons/<slug>.png");
   });
 

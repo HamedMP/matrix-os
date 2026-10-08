@@ -50,7 +50,7 @@ describe.skipIf(process.platform !== "linux")("gallery build-only template depen
     expect(JSON.parse(await readFile(join(destination, "matrix.json"), "utf8"))).toMatchObject({
       slug: "focus", database: "postgres", scope: "personal", permissions: [],
     });
-    expect(JSON.parse(await readFile(join(destination, "src/definition.json"), "utf8"))).toEqual(definition);
+    expect(JSON.parse(await readFile(join(destination, "src/definition.json"), "utf8"))).toMatchObject(definition);
     expect(await readFile(join(destination, "dist/index.html"), "utf8")).not.toContain(placeholder);
     await expect(readFile(join(destination, "node_modules/react/package.json"))).rejects.toMatchObject({ code: "ENOENT" });
     await writeFile(join(destination, "src/definition.json"), "owner edit");

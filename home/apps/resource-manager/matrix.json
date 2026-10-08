@@ -3,7 +3,7 @@
   "description": "Monitor Matrix OS services, processes, and resource usage",
   "runtime": "vite",
   "category": "utility",
-  "icon": "resource-manager",
+  "icon": "v3-resource-manager",
   "author": "system",
   "version": "1.0.0",
   "slug": "resource-manager",

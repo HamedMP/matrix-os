@@ -2,7 +2,7 @@
   "name": "Task Manager",
   "description": "Trello-style project boards with draggable cards, labels, due dates, and checklists backed by your own Postgres",
   "category": "productivity",
-  "icon": "task-manager",
+  "icon": "v3-task-manager",
   "author": "system",
   "version": "3.0.0",
   "runtime": "vite",

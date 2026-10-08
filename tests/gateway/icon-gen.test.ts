@@ -109,12 +109,11 @@ describe("POST /api/apps/:slug/icon", () => {
     expect(existsSync(join(homePath, "system/icons"))).toBe(true);
   });
 
-  it("uses the Figma clay icon style when no desktop.json", async () => {
+  it("uses the distinct Matrix icon style when no desktop.json", async () => {
     const res = await app.request("/api/apps/timer/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
-    expect(body.prompt).toContain("one puffy, inflated, toy-like object");
-    expect(body.prompt).toContain("Front view");
-    expect(body.prompt).toContain("green, teal, gold, blue, or neutral");
+    expect(body.prompt).toContain("mixed silhouettes");
+    expect(body.prompt).toContain("transparent background");
     expect(body.prompt).toContain("timer");
   });
 
@@ -126,7 +125,7 @@ describe("POST /api/apps/:slug/icon", () => {
     const res = await app.request("/api/apps/calculator/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("pixel art retro 8-bit style");
-    expect(body.prompt).not.toContain("Figma clay app icon artwork");
+    expect(body.prompt).not.toContain("Ubuntu/Yaru");
   });
 
   it("uses style from request body over desktop.json", async () => {

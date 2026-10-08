@@ -7,6 +7,8 @@ export interface ViewProps {
   onEdit: (record: OwnerRecord) => void;
   onEvidence: (record: OwnerRecord) => void;
   onAdd: () => void;
+  onImport?: () => void;
+  canImport?: boolean;
   onSave: (record: OwnerRecord) => Promise<unknown>;
 }
 export function Badge({ value }: { value: unknown }) {

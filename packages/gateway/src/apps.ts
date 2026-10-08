@@ -5,6 +5,7 @@ import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
 import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
 import { resolveSystemIconMetadata, type SystemIconMetadata } from "./icon-metadata.js";
+import { AppGalleryCatalogSchema } from "@matrix-os/contracts/app-gallery";
 
 export interface AppEntry extends AppMeta {
   slug?: string;
@@ -57,6 +58,19 @@ export async function listAppCatalog(
 
 const ICON_METADATA_BATCH_SIZE = 16;
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]{1,64}$/;
+const BUNDLED_GALLERY_CATALOG = new URL("../../../home/system/app-gallery.json", import.meta.url);
+let galleryLegacyIconsPromise: Promise<Map<string, string>> | undefined;
+
+function galleryLegacyIcons(): Promise<Map<string, string>> {
+  galleryLegacyIconsPromise ??= readFile(BUNDLED_GALLERY_CATALOG, "utf8")
+    .then((raw) => AppGalleryCatalogSchema.parse(JSON.parse(raw)))
+    .then((catalog) => new Map(catalog.apps.map((app) => [app.id, app.icon])))
+    .catch((error: unknown) => {
+      console.warn("[apps] bundled gallery icon catalog is unavailable:", error instanceof Error ? error.message : String(error));
+      return new Map<string, string>();
+    });
+  return galleryLegacyIconsPromise;
+}
 
 export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null {
   if (typeof app.icon === "string" && SAFE_ICON_STEM.test(app.icon)) return app.icon;
@@ -67,6 +81,7 @@ export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null
 async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<AppCatalog> {
   const hydrated: AppEntry[] = [];
   const icons: Record<string, SystemIconMetadata> = {};
+  const legacyIcons = await galleryLegacyIcons();
   for (let offset = 0; offset < apps.length; offset += ICON_METADATA_BATCH_SIZE) {
     const batch = apps.slice(offset, offset + ICON_METADATA_BATCH_SIZE);
     // In-flight lookups are deduplicated per batch, so this map never holds
@@ -88,6 +103,15 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
     const entries = await Promise.all(batch.map(async (app) => {
       const iconStem = appIconStem(app);
       if (!iconStem) return app;
+      const galleryStem = app.slug && app.author === "Matrix OS" && legacyIcons.get(app.slug) === iconStem
+        ? `gallery-${app.slug}` : null;
+      if (galleryStem) {
+        const galleryIcon = await resolveOnce(galleryStem);
+        if (galleryIcon) {
+          icons[galleryStem] = galleryIcon;
+          return { ...app, iconUrl: galleryIcon.versionedUrl };
+        }
+      }
       const icon = await resolveOnce(iconStem);
       if (!icon) return app;
       icons[iconStem] = icon;

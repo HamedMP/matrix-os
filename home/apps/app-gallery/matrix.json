@@ -7,7 +7,7 @@
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "scope": "personal",
-  "icon": "app-gallery",
+  "icon": "v3-app-gallery",
   "category": "productivity",
   "build": {
     "install": "pnpm install --frozen-lockfile",

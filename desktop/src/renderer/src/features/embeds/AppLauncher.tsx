@@ -3,7 +3,6 @@ import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
-import { DesktopResourceSharing } from "../files/DesktopResourceSharing";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -37,7 +36,7 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
       <img
         src={url}
         alt=""
-        className={`${large ? "h-16 w-16 rounded-[18px]" : "h-11 w-11 rounded-xl"} object-cover shadow-[var(--shadow-1)]`}
+        className={`${large ? "h-16 w-16" : "h-11 w-11"} object-contain drop-shadow-[0_5px_8px_rgba(0,0,0,0.15)]`}
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
@@ -56,7 +55,7 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
 function BundledIcon({ url, fallback }: { url?: string; fallback: ReactNode }) {
   const [failedUrl, setFailedUrl] = useState<string>();
   return url && failedUrl !== url
-    ? <img src={url} alt="" className="size-full rounded-[18px] object-cover" draggable={false} onError={() => setFailedUrl(url)} />
+    ? <img src={url} alt="" className="size-full object-contain" draggable={false} onError={() => setFailedUrl(url)} />
     : <>{fallback}</>;
 }
 
@@ -69,7 +68,7 @@ function OsViewDestinationIcon({ path }: { path: string }) {
       data-launchpad-built-in-icon
       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
       style={{
-        background: appearance?.background ?? "#0E3422",
+        background: artwork ? "transparent" : appearance?.background ?? "#0E3422",
         color: appearance?.foreground ?? "#BED77B",
       }}
     >
@@ -305,10 +304,6 @@ export default function AppLauncher({
         </div>
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
-        {filtered[activeIndex]?.type === "installed" && filtered[activeIndex].app.slug ? <div className="flex items-center justify-end gap-2 text-xs">
-          <span className="truncate" style={{ color: "var(--text-tertiary)" }}>{filtered[activeIndex].name}</span>
-          <DesktopResourceSharing key={filtered[activeIndex].app.slug} kind="app" path={filtered[activeIndex].app.slug} />
-        </div> : null}
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
@@ -346,7 +341,7 @@ export default function AppLauncher({
                     <span
                       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
                       style={{
-                        background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+                        background: bundledDesktopIconForPath("__create-app__") ? "transparent" : OS_VIEW_CREATE_APP_APPEARANCE.background,
                         color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
                       }}
                     >
@@ -355,7 +350,7 @@ export default function AppLauncher({
                   ) : entry.type === "os-view" ? (
                     <OsViewDestinationIcon path={entry.key} />
                   ) : entry.type === "fixed" ? (
-                    <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
+                    <span className="flex size-16 items-center justify-center rounded-[18px]" style={{ background: entry.app.iconUrl ? "transparent" : entry.app.color, color: entry.app.iconColor }}>
                       <BundledIcon url={entry.app.iconUrl} fallback={<entry.app.icon size={32} aria-hidden="true" />} />
                     </span>
                   ) : (

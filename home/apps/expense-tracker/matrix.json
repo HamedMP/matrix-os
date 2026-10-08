@@ -2,7 +2,7 @@
   "name": "Expense Tracker",
   "description": "Track spending, budgets, and recurring bills with a monthly dashboard.",
   "category": "finance",
-  "icon": "expense-tracker",
+  "icon": "v3-expense-tracker",
   "author": "system",
   "version": "2.0.0",
   "storage": {

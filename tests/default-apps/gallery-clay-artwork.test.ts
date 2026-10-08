@@ -5,7 +5,7 @@ import { galleryArtwork, galleryIdentitySources } from "../../home/apps/app-gall
 
 const supplied = ["atlas", "folio", "subscriptions", "agenda", "focus", "workout-coach", "expense-tracker", "todo", "game-center"];
 
-describe("Figma clay identity artwork", () => {
+describe("Gallery identity artwork", () => {
   it.each(supplied)("packages the original %s SVG with its master dimensions", (slug) => {
     const text = readFileSync(resolve("home/apps/app-gallery/src/assets/clay", `${slug}.svg`), "utf8");
     const root = text.match(/<svg\b[^>]*>/)?.[0];
@@ -14,17 +14,26 @@ describe("Figma clay identity artwork", () => {
     expect(text).not.toContain("www.figma.com/api/mcp/asset/");
   });
 
-  it("keeps the required design skill aligned with the generator's clay default", () => {
+  it("keeps the required design skill aligned with the generator's distinct icon default", () => {
     const skill = readFileSync("skills/matrix/design-system/SKILL.md", "utf8");
-    expect(skill).toContain("front-facing matte clay");
+    expect(skill).toContain("mixed silhouettes");
     expect(skill).toContain("owner's iconStyle");
     expect(skill).not.toContain("light premium iOS/macOS skeuomorphic artwork");
   });
 
   it("prefers the supplied semantic icon and retains both existing fallback formats", () => {
     expect(galleryIdentitySources({ id: "folio", icon: "folio" })).toEqual([
-      galleryArtwork("clay/folio.svg"), galleryArtwork("icons/folio.png"), galleryArtwork("icons/folio.svg"),
+      galleryArtwork("icons/folio.png"), galleryArtwork("clay/folio.svg"), galleryArtwork("icons/folio.svg"),
     ]);
+  });
+
+  it("ships the same first-party icon bytes to the Gallery and installed launcher", () => {
+    const catalog = JSON.parse(readFileSync("home/system/app-gallery.json", "utf8")) as { apps: Array<{ id: string }> };
+    for (const { id } of catalog.apps) {
+      expect(readFileSync(`home/system/icons/gallery-${id}.png`)).toEqual(
+        readFileSync(`home/apps/app-gallery/src/assets/icons/${id}.png`),
+      );
+    }
   });
 
   it("keeps unrelated app identities rather than assigning a generic clay object", () => {

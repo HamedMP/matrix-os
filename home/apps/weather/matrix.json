@@ -3,7 +3,7 @@
   "description": "Beautiful weather with forecasts",
   "runtime": "vite",
   "category": "utility",
-  "icon": "weather",
+  "icon": "v3-weather",
   "author": "system",
   "version": "1.0.0",
   "slug": "weather",

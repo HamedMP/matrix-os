@@ -316,12 +316,11 @@ describe("generateIconBatch", () => {
 });
 
 describe("DEFAULT_ICON_STYLE", () => {
-  it("keeps generated app icons aligned with the Figma clay family", () => {
-    expect(DEFAULT_ICON_STYLE).toContain("one puffy, inflated, toy-like object");
-    expect(DEFAULT_ICON_STYLE).toContain("Front view");
-    expect(DEFAULT_ICON_STYLE).toContain("green, teal, gold, blue, or neutral");
-    expect(DEFAULT_ICON_STYLE).toContain("70%");
-    expect(DEFAULT_ICON_STYLE).toContain("no metal, glass, neon, glow, red or coral");
-    expect(DEFAULT_ICON_STYLE).toContain("Matrix shell owns the final corner radius");
+  it("keeps generated app icons distinct and readable like the Matrix desktop family", () => {
+    expect(DEFAULT_ICON_STYLE).toContain("mixed silhouettes");
+    expect(DEFAULT_ICON_STYLE).toContain("transparent background");
+    expect(DEFAULT_ICON_STYLE).toContain("Ubuntu/Yaru");
+    expect(DEFAULT_ICON_STYLE).toContain("48 and 20 pixels");
+    expect(DEFAULT_ICON_STYLE).not.toContain("puffy, inflated, toy-like");
   });
 });

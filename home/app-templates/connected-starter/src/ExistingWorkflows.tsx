@@ -137,6 +137,28 @@ function ReceiptInbox(props: ViewProps) {
 }
 function SubscriptionGuardian(props: ViewProps) {
     const queue = renewalQueue(props.records, today());
+    if (!props.records.length) return <section className="subscriptions-welcome" aria-label="Get started with subscriptions">
+      <div className="subscriptions-welcome-copy">
+        <span className="eyebrow">Your subscriptions, together</span>
+        <h2>Know what renews next.</h2>
+        <p>Bring receipts from your connected email into one clear view of providers, recurring costs, and confirmed renewal dates.</p>
+        <div className="subscriptions-welcome-actions">
+          <button className="primary" onClick={props.onImport} disabled={!props.canImport}>Find subscriptions in email</button>
+          <button onClick={props.onAdd}>Add one manually</button>
+        </div>
+        <span className="subscriptions-welcome-note">Only dates stated in your records appear as renewal dates.</span>
+      </div>
+      <div className="subscriptions-welcome-visual" aria-hidden="true">
+        <div className="subscriptions-visual-source"><span>✉</span><div><strong>Connected inbox</strong><small>Receipts and plans</small></div></div>
+        <div className="subscriptions-visual-flow"><i/><i/><i/></div>
+        <div className="subscriptions-visual-destination">
+          <div><span className="subscriptions-visual-symbol">↻</span><strong>Everything in view</strong></div>
+          <div className="subscriptions-visual-line"><span>Providers</span><b/><b/></div>
+          <div className="subscriptions-visual-line"><span>Costs</span><b/><b/></div>
+          <div className="subscriptions-visual-line"><span>Renewal dates</span><b/><b/></div>
+        </div>
+      </div>
+    </section>;
     return <>
       <section className="workflow-panel" aria-label="Renewal review">
         <Introduction symbol="↻" title="Stay ahead of your commitments." detail="Confirmed renewal dates lead the queue. A receipt date alone never becomes a renewal or cancellation deadline."/>

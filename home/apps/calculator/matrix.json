@@ -3,7 +3,7 @@
   "description": "Numi-style calculator: evaluate expressions live with a history rail and scientific mode.",
   "runtime": "vite",
   "category": "utility",
-  "icon": "calculator",
+  "icon": "v3-calculator",
   "author": "system",
   "version": "1.0.0",
   "slug": "calculator",

@@ -157,14 +157,11 @@ createRoot(document.getElementById("root")!).render(
 Every app manifest must set `"icon": "<slug>"`, and the matching file must exist at
 `~/system/icons/<slug>.png` or `~/system/icons/<slug>.svg`. Prefer PNGs for app logos.
 
-New app logos follow the Figma clay family: one puffy toy-like object in soft matte plastic,
-front view, optically centred, about 70% of the tile. Use a light vertical gradient between
-neighbouring green/teal/gold/blue/neutral brand steps; give the object a different hue and one
-small third-hue accent. Keep chunky rounded forms, at most three or four raised details,
-top-left light and soft downward shadows. No text, logos, watermarks, metal, glass, neon,
-red/coral, perspective, transparency or separate visible frame. The shell owns the 22% corner
-radius. Check at 64, 48 and 20px, preserve owner-provided artwork, and give each game a distinct
-semantic object. Read the app-builder's `references/clay-icons.md` for the precise recipe.
+New app logos follow the Matrix desktop family: an app-specific subject with a distinct
+silhouette on a transparent canvas, rich differentiated color and restrained depth. Avoid the
+repeated beige square tile. Check at 64, 48 and 20px over light and dark surfaces; preserve
+owner-provided artwork and give each game a distinct semantic object. Read the app-builder's
+`references/app-icons.md` for the precise recipe.
 
 ### Product styles and responsive layouts
 

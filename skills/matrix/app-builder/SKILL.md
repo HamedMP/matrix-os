@@ -123,14 +123,14 @@ The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) 
 icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
-2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
-   one puffy, front-facing toy-like clay object on a light brand tile of a contrasting hue.
-   Read [Clay icon recipe](references/clay-icons.md) for the exact palette, lighting, dimensions,
-   prompt template and semantic mappings. Keep a distinct object for each game's identity.
+2. Create `~/system/icons/<slug>.png` using the Matrix desktop icon style:
+   a distinct app-specific silhouette on a transparent background, rich color and controlled depth.
+   Read [App icon recipe](references/app-icons.md) for the palette, scale, prompt template and
+   semantic mappings. Keep a distinct object for each game's identity.
    Preserve user-provided icons and icon styles when refining an existing app.
 
 For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. Exact supplied
-Figma clay SVGs may be packaged directly or rasterized for PNG-compatible launcher paths; keep
+Supplied Figma SVGs may be packaged directly or rasterized for PNG-compatible launcher paths; keep
 their geometry and colours unchanged. Do not substitute a recreated outline for supplied artwork.
 
 ## Data (Postgres via the MatrixOS bridge)

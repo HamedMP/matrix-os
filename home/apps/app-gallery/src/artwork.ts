@@ -25,7 +25,7 @@ export function galleryArtwork(path: string): string | undefined {
 
 /** Keep each app's semantic identity when newer artwork cannot be loaded. */
 export function galleryIdentitySources(app: { id: string; icon: string }): string[] {
-  return [`clay/${app.id}.svg`, `icons/${app.id}.png`, `icons/${app.icon}.svg`]
+  return [`icons/${app.id}.png`, `clay/${app.id}.svg`, `icons/${app.icon}.svg`]
     .map(galleryArtwork)
     .filter((asset): asset is string => asset !== undefined)
     .filter((asset, index, assets) => assets.indexOf(asset) === index);

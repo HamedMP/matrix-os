@@ -3,7 +3,7 @@
   "description": "Classic Klondike solitaire card game",
   "runtime": "vite",
   "category": "games",
-  "icon": "solitaire",
+  "icon": "v3-solitaire",
   "author": "system",
   "version": "1.0.0",
   "tags": [

@@ -51,9 +51,13 @@ describe.skipIf(process.platform !== "linux")("Linux descriptor-anchored gallery
     assert.deepEqual(await service().install("folio"), { status: "installed", slug: "folio", name: "Folio", path: "apps/folio" });
     const manifest = JSON.parse(await readFile(target("matrix.json"), "utf8"));
     assert.equal(manifest.runtime, "vite"); assert.equal(manifest.scope, "personal"); assert.equal(manifest.listingTrust, "first_party"); assert.equal(manifest.database, "postgres");
+    assert.equal(manifest.icon, "gallery-folio");
     assert.deepEqual(manifest.storage.tables.records.columns, { payload: "jsonb", source_id: "text" });
-    assert.deepEqual(JSON.parse(await readFile(target("src/definition.json"), "utf8")), definition);
+    const { iconDataUrl, ...storedDefinition } = JSON.parse(await readFile(target("src/definition.json"), "utf8"));
+    assert.deepEqual(storedDefinition, definition); assert.match(iconDataUrl, /^data:image\/png;base64,/);
     assert(!String(await readFile(target("dist/index.html"))).includes(placeholder));
+    assert.match(String(await readFile(target("dist/index.html"))), /data:image\/png;base64,/);
+    assert.deepEqual(await readFile(target("dist/app-icon.png")), await readFile("home/apps/app-gallery/src/assets/icons/folio.png"));
     assert.equal(await readFile(target("index.html"), "utf8"), `<script>${placeholder}</script>`); assert.deepEqual(await readdir(stageRoot()), []);
     assert.equal((await service().list())[0].launchPath, "apps/folio");
   });
@@ -108,7 +112,7 @@ describe.skipIf(process.platform !== "linux")("Linux descriptor-anchored gallery
   it("keeps Business installs personal", async () => { await writeFile(catalogPath, JSON.stringify({ version: 1, apps: [{ ...definition, collection: "business" }] })); await service().install("folio"); assert.equal(JSON.parse(await readFile(target("matrix.json"), "utf8")).scope, "personal"); });
   it("publishes manifest last", async () => {
     patch(PrivateStage.prototype, "publish", original => async function(this: PrivateStage, name, destination, filename) {
-      if (filename === "matrix.json") { await absent(target("matrix.json")); assert.deepEqual(JSON.parse(await readFile(target("src/definition.json"), "utf8")), definition); }
+      if (filename === "matrix.json") { await absent(target("matrix.json")); const { iconDataUrl: _icon, ...storedDefinition } = JSON.parse(await readFile(target("src/definition.json"), "utf8")); assert.deepEqual(storedDefinition, definition); }
       return original.call(this, name, destination, filename);
     }); await service().install("folio");
   });

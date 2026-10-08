@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { listApps } from "../../packages/gateway/src/apps.js";
-import { resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
+import { invalidateAppIndexCache, resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
 
 describe("T711: GET /api/apps", () => {
   let homePath: string;
@@ -63,6 +63,27 @@ describe("T711: GET /api/apps", () => {
 
     expect(apps).toHaveLength(1);
     expect(apps[0]?.iconUrl).toMatch(/^\/icons\/custom-brand\.png\?v=/);
+  });
+
+  it("uses the gallery artwork for an existing first-party install without changing an owner-selected icon", async () => {
+    mkdirSync(join(homePath, "system/icons"), { recursive: true });
+    mkdirSync(join(homePath, "apps/subscriptions"), { recursive: true });
+    writeFileSync(join(homePath, "system/icons/subscriptions.png"), "old-owner-icon");
+    writeFileSync(join(homePath, "system/icons/gallery-subscriptions.png"), "gallery-icon");
+    writeFileSync(join(homePath, "system/icons/my-subscriptions.png"), "owner-selected-icon");
+    writeFileSync(join(homePath, "apps/subscriptions/index.html"), "<html></html>");
+    const manifest = {
+      name: "Subscriptions", slug: "subscriptions", author: "Matrix OS",
+      listingTrust: "first_party", icon: "subscriptions", version: "1.0.0",
+      runtimeVersion: "^24.0.0", runtime: "static",
+    };
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify(manifest));
+
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/gallery-subscriptions\.png\?v=/);
+
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify({ ...manifest, icon: "my-subscriptions" }));
+    invalidateAppIndexCache();
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/my-subscriptions\.png\?v=/);
   });
 
   it("lists multiple apps sorted by name", async () => {
@@ -496,7 +517,7 @@ describe("T711: GET /api/apps", () => {
       name: "Clock",
       slug: "clock",
       runtime: "vite",
-      icon: "clock",
+      icon: "v3-clock",
       author: "system",
       listingTrust: "first_party",
       runtimeVersion: "^1.0.0",

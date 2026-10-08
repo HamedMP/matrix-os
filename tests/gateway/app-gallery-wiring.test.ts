@@ -14,6 +14,7 @@ const execute = promisify(execFile);
 const roots: string[] = []; // Test-owned; drained after each test.
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 beforeAll(async () => {
+  if (process.platform !== "linux") return;
   await execute(process.execPath, ["scripts/build-app-gallery-template.mjs"], { timeout: 30_000 });
 }, 35_000);
 
@@ -65,7 +66,7 @@ describe("bundled gallery through client, authenticated route, and portable runt
       expect(html).not.toContain("__MATRIX_APP_DEFINITION__");
       expect(html).toContain('id="matrix-app-definition"');
       expect(html).toContain(`"id":"${definition.id}"`);
-      expect(JSON.parse(await readFile(join(folder, "src/definition.json"), "utf8"))).toEqual(
+      expect(JSON.parse(await readFile(join(folder, "src/definition.json"), "utf8"))).toMatchObject(
         Object.fromEntries(Object.entries(definition).filter(([key]) => key !== "installed")),
       );
       await openGalleryApp(bridge, { ...definition, installed: true, installedName: installed.name, launchPath: installed.path });

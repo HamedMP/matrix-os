@@ -138,7 +138,7 @@ border-radius: 22px;
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present; preserve an owner's chosen style. The shipped Figma clay family uses one puffy toy-like object in soft matte plastic, front view, about 70% of a light green/teal/gold/blue/neutral tile, a contrasting object hue and one small third-hue accent. Use a top-left highlight and soft downward shadow. No text/logos/watermarks, metal/glass, neon, red/coral, perspective or transparency. The Matrix shell owns the final 22% corner radius. Check the silhouette at 64, 48 and 20px. Individual games keep distinct semantic objects rather than sharing a controller.
+Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present; preserve an owner's chosen style. The Matrix desktop family uses mixed silhouettes on transparent backgrounds with app-specific pictograms, rich distinct colors, controlled highlights and soft depth. Take inspiration from Ubuntu/Yaru's variety without copying third-party artwork. Avoid repeated beige square tiles, generic controllers, text, logos and watermarks. Check the silhouette at 64, 48 and 20px.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

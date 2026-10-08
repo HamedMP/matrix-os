@@ -43,12 +43,14 @@ export default function Sidebar({
   onAdd,
 }: Props) {
   const markIndex = workflowMarks.indexOf(app.id);
-  const [controlsOpen, setControlsOpen] = useState(() => !canUseRecords || !!(query || scope !== "all" || account));
+  const iconDataUrl = app.iconDataUrl && /^data:image\/png;base64,[A-Za-z0-9+/=]{1,200000}$/.test(app.iconDataUrl)
+    ? app.iconDataUrl : null;
+  const [controlsOpen, setControlsOpen] = useState(() => !!(query || scope !== "all" || account));
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className={`brand-mark ${markIndex >= 0 ? "sculptural-mark" : ""}`} aria-hidden="true" style={markIndex >= 0 ? { backgroundImage: `url(${workflowArtwork})`, backgroundSize: "300% 300%", backgroundPosition: `${(markIndex % 3) * 50}% ${Math.floor(markIndex / 3) * 50}%` } : undefined}>
-          {markIndex < 0 && <svg viewBox="0 0 32 32" fill="none"><path d={markPath(app.id,app.view)} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/><circle cx="25" cy="7" r="4" fill="currentColor" opacity=".18"/></svg>}
+        <span className={`brand-mark ${iconDataUrl ? "gallery-mark" : markIndex >= 0 ? "sculptural-mark" : ""}`} aria-hidden="true" style={!iconDataUrl && markIndex >= 0 ? { backgroundImage: `url(${workflowArtwork})`, backgroundSize: "300% 300%", backgroundPosition: `${(markIndex % 3) * 50}% ${Math.floor(markIndex / 3) * 50}%` } : undefined}>
+          {iconDataUrl ? <img src={iconDataUrl} alt="" /> : markIndex < 0 && <svg viewBox="0 0 32 32" fill="none"><path d={markPath(app.id,app.view)} stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/><circle cx="25" cy="7" r="4" fill="currentColor" opacity=".18"/></svg>}
         </span>
         <div>
           <strong>{app.name}</strong>

@@ -1,7 +1,6 @@
 "use client";
 
 import { prepareBridgeFetchRequest } from "./app-viewer-bridge-request";
-import { FileResourceSharing } from "./file-browser/FileResourceSharing";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
 
 import { useState, useEffect, useRef } from "react";
@@ -352,9 +351,6 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
-      {slug ? <div className="flex justify-end border-b px-3 py-1.5">
-        <FileResourceSharing kind="app" path={slug} />
-      </div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}

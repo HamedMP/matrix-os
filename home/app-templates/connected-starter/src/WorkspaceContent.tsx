@@ -13,6 +13,8 @@ interface Props {
   onEdit: (r: OwnerRecord) => void;
   onEvidence: (r: OwnerRecord) => void;
   onAdd: () => void;
+  onImport?: () => void;
+  canImport?: boolean;
   onSave: (r: OwnerRecord) => Promise<unknown>;
   creationScope?: "personal" | "work";
 }
@@ -29,12 +31,15 @@ export default function WorkspaceContent({
   onEdit,
   onEvidence,
   onAdd,
+  onImport,
+  canImport,
   onSave,
   creationScope,
 }: Props) {
   return (
     <main>
-      <Heading {...{ app, records, visible, canUseRecords, loading, error }} />
+      {!(app.id === "subscriptions" && !records.length && !loading && !error) &&
+        <Heading {...{ app, records, visible, canUseRecords, loading, error }} />}
       {unavailable && (
         <p className="notice" role="status">
           {unavailable}
@@ -58,18 +63,20 @@ export default function WorkspaceContent({
             onEdit={onEdit}
             onEvidence={onEvidence}
             onAdd={onAdd}
+            onImport={onImport}
+            canImport={canImport}
             onSave={onSave}
             creationScope={creationScope}
           />
         )}
-      <p className="workspace-foot">
+      {!(app.id === "subscriptions" && !records.length) && <p className="workspace-foot">
         {app.services.length
           ? "Source-backed imports and your own notes, together."
           : "A space built from your own entries."}{" "}
         {limited
           ? "Coverage is limited: showing up to 1,000 active records from the latest 5,000 saved rows. Charts and exports cover the displayed records only."
           : ""}
-      </p>
+      </p>}
     </main>
   );
 }

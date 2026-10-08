@@ -24,21 +24,24 @@ export interface AppGalleryService {
 function manifestFor(definition: GalleryApp) {
   return AppManifestSchema.parse({
     name: definition.name, slug: definition.id, description: definition.description,
-    category: definition.category, icon: definition.icon, author: "Matrix OS", version: "1.0.0",
+    category: definition.category, icon: `gallery-${definition.id}`, author: "Matrix OS", version: "1.0.0",
     runtime: "vite", runtimeVersion: "^24.0.0", database: "postgres", scope: "personal", listingTrust: "first_party",
     permissions: [], build: { command: "pnpm exec vite build", output: "dist" },
     storage: { tables: { records: { columns: { payload: "jsonb", source_id: "text" } } } },
   });
 }
-function injectedFiles(files: Map<string, Buffer>, definition: GalleryApp): Map<string, Buffer> {
-  const json = JSON.stringify(definition).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+function injectedFiles(files: Map<string, Buffer>, definition: GalleryApp, icon: Buffer): Map<string, Buffer> {
+  const installedDefinition = { ...definition, iconDataUrl: `data:image/png;base64,${icon.toString("base64")}` };
+  const json = JSON.stringify(installedDefinition).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
   const built = files.get("dist/index.html")?.toString("utf8");
   if (!built || built.split(PLACEHOLDER).length !== 2 || !files.has("src/definition.json")) throw new GalleryError(503, "Invalid starter definition boundary");
   files.set("dist/index.html", Buffer.from(built.replace(PLACEHOLDER, () => json)));
   const source = files.get("index.html")?.toString("utf8");
   if (!source || source.split(PLACEHOLDER).length !== 2) throw new GalleryError(503, "Invalid source definition boundary");
   // Preserve the source placeholder: owner rebuilds must use their edited definition.json fallback.
-  files.set("src/definition.json", Buffer.from(JSON.stringify(definition, null, 2) + "\n"));
+  files.set("src/definition.json", Buffer.from(JSON.stringify(installedDefinition, null, 2) + "\n"));
+  files.set("dist/app-icon.png", icon);
+  files.set("public/app-icon.png", icon);
   return files;
 }
 
@@ -73,7 +76,8 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       const installed = apps ? await existing(apps, definition.id) : null;
       if (installed) return installed;
       // Validate and prepare everything privately before creating any discoverable app folder.
-      const files = injectedFiles(await readTemplate(templatePath, limits), definition);
+      const icon = await readLimited(join(BUNDLED_HOME, "apps/app-gallery/src/assets/icons", `${definition.id}.png`), limits.maxFileBytes);
+      const files = injectedFiles(await readTemplate(templatePath, limits), definition, icon);
       const manifest = Buffer.from(JSON.stringify(manifestFor(definition), null, 2) + "\n");
       let bytesTotal = 0;
       for (const bytes of files.values()) {

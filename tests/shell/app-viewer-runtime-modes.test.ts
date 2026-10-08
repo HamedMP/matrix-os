@@ -42,19 +42,11 @@ describe("AppViewer bridged runtime loading", () => {
     });
   });
 
-  describe("standalone app sharing", () => {
-    // AppViewer is not render-testable here, so the invariant is asserted on the source:
-    // Share is offered only where a registry slug exists, and the slug is what the owner
-    // catalog receives. A launch path (`apps/<slug>/index.html`, `modules/...`) names assets,
-    // not an app identity, and always resolves as not found.
-    it("hands the owner catalog the resolved slug, never the launch path", async () => {
+  describe("edge-to-edge app content", () => {
+    it("does not insert a sharing toolbar above the app iframe", async () => {
       const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
-      const index = source.indexOf("<FileResourceSharing");
-      expect(index).toBeGreaterThan(-1);
-      const row = source.slice(index - 160, index + 160);
-      expect(row).toContain("path={slug}");
-      expect(row).toContain("{slug ?");
-      expect(row).not.toContain("modules/");
+      expect(source).not.toContain("<FileResourceSharing");
+      expect(source).toContain('className="min-h-0 w-full flex-1 border-0"');
     });
   });
 
