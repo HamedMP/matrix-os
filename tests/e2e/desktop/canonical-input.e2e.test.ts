@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { CanonicalChatDetailResponseSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -30,6 +30,9 @@ const server = createServer((req, res) => {
     res.write('data: {"type":"chat.stream.attached"}\n\ndata: {"type":"chat.replay.end"}\n\n');
     streams.add(res); res.on("close", () => streams.delete(res)); return;
   }
+  // Ordinary Chat identity must be explicit; missing Bot fixtures correctly hide unknown identities.
+  if (path === "/api/chat-agents") { json(ChatAgentListResponseSchema.parse({ enabled: true, agents: [] })); return; }
+  if (path === `/api/chats/${detail.record.chat.id}/bot`) { json(BotDirectChatResponseSchema.parse({ agentId: null })); return; }
   if (path === "/api/chats") { json({ items: [detail.record] }); return; }
   if (path === `/api/chats/${detail.record.chat.id}`) { json(detail); return; }
   if (path === "/api/chat-providers") { json(createCanonicalChatFixture("input_required").providerCatalog); return; }

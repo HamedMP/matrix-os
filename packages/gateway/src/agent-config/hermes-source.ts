@@ -65,7 +65,7 @@ function authAction(authKind: AgentAuthKind) {
   return "contact_owner" as const;
 }
 
-function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | null) {
+function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | null, requireListedSelection = false) {
   const models: string[] = [];
   const seen = new Set<string>();
   for (const candidate of rawModels ?? []) {
@@ -80,6 +80,13 @@ function parseModelIds(rawModels: unknown[] | undefined, currentModel: string | 
   models.sort((left, right) => left.localeCompare(right));
   if (currentModel === null || currentModel.endsWith("-pro")) return models;
   const selectedIndex = models.indexOf(currentModel);
+  // Native provider switches can expose the new provider before updating its
+  // model. Do not turn the previous provider's selection into Codex inventory
+  // or persist it as a generated native default.
+  if (requireListedSelection && selectedIndex === -1 && !(rawModels ?? []).some(candidate => {
+    const parsed = ModelIdSchema.safeParse(candidate);
+    return parsed.success && parsed.data === currentModel;
+  })) return models;
   if (selectedIndex !== -1) models.splice(selectedIndex, 1);
   return [currentModel, ...models].slice(0, MAX_MODELS_PER_PROVIDER);
 }
@@ -96,12 +103,13 @@ function normalizeProvider(
   const name = DisplayNameSchema.safeParse(parsed.data.name);
   const authenticated = parsed.data.authenticated === true;
   const authKind = authKindForProvider(
-    parsed.data.auth_type ?? undefined,
+    parsed.data.auth_type ?? (parsed.data.is_user_defined === false && ["openai-api", "openrouter"].includes(id.data) ? "api_key" : undefined),
     parsed.data.is_user_defined === true,
   );
   const models = parseModelIds(
     parsed.data.models,
     id.data === currentProvider ? currentModel : null,
+    id.data === "openai-codex",
   ).map((model) => ({
     id: model,
     displayName: model,
@@ -219,8 +227,6 @@ export function normalizeHermesRuntimeSnapshot(input: {
   // native model/options contract omits auth_type for this built-in entry.
   // Custom, duplicate, or explicitly different credential records stay closed.
   const selectedCredentialKind = nativeCredentialKind(currentProvider, nativeProvider);
-  const codexProvider = nativeProviderRecord(options.providers, "openai-codex");
-  const codexCredentialKind = nativeCredentialKind("openai-codex", codexProvider);
   const localObservation = (authenticated: boolean | undefined) => ({
     state: authenticated === true ? "present_unverified" as const
       : authenticated === false ? "absent" as const : "unknown" as const,
@@ -268,10 +274,11 @@ export function normalizeHermesRuntimeSnapshot(input: {
       transition: null,
     },
     providers,
-    ...(codexProvider && codexCredentialKind && input.observedAt !== undefined ? {
-      nativeProfileObservations: [{ providerId: "openai-codex", credentialKind: codexCredentialKind,
-        localObservation: localObservation(codexProvider.authenticated) }],
-    } : {}),
+    ...(input.observedAt !== undefined ? { nativeProfileObservations: ["openai-codex", "openai-api", "anthropic", "openrouter"].flatMap(providerId => {
+      const raw = nativeProviderRecord(options.providers, providerId);
+      const credentialKind = nativeCredentialKind(providerId, raw);
+      return raw && credentialKind ? [{ providerId, credentialKind, localObservation: localObservation(raw.authenticated) }] : [];
+    }) } : {}),
     messaging: {
       runtime: "hermes",
       provider: configured ? currentProvider : null,
@@ -310,10 +317,12 @@ export function createHermesRuntimeSource(
     if (cached !== null && cached.expiresAt > now()) return cached.value;
     if (inFlight === null || inFlight.generation !== generation) {
       const requestGeneration = generation;
-      const observedAt = now();
+      // Credential evidence is observed when model/options actually arrives,
+      // not when the RPC starts. A slow status call must not retimestamp it.
+      let observedAt: number | undefined;
       const promise = Promise.allSettled([
         readJson("/api/status", signal),
-        readJson("/api/model/options", signal),
+        readJson("/api/model/options", signal).then(value => { observedAt = now(); return value; }),
       ]).then(([statusResult, modelOptionsResult]) => {
         signal.throwIfAborted();
         if (statusResult.status === "rejected") throw statusResult.reason;

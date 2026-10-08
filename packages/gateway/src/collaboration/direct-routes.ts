@@ -49,6 +49,30 @@ export function readDirectCredentials(c: Context): DirectRequestCredentials | nu
   return { sessionId: parsedId.data, signature: envelope.signature, proof: envelope.proof };
 }
 
+const DENIAL_LOG_INTERVAL_MS = 60_000;
+/** Denial codes are a closed set; the cap only guards against that ever changing. */
+const MAX_DENIAL_LOG_CODES = 32;
+const denialLog = new Map<string, { loggedAt: number; suppressed: number }>();
+
+/**
+ * The client only ever sees a generic denial; the code is what tells an operator which check
+ * refused it (origin, ticket, proof). Without it a misconfigured home is a bare 401. These
+ * routes are reachable unauthenticated, so each code logs at most once a minute and the next
+ * line reports how many were suppressed.
+ */
+function logDenial(code: string): void {
+  const now = Date.now();
+  const entry = denialLog.get(code);
+  if (entry && now - entry.loggedAt < DENIAL_LOG_INTERVAL_MS) {
+    entry.suppressed += 1;
+    return;
+  }
+  if (!entry && denialLog.size >= MAX_DENIAL_LOG_CODES) denialLog.clear();
+  if (entry?.suppressed) console.warn("[collaboration-direct] request denied", code, { suppressed: entry.suppressed });
+  else console.warn("[collaboration-direct] request denied", code);
+  denialLog.set(code, { loggedAt: now, suppressed: 0 });
+}
+
 export function directErrorResponse(c: Context, error: unknown): Response | null {
   if (!(error instanceof DirectAuthError)) return null;
   switch (error.code) {
@@ -56,7 +80,9 @@ export function directErrorResponse(c: Context, error: unknown): Response | null
     case "replayed": return safeJson(c, "Collaboration state changed", 409);
     case "limit": return safeJson(c, "Too many collaboration connections", 429);
     case "unavailable": return safeJson(c, "Collaboration unavailable", 503);
-    default: return safeJson(c, "Collaboration request denied", 401);
+    default:
+      logDenial(error.code);
+      return safeJson(c, "Collaboration request denied", 401);
   }
 }
 

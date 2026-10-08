@@ -66,8 +66,37 @@ describe("funded AI funding summary client", () => {
         authorization: `Bearer ${"p".repeat(64)}`,
         "content-type": "application/json",
       }),
-      body: "{}",
+      body: JSON.stringify({ includeChatAvailability: true }),
     }));
+  });
+
+  it("reads opted-in Chat availability and rejects malformed or mismatched projections", async () => {
+    const chatAvailability = { contractVersion: 1, asOf: NOW, eligibleBalanceMicrousd: 400, availableBalanceMicrousd: 200 };
+    const response = { contractVersion: 1, funding, policy, chatAvailability };
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn: vi.fn(async () => Response.json(response)) });
+    await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy, chatAvailability });
+    for (const invalid of [{ ...chatAvailability, availableBalanceMicrousd: 401 }, { ...chatAvailability, asOf: "2026-08-30T09:00:00.000Z" }]) {
+      const bad = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn: vi.fn(async () => Response.json({ ...response, chatAvailability: invalid })) });
+      await expect(bad.getFundingSummary()).rejects.toBeInstanceOf(FundedAiFundingSummaryClientError);
+    }
+  });
+
+  it("retries a legacy body rejection once under the same deadline without inventing availability", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "invalid_request", message: "Invalid request" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ contractVersion: 1, funding, policy }));
+    const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+    await expect(client.getFundingSummary()).resolves.toEqual({ funding, policy });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls[1][1]).toMatchObject({ body: "{}", signal: fetchFn.mock.calls[0][1].signal });
+  });
+
+  it("does not retry unrelated or malformed body denials", async () => {
+    for (const body of [{ error: { code: "unavailable", message: "Service unavailable" } }, { error: { code: "invalid_request", message: "raw private detail" } }]) {
+      const fetchFn = vi.fn(async () => Response.json(body, { status: 400 }));
+      const client = createFundedAiFundingSummaryClient(runtimeConfig(), { fetchFn });
+      await expect(client.getFundingSummary()).rejects.toBeInstanceOf(FundedAiFundingSummaryClientError);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("fails safely on denial, malformed or oversized responses, and timeouts", async () => {

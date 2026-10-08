@@ -254,3 +254,381 @@ availability, labels, guarded transitions, and resulting V3 refreshes.
 - **SC-013**: The same V3 fixture produces identical harness, account, access-source, model, and lifecycle availability in Canvas, Web Desktop, and Electron contract/component tests, with current visual evidence for all three surfaces.
 - **SC-014**: Logout, removal, disable, and active-Chat reassignment failure paths preserve prior visible state and Chat history in 100% of lifecycle integration tests.
 - **SC-015**: Matrix AI is never projected ready when either policy eligibility or fresh relay health is absent in the funded-readiness test matrix.
+
+
+### Owner-scoped credit history contract
+
+`GET /billing/ai-credit/history` uses the existing billing Clerk identity resolver.
+Validated runtime slot, page size (1–50), and opaque cursor are applied to the
+active authorized computer resolved server-side. Ledger reads and settled-model
+metadata joins remain scoped to that owner, machine, and runtime. Cross-scope
+cursors are rejected; created-at/entry keyset ordering keeps pagination stable.
+Core migrations add a scope-prefixed expression index for opaque cursor anchors
+and a scope-prefixed ordering index for bounded history pages. These indexes
+change no cursor format, ledger values, or authorization predicates. The non-null
+timestamp/entry tuple uses a row-comparison seek. Tests explain the actual joined
+endpoint SQL for first, subsequent and deep cursor pages against representative
+ledger and reservation data, rather than a simplified ledger-only query.
+Responses are private/no-store in both browser and CDN caches, vary on
+Authorization without replacing existing Vary fields, and include only timestamp, exact signed microUSD
+amount, activity kind, and nullable model ID. No credential, payment, ledger,
+reservation, request, or source-reference identifier is returned. Database
+failures return safe unavailable feedback. This read-only endpoint changes no
+credit balance, budget, policy, or access.
+
+Contract and platform tests cover query bounds, scope isolation, pagination,
+unknown model metadata, empty results, private-field redaction, safe failures,
+and billing registration. Renderer history presentation and real runtime/Electron
+acceptance follow in later Settings layers; public guidance remains tracked in
+the separate matrix-os-site documentation PR.
+
+### Managed agent lifecycle safeguards
+
+Managed Hermes/OpenClaw uninstall writes the durable opt-out before stopping
+installers and reasserts it after acquiring the shared runtime lock. Concurrent
+installation cannot erase this choice. Host control accepts fixed runtime/action
+arguments, verifies managed installation paths, and preserves all owner home
+files, credentials, sessions, projects, and conversations. Install and sync paths
+respect the opt-out; provisioning installs only OS-owned service control.
+Systemd wrappers preserve non-root runtime execution and current service scope.
+Cancellation polls/stops the install unit within one bounded deadline and reports
+success only after the installer-held control lock drains and a final stop proves
+no earlier launch can appear. It does not write an uninstall opt-out. Concurrent
+opt-out creation accepts only a regular root-control marker; symlinks fail closed.
+Hermes removal requires the exact pinned managed launcher bytes or legacy venv
+symlink target. Customized or unproven entrypoints are retained and uninstall
+reports incomplete while preserving the durable opt-out.
+
+Host lifecycle tests exercise install/uninstall races, fixed command boundaries,
+service wiring, opt-out persistence, and owner-data preservation. Native Settings
+adapter support is delivered separately; this host layer advertises no new
+foreground workflow capability.
+
+### Negotiated native account identity and offered inventory
+
+Native Codex and Hermes readers return bounded allowlisted identity and quota
+metadata for the exact runtime profile. Provider calls and child lifetimes have
+deadlines, output bounds, and cleanup; errors preserve honest unavailable usage.
+Missing quota is not zero; 0 and 100 percent are valid observations. Hermes reads
+its own selected provider principal and never borrows standalone Codex identity.
+Metadata does not establish model-call readiness or change credentials/routes.
+
+Only the positively resolved runtime owner triggers private account metadata
+reads. Other principals receive redacted identity and unavailable private quota.
+Provider Settings GET responses use `Cache-Control: private, no-store` so
+private identity and quota observations are not retained in HTTP caches.
+GET connectionDetails, model capabilities, and offered Matrix inventory require
+explicit wire negotiation; default historical responses and mutation receipts
+omit new fields. Offered inventory uses the existing authoritative current
+funded policy and canonical catalog; it cannot grant inference permission.
+
+Tests cover owner/collaborator boundaries, stale metadata, profile/provider
+mismatch, schema compatibility, safe errors, bounded readers, and catalog
+policy. Real deployed metadata and Electron presentation remain later combined
+acceptance gates; this layer adds no guided sign-in capability.
+
+Optional native metadata is read only for installed native harnesses. Native
+inventory, funding/catalog enrichment and profile verification all run outside
+Settings mutation admission. A fresh canonical revalidation is paired with a
+fresh funding/catalog observation, never the policy captured before metadata.
+Native principal verification follows that complete fresh epoch. These bounded
+reads establish point-in-time observations, not an atomic transaction across
+external native profiles and platform policy.
+Null/cooldown metadata does not cause a second canonical pipeline. Configuration
+reconciliation, a generation sample after prior writer admissions drain, and a final persisted-revision/mutation-generation fence serialize
+with writes; a raced read retries once without optional metadata, then fails
+closed if it cannot publish a coherent snapshot.
+
+Canonical presentation labels are not principal proof. Each optional observation
+has a private, observation-lifetime verification callback in a WeakMap. Codex
+uses the same selected `CODEX_HOME` and official read-only app-server protocol;
+its final verification reads account identity only, with `refreshToken: false`
+and no quota request. Exact ChatGPT type, email and plan, plus native ID when provided, must still
+match. Missing ChatGPT native ID drops optional identity. API-key observations verify
+only the current API-key authentication class and contain no principal claim,
+email, plan or allowance; they never inherit ChatGPT metadata. Hermes verifies
+its own pinned singleton/pool selection through a bounded native helper without
+an HTTP quota request, credential import, refresh or login. A changed token
+discards the observation conservatively, including normal token rotation.
+Private binding evidence and callbacks never enter snapshots, contracts,
+persistence, or logs. Reader subprocess deadlines/output bounds remain enforced;
+verification also has an eight-second outer bound. These observations do not
+change canonical routing/readiness, enablement, budgets or policy.
+
+Readers coalesce their bounded in-flight observation. During cooldown they
+return no optional metadata rather than sleeping inside a foreground request
+or reusing unverified identity from a previous native profile. Canonical
+connection/readiness remains authoritative. Safe profile-aware caching is not
+delivered here; repeated owner GET/usage presentation still requires Electron
+Desktop acceptance before claiming complete UX validation.
+
+Codex app-server account/read may expose no native principal ID. For that approved
+protocol shape, a private credential-file proof can bind the observation only
+after the same app-server confirms effective cli_auth_credentials_store=file.
+Tentative private proof is captured before process startup, then compared again
+after effective config observation before the first account request; process
+startup cannot bind cached old-account data to replacement credentials.
+The selected explicit CODEX_HOME or HOME/.codex is bounded, owner/trust checked
+and no-follow read; opaque per-reader proof stays in private verification state.
+Proof equality is required before/after the complete account/quota sequence and
+again on the fresh paired Settings observation. Same presentation with changed
+credentials is rejected. Unknown, auto or keyring storage never borrows a stale
+auth.json; missing proof fails closed. Existing genuine native-ID binding and
+API-key class-only projection remain supported without borrowing allowance.
+
+Verified fresh standalone Codex metadata can establish authenticated credential
+connection for only its installed canonical Codex driver, exact owner OpenAI
+profile/account, and saved eligible provider/model/account route. The projection
+must keep account and harness authentication coherent after short local scan
+evidence expires. This does not change source readiness, connectivity, model
+admission, or saved enablement; explicitly disabled agents remain disabled.
+Expired, future, rejected, mismatched-profile or absent-driver metadata cannot
+provide this authority. API-key projection remains class-only without ChatGPT
+identity or subscription allowance.
+
+A native Codex API-key class observation identifies only the connection method,
+not key validity. It must preserve canonical unknown, rejected, expired and
+auth-required authentication states and their verification timestamps. Only
+canonical provider-ready evidence may authenticate a key; the native class
+observation cannot change source readiness, execution policy or enablement.
+
+Within the five-second Codex quota-read interval, rapid Settings disable/enable
+responses may reuse one runtime-bound observation only while its original
+metadata and quota reset remain fresh. Every reuse re-reads the approved native
+identity with private principal/file proof; final paired-snapshot verification
+still runs independently. Concurrent reads coalesce, quota reads remain rate
+limited, and changed/missing proof, failed reads or expired observations discard
+the single-slot cache. Reuse does not extend timestamps or confer API-key validity.
+
+### Owner foreground workflow boundary
+
+Settings foreground workflows mount behind the existing request principal and
+resolved runtime owner. Anonymous requests return 401, other owners 403, and
+missing runtime dependencies 503. Start, code submission, key verification, and
+cancellation validate bounded strict payloads before execution. Receipts retain
+only safe bounded state, expire, and use owner-scoped idempotency; native profile
+writes require serialized admission and confirmed child cleanup. Secrets never
+enter public receipts or logs. Fixed-origin key probes enforce deadlines and
+redirect rejection before the injected native saver may replace credentials.
+
+This engine layer registers an empty adapter registry: owner capabilities are
+empty and attempts to start undelivered adapters are unavailable. It advertises
+no login, install, or uninstall support until native adapters are delivered.
+Gateway shutdown drains the registered engine. Registration, profile guard,
+receipt lifecycle, route authorization, and key-child cleanup tests exercise
+the delivered boundaries independently from later runtime adapters.
+
+A terminal receipt does not itself prove that a native operation stopped. An
+uncertain launch or failed cancellation/expiry cleanup retains same-profile
+admission and its bounded receipt slot until registered cleanup confirms it
+stopped. Such receipts cannot be evicted to admit replacement work. Failed
+expiry cleanup records a coarse unavailable result without failing unrelated
+harness requests. Shutdown attempts each independent cleanup even if another
+fails; it never reopens admission on the closed service.
+
+Native/browser adapters delivered in the following layer MUST register their
+cleanup before starting native side effects and await native completion before
+cleanup resolves. An uncertain launch that cannot supply cleanup remains blocked: retrying
+with another idempotency key is not recovery. Recovery requires confirmed native
+cleanup; process restart alone does not prove that a child or profile writer
+stopped, so the native profile guard remains required across service instances.
+A known preflight failure may throw `ProviderWorkflowNotStartedError` only if
+no child, terminal session, service mutation, account write or durable writer
+lease was acquired. Such a failed receipt permits a new attempt without cleanup.
+Missing cleanup alone is never this proof: generic launch/acquire failures retain
+admission. If cleanup was registered, even a typed not-started error requires
+successful cleanup before release. Adapter code must not convert generic helper,
+lease-acquisition or spawn errors to the no-start type.
+Adapters MUST throw `ProviderWorkflowCodeNotAcceptedError` only when they prove
+no authorization bytes were submitted (for example, the authorization prompt
+is not ready). Ambiguous partial writes retain the submission latch. Accepted
+submission stays single-use under concurrent requests. Adapter integration and
+real authorization acceptance remain pending in the native/browser layer.
+
+### Private native writer admission primitive
+
+The adapter-independent writer lease stores only process/profile admission in a
+runtime-private sibling directory outside the synced owner home. Exclusive,
+symlink-safe acquisition prevents a second process from claiming the same profile.
+The actual owner home is resolved at the filesystem boundary; trusted aliases of
+that home share one canonical private marker path. Lexical and canonical trust
+checks remain mandatory, and retargeting an alias cannot release another home's
+marker. An unresolved home fails closed with a safe lifecycle error.
+Release coalesces concurrent ownership checks and unlinks: an older cleanup must
+never remove a replacement writer's marker. A failed unlink remains fenced and
+permits an explicit cleanup retry. No timeout or gateway death clears admission.
+Owner-authorized native adapters consume this primitive in the following layer;
+the primitive alone exposes no endpoint or new credential-writing capability.
+
+Direct primitive tests cover exclusive cross-instance acquisition, independent
+profiles, absence from synced owner paths, symlinked admission ancestors/markers,
+and replacement-marker identity retention, in addition to release races/retries.
+
+Private admission directories must belong to the gateway UID and have mode 0700;
+existing directory permissions are never changed. Both lexical and resolved ancestors must
+belong to that UID or root and reject group/other write access, except root-owned
+sticky shared anchors. Creation initialization failures close the descriptor and
+attempt removal of the never-admitted marker; cleanup failures remain fenced.
+The original initialization error is preserved.
+
+Only the owning admission closure may release a live marker. There is no
+cross-process recovery-delete API, TTL expiry, or PID-death unlock. Cooperating
+processes cannot admit a replacement until that owned unlink finishes. Operators
+must stop all gateway admission holders and confirm every native writer has
+stopped before any out-of-band recovery.
+POSIX path stat/unlink is not atomic against noncooperating same-UID or root
+actors deleting/replacing a live marker; those actors and filesystem ACLs are
+within the trusted runtime boundary. The primitive does not claim to contain them.
+Native foreground adapters register cleanup before launching side effects and
+await confirmed child/terminal drain plus any completion writer before reporting
+cancellation. Only explicit unsupported-method preflight uses a no-start proof;
+lease acquisition or launch errors never become that proof. Claude prompt-not-
+ready rejection proves no code bytes were submitted and permits retry, while an
+ambiguous write failure remains single-use. Pi Settings discovers the managed
+native 1.0 API, without modifying the embedded SDK/runtime modules.
+
+Direct Codex/Claude native writers and singleton API-key saves use exclusive,
+symlink-safe durable profile admission. Markers live in the runtime-private sibling
+`.matrix-private/<home basename>/native-writers`, outside the synced owner home;
+they never migrate with owner files to another computer. Terminal-backed historical writers also
+remain fenced by canonical registry liveness. Markers contain only bounded
+admission/profile/process identity and survive gateway restart; TTL, receipt
+expiry, and an old gateway PID's death cannot clear them. Confirmed successful
+writer drain removes the owned marker. An ambiguous writer failure remains
+blocked and requires operator-confirmed native process/registry cleanup before
+recovering admission; there is no automatic reset or broader access grant.
+Native protocol fixtures simulate Claude success/rejection without asserting
+that a real paid subscription was exercised.
+
+Composition extraction plan: the existing oversized `server.ts` remains a
+dependency-wiring entrypoint in this bounded layer. A follow-up extracts native
+Settings connection construction and adapter registration into
+`server/provider-settings-native-runtime.ts`, taking explicit store, registry,
+profile guard, inventory reader, environment, and owner dependencies, and
+returning one close lifecycle. Connection protocols and policy stay in their
+existing focused modules; no behavior belongs in that composition helper.
+The terminal login coordinator has one responsibility: serialized canonical
+terminal login handoff and recovery. Its retained larger size is reviewed as
+that single state machine; native subprocess protocols are separate modules.
+
+A private admission marker may outlive its receipt after an interrupted launch,
+ambiguous partial writer failure, or marker persistence/release failure. Such an
+orphan remains unavailable rather than being inferred stale from its gateway
+PID. It is never exposed through a Settings DTO and contains no credentials,
+authorization code, account identity, or CLI output. Unsupported-method preflight
+uses the typed no-start signal only before any lease, child, session, or writer
+is acquired; all later failures require confirmed cleanup.
+
+Independent workflow-engine and native coordinator shutdown drains start
+concurrently, so a delayed writer cannot prevent the other coordinators from
+rejecting new work and reaping their own children. Each drain retains its native
+bounded cleanup contract; failure never clears unresolved writer admission.
+
+Codex/Claude installers acquire durable admission before any Terminal launch.
+Only an explicit saver proof of zero native writes (such as CODEX_HOME preflight)
+releases failed write admission; ambiguous failures remain fenced. Pi Settings
+foreground installs pin the verified native adapter version 1.0.0.
+
+Concurrent release calls share one ownership check and unlink. A failed unlink
+preserves admission and permits release retry; an already completed admission
+cannot remove a newer writer marker.
+
+Shared foreground workflow foundation uses the same bounded, capability-negotiated
+client in Web Desktop, Web Canvas, and Electron Desktop. Authorization codes and
+API keys stay transient in the mounted exact harness/transport lifetime, outside
+generic Settings mutation receipts. A runtime/client switch clears previous
+capabilities, operation references and row status before exposing the new scope.
+Owner-only 403 is an action denial, while transport 401 retains the existing
+session-expiry behavior. While a replacement workflow is active, account changes
+and Disconnect are unavailable; supported cancellation remains available and
+settled workflows restore those account actions. A successful native connection enables the exact route
+server-side; capability reads and refresh alone never enable a saved agent.
+
+This boundary mounts foreground workflows through a narrow existing-view slot
+for negotiated harness capabilities. Unsupported drivers retain current Settings
+controls; grouped presentation, full connected cards, allowance bars and billing
+dialog composition follow in separate layers. `HarnessWorkflowPanel` retains one
+foreground state machine for method selection, native polling, key/code delivery
+and cancellation. Its larger size is intentional for this extraction; subsequent
+refactoring should first extract the disconnect confirmation and pure method
+rendering without splitting lifetime/generation ownership across controllers.
+
+Negotiated Pi/OpenCode foreground login retains Matrix AI, saved model and access
+source controls inside closed Advanced configuration. Supported terminal-only
+login remains an explicit fallback there, never an automatic normal login path.
+Status reads retry transient outages with bounded backoff until receipt expiry;
+authorization denial, cancellation, terminal receipts and scope changes stop
+recovery. A failed cancellation does not resend cancellation or resume reads
+automatically; an explicit successful status check can rearm bounded polling for
+the same still-active receipt. Expiry stops polling without inventing server cleanup or terminal state.
+Web authorization opens a same-origin blank handle, immediately severs its opener
+and sets a no-referrer document policy before trusted navigation. A blocked or
+unisolatable popup returns failure. `noopener`-requested opens cannot be detected
+by their null return alone (WHATWG Window.open / MDN Window.open).
+
+A restored active terminal-only login can reopen its exact server receipt session
+inside Advanced configuration without creating another login. This continuation
+requires advertised Terminal support and no inline adapter; settled, cancelled,
+expired, denied and unadvertised login receipts never expose that fallback.
+
+Guided saved-Off connections expose an explicit Connect saved connection action without reauthentication or an Enable toggle. The action refreshes the current scope and verifies writable permission, server action support, unchanged selected account/source/route/configuration and current credential observation before enabling; refresh or rendering alone never restores Off. Pending guided authentication disables conflicting Advanced configuration controls while retaining cancellation. Web workflow authorization denial is classified from HTTP 401/403 even when its body is plain text.
+
+Saved reconnection admission is bound to the mounted runtime/workflow client, not refresh-function identity. Same-runtime parent renders may recreate inline refresh callbacks; changing workflow scope during the pending observation invalidates the old request.
+### Bounded Matrix overview and credit history UI layer
+
+The overview displays authoritative spendable `credit.remainingBalanceMicrousd`, actual enabled model inventory and capability badges. It offers Usage history and Buy credit; serving-agent selection stays inside Advanced Matrix AI settings. Purchase availability still requires current managed credit, writable add-credit support, top-up policy and a ready/credit-required route. A visible purchase button is not a checkout grant. The one-line gatewayCreditLines helper is delivered with this billing layer rather than grouped presentation.
+
+History reuses the authenticated owner-scoped Web/Electron transport; it preserves opaque cursors, six-decimal microUSD precision, loaded rows on page errors and same-cursor retries. Rendered entries are capped at 500 and a cap with remaining pages is not reported as all activity loaded. Loader replacement immediately clears rows/cursor/error; requests are aborted and late replies are fenced. The view closes a dialog when its loader/runtime scope changes. Checkout settlement is fenced by exact source-ID and submission callback scope; old completion/error/finally cannot close or corrupt a replacement dialog. No account/funding policy or routing truth is changed by UI observation.
+
+Billing dialogs reuse the system overlay-dim and shadow-3 tokens already delivered in the workflow foundation, with dark fallback scrim/shadow and readable paired hover colors. Header/footer stay outside bounded scrolling content; keyboard trapping/restore/Escape remain shared. GatewayPanel retains one coherent Matrix overview/credit-policy editing/checkout presentation responsibility at roughly 565 LOC; any future independent checkout behavior should extract its dialog/controller rather than expanding this component. Grouped account presentation remains a later layer. Exact Electron Desktop/backend acceptance is separate from these unit/type checks.
+
+Web checkout callback identity is stable for a mounted computer/runtime lifetime;
+ordinary Settings snapshot refreshes do not close an active credit dialog or
+invalidate its pending settlement. Actual runtime/lifetime changes still replace
+the callback and reject the former scope before networking or navigation.
+
+Checkout unavailability uses only typed policy, purchase capability and funding observations. Necessary policy/permission guidance stays inside Buy credit; policy-disabled purchases offer administrator/support guidance rather than suggesting refresh enables purchasing. Refresh remains available for unconfirmed or transient funding observations. Positive spendable balances below one cent preserve up to six decimal places, never rounding a positive amount to zero or up to a cent. Dialog owner/runtime settlement and history scope fences remain unchanged.
+### Grouped connection presentation and retained-driver boundary
+
+Coding agents and general agents share mounted, inert-on-collapse disclosure state with ~200ms reversible transitions and a reduced-motion override. Refresh resolves an expanded catalog/workflow ID to the same agent's saved ID; transport replacement clears expansion, operation IDs and bounded per-row Connect request counters before exposure. A Connect request preserves other visited rows' counters, choices and drafts. Removed row IDs are pruned before admission; the 32-current-row limit rejects explicitly rather than reporting a successful no-op. Identical project-sized SVG chevrons rotate rather than swapping geometry; shipped upstream artwork preserves packaged and explicit-VM/runtime paths. Missing/failed installation is red, disconnected is yellow and connected is green.
+
+Saved row status consumes the reviewed configured-connection resolver: installation truth and active Connecting take precedence; historical failure cannot negate a current connected observation. Exact selected account/source supplies actual email/plan and usage, with unavailable/stale observations remaining honest. Subscription meters render remaining allowance with rounded track/fill, empty at 100% used. No reading/refresh restores saved Off; successful deliberate connection uses current server capability/revision and atomic enable behavior.
+
+Normal guided login, replacement and disconnect remain in Settings using the unchanged workflow panel and its active-operation guards. Unsupported-driver account/model/route controls remain only inside collapsed Advanced configuration; they do not create a second normal account card, offer a manual Enable toggle or revive Terminal login as the normal connection flow. The fallback retains owner-only mutations and never fabricates guided capability. Existing billing loader/callback fences, private history and dark system modal tokens remain unchanged. Actual combined Electron Desktop/Preview acceptance and Human Review are separate gates.
+
+Grouped composition preserves negotiated generic-agent Matrix/model/access-source
+controls through the workflow panel's collapsed Advanced configuration slot.
+Unsupported drivers retain only server-advertised legacy login methods there;
+owner denial never enables a fallback, and no login starts during rendering or
+refresh. Supported opaque Terminal/browser continuations stay explicit inside
+that disclosure. The grouped normal connection card remains singular.
+
+Non-guided saved agents retain Disconnect under advertised set_harness_enabled:
+it disables only the agent, preserving account credentials and saved routing.
+Failures retain the visible connection and present a safe retry. An explicit
+server catalog open_terminal action may launch Pi/OpenCode setup only inside
+Advanced configuration; callback presence alone and owner-denied access never
+create that capability. Saved missing rows use actual catalog install support,
+including runtime_not_supported, rather than synthesizing availability.
+Native connection labels share finite observation freshness and saved Off rules;
+observation expiry updates the row and account details without claiming known
+quota or remotely verified authentication from local login presence.
+
+Retained non-guided recovery actions keep pending and safe failure state across
+unrelated snapshot renders. Their asynchronous settlements are bound to the
+captured workflow owner and exact harness/action target, rather than the identity
+of a newly allocated render callback; former-owner settlements cannot refresh a
+replacement connection. Saved reconnect admission also rejects expired and
+future-dated native observations during its fresh exact validation.
+## Final reconstructed Settings regression boundary
+
+The final grouped composition retains negotiated native identity, display-only Matrix inventory/capabilities, authoritative spendable microUSD, selected-account/source pairing and scoped history/checkout fences. Compatible unsupported-driver actions remain in collapsed Advanced configuration; normal supported auth stays in Settings. Current Connected overrides historical failed/expired receipts while active replacement remains Connecting and guards account-changing actions. No refresh enables saved Off.
+
+Final broad UI and synthetic Electron fixtures exercise the combined delivered stack. Historical screenshots/QA reports attest only their recorded older build and synthetic gateway. New acceptance records exact source/client/Preview provenance and separately verifies native auth, actual usage, real model replies and settled usage; fixture success cannot substitute for these gates. Public product documentation omits private account/runtime and operator authorization details.
+
+## Native Settings admission and Codex key Connect atomicity
+
+- Each Codex/Claude terminal-login handoff acquires the same exclusive durable native-profile marker used by native credential writers. Recheck canonical receipts and live sessions after acquiring that marker; a stale idle preflight is insufficient. Keep the marker until the canonical launch is acknowledged and protected by its live session/receipt, or failure is proven to precede a launch request or the acknowledged exact session is stopped/deleted. A failed or lost create RPC, missing session, receipt expiry, and gateway restart alone never prove drain. Exact canonical replay/adoption remains read-only and never launches a second native login.
+- Codex API-key Connect holds one profile lease across prior native-auth capture, staged native CLI completion, replacement, fresh Settings observation, and revision-fenced enablement. A rejected Settings observation/CAS must restore exact prior auth bytes and safe original file mode, or original absence. Secrets must stay in bounded owner-only files/buffers and never enter argv, logs, Settings DTOs or exports.
+- Prior auth capture rejects symlinks, non-regular/multiply-linked files, files above 64 KiB, wrong-owner files, and group/other-accessible modes. Restoration is fenced by parent and installed-file identity; it never overwrites a concurrently changed target. Zero the bounded in-memory copy after capture.
+- A failed restoration retains both the durable marker and the single private 0700 staged recovery directory inside the hard-excluded native `.codex` directory, including its bounded owner-only prior-auth backup. Automatic expiry or cleanup must not discard that backup or unlock the profile. Explicit operator recovery must verify the native writer is drained and inspect/reconcile the exact auth identity before restoring/removing the backup and releasing its matching marker. Successful commit or proven restoration removes ordinary staged files after native-process drain.

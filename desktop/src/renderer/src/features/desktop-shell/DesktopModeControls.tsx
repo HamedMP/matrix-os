@@ -4,6 +4,7 @@ import DesktopDiscordButton from "../support/DesktopDiscordButton";
 import DesktopSupportButton from "../support/DesktopSupportButton";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import GettingStartedPopover from "../onboarding/GettingStartedPopover";
+import OrganizationSwitcher from "../organization/OrganizationSwitcher";
 import { LayoutGrid, Monitor, Search } from "../../lib/hugeicons";
 import { useUi } from "../../stores/ui";
 import { useNativeDesktopMode, type NativeDesktopMode } from "../../stores/native-desktop-mode";
@@ -52,6 +53,7 @@ export default function DesktopModeControls() {
           );
         })}
       </div>
+      <OrganizationSwitcher />
       <button
         type="button"
         aria-label="Search"

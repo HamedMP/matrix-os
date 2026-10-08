@@ -8,7 +8,10 @@
  * Organization membership, evaluated on the home, is the only gate.
  */
 
-const MACHINE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Mirrors the platform's default relay origin (packages/platform/src/collaboration/direct-wiring.ts). */
+export const DEFAULT_COLLABORATION_RELAY_ORIGIN = "https://app.matrix-os.com";
+
+const MACHINE_ID_PATTERN =/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface GatewayCollaborationConfig {
   runtimeId: string;
@@ -17,8 +20,18 @@ export interface GatewayCollaborationConfig {
   proofKeys?: Readonly<Record<string, string>>;
   platformBaseUrl: string;
   serviceToken: string;
-  /** S05: browser origins allowed to open direct sessions; empty means direct sessions fail closed. */
+  /**
+   * S05: browser origins allowed to open direct sessions; empty means direct sessions fail closed.
+   * Defaults to `relayOrigin` when MATRIX_COLLABORATION_CLIENT_ORIGINS is unset, because
+   * customer-computer provisioning does not write it and the platform's own origin is what
+   * Web and Electron Desktop present.
+   */
   clientOrigins: readonly string[];
+  /**
+   * The platform relay origin; null when COLLABORATION_RELAY_ORIGIN is not an exact https origin.
+   * The loader always sets it; a hand-built config without it has no relay origin.
+   */
+  relayOrigin?: string | null;
   /** S05: owner and relay handle for runtime registration; absent means the home never registers. */
   ownerId?: string;
   relayHandle?: string;
@@ -44,11 +57,13 @@ export function loadGatewayCollaborationConfig(env: NodeJS.ProcessEnv): GatewayC
   const runtimeId = configuredRuntimeId
     || (machineId && MACHINE_ID_PATTERN.test(machineId) ? `vps:${machineId.toLowerCase()}` : undefined);
   if (!runtimeId) return null;
+  const relayOrigin = parseRelayOrigin(env.COLLABORATION_RELAY_ORIGIN);
   return {
     runtimeId,
     platformBaseUrl: env.PLATFORM_INTERNAL_URL!.trim(),
     serviceToken: env.UPGRADE_TOKEN!,
-    clientOrigins: parseClientOrigins(env.MATRIX_COLLABORATION_CLIENT_ORIGINS),
+    relayOrigin,
+    clientOrigins: resolveClientOrigins(env.MATRIX_COLLABORATION_CLIENT_ORIGINS, relayOrigin),
     ...(env.MATRIX_USER_ID?.trim() ? { ownerId: env.MATRIX_USER_ID.trim() } : {}),
     ...(env.MATRIX_HANDLE?.trim() ? { relayHandle: env.MATRIX_HANDLE.trim() } : {}),
   };
@@ -83,6 +98,27 @@ function describeRuntimeConfiguration(env: NodeJS.ProcessEnv): GatewayCollaborat
     return { configured: false, reason: "platform_configuration_missing" };
   }
   return { configured: true };
+}
+
+/**
+ * An explicit list is used exactly as configured (preview homes set one). Only when the
+ * variable is absent or blank does the home fall back to the relay origin; a list that is
+ * present but entirely malformed stays empty, so a typo cannot widen the allowlist.
+ */
+function resolveClientOrigins(raw: string | undefined, relayOrigin: string | null): string[] {
+  if (raw?.trim()) return parseClientOrigins(raw);
+  return relayOrigin ? [relayOrigin] : [];
+}
+
+function parseRelayOrigin(raw: string | undefined): string | null {
+  const value = raw?.trim() || DEFAULT_COLLABORATION_RELAY_ORIGIN;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && parsed.origin === value ? parsed.origin : null;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) console.warn("[collaboration] relay origin parse failed", error instanceof Error ? error.name : "UnknownError");
+    return null;
+  }
 }
 
 /** S05: exact https origins, deduplicated; anything malformed is dropped so a typo cannot widen the allowlist. */

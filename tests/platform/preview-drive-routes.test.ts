@@ -8,7 +8,10 @@ import { createPreviewDriveRoutes, projectPreviewDriveFiles } from '../../packag
 import { mintPreviewDriveTurnProof, previewDriveTurnBodyDigest } from '../../packages/platform/src/preview-drive-turn-proof.js';
 import { mintCustomMcpApprovalProof } from '../../packages/platform/src/custom-mcp-approval-proof.js';
 
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
+
 const secret = 'platform-secret-123';
+const deletionSecret = 'preview-deletion-secret-at-least-32-bytes';
 const handle = 'pr-1234';
 const base = `/internal/containers/${handle}/preview-drive`;
 const turnBody = { clientRequestId: 'req_one', baseRevision: 0,
@@ -38,7 +41,7 @@ describe('Preview Drive Platform routes', () => {
       status: 'running', provisionedAt: '2026-09-30T00:00:00.000Z' });
     listConnections.mockClear(); execute.mockClear();
   });
-  afterEach(async () => { await destroyTestPlatformDb(db); });
+  afterEach(async () => { vi.unstubAllEnvs(); await destroyTestPlatformDb(db); });
 
   function app() {
     const root = new Hono();
@@ -99,6 +102,64 @@ describe('Preview Drive Platform routes', () => {
         { id: 'file2', name: 'two' }, { id: 'file3', name: 'three' }] } });
     expect(execute).toHaveBeenCalledWith('user_owner', 'personal', { maxResults: 3 });
     expect((await post('/execute', { runGrant, chatId: 'chat_one', runId: 'run_one', actionGrant, action })).status).toBe(403);
+  });
+
+  it('consumes an approved grant even when provider execution fails under deletion admission', async () => {
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', deletionSecret);
+    const runGrant = await redeem();
+    const proof = mintCustomMcpApprovalProof({ method: 'POST', path: '/api/chats/chat_one/runs/run_one/approvals/approval_one',
+      identity: { handle, userId: 'user_owner', source: 'auth' },
+      body: JSON.stringify({ clientRequestId: 'req_approval', decision: 'approve', actionDigest }), secret });
+    const granted = await post('/grants', { runGrant, chatId: 'chat_one', runId: 'run_one', approvalId: 'approval_one',
+      clientRequestId: 'req_approval', actionDigest, action }, { 'x-matrix-custom-mcp-approval-proof': proof! });
+    expect(granted.status).toBe(200);
+    const { actionGrant } = await granted.json() as { actionGrant: string };
+    execute.mockRejectedValueOnce(new Error('Synthetic provider failure'));
+    const request = { runGrant, chatId: 'chat_one', runId: 'run_one', actionGrant, action };
+    expect((await post('/execute', request)).status).toBe(502);
+    expect((await post('/execute', request)).status).toBe(403);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks turn redemption when the authenticated actor has scheduled deletion', async () => {
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', deletionSecret);
+    const repo = new AccountDeletionRepository(db.kysely, { secret: deletionSecret });
+    await repo.accept({ clerkUserId: 'user_owner', appleTokens: [] }, false);
+    const proof = mintPreviewDriveTurnProof({ method: 'POST', path: '/api/chats/chat_one/turns',
+      identity: { handle, userId: 'user_owner', source: 'auth' }, body: JSON.stringify(turnBody), secret });
+    const response = await post('/turn/redeem', { actorId: 'user_owner', chatId: 'chat_one',
+      turnId: 'cturn_one', runId: 'run_one', clientRequestId: 'req_one', bodyDigest: previewDriveTurnBodyDigest(turnBody) },
+      { 'x-matrix-preview-drive-turn-proof': proof! });
+    expect(response.status).toBe(409);
+    expect(await db.executor.selectFrom('preview_drive_grants').selectAll().execute()).toEqual([]);
+  });
+
+  it('blocks existing actor grants in every deletion phase but still permits cleanup', async () => {
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', deletionSecret);
+    const runGrant = await redeem();
+    const approval = mintCustomMcpApprovalProof({ method: 'POST', path: '/api/chats/chat_one/runs/run_one/approvals/approval_one',
+      identity: { handle, userId: 'user_owner', source: 'auth' },
+      body: JSON.stringify({ clientRequestId: 'req_approval', decision: 'approve', actionDigest }), secret });
+    const grantBody = { runGrant, chatId: 'chat_one', runId: 'run_one', approvalId: 'approval_one',
+      clientRequestId: 'req_approval', actionDigest, action };
+    const grant = await post('/grants', grantBody, { 'x-matrix-custom-mcp-approval-proof': approval! });
+    expect(grant.status).toBe(200);
+    const { actionGrant } = await grant.json() as { actionGrant: string };
+    const repo = new AccountDeletionRepository(db.kysely, { secret: deletionSecret });
+    await repo.accept({ clerkUserId: 'user_owner', appleTokens: [] }, false);
+    listConnections.mockClear(); execute.mockClear();
+    for (const status of ['scheduled', 'processing', 'completed'] as const) {
+      await db.executor.updateTable('account_deletion_jobs').set({ status }).execute();
+      expect((await post('/discover', { runGrant, chatId: 'chat_one', runId: 'run_one', kind: 'inventory' })).status).toBe(409);
+      expect((await post('/grants', grantBody, { 'x-matrix-custom-mcp-approval-proof': approval! })).status).toBe(409);
+      expect((await post('/execute', { runGrant, chatId: 'chat_one', runId: 'run_one', actionGrant, action })).status).toBe(409);
+    }
+    expect(listConnections).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(await db.executor.selectFrom('preview_drive_grants').select('consumed_at').where('kind', '=', 'action').executeTakeFirst())
+      .toEqual({ consumed_at: null });
+    expect((await post('/revoke', { runGrant, chatId: 'chat_one', runId: 'run_one' })).status).toBe(200);
+    expect(await db.executor.selectFrom('preview_drive_grants').selectAll().execute()).toEqual([]);
   });
 
   it('projects raw and SDK-wrapped Google files responses without leaking extra fields', () => {

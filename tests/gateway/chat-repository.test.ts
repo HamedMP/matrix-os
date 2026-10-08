@@ -211,6 +211,7 @@ describe("ChatRepository", () => {
     expect(tables.map((row) => row.table_name).sort()).toEqual([
       "chat_approval_outcomes",
       "chat_attachments",
+      "chat_credentials",
       "chat_deletions",
       "chat_drive_projects",
       "chat_import_jobs",

@@ -98,7 +98,6 @@ describe("executeIntegrationAction", () => {
       actionId: "search",
       params: {
         query: "roadmap",
-        headers: { Authorization: "attacker-controlled" },
       },
     });
 
@@ -106,9 +105,18 @@ describe("executeIntegrationAction", () => {
       externalUserId: "user-1",
       accountId: "acc-1",
       url: "https://api.notion.com/v1/search",
-      body: { query: "roadmap" },
+      body: { query: "roadmap", page_size: 25 },
       headers: { "Notion-Version": "2022-06-28" },
     });
+  });
+
+  it("rejects caller-supplied provider headers before dispatch", async () => {
+    const pipedream = mockPipedream();
+    await expect(executeIntegrationAction({ pipedream, externalUserId: "user-1", connection: { pipedream_account_id: "acc-1" },
+      def: getService("notion")!, actionDef: getAction("notion", "search")!, serviceId: "notion", actionId: "search",
+      params: { query: "roadmap", headers: { Authorization: "attacker-controlled" } },
+    })).rejects.toThrow("Invalid action parameters");
+    expect(pipedream.proxyPost).not.toHaveBeenCalled();
   });
 
   it("throws a not-implemented error instead of calling a fabricated fallback URL", async () => {

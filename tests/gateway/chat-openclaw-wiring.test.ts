@@ -6,7 +6,7 @@ describe("OpenClaw canonical Chat production wiring", () => {
   it("keeps catalog executability and adapter registration connected", () => {
     const source = readFileSync(join(process.cwd(), "packages/gateway/src/server.ts"), "utf8");
     const importAdapter = source.indexOf("createOpenClawChatProviderAdapter");
-    const executableKinds = source.indexOf("const canonicalExecutableDriverKinds = [");
+    const executableKinds = source.search(/\bconst canonicalExecutableDriverKinds(?:\s*:[^=]+)?\s*=\s*\[/);
     const executableOpenClaw = source.indexOf('"openclaw" as const', executableKinds);
     const adapterList = source.indexOf("const canonicalAdapters:", executableOpenClaw);
     const registeredAdapter = source.indexOf("createOpenClawChatProviderAdapter({", adapterList);

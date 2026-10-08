@@ -84,7 +84,7 @@ function SelectedTerminalSharing({ session }: { session: ShellSessionSummary | n
   return <DesktopTerminalSharing terminalId={session.name} />;
 }
 
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing session orchestration coordinates retained xterm panes, rename/delete recovery, and external open requests. This change only delegates a selected session to a leaf sharing control; splitting the existing lifecycle state belongs in a focused refactor with its own regression coverage.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing session orchestration coordinates retained xterm panes, rename/delete recovery, and external open requests. Splitting the existing lifecycle state belongs in a focused refactor with its own regression coverage.
 export default function TerminalsTab({
   active = true,
   visible = active,

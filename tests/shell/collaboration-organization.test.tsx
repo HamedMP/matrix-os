@@ -10,7 +10,14 @@ vi.mock("@clerk/nextjs", () => ({
   useOrganization: () => ({ organization: organizationState.organization }),
 }));
 
-import { CollaborationOrganization } from "../../shell/src/lib/collaboration-organization.js";
+import {
+  CollaborationOrganization,
+  OrganizationOnly,
+} from "../../shell/src/lib/collaboration-organization.js";
+import {
+  OrganizationStateProvider,
+  useCollaborationOrganization,
+} from "../../shell/src/lib/collaboration-organization-state.js";
 
 function StatefulChild({ organizationId }: { organizationId: string | null }) {
   // Stands in for a share flow holding organization-bound state (a preflight token, an open scope).
@@ -28,18 +35,47 @@ describe("CollaborationOrganization gate", () => {
   });
 
   it("remounts the sharing subtree when the active organization changes so no organization-bound state survives", () => {
-    organizationState.organization = { id: "org_alpha" };
-    const { rerender } = render(<CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>);
+    const { rerender } = render(<OrganizationStateProvider value={{ status: "member", organizationId: "org_alpha" }}>
+      <CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>
+    </OrganizationStateProvider>);
     fireEvent.click(screen.getByRole("button", { name: "preflight" }));
     expect(screen.getByTestId("token")).toHaveTextContent("preflight-for-org_alpha");
 
-    organizationState.organization = { id: "org_beta" };
-    act(() => rerender(<CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>));
+    act(() => rerender(<OrganizationStateProvider value={{ status: "member", organizationId: "org_beta" }}>
+      <CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>
+    </OrganizationStateProvider>));
     expect(screen.getByTestId("organization")).toHaveTextContent("org_beta");
     expect(screen.getByTestId("token")).toHaveTextContent("none");
 
-    organizationState.organization = null;
-    act(() => rerender(<CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>));
+    act(() => rerender(<OrganizationStateProvider value={{ status: "loading", organizationId: null }}>
+      <CollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</CollaborationOrganization>
+    </OrganizationStateProvider>));
     expect(screen.getByTestId("organization")).toHaveTextContent("none");
+  });
+
+  it("hides organization-only surfaces only after an empty membership list is confirmed", () => {
+    const { rerender } = render(<OrganizationStateProvider value={{ status: "loading", organizationId: null }}>
+      <OrganizationOnly><div>Organization surface</div></OrganizationOnly>
+    </OrganizationStateProvider>);
+    expect(screen.getByText("Organization surface")).toBeVisible();
+
+    rerender(<OrganizationStateProvider value={{ status: "unavailable", organizationId: null }}>
+      <OrganizationOnly><div>Organization surface</div></OrganizationOnly>
+    </OrganizationStateProvider>);
+    expect(screen.getByText("Organization surface")).toBeVisible();
+
+    rerender(<OrganizationStateProvider value={{ status: "none", organizationId: null }}>
+      <OrganizationOnly><div>Organization surface</div></OrganizationOnly>
+    </OrganizationStateProvider>);
+    expect(screen.queryByText("Organization surface")).toBeNull();
+  });
+
+  it("exposes the authoritative membership state to non-sharing navigation", () => {
+    function State() {
+      const value = useCollaborationOrganization();
+      return <span>{`${value.status}:${value.organizationId ?? "none"}`}</span>;
+    }
+    render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><State /></OrganizationStateProvider>);
+    expect(screen.getByText("none:none")).toBeVisible();
   });
 });

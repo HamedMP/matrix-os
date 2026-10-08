@@ -40,10 +40,37 @@ import {
   sleep,
 } from './customer-vps-support.js';
 import type { CustomerVpsContext } from './customer-vps-context.js';
+import { AccountDeletionAdmissionError, getAccountDeletionAdmission, withAccountDeletionAdmission } from './account-deletion/admission.js';
 
 /** Recovers a customer VPS onto a replacement server and reconciles pending recovery creates. */
 export function createCustomerVpsRecovery(context: CustomerVpsContext) {
   const { deps, machineIdFactory, tokenFactory, postgresPasswordFactory, now, queueProviderDeletion } = context;
+
+  async function admitRecovery<T>(owner: string, work: (db: typeof deps.db) => Promise<T>): Promise<T> {
+    try {
+      return await withAccountDeletionAdmission(deps.db, owner, work);
+    } catch (error: unknown) {
+      if (error instanceof AccountDeletionAdmissionError) {
+        throw new CustomerVpsError(409, 'invalid_state', 'Account deletion is pending');
+      }
+      throw error;
+    }
+  }
+  async function createRecoveryServer(owner: string, input: Parameters<HetznerClient['createServer']>[0]) {
+    let created: Awaited<ReturnType<HetznerClient['createServer']>> | undefined;
+    try {
+      return await admitRecovery(owner, async () => {
+        created = await deps.hetzner.createServer(input);
+        return created;
+      });
+    } catch (error: unknown) {
+      // The provider can return a known server before the admission transaction
+      // fails to commit. Keep that result available for compensation.
+      if (created) await removeRejectedRecoveryServer({ serverId: created.id,
+        machineId: input.labels?.machine_id ?? '', handle: input.name });
+      throw error;
+    }
+  }
 
   async function waitForRecoveryCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
     for (let attempt = 0; attempt < RECOVERY_CREATE_ACTION_POLL_ATTEMPTS; attempt += 1) {
@@ -97,6 +124,10 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     row: UserMachineRecord,
   ): Promise<'settled' | 'pending' | 'failed'> {
     if (row.status !== 'recovering') return 'settled';
+    // The deletion job drains both old servers and ambiguous labeled creates.
+    // Retain its durable recovery provenance instead of adopting or replacing a
+    // server after the owner has requested erasure.
+    if (!(await getAccountDeletionAdmission(deps.db, row.clerkUserId)).newWorkAllowed) return 'pending';
     const restoreOldMachine = async (encryptedPayload: string): Promise<boolean> => {
       let payload: ProvisioningPayload;
       try {
@@ -114,7 +145,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
           'recovery_encrypted_payload',
         ]).where('machine_id', '=', row.machineId).forUpdate().executeTakeFirst();
         if (!current || current.status !== 'recovering' || current.deleted_at !== null
-          || current.hetzner_server_id !== row.hetznerServerId
+          || parseNullableProviderActionId(current.hetzner_server_id as number | string | null) !== row.hetznerServerId
           || parseNullableProviderActionId(
             current.recovery_create_action_id as number | string | null,
           ) !== row.recoveryCreateActionId
@@ -327,7 +358,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
         if (!transitioned) return 'pending';
         let cleanServer;
         try {
-          cleanServer = await deps.hetzner.createServer({
+          cleanServer = await createRecoveryServer(row.clerkUserId, {
             name: buildRecoveryServerName(row.handle, row.machineId),
             serverType: row.serverType ?? deps.config.serverType,
             location: row.location ?? deps.config.location,
@@ -422,6 +453,9 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
   }
 
   async function recover(input: RecoverRequest): Promise<RecoverResponse> {
+    if (!(await getAccountDeletionAdmission(deps.db, input.clerkUserId)).newWorkAllowed) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Account deletion is pending');
+    }
     const active = await getActiveUserMachineByClerkId(deps.db, input.clerkUserId, input.runtimeSlot);
     if (!active) {
       throw new CustomerVpsError(404, 'not_found', 'Machine not found');
@@ -524,13 +558,21 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     }, deps.config.platformSecret);
     let encryptedRecoveryPayload = sealRecoveryIntent(recoveryImage);
     const intendedServerType = billingContext?.serverType ?? active.serverType ?? deps.config.serverType;
-    const existing = await claimUserMachineRecovery(deps.db, input.clerkUserId, active.runtimeSlot, {
+    let existing: UserMachineRecord | undefined;
+    try {
+      existing = await admitRecovery(input.clerkUserId, trx => claimUserMachineRecovery(trx, input.clerkUserId, active.runtimeSlot, {
       machineId,
       encryptedPayload: encryptedRecoveryPayload,
       serverType: intendedServerType,
       registrationTokenHash: registration.hash,
       registrationTokenExpiresAt: registration.expiresAt,
-    });
+      }));
+    } catch (error: unknown) {
+      if (recoveryImage.imageSource === 'snapshot') {
+        await releaseGoldenSnapshotLease(deps.db, recoveryImage.snapshotLeaseId, currentTime.toISOString());
+      }
+      throw error;
+    }
     if (!existing) {
       if (recoveryImage.imageSource === 'snapshot') {
         await releaseGoldenSnapshotLease(deps.db, recoveryImage.snapshotLeaseId, currentTime.toISOString());
@@ -615,7 +657,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
             throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
           }
         }
-        server = await deps.hetzner.createServer(recoveryCreateInput);
+        server = await createRecoveryServer(existing.clerkUserId, recoveryCreateInput);
         if (recoveryImage.imageSource === 'snapshot') {
           const accepted = await markGoldenSnapshotCreateIntentAccepted(
             deps.db, recoveryImage.snapshotLeaseId, server.createActionId ?? null, now().toISOString(),
@@ -635,7 +677,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
         await transitionRecoveryToCleanFallback(recoveryImage);
         await assertMachineProviderMutationAllowed(deps, existing, recoveryCreateInput.serverType, now());
         try {
-          server = await deps.hetzner.createServer({
+          server = await createRecoveryServer(existing.clerkUserId, {
             name: recoveryCreateInput.name,
             serverType: recoveryCreateInput.serverType,
             location: recoveryCreateInput.location,
@@ -677,7 +719,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
           await transitionRecoveryToCleanFallback(recoveryImage);
           await assertMachineProviderMutationAllowed(deps, existing, recoveryCreateInput.serverType, now());
           try {
-            server = await deps.hetzner.createServer({
+            server = await createRecoveryServer(existing.clerkUserId, {
               name: recoveryCreateInput.name,
               serverType: recoveryCreateInput.serverType,
               location: recoveryCreateInput.location,

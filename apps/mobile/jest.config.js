@@ -8,9 +8,12 @@ module.exports = {
   // @react-native/assets-registry, ...). The hoisted root node_modules is flat and
   // complete, so add it as a fallback resolution root.
   modulePaths: [path.resolve(__dirname, "../../node_modules")],
+  // micromark and its helpers (character-entities,
+  // decode-named-character-reference, devlop) are ESM-only and reach every suite
+  // through the @matrix-os/contracts index, so they must be transformed too.
   transformIgnorePatterns: [
-    "node_modules/.pnpm/(?!(react-native|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*)@)",
-    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage)",
+    "node_modules/.pnpm/(?!(react-native|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
+    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
   ],
   setupFiles: ["./jest.setup.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],

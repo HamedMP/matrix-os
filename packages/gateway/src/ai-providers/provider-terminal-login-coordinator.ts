@@ -1,3 +1,5 @@
+import { claudeNativeTerminalCommand } from "./claude-native-executable.js";
+import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,16 +38,6 @@ type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
-const LOGIN_COMMANDS = {
-  codex: {
-    agent: "codex" as const,
-    command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
-  },
-  claude: {
-    agent: "claude" as const,
-    command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; claude'",
-  },
-} as const;
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error
@@ -135,7 +127,7 @@ function legacyLoginSessionName(harness: "codex" | "claude", legacyPayloadHash: 
 
 function matchesLegacyLoginPayload(
   input: LoginInput,
-  receipt: ReceiptDocument["receipts"][number],
+  receipt: Pick<ReceiptDocument["receipts"][number], "recoveryHash" | "key" | "payloadHash">,
 ): boolean {
   if (receipt.recoveryHash !== undefined) return false;
   // Legacy receipts did not persist their recovery identity. Recompute the exact
@@ -173,12 +165,9 @@ function replaceBoundedReceipt(document: ReceiptDocument, receipt: ReceiptDocume
 function supportsHarness(
   enabledHarnesses: ReadonlySet<"codex" | "claude">,
   harness: LoginHarness,
-): harness is LoginHarness & { harness: "codex" | "claude" } {
+): harness is LoginHarness & { harness: "claude" } {
   return harness.installState === "installed"
-    && (
-      (harness.harness === "codex" && harness.driverId === "codex")
-      || (harness.harness === "claude" && harness.driverId === "claude_code")
-    )
+    && harness.harness === "claude" && harness.driverId === "claude_code"
     && enabledHarnesses.has(harness.harness);
 }
 
@@ -186,6 +175,7 @@ export function createProviderTerminalLoginCoordinator(options: {
   homePath: string;
   registry: ProviderLoginRegistry;
   enabledHarnesses: readonly ("codex" | "claude")[];
+  profileGuard?: NativeProviderProfileGuard;
   now?: () => Date;
   persistReceipt?: ReceiptWriter;
 }): ProviderLoginCoordinator & { resolveTerminalIdentity(attempt: ProviderConnectionAttempt): Promise<string> } {
@@ -194,7 +184,8 @@ export function createProviderTerminalLoginCoordinator(options: {
     || !options.registry.rename || !options.registry.observeAgentLiveness) {
     throw new Error("Provider login shell registry is required");
   }
-  const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses));
+  // Accept legacy configuration shape, but never enable hosted Codex subscription login.
+  const enabledHarnesses = new Set(EnabledHarnessSchema.array().max(2).parse(options.enabledHarnesses).filter(harness => harness === "claude"));
   const receiptsPath = join(options.homePath, "system/ai-providers/login-receipts.json");
   const recoveryPath = join(options.homePath, "system/ai-providers/login-recovery.json");
   const now = options.now ?? (() => new Date());
@@ -246,7 +237,21 @@ export function createProviderTerminalLoginCoordinator(options: {
     },
 
     async startLogin(input) {
-      return await serialize(async () => {
+      // Reject excluded providers before profile admission, receipt reads or native effects.
+      if (input.harness.id !== input.mutation.harnessInstanceId
+        || input.mutation.method !== "terminal"
+        || !supportsHarness(enabledHarnesses, input.harness)) {
+        throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+      }
+      let requestedSession: string | undefined;
+      let confirmedSession = false;
+      const createSession = async (request: Parameters<ProviderLoginRegistry["create"]>[0]) => {
+        requestedSession = request.name; // Set before RPC: a lost reply is not a no-start proof.
+        const session = await options.registry.create(request);
+        confirmedSession = session.name === request.name;
+        return session;
+      };
+      const start = () => serialize(async () => {
         if (input.harness.id !== input.mutation.harnessInstanceId
           || input.mutation.method !== "terminal"
           || !supportsHarness(enabledHarnesses, input.harness)) {
@@ -254,7 +259,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const hash = payloadHash(input);
         const recoveryHash = recoveryIdentityHash(input);
-        const command = LOGIN_COMMANDS[input.harness.harness];
+        const command = { agent: "claude" as const, command: claudeNativeTerminalCommand(options.homePath) };
         const canonicalSessionName = loginSessionName(recoveryHash);
         const document = await readReceipts(receiptsPath);
         const recoveryDocument = await readReceipts(recoveryPath);
@@ -342,7 +347,7 @@ export function createProviderTerminalLoginCoordinator(options: {
               await options.registry.get(attempt.action.terminalSessionId);
             } catch (error) {
               if (!isMissingSession(error)) throw error;
-              await options.registry.create({
+              await createSession({
                 name: attempt.action.terminalSessionId,
                 cwd: "~",
                 cmd: command.command,
@@ -549,7 +554,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const session = adoptedExpiredSession
           ? { name: sessionName }
-          : await options.registry.create({
+          : await createSession({
             name: sessionName,
             cwd: "~",
             cmd: command.command,
@@ -581,6 +586,24 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         return attempt;
       });
+      if (options.profileGuard) {
+        // Preserve the historical conflict response before profile admission.
+        // This is a read-only preflight; the serialized path rechecks receipts.
+        const known = (await Promise.all([readReceipts(receiptsPath), readReceipts(recoveryPath)]))
+          .flatMap(document => document.receipts).filter(receipt => receipt.key === input.mutation.idempotencyKey);
+        if (known.some(receipt => receipt.payloadHash !== payloadHash(input))) {
+          throw new ProviderSettingsStoreError("idempotency_conflict", 409);
+        }
+        const profile = input.harness.harness;
+        return options.profileGuard.run(profile, { kind: "login", recoveryKey: recoveryIdentityHash(input),
+          matchesLegacyReceipt: (key, hash) => matchesLegacyLoginPayload(input, { key, payloadHash: hash }),
+          // Closing a tab is not a native-child drain acknowledgement.
+          // Missing/ambiguous command observations retain durable admission.
+          confirmDrained: async () => !requestedSession || confirmedSession
+            && await options.registry.observeAgentLiveness(requestedSession, profile) === "stopped",
+        }, start);
+      }
+      return start();
     },
   };
 }

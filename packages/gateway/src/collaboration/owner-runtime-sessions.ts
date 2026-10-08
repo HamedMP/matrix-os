@@ -15,8 +15,18 @@ const EVIDENCE_TTL_MS = COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSecon
 const REQUEST_WINDOW_MS = COLLABORATION_DIRECT_LIMITS.ticketTtlSeconds * 1_000;
 const SKEW_MS = COLLABORATION_DIRECT_LIMITS.clockSkewSeconds * 1_000;
 const MAX_SESSIONS = 256;
-const RUNTIME_PATH = /^\/api\/collaboration\/runtimes\/((?:[A-Za-z0-9:_-]|%3[Aa]){1,128})\/(catalog\/resolve|scopes\/preflight|scopes)$/;
-const OWNER_PROJECT_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(members|project\/inventory|project\/confirm))?$/;
+const RUNTIME_PATH = /^\/api\/collaboration\/runtimes\/((?:[A-Za-z0-9:_-]|%3[Aa]){1,128})\/(catalog\/(?:lookup|resolve)|scopes\/preflight|scopes)$/;
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const OWNER_PROJECT_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/(members|project/inventory|project/confirm|grants|grants/${UUID}))?$`);
+
+/** The verbs each private-project setup route accepts; anything else is refused before the signature is read. */
+function ownerProjectMethodAllowed(route: string | undefined, method: OwnerRuntimeRequest["method"]): boolean {
+  if (route === "project/confirm") return method === "POST";
+  // Choosing who gets access before sharing: list and create grants, then change or revoke one.
+  if (route === "grants") return method === "GET" || method === "POST";
+  if (route?.startsWith("grants/")) return method === "PATCH" || method === "DELETE";
+  return method === "GET";
+}
 
 interface SessionRecord {
   session: CollaborationOwnerRuntimeSession;
@@ -28,10 +38,12 @@ export interface OwnerRuntimeRequest {
   sessionId: string;
   signature: unknown;
   proof: string;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   query: string;
   body: Uint8Array;
+  /** Digest of a revoke's expected-revision headers; absent means the request carries none. */
+  conditionalHeadersDigest?: string;
 }
 
 export class OwnerRuntimeSessionService {
@@ -85,7 +97,7 @@ export class OwnerRuntimeSessionService {
     const runtimeRoute = RUNTIME_PATH.exec(input.path);
     const projectRoute = OWNER_PROJECT_PATH.exec(input.path);
     const runtimeAllowed = runtimeRoute && runtimeRoute[1]!.replace(/%3[aA]/g, ":") === this.options.runtimeId && input.method === "POST";
-    const projectAllowed = projectRoute && (projectRoute[2] === "project/confirm" ? input.method === "POST" : input.method === "GET");
+    const projectAllowed = projectRoute && ownerProjectMethodAllowed(projectRoute[2], input.method);
     if ((!runtimeAllowed && !projectAllowed) || input.query) throw denied();
     const parsed = CollaborationDirectRequestSignatureSchema.safeParse(input.signature);
     if (!parsed.success || parsed.data.sessionId !== input.sessionId) throw invalidSignature();
@@ -95,7 +107,7 @@ export class OwnerRuntimeSessionService {
     if (issuedAt > current + SKEW_MS || current - issuedAt > REQUEST_WINDOW_MS
       || signature.method !== input.method || signature.path !== input.path || signature.query !== input.query
       || signature.bodyDigest !== sha256Hex(input.body)
-      || signature.conditionalHeadersDigest !== sha256Hex(new Uint8Array())
+      || signature.conditionalHeadersDigest !== (input.conditionalHeadersDigest ?? sha256Hex(new Uint8Array()))
       || !verifyEd25519(record.proofPublicKey, requestSigningPayload(signature), input.proof)) throw invalidSignature();
     this.options.verifier.admitRequestNonce(record.session.id, signature.nonce, issuedAt + REQUEST_WINDOW_MS + SKEW_MS);
     try {

@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 
 import React from "react";
@@ -24,13 +25,13 @@ function apiReturning(value: unknown): ApiClient {
 }
 
 describe("Desktop canonical Provider catalog client", () => {
-  afterEach(() => cleanup());
+  afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.restoreAllMocks(); });
 
   it("loads and validates the bounded gateway catalog", async () => {
     const api = apiReturning(emptyCatalog);
 
     await expect(fetchCanonicalProviderCatalog(api)).resolves.toEqual(emptyCatalog);
-    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", { timeoutMs: 15_000 });
   });
 
   it("accepts the canonical Claude SDK instance projected from provider truth", async () => {
@@ -101,7 +102,7 @@ describe("Desktop canonical Provider catalog client", () => {
 
     await fetchCanonicalProviderCatalog(api, true);
 
-    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", { timeoutMs: 15_000 });
   });
 
   it("rejects malformed gateway data instead of projecting it into controls", async () => {
@@ -109,7 +110,7 @@ describe("Desktop canonical Provider catalog client", () => {
     await expect(fetchCanonicalProviderCatalog(api)).rejects.toThrow();
   });
 
-  it("revalidates only while the Chat surface is in the foreground", async () => {
+  it("loads cold discovery once and never reads on expired application switching", async () => {
     const refreshedCatalog = { ...emptyCatalog, revision: "catalog_refreshed" };
     const api = apiReturning(refreshedCatalog);
     function CatalogProbe({ active }: { active: boolean }) {
@@ -124,21 +125,24 @@ describe("Desktop canonical Provider catalog client", () => {
 
     view.rerender(<CatalogProbe active />);
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
     expect(await screen.findByText("ready:catalog_refreshed")).not.toBeNull();
 
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
+    await screen.findByText("ready:catalog_refreshed");
 
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(3));
-    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1));
+    expect(api.get).toHaveBeenLastCalledWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
 
     view.rerender(<CatalogProbe active={false} />);
     act(() => window.dispatchEvent(new Event("focus")));
     act(() => document.dispatchEvent(new Event("visibilitychange")));
     await act(async () => undefined);
-    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(api.get).toHaveBeenCalledTimes(1);
   });
 });

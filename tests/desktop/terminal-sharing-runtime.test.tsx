@@ -11,7 +11,7 @@ import { useState } from "react";
 const sharingButton = vi.hoisted(() => vi.fn(() => null));
 
 vi.mock("@matrix-os/ui", () => ({
-  TerminalSharingButton: sharingButton,
+  LegacyTerminalAccessButton: sharingButton,
   createCollaborationBrowserApi: () => ({ baseUrl: "https://app.matrix-os.com" }),
   // The connection store now reaches the direct collaboration client, so this mock has to
   // cover it or the module graph fails to initialise and the button is never rendered.
@@ -21,10 +21,10 @@ vi.mock("@matrix-os/ui", () => ({
 describe("DesktopTerminalSharing", () => {
   beforeEach(() => {
     sharingButton.mockClear();
-    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null });
+    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null, organizationStatus: "unavailable" });
   });
 
-  it("passes the active organization from the connection state and disables sharing without one", async () => {
+  it("passes the verified organization to legacy terminal management without exposing creation", async () => {
     const api = { get: vi.fn(async () => ({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } })) };
     useConnection.setState({ api: api as never, organizationId: null });
     render(<DesktopTerminalSharing terminalId="terminal_release" />);
@@ -32,7 +32,7 @@ describe("DesktopTerminalSharing", () => {
       expect.objectContaining({ runtimeId: "vps:10000000-0000-4000-8000-000000000001", organizationId: null }),
       undefined,
     ));
-    act(() => useConnection.setState({ organizationId: "org_matrix_team" }));
+    act(() => useConnection.setState({ organizationId: "org_matrix_team", organizationStatus: "member" }));
     await waitFor(() => expect(sharingButton).toHaveBeenLastCalledWith(
       expect.objectContaining({ organizationId: "org_matrix_team" }),
       undefined,
@@ -103,12 +103,32 @@ describe("DesktopCollaborationOrganization gate", () => {
         <button type="button" onClick={() => setToken(`preflight-for-${organizationId ?? "none"}`)}>preflight</button>
       </div>;
     }
-    useConnection.setState({ organizationId: "org_alpha" });
+    useConnection.setState({ organizationId: "org_alpha", organizationStatus: "member" });
     const view = render(<DesktopCollaborationOrganization>{(id) => <StatefulChild organizationId={id} />}</DesktopCollaborationOrganization>);
     act(() => { view.getByRole("button", { name: "preflight" }).click(); });
     await waitFor(() => expect(view.getByTestId("token").textContent).toBe("preflight-for-org_alpha"));
     act(() => useConnection.setState({ organizationId: "org_beta" }));
     await waitFor(() => expect(view.getByTestId("organization").textContent).toBe("org_beta"));
     expect(view.getByTestId("token").textContent).toBe("none");
+  });
+
+  it("hides only after the organization listing authoritatively confirms none", () => {
+    const view = render(<DesktopCollaborationOrganization>{() => <span>Organization surface</span>}</DesktopCollaborationOrganization>);
+    act(() => useConnection.setState({ organizationId: null, organizationStatus: "unavailable" }));
+    expect(view.getByText("Organization surface")).toBeTruthy();
+
+    act(() => useConnection.setState({ organizationId: null, organizationStatus: "none" }));
+    expect(view.queryByText("Organization surface")).toBeNull();
+  });
+
+  it("keeps unresolved controls visible without passing a remembered organization as authority", () => {
+    useConnection.setState({ organizationId: "org_stale", organizationStatus: "unavailable" });
+    let received: string | null | undefined;
+    render(<DesktopCollaborationOrganization>{(organizationId) => {
+      received = organizationId;
+      return <span>Organization surface</span>;
+    }}</DesktopCollaborationOrganization>);
+
+    expect(received).toBeNull();
   });
 });

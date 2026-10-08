@@ -244,7 +244,7 @@ describe("provider login terminal registry", () => {
     };
     const registry = createProviderLoginTerminalRegistry(runtime);
 
-    await expect(registry.get(ACTIVE_TAB.name)).resolves.toEqual({ name: ACTIVE_TAB.name });
+    await expect(registry.get(ACTIVE_TAB.name)).resolves.toEqual({ name: ACTIVE_TAB.name, agent: "codex" });
     await expect(registry.rename(ACTIVE_TAB.name, renamed.name)).resolves.toEqual({ name: renamed.name });
     expect(runtime.renameTab).toHaveBeenCalledWith(TERMINAL_REF, {
       name: renamed.name,

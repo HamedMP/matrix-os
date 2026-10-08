@@ -3,6 +3,8 @@ import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
 import { connectWs } from "../fixtures/ws-client.js";
 
+const OWNER_API_KEY = "e2e-owner-key-not-a-live-credential";
+
 describe("E2E: Chat message roundtrip", () => {
   let gw: TestGateway;
 
@@ -199,6 +201,8 @@ describe("E2E: Per-message kernel selection", () => {
 
   beforeAll(async () => {
     gw = await startTestGateway({
+      // The mocked SDK dispatcher still requires an explicit owner-local credential.
+      config: { kernel: { anthropicApiKey: OWNER_API_KEY } },
       spawnFn: async function* (_message, config) {
         observedConfigs.push(config);
         yield { type: "init", sessionId: "override-session" } as KernelEvent;
@@ -230,7 +234,11 @@ describe("E2E: Per-message kernel selection", () => {
       expect(observedConfigs[0]).toMatchObject({
         model: "claude-haiku-4-5",
         effort: "low",
+        env: { ANTHROPIC_API_KEY: OWNER_API_KEY },
       });
+      expect(observedConfigs[0].env?.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(observedConfigs[0].env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+      expect(observedConfigs[0].env?.ANTHROPIC_CUSTOM_HEADERS).toBeUndefined();
     } finally {
       ws.close();
     }

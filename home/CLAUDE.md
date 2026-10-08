@@ -4,7 +4,7 @@ You are building apps for Matrix OS, a web-based AI operating system. Apps run i
 
 ## Quick Start
 
-To create an app, make a Vite app directory in `~/apps/{slug}/`. First-party and polished apps should be React + TypeScript with the Matrix theme; avoid plain one-file HTML apps unless you are making a throwaway prototype.
+To create an app, make a Vite app directory in `~/apps/{slug}/`. Use React + TypeScript with the Matrix theme. Plain HTML or a server runtime requires an explicit request.
 
 1. `matrix.json` - App manifest
 2. `index.html` - Vite root with `<div id="root">`
@@ -18,6 +18,9 @@ The slug must match: `[a-z0-9][a-z0-9_-]*`
 ```json
 {
   "name": "My App",
+  "slug": "my-app",
+  "listingTrust": "first_party",
+  "scope": "personal",
   "description": "What this app does",
   "runtime": "vite",
   "category": "utility",
@@ -60,15 +63,17 @@ Apps can declare database tables in the manifest:
 }
 ```
 
+Combine `storage` with the runtime, slug, trust, scope, and build fields above. `first_party` is for apps you create for the owner; never relabel an imported app to bypass policy.
+
 Column types: `text`, `integer`, `float`, `boolean`, `timestamptz`, `uuid`, `jsonb`
 
 ## App UI
 
-Apps run in an iframe inside the OS shell, but they should be built by Vite into `dist/`. Use React components and shadcn-style primitives (Button, Card, Input, Badge, Tabs, Dialog) styled with Matrix theme tokens.
+Apps run in an iframe inside the OS shell, but they should be built by Vite into `dist/`. Use React components and shadcn-style primitives (Button, Card, Input, Badge, Tabs, Dialog) styled with app-local semantic tokens; inherited Matrix tokens are a baseline.
 
 ### Theme Integration (Required)
 
-Always use CSS custom properties so the app matches the OS theme:
+Use semantic CSS custom properties, starting from the OS theme when no product direction is chosen:
 
 ```css
 :root {
@@ -81,6 +86,8 @@ Always use CSS custom properties so the app matches the OS theme:
   --input-bg: var(--matrix-input-bg, #f5f5f7);
 }
 ```
+
+Use the selected product family, mood and references to shape color, typography, borders, spacing, materials and interactions. Generated products may define their own semantic palette; do not force every app into muted Forest/Ember colors. A delegated choice can be bright/minimal, bold/neo-brutalist, playful, retro or neumorphic. Keep it coherent and stable in DESIGN.md, preserve readable focus/status, and leave the owner’s global shell appearance unchanged.
 
 ### Data Access
 
@@ -105,9 +112,9 @@ if (db) {
 }
 ```
 
-Wrap every call in `try/catch` (no bare catch), update local state optimistically, and reconcile on
-`onChange`. For simple key/value state use `window.MatrixOS.readData(key)` / `writeData(key, value)`
-(also `postMessage`-based) — again, never a raw `fetch`.
+Catch failures, preserve user drafts, and show a safe retry message. Optimistic changes must roll back only the failed mutation. Reconcile on `onChange`, unsubscribe on cleanup, and verify save-and-reopen in Matrix. If the bridge is absent, show an unavailable state; do not silently substitute fake persistence.
+
+Structured app records belong in owner-controlled Postgres. Existing key/value state can use `window.MatrixOS.readData(key)` / `writeData(key, value)` through the bridge.
 
 ### AI text generation
 
@@ -145,16 +152,20 @@ const saved = await window.MatrixOS.readData('myapp-data'); // string | null
 await window.MatrixOS.writeData('myapp-data', JSON.stringify(value));
 ```
 
-## Design Guidelines
+## Design and motion workflow
 
-- Use `system-ui, -apple-system, sans-serif` font stack
-- Use `box-sizing: border-box` globally
-- Set `height: 100vh; overflow: hidden` on body (app runs in a fixed-size window)
-- Use backdrop blur for sidebars: `backdrop-filter: blur(20px) saturate(180%)`
-- Border radius: 8-12px for cards, 6-8px for buttons, 4px for inputs
-- Use `color-mix()` for hover states: `color-mix(in srgb, var(--fg) 4%, transparent)`
-- Smooth transitions: `transition: all 0.15s ease`
-- Focus states should use the accent color
+Read the installed `matrix-app-builder` skill and its `references/app-craft.md`. Load `matrix-design-system` and `matrix-app-ui-patterns` for the layout/theme contract; use `emil-design-eng` and `apple-design` for interface craft, `matrix-landing-design` for landing pages, `shadcn` for current components/presets/charts, and `animate` plus its relevant companions for motion. Find these through your harness's skill catalog and read only the resources needed for the task.
+
+Read the app-builder visual-reference resource: invite the user’s preferred style or inspiration image when needed, delegate bounded similar-app screenshot research when tools support it, inspect the actual images, and choose a primary direction. Keep captures and reference notes in the owner project.
+
+Record a short `DESIGN.md` in the app: user's main job, visual direction, references, layout/density, theme tokens, typography, interaction states, Postgres fields, and purposeful motion. Reuse approved references and existing components. Choose a coherent direction when the brief is clear; offer alternatives when requested or a meaningful choice is unresolved.
+
+- Build the core read/create/edit flow before decorative polish. A planner should open onto planning, not a marketing hero or invented metrics.
+- Inherit Matrix fonts and colors. Use deliberate hierarchy and spacing; glass, gradients, and rounded cards are optional.
+- Keep keyboard navigation and repeated actions immediate. Animate only properties that serve feedback or continuity; avoid `transition: all` and input locks.
+- Use native accessible controls, visible keyboard focus, and a static reduced-motion alternative. Never rely on hover for touch activation.
+- Fit the window: scroll the content region, check narrow windows, and avoid clipping controls or horizontal overflow.
+- Build, run the skill's manifest verifier, open in Matrix, exercise the main flow, inspect screenshots, then refine the largest visual problems. Check persistence, loading/empty/error states, theme variants, keyboard use, and reduced motion. Report which Matrix surfaces were actually tested.
 
 ## Example: Simple Counter App
 
@@ -224,13 +235,13 @@ After creating the files, the app appears automatically in the OS launcher (F3) 
 
 ## Rules
 
-- First-party and polished apps should be Vite + React apps with UI in `src/`; avoid single-file inline HTML except for throwaway prototypes
+- Build Vite + React apps with UI in `src/`; use other runtimes only when requested
 - Always use theme CSS variables with fallback values
 - Apps must work in an iframe context
 - Keep apps self-contained - no external CDN dependencies unless essential
 - Slug must be lowercase alphanumeric with hyphens/underscores only
 - Max app size: 50MB
-- Use localStorage for simple state, manifest storage for structured data
+- Use manifest storage and `window.MatrixOS.db` for structured data; avoid `localStorage` in sandboxed apps
 
 ## Skills & Knowledge
 

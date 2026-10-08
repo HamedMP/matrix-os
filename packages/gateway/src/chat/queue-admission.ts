@@ -7,6 +7,7 @@ import {
   type CanonicalChatQueueAdmissionResponse,
   type CanonicalChatSafeError,
   type CanonicalQueueChatTurnRequest,
+  canonicalExecutionRootProjectId,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
@@ -85,7 +86,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
   const effective = { ...input, ...prepared };
-  const catalog = await options.catalog.getCatalog(options.principal);
+  const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
   const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
     part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
   const validated = validateChatProviderSelection({
@@ -109,9 +110,18 @@ export async function enqueueCanonicalQueuedTurn(options: {
       503,
     );
   }
+  // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
+  // so no ordinary Chat can mount a bot's private files.
+  if (input.executionRoot?.kind === "bot_workspace") {
+    throw new CanonicalQueueAdmissionError(
+      safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
+      400,
+    );
+  }
   const rootRef = input.executionRoot
     ?? (record.projectId ? { kind: "project" as const, projectId: record.projectId } : undefined);
-  if (input.executionRoot && record.projectId && input.executionRoot.projectId !== record.projectId) {
+  if (input.executionRoot && record.projectId
+      && canonicalExecutionRootProjectId(input.executionRoot) !== record.projectId) {
     throw new CanonicalQueueAdmissionError(
       safeError("project_unavailable", "The selected workspace does not belong to this Chat's Project."),
       400,
@@ -154,7 +164,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
     driverKind: validated.instance.driverKind,
     selection: validated.selection,
     interactionMode: effective.interactionMode,
-    permissionMode: input.permissionMode,
+    permissionMode: effective.permissionMode,
     ...(prepared?.context ? { context: prepared.context } : {}),
     ...(resolvedRoot ? {
       executionRoot: resolvedRoot.ref,

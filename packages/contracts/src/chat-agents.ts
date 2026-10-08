@@ -4,6 +4,7 @@ import { IsoTimestampSchema } from "#contract-primitives";
 import { canonicalBoundedText, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { ChatAgentIdSchema } from "#chat-agent-context";
 import { ChatAgentRecipeSchema, StoredChatAgentRecipeSchema } from "#chat-agent-recipe";
+import { BotRecipeRefSchema } from "#bots/bot";
 
 export const ChatAgentInputFieldsSchema = z.object({
   name: canonicalSafeLabel(80, 320),
@@ -16,12 +17,16 @@ export const CreateChatAgentRequestSchema = ChatAgentInputFieldsSchema.extend({
   clientRequestId: CanonicalChatRequestIdSchema,
 }).strict();
 export const UpdateChatAgentRequestSchema = ChatAgentInputFieldsSchema.partial().extend({
+  // Patch omission must preserve the saved value; create defaults are not updates.
+  description: ChatAgentInputFieldsSchema.shape.description.removeDefault().optional(),
   baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   archived: z.boolean().optional(),
   recipe: ChatAgentRecipeSchema.nullable().optional(),
 }).strict().refine((value) => Object.keys(value).length > 1, { message: "An update is required" });
 export const ChatAgentFieldsSchema = ChatAgentInputFieldsSchema.safeExtend({
   recipe: StoredChatAgentRecipeSchema.optional(),
+  /** Set by the server when a recipe bot is instantiated; clients never write it. */
+  recipeRef: BotRecipeRefSchema.optional(),
 });
 export const ChatAgentSchema = ChatAgentFieldsSchema.extend({
   id: ChatAgentIdSchema,

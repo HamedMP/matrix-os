@@ -248,7 +248,7 @@ export async function authorizeOwnerScope(
   return context;
 }
 
-async function authenticateOwnerProject(
+export async function authenticateOwnerProject(
   options: { ownerRuntimeSessions?: OwnerRuntimeSessionService; repository?: CollaborationRepository; runtimeId?: string },
   c: Context,
   body: Uint8Array,
@@ -256,12 +256,13 @@ async function authenticateOwnerProject(
 ): Promise<CollaborationScopeRecord> {
   const credentials = readDirectCredentials(c);
   const verb = method(c);
-  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId
-    || (verb !== "GET" && verb !== "POST")) {
+  if (!credentials || !options.ownerRuntimeSessions || !options.repository || !options.runtimeId || verb === "PUT") {
     throw new DirectAuthError("invalid_signature", "Owner project session is required");
   }
+  const conditional = optionalDeleteConditions(c);
   const session = await options.ownerRuntimeSessions.authenticate({
     ...credentials, method: verb, path: c.req.path, query: rawQuery(c), body,
+    ...(conditional ? { conditionalHeadersDigest: digestDeleteConditions(conditional) } : {}),
   });
   const scope = await requireScope(options.repository, scopeId);
   if (scope.kind !== "project" || scope.membershipMode !== "direct"

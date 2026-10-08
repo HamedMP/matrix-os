@@ -13,9 +13,6 @@ const sourceSpec = revision?.spec;
 if (!sourceAnnotations || !sourceSpec || sourceSpec.containers?.length !== 1) {
   throw new Error("Expected a single-container Cloud Run candidate revision");
 }
-if (sourceAnnotations["run.googleapis.com/cpu-throttling"] !== "false") {
-  throw new Error("Candidate must have CPU allocated outside requests");
-}
 if (!sourceSpec.serviceAccountName || !sourceSpec.containers[0].image?.includes("@sha256:")) {
   throw new Error("Candidate must have a service account and immutable image digest");
 }

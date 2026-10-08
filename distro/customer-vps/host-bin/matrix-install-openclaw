@@ -10,6 +10,13 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   matrix_export_owner_env
 fi
 
+# An owner-requested uninstall remains authoritative across host upgrades.
+# Only the explicit host-control Install action clears this root-owned marker.
+if [ -e /var/lib/matrix-agent-runtime/disabled-openclaw ] || [ -L /var/lib/matrix-agent-runtime/disabled-openclaw ]; then
+  printf 'matrix-install-openclaw: installation disabled by owner\n'
+  exit 0
+fi
+
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 OPENCLAW_VERSION="${OPENCLAW_VERSION:-2026.7.1}"

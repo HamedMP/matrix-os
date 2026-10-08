@@ -14,6 +14,7 @@ import {
   KernelCredentialAccessSourceIdSchema,
   type KernelCredentialAccessSourceId,
 } from "../kernel-credentials.js";
+import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { validateCustomMcpUrl } from "../integrations/custom-mcp/security.js";
 import {
   createCodexOwnerIdentityResolver,
@@ -24,9 +25,12 @@ const MAX_RESPONSE_BYTES = 512 * 1024;
 const MAX_IN_FLIGHT = 8;
 const INFERENCE_TIMEOUT_MS = 30_000;
 const EGRESS_TIMEOUT_MS = 10_000;
-const MAX_REQUEST_FRAME_BYTES = 512 * 1024;
+/** Bot session frames carry a whole transcript: the 512 KiB session plus envelope headroom. */
+const MAX_REQUEST_FRAME_BYTES = 640 * 1024;
 const MAX_RESPONSE_FRAME_BYTES = 1024 * 1024;
 const MAX_BROKER_CONNECTIONS = 64;
+/** Matches the bot worker's bridge: the longest funded queue wait plus one model call. */
+const MAX_ROUTED_REQUEST_TIMEOUT_MS = 11 * 60_000;
 
 const InferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
@@ -106,7 +110,7 @@ function failure(
   return ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId, ok: false, error });
 }
 
-async function readBoundedBody(response: Response): Promise<string> {
+export async function readBoundedBody(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) throw new RangeError("response_too_large");
   if (!response.body) return "";
@@ -133,14 +137,14 @@ async function readBoundedBody(response: Response): Promise<string> {
   return Buffer.concat(chunks, size).toString("utf8");
 }
 
-async function discard(response: Response): Promise<void> {
+export async function discard(response: Response): Promise<void> {
   await response.body?.cancel().catch((error: unknown) => {
     console.warn("[collaboration] scope broker response discard failed:",
       error instanceof Error ? error.name : "UnknownError");
   });
 }
 
-function safeResponseHeaders(response: Response, expected: "inference" | "egress") {
+export function safeResponseHeaders(response: Response, expected: "inference" | "egress") {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   const allowed = expected === "inference"
     ? contentType === "text/event-stream"
@@ -208,6 +212,8 @@ export function createScopeRuntimeBroker(options: {
     url?: string;
   }): Promise<ScopeRuntimeBrokerAuthorization>;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
+  /** Orders funded retries after a relay 429; absent means the first answer is final. */
+  fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: ResolveCredentials;
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   resolveEgress?: ResolveEgress;
@@ -267,6 +273,8 @@ export function createScopeRuntimeBroker(options: {
         process.env,
         authorization.accessSourceId,
         options.fundedCredentialProvider,
+        // Shared Chat runs answer a person who is waiting.
+        { requestClass: "interactive" },
       );
       const env = credentialLaunch.env;
       const apiKey = env?.ANTHROPIC_API_KEY;
@@ -284,13 +292,44 @@ export function createScopeRuntimeBroker(options: {
       for (const [name, value] of Object.entries(request.headers)) {
         if (value) headers.set(name, value);
       }
-      const response = await fetchImpl(`${baseUrl}${request.path}`, {
+      const funded = authorization.accessSourceId === "matrix_included" ? options.fundedAdmission : undefined;
+      // The runtime handle is authenticated and unique per shared run, so it keeps each turn's place in line.
+      if (authorization.accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
+      // Every attempt and every wait ends with this request, before the workload's socket gives up.
+      const deadline = AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]);
+      const send = () => fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
         body: request.body,
         redirect: "error",
-        signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(INFERENCE_TIMEOUT_MS)]),
+        signal: deadline,
       });
+      let attempts = 0;
+      const response = funded
+        ? await funded.run<Response | "denied">({ requestClass: "interactive", signal: deadline }, async () => {
+          attempts += 1;
+          if (attempts > 1) {
+            // Authority can change while waiting; never start a funded request on a stale approval.
+            const current = BrokerAuthorizationSchema.parse(await options.authorize({
+              runtimeHandle: request.runtimeHandle,
+              executionGeneration: request.executionGeneration,
+              requestId: request.requestId,
+              action: request.action,
+              modelId,
+            }));
+            if (!current.allowed || current.accessSourceId !== authorization.accessSourceId
+              || !current.allowedModelIds.includes(modelId)) return { kind: "done", value: "denied" };
+          }
+          const attempt = await send();
+          // Only a relay capacity refusal is safe to repeat; upstream provider 429s are final.
+          if (attempt.status !== 429 || attempt.headers.get("x-matrix-funded-reason") === null) {
+            return { kind: "done", value: attempt };
+          }
+          await discard(attempt);
+          return { kind: "busy" };
+        })
+        : await send();
+      if (response === "denied") return failure(request.requestId, "action_denied");
       if (!response.ok) {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
@@ -432,8 +471,19 @@ export function createScopeRuntimeBrokerServer(options: {
     handle(request: ScopeRuntimeBrokerRequest): Promise<ScopeRuntimeBrokerResponse>;
     close(): Promise<void> | void;
   };
+  /**
+   * Lets the registry that owns a frame's runtime handle take the whole frame
+   * (bot workloads). Returns undefined to use the shared broker path; a
+   * routed handler resolving undefined drops the connection.
+   */
+  routeFrame?(raw: unknown): Promise<Record<string, unknown> | undefined> | undefined;
   maxConnections?: number;
   requestTimeoutMs?: number;
+  /**
+   * Idle timeout once a frame is routed. A routed handler bounds its own work
+   * (a background model call may wait up to ten minutes for funded capacity).
+   */
+  routedRequestTimeoutMs?: number;
 }) {
   const maxConnections = Math.max(1, Math.min(
     Math.trunc(options.maxConnections ?? MAX_BROKER_CONNECTIONS),
@@ -442,6 +492,10 @@ export function createScopeRuntimeBrokerServer(options: {
   const requestTimeoutMs = Math.max(1, Math.min(
     Math.trunc(options.requestTimeoutMs ?? 35_000),
     60_000,
+  ));
+  const routedRequestTimeoutMs = Math.max(1, Math.min(
+    Math.trunc(options.routedRequestTimeoutMs ?? MAX_ROUTED_REQUEST_TIMEOUT_MS),
+    MAX_ROUTED_REQUEST_TIMEOUT_MS,
   ));
   const sockets = new Set<Socket>();
   const operations = new Set<Promise<void>>();
@@ -484,9 +538,22 @@ export function createScopeRuntimeBrokerServer(options: {
             socket.destroy();
             return;
           }
-          const request = ScopeRuntimeBrokerRequestSchema.parse(JSON.parse(frames[0]!));
-          const response = await options.broker.handle(request);
-          const frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+          const raw: unknown = JSON.parse(frames[0]!);
+          const routed = options.routeFrame?.(raw);
+          let frame: string;
+          if (routed) {
+            socket.setTimeout(routedRequestTimeoutMs);
+            const response = await routed;
+            if (!response) {
+              socket.destroy();
+              return;
+            }
+            frame = `${JSON.stringify(response)}\n`;
+          } else {
+            const request = ScopeRuntimeBrokerRequestSchema.parse(raw);
+            const response = await options.broker.handle(request);
+            frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+          }
           if (Buffer.byteLength(frame, "utf8") > MAX_RESPONSE_FRAME_BYTES) {
             socket.destroy();
             return;

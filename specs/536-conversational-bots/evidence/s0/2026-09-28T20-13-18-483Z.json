@@ -1,0 +1,110 @@
+{
+  "probe": "s0-pi",
+  "recordedAt": "2026-09-28T20:13:18.483Z",
+  "model": "claude-haiku-4-5-20251001",
+  "packages": {
+    "pi-agent-core": "0.86.1",
+    "pi-ai": "0.86.1"
+  },
+  "spendCapUsd": 1.99,
+  "prices": {
+    "currency": "USD",
+    "perMillionTokens": {
+      "input": 1,
+      "output": 5,
+      "cacheRead": 0.1,
+      "cacheWrite": 1.25
+    }
+  },
+  "spentUsd": 0.00767,
+  "cases": [
+    {
+      "name": "text_tool_call",
+      "passed": true,
+      "durationMs": 3743,
+      "usage": {
+        "calls": 3,
+        "inputTokens": 3129,
+        "outputTokens": 185,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.004054
+      },
+      "status": "completed",
+      "toolActions": 2
+    },
+    {
+      "name": "image_input",
+      "passed": true,
+      "durationMs": 609,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 42,
+        "outputTokens": 5,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.000067
+      },
+      "status": "completed",
+      "toolActions": 0
+    },
+    {
+      "name": "denied_call_not_executed",
+      "passed": true,
+      "durationMs": 2138,
+      "usage": {
+        "calls": 2,
+        "inputTokens": 2002,
+        "outputTokens": 131,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.002657
+      },
+      "status": "completed",
+      "toolActions": 1
+    },
+    {
+      "name": "cancellation",
+      "passed": true,
+      "durationMs": 152,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0
+      },
+      "status": "cancelled",
+      "toolActions": 0
+    },
+    {
+      "name": "context_reconstruction",
+      "passed": true,
+      "durationMs": 1240,
+      "usage": {
+        "calls": 2,
+        "inputTokens": 97,
+        "outputTokens": 10,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.000147
+      },
+      "status": "completed",
+      "toolActions": 0
+    },
+    {
+      "name": "compaction",
+      "passed": true,
+      "durationMs": 1620,
+      "usage": {
+        "calls": 1,
+        "inputTokens": 155,
+        "outputTokens": 118,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0,
+        "costUsd": 0.000745
+      }
+    }
+  ]
+}

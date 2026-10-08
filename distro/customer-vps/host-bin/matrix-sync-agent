@@ -211,6 +211,11 @@ mark_hermes_reconciliation_pending() {
 }
 
 reconcile_hermes_release() {
+  if [ -e /var/lib/matrix-agent-runtime/disabled-hermes ] || [ -L /var/lib/matrix-agent-runtime/disabled-hermes ]; then
+    sudo rm -f -- "$HERMES_RECONCILE_MARKER" || return 1
+    log "Hermes reconciliation skipped: owner disabled installation"
+    return 0
+  fi
   if [ -f "/etc/systemd/system/matrix-hermes.service" ]; then
     if ! sudo systemctl enable matrix-hermes.service; then
       log "WARN: failed to enable matrix-hermes.service; reconciliation remains retryable"
@@ -1538,6 +1543,13 @@ apply_update() {
       fi
     fi
     if [ -f "$extract_dir/systemd/matrix-scope-runtime.service" ]; then
+      # Prepare each fixed root before the supervisor's read-only namespace is created.
+      # Existing roots and owner data retain their modes and contents.
+      for workload_root in /home/matrix/home/bots /home/matrix/home/agent-workspaces /home/matrix/home/projects /home/matrix/home/worktrees; do
+        if [ ! -d "$workload_root" ]; then
+          sudo install -d -o matrix -g matrix -m 0750 "$workload_root"
+        fi
+      done
       sudo systemctl enable matrix-scope-runtime.service
       sudo systemctl start matrix-scope-runtime.service
       log "Collaboration scope runtime service enabled"

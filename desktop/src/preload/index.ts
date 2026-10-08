@@ -3,6 +3,7 @@ import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, createAp
 // typed contract — payloads are validated here AND in main (defense in depth,
 // FR-081). The credential never crosses this boundary.
 import { contextBridge, ipcRenderer } from "electron";
+import { NATIVE_APP_OPEN_CHANNEL, createNativeAppOpenClient } from "../shared/native-app-open";
 import {
   EVENT_CHANNELS,
   INVOKE_CHANNELS,
@@ -52,6 +53,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
   contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
     db: database,
+    openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     generate: createAppGenerateClient((context) => ipcRenderer.invoke(APP_GENERATE_CHANNEL, context)),
     ai: createAppAiClient((input) => ipcRenderer.invoke(APP_AI_CHANNEL, input)),
     // Advertise only capabilities this view can use. Other apps retain the

@@ -1,4 +1,5 @@
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
+import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
@@ -250,10 +251,11 @@ const RpcErrorSchema = z.object({
 }).passthrough();
 
 class ProviderRpcError extends Error {
-  constructor(reason = "rejected") {
+  constructor(reason = "rejected", failureReason) {
     super("provider_request_failed");
     this.name = "ProviderRpcError";
     this.reason = reason;
+    this.failureReason = failureReason;
   }
 }
 
@@ -265,6 +267,7 @@ function providerRpcError(raw) {
       && parsed.data.message === "no active turn to steer"
       ? "turn_not_idle"
       : "rejected",
+    codexTerminalFailureReason(raw),
   );
 }
 const ApprovalControlSchema = z.object({
@@ -386,6 +389,7 @@ let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
 let activeTurnTokenUsage;
+let activeTurnFailureReason;
 let terminalEventCount = 0;
 let stdinClosed = false;
 let wakeTurn;
@@ -427,7 +431,7 @@ const executionWatchdog = createCodexExecutionWatchdog({
       ...(diagnostic.toolCallId ? { toolCallId: diagnostic.toolCallId } : {}),
       remoteOutcome: "unknown",
     })}\n`);
-    rejectExecution?.(new Error("Coding execution deadline exceeded"));
+    rejectExecution?.(new CodexExecutionTimeout());
   },
 });
 
@@ -635,7 +639,7 @@ function request(method, params, timeoutMs = RPC_TIMEOUT_MS, subagentMetadata) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRpc.delete(id);
-      reject(new Error("provider_request_timeout"));
+      reject(new CodexExecutionTimeout());
     }, timeoutMs);
     timeout.unref();
     pendingRpc.set(id, { resolve, reject, timeout, method, subagentMetadata });
@@ -1001,8 +1005,17 @@ async function handleProviderMessage(raw) {
     return;
   }
   const notificationTurnId = raw?.params?.turnId ?? raw?.params?.turn?.id;
+  if (raw?.params?.threadId && raw.params.threadId !== nativeThreadId) return;
   if (activeNativeTurnId && notificationTurnId && notificationTurnId !== activeNativeTurnId) {
     rejectCodexServerRequest(raw, sendProvider, -32000);
+    return;
+  }
+  // Notifications are diagnostic evidence, not terminal outcomes. A failed
+  // completion must confirm them; retried or unrelated turns cannot leak a reason.
+  if (raw?.method === "error" && raw.params?.willRetry === false
+    && typeof activeNativeTurnId === "string"
+    && raw.params?.threadId === nativeThreadId && notificationTurnId === activeNativeTurnId) {
+    activeTurnFailureReason = codexTerminalFailureReason(raw.params.error);
     return;
   }
   if (await handleApproval(raw)) return;
@@ -1054,7 +1067,9 @@ async function handleProviderMessage(raw) {
   const completed = TurnCompletedSchema.safeParse(raw);
   if (completed.success) {
     const status = completed.data.params.turn.status;
-    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed");
+    if (status === "inProgress") return;
+    await finishTurn(status === "completed" ? "completed" : status === "interrupted" ? "aborted" : "failed",
+      status === "failed" ? codexTerminalFailureReason(completed.data.params.turn.error) ?? activeTurnFailureReason : undefined);
   }
 }
 
@@ -1314,7 +1329,7 @@ function stop() {
   stopTimer.unref();
 }
 
-async function finishTurn(outcome) {
+async function finishTurn(outcome, failureReason) {
   executionWatchdog.stop();
   await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
@@ -1323,7 +1338,8 @@ async function finishTurn(outcome) {
     toolItemsWithOutput.size > 0;
   if (!activeTurn && !hasUnsettledItems) {
     if ((outcome === "failed" || outcome === "aborted") && terminalEventCount === 0) {
-      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed" });
+      await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed",
+        ...(outcome === "failed" && failureReason ? { failureReason } : {}) });
       terminalEventCount += 1;
     }
     return;
@@ -1332,6 +1348,7 @@ async function finishTurn(outcome) {
   activeTurn = false;
   activeNativeTurnId = undefined;
   activeTurnTokenUsage = undefined;
+  activeTurnFailureReason = undefined;
   settleToolBoundaryWaiters(false);
   for (const messageId of assistantItemsWithDelta) {
     await flushAssistantDelta(messageId);
@@ -1353,6 +1370,7 @@ async function finishTurn(outcome) {
   privateToolItems.clear();
   await persist({
     type: outcome === "completed" ? "turn.completed" : outcome === "aborted" ? "turn.aborted" : "turn.failed",
+    ...(outcome === "failed" && failureReason ? { failureReason } : {}),
     ...(outcome === "completed" && tokenUsage ? { usage: tokenUsage } : {}),
   });
   terminalEventCount += 1;
@@ -1369,6 +1387,7 @@ async function runTurn(threadId, turn) {
   subagentRuntime.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
+  activeTurnFailureReason = undefined;
   try {
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
@@ -1527,7 +1546,8 @@ try {
     await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect",
       outcome: userStopped ? "cancelled" : "failed" });
   }
-  await finishTurn(userStopped ? "aborted" : "failed").catch((error) => {
+  await finishTurn(userStopped ? "aborted" : "failed", error instanceof ProviderRpcError ? error.failureReason
+    : codexExecutionFailureReason(error)).catch((error) => {
     console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
   });
   stop();

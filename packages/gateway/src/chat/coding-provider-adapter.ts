@@ -1,6 +1,7 @@
 import { sealToolOutput } from "../coding-agents/protected-tool-output.mjs";
 import { coarseToolOutputText } from "../coding-agents/codex-tool-output.mjs";
 import { ChatInputNotDeliveredError } from "./input-delivery-error.js";
+import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
 import { BackgroundProjectionDetached } from "./background-run-control.js";
 import { createHash } from "node:crypto";
 import { boundedOperation } from "../bounded-operation.js";
@@ -9,6 +10,7 @@ import type { CodingAgentProviderAdapter } from "../coding-agents/provider-adapt
 import {
   AgentModeSchema,
   CanonicalChatSafeErrorSchema,
+  canonicalAgentFailure,
   CanonicalChatToolOutputTextSchema,
   type CanonicalChatAgentActivityKind,
   type AgentThreadEvent,
@@ -23,6 +25,7 @@ import {
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { projectCodingActivity } from "./coding-activity-projection.js";
 import { createAssistantTextStreamProjector, sanitizeAssistantText } from "./safe-activity-projection.js";
+import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -255,12 +258,14 @@ function normalizeEvent(
     return [...settled, CanonicalProviderRunEventSchema.parse({
       type: "run.completed",
       outcome: "failed",
-      error: CanonicalChatSafeErrorSchema.parse({
+      error: CanonicalChatSafeErrorSchema.parse(
+        canonicalAgentFailure(event.error.code.startsWith("agent_") ? event.error.code.slice(6) : undefined) ?? {
         code: "run_failed",
         safeMessage: "The coding Provider Run failed.",
         retryable: true,
         recoveryActions: ["retry"],
-      }),
+        },
+      ),
     })];
   }
   if (event.type === "thread.completed") {
@@ -358,35 +363,35 @@ async function* normalizedEvents(
 async function* projectAssistantText(
   events: AsyncIterable<CanonicalProviderRunEvent>,
   options: { homePath: string; executionRoot?: string; showPrivatePaths: boolean },
+  context: { ownerType: "personal" | "organization"; ownerId: string; chatId: string; runId: string; key?: Buffer; sharedScopeId?: string },
 ): AsyncGenerator<CanonicalProviderRunEvent> {
   let messageId: string | undefined;
   let projector = createAssistantTextStreamProjector(options);
+  const emitter = createAssistantCredentialEmitter(context);
   const flush = () => {
-    const delta = projector.flush();
-    return delta && messageId ? CanonicalProviderRunEventSchema.parse({ type: "assistant.delta", messageId, delta }) : undefined;
+    const projected = projector.flushCaptured();
+    return projected.text && messageId ? emitter.emit(projected, messageId) : [];
   };
   for await (const event of events) {
     if (event.type === "assistant.delta") {
       if (messageId && messageId !== event.messageId) {
-        const tail = flush();
-        if (tail) yield tail;
+        for (const tail of flush()) yield tail;
         projector = createAssistantTextStreamProjector(options);
       }
       messageId = event.messageId;
-      const delta = projector.push(event.delta);
-      if (delta) yield { ...event, delta };
+      const projected = projector.pushCaptured(event.delta);
+      if (projected.text) for (const delta of emitter.emit(projected, messageId)) yield delta;
       continue;
     }
     if (event.type === "run.completed") {
-      const tail = flush();
-      if (tail) yield tail;
+      for (const tail of flush()) yield tail;
       projector = createAssistantTextStreamProjector(options);
       messageId = undefined;
     } else if (messageId) {
       // Preserve the native activity order when an ordinary word is complete.
       // Path and credential candidates remain buffered across activity events.
       const delta = projector.flushBoundary(" ");
-      if (delta) yield { type: "assistant.delta", messageId, delta };
+      if (delta) for (const projected of emitter.emit({ text: delta, captures: [] }, messageId)) yield projected;
     }
     yield event;
   }
@@ -537,6 +542,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         for await (const event of projectAssistantText(
           normalizedEvents(created.snapshot.events.items, inbox, options.providerId, options.toolOutputKey),
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+          { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
@@ -592,6 +598,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         for await (const event of projectAssistantText(
           normalizedEvents(eventsForAcceptedRun(current, requestId), inbox, options.providerId, options.toolOutputKey),
           { homePath: options.homePath ?? "/home/matrix/home", executionRoot: input.executionRoot, showPrivatePaths: !input.sharedScopeId },
+          { ownerType: input.owner.type, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, key: options.toolOutputKey, sharedScopeId: input.sharedScopeId },
         )) {
           if (event.type === "run.completed") terminalObserved = true;
           yield event;
@@ -691,5 +698,21 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       );
     },
   };
+  if (options.providerId === "codex" && options.nativeInputProvider?.deferInput) {
+    adapter.submitDeferredInput = async (input) => {
+      const active = activeSteerRuns.get(input.runId);
+      if (!active || active.ownerId !== input.owner.ownerId || active.chatId !== input.chatId) throw new ChatSteerNotDeliveredError();
+      try {
+        await adapter.steer!(input);
+      } catch (error: unknown) {
+        if (error instanceof CodingAgentTurnError && ["thread_not_found", "thread_busy"].includes(error.code)) {
+          throw new ChatSteerNotDeliveredError();
+        }
+        if ((error instanceof CodingAgentTurnError && error.code === "turn_unavailable")
+          || (error instanceof Error && ["CodexControlRejectedError", "CodexControlUnavailableError"].includes(error.name))) throw new ChatInputNotDeliveredError();
+        throw error;
+      }
+    };
+  }
   return adapter;
 }

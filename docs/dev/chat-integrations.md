@@ -10,12 +10,15 @@ model or provider credential does not add missing harness tools.
 | Claude Code canonical Chat | Inventory, schemas, exact-account actions and account management | Run-scoped Gateway authority; action approval below |
 | Claude Code Terminal | Full user-level Matrix MCP registration | Independent of Chat's strict per-run configuration |
 | Codex Chat | Native MCP and read-only CLI fallback | Verify native discovery/read and fallback separately |
-| Claude SDK / Matrix AI kernel | Kernel IPC tools and integration approval hook | Funding does not itself identify the executing harness |
+| Matrix AI / owned Pi canonical Chat | Owner services and Custom MCP through the Gateway broker | Private owner/run authority and canonical action approval; no recipe grant inheritance |
 | Hermes | Built-in MCP bootstrap and actor-scoped bearer | Custom MCP authorization is a separate contract |
 | OpenClaw | Matrix MCP bootstrap registration | Verify actual runtime configuration and provider execution |
 | OpenCode canonical Chat | No built-in integration bridge | Current read-only tool/permission restriction prevents fallback |
-| Pi canonical Chat | No built-in integration bridge | Current read/ask_user-only route prevents fallback |
+| User-installed Pi canonical Chat | No built-in integration bridge | The separate CLI route retains its read/ask_user-only restriction |
 | Jev Inbox recipe | Receipt-bound preview workflow | Intentionally excludes general Drive actions |
+
+Funded canonical Chat uses the owned Pi worker; the retired SDK-funded Chat route
+remains denied. A user-installed Pi CLI is independent of that managed worker.
 
 This table records implementation/configuration paths, not a live pass for every
 model, account or release. Record exact versions and actual tool outcomes when
@@ -78,3 +81,10 @@ the account owner accepts that visibility. A tagged Platform Preview backed by
 staging data cannot validate an owner's production Drive connection. Record the
 serving Platform revision and exact host bundle separately, then verify the
 machine-only negative case before a real provider read.
+
+Preview Drive redemption, discovery, grant issuance and execution honor the
+authenticated actor's account-deletion admission under the same owner lock as
+ordinary integration mutations. Deletion of the shared machine owner does not
+select or authorize a collaborator's personal account. Grant revocation remains
+available for cleanup. A provider failure still consumes the approved one-use
+grant and requires new approval before retry.

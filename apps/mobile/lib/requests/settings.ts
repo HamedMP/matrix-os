@@ -7,7 +7,7 @@ import {
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
 
-const SystemInfoSchema = z.looseObject({
+export const MobileSystemInfoSchema = z.looseObject({
   version: z.string(),
   runningVersion: z.string(),
   model: z.string(),
@@ -19,7 +19,7 @@ const SystemInfoSchema = z.looseObject({
 const OkResponseSchema = z.looseObject({ ok: z.literal(true) });
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
-export type MobileSystemInfo = z.infer<typeof SystemInfoSchema>;
+export type MobileSystemInfo = z.infer<typeof MobileSystemInfoSchema>;
 export type MobileBillingStatus = MatrixBillingStatus;
 
 export function fetchMobileSystemInfo(
@@ -29,7 +29,7 @@ export function fetchMobileSystemInfo(
   return fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(gatewayUrl, "/api/system/info"),
     token: clerkToken,
-    schema: SystemInfoSchema,
+    schema: MobileSystemInfoSchema,
     errorMessage: "System information unavailable. Try again.",
   });
 }

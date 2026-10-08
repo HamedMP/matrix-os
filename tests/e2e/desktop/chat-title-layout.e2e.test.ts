@@ -36,6 +36,8 @@ suite("long Chat titles in the built Electron header", () => {
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
     page = await app.firstWindow(); page.setDefaultTimeout(8000);
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
+    const done = page.getByRole("button", { name: "Done", exact: true });
+    if (await done.getAttribute("aria-expanded") === "false") await done.click();
     await page.getByRole("button", { name: LONG_CHAT_TITLE, exact: true }).click();
     await page.getByRole("button", { name: `Rename ${LONG_CHAT_TITLE}`, exact: true }).waitFor();
     if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) {
@@ -48,7 +50,7 @@ suite("long Chat titles in the built Electron header", () => {
   afterAll(async () => {
     try { if (app) await closeElectronApp(app); } finally { await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); }
   });
-  it("clips history titles and scrolls them on hover/focus, respecting reduced motion", async () => {
+  it("scrolls overflowing history titles on hover/focus and keeps reduced motion quiet", async () => {
     const row = page.getByRole("button", { name: LONG_CHAT_TITLE, exact: true });
     await row.hover();
     const clipped = await row.evaluate((element) => {
@@ -64,12 +66,16 @@ suite("long Chat titles in the built Electron header", () => {
     });
     expect(clipped).toBe(true);
     const title = row.locator("span[title]");
-    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
-    const start = await title.evaluate(el => el.getBoundingClientRect().x);
-    await expect.poll(() => title.evaluate(el => el.getBoundingClientRect().x)).toBeLessThan(start - 2);
+    expect(await title.evaluate(el => el.getAnimations().length)).toBe(1);
+    const viewport = row.locator(".matrix-chat-title-viewport");
+    const start = await viewport.boundingBox();
+    await title.evaluate(el => { const animation = el.getAnimations()[0]; animation.pause(); animation.currentTime = 2000; });
+    expect(await title.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m41)).toBeLessThan(0);
+    expect(await viewport.boundingBox()).toEqual(start);
+    await title.evaluate(el => el.getAnimations().forEach(animation => animation.cancel()));
     await page.mouse.move(0, 0);
     await row.focus();
-    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
+    expect(await title.evaluate(el => el.getAnimations().length)).toBe(1);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(0);
     expect(await title.getAttribute("title")).toBe(LONG_CHAT_TITLE);
@@ -85,25 +91,23 @@ suite("long Chat titles in the built Electron header", () => {
       await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 850), width);
       await row.hover();
       const title = row.locator("span[title]");
-      await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
+      expect(await title.evaluate(el => el.getAnimations().length)).toBe(1);
       const bounds = await row.evaluate(element => {
         const text = element.querySelector("span[title]")!;
-        const viewport = text.parentElement!;
+        const viewport = element.querySelector(".matrix-chat-title-viewport")!;
         const unread = element.querySelector('[aria-label^="Unread "]')!;
         const error = element.querySelector('[aria-label^="Agent failed"]')!;
-        const animation = text.getAnimations()[0];
-        animation.pause();
-        animation.currentTime = Number(animation.effect!.getTiming().duration);
         const actions = element.parentElement!.querySelector('button[title^="Unpin "]')!;
         return { viewportRight: viewport.getBoundingClientRect().right,
           unreadLeft: unread.getBoundingClientRect().left, errorLeft: error.getBoundingClientRect().left,
-          textRight: text.getBoundingClientRect().right, actionLeft: actions.getBoundingClientRect().left };
+          clipping: getComputedStyle(viewport).overflowX, actionLeft: actions.getBoundingClientRect().left };
       });
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.unreadLeft);
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.errorLeft);
-      expect(bounds.textRight).toBeLessThanOrEqual(Math.min(bounds.actionLeft, bounds.viewportRight) + 1);
+      expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.actionLeft);
+      expect(bounds.clipping).toBe("hidden");
       await page.getByRole("button", { name: `Unpin ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
-      await page.getByRole("button", { name: `Delete ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
+      await page.getByRole("button", { name: `Actions for ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
       await page.screenshot({ path: join(evidence, `history-${width}.png`) });
     }
   });

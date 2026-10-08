@@ -70,6 +70,11 @@ export const ResolvedChatAgentRecipeSchema = z.object({
     name: canonicalSafeLabel(120, 480),
     instructions: canonicalBoundedText(24 * 1024, 24 * 1024),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    // Server-resolved location for lazy resources; absent in older snapshots.
+    sourceFile: z.string().min(1).max(2048).startsWith("/")
+      .regex(/^[^\u0000-\u001f\u007f]+$/)
+      .refine((value) => new TextEncoder().encode(value).byteLength <= 2048,
+        { message: "Skill source location exceeds byte limit" }).optional(),
   }).strict()).max(CHAT_AGENT_RECIPE_MAX_SKILLS),
   integrations: z.array(RecipeIntegrationSchema).max(8),
   output: RecipeOutputSchema,

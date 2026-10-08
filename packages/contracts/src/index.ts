@@ -8,6 +8,8 @@ export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
+export * from "#chat-event-wire";
+export * from "#bots";
 export * from "#chat-artifacts";
 export * from "#file-preview";
 import { z } from "zod/v4";
@@ -66,6 +68,7 @@ export * from "#collaboration-peer";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
+export * from "#organization-management";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#jev-hermes-route";
@@ -1449,3 +1452,11 @@ export { normalizeTerminalSnapshot } from "#terminal-snapshot";
 export { chatSubagentPresentation, projectChatSubagent, ChatSubagentSchema, type ChatSubagent } from "#chat-subagent";
 
 export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type ImportedChatAssetRef } from "#canonical-chat-import-parts";
+export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
+
+export * from "#provider-workflows";
+export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-wire';
+export * from '#matrix-anthropic-connection';
+
+export * from "#chat-navigation";

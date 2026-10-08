@@ -21,20 +21,20 @@ describe("shared provider artwork URLs", () => {
   it("resolves each shipped logo inside a packaged Electron renderer", () => {
     setDocumentBase("file:///Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/index.html");
     const expected = {
-      claude: "claude-code.png",
-      codex: "codex.png",
-      hermes: "hermes-agent.png",
-      openclaw: "openclaw.svg",
-      opencode: "opencode-white.png",
-      pi: "pi-coding-agent.png",
+      claude: "agents/settings/claude.svg",
+      codex: "agents/settings/openai.svg",
+      hermes: "agent-logos/hermes-agent.png",
+      openclaw: "agent-logos/openclaw.svg",
+      opencode: "agent-logos/opencode-white.png",
+      pi: "agent-logos/pi-coding-agent.png",
     } as const;
 
     for (const [harness, filename] of Object.entries(expected)) {
       const { container, unmount } = render(<HarnessIcon harness={harness as keyof typeof expected} />);
       const src = container.querySelector("img")?.getAttribute("src");
-      expect(src).toBe(`./agent-logos/${filename}`);
+      expect(src).toBe(`./${filename}`);
       expect(new URL(src!, document.baseURI).pathname).toBe(
-        `/Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/agent-logos/${filename}`,
+        `/Applications/Matrix%20OS.app/Contents/Resources/app.asar/out/renderer/${filename}`,
       );
       unmount();
     }
@@ -44,7 +44,7 @@ describe("shared provider artwork URLs", () => {
     setDocumentBase("https://app.matrix-os.com/vm/review/settings");
     const { container } = render(<HarnessIcon harness="codex" />);
     const src = container.querySelector("img")?.getAttribute("src");
-    expect(src).toBe("/agent-logos/codex.png");
-    expect(new URL(src!, document.baseURI).pathname).toBe("/agent-logos/codex.png");
+    expect(src).toBe("/vm/review/agents/settings/openai.svg");
+    expect(new URL(src!, document.baseURI).pathname).toBe("/vm/review/agents/settings/openai.svg");
   });
 });

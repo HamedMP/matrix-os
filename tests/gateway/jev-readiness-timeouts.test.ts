@@ -10,7 +10,8 @@ const summary = { policy: { enabled: true, globalRevision: 1, runtimeRevision: 1
   monthlyBudgetMicrousd: 100_000, checkedAt: now.toISOString(), staleAfter: receipt.staleAfter },
 funding: { asOf: now.toISOString(), periodStart: now.toISOString(), monthlyBudgetMicrousd: 100_000,
   settledThisMonthMicrousd: 0, reservedMicrousd: 0, reservedThisMonthMicrousd: 0, promotionalBalanceMicrousd: 100_000,
-  addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000, remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000 } };
+  addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000, remainingBalanceMicrousd: 100_000, remainingBudgetMicrousd: 100_000 },
+chatAvailability: { contractVersion: 1 as const, asOf: now.toISOString(), eligibleBalanceMicrousd: 100_000, availableBalanceMicrousd: 100_000 } };
 function config() { return loadFundedAiRuntimeConfig({ MATRIX_FUNDED_AI_ENABLED: "true", PLATFORM_INTERNAL_URL: "https://platform.example.test",
   MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.test", MATRIX_FUNDED_AI_RUNTIME_TOKEN: "t".repeat(64),
   MATRIX_HANDLE: "fixture", MATRIX_CLERK_USER_ID: "owner_fixture", MATRIX_MACHINE_ID: "machine_fixture", MATRIX_RUNTIME_SLOT: "primary" })!; }

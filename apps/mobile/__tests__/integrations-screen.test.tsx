@@ -98,7 +98,7 @@ describe("drawer integrations screen", () => {
     const styles = [
       screen.getByLabelText("View installed integrations").props.style,
       screen.getByText("2 connected accounts").props.style,
-      screen.getByText("AVAILABLE").props.style,
+      screen.getByText("Communication").props.style,
       screen.getByLabelText("Connect GitHub integration").props.style,
     ].map(NativeStyleSheet.flatten);
 
@@ -110,6 +110,17 @@ describe("drawer integrations screen", () => {
       expect(style.marginBottom).toBeUndefined();
       expect(style.marginVertical).toBeUndefined();
     }
+  });
+
+  it("searches apps and filters connected apps using the shared catalog", () => {
+    render(<IntegrationsScreen />);
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "email");
+    expect(screen.getByLabelText("Connect Gmail integration")).toBeTruthy();
+    expect(screen.queryByLabelText("Connect GitHub integration")).toBeNull();
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "");
+    fireEvent.press(screen.getByText("Connected"));
+    expect(screen.getByLabelText("Connect GitHub integration")).toBeTruthy();
+    expect(screen.queryByLabelText("Connect Gmail integration")).toBeNull();
   });
 
   it("lists available services and connected accounts from the computer", () => {

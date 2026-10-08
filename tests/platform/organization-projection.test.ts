@@ -54,6 +54,50 @@ describe("organization membership projection (T016/T019)", () => {
     await projection.shutdown();
   });
 
+  it("discovers memberships that predate the webhook before confirming an actor has no organizations", async () => {
+    const listOrganizationsForActor = vi.fn(async () => [org]);
+    const listMembers = vi.fn(async () => snapshot(org, [member]));
+    const projection = createOrganizationMembershipProjection({
+      repository,
+      upstream: { listMembers, listOrganizationsForActor },
+      now: () => clock,
+    });
+
+    await expect(projection.discoverOrganizationsForActor(member)).resolves.toEqual({ complete: true });
+    expect(listOrganizationsForActor).toHaveBeenCalledWith(member);
+    expect(await projection.isCurrentMember({ organizationId: org, actorId: member })).toBe(true);
+    await projection.shutdown();
+  });
+
+  it("does not confirm an empty organization list when Clerk discovery is unavailable", async () => {
+    const projection = createOrganizationMembershipProjection({
+      repository,
+      upstream: { listMembers: async () => snapshot(org, [member]) },
+      now: () => clock,
+    });
+
+    await expect(projection.discoverOrganizationsForActor(member)).resolves.toEqual({ complete: false });
+    await projection.shutdown();
+  });
+
+  it("does not mark discovery complete when the projected membership scan is capped", async () => {
+    vi.spyOn(repository, "listOrganizationsForActorPage").mockResolvedValue({
+      organizations: [],
+      complete: false,
+    });
+    const projection = createOrganizationMembershipProjection({
+      repository,
+      upstream: {
+        listOrganizationsForActor: async () => [],
+        listMembers: async () => snapshot(org, [member]),
+      },
+      now: () => clock,
+    });
+
+    await expect(projection.discoverOrganizationsForActor(member)).resolves.toEqual({ complete: false });
+    await projection.shutdown();
+  });
+
   it("tombstones members missing from the upstream snapshot and reports them as ended", async () => {
     let members = [member, outsider];
     const projection = createOrganizationMembershipProjection({ repository, upstream: { listMembers: async () => snapshot(org, members, 2_000) }, now: () => clock });

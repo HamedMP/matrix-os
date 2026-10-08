@@ -1,13 +1,13 @@
 import { executeIntegrationAction } from "./action-execution.js";
-import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess, isConnectionError, isTimeoutError } from "./call-outcome.js";
+import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
 import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection } from "./connection-selection.js";
 import { Hono, type Context } from "hono";
 import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { listServices, getService, getAction } from "./registry.js";
+import { registerConnectedIntegrationWebhook, type VerifiedConnectedWebhookAdmission } from "./connected-webhook.js";
+import { listServices, getService, getServiceByPipedreamApp, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
@@ -43,34 +43,9 @@ const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
   label: LabelField.optional(),
+  connectionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
-
-const WebhookBodySchema = z.object({
-  external_user_id: z.string().min(1),
-  account_id: z.string().min(1),
-  app: z.string().min(1),
-  label: LabelField.optional(),
-  email: z.string().optional(),
-  scopes: z.array(z.string()).optional(),
-});
-
-// ---------------------------------------------------------------------------
-// HMAC verification
-// ---------------------------------------------------------------------------
-
-function verifyHmac(payload: string, signature: string, secret: string): boolean {
-  if (!secret) return false;
-  const expected = createHmac("sha256", secret).update(payload).digest("hex");
-  const expectedBuf = Buffer.from(expected);
-  const signatureBuf = Buffer.from(signature);
-  const maxLen = Math.max(expectedBuf.length, signatureBuf.length);
-  const paddedExpected = Buffer.alloc(maxLen);
-  const paddedSignature = Buffer.alloc(maxLen);
-  expectedBuf.copy(paddedExpected);
-  signatureBuf.copy(paddedSignature);
-  return signatureBuf.length === expectedBuf.length && timingSafeEqual(paddedSignature, paddedExpected);
-}
 
 // ---------------------------------------------------------------------------
 // Per-action param validation
@@ -85,13 +60,6 @@ export { getErrorStatusCode, getRetryAfterSeconds } from "./call-outcome.js";
 // ---------------------------------------------------------------------------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-// Strip control characters and truncate to a safe length before logging
-// untrusted input. Prevents log injection (CR/LF, ANSI escape) from external
-// payloads like webhook bodies.
-function safeForLog(value: unknown, maxLen = 64): string {
-  return String(value).replace(/[\r\n\x00-\x1f\x7f]/g, "?").slice(0, maxLen);
-}
 
 // ---------------------------------------------------------------------------
 // Profile email resolution -- call each service's own API to get the email
@@ -122,11 +90,7 @@ const PROFILE_ENDPOINTS: Record<string, {
     // the verified primary if we want fuller coverage.)
     extract: (d) => d?.email ?? undefined,
   },
-  slack: {
-    url: "https://slack.com/api/auth.test",
-    // auth.test yields a username/display identifier, not an email address.
-    extract: () => undefined,
-  },
+  // Slack auth.test cannot return an email; do not spend a proxy credit on it.
   discord: {
     url: "https://discord.com/api/v10/users/@me",
     extract: (d) => d?.email ?? d?.username,
@@ -171,6 +135,7 @@ export interface IntegrationRoutesOpts {
   resolveUserId: (c: Context) => Promise<string | null>;
   authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
+  verifiedConnectedWebhook?: VerifiedConnectedWebhookAdmission;
   mcpPresetBroker?: {
     listConnections(userId: string): Promise<Array<{
       id: string;
@@ -190,6 +155,7 @@ export interface IntegrationRoutesOpts {
       service: ServiceDefinition;
       actionId: string;
       params?: Record<string, unknown>;
+      connectionId?: string;
     }): Promise<unknown>;
     disconnect(userId: string, connectionId: string): Promise<boolean>;
   };
@@ -199,7 +165,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   // Pending labels from /connect that need to survive the OAuth round-trip.
@@ -453,16 +419,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => {
-        const service = getService(acc.app);
-        return !existingPdIds.has(acc.id) && service?.connectorKind === "pipedream";
+      const newAccounts = pdAccounts.flatMap(acc => {
+        const service = getServiceByPipedreamApp(acc.app);
+        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
       });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
         newAccounts.map(async (acc) => {
           if (acc.email) return acc.email;
-          return resolveAccountEmail(pipedream, externalId, acc.id, acc.app);
+          return resolveAccountEmail(pipedream, externalId, acc.id, acc.serviceId);
         }),
       );
 
@@ -478,10 +444,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
           const explicitLabel = consumePendingLabel(pendingKey);
-          const label = explicitLabel ?? acc.app;
+          const label = explicitLabel ?? acc.serviceId;
           const row = await db.connectService({
             userId: uid,
-            service: acc.app,
+            service: acc.serviceId,
             pipedreamAccountId: acc.id,
             accountLabel: label,
             accountEmail: resolvedEmails[i],
@@ -498,14 +464,15 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }
       const synced = upserted.filter((u) => u.row.inserted).length;
 
-      // Also backfill emails for existing connections missing them
+      // Consent polling must stay credit-free for existing accounts. Backfill
+      // only actual emails from the management inventory, never paid profiles.
       const missingEmail = existing.filter((s) => !s.account_email);
       await Promise.all(
         missingEmail.map(async (s) => {
           const conn = pdAccounts.find((a) => a.id === s.pipedream_account_id);
           if (!conn) return;
-          const email = await resolveAccountEmail(pipedream, externalId, conn.id, s.service);
-          if (email) await db.updateAccountEmail(s.id, email);
+          const email = z.email().safeParse(conn.email);
+          if (email.success) await db.updateAccountEmail(s.id, email.data);
         }),
       );
 
@@ -547,7 +514,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
         const result = await mcpPresetBroker.connect(uid, def);
@@ -586,83 +553,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // POST /webhook/connected -- Pipedream webhook (HMAC verified)
   // -----------------------------------------------------------------------
 
-  app.post("/webhook/connected", bodyLimit({ maxSize: 65536 }), async (c) => {
-    const rawBody = await c.req.text();
-
-    const signature = c.req.header("x-pd-signature");
-    if (!signature || !verifyHmac(rawBody, signature, webhookSecret)) {
-      return c.json({ error: "Invalid signature" }, 401);
-    }
-
-    let body: unknown;
-    try {
-      body = JSON.parse(rawBody);
-    } catch (err: unknown) {
-      console.warn("[integrations] Invalid connected webhook JSON:", err instanceof Error ? err.message : String(err));
-      return c.json({ error: "Invalid JSON" }, 400);
-    }
-
-    const parsed = WebhookBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: "Invalid webhook payload" }, 400);
-    }
-
-    const { external_user_id, account_id, app: appName, label, email, scopes } = parsed.data;
-
-    if (getService(appName)?.connectorKind !== "pipedream") {
-      return c.json({ error: "Unsupported app" }, 400);
-    }
-
-    const webhookUser = await db.getUserByPipedreamExternalId(external_user_id);
-    if (!webhookUser) {
-      console.warn("[integrations] Webhook for unknown external_user_id:", safeForLog(external_user_id));
-      return c.json({ error: "Unknown user" }, 400);
-    }
-    const webhookUserId = webhookUser.id;
-
-    // Recover the user-entered label from /connect (Pipedream doesn't relay it)
-    const pendingKey = `${external_user_id}:${appName}`;
-    const explicitLabel = consumePendingLabel(pendingKey);
-    const resolvedLabel = explicitLabel ?? (label ?? appName);
-
-    let resolvedEmail = email;
-    if (!resolvedEmail) {
-      resolvedEmail = await resolveAccountEmail(pipedream, external_user_id, account_id, appName);
-    }
-
-    try {
-      const row = await db.connectService({
-        userId: webhookUserId,
-        service: appName,
-        pipedreamAccountId: account_id,
-        accountLabel: resolvedLabel,
-        accountEmail: resolvedEmail,
-        scopes: scopes ?? [],
-      });
-      await applyExplicitReconnectLabel(row, explicitLabel);
-      // Only emit when this webhook actually inserted a new row. Pipedream
-      // retries webhooks on non-2xx responses and network timeouts (standard
-      // exponential backoff), so a retry lands on the same
-      // (user_id, pipedream_account_id) pair, hits ON CONFLICT DO UPDATE,
-      // and without this guard would emit a duplicate integration:connected
-      // event. The shell reacts to that event by calling /sync, which (if a
-      // parallel webhook is still in flight) can emit yet again -- the same
-      // cascading WebSocket noise R3 was designed to prevent in /sync.
-      if (row.inserted) {
-        emit({ type: "integration:connected", service: appName, accountLabel: resolvedLabel });
-      }
-    } catch (err) {
-      if (isTimeoutError(err)) {
-        console.error("[integrations] webhook connectService timeout:", err instanceof Error ? err.message : err);
-      } else if (isConnectionError(err)) {
-        console.error("[integrations] webhook connectService connection error:", err instanceof Error ? err.message : err);
-      } else {
-        console.error("[integrations] webhook connectService failed:", err instanceof Error ? err.message : err);
-      }
-      return c.json({ error: "Internal error" }, 500);
-    }
-
-    return c.json({ ok: true });
+  registerConnectedIntegrationWebhook(app, { db, pipedream, webhookSecret, emit,
+    verifiedConnectedWebhook: opts.verifiedConnectedWebhook, consumePendingLabel, applyExplicitReconnectLabel,
+    resolveAccountEmail: (externalUserId,accountId,service) => resolveAccountEmail(pipedream,externalUserId,accountId,service),
   });
 
   // -----------------------------------------------------------------------
@@ -686,7 +579,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, action, label, params } = parsed.data;
+    const { service, action, label, params, connectionId } = parsed.data;
 
     const def = getService(service);
     if (!def) {
@@ -709,14 +602,24 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
       try {
+        // Immutable selection cannot follow a label onto a replacement account.
+        // Legacy callers without an ID keep their existing broker behavior.
+        if (connectionId) {
+          const selected = resolveIntegrationConnection(
+            (await mcpPresetBroker.listConnections(uid)).filter(row => row.status === "active"), service, label,
+          );
+          if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+          if (selected.kind !== "found" || selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
+        }
         const data = await mcpPresetBroker.call({
           userId: uid,
           service: def,
           actionId: action,
           params,
+          ...(connectionId ? { connectionId } : {}),
         });
         return c.json({ data, service, action });
       } catch (err) {
@@ -747,26 +650,30 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let selection = resolveIntegrationConnection(connections, service, label);
     if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
     let connection = selection.kind === "found" ? selection.connection : undefined;
+    // A bot's saved grant names a specific row. Never sync/reselect a missing
+    // row, because the same label may now belong to a different account.
+    if (connectionId && connection?.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
 
     if (!connection) {
       try {
         const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
-        const newAccounts = pdAccounts.filter(
-          (acc) => !existingPdIds.has(acc.id) && getService(acc.app),
-        );
+        const newAccounts = pdAccounts.flatMap(acc => {
+          const matchedService = getServiceByPipedreamApp(acc.app);
+          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+        });
         if (newAccounts.length > 0) {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
               const explicitLabel = consumePendingLabel(pendingKey);
-              const lbl = explicitLabel ?? acc.app;
+              const lbl = explicitLabel ?? acc.serviceId;
               const resolvedEmail = acc.email
-                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
+                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.serviceId));
               const row = await db.connectService({
                 userId: uid,
-                service: acc.app,
+                service: acc.serviceId,
                 pipedreamAccountId: acc.id,
                 accountLabel: lbl,
                 accountEmail: resolvedEmail,

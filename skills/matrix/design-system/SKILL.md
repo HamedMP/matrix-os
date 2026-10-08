@@ -1,10 +1,12 @@
 ---
+triggers: ["Matrix theme", "app styling", "design tokens", "app icon", "UI components"]
 name: matrix-design-system
 description: The Matrix OS visual language — colors, typography, icons, animations, and component patterns. Apply this every time you build, redesign, or polish any Matrix OS surface.
 version: 2.1.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-app-builder]
 metadata:
   agent:
     tags: [Matrix OS, design, UI, brand, theme, colors, typography, icons, animations]
@@ -15,7 +17,7 @@ metadata:
 
 ## When to Use
 
-Apply this for ALL visual work on Matrix OS: building apps, redesigning the shell, creating landing pages, generating icons, or polishing UI. This is the single source of truth.
+Apply this for Matrix integration and accessibility in all visual work. The shared brand is authoritative for Matrix platform surfaces. Generated products and their landing pages use the user’s mood, references and chosen visual family; read app-builder’s visual-reference guidance and record the product direction in DESIGN.md.
 
 ## Brand
 
@@ -55,16 +57,18 @@ Four brand colors + warm sand shades for gradient depth:
 }
 ```
 
-Use `--matrix-*` directly or define `--app-*` aliases from them. Do not replace inherited tokens with app-local blue, green, purple, or novelty palettes unless the user explicitly asks for branded customization.
+Use `--matrix-*` directly or define `--app-*` aliases from them. Generated apps may override app-local semantic tokens to implement their chosen visual family. A bright, bold, retro or playful product should not be forced into the subdued Matrix brand palette. Keep contrast, visible focus, non-color status cues and bridge integration; do not mutate the global shell theme.
 
-### Color Rules
+### Matrix Platform Brand Rules
 
 1. **One Ember per view.** Multiple uses = visual noise.
 2. **Forest is structural.** Headers, primary buttons, nav active states.
 3. **Cream is warmth.** Secondary fills, hover states.
 4. **Deep is text.** Never use pure black `#000000`.
-5. **Backgrounds inherit the active theme.** Quiet solid surfaces are the default for content. Use gradients only when the chosen art direction calls for depth; do not hardcode a light wash over dark mode.
+5. **Matrix platform backgrounds inherit the active theme.** Quiet solid surfaces are the default for content. Use gradients only when the chosen art direction calls for depth; do not hardcode a light wash over dark mode.
 6. **Shadows always use Deep-tinted** `rgba(50,53,46,X)`, never pure black.
+
+For generated products, select a palette with explicit surface/text/accent roles; choose border weight, shadows, radius and type hierarchy for the actual style. Neo-brutalist products can use ink borders and solid offset shadows; playful products can use cheerful surfaces and original SVG accents. Brand-only Forest/Ember limits do not apply to those product palettes.
 
 ### Optional depth
 
@@ -147,7 +151,7 @@ Default to simple line-style SVGs for all UI. Only use specialist bundled assets
 
 ## Animations
 
-Read the installed `emil-design-eng` and `apple-design` skills; see the builder’s
+Discover the installed design skills and read the one relevant to polish or gestures; see the builder’s
 `references/app-craft.md` for the shared process. Motion serves feedback, continuity,
 or a spatial relationship. Frequency comes first: keep typing, keyboard actions, and
 repeated navigation immediate. Do not stagger all content on page mount.
@@ -174,14 +178,15 @@ progress rather than animating invented progress from zero on mount.
 
 Use shadcn-style primitives for app interiors whenever the repo already exposes
 them: Button, Card, Input, Select, Tabs, Tooltip, Badge, Dialog, and related
-unstyled composition helpers. Skin those primitives with Matrix tokens instead
+unstyled composition helpers. Skin those primitives with selected app-local semantic tokens, using inherited Matrix tokens as a baseline instead
 of inventing one-off controls.
 
 
 ### Buttons
 
 ```css
-.btn { padding: 10px 24px; border-radius: 50px; font-family: 'Inter'; font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
+.btn { padding: 10px 16px; border-radius: 10px; font-family: var(--matrix-font-sans, system-ui); font-size: 0.875rem; font-weight: 500; transition: transform 120ms ease-out, background-color 150ms ease; }
+.btn:focus-visible { outline: 2px solid var(--matrix-accent); outline-offset: 3px; }
 ```
 
 | Variant   | Background  | Text          |
@@ -195,16 +200,16 @@ of inventing one-off controls.
 ### Cards
 
 ```css
-.card { background: rgba(255,255,255,0.55); backdrop-filter: blur(12px); border: 1px solid rgba(214,211,200,0.35); border-radius: 22px; padding: 20px; }
+.card { background: var(--matrix-card); color: var(--matrix-fg); border: 1px solid var(--matrix-border); border-radius: 12px; padding: 16px; }
 ```
 
-**Stat cards use horizontal layout** — icon container (46px, gradient bg, 14px radius) + text (label, value, subtitle) side by side. Never stack vertically with empty whitespace.
+Use stat cards only when the number helps a real decision. A compact label/value row is a good starting point; choose hierarchy and density for the content. Glass/gradients are optional direction choices, not default card materials.
 
 ### Inputs
 
 ```css
-.input { background: rgba(255,255,255,0.8); border: 1.5px solid rgba(214,211,200,0.6); border-radius: 50px; padding: 13px 22px; }
-.input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(67,78,63,0.06); background: rgba(255,255,255,0.95); }
+.input { background: var(--matrix-bg); color: var(--matrix-fg); border: 1px solid var(--matrix-border); border-radius: 8px; padding: 10px 12px; font-family: var(--matrix-font-sans, system-ui); }
+.input:focus-visible { outline: 2px solid var(--matrix-accent); outline-offset: 2px; }
 ```
 
 ## Common Pitfalls (non-negotiable)
@@ -215,7 +220,7 @@ of inventing one-off controls.
 
 **Components must fill space intentionally.** No cards with 80% empty whitespace and tiny text in one corner. Use horizontal layouts for compact cards.
 
-**Touch targets: minimum 36×36px.** Even if the icon is 16px.
+**Touch hit areas: minimum 44×44px on touch surfaces.** The visible icon may be smaller.
 
 **Text overflow.** Use `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text in constrained containers.
 
@@ -227,7 +232,7 @@ of inventing one-off controls.
 
 ## Verification
 
-- No horizontal overflow in small windows
+- No page-level horizontal overflow in small windows; essential tables, timelines and boards may scroll inside explicit accessible regions without hiding fields
 - No text characters used as icons (search for `>×</`, `>+</`)
 - All icon buttons visually centered
 - No components with excessive empty whitespace
@@ -235,4 +240,4 @@ of inventing one-off controls.
 - Purposeful, interruptible motion with reduced-motion support
 - All inputs have focus states, all buttons have hover states
 - Inherited fonts with clear hierarchy and legible labels
-- One Ember accent maximum per view
+- A coherent product palette, or one Ember accent maximum on Matrix platform brand surfaces

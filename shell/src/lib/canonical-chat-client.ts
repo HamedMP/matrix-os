@@ -1,6 +1,8 @@
+import { markChatNavigation } from "@matrix-os/ui";
+import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
-import { chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
@@ -43,6 +45,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
+  navigation?():Promise<CanonicalChatNavigationResponse>;
   list(input?: { unreadOnly?: boolean; cursor?: string }): Promise<CanonicalChatListResponse>;
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
@@ -168,7 +171,7 @@ export function createCanonicalShellChatClient(options: {
   createId?: () => string;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatReadStateVersionUrl(path) : path}`, {
+  const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatFundingVersionUrl(chatReadStateVersionUrl(path)) : path}`, {
     ...init,
     ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
       headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
@@ -181,7 +184,7 @@ export function createCanonicalShellChatClient(options: {
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
     })),
     async openEventStream({ cursor, signal }) {
-      const response = await fetchFn(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`)), {
+      const response = await fetchFn(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`)))), {
         method: "GET",
         headers: {
           Accept: "text/event-stream",
@@ -194,7 +197,15 @@ export function createCanonicalShellChatClient(options: {
       if (!response.ok) throw new CanonicalShellChatRequestError(response.status);
       return response;
     },
+    async navigation(){
+      markChatNavigation("request");
+      const response=await fetchFn(`${options.gatewayUrl}/api/chat-navigation?version=1&limit=1000`,{signal:AbortSignal.timeout(REQUEST_TIMEOUT_MS)});
+      if(!response.ok) throw new CanonicalShellChatRequestError(response.status);
+      const raw=await response.text();if(new TextEncoder().encode(raw).byteLength>2*1024*1024)throw new Error("NavigationTooLarge");
+      return CanonicalChatNavigationResponseSchema.parse(JSON.parse(raw));
+    },
     async list(input = {}) {
+      markChatNavigation("legacy-request");
       const query = new URLSearchParams({ limit: "100", scope: "global" });
       if (input.unreadOnly) query.set("unread", "true");
       if (input.cursor) query.set("cursor", input.cursor);

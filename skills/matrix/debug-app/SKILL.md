@@ -1,10 +1,12 @@
 ---
+triggers: ["fix app", "needs_build", "app launch failure", "broken app", "bridge error"]
 name: matrix-debug-app
 description: Debug Matrix OS app failures including needs_build responses, missing dist bundles, broken matrix.json manifests, icon 404s, console errors, and integration proxy issues.
 version: 1.0.0
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
+related_skills: [matrix-app-builder, matrix-integrations]
 metadata:
   agent:
     tags: [Matrix OS, debugging, apps, Vite, console]
@@ -80,7 +82,7 @@ Avoid stale fields from old app formats such as `type: "html-app"` or `type: "re
   `window.MatrixOS.db`; keep localStorage fallback code test-only/no-op.
 - Missing or undefined saved fields: check `matrix.json` `storage.tables` declares the column and type.
 - `401 /api/auth/ws-token`: user is not authenticated or the route is being called from the wrong shell context.
-- `Clerk failed to load clerk.example.com`: stale environment or image build used placeholder Clerk config.
+- `Clerk failed to load clerk.example.com`: stale environment or host-bundle build used placeholder Clerk config.
 
 ## Icon Fixes
 

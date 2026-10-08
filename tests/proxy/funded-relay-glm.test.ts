@@ -105,7 +105,7 @@ describe("Cloudflare GLM usage relay", () => {
     expect(headers.get("cf-aig-gateway-id")).toBe("preview");
     expect(headers.get("cf-aig-metadata")).not.toContain("attacker");
     expect(headers.has("x-api-key")).toBe(false);
-    expect(JSON.parse(String(init?.body))).toMatchObject({ stream_options: { include_usage: true } });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ reasoning_effort: "low", stream_options: { include_usage: true } });
     expect(init?.signal).toBeInstanceOf(AbortSignal); expect(init?.redirect).toBe("error");
     expect(control.finalize).toHaveBeenCalledWith({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
       mode: "exact", actualCostMicrousd: 24 }, expect.any(AbortSignal));
@@ -113,6 +113,7 @@ describe("Cloudflare GLM usage relay", () => {
   it.each([
     { model: "@cf/unreviewed/model" }, { max_tokens: 128_001 }, { user: "caller-authority" },
     { webhookUrl: "http://127.0.0.1" }, { n: 2 }, { messages: [{ role: "tool", content: "bad" }] },
+    ...["medium", "none", "minimal", "xhigh", "", null, 0, false, {}, ["low"]].map((reasoning_effort) => ({ reasoning_effort })),
   ])("denies unsupported requests before inference", async (override) => {
     const control = platform(); const fetchMock = vi.fn();
     const relay = createFundedRelay({ ...config(), fetch: fetchMock, now: () => NOW,
@@ -123,6 +124,7 @@ describe("Cloudflare GLM usage relay", () => {
       body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 256, ...override }),
     });
     expect([400, 403]).toContain(response.status); expect(fetchMock).not.toHaveBeenCalled();
+    if ("reasoning_effort" in override) expect(response.status).toBe(400);
     expect(control.authorize).not.toHaveBeenCalled(); await relay.close();
   });
 });

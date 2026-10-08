@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 import React, { useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -18,7 +19,7 @@ const support = { rootChat: true, resume: true, cancellation: true, attachments:
 function catalog(revision: string, savedOff = false): CanonicalProviderCatalog {
   return CanonicalProviderCatalogSchema.parse({ revision,
     drivers: [{ kind: "pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "coding_agent" }],
-    instances: [{ id: "pi_owner", driverKind: "pi", displayName: "Pi", availability: savedOff ? "unavailable" : "available",
+    instances: [{ id: "pi_owner", driverKind: "pi", displayName: `Pi ${revision}`, availability: savedOff ? "unavailable" : "available",
       ...(savedOff ? { unavailabilityReason: "disabled_in_settings" } : {}), workspaceRequirement: "project_optional",
       catalogRevision: revision, models: savedOff ? [] : [{ id: "model", displayName: "Owner model", availability: "available",
         capabilities: [], supportsVision: false, supportsToolUse: false }], options: [], skills: [], commands: [], setupActions: [], supports: support,
@@ -35,10 +36,10 @@ function deferred<T>() {
 }
 function CatalogComposer({ api, active = true, fallback = oldCatalog }: { api: { get: () => Promise<unknown> }; active?: boolean; fallback?: CanonicalProviderCatalog }) {
   const state = useChatProviderCatalog(fallback, { api, active });
-  return <><output>{state.catalog.revision}</output><output data-testid="catalog-status">{state.status}</output><output data-testid="availability">{state.catalog.instances[0]?.availability}</output><SharedChatComposer value="" onChange={() => undefined}
+  return <><output>{state.catalog.revision}</output><output data-testid="catalog-status">{state.status}</output><output data-testid="availability">{state.catalog.instances[0]?.availability}</output><button onClick={state.refresh}>Refresh catalog</button><SharedChatComposer value="" onChange={() => undefined}
     onSubmit={() => undefined} busy={false} catalog={state.catalog}
     selection={{ instanceId: "pi_owner", model: "model", options: [], interactionMode: "default", permissionMode: "supervised" }}
-    onSelectionChange={() => undefined} instanceLocked={false} onProviderPickerOpen={state.refresh} /></>;
+    onSelectionChange={() => undefined} instanceLocked={false} /></>;
 }
 function LayoutCatalogProbe({ api, observe }: { api: { get: () => Promise<unknown> }; observe: (value: string | undefined) => void }) {
   const state = useChatProviderCatalog(oldCatalog, { api });
@@ -46,7 +47,8 @@ function LayoutCatalogProbe({ api, observe }: { api: { get: () => Promise<unknow
   return <output>{state.status}</output>;
 }
 const openPicker = () => fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
-afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
+const refreshCatalog = () => fireEvent.click(screen.getByRole("button", { name: "Refresh catalog" }));
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.restoreAllMocks(); useConnection.setState(useConnection.getInitialState(), true); useCodingAgentWorkspace.setState(useCodingAgentWorkspace.getInitialState(), true); useBoard.setState(useBoard.getInitialState(), true); });
 describe("native Chat catalog freshness", () => {
   it.each([true, false])("refreshes accepted Settings route changes without reopening (savedOff=%s)", async (savedOff) => {
     const before = catalog("pre_settings", !savedOff);
@@ -76,20 +78,22 @@ describe("native Chat catalog freshness", () => {
       .mockRejectedValue(new Error("unavailable"));
     render(<CatalogComposer api={{ get }} />);
     await screen.findByText("before_update");
-    openPicker();
+    refreshCatalog();
     act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
     await act(async () => older.resolve(oldCatalog));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 
-  it.each(["runtimeSlot", "authGeneration"] as const)("discards old trusted truth when %s changes even with the same API object", async (field) => {
+  it.each(["runtimeSlot", "authGeneration", "status"] as const)("discards old trusted truth when %s changes even with the same API object", async (field) => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockRejectedValue(new Error("unavailable"));
     render(<CatalogComposer api={{ get }} />);
     await screen.findByText("before_update");
-    act(() => useConnection.setState(field === "runtimeSlot" ? { runtimeSlot: "other" } : { authGeneration: 1 }));
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
+    act(() => useConnection.setState(field === "runtimeSlot" ? { runtimeSlot: "other" }
+      : field === "status" ? { status: "signed-out" } : { authGeneration: 1 }));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe(field === "status" ? "fallback" : "error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
   });
 
@@ -106,21 +110,24 @@ describe("native Chat catalog freshness", () => {
     expect(observations).not.toContain("available");
   });
 
-  it("reloads saved-off truth when the normal picker is reopened without a cold restart", async () => {
+  it("reuses current truth on picker open/reopen and reloads saved-off truth on explicit refresh", async () => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
     render(<CatalogComposer api={{ get }} />);
     await screen.findByText("before_update");
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     openPicker();
+    await screen.findByRole("searchbox");
+    expect(get).toHaveBeenCalledTimes(1);
+    refreshCatalog();
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
     expect(screen.queryByText("Connect Pi")).toBeNull();
-    // Closing and rendering do not issue reads; one explicit reopen does.
+    // Closing and reopening reuse the current catalog, without another read.
     openPicker();
     expect(get).toHaveBeenCalledTimes(2);
     openPicker();
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
+    expect(get).toHaveBeenCalledTimes(2);
   });
 
   it("keeps an unchanged owner route selected without fetching on ordinary renders", async () => {
@@ -132,6 +139,8 @@ describe("native Chat catalog freshness", () => {
     view.rerender(<CatalogComposer api={api} />);
     expect(get).toHaveBeenCalledTimes(1);
     openPicker();
+    expect(get).toHaveBeenCalledTimes(1);
+    refreshCatalog();
     await screen.findByText("same_route_refreshed");
     const trigger = screen.getByRole("button", { name: "Choose model and provider" });
     expect(trigger.getAttribute("data-provider-instance")).toBe("pi_owner");
@@ -139,12 +148,14 @@ describe("native Chat catalog freshness", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 
-  it.each([true, false])("retains last same-runtime catalog on reopen failure (savedOff=%s)", async (savedOff) => {
+  it.each([true, false])("retains last same-runtime catalog on explicit refresh failure (savedOff=%s)", async (savedOff) => {
     const trusted = catalog("trusted_owner_catalog", savedOff);
     const get = vi.fn().mockResolvedValueOnce(trusted).mockRejectedValue(new Error("refresh_failed"));
     render(<CatalogComposer api={{ get }} />);
     await screen.findByText("trusted_owner_catalog");
     openPicker();
+    expect(get).toHaveBeenCalledTimes(1);
+    refreshCatalog();
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByText("trusted_owner_catalog")).not.toBeNull();
     if (savedOff) {
@@ -157,40 +168,47 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it("fails closed on initial and replaced-API errors instead of borrowing old trusted truth", async () => {
+  it("retains the same-scope cache across API replacement and fails closed on a genuinely cold error", async () => {
     const firstApi = { get: vi.fn().mockResolvedValue(newCatalog) };
     const view = render(<CatalogComposer api={firstApi} />);
     await screen.findByText("after_update");
-    const replacementApi = { get: vi.fn().mockRejectedValue(new Error("new_runtime_unavailable")) };
+    const replacementApi = { get: vi.fn().mockRejectedValue(new Error("transport_unavailable")) };
     view.rerender(<CatalogComposer api={replacementApi} />);
+    expect(screen.getByText("after_update")).not.toBeNull();
+    expect(replacementApi.get).not.toHaveBeenCalled();
+    refreshCatalog();
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
-    expect(screen.getByText("before_update")).not.toBeNull();
-    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    expect(screen.getByText("after_update")).not.toBeNull();
     view.unmount();
+    stopDesktopProviderCatalogCoordinator();
     render(<CatalogComposer api={replacementApi} />);
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByTestId("availability").textContent).toBe("unavailable");
   });
 
-  it("reopens the actual HermesPane picker with a forced read and updated saved-Off choices", async () => {
-    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
+  it("reuses the actual HermesPane catalog on reopen and refreshes accepted Settings changes", async () => {
+    const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockResolvedValue(newCatalog);
     window.operator = { invoke: vi.fn(async () => ({ value: null })), on: vi.fn(() => () => undefined) };
     useConnection.setState({ api: { get } as unknown as ApiClient });
     useCodingAgentWorkspace.setState({ status: "ready" });
     render(<HermesPane />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
     openPicker();
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await screen.findByRole("searchbox");
+    expect(get).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Disabled in Settings")).toBeNull();
     openPicker();
     openPicker();
+    await screen.findByRole("searchbox");
+    expect(get).toHaveBeenCalledTimes(1);
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
     await screen.findByText("Disabled in Settings");
-    expect(get).toHaveBeenCalledTimes(3);
-    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true", { timeoutMs: 15_000 });
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenLastCalledWith("/api/chat-providers?refresh=true&includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", expect.objectContaining({ timeoutMs: 15_000 }));
     expect(screen.queryByText("Owner model")).toBeNull();
   });
 
-  it("wires reopening through the production canonical workspace composer", async () => {
+  it("reuses the production canonical workspace catalog on open and refreshes discovery explicitly", async () => {
     const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? oldCatalog : {});
     window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
     const view = render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()}
@@ -200,12 +218,15 @@ describe("native Chat catalog freshness", () => {
     const readsBefore = get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers")).length;
     get.mockImplementation(async (path) => path.startsWith("/api/chat-providers") ? newCatalog : {});
     fireEvent.click(trigger);
+    await screen.findByRole("searchbox");
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore);
+    act(() => desktopProviderCatalogCache.refresh());
     await screen.findByText("Disabled in Settings");
     expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(readsBefore + 1);
     view.unmount();
   });
 
-  it.each([true, false])("preserves production workspace truth on reopen failure (savedOff=%s)", async (savedOff) => {
+  it.each([true, false])("preserves production workspace truth on background refresh failure (savedOff=%s)", async (savedOff) => {
     const trusted = catalog("trusted_workspace", savedOff);
     let failRefresh = false;
     const get = vi.fn(async (path: string) => {
@@ -219,6 +240,7 @@ describe("native Chat catalog freshness", () => {
     const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
     await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
     failRefresh = true;
+    act(() => desktopProviderCatalogCache.refresh());
     fireEvent.click(trigger);
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
     await act(async () => undefined);
@@ -231,7 +253,7 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it.each([true, false])("keeps same-runtime truth when projects change and revalidation fails (savedOff=%s)", async (savedOff) => {
+  it.each([true, false])("reuses same-runtime truth when projects change and keeps explicit revalidation (savedOff=%s)", async (savedOff) => {
     useBoard.setState({ projects: [] });
     const trusted = catalog("trusted_before_project_change", savedOff);
     let failRefresh = false;
@@ -247,6 +269,8 @@ describe("native Chat catalog freshness", () => {
     await waitFor(() => expect(trigger.hasAttribute("disabled")).toBe(false));
     failRefresh = true;
     act(() => useBoard.setState({ projects: [{ slug: "new-project", name: "New project" }] }));
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(1);
+    act(() => desktopProviderCatalogCache.refresh());
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chat-providers"))).toHaveLength(2));
     await act(async () => undefined);
     if (savedOff) {
@@ -259,21 +283,19 @@ describe("native Chat catalog freshness", () => {
     }
   });
 
-  it("discards inactive trusted snapshots before a new active read fails", async () => {
-    const get = vi.fn().mockResolvedValueOnce(newCatalog).mockRejectedValue(new Error("reactivated_unavailable"));
+  it("retains inactive trusted snapshots without a reactivation read", async () => {
+    const get = vi.fn().mockResolvedValueOnce(newCatalog).mockRejectedValue(new Error("must_not_read"));
     const api = { get };
     const view = render(<CatalogComposer api={api} />);
     await screen.findByText("after_update");
     view.rerender(<CatalogComposer api={api} active={false} />);
-    openPicker();
-    expect(get).toHaveBeenCalledTimes(1);
     view.rerender(<CatalogComposer api={api} />);
-    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
-    expect(screen.getByText("before_update")).not.toBeNull();
-    expect(screen.getByTestId("availability").textContent).toBe("unavailable");
+    expect(screen.getByTestId("catalog-status").textContent).toBe("ready");
+    expect(screen.getByText("after_update")).not.toBeNull();
+    expect(get).toHaveBeenCalledOnce();
   });
 
-  it("ignores old fallback-effect responses in both UI and the trusted error snapshot", async () => {
+  it("keeps a pending read across fallback changes and ignores it after an explicit newer response", async () => {
     const older = deferred<CanonicalProviderCatalog>();
     const newer = deferred<CanonicalProviderCatalog>();
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementationOnce(() => older.promise)
@@ -281,12 +303,17 @@ describe("native Chat catalog freshness", () => {
     const api = { get };
     const view = render(<CatalogComposer api={api} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
-    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("ready"));
+    act(() => desktopProviderCatalogCache.refresh());
     view.rerender(<CatalogComposer api={api} fallback={catalog("project_changed_fallback")} />);
+    expect(get).toHaveBeenCalledTimes(2);
+    refreshCatalog();
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => older.resolve(oldCatalog));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
-    await act(async () => older.resolve(oldCatalog));
     expect(screen.getByText("after_update")).not.toBeNull();
+    refreshCatalog();
     openPicker();
     await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("error"));
     expect(screen.getByText("after_update")).not.toBeNull();
@@ -299,12 +326,14 @@ describe("native Chat catalog freshness", () => {
     const get = vi.fn().mockResolvedValueOnce(oldCatalog).mockImplementationOnce(() => older.promise).mockImplementationOnce(() => newer.promise);
     render(<CatalogComposer api={{ get }} />);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
-    act(() => window.dispatchEvent(new Event("focus")));
-    act(() => window.dispatchEvent(new Event("focus")));
+    await waitFor(() => expect(screen.getByTestId("catalog-status").textContent).toBe("ready"));
+    act(() => desktopProviderCatalogCache.refresh());
+    refreshCatalog();
+    expect(get).toHaveBeenCalledTimes(2);
+    await act(async () => outcome === "success" ? older.resolve(oldCatalog) : older.reject(new Error("older_request_failed")));
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
     await act(async () => newer.resolve(newCatalog));
     expect(screen.getByText("after_update")).not.toBeNull();
-    await act(async () => outcome === "success" ? older.resolve(oldCatalog) : older.reject(new Error("older_request_failed")));
     expect(screen.getByText("after_update")).not.toBeNull();
   });
 });

@@ -1,8 +1,9 @@
+import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
+import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3, type AiProviderReadiness } from "@matrix-os/contracts";
 import {
   AiProviderService,
   type AiProviderHealthProbe,
@@ -11,6 +12,7 @@ import { initialProviderSettingsConfiguration } from "../../packages/gateway/src
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import type { GenericHarnessModelCatalogReader } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
@@ -38,11 +40,13 @@ describe("AiProviderService", () => {
   });
 
   function createService(options: {
+    nativeHarnessCatalogReader?: GenericHarnessModelCatalogReader;
     platformKey?: string;
     fundedEnabled?: boolean;
     healthProbe?: AiProviderHealthProbe;
     healthTimeoutMs?: number;
     driverInventory?: () => Promise<AiProviderSnapshotV3["drivers"]>;
+    codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
     codexLocalObservation?: () => Promise<{
       accessSourceId: string;
       state: "present_unverified" | "absent" | "unknown";
@@ -52,6 +56,7 @@ describe("AiProviderService", () => {
   } = {}) {
     return new AiProviderService({
       homePath,
+      nativeHarnessCatalogReader: options.nativeHarnessCatalogReader,
       env: options.platformKey ? {
         ANTHROPIC_API_KEY: options.platformKey,
         MATRIX_FUNDED_AI_ENABLED: options.fundedEnabled === false ? "0" : "1",
@@ -70,6 +75,7 @@ describe("AiProviderService", () => {
         ? undefined
         : async () => options.driverInventory!(),
       codexLocalObservation: options.codexLocalObservation,
+      codexNativeKeyReadiness: options.codexNativeKeyReadiness,
     });
   }
 
@@ -170,6 +176,64 @@ describe("AiProviderService", () => {
       .toMatchObject({ state: "unknown", eligibleModelIds: [] });
     expect(snapshot.active.providerInstanceId).toBeNull();
     service.close();
+  });
+
+  it("keeps selected Matrix admission fresh without unrelated native discovery", async () => {
+    const held = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
+    const driverInventory = vi.fn(() => held.promise);
+    const codexLocalObservation = vi.fn(async () => ({ accessSourceId: "owner_openai_profile", state: "absent" as const, checkedAt: null, staleAfter: null }));
+    const getCatalog = vi.fn(async () => ({ providers: [], accessSources: [], failures: [] }));
+    const codexNativeKeyReadiness = vi.fn(async () => null);
+    const service = createService({ platformKey: "platform-test", driverInventory, codexLocalObservation,
+      codexNativeKeyReadiness, nativeHarnessCatalogReader: { getCatalog } });
+    const request = service.getSnapshot({ admissionScope: "managed_matrix" });
+    try {
+      const result = await Promise.race([request, new Promise<null>(resolve => setTimeout(() => resolve(null), 100))]);
+      expect(result).not.toBeNull();
+      expect(result!.accessSources.find(source => source.id === "matrix_included")?.state).toBe("ready");
+      expect(driverInventory).not.toHaveBeenCalled(); expect(codexLocalObservation).not.toHaveBeenCalled();
+      expect(getCatalog).not.toHaveBeenCalled();
+      expect(codexNativeKeyReadiness).not.toHaveBeenCalled();
+      expect(AiProviderSnapshotV3Schema.safeParse(result).success).toBe(true);
+    } finally { held.resolve([]); await request; service.close(); }
+  });
+
+  it("retains native OpenAI key observation in a complete Settings snapshot", async () => {
+    const codexNativeKeyReadiness = vi.fn(async (): Promise<AiProviderReadiness> => ({
+      state: "ready", checkedAt: NOW.toISOString(), staleAfter: null, action: "none", safeReason: null,
+    }));
+    const service = createService({ codexNativeKeyReadiness });
+    try {
+      const result = await service.getSnapshot();
+      expect(codexNativeKeyReadiness).toHaveBeenCalledOnce();
+      expect(result.accessSources.find(source => source.id === "owner_openai_profile"))
+        .toMatchObject({ state: "ready", fundingKind: "owner_api_key", displayName: "OpenAI API key" });
+    } finally { service.close(); }
+  });
+
+  it("fresh managed admission rejects a policy revoked after a ready selection", async () => {
+    let allowedModelIds = ["claude-sonnet-5"];
+    const read = vi.fn(async () => ({
+      readiness: { state: allowedModelIds.length ? "ready" as const : "unavailable" as const,
+        checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 30_000).toISOString(),
+        action: allowedModelIds.length ? "none" as const : "retry" as const, safeReason: null }, allowedModelIds,
+    }));
+    const service = new AiProviderService({ homePath, fundedCredentialProvider: fundedProvider(),
+      fundedReadinessReader: { read }, now: () => NOW });
+    const catalog = createChatProviderCatalogService({ aiProviderSource: service,
+      codingProviders: { listProviders: async () => { throw new Error("unrelated discovery"); }, invalidate() {} },
+      agentRuntimeSource: async () => { throw new Error("unrelated runtime"); },
+      executableDriverKinds: ["matrix_pi"], now: () => NOW });
+    const principal = { userId: "owner_policy", source: "jwt" as const };
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    try {
+      expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(true);
+      allowedModelIds = [];
+      expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(false);
+      read.mockRejectedValueOnce(new Error("private readiness failure"));
+      expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(false);
+      expect(read).toHaveBeenCalledTimes(3);
+    } finally { service.close(); }
   });
 
   it("checks funded readiness without waiting for slow CLI inventory", async () => {

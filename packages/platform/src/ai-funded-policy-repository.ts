@@ -9,12 +9,14 @@ import {
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
+  type FundedAiRequestClass,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { createAiFundedMeteringRepository } from "./ai-funded-metering-repository.js";
+import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -235,7 +237,14 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     });
   }
 
-  async function issueCredential(identityInput: FundedAiIdentity, probe = false): Promise<FundedAiRuntimeCredentialIssueResponse> {
+  async function issueCredential(
+    identityInput: FundedAiIdentity,
+    probe = false,
+    classInput?: { requestClass?: FundedAiRequestClass },
+  ): Promise<FundedAiRuntimeCredentialIssueResponse> {
+    const requestClass: FundedAiRequestClass = classInput?.requestClass ?? "interactive";
+    // Each class has its own cooldown so a background lease never delays an interactive one.
+    const cooldownColumn = requestClass === "background" ? "next_background_issue_at" : "next_issue_at";
     const identity = IdentitySchema.parse(identityInput);
     await options.db.ready;
     const checked = now();
@@ -290,20 +299,20 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
             AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(eligible.runtime_models::jsonb) model(value) WHERE model.value = ${JEV_MODEL_ID})
         ` : sql`
         UPDATE ai_funded_runtime_policies runtime
-        SET next_issue_at = ${nextIssueAt}
+        SET ${sql.ref(cooldownColumn)} = ${nextIssueAt}
         FROM eligible
         WHERE runtime.machine_id = eligible.machine_id
-          AND runtime.next_issue_at <= ${checkedAt}
+          AND ${sql.ref(`runtime.${cooldownColumn}`)} <= ${checkedAt}
         RETURNING eligible.global_revision, eligible.runtime_revision,
           eligible.global_models, eligible.runtime_models, eligible.monthly_budget_microusd
         `}
       ), inserted AS (
         INSERT INTO ai_runtime_credentials (
           token_id, token_hash, owner_id, machine_id, runtime_slot,
-          audience, scope, issued_at, expires_at, revoked_at
+          audience, scope, issued_at, expires_at, revoked_at, request_class
         )
         SELECT ${tokenId}, ${hashCredential(credential)}, ${identity.ownerId}, ${identity.machineId},
-          ${identity.runtimeSlot}, ${FUNDED_AI_AUDIENCE}, ${FUNDED_AI_SCOPE}, ${checkedAt}, ${expiresAt}, NULL
+          ${identity.runtimeSlot}, ${FUNDED_AI_AUDIENCE}, ${FUNDED_AI_SCOPE}, ${checkedAt}, ${expiresAt}, NULL, ${requestClass}
         FROM leased
         RETURNING token_id
       )
@@ -313,14 +322,16 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     if (!row) {
       const policy = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
         .innerJoin("ai_funded_global_policy as global_policy", (join) => join.onRef("global_policy.policy_id", "=", "global_policy.policy_id"))
-        .select(["runtime.next_issue_at", "runtime.enabled as runtime_enabled", "runtime.expires_at",
+        .select(["runtime.next_issue_at", "runtime.next_background_issue_at", "runtime.enabled as runtime_enabled", "runtime.expires_at",
           "global_policy.enabled as global_enabled"])
         .where("runtime.machine_id", "=", identity.machineId).where("runtime.owner_id", "=", identity.ownerId)
         .where("runtime.runtime_slot", "=", identity.runtimeSlot).where("global_policy.policy_id", "=", "default")
         .executeTakeFirst();
       if (policy && policy.global_enabled && policy.runtime_enabled
         && (policy.expires_at === null || Date.parse(policy.expires_at) > checked.getTime())
-        && policy.next_issue_at > checkedAt) throw new AiFundedPolicyError("rate_limited");
+        && (requestClass === "background" ? policy.next_background_issue_at : policy.next_issue_at) > checkedAt) {
+        throw new AiFundedPolicyError("rate_limited");
+      }
       throw new AiFundedPolicyError(policy ? "access_disabled" : "identity_mismatch");
     }
     const allowedModelIds = intersectModels(parseModels(row.global_models), parseModels(row.runtime_models));
@@ -337,6 +348,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         checkedAt,
         staleAfter: new Date(checked.getTime() + policyFreshnessMs).toISOString(),
       },
+      // Echo only an explicitly requested class; legacy gateways parse this response strictly.
+      ...(classInput?.requestClass ? { requestClass } : {}),
     });
   }
 
@@ -364,11 +377,13 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     getRuntimePolicy,
     updateGlobalPolicy,
     setRuntimePolicy,
-    issueRuntimeCredential: (identity: FundedAiIdentity) => issueCredential(identity),
+    issueRuntimeCredential: (identity: FundedAiIdentity, input?: { requestClass?: FundedAiRequestClass }) =>
+      issueCredential(identity, false, input),
     // Internal sole fixed Jev probe. Admission/rate caps belong to the existing
     // probe service; this must not consume the VPS persistent issuance cooldown.
     issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
+    releaseExecutionAdmission: createFundedExecutionRecovery({ db: options.db, now }),
     ...metering,
   };
 }

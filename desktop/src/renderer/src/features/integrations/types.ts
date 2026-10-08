@@ -22,6 +22,7 @@ export interface AvailableIntegration {
   name: string;
   category: string;
   description?: string;
+  authType?: "oauth" | "keys";
   logoUrl?: string;
 }
 
@@ -103,6 +104,7 @@ export function parseAvailableIntegrations(value: unknown): AvailableIntegration
       id,
       name,
       category,
+      ...(record.authType === "oauth" || record.authType === "keys" ? { authType: record.authType } : {}),
       ...(description ? { description } : {}),
       ...(logoUrl ? { logoUrl } : {}),
     });

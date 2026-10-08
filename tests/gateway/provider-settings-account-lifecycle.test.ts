@@ -95,13 +95,13 @@ describe("provider CLI account lifecycle", () => {
     expect(JSON.stringify(receipts)).not.toMatch(/stdout|stderr|token|secret/i);
   });
 
-  it("runs the verified Codex logout command for one exact installed CLI account", async () => {
+  it.each(["oauth", "api_key"] as const)("runs exact native Codex logout for %s mode", async (method) => {
     const lifecycle = coordinator();
     const account: ProviderLifecycleAccount = {
       ...claudeAccount,
       id: "owner_openai",
       providerId: "openai",
-      authMethod: "oauth",
+      authMethod: method,
       accessSourceId: "owner_openai_profile",
       driverId: "codex",
       harness: "codex",

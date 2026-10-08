@@ -16,6 +16,10 @@ type BalanceSnapshot = {
   month_reserved_microusd: unknown;
 };
 
+/** Runtime credentials: `sk-matrix-funded-<tokenId>.<secret>`. */
+export const FUNDED_TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
+export const FundedReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+
 export function exactInteger(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error("Funded AI monetary total exceeds safe integer range");

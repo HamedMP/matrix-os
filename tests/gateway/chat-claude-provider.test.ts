@@ -1,9 +1,11 @@
+import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import type { CustomMcpApprovalClient } from "../../packages/gateway/src/chat/custom-mcp-approval-client.js";
+
+const createClaudeChatProviderAdapter = ownerSdkAdapterFixture();
 
 class FakeStream extends EventEmitter {}
 
@@ -61,7 +63,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       ...baseInput, selection: { ...baseInput.selection,
         instanceId: "claude_code_matrix_included", model: "claude-sonnet-5" },
     })) { /* Drain the Run. */ }
-    expect(resolveCredentialLaunch).toHaveBeenCalledWith("claude_code_matrix_included");
+    expect(resolveCredentialLaunch).toHaveBeenCalledWith({ instanceId: "claude_code_matrix_included", runId: baseInput.runId });
+    for await (const _event of adapter.resume!({ ...baseInput, runId: "run_owner_resumed",
+      resumeState: { sessionId: "funded_session" } })) { /* Drain the resumed owner Run. */ }
+    expect(resolveCredentialLaunch).toHaveBeenLastCalledWith({ instanceId: "claude_code_default", runId: "run_owner_resumed" });
   });
 
   it("registers scoped built-in and Custom MCP tools on fresh and resumed supervised Runs", async () => {
@@ -836,7 +841,7 @@ describe("Claude canonical Chat Provider adapter", () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it("uses the rotating funded credential and its shorter run deadline", async () => {
+  it("honors an injected trusted credential resolver and its shorter run deadline", async () => {
     const stdout = new FakeStream();
     const stderr = new FakeStream();
     const process = new EventEmitter() as EventEmitter & {
@@ -874,10 +879,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "service_unavailable",
-        safeMessage: "Claude took too long to respond. Try the Run again.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        code: "run_failed",
+        safeMessage: "The agent timed out. Check progress before trying again.",
+        retryable: false,
+        recoveryActions: [],
       },
     });
   });
@@ -924,7 +929,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "run_failed",
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        safeMessage: "Invalid agent response. Try again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
@@ -951,7 +956,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "model_unavailable",
-        safeMessage: "The selected Claude model is unavailable. Choose another model and try again.",
+        safeMessage: "Model unavailable. Choose another model.",
         retryable: false,
         recoveryActions: ["select_provider"],
       },
@@ -977,10 +982,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toContain("sk-ant-secret-value");
@@ -1005,9 +1010,9 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "authorization_failed",
-        safeMessage: "Claude was blocked by its current permissions. Review the permission mode and try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
+        safeMessage: "Permission denied. Review access settings.",
+        retryable: false,
+        recoveryActions: ["open_setup_terminal"],
       },
     }]);
     expect(JSON.stringify(events)).not.toContain("private.sh");
@@ -1027,7 +1032,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "provider_unavailable",
-        safeMessage: "Claude is not available on this runtime. Open setup and install or reconnect Claude.",
+        safeMessage: "Agent unavailable. Install or reconnect in Agents & providers.",
         retryable: false,
         recoveryActions: ["open_setup_terminal"],
       },
@@ -1047,7 +1052,7 @@ describe("Claude canonical Chat Provider adapter", () => {
       outcome: "failed",
       error: {
         code: "run_failed",
-        safeMessage: "Claude returned an invalid response. Try the Run again.",
+        safeMessage: "Invalid agent response. Try again.",
         retryable: true,
         recoveryActions: ["retry"],
       },
@@ -1068,10 +1073,10 @@ describe("Claude canonical Chat Provider adapter", () => {
       type: "run.completed",
       outcome: "failed",
       error: {
-        code: "authorization_failed",
-        safeMessage: "Claude needs to be connected before it can run. Open setup and connect Claude.",
+        code: "provider_unavailable",
+        safeMessage: "Sign-in required. Reconnect in Agents & providers on this computer.",
         retryable: false,
-        recoveryActions: ["open_setup_terminal"],
+        recoveryActions: ["open_setup_terminal", "select_provider"],
       },
     }]);
     expect(JSON.stringify(events)).not.toMatch(/Authentication required|secret|xxxx/);

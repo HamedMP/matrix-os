@@ -21,6 +21,7 @@ TimeoutStartSec=30
 TimeoutStopSec=45
 KillMode=control-group
 RuntimeDirectory=matrix-scope-runtime
+RuntimeDirectoryPreserve=yes
 RuntimeDirectoryMode=0770
 StateDirectory=matrix-scope-runtime
 StateDirectoryMode=0700
@@ -28,7 +29,13 @@ UMask=0007
 PrivateNetwork=yes
 PrivateIPC=yes
 PrivateDevices=yes
-ProtectHome=yes
+# Home stays hidden except fixed workload roots. The supervisor only reads
+# these for validation; each workload binds its one authorized workspace.
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/matrix/home/bots
+BindReadOnlyPaths=-/home/matrix/home/agent-workspaces
+BindReadOnlyPaths=-/home/matrix/home/projects
+BindReadOnlyPaths=-/home/matrix/home/worktrees
 ProtectSystem=strict
 ProtectProc=invisible
 ProcSubset=pid

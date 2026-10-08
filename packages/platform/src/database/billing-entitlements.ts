@@ -1,3 +1,4 @@
+import { withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
 import { sql } from 'kysely';
 import type {
   BillingEntitlementOverrideRecord,
@@ -23,33 +24,35 @@ import {
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing entitlement, override and webhook event queries. */
 
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
-  await db.ready;
-  const row = toBillingEntitlementRow(record);
-  await db.executor
-    .insertInto('billing_entitlements')
-    .values(row)
-    .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
-      source: row.source,
-      plan_slug: row.plan_slug,
-      status: row.status,
-      max_runtime_slots: row.max_runtime_slots,
-      included_runtime_slots: row.included_runtime_slots,
-      addon_runtime_slots: row.addon_runtime_slots,
-      default_server_type: row.default_server_type,
-      allowed_server_types: row.allowed_server_types,
-      stripe_subscription_id: row.stripe_subscription_id,
-      stripe_price_id: row.stripe_price_id,
-      billing_interval: row.billing_interval,
-      grace_period_ends_at: row.grace_period_ends_at,
-      trial_started_at: row.trial_started_at,
-      trial_ends_at: row.trial_ends_at,
-      trial_converted_at: row.trial_converted_at,
-      first_trial_payment_failed_at: row.first_trial_payment_failed_at,
-      effective_from: row.effective_from,
-      effective_until: row.effective_until,
-      updated_at: row.updated_at,
-    }).where('billing_entitlements.updated_at', '<=', row.updated_at))
-    .execute();
+  return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return;
+    const row = toBillingEntitlementRow(record);
+    await trx.executor
+      .insertInto('billing_entitlements')
+      .values(row)
+      .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
+        source: row.source,
+        plan_slug: row.plan_slug,
+        status: row.status,
+        max_runtime_slots: row.max_runtime_slots,
+        included_runtime_slots: row.included_runtime_slots,
+        addon_runtime_slots: row.addon_runtime_slots,
+        default_server_type: row.default_server_type,
+        allowed_server_types: row.allowed_server_types,
+        stripe_subscription_id: row.stripe_subscription_id,
+        stripe_price_id: row.stripe_price_id,
+        billing_interval: row.billing_interval,
+        grace_period_ends_at: row.grace_period_ends_at,
+        trial_started_at: row.trial_started_at,
+        trial_ends_at: row.trial_ends_at,
+        trial_converted_at: row.trial_converted_at,
+        first_trial_payment_failed_at: row.first_trial_payment_failed_at,
+        effective_from: row.effective_from,
+        effective_until: row.effective_until,
+        updated_at: row.updated_at,
+      }).where('billing_entitlements.updated_at', '<=', row.updated_at))
+      .execute();
+  });
 }
 
 export async function getBillingEntitlement(

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,13 +14,34 @@ interface Step { name?: string; if?: string; run?: string; uses?: string; with?:
 interface Job { if?: string; needs?: string[]; steps: Step[]; env?: Record<string, string> }
 
 const workflow = YAML.parse(readFileSync(join(process.cwd(), '.github/workflows/preview-vps.yml'), 'utf8')) as {
+  on: { workflow_dispatch: { inputs: Record<string, { type: string; default?: boolean }> } };
   jobs: Record<string, Job>;
+  concurrency: { group: string; 'cancel-in-progress': string };
 };
 const step = (job: string, name: string): Step => {
   const found = workflow.jobs[job]!.steps.find((candidate) => candidate.name === name);
   if (!found) throw new Error(`missing step ${job}/${name}`);
   return found;
 };
+
+// These workflow guards use the JavaScript-compatible subset of GitHub expressions.
+// Evaluate their actual boolean behavior rather than matching a reassuring substring.
+function evaluateExpression(expression: string, context: Record<string, unknown>): unknown {
+  return runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), {
+    always: () => true,
+    cancelled: () => false,
+    ...context,
+  }, { timeout: 100 });
+}
+
+function concurrencyGroup(eventName: string, bundleOnly = false, action = '', pr: number | string = 1907): string {
+  const context = {
+    github: { event_name: eventName, event: { action, pull_request: { number: eventName === 'pull_request' ? pr : undefined }, label: { name: 'preview-vps' } }, run_id: 42 },
+    inputs: { pr: String(pr), bundle_only: bundleOnly },
+  };
+  return workflow.concurrency.group.replace(/\$\{\{([\s\S]*?)\}\}/g,
+    (_match, expression: string) => String(evaluateExpression(expression, context)));
+}
 
 const headSha = '0123456789abcdef0123456789abcdef01234567';
 const directories: string[] = [];
@@ -41,7 +63,7 @@ async function decide(overrides: Record<string, string>): Promise<{ status: numb
   await writeFile(join(directory, 'gh'), `#!/usr/bin/env bash
 case "$*" in
   */comments*) printf '%s' "\${FAKE_BUNDLE_COMMENT_IDS:-}" ;;
-  *) printf '%s' '{"head":{"sha":"${headSha}","ref":"feature","repo":{"full_name":"HamedMP/matrix-os"}},"user":{"login":"octo-dev"}}' ;;
+  *) printf '%s' "$FAKE_PR_JSON" ;;
 esac
 `);
   await chmod(join(directory, 'gh'), 0o755);
@@ -66,6 +88,8 @@ esac
       REQUESTED_VERSION: '',
       VERIFY_INVENTORY: 'false',
       TEARDOWN_PREVIEW: 'false',
+      BUNDLE_ONLY: 'false',
+      FAKE_PR_JSON: JSON.stringify({ head: { sha: headSha, ref: 'feature', repo: { full_name: 'HamedMP/matrix-os' } }, user: { login: 'octo-dev' } }),
       ...overrides,
     },
   });
@@ -87,6 +111,82 @@ describe('Private Preview bundles in the Preview workflow', () => {
     const { status, outputs } = await decide(overrides);
     expect(status).toBe(0);
     expect(outputs.action).toBe(action);
+  });
+
+  it('exposes an opt-in manual bundle action using live PR head and author without deployment', async () => {
+    expect(workflow.on.workflow_dispatch.inputs.bundle_only).toMatchObject({ type: 'boolean', default: false });
+    const liveSha = 'a'.repeat(40);
+    const { status, outputs } = await decide({
+      EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true',
+      FAKE_PR_JSON: JSON.stringify({ head: { sha: liveSha, ref: 'fresh-feature', repo: { full_name: 'HamedMP/matrix-os' } }, user: { login: 'fresh-author' } }),
+    });
+    expect(status).toBe(0);
+    expect(outputs).toMatchObject({ action: 'bundle', head_sha: liveSha, head_ref: 'fresh-feature', author: 'fresh-author', requested_version: '', teardown_private: 'false' });
+    expect(workflow.jobs.build!.steps.find((candidate) => candidate.uses === 'actions/checkout@v6')?.with?.ref).toBe('${{ needs.gate.outputs.head_sha }}');
+    expect((await decide({ EVENT_NAME: 'workflow_dispatch' })).outputs.action).toBe('deploy');
+  });
+
+  it('isolates bundle-only publication from the PR deployment concurrency group', () => {
+    const deployment = concurrencyGroup('workflow_dispatch');
+    const publication = concurrencyGroup('workflow_dispatch', true);
+    expect(publication).not.toBe(deployment);
+    expect(concurrencyGroup('pull_request', false, 'synchronize')).toBe(deployment);
+    expect(concurrencyGroup('workflow_dispatch', true)).toBe(publication);
+    expect(concurrencyGroup('workflow_dispatch', true, '', 1908)).not.toBe(publication);
+    expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
+      github: { event_name: 'workflow_dispatch', event: { action: '' } },
+    })).toBe(true);
+    for (const [eventName, action] of [['pull_request', 'closed'], ['schedule', '']]) {
+      expect(evaluateExpression(workflow.concurrency['cancel-in-progress'], {
+        github: { event_name: eventName, event: { action } },
+      })).toBe(false);
+    }
+  });
+
+  it('keeps malformed dispatch PR text out of the other operation concurrency namespace', () => {
+    const publication = concurrencyGroup('workflow_dispatch', true, '', 123);
+    expect(concurrencyGroup('workflow_dispatch', false, '', '123-bundle')).not.toBe(publication);
+    const deployment = concurrencyGroup('workflow_dispatch', false, '', 123);
+    expect(concurrencyGroup('workflow_dispatch', true, '', '123-bundle')).not.toBe(deployment);
+    expect(concurrencyGroup('schedule', false, '', '')).toBe('preview-vps-reaper-active');
+  });
+
+  it.each(['bundle', 'deploy', 'deploy_existing', 'verify', 'teardown', 'skip', 'unknown'])
+    ('runs only the intended jobs for action %s, including failed/skipped builds', (action) => {
+      for (const buildResult of ['success', 'failure', 'skipped']) {
+        const context = { needs: { gate: { outputs: { action } }, build: { result: buildResult } } };
+        const expected: Record<string, boolean> = {
+          build: action === 'deploy' || action === 'bundle',
+          publish_bundle: action === 'bundle' && buildResult === 'success',
+          deploy: (action === 'deploy' && buildResult === 'success') || action === 'deploy_existing',
+          verify_inventory: action === 'verify',
+          teardown: action === 'teardown',
+        };
+        for (const [job, shouldRun] of Object.entries(expected)) {
+          expect(Boolean(evaluateExpression(workflow.jobs[job]!.if!, context)), `${job}/${action}/${buildResult}`).toBe(shouldRun);
+        }
+      }
+    });
+
+  it.each<Record<string, string>>([
+    { REQUESTED_VERSION: 'v2026.10.03-pr1907-1-1-0123456' },
+    { VERIFY_INVENTORY: 'true' },
+    { TEARDOWN_PREVIEW: 'true' },
+  ])('rejects bundle-only dispatch combined with another action: %j', async (otherAction) => {
+    const result = await decide({ EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true', ...otherAction });
+    expect(result.status).toBe(1);
+    expect(result.outputs).toEqual({});
+  });
+
+  it('does not publish a fork or invalid SHA through manual bundle-only dispatch', async () => {
+    for (const head of [
+      { sha: headSha, ref: 'feature', repo: { full_name: 'someone/matrix-os' } },
+      { sha: 'invalid', ref: 'feature', repo: { full_name: 'HamedMP/matrix-os' } },
+    ]) {
+      const result = await decide({ EVENT_NAME: 'workflow_dispatch', BUNDLE_ONLY: 'true', FAKE_PR_JSON: JSON.stringify({ head, user: { login: 'octo-dev' } }) });
+      if (head.sha === 'invalid') expect(result.status).toBe(1);
+      else expect(result.outputs.action).toBe('skip');
+    }
   });
 
   it('passes the PR author as provenance, and drops a login the platform would reject', async () => {

@@ -9,11 +9,11 @@
 
 Matrix OS ships 11 local-only utility apps in `home/apps/{calculator, clock, expense-tracker, games, notes, pomodoro, profile, social, task-manager, todo, weather}`. None connect to external services. None pull real user data. All are hand-written inline HTML/CSS/JS (~12K lines total). The quality ceiling is capped by this authoring style — every app reinvents layout, state, and design primitives.
 
-For waitlist users arriving at matrix-os.com from OpenClaw, Lovable, v0, or similar AI-native tools, the first session is underwhelming. They see generic local apps, not an OS that knows their life. The #1 OpenClaw use case is email/inbox management. The #1 consumer category is communication + productivity. Spec 049 shipped Pipedream Connect (3,000+ integrations) and spec 063 (proposed) gives us a real React runtime. The combination unlocks a **Connected Life** default experience: on first session, the user connects Gmail + Calendar + Spotify, and three default apps immediately populate with their real data.
+For waitlist users arriving at matrix-os.com from OpenClaw, AI app builders, v0, or similar AI-native tools, the first session is underwhelming. They see generic local apps, not an OS that knows their life. The #1 OpenClaw use case is email/inbox management. The #1 consumer category is communication + productivity. Spec 049 shipped Pipedream Connect (3,000+ integrations) and spec 063 (proposed) gives us a real React runtime. The combination unlocks a **Connected Life** default experience: on first session, the user connects Gmail + Calendar + Spotify, and three default apps immediately populate with their real data.
 
 ## Target User
 
-Waitlist signups from matrix-os.com. Technical-curious builders who have used OpenClaw, Lovable, v0, or similar AI-native desktop tools. They expect:
+Waitlist signups from matrix-os.com. Technical-curious builders who have used AI-native creation tools. They expect:
 - Working output within 5 minutes of signup
 - Real data from real services, not demo data
 - A modern UI that doesn't feel like a 2014 jQuery demo

@@ -3,8 +3,10 @@ import {
   FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseResponseSchema,
+  FundedAiSafeErrorSchema,
   FundedAiStartResponseSchema,
   type FundedAiAuthorizationResponse,
+  type FundedAiPriorityReason,
   type FundedAiFinalizationRequest,
   type FundedAiFinalizationResponse,
   type FundedAiPolicyCheckResponse,
@@ -18,10 +20,37 @@ import {
 } from "./funded-relay-config.js";
 
 export class FundedControlPlaneError extends Error {
-  constructor(readonly status: number) {
+  constructor(readonly status: number, readonly priorityReason?: FundedAiPriorityReason,
+    readonly fundingReason?: "insufficient_credit" | "budget_exceeded") {
     super("Funded AI control-plane request failed");
     this.name = "FundedControlPlaneError";
   }
+}
+
+/** These are platform contract errors, never arbitrary provider error strings. */
+function fundingReasonFrom(status: number, text: string): "insufficient_credit" | "budget_exceeded" | undefined {
+  if (status !== 402 && status !== 403) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text) as unknown; }
+  catch (error: unknown) { if (error instanceof SyntaxError) return undefined; throw error; }
+  const safe = FundedAiSafeErrorSchema.safeParse(parsed);
+  if (!safe.success) return undefined;
+  if (status === 402 && safe.data.error.code === "insufficient_credit") return "insufficient_credit";
+  if (status === 403 && safe.data.error.code === "budget_exceeded") return "budget_exceeded";
+  return undefined;
+}
+
+/** Only the platform's allowlisted priority reasons pass through; anything else is dropped. */
+function priorityReasonFrom(text: string): FundedAiPriorityReason | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (error) {
+    if (error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+  const safe = FundedAiSafeErrorSchema.safeParse(parsed);
+  return safe.success && safe.data.error.code === "rate_limited" ? safe.data.error.reason : undefined;
 }
 
 async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
@@ -99,7 +128,10 @@ export function createFundedPlatformClient(options: Pick<
       signal: AbortSignal.any([lifetimeSignal, AbortSignal.timeout(platformTimeoutMs)]),
     });
     const text = await readBoundedText(response, maxControlResponseBytes);
-    if (!response.ok) throw new FundedControlPlaneError(response.status);
+    if (!response.ok) {
+      throw new FundedControlPlaneError(response.status, response.status === 429 ? priorityReasonFrom(text) : undefined,
+        fundingReasonFrom(response.status, text));
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;

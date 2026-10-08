@@ -141,6 +141,7 @@ describe("CanonicalChatRoute", () => {
     const record = { chat, projectId: project?.projectId, providerBinding, activeRun };
     const routeApi = api(vi.fn(async (path: string) => {
       if (path.startsWith("/api/chat-providers")) return completed.providerCatalog;
+      if (path === `/api/chats/${chat.id}/bot`) return { agentId: null };
       if (path.startsWith(`/api/chats/${chat.id}`)) {
         return {
           record,
@@ -184,7 +185,7 @@ describe("CanonicalChatRoute", () => {
     expect(await screen.findByText("legacy chat")).toBeTruthy();
   });
 
-  it("forwards the revisioned cancellation body through the real queued-turn route adapter", async () => {
+  it.each(["ordinary", "failed", "loading"] as const)("forwards queue and Run cancellation with Bot identity %s through real route adapters", async (identity) => {
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
       unobserve() {}
@@ -215,16 +216,22 @@ describe("CanonicalChatRoute", () => {
       record,
       messages: running.snapshot.messages,
       turns: running.snapshot.turns,
-      runs: running.snapshot.runs,
+      runs: running.snapshot.runs.map(run => ({...run, capabilitySnapshot: {...run.capabilitySnapshot, steering: "same_run" as const}})),
       activities: running.snapshot.activities,
       queuedTurns: [queuedTurn],
     };
     const routeApi = api(vi.fn(async (path: string) => {
       if (path.startsWith("/api/chat-providers")) return running.providerCatalog;
+      if (path === `/api/chats/${chat.id}/bot`) {
+        if (identity === "failed") throw new Error("binding unavailable");
+        if (identity === "loading") return await new Promise(() => undefined);
+        return { agentId: null };
+      }
       if (path.startsWith(`/api/chats/${chat.id}`)) return detail;
       if (path.startsWith("/api/chats")) return { items: [record] };
       throw new Error("route unavailable");
     }));
+    routeApi.post = vi.fn(async () => ({ run: running.snapshot.runs[0], cancellation: "aborted" }));
     routeApi.delete = vi.fn(async () => {
       detail.queuedTurns = [];
       return {
@@ -245,7 +252,18 @@ describe("CanonicalChatRoute", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel Cancel this queued turn" }));
+    const cancel = await screen.findByRole("button", { name: "Cancel Cancel this queued turn" });
+    if (identity !== "ordinary") {
+      expect(screen.queryByRole("textbox", { name: "Reply to chat" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+      expect((screen.getByRole("button", { name: "Steer Cancel this queued turn" }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(routeApi.post).toHaveBeenCalledWith(
+      `/api/chats/${chat.id}/runs/${activeRun!.runId}/cancel?readStateVersion=1`,
+      { clientRequestId: expect.any(String) },
+    ));
+    fireEvent.click(cancel);
 
     await waitFor(() => {
       expect(routeApi.delete).toHaveBeenCalledWith(

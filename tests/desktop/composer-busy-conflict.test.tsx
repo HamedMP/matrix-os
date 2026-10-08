@@ -12,6 +12,7 @@ import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts
 import { AgentConversationView } from "../../desktop/src/renderer/src/features/coding-agents/AgentConversationView";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
+import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
@@ -73,6 +74,9 @@ async function typeAndEnter(text: string) {
 describe("AgentConversationView composer busy conflict", () => {
   beforeEach(() => {
     globalThis.ResizeObserver = MockResizeObserver as typeof ResizeObserver;
+    useConnection.setState(useConnection.getInitialState(), true);
+    // These settled local IPC fixtures use mockOperator for runtime readiness.
+    useConnection.setState({ status: "signed-in", api: null });
     useCodingAgentWorkspace.setState({
       activeThreadId: "thread_alpha",
       threadSnapshot: snapshot([]),
@@ -87,6 +91,7 @@ describe("AgentConversationView composer busy conflict", () => {
 
   afterEach(() => {
     cleanup();
+    useConnection.setState(useConnection.getInitialState(), true);
     vi.restoreAllMocks();
   });
 

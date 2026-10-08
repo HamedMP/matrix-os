@@ -1,3 +1,4 @@
+import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -5,6 +6,7 @@ import {
   FlatList,
   InteractionManager,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   Text,
@@ -24,36 +26,45 @@ import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjects } from "@/lib/queries/use-projects";
-import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
-import { canonicalChatRequestId } from "@/lib/requests";
 import {
   buildTranscript,
+  optimisticTranscriptMessage,
   transcriptWorkLabel,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { renderChatMarkdown, type ChatMarkdownTheme } from "@/lib/chat-markdown";
+import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
+import { useChatComposer } from "@/lib/use-chat-composer";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectPicker } from "@/components/ProjectPicker";
 import { Icon, IconButton } from "@/components/ui";
 import { AnalyticsMask } from "@/lib/analytics";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
+import { BotChatControls } from "@/components/BotChatControls";
+import { BotRecipeChooser, type BotCreationAttempt } from "@/components/BotRecipeChooser";
+import { useBotChat } from "@/lib/queries/use-bot-chat";
+import { useBotRecipes } from "@/lib/queries/use-bot-recipes";
+import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { ChatContextMenu } from "@/components/ChatContextMenu";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
+import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, userId } = useAuth();
   const { user } = useUser();
   const { theme } = useUnistyles();
+  const warmSessionToken = useSessionTokenWarmup();
   const {
     activeChatId,
     selectionOverride,
     setSelectionOverride,
     selectedProjectId,
     setSelectedProjectId,
+    selectChat,
   } = useCanonicalChatSession();
   const firstName = user?.firstName
     ?? user?.fullName?.trim().split(/\s+/)[0]
@@ -61,30 +72,54 @@ export default function ChatScreen() {
     ?? "there";
 
   const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
-  const { catalog } = useChatProviderCatalog();
+  const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
+  const botChat = useBotChat(activeChatId, gatewayUrl);
+  const [showBotRecipes, setShowBotRecipes] = useState(false);
+  const botCreationAttempt = useRef<BotCreationAttempt | null>(null);
+  const botRecipes = useBotRecipes(gatewayUrl, showBotRecipes);
+  const chats = useCanonicalChats();
+  const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
   const { projects } = useProjects();
-  const sendMessage = useSendChatMessage();
 
-  const selection = selectionOverride
+  const directBot = Boolean(botChat.snapshot);
+  // The picker marks the catalog as being checked whenever it is fetched.
+  // Sending only waits when there is no catalog to choose a model from yet:
+  // one that is merely being re-checked already gives the selection, and the
+  // computer validates that selection when it admits the turn.
+  const providerCatalogChecking = !directBot && (catalogPending || catalogFetching);
+  const providerCatalogLoading = !directBot && catalogPending;
+  const selection = directBot ? MATRIX_BOT_SELECTION : selectionOverride
     ?? detail?.record.chat.currentSelection
     ?? defaultCatalogSelection(catalog);
-  const turnModes = defaultTurnModes(catalog, selection);
+  const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
-  const messages = useMemo(() => buildTranscript(detail), [detail]);
-  const busy = sendMessage.isPending || (detail?.runs.some(
+  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+    scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
+    activeChatId,
+    detail,
+    selection,
+    turnModes,
+    projectId: selectedProjectId,
+    // The selection is not final until the provider catalog has loaded.
+    disabled: providerCatalogLoading,
+  });
+
+  const messages = useMemo(() => {
+    const transcript = buildTranscript(detail);
+    if (optimisticMessages.length === 0) return transcript;
+    // Newest-first, matching the inverted transcript FlatList.
+    return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
+  }, [detail, optimisticMessages]);
+  const busy = isSending || (detail?.runs.some(
     (run) => !["completed", "failed", "aborted"].includes(run.status),
   ) ?? false);
 
-  const [draft, setDraft] = useState("");
   const [inputFocused, setInputFocused] = useState(false);
   // Tapping the model picker itself blurs the TextInput a beat before its
   // native menu opens — delay hiding on blur, and cancel the hide entirely
   // if that blur was caused by touching the picker.
   const hidePickerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerTouchedRef = useRef(false);
-  // Idempotency keys for the in-flight/most recent send attempt, keyed by its
-  // exact drafted text -- see the comment in `send` below.
-  const pendingSendRef = useRef<{ text: string; chatRequestId: string; turnRequestId: string } | null>(null);
 
   const handleInputFocus = useCallback(() => {
     if (hidePickerTimer.current) {
@@ -92,7 +127,13 @@ export default function ChatScreen() {
       hidePickerTimer.current = null;
     }
     setInputFocused(true);
-  }, []);
+    warmSessionToken();
+  }, [warmSessionToken]);
+
+  const handleDraftChange = useCallback((text: string) => {
+    setDraft(text);
+    warmSessionToken();
+  }, [setDraft, warmSessionToken]);
 
   const handleInputBlur = useCallback(() => {
     hidePickerTimer.current = setTimeout(() => {
@@ -111,55 +152,7 @@ export default function ChatScreen() {
 
   const isConnected = Boolean(isSignedIn);
   const hasDraftText = draft.trim().length > 0;
-  const canSend = hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
-
-  const send = useCallback(() => {
-    const trimmed = draft.trim();
-    if (!trimmed || !selection || !turnModes) return;
-    // Clear the draft only once the send actually succeeds -- a failed token
-    // fetch, computer resolution, chat creation, or turn admission leaves the
-    // typed text in place so the user can retry instead of losing it. The
-    // composer stays editable while the send is in flight, so only clear it
-    // if it still holds exactly what was sent -- otherwise the user has
-    // already started a new message and this would erase that instead.
-    //
-    // Reuse the same idempotency keys across retries of this exact drafted
-    // text -- if the first attempt's admission succeeded server-side but its
-    // response was lost, retrying with fresh IDs would create a second chat
-    // and run (and bill) the prompt again.
-    if (pendingSendRef.current?.text !== trimmed) {
-      pendingSendRef.current = {
-        text: trimmed,
-        chatRequestId: canonicalChatRequestId(),
-        turnRequestId: canonicalChatRequestId(),
-      };
-    }
-    const { chatRequestId, turnRequestId } = pendingSendRef.current;
-    sendMessage.mutate({
-      chatId: activeChatId,
-      baseRevision: detail?.record.chat.revision ?? 0,
-      text: trimmed,
-      selection,
-      interactionMode: turnModes.interactionMode,
-      permissionMode: turnModes.permissionMode,
-      projectId: selectedProjectId,
-      chatRequestId,
-      turnRequestId,
-    }, {
-      onSuccess: () => {
-        if (pendingSendRef.current?.text === trimmed) pendingSendRef.current = null;
-        setDraft((current) => (current === trimmed ? "" : current));
-      },
-    });
-  }, [
-    draft,
-    selection,
-    turnModes,
-    activeChatId,
-    detail?.record.chat.revision,
-    selectedProjectId,
-    sendMessage,
-  ]);
+  const canSend = !providerCatalogLoading && hasDraftText && isConnected && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const insets = useSafeAreaInsets();
 
@@ -204,6 +197,29 @@ export default function ChatScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={84}
     >
+      <Pressable accessibilityRole="button" accessibilityLabel="Bot recipes" disabled={!gatewayUrl}
+        style={styles.botRecipesToggle} onPress={() => setShowBotRecipes((value) => !value)}>
+        <Text style={styles.systemText}>Bot recipes</Text>
+      </Pressable>
+      {showBotRecipes && gatewayUrl ? botRecipes.isError
+        ? <Text accessibilityRole="alert" style={styles.systemText}>Bot recipes could not be loaded. Try again.</Text>
+        : botRecipes.isPending ? <Text style={styles.systemText}>Loading bot recipes…</Text>
+          : <BotRecipeChooser catalog={catalog} recipes={botRecipes.recipes} onCreate={botRecipes.create}
+            attemptRef={botCreationAttempt} attemptScope={`${userId ?? ""}:${gatewayUrl}`} onOpenChat={(chatId) => {
+            selectChat(chatId);
+            setShowBotRecipes(false);
+            void chats.invalidate();
+          }} /> : null}
+      {botChat.snapshot ? <BotChatControls catalog={catalog} snapshot={botChat.snapshot} actionsAvailable={!botChat.isError}
+        onSelectionChange={botChat.updateModel} onResolve={botChat.resolve}
+        onRevoke={botChat.revoke} onMemory={botChat.memory} onRefresh={botChat.refresh}
+        onConnectUrl={async (url) => {
+          if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
+          await Linking.openURL(url);
+        }} /> : null}
+      {botChat.isError && activeChatId ? <Text accessibilityRole="alert" style={styles.systemText}>
+        Bot status could not be loaded. Try again.
+      </Text> : null}
       <FlatList
         style={styles.hero}
         data={messages}
@@ -257,7 +273,7 @@ export default function ChatScreen() {
             ref={inputRef}
             accessibilityLabel="Message Matrix"
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={handleDraftChange}
             onSubmitEditing={send}
             onFocus={handleInputFocus}
             onBlur={handleInputBlur}
@@ -276,12 +292,13 @@ export default function ChatScreen() {
                 iconColor={theme.v2.appColors.ink}
               />
               <View style={styles.composerControlsRight}>
-                <View onTouchStart={handlePickerTouchStart}>
-                  <ModelPicker
+                <View style={styles.composerPickers} onTouchStart={handlePickerTouchStart}>
+                  {!directBot ? <ModelPicker
                     catalog={catalog}
+                    catalogLoading={providerCatalogChecking}
                     selection={selection}
                     onSelectionChange={setSelectionOverride}
-                  />
+                  /> : <Text style={styles.systemText}>Bot model</Text>}
                 </View>
                 <IconButton
                   accessibilityLabel={busy ? "Matrix is responding" : "Send message"}
@@ -346,6 +363,9 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
   const expanded = manualExpanded ?? message.isRunning;
   const hasWork = message.toolCalls.length > 0 || message.activities.length > 0;
   const workedLabel = transcriptWorkLabel(message);
+  // While the reply streams, show it at a steady pace with each new chunk
+  // fading in, rather than in the uneven bursts the network delivers.
+  const reveal = useStreamedTextReveal(message.text, message.isRunning);
   // Re-parses on every text change, which is exactly what a growing streamed
   // string needs -- markdown applies as the text arrives, not once at the end.
   const markdownNodes = useMemo(() => {
@@ -359,8 +379,8 @@ function AssistantMessage({ message }: { message: TranscriptMessage }) {
       boldFontFamily: theme.v2.fonts.semibold,
       headingFontFamily: theme.v2.fonts.semibold,
     };
-    return renderChatMarkdown(message.text, markdownTheme);
-  }, [message.text, theme]);
+    return renderChatMarkdown(reveal.text, markdownTheme, reveal.fades);
+  }, [reveal.text, reveal.fades, theme]);
 
   return (
     <View style={styles.matrixBubble}>
@@ -400,6 +420,15 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.appColors.canvas,
+  },
+  botRecipesToggle: {
+    alignSelf: "center",
+    marginVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: theme.v2.colors.borderSubtle,
+    borderRadius: 12,
   },
   hero: {
     flex: 1,
@@ -550,9 +579,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  // Both shrink so wide pickers wrap inside the row and the send button, which
+  // keeps its size, always stays in view.
   composerControlsRight: {
+    flexShrink: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
+  },
+  composerPickers: {
+    flexShrink: 1,
   },
 }));

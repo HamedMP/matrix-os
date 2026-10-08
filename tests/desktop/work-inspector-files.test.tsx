@@ -191,7 +191,7 @@ describe("Work Files inspector composition", () => {
       await screen.findByRole("textbox", { name: "Start a chat" });
       expect(useConnection.getState().api!.forRuntime).toHaveBeenCalledWith("primary");
     }
-    else await screen.findByText("Recents");
+    else await screen.findByRole("textbox", { name: "Start a chat" });
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 });

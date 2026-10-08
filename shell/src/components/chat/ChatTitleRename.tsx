@@ -1,10 +1,12 @@
 "use client";
 
+import { Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ChatContextMenu } from "@matrix-os/ui";
+import { ChatContextMenu, OverflowingChatTitle } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
+  canonicalRecord?: import("@matrix-os/ui").ChatNavigationRecord;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
   title?: string;
@@ -82,6 +84,7 @@ export function RenameableConversationRow({
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -115,17 +118,18 @@ export function RenameableConversationRow({
         selectTimerRef.current = null;
         onRenameStart();
       } : undefined}
-      className={`group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
+      className={`matrix-web-chat-row group flex w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors ${mobile ? "py-3" : "py-2"} ${
         active ? "bg-accent/50 text-foreground" : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
       }`}
     >
       {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
-      <span className={`flex-1 truncate ${conversation.readState?.unread ? "font-semibold" : ""}`}>{title.slice(0, 40) + (title.length > 40 ? "..." : "")}</span>
+      <span className={`matrix-web-chat-title flex min-w-0 flex-1 ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/></span>
     </button>
   );
   if (editing) return row;
   return (
-    <ChatContextMenu chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={onRenameStart ? [{
+    <div data-chat-title-row className="matrix-web-chat-row-item" data-current={active} data-menu-open={menuOpen}>
+    <ChatContextMenu dropdownTrigger={<button type="button" className="matrix-web-chat-row-more" aria-label={`Actions for ${title}`}><Ellipsis aria-hidden="true" size={15} strokeWidth={1.5}/></button>} onDropdownOpenChange={setMenuOpen} chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={onRenameStart ? [{
         label: "Rename", onSelect: () => {
           if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
           renameTimerRef.current = window.setTimeout(() => {
@@ -134,5 +138,6 @@ export function RenameableConversationRow({
           }, 0);
         },
     }] : []}>{row}</ChatContextMenu>
+    </div>
   );
 }

@@ -1,3 +1,12 @@
+import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
+import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
+import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
+import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
+import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
+import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
+import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
+import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
+import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
@@ -44,6 +53,7 @@ import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { formatForChannel } from "./channels/format.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createClaudeChatProviderAdapter } from "./chat/claude-provider-adapter.js";
+import { managedPiMcpDependencies } from "./startup/managed-pi-tools.js";
 import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client.js";
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
@@ -119,6 +129,7 @@ import {
   createFundedAiCredentialManager,
   loadFundedAiRuntimeConfig,
 } from "./funded-ai-credential-manager.js";
+import { createFundedAdmissionQueue } from "./funded-ai/admission-queue.js";
 import { createFundedAiFundingSummaryClient } from "./funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "./funded-ai-route-readiness-client.js";
 import { createFundedAiReadinessReader } from "./funded-ai-readiness.js";
@@ -154,7 +165,8 @@ import { createHostToolPackInstaller, createToolPackService, InMemoryToolPackRep
 import { createPreviewManager } from "./preview-manager.js";
 import { createProjectManager } from "./project-manager.js";
 import { createProvisioner } from "./provisioner.js";
-import { requireRequestPrincipal } from "./request-principal.js";
+import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
+import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
 import { securityHeadersMiddleware } from "./security/headers.js";
 import {
@@ -164,7 +176,15 @@ import {
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
+import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
+import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
+import { startBots, type BotServices } from "./startup/bots.js";
+import { withBotProviderInstance } from "./bots/provider-instance.js";
+import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotContinuationAdmitter } from "./bots/continuations.js";
+import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
+import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -287,6 +307,8 @@ export async function createGateway(config: GatewayConfig) {
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
     : undefined;
+  // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
+  const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
     ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
     : undefined;
@@ -322,6 +344,7 @@ export async function createGateway(config: GatewayConfig) {
   });
   const terminalLiveOwnership = createTerminalLiveOwnership();
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
+  const nativeProviderProfileGuard = createNativeProviderProfileGuard({ homePath, registry: providerLoginTerminalRegistry });
   const workspaceSessionRuntimeBridge = createSessionRuntimeBridge();
   const shellPreferencesStore = new ShellPreferencesStore({ homePath });
   const terminalWindowLayoutStore = new TerminalWindowLayoutStore({ homePath });
@@ -794,6 +817,8 @@ export async function createGateway(config: GatewayConfig) {
   let canonicalChatExecutionRoots: ChatExecutionRootResolver | null = null;
   let canonicalChatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null = null;
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
+  let scopeRuntimeHost: ScopeRuntimeHost | undefined;
+  let botServices: BotServices | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
   // Collaboration wiring always constructs (S20): there is no release flag.
   // Incomplete configuration or a missing owner database registers the
@@ -1039,7 +1064,7 @@ export async function createGateway(config: GatewayConfig) {
         `Diagnose and fix the issue.`;
 
       try {
-        await dispatcher.dispatch(healPrompt, undefined, () => {});
+        await dispatcher.dispatch(healPrompt, undefined, () => {}, undefined, undefined, { fundedRequestClass: "background" });
 
         const result = await checkModuleHealth(target.port, target.healthPath, 5000);
         if (result.ok) {
@@ -1269,6 +1294,12 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
+  app.route("/api/data-imports", await createRuntimeDataImportRoutes({
+    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
+    transport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
@@ -1319,7 +1350,7 @@ export async function createGateway(config: GatewayConfig) {
 
   registerVoiceWebSocketRoutes({
     app, upgradeWebSocket, homePath, geminiLiveConnection, readinessService,
-    captureGatewayProductEvent,
+    captureGatewayProductEvent, nativeProviderProfileGuard,
   });
 
   registerFileRoutes(app, {
@@ -1406,9 +1437,14 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
     ),
   });
+  let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
   const aiProviderService = new AiProviderService({
+    matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
+    exposeClaudeProfileAccount: true,
+    codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
+    openclawRuntimeSource: agentRuntimeServices.source,
     homePath,
     healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
     fundedCredentialProvider,
@@ -1431,13 +1467,15 @@ export async function createGateway(config: GatewayConfig) {
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "codex" | "claude" => agent === "codex" || agent === "claude",
+      (agent): agent is "claude" => agent === "claude",
     ),
   });
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
+    profileGuard: nativeProviderProfileGuard,
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
@@ -1452,13 +1490,18 @@ export async function createGateway(config: GatewayConfig) {
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
+    claudeNativeAccountMetadataReader: createClaudeNativeAccountMetadataReader({ executable: "claude", cwd: homePath, environment: buildSettingsAccountEnvironment(homePath) }),
+    hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
+    ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
+      executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
+    }) } : {}),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
     fundingSummaryReader: fundedAiFundingSummaryReader,
     runtimeCoordinator: providerGenericHarnessCoordinator,
   });
-  const canonicalExecutableDriverKinds = [
+  const canonicalExecutableDriverKinds: import("@matrix-os/contracts").CanonicalProviderDriverKind[] = [
     "kernel" as const,
     "hermes" as const,
     "openclaw" as const,
@@ -1482,7 +1525,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: canonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
     homePath,
     codexExecutable,
@@ -1496,7 +1539,47 @@ export async function createGateway(config: GatewayConfig) {
     credentialedDriverKinds: ["pi", "opencode"],
     driveContextReady: () => chatDriveContext.service !== null,
   });
+  let canonicalChatProviderCatalog = baseCanonicalChatProviderCatalog;
   if (chatRepository && canonicalChatExecutionRoots) {
+    // Extraction plan for this 1,000+ line composition entrypoint:
+    // specs/536-conversational-bots/plan.md#gateway-entrypoint-extraction.
+    // The host starts before the adapters so the bot adapter can bind to it; shared AI
+    // registers on it after the orchestrator exists (below).
+    scopeRuntimeHost = await startScopeRuntimeHost({
+      homePath,
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+      onFailure: logBestEffortFailure,
+    });
+    matrixAnthropicRuntime = createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+      profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+      supports: { rootChat: Boolean(scopeRuntimeHost?.available), recipeBots: Boolean(scopeRuntimeHost?.available) },
+      onSourceChanged: () => botServices?.cancelAnthropicInference?.(),
+    });
+    const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
+    await chatAgents.bootstrap();
+    botServices = await startBots({
+      homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
+      providers: aiProviderService,
+      ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
+      managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+        ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
+      ...(internalIntegrationBaseUrl && internalPlatformToken
+        ? { integrations: createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken }) }
+        : integrationRoutes ? { integrations: createLocalIntegrationTransport(integrationRoutes) } : {}),
+      ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
+      ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+      ...(fundedAdmission ? { fundedAdmission } : {}),
+    });
+    const sourceCatalog = matrixAnthropicRuntime.service
+      ? withMatrixAnthropicProviderInstances(baseCanonicalChatProviderCatalog, aiProviderService,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : baseCanonicalChatProviderCatalog;
+    const enhanced = botServices?.chatgptPlanPeers
+      ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
+    canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
+      refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
@@ -1505,6 +1588,7 @@ export async function createGateway(config: GatewayConfig) {
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
         homePath,
+        credentialKey: toolOutputKey,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
         matrixMcpCapabilityIssuer: matrixMcpCapabilities,
         ...(previewDriveClient ? { previewDriveClient } : {}),
@@ -1542,12 +1626,19 @@ export async function createGateway(config: GatewayConfig) {
         }));
       }
     }
+    if (botServices?.adapter) canonicalAdapters.push(botServices.adapter);
+    if (botServices?.managedAdapter) {
+      canonicalAdapters.push(botServices.managedAdapter);
+      canonicalExecutableDriverKinds.push("matrix_pi");
+    }
     canonicalChatRuntime = await createCanonicalChatRuntime({
       homePath,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
-      catalog: canonicalChatProviderCatalog,
+      catalog: botServices?.adapter ? withBotProviderInstance(canonicalChatProviderCatalog) : canonicalChatProviderCatalog,
+      agents: chatAgents,
+      ...(botServices ? { botChats: botServices.botChats } : {}),
       adapters: new CanonicalChatProviderRegistry(canonicalAdapters.map(adapter => withAsyncChatInput(adapter))),
       executionRoots: canonicalChatExecutionRoots,
       ...(canonicalChatCollaborationGuard ? { collaborationGuard: canonicalChatCollaborationGuard } : {}),
@@ -1559,6 +1650,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
+    botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     backgroundChatProjection.setReconciler(ownerId => canonicalChatOrchestrator?.reconcileActiveRuns({ type: "personal", ownerId }) ?? Promise.resolve());
     // Shared AI marks runs the previous process lost (gateway_restart) before the
     // owner reconcile loop below finishes them; the reverse order loses attribution.
@@ -1568,6 +1660,7 @@ export async function createGateway(config: GatewayConfig) {
     await enableOwnerSharedAi({
       gatewayCollaboration,
       input: {
+        ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
         orchestrator: canonicalChatOrchestrator,
         homePath,
         providerCatalog: canonicalChatProviderCatalog,
@@ -1576,6 +1669,7 @@ export async function createGateway(config: GatewayConfig) {
         // shared AI reports no eligibility instead of launching unmounted runs.
         ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
         ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
+        ...(fundedAdmission ? { fundedAdmission } : {}),
       },
     });
     for (const ownerId of new Set(codingAgentOwnerIds)) {
@@ -1634,14 +1728,26 @@ export async function createGateway(config: GatewayConfig) {
   }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
+  const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
+  matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+    profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+    supports: { rootChat: false, recipeBots: false },
+  });
+  const providerWorkflowLifecycle = await createNativeProviderWorkflowRuntime({
+    app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
+    ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
+    getPrincipal: getOptionalRequestPrincipal,
+    inventory: () => aiProviderService.getSnapshot(),
+  });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
+    credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
     collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
-    canonicalChatProviderCatalog, aiProviderService,
+    canonicalChatProviderCatalog, aiProviderService, botServices,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
     listGmailAccounts: (ownerId) => withCapabilityLookupTimeout(() => lookupJevGmailAccounts(ownerId)),
   });
@@ -1649,6 +1755,7 @@ export async function createGateway(config: GatewayConfig) {
   // T978-T979: Settings API routes
   const settingsRoutes = createSettingsRoutes({
     homePath,
+    nativeProviderProfileGuard,
     channelManager,
     agentRuntimeSource: agentRuntimeServices.source,
     agentRuntimeController: agentRuntimeServices.controller,
@@ -1822,12 +1929,18 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
+      await matrixAnthropicRuntime.close();
+      await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
+      await botServices?.close();
+      botServices = undefined;
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
+      // After collaboration unregisters, so no shared run loses its broker mid-shutdown.
+      await scopeRuntimeHost?.close();
       gatewayCollaboration = null;
       await backgroundAgentRuntime.close();
       await codingAgentWorkspaceRuntime?.close();
@@ -1836,6 +1949,7 @@ export async function createGateway(config: GatewayConfig) {
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();
       aiProviderService.close();
+      fundedAdmission?.close();
       fundedCredentialProvider?.close();
       await jevRuntime?.cleanup.close();
       await codingAgentTurnLifecycle.shutdown();

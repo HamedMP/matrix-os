@@ -1,3 +1,4 @@
+import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 /** Customer VPS provisioning job dispatch, split from customer-vps.ts. */
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from './customer-vps-host-config.js';
@@ -52,6 +53,7 @@ import {
   sleep,
 } from './customer-vps-support.js';
 import type { CustomerVpsContext } from './customer-vps-context.js';
+import type { HetznerClient } from './customer-vps-hetzner.js';
 
 /** Claims durable provisioning jobs and creates their provider servers. */
 export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext) {
@@ -145,6 +147,22 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
     }
 
     let serverIdForCompensation: number | null = null;
+    let admissionCommitFailedWithKnownResult = false;
+    const createAdmittedServer = async (input: Parameters<HetznerClient['createServer']>[0]) => {
+      let created: Awaited<ReturnType<HetznerClient['createServer']>> | undefined;
+      try {
+        return await withAccountDeletionAdmission(deps.db, row.clerkUserId, async () => {
+          created = await deps.hetzner.createServer(input);
+          return created;
+        });
+      } catch (error: unknown) {
+        if (created) {
+          serverIdForCompensation = created.id;
+          admissionCommitFailedWithKnownResult = true;
+        }
+        throw error;
+      }
+    };
     let adoptedExistingServer = false;
     const persistWhileProvisioningClaimIsActive = async (
       mutate: (trx: PlatformDB) => Promise<void>,
@@ -357,7 +375,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
               throw new CustomerVpsError(409, 'snapshot_clone_rejected', 'Provisioning image unavailable');
             }
           }
-          server = await deps.hetzner.createServer(createInput);
+          server = await createAdmittedServer(createInput);
           if (imageDecision.imageSource === 'snapshot') {
             const accepted = await markGoldenSnapshotCreateIntentAccepted(
               deps.db, imageDecision.snapshotLeaseId, server.createActionId ?? null, now().toISOString(),
@@ -380,6 +398,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
             }
           }
         } catch (createErr: unknown) {
+          if (admissionCommitFailedWithKnownResult) throw createErr;
           if (isAmbiguousProviderCreateError(createErr)) {
             logCustomerVpsError('provision create outcome is ambiguous; awaiting exact-label reconciliation', createErr);
             return 'pending';
@@ -407,7 +426,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
             job.authorizationBasis,
           );
           try {
-            server = await deps.hetzner.createServer({
+            server = await createAdmittedServer({
               name: createInput.name,
               serverType: createInput.serverType,
               location: createInput.location,
@@ -426,6 +445,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
               },
             });
           } catch (fallbackCreateErr: unknown) {
+            if (admissionCommitFailedWithKnownResult) throw fallbackCreateErr;
             if (isAmbiguousProviderCreateError(fallbackCreateErr)) {
               logCustomerVpsError(
                 'clean fallback create outcome is ambiguous; awaiting exact-label reconciliation',

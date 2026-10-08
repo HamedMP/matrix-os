@@ -67,6 +67,7 @@ import {
 } from './ai-credit-checkout.js';
 import { processAiCreditWebhookEvent } from './ai-credit-checkout-webhook.js';
 import { createAiCreditCheckoutHandler } from './billing/ai-credit-checkout-route.js';
+import { createAiCreditHistoryHandler } from './billing/ai-credit-history-route.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
 import {
   createRedditAttributionExpiry,
@@ -584,6 +585,11 @@ export function createBillingRoutes(options: {
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
+
+  app.get('/ai-credit/history', createAiCreditHistoryHandler({
+    db: options.db,
+    resolveClerkUserId: (c) => resolveRouteClerkUserId(c, 'ai-credit history'),
+  }));
 
   app.post('/ai-credit/checkout', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), createAiCreditCheckoutHandler({
     db: options.db,

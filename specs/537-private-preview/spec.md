@@ -357,3 +357,31 @@ Public docs are N/A. This is an internal engineering tool, and its reference is
 - Share a Private Preview with another actor. This requires per-actor runtime
   credential isolation.
 - Test PR platform code. Private Previews run against the production platform.
+
+
+## Manual bundle-only publication contract
+
+1. **Scope / trigger:** publish an exact PR bundle when merge conflicts block
+   pull-request workflows, while preserving an existing test machine's owner.
+2. **Signature:** `preview-vps.yml` workflow dispatch accepts optional boolean
+   `bundle_only`, default false, plus the existing required `pr` input.
+3. **Contract:** true resolves the same-repository PR head/author through GitHub
+   and chooses action `bundle`. Existing build and trusted-main register-only
+   publication retain immutable version, PR provenance and `--channel none`.
+   Manual bundle-only publication uses a distinct PR concurrency group, so a
+   replacement publication can cancel an earlier publication without cancelling
+   a deploy, inventory verification or teardown for the same PR. Its operation
+   namespace precedes raw dispatch PR text, so a malformed PR input cannot collide
+   with the other operation before the gate validates the numeric PR.
+4. **Validation / errors:** reject combination with nonempty version, inventory
+   verification or teardown before any build; fork PRs cannot build/publish.
+5. **Good / base / bad:** bundle-only builds/publishes without machine writes;
+   default false preserves existing dispatch behavior; conflicting inputs fail.
+6. **Tests required:** execute the gate for current PR SHA, fork rejection and
+   each incompatible option; evaluate positive and negative action/build-result
+   cases for build/publish/deploy/inventory/teardown guards, including failed and
+   skipped builds. Verify publication concurrency isolation, trusted-main release
+   checkout, provenance and no-channel publication.
+7. **Wrong / correct:** do not dispatch provisioning to obtain a bundle for an
+   independently owned test VPS. Publish bundle-only, then perform a separately
+   scoped deploy of the verified immutable version.

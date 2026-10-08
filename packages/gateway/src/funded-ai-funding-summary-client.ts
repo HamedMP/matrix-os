@@ -1,5 +1,8 @@
 import {
+  FundedAiSafeErrorSchema,
   FundedAiRuntimeFundingSummaryResponseSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
+  type FundedAiChatAvailability,
   type FundedAiRuntimeFundingSummaryResponse,
 } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
@@ -9,7 +12,7 @@ const SAFE_MESSAGE = "Matrix AI usage is temporarily unavailable";
 
 export interface FundedAiFundingSummaryReader {
   getFundingSummary(options?: { signal?: AbortSignal }): Promise<
-    Pick<FundedAiRuntimeFundingSummaryResponse, "funding" | "policy">
+    Pick<FundedAiRuntimeFundingSummaryResponse, "funding" | "policy"> & { chatAvailability?: FundedAiChatAvailability }
   >;
 }
 
@@ -91,7 +94,7 @@ export function createFundedAiFundingSummaryClient(
       const timeout = makeTimeoutSignal(config.requestTimeoutMs);
       const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
       try {
-        const response = await fetchFn(config.fundingSummaryUrl, {
+        const request = (body: string) => fetchFn(config.fundingSummaryUrl, {
           method: "POST",
           redirect: "error",
           signal,
@@ -100,15 +103,30 @@ export function createFundedAiFundingSummaryClient(
             "content-type": "application/json",
             accept: "application/json",
           },
-          body: "{}",
+          body,
         });
+        let response = await request(JSON.stringify({ includeChatAvailability: true }));
+        // Older strict platforms reject the opt-in field. Retry only once,
+        // sharing the original deadline and returning unknown Chat availability.
+        if (response.status === 400) {
+          const rejection = FundedAiSafeErrorSchema.safeParse(await readBoundedFundedJson(response));
+          if (!rejection.success || rejection.data.error.code !== "invalid_request") {
+            throw new FundedAiFundingSummaryClientError();
+          }
+          signal.throwIfAborted();
+          response = await request("{}");
+        }
         if (!response.ok) {
           await cancelResponse(response);
           throw new FundedAiFundingSummaryClientError();
         }
-        const parsed = FundedAiRuntimeFundingSummaryResponseSchema.safeParse(
-          await readBoundedFundedJson(response),
-        );
+        const raw = await readBoundedFundedJson(response);
+        if (typeof raw === "object" && raw !== null && "chatAvailability" in raw) {
+          const parsed = FundedAiRuntimeChatFundingSummaryResponseSchema.safeParse(raw);
+          if (!parsed.success) throw new FundedAiFundingSummaryClientError();
+          return { funding: parsed.data.funding, policy: parsed.data.policy, chatAvailability: parsed.data.chatAvailability };
+        }
+        const parsed = FundedAiRuntimeFundingSummaryResponseSchema.safeParse(raw);
         if (!parsed.success) throw new FundedAiFundingSummaryClientError();
         return { funding: parsed.data.funding, policy: parsed.data.policy };
       } catch (error) {

@@ -77,7 +77,8 @@ describe("Codex account usage copy from the V3 Settings projection", () => {
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()}
     />);
     const row = screen.getByTestId("account-owner_codex");
-    expect(within(row).getByText(/Local login found; access not verified/)).toBeVisible();
+    expect(within(row).getByText(/^Connected ·/)).toBeVisible();
+    expect(within(row).queryByText(/Local login found|access not verified/)).toBeNull();
     expect(within(row).getByText("Usage unavailable")).toBeVisible();
     expect(within(row).getByText("Unknown")).toBeVisible();
     expect(within(row).queryByText("Not Authenticated")).not.toBeInTheDocument();

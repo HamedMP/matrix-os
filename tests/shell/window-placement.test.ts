@@ -2,6 +2,27 @@
 import { describe, expect, it } from "vitest";
 import { constrainFloatingWindow, isPointNearWindow } from "../../packages/ui/src/window/window-placement";
 
+describe("native outside resize clearance", () => {
+  const options = { resizeTargetClearance: 24 };
+  const viewport = { width: 1200, height: 700 };
+  const minimum = { width: 440, height: 300 };
+  it("keeps every external corner inside the work area for restored edge-flush bounds", () => {
+    expect(constrainFloatingWindow({ x: 0, y: 0, width: 1200, height: 700 }, viewport, minimum, undefined, options))
+      .toEqual({ x: 24, y: 24, width: 1152, height: 652 });
+  });
+  it("preserves the stationary edge while resizing up to the external clearance", () => {
+    const previous = { x: 100, y: 100, width: 600, height: 400 };
+    expect(constrainFloatingWindow({ ...previous, height: 700 }, viewport, minimum, previous, options))
+      .toEqual({ ...previous, height: 576 });
+    expect(constrainFloatingWindow({ x: -100, y: -100, width: 800, height: 600 }, viewport, minimum, previous, options))
+      .toEqual({ x: 24, y: 24, width: 676, height: 476 });
+  });
+  it("fits small viewports without minimum dimensions hiding outside targets", () => {
+    expect(constrainFloatingWindow({ x: -30, y: -30, width: 600, height: 400 }, { width: 300, height: 200 }, minimum, undefined, options))
+      .toEqual({ x: 24, y: 24, width: 252, height: 152 });
+  });
+});
+
 const viewport = { width: 900, height: 600 };
 const minimum = { width: 320, height: 200 };
 describe("floating window placement", () => {

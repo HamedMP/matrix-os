@@ -49,7 +49,7 @@ it("blocks only the add-credit modal, not the ordinary provider settings panel",
   render(<GettingStartedVisibilityProvider scope="test"><Card /><GatewayPanel source={source} policy={policy} provider={provider} disabled={false} canSetBudget={false} canSetAllowlist={false} canAddCredit onMutate={() => {}} onAddCredit={() => {}} onRefresh={() => {}} /></GettingStartedVisibilityProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Open checklist" }));
   expect(screen.queryByText("Checklist visible")).not.toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Add credit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
   expect(screen.queryByText("Checklist visible")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByText("Checklist visible")).not.toBeNull();

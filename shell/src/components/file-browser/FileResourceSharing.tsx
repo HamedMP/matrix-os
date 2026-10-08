@@ -1,18 +1,25 @@
 "use client";
 
-import { ResourceSharingButton } from "@matrix-os/ui";
-import { useEffect, useMemo, useState } from "react";
+import { LegacyResourceAccessButton } from "@matrix-os/ui";
+import { useEffect, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
-import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
-import { CollaborationOrganization } from "@/lib/collaboration-organization";
+import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
+import { CollaborationOrganization, useShellCollaborationApi } from "@/lib/collaboration-organization";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
-export function FileResourceSharing({ kind, path }: { kind: "file" | "folder" | "app"; path: string }) {
+export function FileResourceSharing({ kind, path, containerClassName }: {
+  kind: "file" | "folder" | "app";
+  path: string;
+  containerClassName?: string;
+}) {
   const platformHost = useBrowserOrigin();
-  const api = useMemo(() => platformHost ? createShellCollaborationApi(platformHost) : null, [platformHost]);
+  const { status: organizationStatus } = useCollaborationOrganization();
+  const api = useShellCollaborationApi(platformHost, organizationStatus !== "none");
   const [runtimeId, setRuntimeId] = useState<string | null>(null);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- owner runtime identity is local gateway state; the bounded request has an unmount guard and follows the existing project Share adapter.
   useEffect(() => {
+    if (organizationStatus === "none") return;
     let active = true;
     void fetch(`${getGatewayUrl()}/api/system/info`, {
       headers: { accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(10_000),
@@ -24,7 +31,8 @@ export function FileResourceSharing({ kind, path }: { kind: "file" | "folder" | 
       console.warn("[resource-collaboration] runtime unavailable", failure instanceof Error ? failure.name : "UnknownError");
     });
     return () => { active = false; };
-  }, []);
-  return api ? <CollaborationOrganization>{(organizationId) => <ResourceSharingButton
-    api={api} runtimeId={runtimeId} organizationId={organizationId} kind={kind} path={path} />}</CollaborationOrganization> : null;
+  }, [organizationStatus]);
+  return api ? <CollaborationOrganization>{(organizationId) => <LegacyResourceAccessButton
+    api={api} runtimeId={runtimeId} organizationId={organizationId} kind={kind} path={path}
+    containerClassName={containerClassName} />}</CollaborationOrganization> : null;
 }

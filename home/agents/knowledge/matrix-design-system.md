@@ -1,6 +1,6 @@
 # Matrix OS Design System
 
-Comprehensive design token reference for building apps, modules, and UI within Matrix OS. This is the single source of truth for visual language -- every app, game, and tool must follow these tokens and patterns.
+Platform brand token reference for Matrix chrome, auth, onboarding and billing. Generated products choose app-local semantic tokens and a coherent full visual style from the user brief, mood and inspected references. Read the app-builder visual-references guide for bright minimalism, neo-brutalism, playful, retro and selective neumorphism. Typography, shapes, borders, spacing, imagery and motion follow that direction. For surprise requests, choose once and record it in DESIGN.md; do not reshuffle styles on render. The platform palette below is an optional product baseline, not a mandatory palette.
 
 Brand: "Technology that understands you." Warm, calm, personal. The visual language draws from natural materials (forest, sand, ember).
 
@@ -46,7 +46,7 @@ The shell injects `--matrix-*` variables into app iframes via the bridge. Apps t
 | `--matrix-success`     | `#3A7D44` | Positive states, confirmations |
 | `--matrix-warning`     | `#D49B2A` | Warnings, caution states       |
 
-### Color Rules
+### Matrix Platform Brand Rules
 
 1. **One Ember accent per view.** Multiple Ember elements = visual noise.
 2. **Forest is structural.** Headers, primary buttons, nav active states, icons.
@@ -58,7 +58,7 @@ The shell injects `--matrix-*` variables into app iframes via the bridge. Apps t
 ### Optional Gradient Backgrounds (fallback examples only)
 
 ```css
-/* App page background — warm sand wash (DEFAULT for all apps) */
+/* Optional platform warm sand background example */
 background: linear-gradient(170deg, #F7F1E7 0%, #F3EAE0 30%, #F7F3ED 60%, #F7F1E7 100%);
 
 /* Section with depth */
@@ -80,8 +80,7 @@ background: linear-gradient(135deg, #32352E 0%, #434E3F 40%, #D6AB8B 100%);
 
 ### App Typography
 
-Use inherited shell fonts for app headings and controls. Display fonts are optional
-for explicit art direction, never mandatory. Create hierarchy with weight, size,
+Use inherited shell fonts as a baseline or available local fonts chosen for the product direction. Display fonts are optional, never mandatory. Create hierarchy with weight, size,
 leading, measure, and alignment. Do not load remote fonts.
 
 ### Type Scale
@@ -220,7 +219,7 @@ Glass card with gradient background showing through:
 .card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(50,53,46,0.06); }
 ```
 
-**Stat cards must use horizontal layout** — icon container (46px, gradient bg, 14px radius) + text block (label, value, subtitle) side by side. Never stack vertically with empty whitespace.
+Show statistics only when they help the primary task and derive from real data. Choose horizontal or vertical composition to fit density, content and the selected style; a card is optional.
 
 ### Inputs
 
@@ -248,8 +247,8 @@ Always use flexbox centering and inline SVG or bundled local icons:
 
 ```css
 .icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -273,14 +272,16 @@ Always use flexbox centering and inline SVG or bundled local icons:
 
 1. **Never use text characters as icons.** `+`, `×`, `→`, `✓` never center. Use inline SVG or bundled local assets.
 2. **Always center icon buttons with flexbox.** `display:flex; align-items:center; justify-content:center`.
-3. **Components must fill space intentionally.** No empty whitespace corners. Use horizontal layouts for compact stat/info cards.
-4. **Touch targets: minimum 36×36px.** Even if the icon is 16px.
+3. **Use space intentionally.** Let density and negative space serve the primary task and selected product style.
+4. **Touch hit areas: minimum 44×44px on touch surfaces.** The visible icon may be smaller.
 5. **Text overflow:** `overflow:hidden; text-overflow:ellipsis; white-space:nowrap` on single-line text.
 6. **All inputs need visible focus states.** Never just `outline:none` with no replacement.
 7. **All buttons need hover + active states.** No flat state-free buttons.
-8. **Don't mix border-radius values** on adjacent elements.
-9. **Backgrounds must honor the active theme.** Use gradients only with a purpose.
-10. **Inherit shell fonts.** Establish hierarchy through size, weight, leading, and spacing.
+8. **Use a coherent shape system.** Deliberate radius differences can express hierarchy within the selected style.
+9. **Product backgrounds follow their semantic palette and supported modes.** Use gradients only with a purpose.
+10. **Choose available local or inherited fonts.** Establish hierarchy through size, weight, leading, and spacing.
+
+Adapt composition to the observed app container width, preserving all meaningful fields and actions. Prevent page-level horizontal overflow; essential tables, timelines and boards may use explicit accessible scroll regions. Do not use overflow masks to conceal clipped content.
 
 ## Bridge API Patterns
 

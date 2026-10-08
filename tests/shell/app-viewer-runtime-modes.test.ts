@@ -42,19 +42,14 @@ describe("AppViewer bridged runtime loading", () => {
     });
   });
 
-  describe("standalone app sharing", () => {
+  describe("legacy standalone app access", () => {
     // AppViewer is not render-testable here, so the invariant is asserted on the source:
-    // Share is offered only where a registry slug exists, and the slug is what the owner
-    // catalog receives. A launch path (`apps/<slug>/index.html`, `modules/...`) names assets,
-    // not an app identity, and always resolves as not found.
-    it("hands the owner catalog the resolved slug, never the launch path", async () => {
+    // projects are the only newly live-shareable resource; the app window can only
+    // mount the discovery-only manager for a share that already exists.
+    it("offers legacy management without a standalone share creator", async () => {
       const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
-      const index = source.indexOf("<FileResourceSharing");
-      expect(index).toBeGreaterThan(-1);
-      const row = source.slice(index - 160, index + 160);
-      expect(row).toContain("path={slug}");
-      expect(row).toContain("{slug ?");
-      expect(row).not.toContain("modules/");
+      expect(source).toContain("FileResourceSharing");
+      expect(source).not.toMatch(/ResourceSharingButton|TerminalSharingButton|scopes\`,?\s*\{/);
     });
   });
 

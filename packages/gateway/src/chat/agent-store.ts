@@ -7,8 +7,9 @@ import { z } from "zod/v4";
 import {
   CanonicalOwnerScopeSchema, ChatAgentIdSchema, ChatAgentSchema,
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
-  type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
+  type BotRecipeRef, type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
+import { lockChatAgentOwner } from "./agent-owner-lock.js";
 import { resolveWithinHome } from "../path-security.js";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
@@ -84,11 +85,9 @@ export class ChatAgentStore {
   }
 
   private async withOwnerLock<T>(owner: ChatOwner, action: () => Promise<T>): Promise<T> {
-    const key = this.ownerKey(owner);
+    this.ownerKey(owner);
     return this.options.db.transaction().execute(async (trx) => {
-      await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
-      await sql`INSERT INTO chat_agent_owner_locks (owner_key) VALUES (${key}) ON CONFLICT DO NOTHING`.execute(trx);
-      await sql`SELECT owner_key FROM chat_agent_owner_locks WHERE owner_key = ${key} FOR UPDATE`.execute(trx);
+      await lockChatAgentOwner(trx, owner);
       return action();
     });
   }
@@ -195,6 +194,43 @@ export class ChatAgentStore {
       await this.write(directory, { agent, createHash }, true);
       return agent;
     });
+  }
+
+  /**
+   * Creates a recipe bot under the ID its creation operation reserved. The
+   * file is created exclusively under the owner lock. A file already there
+   * with the same creation hash is this bot (a retried creation); anything
+   * else is a conflict. An existing bot is never replaced or deleted.
+   */
+  async createRecipeBot(owner: ChatOwner, input: {
+    id: string;
+    createHash: string;
+    fields: Pick<ChatAgent, "name" | "description" | "instructions" | "selection">;
+    recipeRef: BotRecipeRef;
+  }): Promise<ChatAgent> {
+    const id = ChatAgentIdSchema.parse(input.id);
+    const createHash = z.string().regex(/^[a-f0-9]{64}$/).parse(input.createHash);
+    const ownerKey = this.ownerKey(owner);
+    return this.withOwnerLock(owner, async () => {
+      const directory = (await this.directory([ownerKey], true))!;
+      const existing = await this.read(join(directory, `${id}.md`));
+      if (existing) {
+        if (existing.agent.id !== id) throw new ChatAgentStoreError("agent_unavailable");
+        if (existing.createHash !== createHash) throw new ChatAgentStoreError("agent_conflict");
+        return existing.agent;
+      }
+      if ((await this.list(owner, true)).length >= MAX_AGENTS) throw new ChatAgentStoreError("agent_capacity");
+      const now = (this.options.now?.() ?? new Date()).toISOString();
+      const agent = ChatAgentSchema.parse({ ...input.fields, recipeRef: input.recipeRef,
+        id, revision: 1, archived: false, createdAt: now, updatedAt: now });
+      await this.write(directory, { agent, createHash }, true);
+      return agent;
+    });
+  }
+
+  /** Every saved agent counts toward the per-owner cap, archived ones included. */
+  async count(owner: ChatOwner): Promise<number> {
+    return (await this.list(owner, true)).length;
   }
 
   async update(owner: ChatOwner, agentId: string, inputValue: UpdateChatAgentRequest,

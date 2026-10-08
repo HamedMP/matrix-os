@@ -1,3 +1,4 @@
+import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import type { ProvisioningJobRecord } from './customer-vps-provisioning-jobs.js';
 import type { PlatformDB, UserMachineRecord } from './db.js';
 import { validatePrebillingProvisioningIntent } from './prebilling-provisioning-store.js';
@@ -8,6 +9,7 @@ export async function isProvisioningJobAuthorized(
   machine: UserMachineRecord,
   now: string,
 ): Promise<boolean> {
+  if (!(await getAccountDeletionAdmission(db, machine.clerkUserId)).newWorkAllowed) return false;
   if (job.authorizationBasis !== 'prebilling_intent') return true;
   if (!job.prebillingIntentId) return false;
   return Boolean(await validatePrebillingProvisioningIntent(db, {
@@ -26,7 +28,11 @@ export async function persistProvisioningClaimMutation(
   db: PlatformDB,
   input: { machineId: string; jobId: string; mutate: (trx: PlatformDB) => Promise<void> },
 ): Promise<{ persisted: boolean; prebillingCleanupWon: boolean; alreadyCompleted: boolean }> {
-  return db.transaction(async (trx) => {
+  const owner = await db.executor.selectFrom('user_machines').select('clerk_user_id')
+    .where('machine_id', '=', input.machineId).executeTakeFirst();
+  if (!owner) return { persisted: false, prebillingCleanupWon: true, alreadyCompleted: false };
+  return withAccountDeletionOwnerLock(db, owner.clerk_user_id, async (trx, admission) => {
+    if (!admission.newWorkAllowed) return { persisted: false, prebillingCleanupWon: true, alreadyCompleted: false };
     const machine = await trx.executor.selectFrom('user_machines').select(['deleted_at', 'status'])
       .where('machine_id', '=', input.machineId).forUpdate().executeTakeFirst();
     const job = await trx.executor.selectFrom('provisioning_jobs').select(['status', 'authorization_basis'])

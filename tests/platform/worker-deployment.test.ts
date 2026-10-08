@@ -78,6 +78,17 @@ describe("platform worker deployment", () => {
     expect(result.stderr).toContain("background workers disabled");
   });
 
+  it("allocates worker CPU independently of a request-throttled web candidate", () => {
+    const source = structuredClone(candidate);
+    source.metadata.annotations["run.googleapis.com/cpu-throttling"] = "true";
+    const result = render(source);
+    expect(result.status).toBe(0);
+    const worker = JSON.parse(result.stdout);
+    expect(worker.spec.template.metadata.annotations["run.googleapis.com/cpu-throttling"]).toBe("false");
+    expect(worker.spec.template.spec.containers[0].image).toBe(source.spec.containers[0].image);
+    expect(worker.spec.template.spec.containers[0].env).toContainEqual({ name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: "true" });
+  });
+
   it("selects only idle tagged revisions that still start background workers", () => {
     const service = { status: { traffic: [
       { tag: "legacy-worker", revisionName: "old", percent: 0 },

@@ -18,6 +18,8 @@ export interface CollaborationDirectoryTable {
   audience: "members" | "organization" | null;
   /** Opaque owner-home grant pointer used only for an explicit accept request. */
   organization_grant_id: string | null;
+  /** A shared project's Chat: routed to the same home, admitted from the parent project's membership. */
+  parent_scope_id: ColumnType<string | null, string | null | undefined, string | null>;
   /**
    * S18: false for every row that predates the cutover migration. Those rows
    * are legacy and only their own activated journal admits them; rows created
@@ -35,6 +37,8 @@ export interface CollaborationUserIndexTable {
   scope_id: string;
   status: "invited" | "accepted" | "revoked";
   invitation_id: string | null;
+  /** Opaque owner-home pointer to a pending grant addressed to this actor alone; null otherwise. */
+  grant_id: string | null;
   locator_generation: number;
   last_event_id: string;
   updated_at: Timestamp;
@@ -145,6 +149,11 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS audience TEXT
     CHECK (audience IS NULL OR audience IN ('members', 'organization'))`.execute(trx);
   await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS organization_grant_id UUID`.execute(trx);
+  // A project's Chats are routed beside their project and removed with it.
+  await sql`ALTER TABLE collaboration_directory ADD COLUMN IF NOT EXISTS parent_scope_id UUID
+    REFERENCES collaboration_directory(scope_id) ON DELETE CASCADE`.execute(trx);
+  await sql`CREATE INDEX IF NOT EXISTS idx_collaboration_directory_parent
+    ON collaboration_directory (parent_scope_id) WHERE parent_scope_id IS NOT NULL`.execute(trx);
   // S18: the cutover migration is the boundary between legacy and direct scopes.
   // The column is added without a default so every row that already exists
   // backfills to false, then defaults to true so rows created after the
@@ -167,6 +176,8 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
     )
   `.execute(trx);
   await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS invitation_id UUID`.execute(trx);
+  // A pending grant addressed to one member is listed and ticketed from this pointer alone.
+  await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS grant_id UUID`.execute(trx);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_user_invitation
     ON collaboration_user_index(invitation_id)

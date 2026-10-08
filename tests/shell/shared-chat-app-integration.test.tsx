@@ -100,6 +100,7 @@ vi.mock("../../shell/src/lib/collaboration", () => ({
     delete: vi.fn(),
     subscribe: vi.fn(() => () => undefined),
   }),
+  releaseShellCollaborationApi: vi.fn(),
 }));
 
 describe("web Chat shared collaboration integration", () => {

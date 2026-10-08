@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -52,7 +53,7 @@ describe("canonical shell Chat state", () => {
       if (url.includes("/approvals/")) return Response.json({ approvalId: "approval_drive", decision: "approve", submission: "accepted" });
       throw new Error(`Unexpected request: ${url} ${init?.method ?? "GET"}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch(fetchFn);
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages.some(message =>
       message.metadata?.canonicalApproval?.actionDigest === actionDigest)).toBe(true));
@@ -72,7 +73,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -83,7 +84,7 @@ describe("canonical shell Chat state", () => {
       }
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
 
     try {
       const { result } = renderHook(() => useCanonicalChatState(), {
@@ -137,8 +138,8 @@ describe("canonical shell Chat state", () => {
       activeRun: { runId: "run_fallback", turnId: "cturn_fallback", status: "running" as const },
     };
     let detailCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return streamResponse;
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;
@@ -171,13 +172,13 @@ describe("canonical shell Chat state", () => {
       if (url.includes("/api/chats/chat_a?") && init?.method === undefined) {
         return Response.json(detail("chat_a", "Old title", 3));
       }
-      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") {
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") {
         expect(JSON.parse(String(init.body))).toEqual({ expectedTitleVersion: 3, title: "New title" });
         return Response.json(record("chat_a", "New title", 4));
       }
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
 
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.conversations[0]?.title).toBe("Old title"));
@@ -194,7 +195,7 @@ describe("canonical shell Chat state", () => {
     const renameResponse = new Promise<Response>((resolve) => { resolveRename = resolve; });
     let detailCalls = 0;
     let listCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?") && init?.method === undefined) {
         listCalls += 1;
         return Response.json({ items: [record("chat_a", listCalls === 1 ? "Initial" : "Newest refresh", listCalls === 1 ? 3 : 5)] });
@@ -203,7 +204,7 @@ describe("canonical shell Chat state", () => {
         detailCalls += 1;
         return Response.json(detail("chat_a", detailCalls === 1 ? "Initial" : "Newest refresh", detailCalls === 1 ? 3 : 5));
       }
-      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1") && init?.method === "PATCH") return renameResponse;
+      if (url.endsWith("/api/chats/chat_a/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") return renameResponse;
       throw new Error(`Unexpected request: ${url}`);
     }));
 
@@ -211,6 +212,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(result.current.activeConversationTitle).toBe("Initial"));
     let rename!: Promise<boolean>;
     act(() => { rename = result.current.renameConversation!("chat_a", "Renamed"); });
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(result.current.activeConversationTitle).toBe("Newest refresh"));
     resolveRename(Response.json(record("chat_a", "Renamed", 4)));
@@ -225,7 +227,7 @@ describe("canonical shell Chat state", () => {
     let staleDetail!: (response: Response) => void;
     let listCalls = 0;
     let detailCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes("/api/chats?")) {
         if (++listCalls === 1) return Response.json({ items: [record("chat_a", "Initial", 3)] });
         return new Promise<Response>((resolve) => { staleList = resolve; });
@@ -234,11 +236,12 @@ describe("canonical shell Chat state", () => {
         if (++detailCalls === 1) return Response.json(detail("chat_a", "Initial", 3));
         return new Promise<Response>((resolve) => { staleDetail = resolve; });
       }
-      if (url.endsWith("/title?readStateVersion=1") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
+      if (url.endsWith("/title?readStateVersion=1&fundingVersion=1") && init?.method === "PATCH") return Response.json(record("chat_a", "Manual", 4));
       throw new Error("Unexpected request");
     }));
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.activeConversationTitle).toBe("Initial"));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 61_000);
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(staleDetail).toBeDefined());
     await act(async () => { await result.current.renameConversation!("chat_a", "Manual"); });
@@ -253,7 +256,7 @@ describe("canonical shell Chat state", () => {
   it("ignores an out-of-order detail response after switching chats", async () => {
     let resolveA: ((response: Response) => void) | undefined;
     const detailA = new Promise<Response>((resolve) => { resolveA = resolve; });
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A"), record("chat_b", "B")] });
       if (url.includes("/api/chats/chat_a?")) return detailA;
       if (url.includes("/api/chats/chat_b?")) return Response.json(detail("chat_b", "B"));
@@ -275,7 +278,7 @@ describe("canonical shell Chat state", () => {
     let resolveFirst: ((response: Response) => void) | undefined;
     const firstDetail = new Promise<Response>((resolve) => { resolveFirst = resolve; });
     let detailCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
       if (url.includes("/api/chats/chat_a?")) {
         detailCalls += 1;
@@ -300,7 +303,7 @@ describe("canonical shell Chat state", () => {
     let rejectFirst: ((error: Error) => void) | undefined;
     const firstDetail = new Promise<Response>((_resolve, reject) => { rejectFirst = reject; });
     let detailCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
       if (url.includes("/api/chats/chat_a?")) {
         detailCalls += 1;
@@ -324,7 +327,7 @@ describe("canonical shell Chat state", () => {
 
   it("does not regress a chat when a later refresh returns an older revision", async () => {
     let detailCalls = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A", 2)] });
       if (url.includes("/api/chats/chat_a?")) {
         detailCalls += 1;
@@ -353,7 +356,7 @@ describe("canonical shell Chat state", () => {
         const path = parsed.searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1")) {
         return Response.json({ error: { code: "provider_unavailable", safeMessage: "Do not render upstream details", retryable: true } }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -362,7 +365,7 @@ describe("canonical shell Chat state", () => {
       }
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
     vi.stubGlobal("crypto", { randomUUID: () => "stable-id" });
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.sessionId).toBe("chat_a"));
@@ -382,7 +385,7 @@ describe("canonical shell Chat state", () => {
     await waitFor(() => expect(fetchFn.mock.calls.some(([url, init]) =>
       String(url).includes("/api/files/blob?") && (init as RequestInit | undefined)?.method === "DELETE"))
       .toBe(true));
-    expect(result.current.messages.at(-1)?.content).toBe("This connection is currently unavailable. Open Agents & providers to check it.");
+    expect(result.current.messages.at(-1)?.content).toBe("Connection unavailable. Check Agents & providers.");
   });
 
   it("waits for parallel uploads to settle before deleting partial successes", async () => {
@@ -408,7 +411,7 @@ describe("canonical shell Chat state", () => {
       }
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
     vi.stubGlobal("crypto", { randomUUID: vi.fn()
       .mockReturnValueOnce("first-id")
       .mockReturnValueOnce("second-id") });
@@ -426,7 +429,7 @@ describe("canonical shell Chat state", () => {
 
     await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
-    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1"))).toBe(false);
   });
 
   it("keeps uploaded files when admission outcome is ambiguous", async () => {
@@ -440,7 +443,7 @@ describe("canonical shell Chat state", () => {
         const path = new URL(url).searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&readStateVersion=1&fundingVersion=1")) {
         return Response.json({ error: "unavailable" }, { status: 503 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -448,7 +451,7 @@ describe("canonical shell Chat state", () => {
       }
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
     vi.stubGlobal("crypto", { randomUUID: () => "stable-id" });
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("A"));
@@ -466,7 +469,7 @@ describe("canonical shell Chat state", () => {
       (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
   });
 
-  it("refreshes canonical list and active detail when the shell regains focus", async () => {
+  it("reuses fresh navigation and refreshes active detail when the shell regains focus", async () => {
     let detailCalls = 0;
     const fetchMock = vi.fn(async (url: string) => {
       if (url.includes("/api/chats?")) return Response.json({ items: [record("chat_a", "A")] });
@@ -476,14 +479,14 @@ describe("canonical shell Chat state", () => {
       }
       throw new Error("Unexpected request");
     });
-    vi.stubGlobal("fetch", fetchMock);
+    stubLegacyChatFetch( fetchMock);
 
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("Before"));
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("After"));
 
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chats?"))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/chats?"))).toHaveLength(1);
   });
 
   it("refuses a reused approval id when its carried run is no longer active", async () => {
@@ -509,7 +512,7 @@ describe("canonical shell Chat state", () => {
       if (url.includes("/approvals/")) throw new Error(`Wrong approval run: ${url}`);
       throw new Error(`Unexpected request: ${url}`);
     });
-    vi.stubGlobal("fetch", fetchFn);
+    stubLegacyChatFetch( fetchFn);
     const { result } = renderHook(() => useCanonicalChatState());
     await waitFor(() => expect(result.current.messages[0]?.metadata?.canonicalApproval)
       .toMatchObject({ runId: "run_previous", approvalId: "approval_reused" }));
@@ -531,14 +534,13 @@ it("loads unread results beyond the first page", async () => {
     const url = new URL(input, "http://localhost");
     if (url.pathname.endsWith("/events")) return new Response(new ReadableStream(), { headers: { "content-type": "text/event-stream" } });
     if (url.pathname === "/api/chats") {
-      if (!url.searchParams.has("unread")) return Response.json({ items: [] });
       const item = (id: string) => ({ ...record(id, id), readState: { unread: true, markedUnread: true, version: 1, readThroughSeq: 0, latestIncomingSeq: 0 } });
       return Response.json(url.searchParams.has("cursor") ? { items: [item("chat_second")] }
         : { items: [item("chat_first")], nextCursor: "chatcur_page_two" });
     }
     return Response.json(detail("chat_first", "chat_first"));
   });
-  vi.stubGlobal("fetch", fetchFn);
+  stubLegacyChatFetch( fetchFn);
   const { result, unmount } = renderHook(() => useCanonicalChatState());
   await act(async () => { result.current.setUnreadOnly?.(true); });
   await waitFor(() => expect(result.current.conversations.map(item => item.id)).toEqual(["chat_first", "chat_second"]));

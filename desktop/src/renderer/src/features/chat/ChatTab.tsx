@@ -8,6 +8,7 @@ import { cn } from "../../lib/cn";
 import type { CanonicalChatEventSource } from "../../lib/canonical-chat-client";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
 import { Button } from "../../design/primitives";
+import { BrandLogo } from "../../design/BrandPanel";
 import { useConnection } from "../../stores/connection";
 import { useBoard } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
@@ -96,7 +97,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
   const runtimeProviderStatus = useCodingAgentWorkspace((state) => state.status);
   const refreshRuntimeProviderSummary = useCodingAgentWorkspace((state) => state.refresh);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
-    () => createCanonicalComposerSelection(fallbackCatalog, "hermes_default"),
+    () => createCanonicalComposerSelection(providerCatalog, "hermes_default"),
   );
   const handleProviderSetup = useProviderSetup(
     runtimeProviderSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
@@ -108,8 +109,13 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     void refreshRuntimeProviderSummary();
   }, [api, refreshRuntimeProviderSummary, runtimeProviderStatus]);
 
+  const observedProviderCatalog = useRef(false);
   useEffect(() => {
+    const hadObservedCatalog = observedProviderCatalog.current;
+    observedProviderCatalog.current = liveProviderCatalog.lastSuccessAt !== null;
     setCanonicalSelection((current) => {
+      if (current && hadObservedCatalog && !providerCatalog.instances.some(instance => instance.id === current.instanceId
+        && instance.availability === "available" && instance.models.some(model => model.id === current.model && model.availability === "available"))) return current;
       if (current && providerCatalog.instances.some((instance) => (
         instance.id === current.instanceId
         && instance.models.some((model) => model.id === current.model && model.availability === "available")
@@ -123,7 +129,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
         ? applyCanonicalComposerPreference(providerCatalog, next, composerSelections[next.instanceId])
         : null;
     });
-  }, [composerSelections, providerCatalog]);
+  }, [composerSelections, providerCatalog, liveProviderCatalog.lastSuccessAt]);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -157,6 +163,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     )) ?? false;
     if (
       uploadingAttachments
+      || liveProviderCatalog.initialLoading
       || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
       || !canSubmitChatDraft(
         draft,
@@ -256,7 +263,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           disabled={uploadingAttachments}
           canSubmit={composerReady}
           catalog={providerCatalog}
-          onProviderPickerOpen={liveProviderCatalog.refresh}
+          providerCatalogLoading={liveProviderCatalog.initialLoading}
           selection={canonicalSelection}
           onSelectionChange={(selection) => {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);
@@ -318,6 +325,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
       {empty ? (
         <div data-testid="chat-empty-content" className={cn("mx-auto flex min-h-0 w-full flex-1 flex-col justify-center gap-[26px] px-5 py-8", CHAT_CONTENT_WIDTH_CLASS)}>
           <div className="flex shrink-0 flex-col items-center gap-[26px] text-center">
+            <BrandLogo size={48} className="block" testId="chat-welcome-matrix-logo" />
             <h1
               className="text-[32px] font-semibold leading-tight tracking-[-0.02em]"
               style={{ color: "var(--text-primary)" }}
@@ -407,6 +415,7 @@ export default function ChatTab({
   sharedHeaderContainer,
   onSharedChatMetadata,
   draftRequest,
+  onDraftConsumed,
   externalNavigation = false,
   renderInspector,
   inspectorExclusive = false,
@@ -422,6 +431,7 @@ export default function ChatTab({
   sharedHeaderContainer?: HTMLElement | null;
   onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
   draftRequest?: ChatAgentDraftRequest | null;
+  onDraftConsumed?: (id: number) => void;
   externalNavigation?: boolean;
   renderInspector?: (detail: CanonicalChatDetailResponse) => ReactNode;
   inspectorExclusive?: boolean;
@@ -442,6 +452,7 @@ export default function ChatTab({
       sharedHeaderContainer={sharedHeaderContainer}
       onSharedChatMetadata={onSharedChatMetadata}
       draftRequest={draftRequest}
+      onDraftConsumed={onDraftConsumed}
       active={active}
       live={visible}
       eventSource={eventSource}

@@ -40,7 +40,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     sourcePr: row.source_pr,
     confirmedBundleVersion: row.confirmed_bundle_version,
     developerTools: parseDeveloperToolsJson(row.developer_tools),
-    hetznerServerId: row.hetzner_server_id,
+    hetznerServerId: parseNullableProviderActionId(row.hetzner_server_id as number | string | null),
     publicIPv4: row.public_ipv4,
     publicIPv6: row.public_ipv6,
     status: row.status,
@@ -53,7 +53,7 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
       row.recovery_create_action_id as number | string | null,
     ),
     recoveryEncryptedPayload: row.recovery_encrypted_payload,
-    recoveryOldServerId: row.recovery_old_server_id,
+    recoveryOldServerId: parseNullableProviderActionId(row.recovery_old_server_id as number | string | null),
     recoveryOldPublicIPv4: row.recovery_old_public_ipv4,
     serverType: row.server_type,
     location: row.location,
@@ -162,7 +162,7 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
 export function mapProviderDeletion(row: ProviderDeletionQueueTable): ProviderDeletionQueueRecord {
   return {
     id: row.id,
-    providerServerId: row.provider_server_id,
+    providerServerId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(row.provider_server_id),
     reason: row.reason,
     machineId: row.machine_id,
     handle: row.handle,

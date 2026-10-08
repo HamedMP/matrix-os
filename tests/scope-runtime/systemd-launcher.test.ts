@@ -85,6 +85,18 @@ async function writeProvenance(
 }
 
 describe("scope runtime systemd launcher", () => {
+  it("advertises the Chat profile before the gateway has opened its broker socket", async () => {
+    const paths = await fixture();
+    await rm(paths.brokerSocket);
+    const runCommand = vi.fn(async () => ({ stdout: "" }));
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+
+    await expect(launcher.supportedAdapters?.()).resolves.toContainEqual({
+      adapterId: "claude-code", harnessVersion: SCOPE_RUNTIME_HARNESS_VERSION, workloads: ["chat_ai"],
+    });
+    await expect(launcher.start(launch)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(runCommand).not.toHaveBeenCalledWith("/usr/bin/systemd-run", expect.anything());
+  });
   it("advertises Codex only when the fixed native binary has the pinned version", async () => {
     const paths = await fixture();
     const verified = createSystemdScopeRuntimeLauncher({

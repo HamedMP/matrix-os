@@ -1,3 +1,5 @@
+import { managedPiChatInstances } from "../../packages/gateway/src/chat/managed-chat-catalog.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,6 +80,23 @@ describe("Chat Agent HTTP boundary", () => {
     await agents.close(); await repository.kysely.destroy(); await rm(home, { recursive: true, force: true });
   });
   const json = (method: string, body: unknown) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  it.each(["matrix_pi_anthropic_api", "matrix_anthropic_api"])("rejects %s on generic Agent create and edit even when advertised", async instanceId => {
+    const selection = { instanceId, model: "claude-owner", options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] };
+    catalog.instances.push({ ...catalog.instances[0]!, id: instanceId, driverKind: instanceId.startsWith("matrix_pi_") ? "matrix_pi" : "matrix_bot",
+      models: [{ ...catalog.instances[0]!.models[0]!, id: selection.model }], defaultSelection: selection,
+      options: selection.options.map(o => ({ id: o.id, label: o.id, kind: "enum", values: [{ value: o.value, label: "Current connection" }], defaultValue: o.value, placement: "advanced" })) });
+    expect((await app.request("/api/chat-agents", json("POST", { ...fields, selection }))).status).toBe(400);
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    expect((await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: created.revision, selection }))).status).toBe(400);
+  });
+  it("rejects owner-local subscription selection on generic Agent create and edit", async () => {
+    const selection = { instanceId: "matrix_chatgpt_plan", model: "account-model", options: [
+      { id: "accountId", value: "account_own" }, { id: "grantRevision", value: "3" },
+    ] };
+    expect((await app.request("/api/chat-agents", json("POST", { ...fields, selection }))).status).toBe(400);
+    const created = await (await app.request("/api/chat-agents", json("POST", fields))).json();
+    expect((await app.request(`/api/chat-agents/${created.id}`, json("PATCH", { baseRevision: created.revision, selection }))).status).toBe(400);
+  });
   it("rejects a Jev recipe on a Codex harness at create and selection-only edit", async () => {
     const recipe = { skills: ["matrix-jev-email-triage", "matrix-integrations"],
       integrations: [{ service: "gmail", accountLabel: "My Gmail" }], output: "Read-only proposals" };
@@ -108,6 +127,60 @@ describe("Chat Agent HTTP boundary", () => {
     }));
     expect(repaired.status).toBe(200);
     expect((await repaired.json()).archived).toBe(false);
+  });
+
+  it("protects server-routed recipe bots from coding-model edits while allowing profile edits", async () => {
+    const bot = await agents.createRecipeBot(owner, {
+      id: "bot_writingroute", createHash: "a".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Help write", selection: fields.selection },
+      recipeRef: { recipeId: "writing-bot", version: "1" },
+    });
+    const rejected = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, selection: fields.selection,
+    }));
+    expect(rejected.status).toBe(400);
+    expect((await agents.get(owner, bot.id))?.revision).toBe(bot.revision);
+    const edited = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", {
+      baseRevision: bot.revision, name: "My Writing Bot",
+    }));
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toMatchObject({ name: "My Writing Bot", recipeRef: bot.recipeRef });
+  });
+
+  it("requires the complete current Anthropic binding before saving a recipe Bot selection", async () => {
+    const selection = { instanceId: "matrix_anthropic_api", model: "claude-owner", options: [
+      { id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" },
+    ] };
+    catalog.instances.push({ ...catalog.instances[0]!, id: selection.instanceId, driverKind: "matrix_bot",
+      supports: { ...catalog.instances[0]!.supports, permissionModes: ["default"] },
+      models: [{ ...catalog.instances[0]!.models[0]!, id: selection.model }], defaultSelection: selection,
+      options: selection.options.map(o => ({ id: o.id, label: o.id, kind: "enum", values: [{ value: o.value, label: "Current connection" }], defaultValue: o.value, placement: "advanced" })) });
+    const bot = await agents.createRecipeBot(owner, { id: "bot_anthropicedit", createHash: "e".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Write", selection: { instanceId: "matrix_bot_default", model: "auto" } },
+      recipeRef: { recipeId: "writing-bot", version: "1" } });
+    for (const options of [undefined, [], [selection.options[0]!], [selection.options[1]!],
+      [{ ...selection.options[0]!, value: "2" }, selection.options[1]!],
+      [selection.options[0]!, { ...selection.options[1]!, value: "cfbe8f56-2fbc-47d7-9769-489ac7d4a78f" }]]) {
+      expect((await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection: { ...selection, options } }))).status).toBe(400);
+      expect((await agents.get(owner, bot.id))?.revision).toBe(bot.revision);
+    }
+    const saved = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }));
+    expect(saved.status).toBe(200); expect(await saved.json()).toMatchObject({ selection, revision: 2 });
+  });
+
+  it("saves a recipe bot managed model with revision checks and can restore Automatic", async () => {
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" });
+    catalog.instances.push(...managedPiChatInstances(makeAiProviderSnapshot()).map((instance) => ({ ...instance, catalogRevision: catalog.revision })));
+    const bot = await agents.createRecipeBot(owner, { id: "bot_managededit", createHash: "c".repeat(64),
+      fields: { name: "Writing Bot", description: "Write", instructions: "Help write", selection: { instanceId: "matrix_bot_default", model: "auto" } },
+      recipeRef: { recipeId: "writing-bot", version: "1" } });
+    const response = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }));
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ selection, revision: 2, description: "Write" });
+    expect((await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: bot.revision, selection }))).status).toBe(409);
+    const automatic = { instanceId: "matrix_bot_default", model: "auto" };
+    const restored = await app.request(`/api/chat-agents/${bot.id}`, json("PATCH", { baseRevision: 2, selection: automatic }));
+    expect(restored.status).toBe(200); expect(await restored.json()).toMatchObject({ selection: automatic, revision: 3 });
   });
 
   it("stamps owner, exact label, connection ID and expected email on Jev creation", async () => {
@@ -272,6 +345,26 @@ describe("Chat Agent HTTP boundary", () => {
     const result = await app.request("/api/chat-agents", json("POST", { ...fields, selection }));
     expect(result.status).toBe(201);
     expect((await result.json()).selection).toEqual(selection);
+  });
+
+  it("creates a custom Agent with an authorized Matrix model and rejects unavailable or private Bot routes", async () => {
+    const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    catalog.drivers.push({ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" });
+    const instances = managedPiChatInstances(makeAiProviderSnapshot()).map(instance => ({ ...instance, catalogRevision: catalog.revision }));
+    catalog.instances.push(...instances);
+    const input = { ...fields, clientRequestId: "req_route_matrix_agent", selection };
+    const response = await app.request("/api/chat-agents", json("POST", input));
+    expect(response.status).toBe(201);
+    const created = await response.json();
+    expect(created).toMatchObject({ selection, name: fields.name });
+    expect((await agents.get(owner, created.id))?.selection).toEqual(selection);
+    const instance = catalog.instances.find(candidate => candidate.id === selection.instanceId)!;
+    instance.availability = "unavailable";
+    instance.defaultSelection = undefined;
+    expect((await app.request("/api/chat-agents", json("POST", input))).status).toBe(201);
+    expect((await app.request("/api/chat-agents", json("POST", { ...input, clientRequestId: "req_route_matrix_blocked" }))).status).toBe(400);
+    expect((await app.request("/api/chat-agents", json("POST", { ...input, clientRequestId: "req_route_private_bot", selection: { instanceId: "matrix_bot_default", model: "auto" } }))).status).toBe(400);
+    expect(await agents.list(owner)).toHaveLength(1);
   });
 
   it("persists conversational MCP creation through the real route and makes retries idempotent", async () => {

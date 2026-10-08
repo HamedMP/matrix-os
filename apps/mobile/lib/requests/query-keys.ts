@@ -14,6 +14,9 @@ export const mobileQueryKeys = {
     computerKey,
     chatId,
   ] as const,
+  botChat: (userId: string, gatewayUrl: string, chatId: string) => [
+    "native-bot-chat", userId, gatewayUrl, chatId,
+  ] as const,
   chatProviderCatalog: (userId: string, computerKey: string) => [
     "mobile",
     "chat-providers",
@@ -80,5 +83,11 @@ export const mobileQueryKeys = {
     "billing",
     userId,
     runtimeSlot,
+  ] as const,
+  accountDeletion: (userId: string) => [
+    "mobile",
+    "settings",
+    "account-deletion",
+    userId,
   ] as const,
 };

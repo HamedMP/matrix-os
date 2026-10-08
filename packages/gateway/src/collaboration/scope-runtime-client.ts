@@ -3,20 +3,26 @@ import { createConnection, type Socket } from "node:net";
 import {
   ScopeRuntimeRequestSchema,
   ScopeRuntimeResponseSchema,
+  type ScopeRuntimeBotCommand,
+  type ScopeRuntimeCapabilityProfile,
   type ScopeRuntimeRequest,
   type ScopeRuntimeResponse,
   type ScopeRuntimeSandboxManifest,
+  type ScopeRuntimeWorkload,
 } from "@matrix-os/scope-runtime";
 
 const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_TIMEOUT_MS = 90_000;
 const MAX_IN_FLIGHT_REQUESTS = 64;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
+/** A relayed bot turn may run until the workload's 900 second lifetime ends. */
+const BOT_RUN_TIMEOUT_MS = 935_000;
+const BOT_CONTROL_TIMEOUT_MS = 20_000;
 
 export interface ScopeRuntimeSandboxCapability {
   policyVersion: number;
   policyDigest: string;
-  workloads: Array<"chat_ai" | "terminal">;
+  workloads: ScopeRuntimeWorkload[];
 }
 
 export interface ScopeRuntimeProfileCatalogEntry {
@@ -27,7 +33,7 @@ export interface ScopeRuntimeProfileCatalogEntry {
   sandbox?: { policyVersion: number; policyDigest: string };
   supportedAdapters: Readonly<Record<string, Readonly<{
     harnessVersions: readonly string[];
-    workloads: readonly ("chat_ai" | "terminal")[];
+    workloads: readonly ScopeRuntimeWorkload[];
   }>>>;
 }
 
@@ -41,7 +47,7 @@ export type ScopeRuntimeCapability =
     supportedAdapters: Array<{
       adapterId: string;
       harnessVersion: string;
-      workloads: Array<"chat_ai" | "terminal">;
+      workloads: ScopeRuntimeWorkload[];
     }>;
     /** Present only when the supervisor advertises a sandbox policy that matches the catalog. */
     sandbox?: ScopeRuntimeSandboxCapability;
@@ -79,8 +85,10 @@ export function createScopeRuntimeClient(options: {
     available: false,
     reason: "supervisor_unavailable",
   };
+  /** Per-profile capabilities for every catalog profile; each fails closed on its own. */
+  let profileCapabilities = new Map<string, ScopeRuntimeCapability>();
 
-  function request(input: ScopeRuntimeRequest): Promise<ScopeRuntimeResponse> {
+  function request(input: ScopeRuntimeRequest, requestTimeoutMs = timeoutMs): Promise<ScopeRuntimeResponse> {
     if (closed) return Promise.reject(new ScopeRuntimeClientError("client_closed"));
     if (operations.size >= MAX_IN_FLIGHT_REQUESTS) {
       return Promise.reject(new ScopeRuntimeClientError("client_capacity"));
@@ -91,7 +99,7 @@ export function createScopeRuntimeClient(options: {
     }
     const operation = new Promise<ScopeRuntimeResponse>((resolve, reject) => {
       const socket = createConnection({ path: options.socketPath });
-      const signal = AbortSignal.timeout(timeoutMs);
+      const signal = AbortSignal.timeout(requestTimeoutMs);
       let response = "";
       let settled = false;
       sockets.add(socket);
@@ -108,7 +116,7 @@ export function createScopeRuntimeClient(options: {
       };
       signal.addEventListener("abort", fail, { once: true });
       socket.setEncoding("utf8");
-      socket.setTimeout(timeoutMs, fail);
+      socket.setTimeout(requestTimeoutMs, fail);
       socket.once("error", fail);
       socket.once("connect", () => socket.end(frame));
       socket.on("data", (chunk) => {
@@ -150,27 +158,57 @@ export function createScopeRuntimeClient(options: {
     return options.profileCatalog[profileId];
   }
 
-  function supports(response: Extract<ScopeRuntimeResponse, { type: "capability.result"; ok: true }>): boolean {
-    const expected = options.profileCatalog[response.profile.profileId];
-    if (!expected || response.profile.identity.mode !== "dynamic"
-      || response.profile.identity.uidMin !== expected.identity.uidMin
-      || response.profile.identity.uidMax !== expected.identity.uidMax
-      || expected.profileVersion !== response.profile.profileVersion
-      || expected.profileDigest !== response.profile.profileDigest) return false;
-    if (expected.sandbox && (!response.profile.sandbox
-      || response.profile.sandbox.policyVersion !== expected.sandbox.policyVersion
-      || response.profile.sandbox.policyDigest !== expected.sandbox.policyDigest)) return false;
-    return response.profile.adapters.every((adapter) => {
+  /** Exact match against the catalog: identity, version, digest, sandbox policy, and every adapter. */
+  function supportsProfile(profile: ScopeRuntimeCapabilityProfile): boolean {
+    const expected = options.profileCatalog[profile.profileId];
+    if (!expected || profile.identity.mode !== "dynamic"
+      || profile.identity.uidMin !== expected.identity.uidMin
+      || profile.identity.uidMax !== expected.identity.uidMax
+      || expected.profileVersion !== profile.profileVersion
+      || expected.profileDigest !== profile.profileDigest) return false;
+    if (expected.sandbox && (!profile.sandbox
+      || profile.sandbox.policyVersion !== expected.sandbox.policyVersion
+      || profile.sandbox.policyDigest !== expected.sandbox.policyDigest)) return false;
+    return profile.adapters.every((adapter) => {
       const supported = expected.supportedAdapters[adapter.adapterId];
       return supported?.harnessVersions.includes(adapter.harnessVersion) === true
         && adapter.workloads.every((workload) => supported.workloads.includes(workload));
     });
   }
 
+  function capabilityFor(profile: ScopeRuntimeCapabilityProfile): ScopeRuntimeCapability {
+    if (!supportsProfile(profile)) return { available: false, reason: "unsupported_profile" };
+    return {
+      available: true,
+      profileId: profile.profileId,
+      executionGeneration: profile.executionGeneration,
+      supportedAdapters: profile.adapters.map((entry) => ({
+        adapterId: entry.adapterId,
+        harnessVersion: entry.harnessVersion,
+        workloads: [...entry.workloads],
+      })),
+      ...(profile.sandbox && expected(profile.profileId)?.sandbox
+        ? { sandbox: {
+            policyVersion: profile.sandbox.policyVersion,
+            policyDigest: profile.sandbox.policyDigest,
+            workloads: [...profile.sandbox.workloads],
+          } }
+        : {}),
+    };
+  }
+
+  function capabilityOfProfile(profileId: string): ScopeRuntimeCapability {
+    return profileCapabilities.get(profileId) ?? (currentCapability.available
+      ? { available: false, reason: "unsupported_profile" }
+      : currentCapability);
+  }
+
   return {
     capability(): ScopeRuntimeCapability {
       return currentCapability;
     },
+    /** A catalog profile's capability; profiles the supervisor does not advertise are unsupported. */
+    profileCapability: capabilityOfProfile,
     async refreshCapability(): Promise<ScopeRuntimeCapability> {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
       try {
@@ -179,53 +217,48 @@ export function createScopeRuntimeClient(options: {
           type: "capability.get",
           requestId: createRequestId(),
         });
-        if (response.type !== "capability.result" || !response.ok || !supports(response)) {
+        if (response.type !== "capability.result" || !response.ok) {
           currentCapability = { available: false, reason: "unsupported_profile" };
+          profileCapabilities = new Map();
           return currentCapability;
         }
-        currentCapability = {
-          available: true,
-          profileId: response.profile.profileId,
-          executionGeneration: response.profile.executionGeneration,
-          supportedAdapters: response.profile.adapters.map((entry) => ({
-            adapterId: entry.adapterId,
-            harnessVersion: entry.harnessVersion,
-            workloads: [...entry.workloads],
-          })),
-          ...(response.profile.sandbox && expected(response.profile.profileId)?.sandbox
-            ? { sandbox: {
-                policyVersion: response.profile.sandbox.policyVersion,
-                policyDigest: response.profile.sandbox.policyDigest,
-                workloads: [...response.profile.sandbox.workloads],
-              } }
-            : {}),
-        };
+        currentCapability = capabilityFor(response.profile);
+        const advertised = response.profiles ?? [response.profile];
+        const next = new Map<string, ScopeRuntimeCapability>();
+        for (const profileId of Object.keys(options.profileCatalog)) {
+          const profile = advertised.find((entry) => entry.profileId === profileId);
+          next.set(profileId, profile ? capabilityFor(profile) : { available: false, reason: "unsupported_profile" });
+        }
+        profileCapabilities = next;
         return currentCapability;
       } catch (error: unknown) {
         if (!(error instanceof ScopeRuntimeClientError)) {
           console.warn("[collaboration] scope runtime capability failed");
         }
         currentCapability = { available: false, reason: "supervisor_unavailable" };
+        profileCapabilities = new Map();
         return currentCapability;
       }
     },
     async createRuntime(input: {
       scopeHandle: string;
-      workload: "chat_ai" | "terminal";
+      /** A catalog profile other than the shared-chat one, e.g. the bot profile. */
+      profileId?: string;
+      workload: ScopeRuntimeWorkload;
       adapterId: string;
       harnessVersion: string;
-      /** S07: required for any run or terminal that acts for a collaborator. */
+      /** S07: required for any run or terminal that acts for a collaborator, and for every bot. */
       sandbox?: ScopeRuntimeSandboxManifest;
     }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
-      const capability = currentCapability;
+      const capability = input.profileId === undefined ? currentCapability : capabilityOfProfile(input.profileId);
       if (!capability.available) throw new ScopeRuntimeClientError("runtime_unavailable");
       if (input.sandbox && (!capability.sandbox || !capability.sandbox.workloads.includes(input.workload)
         || input.sandbox.scopeHandle !== input.scopeHandle)) {
         throw new ScopeRuntimeClientError("runtime_unavailable");
       }
-      // Every call through this collaboration client is a shared run. The
-      // caller cannot opt into the owner's wider fixed profile by omitting a manifest.
+      // Every call through this client is sandboxed: a shared run or a private bot.
+      // A caller cannot opt into the owner's wider fixed profile by omitting a manifest.
       if (!input.sandbox) throw new ScopeRuntimeClientError("runtime_unavailable");
       const adapter = capability.supportedAdapters.find((entry) => entry.adapterId === input.adapterId);
       if (!adapter || adapter.harnessVersion !== input.harnessVersion
@@ -251,6 +284,30 @@ export function createScopeRuntimeClient(options: {
         executionGeneration: response.executionGeneration,
         state: response.state,
       };
+    },
+    /**
+     * Relays a bot command to a `bot_agent` worker. `bot.run` holds the call
+     * until the turn ends; steer and cancel answer quickly. The reply is
+     * opaque here and validated by the caller against the bot contracts.
+     */
+    async runBot(input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand }) {
+      if (closed) throw new ScopeRuntimeClientError("client_closed");
+      const response = await request({
+        version: 1,
+        type: "runtime.bot",
+        requestId: createRequestId(),
+        runtimeHandle: input.runtimeHandle,
+        executionGeneration: input.executionGeneration,
+        command: input.command,
+      }, input.command.kind === "bot.run" ? BOT_RUN_TIMEOUT_MS : BOT_CONTROL_TIMEOUT_MS);
+      if (response.type !== "runtime.bot.result") throw new ScopeRuntimeClientError("runtime_unavailable");
+      if (!response.ok) {
+        return { ok: false as const, error: response.error };
+      }
+      if (response.runtimeHandle !== input.runtimeHandle || response.executionGeneration !== input.executionGeneration) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      return { ok: true as const, reply: response.reply };
     },
     async stopRuntime(input: { runtimeHandle: string }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
@@ -306,6 +363,7 @@ export function createScopeRuntimeClient(options: {
       for (const socket of sockets) socket.destroy();
       await Promise.allSettled([...operations]);
       currentCapability = { available: false, reason: "supervisor_unavailable" };
+      profileCapabilities = new Map();
     },
   };
 }

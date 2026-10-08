@@ -31,3 +31,19 @@ describe("IPC server dependency registration", () => {
     expect(config.tools.map((registered) => registered.name)).toContain("transcribe");
   });
 });
+
+describe("IPC owner data import registration", () => {
+  afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); });
+  it("registers the same owner import actions when owner authentication exists", async () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "owner-test-token");
+    await createIpcServer({} as MatrixDB);
+    const config = sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> };
+    expect(config.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["refresh_imported_data", "get_imported_data_status", "read_imported_data_pages", "preview_data_url", "delete_imported_data"]));
+  });
+  it("omits owner import actions when scoped Run credentials are present", async () => {
+    vi.stubEnv("MATRIX_AUTH_TOKEN", "owner-test-token"); vi.stubEnv("MATRIX_AGENT_INTEGRATIONS_TOKEN", "a".repeat(64));
+    await createIpcServer({} as MatrixDB);
+    const config = sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> };
+    expect(config.tools.map(tool => tool.name)).not.toContain("refresh_imported_data");
+  });
+});

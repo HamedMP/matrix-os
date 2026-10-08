@@ -15,6 +15,7 @@ interface WebDesktopHeaderProps {
   onShowDesktop: () => void;
   onToggleFullscreen: (id: string) => void;
   rightActions?: ReactNode;
+  leadingAction?: ReactNode;
 }
 
 function activeWindowId(windows: AppWindow[]): string | null {
@@ -35,6 +36,7 @@ export function WebDesktopHeader({
   onShowDesktop,
   onToggleFullscreen,
   rightActions,
+  leadingAction,
 }: WebDesktopHeaderProps) {
   const [previewsOpen, setPreviewsOpen] = useState(false);
   useGettingStartedBlocker(previewsOpen);
@@ -80,6 +82,7 @@ export function WebDesktopHeader({
           >
             <Monitor className="size-3.5" aria-hidden="true" />
           </button>
+          {leadingAction ? <div role="presentation" className="flex shrink-0 items-center border-r border-border/70 px-2">{leadingAction}</div> : null}
           {fullscreenWindow ? (
             <button
               type="button"

@@ -4,6 +4,24 @@ import { describe, expect, it } from "vitest";
 import { runPlatformMigration } from "../../packages/platform/src/migration-runner.js";
 
 describe("versioned platform migration transaction", () => {
+  it('rolls back a failed channel migration independently of a newer core marker', async () => {
+    const instance = await KyselyPGlite.create();
+    const db = new Kysely<Record<string, never>>({ dialect: instance.dialect });
+    try {
+      await runPlatformMigration(db, async () => undefined, { revision: { generation: 8, fingerprint: 'newer-core' } });
+      const options = { scope: 'whatsapp' as const, revision: { generation: 1, fingerprint: 'channel' } };
+      await expect(runPlatformMigration(db, async trx => {
+        await sql`CREATE TABLE channel_probe(id TEXT PRIMARY KEY)`.execute(trx);
+        throw new Error('channel failure');
+      }, options)).rejects.toThrow('channel failure');
+      expect((await sql<{ name: string | null }>`SELECT to_regclass('channel_probe')::text AS name`.execute(db)).rows[0]?.name).toBeNull();
+      expect((await sql`SELECT scope FROM platform_schema_revisions WHERE scope='whatsapp'`.execute(db)).rows).toEqual([]);
+      await runPlatformMigration(db, async trx => { await sql`CREATE TABLE channel_probe(id TEXT PRIMARY KEY)`.execute(trx); }, options);
+      await runPlatformMigration(db, async () => { throw new Error('completed channel must skip'); }, options);
+      expect((await sql<{ scope: string; generation: number }>`SELECT scope,generation FROM platform_schema_revisions ORDER BY scope`.execute(db)).rows)
+        .toEqual([{ scope: 'core', generation: 8 }, { scope: 'whatsapp', generation: 1 }]);
+    } finally { await db.destroy(); }
+  });
   it("skips completed DDL and leaves the old revision after a failed upgrade", async () => {
     const instance = await KyselyPGlite.create();
     const db = new Kysely<Record<string, never>>({ dialect: instance.dialect });

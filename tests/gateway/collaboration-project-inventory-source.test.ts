@@ -128,6 +128,20 @@ describe("gateway project inventory source", () => {
     await expect(badRevision.getProject(OWNER, PROJECT)).rejects.toMatchObject({ code: "unavailable" });
   });
 
+  it("logs validation failures by error name before failing closed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const malformed = dependencies();
+    malformed.chats.list = vi.fn(async () => [{ id: "chat_alpha", revision: "not-a-revision" } as never]);
+
+    await expect(createGatewayProjectInventorySource(malformed).listChats(OWNER, PROJECT))
+      .rejects.toMatchObject({ code: "unavailable" });
+    expect(warn).toHaveBeenCalledWith(
+      "[collaboration-project] canonical inventory source failed",
+      "ZodError",
+    );
+    warn.mockRestore();
+  });
+
   it("includes current workspace terminal refs and fails closed without an incarnation proof", async () => {
     const workspaceId = "tws_0123456789abcdef0123456789abcdef";
     const projectTabId = "tt_0123456789abcdef0123456789abcdef";

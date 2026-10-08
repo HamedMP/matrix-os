@@ -1,9 +1,14 @@
-import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { Host, Picker } from "@expo/ui";
-import { View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { ActivityIndicator, Text, View, useWindowDimensions } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+
+import { MenuPicker, type MenuPickerOption } from "@/components/ui/MenuPicker";
 
 const MODEL_VALUE_SEPARATOR = "::";
+// Shares of the window width the two triggers' labels may take before they are
+// cut off, sized so both sit on one row beside the attach and send buttons.
+const MODEL_LABEL_WIDTH_SHARE = 0.32;
+const OPTION_LABEL_WIDTH_SHARE = 0.2;
 
 function modelKey(instanceId: string, modelId: string): string {
   return `${instanceId}${MODEL_VALUE_SEPARATOR}${modelId}`;
@@ -17,30 +22,42 @@ function parseModelKey(key: string): { instanceId: string; modelId: string } | n
 
 /**
  * Composer model/harness picker — mirrors the ChatGPT-style "tap to open a
- * native popup" pattern using `@expo/ui`'s cross-platform `Picker`
- * (`appearance="menu"`, SwiftUI Picker on iOS / Material3 dropdown on
- * Android) rather than a bespoke bottom sheet.
+ * native popup" pattern through `MenuPicker` (SwiftUI menu picker on iOS, a
+ * compact trigger with a Material3 dropdown on Android) rather than a bespoke
+ * bottom sheet.
  */
 export function ModelPicker({
   catalog,
   selection,
   onSelectionChange,
+  catalogLoading = false,
 }: {
   catalog: CanonicalProviderCatalog | null;
+  catalogLoading?: boolean;
   selection: CanonicalChatModelSelection | null;
   onSelectionChange: (selection: CanonicalChatModelSelection) => void;
 }) {
-  const { theme } = useUnistyles();
-  if (!catalog) return null;
-  const availableInstances = catalog.instances.filter((instance) => instance.availability === "available");
-  if (availableInstances.length === 0) return null;
+  const { width } = useWindowDimensions();
+  const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available" && !isLegacyMatrixSdkProvider(instance)) ?? [];
+  const reservedModels = catalog?.instances.filter((instance) => !isLegacyMatrixSdkProvider(instance) && canonicalProviderFundingState(instance) === "credit_reserved")
+    .flatMap((instance) => instance.models.map((model) => ({ instance, model }))) ?? [];
+  const unavailableModels = availableInstances.flatMap((instance) => instance.models
+    .filter((model) => model.availability !== "available").map((model) => ({ instance, model })));
 
   const selectedInstance = selection
-    ? availableInstances.find((instance) => instance.id === selection.instanceId)
+    ? catalog?.instances.find((instance) => instance.id === selection.instanceId)
     : undefined;
+  const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
+  const selectionAvailable = selectedInstance?.availability === "available" && !isLegacyMatrixSdkProvider(selectedInstance) && selectedModel?.availability === "available";
+  const selectedCreditReserved = selectedModel && selectedInstance && !isLegacyMatrixSdkProvider(selectedInstance) && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
+  const savedLabel = canonicalProviderModelRouteLabel(selectedInstance, selectedModel?.displayName ?? selection?.model ?? "Models unavailable");
   const modelValue = selection ? modelKey(selection.instanceId, selection.model) : "";
+  const recoveryReason = !catalog ? "Checking model availability"
+    : selectedInstance?.availability !== "available" && selectedInstance && selectedModel ? canonicalProviderAvailabilityReasonLabel(selectedInstance)
+      : "Saved model unavailable";
 
   function handleModelChange(value: string) {
+    if (catalogLoading) return;
     const parsed = parseModelKey(value);
     if (!parsed) return;
     const instance = availableInstances.find((candidate) => candidate.id === parsed.instanceId);
@@ -49,13 +66,13 @@ export function ModelPicker({
     onSelectionChange({ instanceId: instance.id, model: model.id });
   }
 
-  const composerOption = selectedInstance?.options.find((option) => option.placement === "composer");
+  const composerOption = selectionAvailable ? selectedInstance?.options.find((option) => option.placement === "composer") : undefined;
   const optionValue = composerOption && selection?.options
     ? selection.options.find((selected) => selected.id === composerOption.id)?.value
     : composerOption?.defaultValue;
 
   function handleOptionChange(value: string) {
-    if (!selection || !composerOption) return;
+    if (catalogLoading || !selection || !composerOption) return;
     const otherOptions = (selection.options ?? []).filter((option) => option.id !== composerOption.id);
     onSelectionChange({
       ...selection,
@@ -63,53 +80,72 @@ export function ModelPicker({
     });
   }
 
-  // The native menu button's own label already shows the selected item's
-  // text (SwiftUI .pickerStyle(.menu) / Material3 dropdown convention), so
-  // no separate caption is rendered here — just the model's short name.
+  // The menu trigger shows the selected item's own label, so include the
+  // connection/runtime label to distinguish equally named models.
+  const modelOptions: MenuPickerOption[] = [
+    ...(selection && !selectionAvailable && !selectedCreditReserved
+      ? [{ label: `${savedLabel} · ${catalog ? "unavailable" : "checking"}`, value: modelValue }]
+      : []),
+    ...(!selection ? [{ label: "Choose a model", value: "" }] : []),
+    ...availableInstances.flatMap((instance) => (
+      instance.models
+        .filter((model) => model.availability === "available")
+        .map((model) => ({
+          label: canonicalProviderModelRouteLabel(instance, model.displayName),
+          value: modelKey(instance.id, model.id),
+        }))
+    )),
+  ];
+
   return (
-    <View style={styles.row}>
-      <Host matchContents seedColor={theme.v2.appColors.muted}>
-        <Picker
-          appearance="menu"
-          selectedValue={modelValue}
-          onValueChange={handleModelChange}
-          testID="model-picker"
-        >
-          {availableInstances.flatMap((instance) => (
-            instance.models
-              .filter((model) => model.availability === "available")
-              .map((model) => (
-                <Picker.Item
-                  key={modelKey(instance.id, model.id)}
-                  label={model.displayName}
-                  value={modelKey(instance.id, model.id)}
-                />
-              ))
-          ))}
-        </Picker>
-      </Host>
+    <View style={styles.row} accessibilityState={{ busy: catalogLoading }}>
+      {catalogLoading ? <ActivityIndicator size="small" accessibilityLabel="Checking model availability" /> : null}
+      <MenuPicker
+        options={modelOptions}
+        selectedValue={modelValue}
+        onValueChange={handleModelChange}
+        enabled={!catalogLoading && availableInstances.some((instance) => instance.models.some((model) => model.availability === "available"))}
+        accessibilityLabel="Model"
+        placeholder="Choose a model"
+        maxLabelWidth={Math.round(width * MODEL_LABEL_WIDTH_SHARE)}
+        testID="model-picker"
+      />
+      {reservedModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
+        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.recovery}>
+        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Credit reserved
+      </Text>)}
+      {reservedModels.length > 0 ? <Text style={styles.recovery}>Your credit is reserved while usage is confirmed.</Text> : null}
+      {unavailableModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
+        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.recovery}>
+        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Model unavailable
+      </Text>)}
+      {selection && !selectionAvailable && !catalogLoading ? <Text accessibilityRole="alert" style={styles.recovery}>
+        {recoveryReason}. Choose another model or check Agents &amp; providers.
+      </Text> : null}
       {composerOption && composerOption.kind === "enum" && composerOption.values ? (
-        <Host matchContents seedColor={theme.v2.appColors.muted}>
-          <Picker
-            appearance="menu"
-            selectedValue={typeof optionValue === "string" ? optionValue : ""}
-            onValueChange={handleOptionChange}
-            testID="model-option-picker"
-          >
-            {composerOption.values.map((value) => (
-              <Picker.Item key={value.value} label={value.label} value={value.value} />
-            ))}
-          </Picker>
-        </Host>
+        <MenuPicker
+          options={composerOption.values}
+          selectedValue={typeof optionValue === "string" ? optionValue : ""}
+          onValueChange={handleOptionChange}
+          enabled={!catalogLoading}
+          accessibilityLabel={composerOption.label}
+          maxLabelWidth={Math.round(width * OPTION_LABEL_WIDTH_SHARE)}
+          testID="model-option-picker"
+        />
       ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
+  // End-aligned so that pickers which wrap onto a second line stay beside the
+  // send button, where they sit when they fit on one.
   row: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "center",
+    justifyContent: "flex-end",
     gap: 4,
   },
-});
+  recovery: { color: theme.colors.mutedForeground, flexBasis: "100%", fontSize: 12 },
+}));

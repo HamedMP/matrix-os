@@ -10,17 +10,23 @@ import {
 } from "../../packages/gateway/src/kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 
+const requestedClasses: string[] = [];
+
 function fundedProvider(): MatrixFundedCredentialProvider {
   return {
     enabled: true,
     maxRunMs: 600_000,
-    getCredential: async () => ({
-      token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
-      tokenId: "credential_123",
-      expiresAt: "2026-08-30T10:15:00.000Z",
-      relayBaseUrl: "https://relay.matrix-os.com",
-      maxRunMs: 600_000,
-    }),
+    getCredential: async ({ requestClass }) => {
+      requestedClasses.push(requestClass);
+      return {
+        token: `sk-matrix-funded-credential_123.${"A".repeat(43)}`,
+        tokenId: "credential_123",
+        expiresAt: "2026-08-30T10:15:00.000Z",
+        relayBaseUrl: "https://relay.matrix-os.com",
+        maxRunMs: 600_000,
+        requestClass,
+      };
+    },
     invalidate: () => {},
     close: () => {},
   };
@@ -72,10 +78,10 @@ describe("kernel credential resolution", () => {
 
   it("uses platform mode when owner credentials are absent", async () => {
     expect(await resolveKernelCredentialMode(homePath)).toBe("platform");
-    await expect(buildKernelEnv(homePath, { ANTHROPIC_API_KEY: "platform-key" })).resolves.toBeUndefined();
+    await expect(buildKernelEnv(homePath, { ANTHROPIC_API_KEY: "platform-key" })).rejects.toThrow("Selected AI access is unavailable");
   });
 
-  it("honors an explicit Matrix-funded source even when owner credentials exist", async () => {
+  it("rejects an explicit Matrix-funded source even when owner credentials exist", async () => {
     writeFileSync(
       join(homePath, "system/config.json"),
       JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner-key" } }),
@@ -90,10 +96,7 @@ describe("kernel credential resolution", () => {
       },
       "matrix_included",
       fundedProvider(),
-    )).resolves.toMatchObject({
-      ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
-      ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
-    });
+    )).rejects.toThrow("Selected AI access is unavailable");
   });
 
   it("never treats a static platform key as Matrix-funded access", async () => {
@@ -109,30 +112,14 @@ describe("kernel credential resolution", () => {
     });
   });
 
-  it("returns a bounded funded launch without exposing token metadata in source snapshots", async () => {
+  it("retains readonly funded source metadata without acquiring a launch", async () => {
+    requestedClasses.length = 0;
     const provider = fundedProvider();
-    const launch = await buildKernelCredentialLaunch(homePath, {
-      MATRIX_AUTH_TOKEN: "platform-auth-secret",
-      UPGRADE_TOKEN: "upgrade-secret",
-      MATRIX_CODE_PROXY_TOKEN: "code-proxy-secret",
-      AI_RELAY_CONTROL_TOKEN: "relay-control-secret",
-      CF_AIG_AUTHORIZATION: "cloudflare-secret",
-    }, "matrix_included", provider);
-    expect(launch).toMatchObject({
-      fundedRunTimeoutMs: 600_000,
-      env: {
-        ANTHROPIC_API_KEY: expect.stringMatching(/^sk-matrix-funded-/),
-        ANTHROPIC_BASE_URL: "https://relay.matrix-os.com",
-      },
-    });
-    expect(launch.env).not.toHaveProperty("MATRIX_AUTH_TOKEN");
-    expect(launch.env).not.toHaveProperty("UPGRADE_TOKEN");
-    expect(launch.env).not.toHaveProperty("MATRIX_CODE_PROXY_TOKEN");
-    expect(launch.env).not.toHaveProperty("AI_RELAY_CONTROL_TOKEN");
-    expect(launch.env).not.toHaveProperty("CF_AIG_AUTHORIZATION");
+    await expect(buildKernelCredentialLaunch(homePath, {}, "matrix_included", provider, { requestClass: "interactive" })).rejects.toThrow();
     const sources = await resolveKernelCredentialSources(homePath, {}, provider);
     expect(sources.matrixIncluded.state).toBe("ready");
     expect(JSON.stringify(sources)).not.toContain("credential_123");
+    expect(requestedClasses).toEqual([]);
   });
 
   it("honors an explicit owner source and fails closed when it is unavailable", async () => {
@@ -152,6 +139,35 @@ describe("kernel credential resolution", () => {
       { ANTHROPIC_API_KEY: "platform-key" },
       "owner_anthropic_profile",
     )).rejects.toThrow("Selected AI access is unavailable");
+  });
+
+  it.each([
+    ["key", undefined], ["key", "owner_anthropic_key"],
+    ["profile", undefined], ["profile", "owner_anthropic_profile"],
+  ] as const)("isolates %s owner launch credentials for source %s from ambient auth", async (kind, source) => {
+    if (kind === "key") {
+      writeFileSync(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-key" } }));
+    } else {
+      writeFileSync(join(homePath, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: "owner-account" } }));
+    }
+    const launch = await buildKernelCredentialLaunch(homePath, {
+      ANTHROPIC_API_KEY: "ambient-key",
+      ANTHROPIC_BASE_URL: "https://ambient.example",
+      ANTHROPIC_AUTH_TOKEN: "ambient-token",
+      CLAUDE_CODE_OAUTH_TOKEN: "ambient-oauth-token",
+      ANTHROPIC_CUSTOM_HEADERS: "x-matrix-funded-claim-key: old-run",
+      PATH: "/owner/tools", OWNER_SETTING: "preserved",
+    }, source, fundedProvider(), { requestClass: "interactive" });
+    expect(launch.env).not.toHaveProperty("ANTHROPIC_AUTH_TOKEN");
+    expect(launch.env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+    expect(launch.env).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(launch.env).not.toHaveProperty("ANTHROPIC_BASE_URL");
+    expect(launch.env).toMatchObject({ PATH: "/owner/tools", OWNER_SETTING: "preserved" });
+    if (kind === "key") expect(launch.env?.ANTHROPIC_API_KEY).toBe("owner-key");
+    else {
+      expect(launch.env?.HOME).toBe(homePath);
+      expect(launch.env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    }
   });
 
   it("reports Matrix and owner credential sources independently without secrets", async () => {
@@ -212,5 +228,31 @@ describe("kernel credential resolution", () => {
       ownerApiKey: { state: "invalid" },
       ownerProfile: { state: "unavailable" },
     });
+  });
+});
+
+describe("funded kernel launch classes", () => {
+  let homePath: string;
+  beforeEach(() => {
+    homePath = mkdtempSync(join(tmpdir(), "kernel-funding-"));
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    requestedClasses.length = 0;
+  });
+  afterEach(() => rmSync(homePath, { recursive: true, force: true }));
+
+  it.each(["interactive", "background"] as const)("rejects %s funded SDK launches before credential acquisition", async (requestClass) => {
+    await expect(buildKernelCredentialLaunch(homePath, {}, "matrix_included", fundedProvider(), {
+      requestClass, claimKey: "run_abc:turn.1",
+    })).rejects.toThrow();
+    expect(requestedClasses).toEqual([]);
+  });
+
+  it("does not send funded claim headers with owner SDK access", async () => {
+    writeFileSync(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "sk-ant-owner" } }));
+    const owner = await buildKernelCredentialLaunch(homePath, {}, "owner_anthropic_key", fundedProvider(), {
+      requestClass: "interactive", claimKey: "run_abc",
+    });
+    expect(owner.env).not.toHaveProperty("ANTHROPIC_CUSTOM_HEADERS");
+    expect(requestedClasses).toEqual([]);
   });
 });

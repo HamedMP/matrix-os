@@ -3,6 +3,7 @@ import { Button } from "../../design/primitives";
 import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
+import { readNativeEmbedBounds } from "./embed-bounds";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -55,17 +56,11 @@ export default function EmbedHost({
     const id = embedIdRef.current;
     const host = hostRef.current;
     if (!id || !host || !activeRef.current) return;
-    const r = host.getBoundingClientRect();
     void invoke("embed:set-bounds", {
       embedId: id,
-      bounds: {
-        x: Math.round(r.left),
-        y: Math.round(r.top),
-        width: Math.round(r.width),
-        height: Math.round(r.height),
-      },
+      bounds: readNativeEmbedBounds(host, visualScale),
     });
-  }, []);
+  }, [visualScale]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -86,13 +81,7 @@ export default function EmbedHost({
       pendingStates.set(payload.embedId, payload.state);
     });
 
-    const r = host.getBoundingClientRect();
-    const bounds = {
-      x: Math.round(r.left),
-      y: Math.round(r.top),
-      width: Math.round(r.width),
-      height: Math.round(r.height),
-    };
+    const bounds = readNativeEmbedBounds(host, visualScale);
 
     const openRequest = kind === "hosted-shell" || kind === "code-editor"
       ? { kind, bounds, active: activeRef.current }

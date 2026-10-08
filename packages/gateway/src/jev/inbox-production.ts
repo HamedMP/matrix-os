@@ -1,7 +1,7 @@
 import type { JevInboxBatchStore } from "./inbox-batch-store.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
-import { JEV_MODEL_ID, FundedAiRuntimeFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { JEV_MODEL_ID, FundedAiRuntimeChatFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { createJevHermesCredentialResolver } from "../chat/jev-hermes-credentials.js";
 import { verifyJevHermesRuntimePin, verifyJevHermesDependencies } from "../chat/jev-hermes-runtime-pin.js";
 import { createFundedAiReadinessReader } from "../funded-ai-readiness.js";
@@ -46,11 +46,12 @@ export function createProductionJevInboxRuntime(options: {
     fundedPolicyReady: async signal => {
       if (!options.service || !options.fundedOwnerId || !options.summary) return false;
       const raw = await options.summary.getFundingSummary({ signal }); signal.throwIfAborted();
-      const { policy, funding } = FundedAiRuntimeFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
+      if (!raw.chatAvailability) return false;
+      const { policy, funding, chatAvailability } = FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, ...raw });
       const now = Date.now();
       return policy.enabled && policy.allowedModelIds.includes(JEV_MODEL_ID)
         && Date.parse(policy.checkedAt) <= now && Date.parse(policy.staleAfter) > now
-        && funding.remainingBudgetMicrousd > 0 && funding.remainingBalanceMicrousd > 0
+        && funding.remainingBudgetMicrousd > 0 && chatAvailability.availableBalanceMicrousd > 0
         && Date.parse(funding.asOf) <= now + 60_000 && now - Date.parse(funding.asOf) < 300_000;
     },
     fundedReady: async signal => {

@@ -812,7 +812,8 @@ exit 99
     expect(cloudInit).toContain(
       'if [ -f /etc/systemd/system/matrix-vps-registration.service ]; then',
     );
-    expect(cloudInit).toContain('systemctl enable --now matrix-vps-registration.service');
+    expect(cloudInit).toContain('systemctl enable matrix-vps-registration.service');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-vps-registration.service');
     expect(cloudInit).not.toMatch(/systemctl enable[^\n]+matrix-restore\.service[^\n]+matrix-terminal-runtime\.service/);
     expect(cloudInit).not.toMatch(/systemctl start[^\n]+matrix-restore\.service[^\n]+matrix-terminal-runtime\.service/);
     expect(cloudInit).not.toMatch(/systemctl enable[^\n]+matrix-gateway\.service[^\n]+matrix-vps-registration\.service/);

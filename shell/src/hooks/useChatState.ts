@@ -25,8 +25,11 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  navigationFresh?:boolean;
+  navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
+  openSharedProject?: (scopeId: string) => void;
   openSharedHome?: () => void;
   unreadOnly?: boolean;
   setUnreadOnly?: (value: boolean) => void;
@@ -34,11 +37,18 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  agentSummaryClient?: ChatAgentClient;
+  authorityKey?: string;
+  composerIdentity?: object;
+  isCurrentAuthority?: () => boolean;
+  botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;
+  /** Cancellable run from the selected canonical Chat detail, separate from admission/loading. */
+  activeRunId?: string;
   /** Name of the currently-running tool, or null when the agent is just
       generating text. Drives the global AgentStatusCard's stage label. */
   currentTool: string | null;

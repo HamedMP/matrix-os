@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -14,6 +14,7 @@ import type { SetupPlan } from "../../packages/kernel/src/onboarding.js";
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "provision-")));
   mkdirSync(join(dir, "system"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   return dir;
 }
 
@@ -46,6 +47,7 @@ describe("T404: Provisioner", () => {
   beforeEach(() => {
     homePath = makeHomePath();
   });
+  afterEach(() => rmSync(homePath, { recursive: true, force: true }));
 
   it("ignores plan with non-pending status", async () => {
     const spawn = vi.fn<SpawnFn>(async function* () { yield resultEvent("s"); });

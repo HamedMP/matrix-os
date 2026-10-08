@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -240,7 +240,10 @@ describe("dispatcher $ai_generation wiring", () => {
   beforeEach(() => {
     homePath = resolve(mkdtempSync(join(tmpdir(), "dispatch-ai-")));
     mkdirSync(join(homePath, "system", "logs"), { recursive: true });
+    writeFileSync(join(homePath, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   });
+
+  afterEach(() => rmSync(homePath, { recursive: true, force: true }));
 
   function usageSpawn(): SpawnFn {
     return async function* (_message, _config) {

@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
@@ -15,8 +16,8 @@ it.each([false, true])("renders streaming through an in-flight rename (%s) witho
     createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:00.000Z" };
   const record = { chat, activeRun: { runId: "run_content", turnId: "cturn_content", status: "running" } };
   const detail = vi.fn(async () => Response.json({ record, messages: [], runs: [], turns: [], activities: [] }));
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1")) return stream;
+  stubLegacyChatFetch( vi.fn(async (url: string) => {
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return stream;
     if (url.includes("/title?")) return Response.json({ ...record, chat: { ...chat, title: "Manual", titleVersion: 1, revision: 4 } });
     if (url.includes("/api/chats?")) return Response.json({ items: [record] });
     return detail();

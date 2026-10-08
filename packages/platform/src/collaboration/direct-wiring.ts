@@ -50,6 +50,25 @@ export function loadCollaborationRelayOrigin(env: NodeJS.ProcessEnv): string | n
   }
 }
 
+/**
+ * The home for a private project owner's setup request, routed by runtime because the project is
+ * not in the directory yet. Only an enrolled runtime the caller registered, on a machine the caller
+ * owns and that may collaborate (`resolveRuntimeOrigin` re-checks ownership), resolves.
+ */
+export function createOwnerRuntimeHomeResolver(options: {
+  endpoints: { resolve(logicalRuntimeId: string): Promise<{ ownerId: string } | null> };
+  resolveRuntimeOrigin(runtimeId: string, ownerId: string): Promise<string | null>;
+}): (actorId: string, logicalRuntimeId: string) => Promise<RelayHome | null> {
+  return async (actorId, logicalRuntimeId) => {
+    const enrolled = /^vps-([0-9a-f-]{36})$/.exec(logicalRuntimeId);
+    if (!enrolled) return null;
+    const record = await options.endpoints.resolve(logicalRuntimeId);
+    if (!record || record.ownerId !== actorId) return null;
+    const origin = await options.resolveRuntimeOrigin(`vps:${enrolled[1]}`, actorId);
+    return origin ? { runtimeId: logicalRuntimeId, origin } : null;
+  };
+}
+
 export async function createPlatformCollaborationDirect(options: {
   db: Kysely<RuntimeEndpointPlatformDatabase>;
   repository: PlatformCollaborationRepository;
@@ -103,6 +122,7 @@ export async function createPlatformCollaborationDirect(options: {
       const origin = await options.resolveRuntimeOrigin(enrolled ? `vps:${enrolled[1]}` : logicalRuntimeId, record.ownerId);
       return origin ? { runtimeId: logicalRuntimeId, origin } : null;
     },
+    resolveOwnerRuntimeHome: createOwnerRuntimeHomeResolver({ endpoints, resolveRuntimeOrigin: options.resolveRuntimeOrigin }),
     ...(options.relayFetch ? { fetchImpl: options.relayFetch } : {}),
   });
   relay.startSweep();

@@ -16,6 +16,7 @@ import { bootstrapPlatformOrganizationDatabase, type OrganizationPlatformDatabas
 import { createOrganizationMembershipProjection, type ClerkOrganizationUpstream, type OrganizationMembershipProjection } from "./projection.js";
 import { PlatformOrganizationRepository } from "./repository.js";
 import { createPlatformOrganizationRoutes } from "./routes.js";
+import type { OrganizationManagementDirectory, OrganizationManagementUpstream } from "./management.js";
 
 const MAX_AFFECTED_RUNTIMES = 256;
 const INBOX_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -39,6 +40,8 @@ export async function createPlatformOrganizations(options: {
   clerkSecretKey?: string;
   webhookSigningSecret?: string;
   upstream?: ClerkOrganizationUpstream;
+  managementDirectory?: OrganizationManagementDirectory;
+  managementUpstream?: OrganizationManagementUpstream;
   resolveActor(c: Context): Promise<string | null>;
   authenticateRuntime(input: { runtimeId: string; bearerToken: string }): Promise<{ runtimeId: string; ownerId: string } | null>;
   fetchImpl?: typeof fetch;
@@ -48,9 +51,11 @@ export async function createPlatformOrganizations(options: {
   await bootstrapPlatformOrganizationDatabase(options.db);
   const now = options.now ?? (() => new Date());
   const repository = new PlatformOrganizationRepository(options.db, { now });
-  const upstream = options.upstream ?? (options.clerkSecretKey
+  const clerkUpstream = options.clerkSecretKey
     ? new ClerkOrganizationUpstreamClient({ secretKey: options.clerkSecretKey, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}), now })
-    : undefined);
+    : undefined;
+  const upstream = options.upstream ?? clerkUpstream;
+  const managementUpstream = options.managementUpstream ?? clerkUpstream;
   if (!upstream) console.warn("[organizations] no Clerk upstream configured: organization membership can never be verified");
 
   let controlAuthority: CollaborationControlAuthority | undefined;
@@ -80,6 +85,8 @@ export async function createPlatformOrganizations(options: {
     repository,
     projection,
     controlAuthority,
+    ...(options.managementDirectory ? { managementDirectory: options.managementDirectory } : {}),
+    ...(managementUpstream ? { managementUpstream } : {}),
     ...(options.webhookSigningSecret ? { webhookSigningSecret: options.webhookSigningSecret } : {}),
     resolveActor: options.resolveActor,
     authenticateRuntime: options.authenticateRuntime,

@@ -248,6 +248,36 @@ describe("collaboration capability HTTP routes", () => {
     expect(outsider.status).toBe(403);
   });
 
+  it("looks up only an already-current catalog identity without registering or rotating resources", async () => {
+    const lookupPath = `/api/collaboration/runtimes/${runtimeId}/catalog/lookup`;
+    const lookup = () => signed({ actorId: ownerId, method: "POST", path: lookupPath, scopeId: null,
+      body: { kind: "file", path: "notes.txt", organizationId },
+    });
+    const before = await lookup();
+    expect(before.status).toBe(200);
+    expect(await before.json()).toEqual({ entry: null });
+    expect(await fixture.db.selectFrom("collaboration_resource_catalog").select("id")
+      .where("owner_id", "=", ownerId).where("kind", "=", "file")
+      .where("path", "=", "notes.txt").execute()).toEqual([]);
+
+    const resolvePath = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
+    const resolved = await signed({ actorId: ownerId, method: "POST", path: resolvePath, scopeId: null,
+      body: { kind: "file", path: "notes.txt", organizationId },
+    });
+    const registered = await resolved.json() as { id: string };
+    const current = await lookup();
+    expect(current.status).toBe(200);
+    expect(await current.json()).toMatchObject({ entry: { id: registered.id, kind: "file", path: "notes.txt" } });
+
+    await rm(join(homePath, "notes.txt"));
+    await writeFile(join(homePath, "notes.txt"), "replacement");
+    const replaced = await lookup();
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toEqual({ entry: null });
+    expect(await fixture.db.selectFrom("collaboration_resource_catalog").select("id")
+      .where("id", "=", registered.id).executeTakeFirst()).toEqual({ id: registered.id });
+  });
+
   it("routes encoded vps owner catalog requests through only the bounded owner runtime session", async () => {
     const sessions = runtime.ownerRuntimeSessions;
     expect(sessions).toBeDefined();

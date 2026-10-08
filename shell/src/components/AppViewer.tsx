@@ -359,20 +359,16 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return null;
   }
 
-  return (
-    <div className="flex h-full w-full flex-col">
-      {slug ? <div className="flex justify-end border-b px-3 py-1.5">
-        <FileResourceSharing kind="app" path={slug} />
-      </div> : null}
-      <iframe
-        ref={iframeRef}
-        key={refreshKey}
-        src={iframeSrc}
-        srcDoc={slug && iframeHtml ? iframeHtml : undefined}
-        className="min-h-0 w-full flex-1 border-0"
-        sandbox={APP_IFRAME_SANDBOX}
-        title={path}
-      />
-    </div>
-  );
+  return <div className="flex h-full w-full flex-col">
+    {slug ? <FileResourceSharing kind="app" path={slug} containerClassName="flex justify-end border-b px-3 py-1.5" /> : null}
+    <iframe
+      ref={iframeRef}
+      key={refreshKey}
+      src={iframeSrc}
+      srcDoc={slug && iframeHtml ? iframeHtml : undefined}
+      className="min-h-0 w-full flex-1 border-0"
+      sandbox={APP_IFRAME_SANDBOX}
+      title={path}
+    />
+  </div>;
 }

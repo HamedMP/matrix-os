@@ -1,8 +1,10 @@
+import { startDesktopProviderCatalogCoordinator, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
+import { resetProviderPreferences } from "./provider-preferences-test-utils";
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
@@ -10,6 +12,8 @@ import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 import { openExistingProviderTerminalSession } from "@desktop/renderer/src/features/settings/provider-settings-desktop-adapter";
+import { openChatProviderSettings } from "@desktop/renderer/src/features/chat/open-chat-provider-settings";
+vi.mock("@desktop/renderer/src/features/chat/open-chat-provider-settings", () => ({ openChatProviderSettings: vi.fn() }));
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 vi.mock("@desktop/renderer/src/features/settings/provider-settings-desktop-adapter", async (original) => ({
   ...(await original<typeof import("@desktop/renderer/src/features/settings/provider-settings-desktop-adapter")>()),
@@ -22,6 +26,20 @@ beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
 });
 describe("canonical native empty Chat connection wiring", () => {
+  it("opens current supported Codex Settings recovery without a legacy login mutation", async () => {
+    const snapshot = disconnectedSnapshot();
+    const api = { forRuntime: () => api, get: vi.fn(async () => snapshot), post: vi.fn() };
+    useConnection.setState({ status: "signed-in", handle: "owner", runtimeSlot: "preview", api: api as unknown as ApiClient });
+    render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} projectId={null} initialView="draft" active catalog={providerCatalog} />);
+    const draft = screen.getByRole("textbox", { name: "Start a chat" });
+    await setSharedComposerText(draft, "Keep the recovery draft");
+    const connect = await screen.findByRole("button", { name: "Connect Codex" });
+    fireEvent.click(connect);
+    expect(openChatProviderSettings).toHaveBeenCalledOnce();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(draft).toHaveTextContent("Keep the recovery draft");
+  });
+
   it.each(["checking", "unknown", "read_failed"])("preserves native starter cards and draft while connection evidence is %s", async (state) => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "unknown";
     const api = { forRuntime: () => api, get: vi.fn(async () => {
@@ -49,13 +67,10 @@ describe("canonical native empty Chat connection wiring", () => {
     const scroll = retry.closest<HTMLElement>('[data-slot="chat-starter-scroll"], [data-slot="chat-project-draft-scroll"]');
     expect(scroll).not.toBeNull();
     expect(scroll).toHaveClass("min-h-0", "overflow-y-auto");
-    if (projectId === null) {
-      expect(scroll).toHaveClass("items-start");
-      expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
-      expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
-    } else {
-      expect(scroll).toHaveClass("justify-center-safe");
-    }
+    expect(scroll).toHaveClass("items-start");
+    expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
+    expect(scroll?.contains(screen.getByRole("textbox", { name: "Start a chat" }))).toBe(false);
+    expect(screen.getByRole("button", { name: "Explore and understand code" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
   });
   it("opens the server-issued Settings login in Terminal on the selected runtime", async () => {
@@ -83,4 +98,30 @@ describe("canonical native empty Chat connection wiring", () => {
     expect(await screen.findByRole("button", { name: "Explore and understand code" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
   });
+});
+
+
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); vi.unstubAllGlobals(); });
+it("mounted signed-in onboarding does not invalidate the warmed provider cache on twenty application switches", async () => {
+  resetProviderPreferences({ hydrated: true });
+  const settings = disconnectedSnapshot(); settings.harnesses[0]!.authState = "unknown";
+  const get = vi.fn(async (path: string) => path.startsWith("/api/chat-providers") ? providerCatalog : settings);
+  const api = { forRuntime: () => api, get };
+  useConnection.setState({ status: "signed-in", handle: "owner", api: api as unknown as ApiClient });
+  const stop = startDesktopProviderCatalogCoordinator();
+  render(<CanonicalChatWorkspace client={createCanonicalChatWorkspaceClient()} api={api as unknown as ApiClient} projectId={null} initialView="draft" active />);
+  const trigger = await screen.findByRole("button", { name: "Choose model and provider" });
+  await waitFor(() => expect(trigger.querySelector('[role="status"]')).toBeNull());
+  await setSharedComposerText(screen.getByRole("textbox", { name: "Start a chat" }), "Keep the warmed draft");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+  const reads = get.mock.calls.length;
+  for (let index = 0; index < 20; index++) act(() => {
+    window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await act(async () => undefined);
+  expect(get.mock.calls).toHaveLength(reads);
+  expect(useConnection.getState().providerCatalogGeneration).toBe(0);
+  expect(trigger.querySelector('[role="status"]')).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
+  act(() => stop());
 });

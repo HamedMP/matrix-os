@@ -5,7 +5,7 @@ import type { ProviderSettingsMutationIntent } from "./types.js";
 import { ownAccountTargets, preferredOwnAccountTarget } from "./own-account-targets.js";
 
 /** Connection is a funding choice, never a synthetic model provider. */
-export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySelected, onUseGateway, canSetRoute, disabled, onMutate, onSetupHarness, onRefreshForConnection }: {
+export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySelected, onUseGateway, canSetRoute, disabled, onMutate, onConnectSettings, onRefreshForConnection }: {
   snapshot: ProviderSettingsSnapshot;
   harness: ProviderHarnessInstance;
   gatewaySource: ProviderAccessSource | null;
@@ -14,7 +14,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
   canSetRoute: boolean;
   disabled: boolean;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
-  onSetupHarness?: () => Promise<boolean>;
+  onConnectSettings?: () => Promise<boolean>;
   onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
 }) {
   const [pending, setPending] = useState(false);
@@ -81,7 +81,7 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
           route: { kind: "configurable", providerId: target.source.providerId, modelId: target.model.id },
           accessSourceId: target.source.id, accountId: target.source.accountId,
           ...(current.atomicConnectSupported === true ? { enableHarness: true } : {}) })
-        : await onSetupHarness?.();
+        : await onConnectSettings?.();
       if (result === false && mounted.current && currentHarness.current === harness.id) setFailed(true);
     } catch (error) {
       console.warn("[provider-settings] Connection action failed:", error instanceof Error ? error.name : typeof error);
@@ -96,12 +96,12 @@ export function ConnectionChoices({ snapshot, harness, gatewaySource, gatewaySel
         <span>{gatewaySelected ? "Matrix credit · no separate login" : gatewaySource?.readiness.state === "ready" && onUseGateway ? "Matrix credit · no separate login" : "Not available for this connection"}</span>
       </button>
       <button type="button" className="matrix-ap-connection-choice" aria-pressed={ownSelected}
-        disabled={disabled || pending || needsUpdate || !(ownTarget && canSetRoute) && !(staleNative && canSetRoute && onRefreshForConnection) && !(savedSourceId !== null && canSetRoute) && !onSetupHarness} onClick={() => { void selectOwn(); }}>
+        disabled={disabled || pending || needsUpdate || !(ownTarget && canSetRoute) && !(staleNative && canSetRoute && onRefreshForConnection) && !(savedSourceId !== null && canSetRoute) && !onConnectSettings} onClick={() => { void selectOwn(); }}>
         <strong>Own account</strong><span>{ownSelected ? "Selected" : `Connect through ${harness.displayName}`}</span>
       </button>
     </div>
     {catalogRecovery ? <p className="matrix-ap-help" role="status">Saved connection unavailable. Try Own account to refresh this connection.</p> : null}
-    {needsUpdate ? <p className="matrix-ap-help" role="status">Update this computer to connect and enable an agent in one step.</p> : null}
+    {needsUpdate ? <p className="matrix-ap-help" role="status">Update this computer to connect this agent.</p> : null}
     {failed ? <p role="alert" className="matrix-ap-help">Connection could not be updated. Try again.</p> : null}
   </div>;
 }

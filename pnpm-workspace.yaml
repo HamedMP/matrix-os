@@ -24,6 +24,11 @@ minimumReleaseAgeExclude:
   - "babel-preset-expo"
   - "react-native-reanimated"
   - "react-native-worklets"
+  # Explicitly requested Pi SDK 1.0 upgrade; only these verified releases are exempt.
+  # All other versions and non-Pi transitive dependencies retain the 7-day delay.
+  - "@earendil-works/pi-agent-core@1.0.0"
+  - "@earendil-works/pi-ai@1.0.0"
+  - "@earendil-works/pi-telemetry@1.0.0"
 
 shamefullyHoist: true
 

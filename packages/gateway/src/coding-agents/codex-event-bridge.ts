@@ -9,11 +9,13 @@ import {
   AgentThreadEventSchema,
   AgentThreadSummarySchema,
   SafeClientErrorSchema,
+  canonicalAgentFailure,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
+import type { CodexFailureReason } from "./codex-terminal-failure.mjs";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
 import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
@@ -96,15 +98,24 @@ function completionEvents(input: {
   outcome: "completed" | "failed" | "aborted";
   occurredAt: string;
   nextEventId: () => string;
+  failureReason?: CodexFailureReason;
 }): AgentThreadEvent[] {
   const events: AgentThreadEvent[] = [];
   if (input.outcome === "failed") {
+    const classified = canonicalAgentFailure(input.failureReason);
     events.push(AgentThreadEventSchema.parse({
       type: "thread.error",
       eventId: input.nextEventId(),
       threadId: input.threadId,
       occurredAt: input.occurredAt,
-      error: SafeClientErrorSchema.parse({
+      error: SafeClientErrorSchema.parse(classified ? {
+        code: `agent_${input.failureReason}`,
+        safeMessage: classified.safeMessage,
+        retryable: classified.retryable,
+        recoveryActions: classified.retryable ? ["retry"]
+          : input.failureReason === "authentication_required" ? ["sign_in", "open_setup_terminal"]
+          : classified.recoveryActions?.includes("start_new_chat") ? ["start_new_session"] : ["select_runtime"],
+      } : {
         code: "provider_failed",
         safeMessage: "The coding agent stopped. Review the thread and try again.",
         retryable: true,
@@ -260,6 +271,7 @@ export function createCodexEventBridge(options: {
         events.push(...completionEvents({
           threadId: entry.threadId,
           outcome: parsed.outcome,
+          failureReason: parsed.failureReason,
           occurredAt,
           nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++),
         }));

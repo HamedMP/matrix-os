@@ -296,7 +296,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     harness: "hermes" | "openclaw";
   }, snapshot?: Parameters<ProviderSettingsRuntimeCoordinator["applyConfiguration"]>[0]["snapshot"]): ConfiguredRuntimeRoute {
     const source = snapshot?.accessSources.find((candidate) => candidate.id === harness.accessSourceId);
-    const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+    const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
       ? hermesNativeModelId(harness, source) : undefined;
     if (nativeModel === null) throw new ProviderSettingsStoreError("invalid_route", 400);
     const route = ConfiguredRuntimeRouteSchema.safeParse({
@@ -539,6 +539,10 @@ export function createProviderGenericHarnessCoordinator(options: {
       const fallback = input.after.harnesses.find((harness) =>
         harness.enabled && systemHarness(harness.harness) && harness.id !== target.id,
       );
+      // Off gates canonical Chat admission; it does not uninstall the native
+      // runtime or require installing another one. Preserve its configuration
+      // when no enabled system harness exists to receive messaging selection.
+      if (!fallback) return null;
       const supportedFallback = requireGenericHarness(fallback);
       await requireRuntimeSupport(supportedFallback, input.canonical, input.snapshot);
       return configuredRuntimeRoute(supportedFallback as typeof supportedFallback & {
@@ -621,7 +625,7 @@ export function createProviderGenericHarnessCoordinator(options: {
     const affected = affectedHarness(input);
     const specialized = affected.after ?? affected.before;
     if (specialized && isSpecializedHarness(specialized)) {
-      assertSpecializedHarnessEnablement({ harness: specialized, mutation, canonical: input.canonical });
+      assertSpecializedHarnessEnablement({ harness: specialized, mutation, canonical: input.canonical, snapshot: input.snapshot, claudeNativeCompletion: input.claudeNativeCompletion });
       replaceReceipt(receipts, { key: input.idempotencyKey, payloadHash, state: "applied" });
       await writeReceipts(receipts);
       return;

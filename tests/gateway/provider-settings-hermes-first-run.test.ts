@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSettingsUpdate, AiProviderSnapshotV3 } from "@matrix-os/contracts";
+import { ProviderSettingsMutationSchema, type AgentSettingsUpdate, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { AgentConfigError } from "../../packages/gateway/src/agent-config/errors.js";
 import type { AgentRuntimeSettingsSnapshot } from "../../packages/gateway/src/agent-config/service.js";
 import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
+import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
 import { writeProviderJsonAtomic } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import {
   providerSettingsCanonicalFixture,
@@ -178,6 +179,34 @@ describe("Hermes enablement for a first-run owner", () => {
       enabled: true,
     };
   }
+
+  it("rejects source-less Hermes enable before changing the route or owner settings", async () => {
+    const { store, update, currentRoute } = await setup();
+    await writeProviderJsonAtomic(store.configurationPath, {
+      schemaVersion: 1, revision: 0, accountProfiles: [], gatewayPolicy: null, receipts: [],
+      harnesses: [{ id: "harness_hermes", driverId: "hermes", harness: "hermes", displayName: "Hermes",
+        accentColor: null, enabled: false, enablementOrigin: "owner_configuration", selectedAccountId: null,
+        accessSourceId: null, route: { kind: "configurable", providerId: "anthropic", modelId: "claude-fable-5" } }],
+    });
+    const before = await store.getSnapshot();
+    const hermes = before.harnesses.find(harness => harness.harness === "hermes")!;
+    expect(hermes).toMatchObject({ enabled: false, accessSourceId: null });
+    await expect(store.mutate(enableMutation(hermes.id, before.revision))).rejects.toMatchObject({
+      code: "invalid_route", status: 400,
+    });
+    const app = createProviderSettingsRoutes({ store, getPrincipal: () => ({ userId: "fixture-owner" }) });
+    const response = await app.request("/provider-settings/actions?includeCapabilities=true&includeModelCapabilities=true", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ProviderSettingsMutationSchema.parse(enableMutation(hermes.id, before.revision, "0367981b-c1b2-4fda-85b8-6e5c48eee891"))),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: { code: "invalid_request", message: "Invalid provider settings request." } });
+    expect(update).not.toHaveBeenCalled();
+    expect(currentRoute()).toBeNull();
+    const after = await store.getSnapshot();
+    expect(after.revision).toBe(before.revision);
+    expect(after.harnesses.find(harness => harness.id === hermes.id)).toEqual(hermes);
+  });
 
   it("enables Hermes with the selected route when the runtime has no messaging route yet", async () => {
     const { store, update, currentRoute, receiptsPath } = await setup();

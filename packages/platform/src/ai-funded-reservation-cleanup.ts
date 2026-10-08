@@ -3,9 +3,12 @@ import { NoResultError, sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { deleteExpiredPriorityClaims } from "./ai-funded-priority-claims.js";
 import { exactInteger, utcMonthStart, fundingSummary, recordUsageFunding } from "./ai-funded-metering-helpers.js";
 import { reconcileExpiredPromotionalCredit, reservationDebitSplit, debitAttributedPromotionalGrants, debitPromotionalGrants } from "./ai-funded-reservation-sources.js";
 import { isSpeechMonthlyAuthorization } from "./speech/reservation-policy.js";
+
+const MAX_EXPIRED_CLAIM_DELETES = 500;
 export const CleanupSchema = z.object({ limit: z.number().int().min(1).max(1_000) }).strict();
 
 export interface AiFundedReservationCleanupOptions {
@@ -251,5 +254,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
       });
     }
   }
+  // Expired priority claims hold nothing; remove them in bounded batches.
+  await deleteExpiredPriorityClaims(options.db.executor, checkedAt, MAX_EXPIRED_CLAIM_DELETES);
   return cleaned;
 }

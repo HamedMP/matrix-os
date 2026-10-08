@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { createAiProviderRoutes } from "../../packages/gateway/src/ai-providers/routes.js";
+import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
 const emptySnapshot: AiProviderSnapshotV3 = {
   contractVersion: 3,
@@ -16,6 +17,22 @@ const emptySnapshot: AiProviderSnapshotV3 = {
 };
 
 describe("AI provider routes", () => {
+  it.each([false, true])("negotiates rich funding reasons independently of native profiles: %s", async rich => {
+    const held = makeAiProviderSnapshot();
+    Object.assign(held.accessSources[0]!, { state: "unavailable", action: "retry", safeReason: "credit_reserved" });
+    held.instances[0]!.readiness = { state: "unavailable", action: "retry", safeReason: "credit_reserved", checkedAt: null, staleAfter: null };
+    held.instances[0]!.defaultModelId = null;
+    const app = createAiProviderRoutes({ service: { getSnapshot: async () => held }, getPrincipal: () => ({ userId: "owner_123" }) });
+    for (const native of [false, true]) {
+      const response = await app.request(`/providers?includeNativeProfiles=${native}&includeFundingState=${rich}`);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.accessSources[0].safeReason).toBe(rich ? "credit_reserved" : "credit_required");
+      expect(body.instances[0].readiness.safeReason).toBe(rich ? "credit_reserved" : "credit_required");
+      expect(held.accessSources[0]!.safeReason).toBe("credit_reserved");
+    }
+    expect((await app.request("/providers?includeFundingState=yes")).status).toBe(400);
+  });
   it("authenticates and returns the bounded canonical provider snapshot", async () => {
     const getSnapshot = vi.fn(async () => emptySnapshot);
     const getPrincipal = vi.fn(() => ({ userId: "owner_123" }));

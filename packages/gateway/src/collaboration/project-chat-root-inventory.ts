@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { CanonicalChatExecutionRootRefSchema, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
+import { CanonicalChatExecutionRootRefSchema, canonicalExecutionRootProjectId, type CanonicalChatExecutionRootRef } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase } from "../chat/database.js";
@@ -127,7 +127,7 @@ export function createProjectChatRootInventory(options: {
         const rootInput = selected.get(chat.id)?.root ?? { kind: "project", projectId };
         const parsed = CanonicalChatExecutionRootRefSchema.safeParse(rootInput);
         const fallback = { kind: "project" as const, projectId };
-        if (!parsed.success || parsed.data.projectId !== projectId) {
+        if (!parsed.success || canonicalExecutionRootProjectId(parsed.data) !== projectId) {
           return { chatId: chat.id, revision: Number(chat.revision), executionRoot: fallback, readiness: "blocked", blocker: "chat_root_unavailable" };
         }
         try {

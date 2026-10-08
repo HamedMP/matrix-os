@@ -1,4 +1,8 @@
+import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
+import { projectChatFundingErrors } from "./funding-error-wire.js";
+import { ChatFundingWireVersionSchema } from "@matrix-os/contracts";
 import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
@@ -115,6 +119,7 @@ const ChatDetailQuerySchema = z.object({
 }).strict();
 
 export interface CanonicalChatRouteService {
+  navigation?(owner: ChatOwner, input: CanonicalChatNavigationQuery): Promise<CanonicalChatNavigationResponse>;
   create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(
     owner: ChatOwner,
@@ -295,7 +300,7 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(value,
+  return context.json(projectChatReadStateResponse(projectChatRecipeSources(value),
     ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
 }
 
@@ -312,10 +317,12 @@ export function createCanonicalChatRoutes(options: {
     }
     const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
     if (!metadataVersion.success) return validationError(context);
+    const fundingVersion = ChatFundingWireVersionSchema.safeParse(context.req.query("fundingVersion"));
+    if (!fundingVersion.success || (context.req.queries("fundingVersion")?.length ?? 0) > 1) return validationError(context);
     await next();
     context.header("Vary", "X-Matrix-Chat-Metadata", { append: true });
-    if (metadataVersion.data === "0" && context.res.headers.get("content-type")?.includes("application/json")) {
-      const payload = projectChatMetadata(await context.res.json(), "0");
+    if ((metadataVersion.data === "0" || fundingVersion.data === "0") && context.res.headers.get("content-type")?.includes("application/json")) {
+      const payload = projectChatFundingErrors(projectChatMetadata(await context.res.json(), metadataVersion.data), fundingVersion.data);
       const headers = new Headers(context.res.headers);
       headers.delete("content-length");
       context.res = new Response(JSON.stringify(payload), { status: context.res.status, headers });
@@ -382,6 +389,24 @@ export function createCanonicalChatRoutes(options: {
         },
       );
       return chatJson(context, CanonicalChatListResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chat-navigation", async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const parsed = CanonicalChatNavigationQuerySchema.safeParse(context.req.query());
+      if (!parsed.success || Object.keys(context.req.query()).some(key => (context.req.queries(key)?.length ?? 0) > 1)) {
+        return validationError(context);
+      }
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      if (!options.service.navigation) throw new Error("Navigation is unavailable");
+      const result = await options.service.navigation(owner, parsed.data);
+      const snapshot = CanonicalChatNavigationResponseSchema.safeParse(result);
+      if (!snapshot.success) throw new Error("Navigation is unavailable");
+      return context.json(snapshot.data);
     } catch (error: unknown) {
       return handleError(context, error);
     }

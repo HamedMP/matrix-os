@@ -8,12 +8,13 @@ import {
   View,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import Add01Icon from "@hugeicons/core-free-icons/Add01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
+import { buildIntegrationSections, integrationDescription, integrationAuthType } from "@matrix-os/contracts/integration-marketplace";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
 import {
+  SearchField,
   ListRow,
   ListRowSkeletonStack,
   ListRowStack,
@@ -25,6 +26,10 @@ import type { IntegrationService } from "@/lib/requests";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 
 export default function IntegrationsScreen() {
+  const [query, setQuery] = useState("");
+  const [oauthOnly, setOauthOnly] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
+  const [connectedOnly, setConnectedOnly] = useState(false);
   const router = useRouter();
   const { theme } = useUnistyles();
   const {
@@ -46,12 +51,13 @@ export default function IntegrationsScreen() {
   const connectInFlight = useRef(false);
   syncConnectionsRef.current = syncConnections;
   const servicesById = new Map(available.map((service) => [service.id, service]));
+  const catalogSections = buildIntegrationSections(available, { query, oauthOnly, connectedOnly, connectedIds: connected.map(c => c.service) });
   const connectedLabel = isPending
     ? "Loading connected accounts…"
     : `${connected.length} connected ${connected.length === 1 ? "account" : "accounts"}`;
 
   const connectIntegration = async (service: IntegrationService) => {
-    if (connectingServiceId || connectInFlight.current) return;
+    if (connectingServiceId || startingServiceId || connectInFlight.current) return;
     connectInFlight.current = true;
     setConnectionError(null);
     previousConnectionIds.current = new Set(connected.map((connection) => connection.id));
@@ -124,8 +130,8 @@ export default function IntegrationsScreen() {
 
   return (
     <Page
-      title="Integrations"
-      subtitle="Capabilities Matrix can use on your behalf"
+      title="Connect Apps"
+      subtitle="Connect apps to let Matrix work across your tools"
       refreshing={pullToRefresh.refreshing}
       onRefresh={pullToRefresh.onRefresh}
     >
@@ -137,7 +143,7 @@ export default function IntegrationsScreen() {
       >
         <Spacer size="lg" />
         <View>
-          <Text style={styles.cardEyebrow}>CONNECTED</Text>
+          <Text style={styles.cardEyebrow}>Connected apps</Text>
           <Spacer size="xs" />
           <Text style={styles.cardTitle}>{connectedLabel}</Text>
         </View>
@@ -159,7 +165,13 @@ export default function IntegrationsScreen() {
       </Pressable>
 
       <Spacer size="2xl" />
-      <Text style={styles.sectionLabel}>AVAILABLE</Text>
+      <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
+      <Spacer size="md" />
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: !connectedOnly }} onPress={() => setConnectedOnly(false)} style={styles.filter}><Text style={styles.statusText}>All apps</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: connectedOnly }} onPress={() => setConnectedOnly(true)} style={styles.filter}><Text style={styles.statusText}>Connected</Text></Pressable>
+        <Pressable accessibilityRole="checkbox" accessibilityLabel="Sign in without API keys" accessibilityState={{ checked: oauthOnly }} onPress={() => setOauthOnly(value => !value)} style={styles.filter}><Text style={styles.statusText}>{oauthOnly ? "✓ " : ""}Sign in without API keys</Text></Pressable>
+      </View>
       <Spacer size="md" />
       {isPending ? <ListRowSkeletonStack testID="integration-row-skeleton" /> : null}
       {isError ? <Text style={styles.statusText}>Integrations unavailable. Try again.</Text> : null}
@@ -173,26 +185,31 @@ export default function IntegrationsScreen() {
         <Text style={styles.statusText}>No integrations available.</Text>
       ) : null}
       {!isPending && !isError && available.length > 0 ? (
-        <ListRowStack>
-          {available.map((service) => (
-            <ListRow
-              key={service.id}
-              title={service.name}
-              detail={`${titleCase(service.category)} service`}
-              leading={<IntegrationLogo service={service} />}
-              actionIcon={Add01Icon}
-              action={startingServiceId === service.id || connectingServiceId === service.id ? (
-                <ActivityIndicator
-                  color={theme.v2.appColors.muted}
-                  size="small"
-                  testID={`integration-connect-spinner-${service.id}`}
-                />
-              ) : undefined}
-              accessibilityLabel={`Connect ${service.name} integration`}
-              onPress={() => void connectIntegration(service)}
-            />
+        <View>
+          {catalogSections.map(section => (
+            <View key={section.title}>
+              <Spacer size="xl" />
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={styles.sectionLabel}>{section.title}</Text>
+                {!query.trim() && !connectedOnly && !oauthOnly && !expandedSections.includes(section.title) && section.services.length > 4 ? <Pressable accessibilityRole="button" accessibilityLabel={`View all ${section.title} apps`} onPress={() => setExpandedSections(previous => [...previous, section.title])}><Text style={styles.statusText}>View all</Text></Pressable> : null}
+              </View>
+              <Spacer size="md" />
+              <ListRowStack>
+                {(query.trim() || connectedOnly || oauthOnly || expandedSections.includes(section.title) ? section.services : section.services.slice(0, 4)).map(service => (
+                  <ListRow key={service.id} title={service.name}
+                    detail={`${integrationDescription(service)} · ${integrationAuthType(service) === "keys" ? "API key required" : integrationAuthType(service) === "oauth" ? "Sign in securely" : "Connect your account"}`}
+                    leading={<IntegrationLogo service={service} />}
+                    action={<View style={styles.filter}>
+                      {startingServiceId === service.id || connectingServiceId === service.id ? <ActivityIndicator color={theme.v2.appColors.muted} size="small" testID={`integration-connect-spinner-${service.id}`} />
+                        : <Text style={styles.statusText}>{connected.some(c => c.service === service.id) ? "Add account" : "Connect"}</Text>}
+                    </View>}
+                    accessibilityLabel={`Connect ${service.name} integration`} onPress={startingServiceId || connectingServiceId ? undefined : () => void connectIntegration(service)} />
+                ))}
+              </ListRowStack>
+            </View>
           ))}
-        </ListRowStack>
+          {catalogSections.length === 0 ? <Text style={styles.statusText}>No integrations found. Try another search or change the filters.</Text> : null}
+        </View>
       ) : null}
     </Page>
   );
@@ -207,6 +224,7 @@ function titleCase(value: string): string {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  filter: { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.v2.appColors.surface },
   installedCard: {
     borderWidth: 1,
     borderColor: theme.v2.appColors.line,

@@ -31,7 +31,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
 
   async function getRun(input: RunLookup): Promise<PreviewDriveRun | null> {
     if (!TOKEN.test(input.token)) return null;
-    const row = await db.kysely.selectFrom('preview_drive_grants')
+    const row = await db.executor.selectFrom('preview_drive_grants')
       .selectAll()
       .where('token_hash', '=', digest(input.token))
       .where('kind', '=', 'run')
@@ -51,7 +51,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
     async redeemTurn(input: PreviewDriveRun & { proofNonce: string }): Promise<string | null> {
       if (!/^[a-f0-9]{32}$/.test(input.proofNonce)) return null;
       const token = randomBytes(32).toString('hex');
-      const inserted = await db.kysely.insertInto('preview_drive_grants').values({
+      const inserted = await db.executor.insertInto('preview_drive_grants').values({
         token_hash: digest(token), kind: 'run', proof_nonce_hash: nonceDigest('run', input.proofNonce),
         run_token_hash: null, handle: input.handle, actor_id: input.actorId,
         chat_id: input.chatId, turn_id: input.turnId, run_id: input.runId,
@@ -77,7 +77,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
         action_digest: input.actionDigest, account_label: input.label, max_results: input.maxResults,
         expires_at: expiresAt, consumed_at: null,
       };
-      const inserted = await db.kysely.insertInto('preview_drive_grants').values(row)
+      const inserted = await db.executor.insertInto('preview_drive_grants').values(row)
         .onConflict(oc => oc.doNothing()).returning('token_hash').executeTakeFirst();
       return inserted ? token : null;
     },
@@ -86,7 +86,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
       if (!TOKEN.test(input.runGrant) || !TOKEN.test(input.grant)) return null;
       const run = await getRun({ token: input.runGrant, handle: input.handle, chatId: input.chatId, runId: input.runId });
       if (!run) return null;
-      const row = await db.kysely.updateTable('preview_drive_grants')
+      const row = await db.executor.updateTable('preview_drive_grants')
         .set({ consumed_at: new Date(now()).toISOString() })
         .where('token_hash', '=', digest(input.grant))
         .where('kind', '=', 'action')
@@ -104,7 +104,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
       return row ? { actorId: row.actor_id } : null;
     },
     async sweep(): Promise<number> {
-      const deleted = await db.kysely.deleteFrom('preview_drive_grants')
+      const deleted = await db.executor.deleteFrom('preview_drive_grants')
         .where('expires_at', '<=', new Date(now()).toISOString())
         .returning('token_hash').execute();
       return deleted.length;
@@ -112,7 +112,7 @@ export function createPreviewDriveStore(db: PlatformDB, options: { now?: () => n
     async revokeRun(input: RunLookup): Promise<number> {
       if (!TOKEN.test(input.token)) return 0;
       const runHash = digest(input.token);
-      const deleted = await db.kysely.deleteFrom('preview_drive_grants')
+      const deleted = await db.executor.deleteFrom('preview_drive_grants')
         .where('handle', '=', input.handle)
         .where('chat_id', '=', input.chatId)
         .where('run_id', '=', input.runId)

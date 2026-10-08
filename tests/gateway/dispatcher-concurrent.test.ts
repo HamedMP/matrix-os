@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -11,6 +11,7 @@ import type { KernelEvent } from "@matrix-os/kernel";
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "dispatch-c-")));
   mkdirSync(join(dir, "system"), { recursive: true });
+  writeFileSync(join(dir, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
   return dir;
 }
 

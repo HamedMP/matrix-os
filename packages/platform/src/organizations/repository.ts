@@ -13,7 +13,7 @@ import type {
   OrganizationMembershipState,
   OrganizationPlatformDatabase,
 } from "./database.js";
-import type { MembershipSnapshot, OrganizationSnapshot } from "./roles.js";
+import type { MemberProfile, MembershipSnapshot, OrganizationSnapshot } from "./roles.js";
 
 type Executor = Kysely<OrganizationPlatformDatabase> | Transaction<OrganizationPlatformDatabase>;
 
@@ -36,6 +36,11 @@ export interface MembershipRecord {
   state: OrganizationMembershipState;
   membershipEpoch: number;
   sourceUpdatedAt: Date;
+  displayName: string | null;
+  email: string | null;
+  imageUrl: string | null;
+  /** When the source observed each stored profile field (internal ordering, never returned to clients). */
+  profileObservedAt: { displayName: Date | null; email: Date | null; imageUrl: Date | null };
 }
 
 export interface EndedMembership {
@@ -169,10 +174,20 @@ export class PlatformOrganizationRepository {
       }
       if (existing && existing.sourceUpdatedAt.getTime() === input.sourceUpdatedAt.getTime()
         && existing.state === input.state && existing.role === input.role && existing.membershipId === input.membershipId) {
+        // A renamed person keeps the same membership: refresh the display profile only, never the
+        // epoch, which would end every activation the member holds.
+        // Written even when the values match, so the observation time advances and a report
+        // observed in between cannot later pass for the newest.
+        const profile = newerProfile(existing, input.profile);
+        if (profile) {
+          await repo.db.updateTable("organization_memberships").set(profileColumns(profile))
+            .where("organization_id", "=", input.organizationId).where("actor_id", "=", input.actorId).execute();
+        }
         return { outcome: "unchanged", membershipEpoch: existing.membershipEpoch, ended: false };
       }
       const epoch = await repo.bumpEpoch(input.organizationId, org.membershipEpoch);
       const now = repo.now();
+      const profile = newerProfile(existing, input.profile);
       await repo.db.insertInto("organization_memberships").values({
         organization_id: input.organizationId,
         actor_id: input.actorId,
@@ -182,6 +197,7 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
+        ...profileColumns(profile),
       }).onConflict((oc) => oc.columns(["organization_id", "actor_id"]).doUpdateSet({
         membership_id: input.membershipId,
         role: input.role,
@@ -189,6 +205,8 @@ export class PlatformOrganizationRepository {
         membership_epoch: epoch,
         source_updated_at: input.sourceUpdatedAt,
         updated_at: now,
+        // A change that reports no profile, or an older one, keeps the stored profile.
+        ...profileColumns(profile),
       })).execute();
       const ended = input.state === "removed" && existing?.state === "active";
       if (ended) {
@@ -284,14 +302,18 @@ export class PlatformOrganizationRepository {
     return Number(result.numDeletedRows ?? 0);
   }
 
-  async listOrganizationsForActor(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<Array<{ organization: OrganizationRecord; membership: MembershipRecord }>> {
+  async listOrganizationsForActorPage(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<{
+    organizations: Array<{ organization: OrganizationRecord; membership: MembershipRecord }>;
+    complete: boolean;
+  }> {
+    const boundedLimit = Math.min(Math.max(limit, 1), ORGANIZATION_LIST_LIMIT);
     const rows = await this.db.selectFrom("organization_memberships as m")
       .innerJoin("organizations as o", "o.organization_id", "m.organization_id")
       .selectAll("m")
       .select(["o.name", "o.slug", "o.ai_submission", "o.lifecycle", "o.source_updated_at as org_source_updated_at", "o.verified_at", "o.membership_epoch as org_epoch"])
       .where("m.actor_id", "=", actorId).where("m.state", "=", "active").where("o.lifecycle", "=", "active")
-      .orderBy("m.organization_id").limit(Math.min(Math.max(limit, 1), ORGANIZATION_LIST_LIMIT)).execute();
-    return rows.map((row) => ({
+      .orderBy("m.organization_id").limit(boundedLimit + 1).execute();
+    const organizations = rows.slice(0, boundedLimit).map((row) => ({
       organization: {
         organizationId: row.organization_id,
         name: row.name,
@@ -304,6 +326,11 @@ export class PlatformOrganizationRepository {
       },
       membership: toMembership(row),
     }));
+    return { organizations, complete: rows.length <= boundedLimit };
+  }
+
+  async listOrganizationsForActor(actorId: string, limit = ORGANIZATION_LIST_LIMIT): Promise<Array<{ organization: OrganizationRecord; membership: MembershipRecord }>> {
+    return (await this.listOrganizationsForActorPage(actorId, limit)).organizations;
   }
 
   async listMembers(organizationId: string, page: { limit: number; afterActorId?: string }): Promise<{ members: MembershipRecord[]; nextActorId?: string }> {
@@ -314,6 +341,18 @@ export class PlatformOrganizationRepository {
     const rows = await query.execute();
     const members = rows.slice(0, limit).map(toMembership);
     return rows.length > limit ? { members, nextActorId: members[members.length - 1]!.actorId } : { members };
+  }
+
+  async listMemberCounts(organizationIds: readonly string[]): Promise<Map<string, number>> {
+    if (organizationIds.length === 0) return new Map();
+    const rows = await this.db.selectFrom("organization_memberships")
+      .select("organization_id")
+      .select((eb) => eb.fn.count<number>("actor_id").as("member_count"))
+      .where("organization_id", "in", [...organizationIds])
+      .where("state", "=", "active")
+      .groupBy("organization_id")
+      .execute();
+    return new Map(rows.map((row) => [row.organization_id, asNumber(row.member_count)]));
   }
 
   // --- revocation intents (durable outbox drained by the control authority) --------------------
@@ -530,6 +569,8 @@ function toOrganization(row: {
 function toMembership(row: {
   organization_id: string; actor_id: string; membership_id: string; role: string; state: OrganizationMembershipState;
   membership_epoch: number | string; source_updated_at: Date | string;
+  display_name?: string | null; email?: string | null; image_url?: string | null;
+  display_name_observed_at?: Date | string | null; email_observed_at?: Date | string | null; image_url_observed_at?: Date | string | null;
 }): MembershipRecord {
   return {
     organizationId: row.organization_id,
@@ -539,8 +580,41 @@ function toMembership(row: {
     state: row.state,
     membershipEpoch: asNumber(row.membership_epoch),
     sourceUpdatedAt: asDate(row.source_updated_at)!,
+    displayName: row.display_name ?? null,
+    email: row.email ?? null,
+    imageUrl: row.image_url ?? null,
+    profileObservedAt: {
+      displayName: asDate(row.display_name_observed_at),
+      email: asDate(row.email_observed_at),
+      imageUrl: asDate(row.image_url_observed_at),
+    },
   };
 }
+
+/**
+ * The reported fields the stored profile has not seen a later observation of (webhooks and
+ * reconciles race, and a report may carry only some fields), or nothing when none remain.
+ */
+function newerProfile(existing: MembershipRecord | null, profile: MemberProfile | undefined): MemberProfile | undefined {
+  if (!profile) return undefined;
+  const fresh = (stored: Date | null | undefined) => !stored || stored.getTime() <= profile.observedAt.getTime();
+  const kept: MemberProfile = { observedAt: profile.observedAt };
+  if (profile.displayName !== undefined && fresh(existing?.profileObservedAt.displayName)) kept.displayName = profile.displayName;
+  if (profile.email !== undefined && fresh(existing?.profileObservedAt.email)) kept.email = profile.email;
+  if (profile.imageUrl !== undefined && fresh(existing?.profileObservedAt.imageUrl)) kept.imageUrl = profile.imageUrl;
+  return Object.keys(kept).length > 1 ? kept : undefined;
+}
+
+/** Only the fields the source reported, each with its own observation time. */
+function profileColumns(profile: MemberProfile | undefined) {
+  if (!profile) return {};
+  return {
+    ...(profile.displayName !== undefined ? { display_name: profile.displayName, display_name_observed_at: profile.observedAt } : {}),
+    ...(profile.email !== undefined ? { email: profile.email, email_observed_at: profile.observedAt } : {}),
+    ...(profile.imageUrl !== undefined ? { image_url: profile.imageUrl, image_url_observed_at: profile.observedAt } : {}),
+  };
+}
+
 
 function toDenial(row: {
   denial_id: string; organization_id: string | null; actor_id: string | null; scope_id: string | null; generation: number | string;

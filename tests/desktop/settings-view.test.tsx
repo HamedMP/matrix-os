@@ -79,7 +79,7 @@ describe("SettingsView", () => {
   it("keeps the selected navigation highlight in sync with the visible section", () => {
     render(<SettingsView />);
     const providers = screen.getByRole("button", { name: "Agents & providers" });
-    const services = screen.getByRole("button", { name: "Services" });
+    const services = screen.getByRole("button", { name: "Connect Apps" });
 
     fireEvent.click(providers);
     expect(providers.className).toContain("bg-[var(--bg-selected)]");
@@ -106,7 +106,7 @@ describe("SettingsView", () => {
 
     expect(integrationGroup).not.toBeNull();
     expect(integrationGroup.compareDocumentPosition(machineGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Services" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Connect Apps" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "MCPs" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Skills" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "CLI" })).not.toBeNull();

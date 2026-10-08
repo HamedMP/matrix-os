@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React, { type ComponentProps, type ComponentType } from "react";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type {
@@ -9,9 +11,11 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
-import { PinOffIcon } from "@desktop/renderer/src/lib/hugeicons";
+import { ChatAgentsWorkspace, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import { PinOffIcon } from "lucide-react";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { Project } from "@desktop/renderer/src/stores/board";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 function record(
   id: string,
@@ -92,6 +96,7 @@ function setup() {
     onNewGlobalChat: vi.fn(),
     onCreateProject: vi.fn(),
     onNewProjectChat: vi.fn(),
+    onSelectProject: vi.fn(),
     onSelectChat: vi.fn(),
     onCollapse: vi.fn(),
   };
@@ -130,13 +135,102 @@ function renderRail(client: CanonicalChatClient, eventSource?: Pick<CanonicalCha
     onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
 }
 
+// Existing list/action tests explicitly use an expanded Done preference. Fresh
+// installation defaults and owner/Computer isolation have separate regressions.
+const initialConnection = useConnection.getState();
+beforeEach(() => {
+  useConnection.setState({ status: "signed-in", userId: "rail-fixture", platformHost: "https://platform.test", runtimeSlot: "primary", organizationStatus: "none", organizationId: null });
+  localStorage.setItem('matrix-chat-rail-disclosure:["https://platform.test","rail-fixture","primary"]', '{"done":true}');
+});
 afterEach(() => {
+  localStorage.clear();
+  useConnection.setState(initialConnection);
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("WorkRail", () => {
+  it("refreshes shared project discovery immediately after a canonical Chat is created", async () => {
+    const events = eventHarness();
+    const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
+    const changed = vi.fn();
+    const unsubscribe = subscribeCollaborationDiscoveryChanged(changed);
+    try {
+      renderRail(client, events.eventSource);
+      await waitFor(() => expect(client.list).toHaveBeenCalled());
+
+      act(() => events.emit(chatChanged("chat_new_project", 1, "chat.created")));
+
+      await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    } finally {
+      unsubscribe();
+    }
+  });
+  it("projects Bot approvals only as Needs you reminders and clears resolved reminders on refresh", async () => {
+    const bot = record("chat_bot", "Bot transcript", { pinned: true, projectId: "alpha", updatedAt: "2026-10-02T12:00:00Z" });
+    let approvalPending = true;
+    const events = eventHarness();
+    const client = {
+      list: vi.fn(async () => ({ items: [bot, recent] })),
+      agents: {
+        list: vi.fn(async () => ({ enabled: true, agents: [{ id: "agent_bot", name: "Research bot", recipeRef: { id: "research", revision: 1 } }] })),
+        bots: {
+          directChat: vi.fn(async () => bot.chat.id),
+          directBot: vi.fn(async () => null),
+          interactions: vi.fn(async () => approvalPending ? [{ kind: "approval", status: "pending", expiresAt: "2099-01-01T00:00:00.000Z" }] : []),
+        },
+      },
+    } as unknown as CanonicalChatClient;
+    const onOpenBotChat = vi.fn();
+    render(<ChatAgentsWorkspace><WorkRail client={client} eventSource={events.eventSource} projects={[alpha]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()} onOpenBotChat={onOpenBotChat} /></ChatAgentsWorkspace>);
+    const reminder = await screen.findByRole("button", { name: "Review Research bot approval" });
+    const needsYou = screen.getByRole("button", { name: "Needs you" }).closest("section")!;
+    expect(needsYou.contains(reminder)).toBe(true);
+    await screen.findByRole("button", { name: "Chat with Research bot" });
+    const orderedLabels = [...screen.getByRole("navigation").querySelectorAll("button")]
+      .map(button => button.getAttribute("aria-label") ?? button.textContent?.trim())
+      .filter(label => ["New chat", "Search chats", "Agents", "Pinned", "Projects", "Needs you", "Working", "Done"].includes(label ?? ""));
+    expect(orderedLabels).toEqual(["New chat", "Search chats", "Agents", "Projects", "Needs you", "Working", "Done"]);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse agents" }));
+    expect(screen.queryByRole("button", { name: "Chat with Research bot" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Review Research bot approval" })).toBeTruthy();
+
+    expect(screen.queryByRole("button", { name: "Bot transcript" })).toBeNull();
+    fireEvent.click(reminder);
+    expect(onOpenBotChat).toHaveBeenCalledWith("chat_bot");
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
+    expect(screen.queryByRole("button", { name: "Bot transcript" })).toBeNull();
+    approvalPending = false;
+    act(() => events.emit(chatChanged("chat_bot", 2)));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Review Research bot approval" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Bot transcript" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+  });
+
+  it("selects a Project without expanding it and keeps its disclosure independent", async () => {
+    const { actions } = setup();
+    const name = await screen.findByRole("button", { name: "Alpha" });
+    fireEvent.click(name);
+    expect(actions.onSelectProject).toHaveBeenCalledWith(alpha);
+    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
+    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(actions.onSelectProject).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Collapse Alpha chats" }));
+    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+  });
+
+  it("keeps New chat and Search outside the scrollable list", async () => {
+    setup();
+    await screen.findByRole("button", { name: "Recent global" });
+    const scroller = screen.getByTestId("work-rail-scroll");
+    expect(scroller.contains(screen.getByRole("button", { name: "New chat" }))).toBe(false);
+    expect(scroller.contains(screen.getByRole("button", { name: "Search chats" }))).toBe(false);
+    const labels = [...scroller.querySelectorAll('[data-slot="chat-sidebar-section-heading"] button')].map(button => button.getAttribute("aria-label"));
+    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
+  });
+
   it("moves projects between Projects and Pinned when pin state changes", async () => {
     const client = { list: vi.fn(async () => ({ items: [] })) } as unknown as CanonicalChatClient;
     const actions = {
@@ -146,11 +240,11 @@ describe("WorkRail", () => {
     const { rerender } = render(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
 
     await waitFor(() => expect(client.list).toHaveBeenCalled());
-    let pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    let pinnedSection = screen.queryByRole("button", { name: "Pinned" })?.closest("section");
     let projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
-    expect(pinnedSection).toBeTruthy();
+    expect(pinnedSection).toBeUndefined();
     expect(projectsSection).toBeTruthy();
-    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(pinnedSection).toBeUndefined();
     expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
 
     rerender(<WorkRail client={client} projects={[{ ...alpha, pinned: true }, beta]} active {...actions} />);
@@ -163,9 +257,9 @@ describe("WorkRail", () => {
     expect(within(projectsSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
 
     rerender(<WorkRail client={client} projects={[alpha, beta]} active {...actions} />);
-    pinnedSection = screen.getByRole("button", { name: "Pinned" }).closest("section");
+    pinnedSection = screen.queryByRole("button", { name: "Pinned" })?.closest("section");
     projectsSection = screen.getByRole("button", { name: "Projects" }).closest("section");
-    expect(within(pinnedSection!).queryByRole("button", { name: "Alpha" })).toBeNull();
+    expect(pinnedSection).toBeUndefined();
     expect(within(projectsSection!).getByRole("button", { name: "Alpha" })).toBeTruthy();
   });
 
@@ -272,7 +366,9 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
   });
 
-  it("matches the Settings sidebar title, groups, and item styling", async () => {
+  it("uses the Chat rail typography and contained section headings", async () => {
+    const css = await readFile(resolve(__dirname, "../../desktop/src/renderer/src/features/work/work-rail/work-rail.css"), "utf8");
+    render(<style>{css}</style>);
     setup();
     const rail = screen.getByRole("navigation", { name: "Chat navigation" });
     const newChat = screen.getByRole("button", { name: "New chat" });
@@ -280,71 +376,55 @@ describe("WorkRail", () => {
 
     expect(rail.className).toContain("w-[240px]");
     expect(rail.className).toContain("gap-0.5");
-    expect(rail.className).toContain("overflow-y-auto");
-    expect(rail.className).toContain("p-2");
+    expect(rail.className).toContain("overflow-hidden");
+    expect(screen.getByTestId("work-rail-scroll").className).toContain("overflow-y-auto");
+    expect(rail.className).toContain("pt-3");
+    expect(rail.className).toContain("pb-2");
+    expect(rail.className).not.toContain("px-2");
+    expect(screen.getByTestId("work-rail-scroll").className).toContain("pl-2.5");
     expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
-    const title = screen.getByRole("heading", { name: "Chats" });
-    expect(title.className).toContain("px-2.5");
-    expect(title.className).toContain("py-2");
-    expect(title.className).toContain("text-lg");
-    expect(title.className).toContain("font-semibold");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
-    expect(newChat.className).toContain("py-1.5");
-    expect(newChat.className).toContain("text-sm");
-    expect(newChat.className).toContain("font-medium");
+    expect(newChat.className).toContain("h-8");
+    expect(newChat.className).toContain("text-[14px]");
+    expect(newChat.className).toContain("font-normal");
     expect(newChat.closest('[data-slot="chat-sidebar-new-chat"]')).toBeTruthy();
-    expect(search.closest("[data-chat-sidebar-title]")).toBeTruthy();
+    expect(screen.getByTestId("work-rail-scroll").contains(search)).toBe(false);
     expect(search.closest('[data-slot="chat-sidebar-section-heading"]')).toBeNull();
-    expect(screen.queryByText("Search", { selector: "button" })).toBeNull();
+    expect(search.querySelector("span")?.textContent).toBe("Search");
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     const projectChatRow = screen.getByRole("button", { name: "Alpha chat" });
     const recentChat = screen.getByRole("button", { name: "Recent global" });
     const pinnedHeading = screen.getByRole("button", { name: "Pinned" });
     const projectsHeading = screen.getByRole("button", { name: "Projects" });
-    const recentsHeading = screen.getByRole("button", { name: "Recents" });
+    const recentsHeading = screen.getByRole("button", { name: "Done" });
 
     for (const item of [pinnedChat, projectChatRow, recentChat]) {
       expect(item.className).toContain("gap-2.5");
       expect(item.className).toContain("px-2.5");
       expect(item.className).toContain("py-1.5");
       expect(item.className).toContain("text-sm");
-      expect(item.className).toContain("font-medium");
+      expect(item.className).toContain("font-normal");
     }
+    expect(getComputedStyle(projectsHeading).textTransform).toBe("uppercase");
+    expect(projectsHeading.closest(".work-rail-group-heading")).toBeNull();
+    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeNull();
+    expect(screen.getByRole("button", { name: "Alpha", exact: true }).querySelector("svg.lucide-folder-open")).toBeTruthy();
     for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
-      expect(heading.className).toContain("px-2.5");
-      expect(heading.className).toContain("pt-2");
-      expect(heading.className).toContain("pb-1");
-      expect(heading.className).toContain("text-xs");
-      expect(heading.className).toContain("font-semibold");
-      expect(heading.className).toContain("tracking-wide");
-      expect(heading.querySelector("svg")).toBeNull();
+      expect(heading.className).toContain("work-rail-section-toggle");
+      expect(heading.querySelector(".work-rail-section-disclosure")).toBeTruthy();
     }
   });
 
-  it("keeps the unread filter as a compact toggle beside the Chats title", async () => {
+  it("keeps every ordinary Chat without filter/sort controls", async () => {
     const { client } = setup();
-
-    const title = screen.getByRole("heading", { name: "Chats" });
-    const unreadToggle = screen.getByRole("button", { name: "Show unread chats only" });
-    expect(unreadToggle.closest("[data-chat-sidebar-title]")).toBe(title.closest("[data-chat-sidebar-title]"));
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("button", { name: "All" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Unread" })).toBeNull();
-
-    fireEvent.click(unreadToggle);
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("true");
-    expect(unreadToggle.getAttribute("aria-label")).toBe("Show all chats");
-    expect(unreadToggle.getAttribute("title")).toBe("Show all chats");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ unreadOnly: true, limit: 100 }));
-
-    fireEvent.click(unreadToggle);
-    expect(unreadToggle.getAttribute("aria-pressed")).toBe("false");
-    expect(unreadToggle.getAttribute("aria-label")).toBe("Show unread chats only");
-    expect(unreadToggle.getAttribute("title")).toBe("Show unread chats only");
-    await waitFor(() => expect(client.list).toHaveBeenLastCalledWith({ limit: 100 }));
+    await screen.findByRole("button", { name: "Recent global" });
+    expect(screen.queryByRole("button", {name:"Sort chats"})).toBeNull();
+    expect(screen.queryByRole("button", {name:"Recent"})).toBeNull();
+    expect(screen.getByRole("button", {name:"Recent global"}).closest("section")?.querySelector("[aria-label=Done]")).toBeTruthy();
+    expect(client.list).toHaveBeenLastCalledWith({limit:100});
   });
 
   it("converges two Chat rows from the shared event source without adding WorkRail polling", async () => {
@@ -495,9 +575,7 @@ describe("WorkRail", () => {
     expect(title.getAttribute("title")).toBe("Recent global");
     expect(actions?.className).toContain("absolute");
     expect(actions?.className).toContain("group-focus-within/chat:opacity-100");
-    expect(actions?.getAttribute("style")).toContain(
-      "background: linear-gradient(var(--bg-hover), var(--bg-hover)), var(--bg-surface)",
-    );
+    expect(actions?.className).toContain("work-rail-chat-actions");
   });
 
   it("hides pinned Chat actions until hover or focus while preserving run status and an Unpin icon", async () => {
@@ -513,7 +591,7 @@ describe("WorkRail", () => {
 
     const chat = await screen.findByRole("button", { name: "Running pinned" });
     const pin = screen.getByRole("button", { name: "Unpin Running pinned" });
-    const remove = screen.getByRole("button", { name: "Delete Running pinned" });
+    const remove = screen.getByRole("button", { name: "Actions for Running pinned" });
     const actions = pin.parentElement as HTMLElement;
     const expectedIcon = render(<PinOffIcon size={13} aria-hidden />).container.querySelector("svg");
 
@@ -744,8 +822,8 @@ describe("WorkRail", () => {
     );
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(2));
     const alphaRow = screen.getByRole("button", { name: "Alpha" });
-    fireEvent.click(alphaRow);
-    expect(within(alphaRow.parentElement!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
+    expect(within(alphaRow.closest(".work-rail-project")!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
 
     rerender(
       <WorkRail
@@ -759,8 +837,8 @@ describe("WorkRail", () => {
     );
     await waitFor(() => expect(client.list).toHaveBeenCalledTimes(3));
     const betaRow = screen.getByRole("button", { name: "Beta" });
-    fireEvent.click(betaRow);
-    expect(within(betaRow.parentElement!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Beta chats" }));
+    expect(within(betaRow.closest(".work-rail-project")!.parentElement!).getByRole("button", { name: "Moved chat" })).toBeTruthy();
   });
 
   it("loads bounded canonical Chat pages without a Project filter", async () => {
@@ -852,7 +930,7 @@ describe("WorkRail", () => {
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
     expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
@@ -871,14 +949,14 @@ describe("WorkRail", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
 
     const compose = screen.getByRole("button", { name: "New chat in Alpha" });
     expect(screen.queryByRole("button", { name: "Open Alpha board" })).toBeNull();
     compose.focus();
     expect(document.activeElement).toBe(compose);
     expect(compose.className).toContain("focus-visible");
-    expect(compose.parentElement?.className).toContain("group-focus-within/project:opacity-100");
+    expect(compose.parentElement?.className).toContain("work-rail-project-actions");
     fireEvent.click(compose);
     fireEvent.click(screen.getByRole("button", { name: "Hide Chat navigation" }));
     fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
@@ -1172,6 +1250,23 @@ describe("WorkRail", () => {
     expect((screen.getByRole("button", { name: "Pin Recent global" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("moves a Chat through the existing-project submenu with CAS and retains old placement on failure", async () => {
+    const {client} = setup();
+    const updated = {...recent,projectId:alpha.id,chat:{...recent.chat,revision:2}};
+    client.updateProject=vi.fn().mockRejectedValueOnce(new Error("private failure")).mockResolvedValueOnce(updated);
+    fireEvent.contextMenu(await screen.findByRole("button",{name:"Recent global"}));
+    const trigger=await screen.findByRole("menuitem",{name:"Move to project"});
+    fireEvent.keyDown(trigger,{key:"ArrowRight"});
+    fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("recent");
+    fireEvent.contextMenu(screen.getByRole("button",{name:"Recent global"}));
+    fireEvent.keyDown(await screen.findByRole("menuitem",{name:"Move to project"}),{key:"ArrowRight"});
+    fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("project"));
+    expect(client.updateProject).toHaveBeenLastCalledWith("chat_recent",{baseRevision:1,projectId:alpha.id});
+  });
+
   it("shows Rename, Pin, and Delete in the Chat context menu", async () => {
     setup();
     const recentChat = await screen.findByRole("button", { name: "Recent global" });
@@ -1270,11 +1365,12 @@ describe("WorkRail", () => {
     expect(await screen.findByRole("button", { name: "Pending title" })).toBeTruthy();
   });
 
-  it("deletes a Chat from its hover action after confirmation", async () => {
+  it("deletes a Chat from its hover menu after confirmation", async () => {
     const { client } = setup();
     await screen.findByRole("button", { name: "Recent global" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Delete Recent global" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Recent global" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
 
     await waitFor(() => expect(client.delete).toHaveBeenCalledWith(
@@ -1309,7 +1405,8 @@ describe("WorkRail", () => {
       <WorkRail {...props} activeChatId="chat_original_scope" />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Recent global" }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Recent global" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
     await waitFor(() => expect(client.delete).toHaveBeenCalledOnce());
 

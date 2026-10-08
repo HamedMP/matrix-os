@@ -160,8 +160,11 @@ describe("GettingStartedPopover", () => {
     localStorage.setItem(gettingStartedAutoOpenKey("neo", "primary"), "1");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    // Radix defers unmount autofocus to a zero-delay timer. Drain that callback
+    // while its container and CustomEvent still belong to this jsdom realm.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

@@ -131,6 +131,13 @@ export function isAiCreditCheckoutObject(value: unknown): boolean {
     && (metadata as { matrix_checkout_kind?: unknown }).matrix_checkout_kind === AI_CREDIT_CHECKOUT_KIND);
 }
 
+/** Validated owner identity from a signed checkout projection, including after owner rows are erased. */
+export function readAiCreditCheckoutOwnerId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const parsed = AiCreditCheckoutMetadataSchema.safeParse((value as { metadata?: unknown }).metadata);
+  return parsed.success ? parsed.data.matrix_owner_id : null;
+}
+
 export function readAiCreditCheckoutRequestId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const parsed = AiCreditCheckoutMetadataSchema.safeParse((value as { metadata?: unknown }).metadata);

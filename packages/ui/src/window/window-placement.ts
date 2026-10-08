@@ -43,14 +43,19 @@ export function constrainFloatingWindow(
   viewport: { width: number; height: number },
   minimum: { width: number; height: number },
   previous?: WindowBounds,
-  options: { allowBottomOverflow?: boolean } = {},
+  options: { allowBottomOverflow?: boolean; resizeTargetClearance?: number } = {},
 ): WindowBounds {
   const vw = Math.max(1, finite(viewport.width, 1));
   const vh = Math.max(1, finite(viewport.height, 1));
-  const [x, width] = constrainAxis(bounds.x, bounds.width, Math.min(minimum.width, vw),
-    -SIDE_OVERFLOW, vw + SIDE_OVERFLOW, previous?.x, previous?.width);
-  const [y, height] = constrainAxis(bounds.y, bounds.height, Math.min(minimum.height, vh),
-    -TOP_OVERFLOW, vh + (options.allowBottomOverflow === false ? 0 : SIDE_OVERFLOW), previous?.y, previous?.height);
+  // Native content occludes DOM controls: reserve external target space rather
+  // than an inset inside the app. Renderer windows keep recoverable overflow.
+  const clearance = Math.min(64, Math.max(0, finite(options.resizeTargetClearance ?? 0, 0)));
+  const cx = Math.min(clearance, Math.max(0, (vw - 1) / 2));
+  const cy = Math.min(clearance, Math.max(0, (vh - 1) / 2));
+  const [x, width] = constrainAxis(bounds.x, bounds.width, Math.min(minimum.width, vw - cx * 2),
+    clearance ? cx : -SIDE_OVERFLOW, clearance ? vw - cx : vw + SIDE_OVERFLOW, previous?.x, previous?.width);
+  const [y, height] = constrainAxis(bounds.y, bounds.height, Math.min(minimum.height, vh - cy * 2),
+    clearance ? cy : -TOP_OVERFLOW, clearance ? vh - cy : vh + (options.allowBottomOverflow === false ? 0 : SIDE_OVERFLOW), previous?.y, previous?.height);
   return { x, y, width, height };
 }
 

@@ -27,12 +27,13 @@ function runtimeEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-function issueResponse(expiresAt = new Date(NOW + 15 * 60_000).toISOString()) {
+function issueResponse(expiresAt = new Date(NOW + 15 * 60_000).toISOString(), tokenId = TOKEN_ID, requestClass?: "interactive" | "background") {
   return {
     contractVersion: 1,
+    ...(requestClass ? { requestClass } : {}),
     credential: {
-      token: TOKEN,
-      tokenId: TOKEN_ID,
+      token: tokenId === TOKEN_ID ? TOKEN : `sk-matrix-funded-${tokenId}.${"A".repeat(43)}`,
+      tokenId,
       audience: "matrix-funded-relay",
       scope: "ai:invoke",
       issuedAt: new Date(NOW).toISOString(),
@@ -112,8 +113,8 @@ describe("funded AI runtime credential manager", () => {
     });
 
     const [first, second] = await Promise.all([
-      manager.getCredential(),
-      manager.getCredential(),
+      manager.getCredential({ requestClass: "interactive" }),
+      manager.getCredential({ requestClass: "interactive" }),
     ]);
     expect(first).toEqual(second);
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -123,10 +124,10 @@ describe("funded AI runtime credential manager", () => {
       headers: expect.objectContaining({ authorization: `Bearer ${"p".repeat(64)}` }),
     }));
 
-    await manager.getCredential();
+    await manager.getCredential({ requestClass: "interactive" });
     expect(fetchFn).toHaveBeenCalledTimes(1);
     manager.invalidate(TOKEN_ID);
-    await manager.getCredential();
+    await manager.getCredential({ requestClass: "interactive" });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
@@ -148,7 +149,7 @@ describe("funded AI runtime credential manager", () => {
         random: () => 0,
         sleep: async () => {},
       });
-      await expect(manager.getCredential()).rejects.toEqual(expect.objectContaining({
+      await expect(manager.getCredential({ requestClass: "interactive" })).rejects.toEqual(expect.objectContaining({
         name: "FundedAiCredentialError",
         message: "Matrix AI is temporarily unavailable",
       }));
@@ -166,7 +167,7 @@ describe("funded AI runtime credential manager", () => {
       random: () => 0,
       sleep,
     });
-    await expect(manager.getCredential()).resolves.toMatchObject({ tokenId: TOKEN_ID });
+    await expect(manager.getCredential({ requestClass: "interactive" })).resolves.toMatchObject({ tokenId: TOKEN_ID });
     expect(sleep).toHaveBeenCalledWith(100, expect.any(AbortSignal));
 
     const denied = createFundedAiCredentialManager(loadFundedAiRuntimeConfig(runtimeEnv())!, {
@@ -175,7 +176,7 @@ describe("funded AI runtime credential manager", () => {
       random: () => 0,
       sleep: async () => {},
     });
-    const error = await denied.getCredential().catch((caught: unknown) => caught);
+    const error = await denied.getCredential({ requestClass: "interactive" }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(FundedAiCredentialError);
     expect(String(error)).not.toContain("owner details");
   });
@@ -195,7 +196,7 @@ describe("funded AI runtime credential manager", () => {
       sleep,
     });
 
-    const error = await manager.getCredential().catch((caught: unknown) => caught);
+    const error = await manager.getCredential({ requestClass: "interactive" }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(FundedAiCredentialUnexpectedError);
     expect(error).toMatchObject({
       message: "Matrix AI credential processing failed",
@@ -217,11 +218,78 @@ describe("funded AI runtime credential manager", () => {
       random: () => 0,
       makeTimeoutSignal: () => deadline.signal,
     });
-    const pending = manager.getCredential();
+    const pending = manager.getCredential({ requestClass: "interactive" });
     deadline.abort();
     await expect(pending).rejects.toBeInstanceOf(FundedAiCredentialError);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     manager.close();
-    await expect(manager.getCredential()).rejects.toBeInstanceOf(FundedAiCredentialError);
+    await expect(manager.getCredential({ requestClass: "interactive" })).rejects.toBeInstanceOf(FundedAiCredentialError);
+  });
+});
+
+describe("funded AI credential classes", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function classAwarePlatform() {
+    return vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { requestClass?: "interactive" | "background" };
+      const requestClass = body.requestClass ?? "interactive";
+      return new Response(JSON.stringify(issueResponse(undefined, `credential_${requestClass}`, body.requestClass)), { status: 200 });
+    });
+  }
+
+  it("requests and caches one lease per class and invalidates only the matching lease", async () => {
+    const fetchFn = classAwarePlatform();
+    const manager = createFundedAiCredentialManager(loadFundedAiRuntimeConfig(runtimeEnv())!, {
+      fetchFn, now: () => NOW, random: () => 0, sleep: async () => {},
+    });
+
+    const background = await manager.getCredential({ requestClass: "background" });
+    const interactive = await manager.getCredential({ requestClass: "interactive" });
+    await manager.getCredential({ requestClass: "background" });
+
+    expect(background).toMatchObject({ tokenId: "credential_background", requestClass: "background" });
+    expect(interactive).toMatchObject({ tokenId: "credential_interactive", requestClass: "interactive" });
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([
+      JSON.stringify({ requestClass: "background" }),
+      JSON.stringify({ requestClass: "interactive" }),
+    ]);
+    manager.invalidate("credential_background");
+    await manager.getCredential({ requestClass: "interactive" });
+    await manager.getCredential({ requestClass: "background" });
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+
+  it("falls back to the legacy empty body when the platform rejects classes, then re-probes", async () => {
+    let now = NOW;
+    let classesSupported = false;
+    const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = String(init?.body);
+      if (body !== "{}" && !classesSupported) {
+        return new Response(JSON.stringify({ error: { code: "invalid_request", message: "Invalid request" } }), { status: 400 });
+      }
+      const parsed = JSON.parse(body) as { requestClass?: "interactive" | "background" };
+      return new Response(JSON.stringify(issueResponse(new Date(now + 15 * 60_000).toISOString(),
+        `credential_${fetchFn.mock.calls.length}`, parsed.requestClass)), { status: 200 });
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const manager = createFundedAiCredentialManager(loadFundedAiRuntimeConfig(runtimeEnv())!, {
+      fetchFn, now: () => now, random: () => 0, sleep: async () => {},
+    });
+
+    const legacy = await manager.getCredential({ requestClass: "background" });
+    expect(legacy.requestClass).toBe("interactive");
+    expect(fetchFn.mock.calls.map((call) => call[1]?.body)).toEqual([JSON.stringify({ requestClass: "background" }), "{}"]);
+    expect(warn).toHaveBeenCalledWith("[funded-ai-credentials] platform does not accept request classes; using legacy issuance");
+
+    await manager.getCredential({ requestClass: "background", forceRefresh: true });
+    expect(fetchFn.mock.calls.at(-1)?.[1]?.body).toBe("{}");
+
+    now += 10 * 60_000 + 1;
+    classesSupported = true;
+    // The cached legacy lease is still valid, but its fallback window is over: it must be re-probed.
+    const classed = await manager.getCredential({ requestClass: "background" });
+    expect(classed.requestClass).toBe("background");
+    expect(fetchFn.mock.calls.at(-1)?.[1]?.body).toBe(JSON.stringify({ requestClass: "background" }));
   });
 });

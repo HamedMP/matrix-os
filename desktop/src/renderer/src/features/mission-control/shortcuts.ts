@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
 import { defaultProjectId, openProjectChat } from "../../lib/project-chat";
@@ -225,6 +226,12 @@ export function handleNewAgentRunShortcut(
   void openProjectChat(projectId, { compose: canCompose });
 }
 
+function openChatSearchOrPalette(): void {
+  const ui = useUi.getState();
+  if (!ui.paletteOpen && requestChatSearchShortcut()) return;
+  ui.setPaletteOpen(!ui.paletteOpen);
+}
+
 export function useGlobalShortcuts(): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -233,9 +240,9 @@ export function useGlobalShortcuts(): void {
       const meta = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
 
-      if (meta && key === "k") {
+      if (meta && !e.altKey && !e.shiftKey && !e.repeat && key === "k") {
         e.preventDefault();
-        ui.setPaletteOpen(!ui.paletteOpen);
+        openChatSearchOrPalette();
         return;
       }
       if (meta && key === "j") {
@@ -298,7 +305,7 @@ export function useGlobalShortcuts(): void {
       if (action === "new-thread") {
         handleNewAgentRunShortcut({ preventDefault: () => undefined }, ui, useCodingAgentWorkspace.getState());
       }
-      if (action === "palette") ui.setPaletteOpen(!ui.paletteOpen);
+      if (action === "palette") openChatSearchOrPalette();
       if (action === "quick-open") ui.setQuickOpenOpen(!ui.quickOpenOpen);
       if (action === "refresh-home") {
         const tabs = useTabs.getState();

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
+import { buildWorkerBundle } from "./worker-bundles.js";
 import {
   createSingleUseCommandSocketSlot,
   parseScopeRuntimeWorkerArguments,
@@ -44,13 +45,15 @@ describe("scope runtime worker boundary", () => {
     expect(second.destroy).toHaveBeenCalledTimes(2);
   });
 
-  it("is a standalone entrypoint inside the minimal root", async () => {
-    const source = await readFile("packages/scope-runtime/src/worker.ts", "utf8");
-    const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)]
-      .map((match) => match[1]);
-
-    expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((specifier) => specifier?.startsWith("node:"))).toBe(true);
+  it("ships as one file that imports only Node built-ins, as the single-file mount requires", async () => {
+    const bundle = await buildWorkerBundle("packages/scope-runtime/src/worker.ts");
+    try {
+      expect(bundle.imports.length).toBeGreaterThan(0);
+      expect(bundle.imports.every((specifier) => specifier.startsWith("node:"))).toBe(true);
+      expect(bundle.inputs).toContain("packages/scope-runtime/src/inference-bridge.ts");
+    } finally {
+      await bundle.cleanup();
+    }
   });
 
   it("accepts only the fixed proven adapter invocation", () => {
@@ -155,22 +158,24 @@ describe("scope runtime worker boundary", () => {
   });
 
   it("removes inherited credentials at the OS process boundary", async () => {
-    await expect(execFileAsync(process.execPath, [
-      "packages/scope-runtime/src/worker.ts",
-      ...argumentsFixture,
-    ], {
-      env: { ...process.env, MATRIX_AUTH_TOKEN: "owner-secret" },
-      timeout: 5_000,
-    })).rejects.toMatchObject({
-      code: 85,
-    });
+    const bundle = await buildWorkerBundle("packages/scope-runtime/src/worker.ts");
+    try {
+      await expect(execFileAsync(process.execPath, [bundle.outfile, ...argumentsFixture], {
+        env: { ...process.env, MATRIX_AUTH_TOKEN: "owner-secret" },
+        timeout: 5_000,
+      })).rejects.toMatchObject({
+        code: 85,
+      });
+    } finally {
+      await bundle.cleanup();
+    }
   });
 
   it("keeps the ready worker alive until the supervisor signals shutdown", async () => {
     await expect(execFileAsync(process.execPath, [
       "--input-type=module",
       "--eval",
-      'import { waitForScopeRuntimeShutdown } from "./packages/scope-runtime/src/worker.ts";'
+      'import { waitForScopeRuntimeShutdown } from "./packages/scope-runtime/src/worker-common.ts";'
         + 'process.stdout.write("ready\\n"); await waitForScopeRuntimeShutdown();',
     ], {
       cwd: process.cwd(),

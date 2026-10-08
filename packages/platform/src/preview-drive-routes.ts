@@ -9,6 +9,7 @@ import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platfor
 import { readVerifiedCustomMcpApprovalProof, CUSTOM_MCP_APPROVAL_PROOF_HEADER } from './custom-mcp-approval-proof.js';
 import { PREVIEW_DRIVE_TURN_PROOF_HEADER, verifyPreviewDriveTurnProof } from './preview-drive-turn-proof.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
+import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 
 const Ref = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const Hex64 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -70,9 +71,10 @@ export function projectPreviewDriveFiles(value: unknown, maxResults: number): { 
 
 /** Deliberately mounted outside the ordinary Preview-denying integration tree. */
 export function createPreviewDriveRoutes(options: { db: PlatformDB; platformSecret: string;
-  integration?: PreviewDriveIntegration }): Hono<any> {
+  integration?: PreviewDriveIntegration; env?: NodeJS.ProcessEnv }): Hono<any> {
   const app = new Hono<{ Variables: { previewDriveHandle: string; previewDriveMachine: UserMachineRecord } }>();
   const store = createPreviewDriveStore(options.db);
+  const integration = options.integration;
 
   app.use('*', bodyLimit({ maxSize: 4_000 }), async (c, next) => {
     const handle = c.req.param('handle');
@@ -102,10 +104,26 @@ export function createPreviewDriveRoutes(options: { db: PlatformDB; platformSecr
     return parsed.success ? parsed.data : null;
   }
 
+  // Resolve the authenticated actor before admission; the shared machine owner
+  // is not the personal account being accessed. Keep its deletion lock through
+  // grant writes and provider execution, as on ordinary integration routes.
+  async function admitActor(c: Context, actorId: string, work: () => Promise<Response>): Promise<Response> {
+    try {
+      return await withAccountDeletionOwnerLock(options.db, actorId, async (_trx, admission) => {
+        if (!admission.newWorkAllowed) return c.json({ error: 'Account deletion is pending' }, 409);
+        // Provider failures must still commit the consumed one-use grant.
+        return work();
+      }, options.env);
+    } catch (error: unknown) {
+      console.warn('[preview-drive] Actor admission unavailable', error instanceof Error ? error.name : typeof error);
+      return c.json({ error: 'Unavailable' }, 503);
+    }
+  }
+
   app.post('/turn/redeem', async c => {
     const body = await parseBody(c, Redeem);
     if (!body) return c.json({ error: 'Invalid request' }, 400);
-    if (!options.integration) return c.json({ error: 'Unavailable' }, 503);
+    if (!integration) return c.json({ error: 'Unavailable' }, 503);
     const handle = c.get('previewDriveHandle');
     const machine = c.get('previewDriveMachine');
     if (!machine || !canClerkUserAccessMachine(machine, body.actorId)) return c.json({ error: 'Forbidden' }, 403);
@@ -114,86 +132,96 @@ export function createPreviewDriveRoutes(options: { db: PlatformDB; platformSecr
       bodyDigest: body.bodyDigest, secret: options.platformSecret,
     });
     if (!proof) return c.json({ error: 'Forbidden' }, 403);
-    const runGrant = await store.redeemTurn({ proofNonce: proof.nonce, handle, actorId: proof.actorId,
-      chatId: body.chatId, turnId: body.turnId, runId: body.runId,
-      clientRequestId: body.clientRequestId, bodyDigest: body.bodyDigest });
-    return runGrant ? c.json({ runGrant }) : c.json({ error: 'Forbidden' }, 403);
+    return admitActor(c, proof.actorId, async () => {
+      const runGrant = await store.redeemTurn({ proofNonce: proof.nonce, handle, actorId: proof.actorId,
+        chatId: body.chatId, turnId: body.turnId, runId: body.runId,
+        clientRequestId: body.clientRequestId, bodyDigest: body.bodyDigest });
+      return runGrant ? c.json({ runGrant }) : c.json({ error: 'Forbidden' }, 403);
+    });
   });
 
   app.post('/discover', async c => {
     const body = await parseBody(c, Discover);
     if (!body) return c.json({ error: 'Invalid request' }, 400);
-    if (!options.integration) return c.json({ error: 'Unavailable' }, 503);
+    if (!integration) return c.json({ error: 'Unavailable' }, 503);
     const handle = c.get('previewDriveHandle');
     const run = await store.getRun({ token: body.runGrant, handle, chatId: body.chatId, runId: body.runId });
     const machine = c.get('previewDriveMachine');
     if (!run || !machine || !canClerkUserAccessMachine(machine, run.actorId)) return c.json({ error: 'Forbidden' }, 403);
-    try {
-      const connected = (await options.integration.listConnections(run.actorId))
-        .filter(row => row.service === 'google_drive' && row.status === 'active'
-          && row.account_label.length > 0 && row.account_label.length <= 100).slice(0, 16);
-      if (body.kind === 'catalog') return c.json(connected.length ? CATALOG : []);
-      return c.json(connected.map(row => ({ service: 'google_drive', account_label: row.account_label,
-        status: 'active' })));
-    } catch (error: unknown) {
-      console.warn('[preview-drive] Discovery unavailable', error instanceof Error ? error.name : typeof error);
-      return c.json({ error: 'Unavailable' }, 503);
-    }
+    return admitActor(c, run.actorId, async () => {
+      try {
+        const connected = (await integration.listConnections(run.actorId))
+          .filter(row => row.service === 'google_drive' && row.status === 'active'
+            && row.account_label.length > 0 && row.account_label.length <= 100).slice(0, 16);
+        if (body.kind === 'catalog') return c.json(connected.length ? CATALOG : []);
+        return c.json(connected.map(row => ({ service: 'google_drive', account_label: row.account_label,
+          status: 'active' })));
+      } catch (error: unknown) {
+        console.warn('[preview-drive] Discovery unavailable', error instanceof Error ? error.name : typeof error);
+        return c.json({ error: 'Unavailable' }, 503);
+      }
+    });
   });
 
   app.post('/grants', async c => {
     const body = await parseBody(c, Grant);
     if (!body) return c.json({ error: 'Invalid request' }, 400);
-    if (!options.integration) return c.json({ error: 'Unavailable' }, 503);
+    if (!integration) return c.json({ error: 'Unavailable' }, 503);
     const handle = c.get('previewDriveHandle');
     const run = await store.getRun({ token: body.runGrant, handle, chatId: body.chatId, runId: body.runId });
     const machine = c.get('previewDriveMachine');
     if (!run || !machine || !canClerkUserAccessMachine(machine, run.actorId)) return c.json({ error: 'Forbidden' }, 403);
-    const exactDigest = actionDigest(body.action);
-    if (!exactDigest || exactDigest !== body.actionDigest) return c.json({ error: 'Forbidden' }, 403);
-    const proof = readVerifiedCustomMcpApprovalProof(c.req.header(CUSTOM_MCP_APPROVAL_PROOF_HEADER), {
-      handle, actorId: run.actorId, chatId: body.chatId, runId: body.runId,
-      approvalId: body.approvalId, clientRequestId: body.clientRequestId,
-      decision: 'approve', actionDigest: exactDigest, secret: options.platformSecret,
-    });
-    if (!proof) return c.json({ error: 'Forbidden' }, 403);
-    try {
-      const connected = await options.integration.listConnections(run.actorId);
-      if (connected.filter(row => row.service === 'google_drive' && row.status === 'active'
-        && row.account_label === body.action.label).length !== 1) {
-        return c.json({ error: 'Forbidden' }, 403);
-      }
-      const actionGrant = await store.issueAction({ runGrant: body.runGrant, proofNonce: proof.nonce,
+    return admitActor(c, run.actorId, async () => {
+      const exactDigest = actionDigest(body.action);
+      if (!exactDigest || exactDigest !== body.actionDigest) return c.json({ error: 'Forbidden' }, 403);
+      const proof = readVerifiedCustomMcpApprovalProof(c.req.header(CUSTOM_MCP_APPROVAL_PROOF_HEADER), {
         handle, actorId: run.actorId, chatId: body.chatId, runId: body.runId,
-        actionDigest: exactDigest, label: body.action.label, maxResults: body.action.params.maxResults });
-      return actionGrant ? c.json({ actionGrant }) : c.json({ error: 'Forbidden' }, 403);
-    } catch (error: unknown) {
-      console.warn('[preview-drive] Approval unavailable', error instanceof Error ? error.name : typeof error);
-      return c.json({ error: 'Unavailable' }, 503);
-    }
+        approvalId: body.approvalId, clientRequestId: body.clientRequestId,
+        decision: 'approve', actionDigest: exactDigest, secret: options.platformSecret,
+      });
+      if (!proof) return c.json({ error: 'Forbidden' }, 403);
+      try {
+        const connected = await integration.listConnections(run.actorId);
+        if (connected.filter(row => row.service === 'google_drive' && row.status === 'active'
+          && row.account_label === body.action.label).length !== 1) {
+          return c.json({ error: 'Forbidden' }, 403);
+        }
+        const actionGrant = await store.issueAction({ runGrant: body.runGrant, proofNonce: proof.nonce,
+          handle, actorId: run.actorId, chatId: body.chatId, runId: body.runId,
+          actionDigest: exactDigest, label: body.action.label, maxResults: body.action.params.maxResults });
+        return actionGrant ? c.json({ actionGrant }) : c.json({ error: 'Forbidden' }, 403);
+      } catch (error: unknown) {
+        console.warn('[preview-drive] Approval unavailable', error instanceof Error ? error.name : typeof error);
+        return c.json({ error: 'Unavailable' }, 503);
+      }
+    });
   });
 
   app.post('/execute', async c => {
     const body = await parseBody(c, Execute);
     if (!body) return c.json({ error: 'Invalid request' }, 400);
-    if (!options.integration) return c.json({ error: 'Unavailable' }, 503);
+    if (!integration) return c.json({ error: 'Unavailable' }, 503);
     const handle = c.get('previewDriveHandle');
     const exactDigest = actionDigest(body.action);
     if (!exactDigest) return c.json({ error: 'Forbidden' }, 403);
-    const consumed = await store.consumeAction({ runGrant: body.runGrant, grant: body.actionGrant,
-      handle, chatId: body.chatId, runId: body.runId, actionDigest: exactDigest,
-      label: body.action.label, maxResults: body.action.params.maxResults });
+    const run = await store.getRun({ token: body.runGrant, handle, chatId: body.chatId, runId: body.runId });
     const machine = c.get('previewDriveMachine');
-    if (!consumed || !machine || !canClerkUserAccessMachine(machine, consumed.actorId)) return c.json({ error: 'Forbidden' }, 403);
-    try {
-      const raw = await options.integration.execute(consumed.actorId, body.action.label, body.action.params);
-      const data = projectPreviewDriveFiles(raw, body.action.params.maxResults);
-      return data ? c.json({ data, service: 'google_drive', action: 'list_files' })
-        : c.json({ error: 'Unavailable' }, 502);
-    } catch (error: unknown) {
-      console.warn('[preview-drive] Read unavailable', error instanceof Error ? error.name : typeof error);
-      return c.json({ error: 'Unavailable' }, 502);
-    }
+    if (!run || !machine || !canClerkUserAccessMachine(machine, run.actorId)) return c.json({ error: 'Forbidden' }, 403);
+    return admitActor(c, run.actorId, async () => {
+      const consumed = await store.consumeAction({ runGrant: body.runGrant, grant: body.actionGrant,
+        handle, chatId: body.chatId, runId: body.runId, actionDigest: exactDigest,
+        label: body.action.label, maxResults: body.action.params.maxResults });
+      if (!consumed || !machine || !canClerkUserAccessMachine(machine, consumed.actorId)) return c.json({ error: 'Forbidden' }, 403);
+      try {
+        const raw = await integration.execute(consumed.actorId, body.action.label, body.action.params);
+        const data = projectPreviewDriveFiles(raw, body.action.params.maxResults);
+        return data ? c.json({ data, service: 'google_drive', action: 'list_files' })
+          : c.json({ error: 'Unavailable' }, 502);
+      } catch (error: unknown) {
+        console.warn('[preview-drive] Read unavailable', error instanceof Error ? error.name : typeof error);
+        return c.json({ error: 'Unavailable' }, 502);
+      }
+    });
   });
 
   app.post('/revoke', async c => {

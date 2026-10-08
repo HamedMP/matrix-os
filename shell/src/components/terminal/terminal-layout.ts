@@ -219,22 +219,16 @@ export function hasPaneId(node: PaneNode, paneId: string): boolean {
   return hasPaneId(node.children[0], paneId) || hasPaneId(node.children[1], paneId);
 }
 
-/**
- * Session of the pane a tab is focused on, or of its first pane. Share controls on
- * every layout use this, so Web Desktop and the mobile/Canvas chrome share the same
- * terminal rather than each deriving its own.
- */
-export function getFocusedSessionId(node: PaneNode, focusedPaneId: string | null): string | null {
-  // Focus can still name a pane from the previous tab after a layout conflict adopts
-  // another one; looking it up in this tree would find nothing and hide sharing.
-  return getPaneSessionId(node, focusedPaneId && hasPaneId(node, focusedPaneId) ? focusedPaneId : getFirstPaneId(node));
-}
-
 export function getPaneSessionId(node: PaneNode, paneId: string): string | null {
   if (node.type === "pane") {
     return node.id === paneId ? node.sessionId ?? null : null;
   }
   return getPaneSessionId(node.children[0], paneId) ?? getPaneSessionId(node.children[1], paneId);
+}
+
+/** The focused pane's session, falling back to the first pane after tab/layout changes. */
+export function getFocusedSessionId(node: PaneNode, focusedPaneId: string | null): string | null {
+  return getPaneSessionId(node, focusedPaneId && hasPaneId(node, focusedPaneId) ? focusedPaneId : getFirstPaneId(node));
 }
 
 export function getPaneCwd(node: PaneNode, paneId: string): string | null {

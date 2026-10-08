@@ -53,7 +53,7 @@ describe("Claude usage-limit failure through the adapter", () => {
   ])("recognizes quota evidence independently in a mixed error envelope %#", async (line) => {
     const { events } = await replay([line]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } }]);
   });
@@ -69,7 +69,7 @@ describe("Claude usage-limit failure through the adapter", () => {
     vi.setSystemTime(new Date("2026-09-10T08:00:00Z"));
     const { events } = await replay([assistantError(`You've hit your weekly limit${suffix}`)]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } }]);
   });
@@ -79,7 +79,7 @@ describe("Claude usage-limit failure through the adapter", () => {
     vi.setSystemTime(new Date("2026-12-30T08:00:00Z"));
     const { events } = await replay([assistantError("You've hit your weekly limit · resets Jan 2, 12:15am (UTC)")]);
     expect(events.at(-1)).toMatchObject({ error: {
-      safeMessage: "Your usage limit has been reached. Try again after 2027-01-02 00:15 UTC.", retryable: false,
+      safeMessage: "Usage limit reached. Resets 2027-01-02 00:15 UTC.", retryable: false,
     } });
   });
 
@@ -118,20 +118,20 @@ describe("Claude usage-limit failure through the adapter", () => {
       assistantError("Too many requests. Please try again shortly."),
     ]);
     expect(events.at(-1)).toMatchObject({ outcome: "failed", error: { retryable: false,
-      safeMessage: "Your usage limit has been reached. Try again after your allowance resets." } });
+      safeMessage: "Usage limit reached. Wait for reset." } });
   });
   it("retains bounded errors-array evidence from an error result", async () => {
     const { events } = await replay([{ type: "result", is_error: true, subtype: "error_during_execution",
       errors: ["You've hit your weekly limit"] }]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } }]);
   });
   it("keeps temporary native throttling distinct from exhausted allowance", async () => {
     const { events } = await replay([assistantError("Too many requests. Please try again shortly.")]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "service_unavailable", safeMessage: "Requests are temporarily rate limited. Wait a moment and try again.",
+      code: "service_unavailable", safeMessage: "Too many requests. Wait a moment and retry.",
       retryable: true, recoveryActions: ["retry"],
     } }]);
   });
@@ -140,7 +140,7 @@ describe("Claude usage-limit failure through the adapter", () => {
     vi.setSystemTime(new Date("2026-09-10T08:00:00Z"));
     const { events } = await replay([assistantError("You've hit your weekly limit · resets Sep 14, 1pm (UTC)")]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after 2026-09-14 13:00 UTC.",
+      code: "run_failed", safeMessage: "Usage limit reached. Resets 2026-09-14 13:00 UTC.",
       retryable: false,
     } }]);
   });
@@ -148,14 +148,14 @@ describe("Claude usage-limit failure through the adapter", () => {
     const { events } = await replay([{ type: "result", is_error: true, subtype: "error_during_execution",
       result: "You've hit your weekly limit" }], 0);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } }]);
   });
   it("reports native assistant-only weekly exhaustion without connection advice or immediate retry", async () => {
     const { events, spawnFn } = await replay([assistantError("You've hit your weekly limit")]);
     expect(events).toEqual([{ type: "run.completed", outcome: "failed", error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } }]);
     expect(spawnFn).toHaveBeenCalledTimes(1);

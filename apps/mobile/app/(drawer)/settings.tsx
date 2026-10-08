@@ -71,7 +71,7 @@ export default function SettingsScreen() {
         <SettingsRow
           card
           title="Help"
-          detail="Docs and support"
+          detail="Docs, support, privacy, and terms"
           icon={HelpCircleIcon}
           onPress={() => router.push("/settings-detail/help" as never)}
         />

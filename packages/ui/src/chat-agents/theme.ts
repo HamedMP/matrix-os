@@ -18,3 +18,5 @@ export const chatAgentMutedStyle = {
 export const chatAgentButtonClass = "matrix-chat-agent-button rounded-lg border px-3 py-2 text-sm outline-none hover:enabled:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))] focus-visible:ring-2 focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))] disabled:opacity-50";
 export const chatAgentInputClass = "matrix-chat-agent-input w-full min-w-0 rounded-lg border bg-transparent px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]";
 export const chatAgentLauncherClass = "flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm outline-none hover:bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))] focus-visible:ring-2 focus-visible:ring-[var(--ring,var(--accent,var(--matrix-accent,var(--matrix-ring))))]";
+
+export const chatAgentPrimaryButtonClass = `${chatAgentButtonClass} matrix-chat-agent-primary`;

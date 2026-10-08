@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { SCOPE_RUNTIME_PROFILE_LIMITS, type ScopeRuntimeSandboxManifest } from "./protocol.js";
+import { SCOPE_RUNTIME_PROFILE_LIMITS, type ScopeRuntimeSandboxManifest, type ScopeRuntimeWorkload } from "./protocol.js";
 
 export const SCOPE_RUNTIME_SANDBOX_POLICY_VERSION = 1;
 export const SANDBOX_WORKSPACE_MOUNT = "/workspace/project";
@@ -78,14 +78,26 @@ export const SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST = createHash("sha256")
 export const SCOPE_RUNTIME_SANDBOX_CAPABILITY = Object.freeze({
   policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION,
   policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST,
-  // The fixed launcher has a Chat worker only; no PTY adapter is installed.
-  workloads: ["chat_ai"] as ("chat_ai" | "terminal")[],
+  // The fixed launcher has Chat and bot workers only; no PTY adapter is installed.
+  workloads: ["chat_ai", "bot_agent"] as ScopeRuntimeWorkload[],
 });
 
 /** Host-managed project and worktree directories eligible for shared execution. */
 export function sandboxRootsForHome(homePath: string): string[] {
   const home = assertTrustedHostPath(homePath);
   return [join(home, "projects"), join(home, "worktrees")];
+}
+
+/** Bot workspaces (`~/bots/<botId>`); the only roots a `bot_agent` workload may bind. */
+export function botSandboxRootsForHome(homePath: string): string[] {
+  const home = assertTrustedHostPath(homePath);
+  return [join(home, "bots")];
+}
+
+/** Server-owned Chat workspaces and separately owner-authorized project/worktree roots. */
+export function managedPiSandboxRootsForHome(homePath: string): string[] {
+  const home = assertTrustedHostPath(homePath);
+  return [join(home, "agent-workspaces"), ...sandboxRootsForHome(home)];
 }
 
 export interface SandboxMountSources {
@@ -185,6 +197,8 @@ export async function validateSandboxMountSources(
   if (roots.length === 0) throw new Error("Sandbox worktree roots are not configured");
   const canonicalRoots = (await Promise.all(roots.map(async (root) => {
     try {
+      // Owner-writable parent roots must not widen the fixed allowlist through a symlink.
+      await assertNoSymlinkComponents(root);
       return await realpath(root);
     } catch (error: unknown) {
       if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;

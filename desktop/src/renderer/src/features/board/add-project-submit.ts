@@ -24,6 +24,7 @@ export interface AddProjectSubmitContext {
   setError: (message: string) => void;
   close: () => void;
   onCreatedProject?: (project: Project) => void;
+  onProjectReady?: (project: Project) => Promise<void | (() => void)>;
 }
 
 function projectPathMatches(localPath: string | undefined, selectedPath: string): boolean {
@@ -68,8 +69,11 @@ async function finish(
 ): Promise<void> {
   await ctx.selectProject(ctx.api, project.slug);
   if (!ctx.isCurrent()) return;
+  const afterOpened = await ctx.onProjectReady?.(project);
+  if (!ctx.isCurrent()) return;
   ctx.close();
   ctx.openTab({ kind: "project", projectSlug: project.slug, title: project.name || project.slug });
+  afterOpened?.();
   if (options.created) ctx.onCreatedProject?.(project);
 }
 

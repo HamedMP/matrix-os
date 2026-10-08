@@ -1,3 +1,4 @@
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import type { FundedRelayConfig } from "./funded-relay-config.js";
 import { FUNDED_GLM_FLASH } from "./funded-relay-model.js";
 import { workersAiTarget } from "./funded-relay-openai-request.js";
@@ -41,7 +42,10 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
       "cf-aig-collect-log-payload": "false",
       "content-type": "application/json",
     };
-    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }], max_tokens: 1, store: false });
+    // Match ordinary managed turns: omission selects provider max reasoning,
+    // which can exceed the health budget even for a one-token generation.
+    body = JSON.stringify({ model: FUNDED_GLM_FLASH, messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1, store: false, reasoning_effort: "low" });
   } else if (modelId === FUNDED_SONNET) {
     url = `${config.gatewayBaseUrl}/v1/messages`;
     headers = {
@@ -53,7 +57,7 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
   } else return false;
 
   try {
-    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(5_000) });
+    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs) });
     if (!response.ok) {
       await response.body?.cancel();
       return false;

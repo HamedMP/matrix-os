@@ -32,7 +32,11 @@ const RequestSchema = z.object({
     type: z.literal("function"), function: z.object({ name: Name }).strict(),
   }).strict()]).optional(),
   parallel_tool_calls: z.boolean().optional(),
-  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
+  // GLM cannot disable reasoning: omission and unsupported OpenAI aliases
+  // select provider max. Keep ordinary managed turns on the low budget while
+  // preserving deliberate high/max requests.
+  // https://developers.cloudflare.com/workers-ai/models/glm-5.3-flash/
+  reasoning_effort: z.enum(["low", "high", "max"]).default("low"),
   temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
   frequency_penalty: z.number().min(-2).max(2).optional(), presence_penalty: z.number().min(-2).max(2).optional(),
   stop: z.union([z.string().max(1024), z.array(z.string().max(1024)).max(4)]).optional(),

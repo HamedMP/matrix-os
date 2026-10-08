@@ -6,6 +6,7 @@ import { PlatformOrganizationRepository } from "../../packages/platform/src/orga
 import { createOrganizationMembershipProjection } from "../../packages/platform/src/organizations/projection.js";
 import { createCollaborationControlAuthority } from "../../packages/platform/src/collaboration/control-authority.js";
 import { createPlatformOrganizationRoutes } from "../../packages/platform/src/organizations/routes.js";
+import type { OrganizationManagementUpstream } from "../../packages/platform/src/organizations/management.js";
 import { createTestPlatformDb, destroyTestPlatformDb, type TestPlatformDb } from "./platform-db-test-helper.js";
 
 const org = "org_2rout00000000000000000001";
@@ -30,16 +31,18 @@ function signed(id: string, body: string, at: Date) {
   };
 }
 
-function clerkMembershipEvent(type: string, actorId: string, role: string, updatedAt: number, aiSubmission?: string) {
+function clerkMembershipEvent(type: string, actorId: string, role: string, updatedAt: number, aiSubmission?: string,
+  publicUserData: Record<string, unknown> = { identifier: "x@example.com" }, occurredAt?: number) {
   return JSON.stringify({
     type,
+    ...(occurredAt === undefined ? {} : { timestamp: occurredAt }),
     data: {
       id: `orgmem_${actorId}`,
       role,
       created_at: updatedAt,
       updated_at: updatedAt,
       organization: { id: org, name: "Route org", slug: "route-org", public_metadata: aiSubmission ? { collaboration: { aiSubmission } } : {}, created_at: 1, updated_at: updatedAt },
-      public_user_data: { user_id: actorId, identifier: "x@example.com" },
+      public_user_data: { user_id: actorId, ...publicUserData },
     },
   });
 }
@@ -53,6 +56,7 @@ describe("platform organization routes (T018)", () => {
   let authority: ReturnType<typeof createCollaborationControlAuthority>;
   let actor: string | null;
   let members: string[];
+  let managementUpstream: OrganizationManagementUpstream;
 
   beforeEach(async () => {
     fixture = await createTestPlatformDb();
@@ -63,15 +67,40 @@ describe("platform organization routes (T018)", () => {
     members = [admin, member];
     projection = createOrganizationMembershipProjection({
       repository, now: () => clock,
-      upstream: { listMembers: async () => ({
+      upstream: { listOrganizationsForActor: async (actorId) => members.includes(actorId) ? [org] : [], listMembers: async () => ({
         organization: { organizationId: org, name: "Route org", slug: "route-org", aiSubmission: "members", sourceUpdatedAt: new Date(1_000) },
         members: members.map((actorId) => ({ membershipId: `orgmem_${actorId}`, actorId, role: actorId === admin ? "org:admin" : "org:member", sourceUpdatedAt: new Date(1_000) })),
       }) },
     });
     authority = createCollaborationControlAuthority({ repository, now: () => clock, affectedRuntimes: async () => [logicalRuntimeId], projection });
     actor = member;
+    managementUpstream = {
+      listPendingInvitations: vi.fn(async () => [{
+        invitationId: "orginv_pending",
+        emailAddress: "pending@example.com",
+        role: "org:member",
+        createdAt: new Date("2026-09-18T12:00:00.000Z"),
+        expiresAt: new Date("2026-10-18T12:00:00.000Z"),
+      }]),
+      renameOrganization: vi.fn(async () => undefined),
+      updateOrganizationLogo: vi.fn(async () => undefined),
+      createInvitations: vi.fn(async () => undefined),
+      resendInvitation: vi.fn(async () => undefined),
+      revokeInvitation: vi.fn(async () => undefined),
+      updateMemberRole: vi.fn(async () => undefined),
+      removeMember: vi.fn(async () => undefined),
+      deleteOrganization: vi.fn(async () => undefined),
+    };
     app = createPlatformOrganizationRoutes({
       repository, projection, controlAuthority: authority, webhookSigningSecret: signingSecret, now: () => clock,
+      managementDirectory: {
+        resolveMemberProfiles: async (actorIds) => new Map(actorIds.map((actorId) => [actorId, {
+          actorId,
+          displayName: actorId === admin ? "Alex Admin" : "Morgan Member",
+          emailAddress: actorId === admin ? "alex@example.com" : "morgan@example.com",
+        }])),
+      },
+      managementUpstream,
       resolveActor: async () => actor,
       authenticateRuntime: async (input) => {
         if (input.runtimeId === runtimeId && input.bearerToken === runtimeToken) return { runtimeId, ownerId: admin };
@@ -91,9 +120,9 @@ describe("platform organization routes (T018)", () => {
     await projection.reconcile(org);
     const response = await app.request("/api/organizations");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
+    expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Route org", slug: "route-org", role: "org:member", memberCount: 2, aiSubmission: "members", membershipEpoch: expect.any(Number) }] });
     actor = outsider;
-    expect(await (await app.request("/api/organizations")).json()).toEqual({ organizations: [] });
+    expect(await (await app.request("/api/organizations")).json()).toEqual({ complete: true, organizations: [] });
     actor = null;
     expect((await app.request("/api/organizations")).status).toBe(401);
   });
@@ -111,7 +140,7 @@ describe("platform organization routes (T018)", () => {
     try {
       const response = await app.request("/api/organizations");
       const current = await repository.getOrganization(org);
-      expect(await response.json()).toEqual({ organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
+      expect(await response.json()).toEqual({ complete: true, organizations: [{ organizationId: org, name: "Updated org", slug: "updated-org", role: "org:admin", memberCount: 1, aiSubmission: "owner_only", membershipEpoch: current!.membershipEpoch }] });
     } finally { check.mockRestore(); }
   });
 
@@ -167,8 +196,9 @@ describe("platform organization routes (T018)", () => {
     await projection.reconcile(org);
     const first = await app.request(`/api/organizations/${org}/members?limit=1`);
     expect(first.status).toBe(200);
-    const page = await first.json() as { members: Array<{ actorId: string; role: string }>; nextCursor?: string };
+    const page = await first.json() as { members: Array<{ actorId: string; role: string; displayName: string; emailAddress?: string }>; nextCursor?: string };
     expect(page.members).toHaveLength(1);
+    expect(page.members[0]).toMatchObject({ displayName: "Alex Admin", emailAddress: "alex@example.com", role: "org:admin" });
     expect(page.nextCursor).toBeTypeOf("string");
     const second = await (await app.request(`/api/organizations/${org}/members?limit=1&cursor=${encodeURIComponent(page.nextCursor!)}`)).json() as { members: Array<{ actorId: string }>; nextCursor?: string };
     expect(second.members).toHaveLength(1);
@@ -177,6 +207,182 @@ describe("platform organization routes (T018)", () => {
     expect((await app.request(`/api/organizations/not%20an%20org/members`)).status).toBe(422);
     actor = outsider;
     expect((await app.request(`/api/organizations/${org}/members`)).status).toBe(404);
+  });
+
+  it("lists pending invitations only for current admins", async () => {
+    await projection.reconcile(org);
+    expect((await app.request(`/api/organizations/${org}/invitations`)).status).toBe(403);
+    actor = admin;
+    const response = await app.request(`/api/organizations/${org}/invitations`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ invitations: [{
+      invitationId: "orginv_pending",
+      emailAddress: "pending@example.com",
+      role: "org:member",
+      createdAt: "2026-09-18T12:00:00.000Z",
+      expiresAt: "2026-10-18T12:00:00.000Z",
+    }] });
+    actor = outsider;
+    expect((await app.request(`/api/organizations/${org}/invitations`)).status).toBe(404);
+  });
+
+  it("allows admins to rename, invite, update roles, and manage invitations", async () => {
+    await projection.reconcile(org);
+    actor = admin;
+    const json = { "content-type": "application/json" };
+    expect((await app.request(`/api/organizations/${org}`, { method: "PATCH", headers: json, body: JSON.stringify({ name: "New name" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations`, { method: "POST", headers: json, body: JSON.stringify({ emailAddresses: ["new@example.com"], role: "org:member" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "PATCH", headers: json, body: JSON.stringify({ role: "org:admin" }) })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations/orginv_pending/resend`, { method: "POST" })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/invitations/orginv_pending`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.renameOrganization).toHaveBeenCalledWith(org, "New name");
+    expect(managementUpstream.createInvitations).toHaveBeenCalledWith(org, ["new@example.com"], "org:member");
+    expect(managementUpstream.updateMemberRole).toHaveBeenCalledWith(org, member, "org:admin");
+    expect(managementUpstream.resendInvitation).toHaveBeenCalledWith(org, "orginv_pending");
+    expect(managementUpstream.revokeInvitation).toHaveBeenCalledWith(org, "orginv_pending");
+  });
+
+  it("supports logo upload, member removal, leaving, and organization deletion", async () => {
+    await projection.reconcile(org);
+    actor = admin;
+    const logo = new FormData();
+    logo.set("file", new Blob(["logo"], { type: "image/png" }), "logo.png");
+    expect((await app.request(`/api/organizations/${org}/logo`, { method: "PATCH", body: logo })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "DELETE" })).status).toBe(200);
+    expect((await app.request(`/api/organizations/${org}`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.updateOrganizationLogo).toHaveBeenCalledWith(org, expect.any(Blob));
+    expect(managementUpstream.removeMember).toHaveBeenCalledWith(org, member);
+    expect(managementUpstream.deleteOrganization).toHaveBeenCalledWith(org);
+
+    actor = member;
+    expect((await app.request(`/api/organizations/${org}/members/${member}`, { method: "DELETE" })).status).toBe(200);
+    expect(managementUpstream.removeMember).toHaveBeenCalledWith(org, member);
+  });
+
+  it("enforces admin permissions, validates bodies, and protects the final admin", async () => {
+    await projection.reconcile(org);
+    const json = { "content-type": "application/json" };
+    expect((await app.request(`/api/organizations/${org}`, { method: "PATCH", headers: json, body: JSON.stringify({ name: "Nope" }) })).status).toBe(403);
+    actor = admin;
+    expect((await app.request(`/api/organizations/${org}/invitations`, { method: "POST", headers: json, body: JSON.stringify({ emailAddresses: ["bad"], role: "org:member" }) })).status).toBe(422);
+
+    members = [admin];
+    await projection.reconcile(org);
+    expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "PATCH", headers: json, body: JSON.stringify({ role: "org:member" }) })).status).toBe(409);
+    expect((await app.request(`/api/organizations/${org}/members/${admin}`, { method: "DELETE" })).status).toBe(409);
+    expect(managementUpstream.updateMemberRole).not.toHaveBeenCalledWith(org, admin, "org:member");
+  });
+
+  it("prefers persisted Clerk member names and emails over directory fallbacks", async () => {
+    await projection.reconcile(org);
+    const named = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: " Lovelace ", identifier: "ada@example.com", image_url: "https://img.clerk.com/ada.png",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_1", named, clock), body: named })).status).toBe(200);
+    const epoch = (await repository.getMembership({ organizationId: org, actorId: member }))!.membershipEpoch;
+    // An email-less identifier (a phone or username) is never shown as an email, and only https images are kept.
+    const unnamed = clerkMembershipEvent("organizationMembership.updated", admin, "org:admin", 5_000, "members", {
+      first_name: null, last_name: null, identifier: "+15550100", image_url: "javascript:alert(1)",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_2", unnamed, clock), body: unnamed })).status).toBe(200);
+
+    const page = await (await app.request(`/api/organizations/${org}/members`)).json() as { members: Array<Record<string, unknown>> };
+    expect(page.members).toEqual([
+      { actorId: admin, displayName: "Alex Admin", emailAddress: "alex@example.com", role: "org:admin", joinedAt: new Date(5_000).toISOString() },
+      { actorId: member, role: "org:member", joinedAt: new Date(5_000).toISOString(),
+        displayName: "Ada Lovelace", emailAddress: "ada@example.com" },
+    ]);
+    // The current management contract always includes a safe display label and rejects unknown query sections.
+    expect((await app.request(`/api/organizations/${org}/members?include=everything`)).status).toBe(422);
+
+    // A later name change with the same membership timestamp updates the name, never the membership epoch.
+    const renamed = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "King", identifier: "ada@example.com",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_3", renamed, clock), body: renamed })).status).toBe(200);
+    const after = await repository.getMembership({ organizationId: org, actorId: member });
+    expect(after).toMatchObject({ displayName: "Ada King", email: "ada@example.com", membershipEpoch: epoch });
+    // An older event never overwrites the newer profile.
+    const stale = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 4_000, "members", {
+      first_name: "Old", last_name: "Name", identifier: "old@example.com",
+    });
+    await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_profile_4", stale, clock), body: stale });
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+  });
+
+  it("drops an invalid stored email so the safe directory fallback keeps Share available", async () => {
+    await projection.reconcile(org);
+    const body = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Lovelace", identifier: "a..b@example.com",
+    }, clock.getTime());
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_invalid_email", body, clock), body })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ email: null });
+    const response = await app.request(`/api/organizations/${org}/members`);
+    expect(response.status).toBe(200);
+    const page = await response.json() as { members: Array<{ actorId: string; displayName: string; emailAddress?: string }> };
+    expect(page.members.find((entry) => entry.actorId === member)).toMatchObject({
+      displayName: "Ada Lovelace", emailAddress: "morgan@example.com",
+    });
+  });
+
+  it("keeps the newest member profile whichever of the webhook and the reconcile arrives last", async () => {
+    await projection.reconcile(org);
+    // Clerk renamed the member at t=9s; a reconcile read the new name at t=12s (the clock).
+    const fresh = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "King", identifier: "ada@example.com",
+    }, clock.getTime());
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_1", fresh, clock), body: fresh })).status).toBe(200);
+    // A delayed webhook about the same membership, emitted before the rename, arrives afterwards.
+    const delayed = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Lovelace", identifier: "ada@example.com",
+    }, clock.getTime() - 60_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_2", delayed, clock), body: delayed })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+    // Without an envelope timestamp, the membership source timestamp orders the profile. A delayed
+    // webhook cannot look newly observed merely because it arrived now.
+    const noEnvelopeTimestamp = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Old", identifier: "old@example.com",
+    });
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_no_timestamp", noEnvelopeTimestamp, clock), body: noEnvelopeTimestamp })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King", email: "ada@example.com" });
+    // One name key cannot safely rebuild the combined display name, so it leaves the stored name.
+    const partialName = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      last_name: "Byron",
+    }, clock.getTime() + 30_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_partial_name", partialName, clock), body: partialName })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King" });
+    // A payload that does not report the name or email leaves the stored ones alone.
+    const sparse = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {}, clock.getTime() + 1_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_3", sparse, clock), body: sparse })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada King", email: "ada@example.com" });
+    // Each field keeps its own observation time: an email-only report does not make a name
+    // change observed before it (but after the stored name) look stale.
+    const emailOnly = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      identifier: "ada.king@example.com",
+    }, clock.getTime() + 20_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_4", emailOnly, clock), body: emailOnly })).status).toBe(200);
+    const renamedBefore = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      first_name: "Ada", last_name: "Byron",
+    }, clock.getTime() + 10_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_5", renamedBefore, clock), body: renamedBefore })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ displayName: "Ada Byron", email: "ada.king@example.com" });
+    const staleEmail = clerkMembershipEvent("organizationMembership.updated", member, "org:member", 5_000, "members", {
+      identifier: "ada.old@example.com",
+    }, clock.getTime() + 15_000);
+    expect((await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_order_6", staleEmail, clock), body: staleEmail })).status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ email: "ada.king@example.com" });
+  });
+
+  it("drops an image whose normalized address is too long instead of failing the membership change", async () => {
+    await projection.reconcile(org);
+    // `URL` percent-encodes spaces, so this fits the input bound but not the stored one.
+    const image = `https://img.clerk.com/${" ".repeat(700)}avatar.png`;
+    const removed = clerkMembershipEvent("organizationMembership.deleted", member, "org:member", 5_000, "members", {
+      first_name: "Ada", image_url: image,
+    });
+    const response = await app.request("/webhooks/clerk/organizations", { method: "POST", headers: signed("msg_long_image", removed, clock), body: removed });
+    expect(response.status).toBe(200);
+    expect(await repository.getMembership({ organizationId: org, actorId: member })).toMatchObject({ state: "removed", imageUrl: null });
   });
 
   it("verifies, deduplicates and applies Clerk organization webhooks with the correct status codes", async () => {

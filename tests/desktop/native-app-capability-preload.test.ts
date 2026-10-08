@@ -60,3 +60,16 @@ it("restores the one-way legacy API alongside text generation", async () => {
   expect(() => bridge.generate("x".repeat(32001))).toThrow("Invalid app task");
   expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(1);
 });
+
+it("exposes the one-way installed-app launch request in native app views", async () => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  electron.ipcRenderer.invoke.mockResolvedValue({ ok: true });
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(bridge.openApp("Planner", "/files/apps/planner/index.html")).toBeUndefined();
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:open", {
+    name: "Planner", path: "/files/apps/planner/index.html",
+  });
+  expect(() => bridge.openApp("Settings", "__settings__")).toThrow("Invalid app launch");
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledTimes(1);
+});

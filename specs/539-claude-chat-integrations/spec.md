@@ -144,3 +144,40 @@ then merge. Real Google Drive acceptance is performed after merge by the affecte
 user on a matching runtime and Platform revision. Owner subscription login and an
 owner-runtime live test are no longer pre-merge gates. This changes rollout order,
 not the authorization contract or the evidence required to claim live success.
+
+## 2026-10-09 owner acceptance and current-main compatibility
+
+The owner renewed the Claude subscription and explicitly resumed pre-merge Main
+computer acceptance after merging current main. This supersedes the previous
+rollout order: verify the immutable PR bundle on the owner's runtime first, then
+require fresh Greptile 5/5 and green CI on the final head before merge. Keep the
+existing affected-user post-merge verification separate from owner acceptance.
+
+Current main uses managed Pi for Matrix AI Chat. Preserve that managed broker
+and the retired Claude SDK Chat behavior; the separate installed Claude Code
+adapter retains its native subscription and Matrix-funded source boundaries.
+Native launch capabilities must keep `chat_call` or `chat_discovery` rather than
+downgrading either to a Custom-MCP-only scope. Funded credentials resolve by both
+instance ID and run ID; they cannot replace native subscription credentials.
+
+### Preview actor deletion admission contract
+
+1. **Scope:** shared Preview personal Drive authorization must honor the actual
+   actor's account deletion state, independently of the shared machine owner.
+2. **Signatures:** `/internal/containers/:handle/preview-drive/{turn/redeem,
+   discover,grant,execute}` resolves the signed actor/run before calling
+   `withAccountDeletionOwnerLock(db, actorId, callback, env)`.
+3. **Contract:** keep the owner lock through grant writes and provider execution.
+   The grant store participates in the ambient transaction. A failed provider
+   operation still commits consumption of the one-use action grant.
+4. **Errors:** scheduled, processing and completed deletion deny new work with
+   409; admission infrastructure failure returns generic 503. Revoke cleanup
+   remains permitted. Provider failure cannot restore a consumed action grant.
+5. **Cases:** active actor may redeem/discover/grant/execute; actor with deletion
+   pending cannot use an otherwise valid run; cleanup may revoke an existing run.
+6. **Tests:** actual PostgreSQL tests assert denial in all deletion states at
+   each phase, allowed cleanup, and no replay following provider failure under
+   the owner transaction.
+7. **Wrong vs correct:** checking only the shared machine owner's state or
+   rolling back a provider-error response can bypass deletion or replay a grant.
+   Lock the signed actor and commit one-use consumption before returning failure.

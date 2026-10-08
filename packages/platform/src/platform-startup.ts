@@ -1,10 +1,14 @@
+import { z } from 'zod/v4';
+import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
+import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
+import type { AccountDeletionAdapterOptions } from './account-deletion/adapters.js';
 import { serve } from '@hono/node-server';
 import {
   createPostHogErrorTracker,
   installPostHogProcessErrorTracking,
   type MatrixTelemetryEvent,
 } from '@matrix-os/observability';
-import type { Hono, Context } from 'hono';
+import { Hono, type Context } from 'hono';
 import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
@@ -46,6 +50,12 @@ import {
   createGranolaPresetBroker,
   type ManagedMcpPresetBroker,
 } from './granola-preset-broker.js';
+import { MATRIX_OAUTH_CLIENT_METADATA, MATRIX_OAUTH_CLIENT_METADATA_URL } from './oauth-client-metadata.js';
+import { createManagedOAuthPresetBroker } from './managed-oauth-preset-broker.js';
+import { createManagedPresetRouter } from './managed-preset-router.js';
+import { BokioOAuthManager, type BokioCredentialStore, type BokioCredentialCrypto } from './bokio-oauth.js';
+import { createBokioPresetBroker } from './bokio-preset-broker.js';
+import { createManagedPresetLifecycle } from './managed-preset-lifecycle.js';
 import { logPlatformRouteError } from './platform-route-utils.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import {
@@ -80,6 +90,8 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
+import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -103,7 +115,7 @@ export function parseGoldenSnapshotReconciliationInterval(raw: string | undefine
   return value;
 }
 
-interface GatewayPlatformDb {
+interface GatewayPlatformDb extends BokioCredentialStore {
   migrate(): Promise<void>;
   destroy(): Promise<void>;
   sweepCustomMcpApprovals(now: Date): Promise<number>;
@@ -128,20 +140,22 @@ interface GatewayCustomMcpModules {
       shutdown(): Promise<void>;
       getPreset(userId: string, presetId: string): Promise<any>;
       ensurePreset(input: { userId: string; presetId: string; name: string; url: string }): Promise<any>;
-      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[] }): Promise<any>;
+      activatePreset(input: { userId: string; presetId: string; allowedTools: readonly string[]; requiredTools?: readonly string[]; expectedRevision?: number }): Promise<any>;
       callSelectedTool(input: { userId: string; serverId: string; toolName: string; arguments?: Record<string, unknown>; approvalGranted: boolean }): Promise<unknown>;
+      callManagedPresetTool(input: { userId: string; serverId: string; presetId: string; toolName: string; arguments?: Record<string, unknown> }): Promise<unknown>;
       remove(userId: string, serverId: string): Promise<void>;
+      removeForAccountDeletion(userId: string, serverId: string): Promise<void>;
     };
   };
   oauth: {
     CustomMcpOAuthManager: new (options: Record<string, unknown>) => {
-      start(userId: string, serverId: string): Promise<string>;
-      complete(userId: string, state: string, code: string): Promise<{ serverId: string }>;
+      start(userId: string, serverId: string, options?: { scopes?: readonly string[] }): Promise<string>;
+      complete(state: string, code: string): Promise<{ serverId: string }>;
       resolveAuthorization(userId: string, row: unknown): Promise<string | undefined>;
       revoke(credential: unknown): Promise<void>;
     };
   };
-  crypto: { parseCustomMcpEncryptionKey(value?: string): Buffer };
+  crypto: BokioCredentialCrypto & { parseCustomMcpEncryptionKey(value?: string): Buffer };
   routes: {
     createCustomMcpRoutes(options: Record<string, unknown>): Hono;
   };
@@ -162,7 +176,7 @@ interface GatewayPipedreamConfig {
 }
 
 interface GatewayPipedreamModule {
-  createPipedreamClient(config: GatewayPipedreamConfig): unknown;
+  createPipedreamClient(config: GatewayPipedreamConfig): Promise<NonNullable<AccountDeletionAdapterOptions['pipedream']>>;
 }
 
 interface GatewayIntegrationRoutesModule {
@@ -174,6 +188,7 @@ interface GatewayIntegrationRoutesModule {
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
+    verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
   }): Hono;
   executeIntegrationAction(opts: {
     pipedream: unknown; externalUserId: string;
@@ -203,6 +218,7 @@ interface GatewayR2ClientModule {
 }
 
 type CreatePlatformApp = (deps: {
+  accountDeletion?: import('./account-deletion/wiring.js').AccountDeletionRuntime;
   db: PlatformDB;
   atsDb?: AtsDB;
   docker?: Dockerode;
@@ -220,6 +236,7 @@ type CreatePlatformApp = (deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  whatsappRoutes?: Hono<any>;
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
@@ -459,6 +476,8 @@ async function startPlatformServerWithCleanup(
     console.log(`[matrix] Provisioner enabled (${homeserverUrl})`);
   }
 
+  let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let previewDriveIntegration: PreviewDriveIntegration | undefined;
@@ -507,6 +526,9 @@ async function startPlatformServerWithCleanup(
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
+    deletionPipedream = pipedream;
+    const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
+      createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
@@ -535,6 +557,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('platformUserId') as string | undefined;
         const handle = c.get('platformHandle') as string | undefined;
@@ -546,6 +569,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('internalContainerClerkUserId') as string | undefined;
@@ -643,13 +667,26 @@ async function startPlatformServerWithCleanup(
       dispatcher: customerVpsProxyDispatcher,
       logError: logPlatformRouteError,
     });
-    let oauthManager: InstanceType<GatewayCustomMcpModules['oauth']['CustomMcpOAuthManager']>;
+    const oauthManager = new oauthModule.CustomMcpOAuthManager({
+      db: customDb,
+      encryptionKey,
+      clientId: oauthClientId,
+      redirectUri: oauthRedirectUri,
+      ...(MATRIX_OAUTH_CLIENT_METADATA.redirect_uris.includes(oauthRedirectUri) ? { clientMetadataUrl: MATRIX_OAUTH_CLIENT_METADATA_URL } : {}),
+    });
+    const bokioOAuth = new BokioOAuthManager({ db: customDb, encryptionKey, credentialCrypto: cryptoModule,
+      clientId: process.env.BOKIO_CLIENT_ID, clientSecret: process.env.BOKIO_CLIENT_SECRET,
+      redirectUri: process.env.BOKIO_OAUTH_REDIRECT_URI ?? oauthRedirectUri });
+    const bokioBroker = createBokioPresetBroker({ db: customDb, oauth: bokioOAuth });
+    const managedLifecycle = createManagedPresetLifecycle({ db: customDb, oauth: oauthManager,
+      bokioOAuth, bokioBroker, activatePreset: input => broker.activatePreset(input), decodeState: state => cryptoModule.decryptCustomMcpOAuthState<{ kind?: unknown; userId?: unknown }>(state, encryptionKey) });
     const broker = new brokerModule.CustomMcpBroker({
       db: customDb,
       encryptionKey,
       projection,
       resolveOAuthAuthorization: (userId: string, row: unknown) => oauthManager.resolveAuthorization(userId, row),
       revokeOAuth: (credential: unknown) => oauthManager.revoke(credential),
+      removeManagedPreset: managedLifecycle.removeManagedPreset,
     });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
@@ -663,24 +700,33 @@ async function startPlatformServerWithCleanup(
       }
     };
     registerCustomMcpStartupCleanup(customMcpShutdown);
-    oauthManager = new oauthModule.CustomMcpOAuthManager({
-      db: customDb,
-      encryptionKey,
-      clientId: oauthClientId,
-      redirectUri: oauthRedirectUri,
+    deletionCustomMcp = { remove: (userId,serverId) => broker.removeForAccountDeletion(userId,serverId) };
+    const granolaBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
+    const managedOAuthBroker = createManagedOAuthPresetBroker({ broker, oauth: oauthManager });
+    managedMcpPresetBroker = createManagedPresetRouter({
+      granola: granolaBroker, posthog_oauth: managedOAuthBroker, loops: managedOAuthBroker, lemlist: managedOAuthBroker,
+      bokio: bokioBroker,
     });
-    managedMcpPresetBroker = createGranolaPresetBroker({ broker, oauth: oauthManager });
-    customMcpRoutes = routesModule.createCustomMcpRoutes({
+    const managedOAuthFlow = managedLifecycle.oauth;
+    const publicCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
         c.get('platformUserId') as string | undefined,
         c.get('platformHandle') as string | undefined,
       ),
     });
+    customMcpRoutes=new Hono();
+    customMcpRoutes.use('/oauth/callback',createAccountDeletionMutationGuard({db,env:process.env,isMutation:()=>true,
+      resolveOwner:async c=>{
+        const state=z.string().min(32).max(512).parse(c.req.query('state'));
+        const decoded=z.object({userId:z.string().min(1).max(128)}).parse(cryptoModule.decryptCustomMcpOAuthState(state,encryptionKey));
+        return (await customDb.getUserById(decoded.userId))?.clerk_id;
+      }}));
+    customMcpRoutes.route('/',publicCustomMcpRoutes);
     internalCustomMcpRoutes = routesModule.createCustomMcpRoutes({
       broker,
-      oauth: oauthManager,
+      oauth: managedOAuthFlow,
       allowToolCalls: true,
       resolveActorId: (c: Context) => c.get('internalContainerClerkUserId') as string | null,
       resolveUserId: async (c: Context) => resolveCustomMcpUserId(
@@ -985,9 +1031,20 @@ async function startPlatformServerWithCleanup(
   });
 
   const appEnv = process.env;
+  const whatsappRuntime = createConfiguredWhatsAppRuntime({ db, env: appEnv, clerkAuth });
+  registerCustomMcpStartupCleanup(async () => { await whatsappRuntime?.shutdown(); });
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
+  const accountDeletion = await createConfiguredAccountDeletionRuntime({
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+  });
+  registerCustomMcpStartupCleanup(async () => {
+    accountDeletion?.stop();
+    await accountDeletion?.drain();
+    accountDeletion?.close();
+  });
   const app = createPlatformApp({
+    accountDeletion,
     db,
     atsDb,
     docker,
@@ -1005,6 +1062,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRelayRoutes,
     internalFundedAiOperatorRoutes,
     internalSpeechRuntimeRoutes,
+    whatsappRoutes: whatsappRuntime?.routes,
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
@@ -1030,12 +1088,14 @@ async function startPlatformServerWithCleanup(
   const server = serve({ fetch: app.fetch, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
+  if (backgroundWorkersEnabled) whatsappRuntime?.start();
 
   let shuttingDown = false;
   const shutdown = (signal: NodeJS.Signals): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[platform] Received ${signal}, shutting down`);
+    accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
@@ -1053,10 +1113,13 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        await accountDeletion?.drain();
+        accountDeletion?.close();
         await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
           containerProxyDispatcher.close(),

@@ -92,6 +92,9 @@ describe("owner runtime direct sessions", () => {
     await expect(fixture.service.create(body)).rejects.toMatchObject({ code: "replayed" });
     const path = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/resolve`;
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).resolves.toMatchObject({ actorId: ownerId, organizationId });
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+      `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/lookup`)))
+      .resolves.toMatchObject({ actorId: ownerId, organizationId });
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001")))
       .rejects.toMatchObject({ code: "denied" });
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `/api/collaboration/runtimes/vps%3A22222222-2222-4222-8222-222222222222/scopes`)))
