@@ -175,9 +175,26 @@ instance ID and run ID; they cannot replace native subscription credentials.
    remains permitted. Provider failure cannot restore a consumed action grant.
 5. **Cases:** active actor may redeem/discover/grant/execute; actor with deletion
    pending cannot use an otherwise valid run; cleanup may revoke an existing run.
-6. **Tests:** actual PostgreSQL tests assert denial in all deletion states at
+6. **Tests:** database-backed PGlite tests assert denial in all deletion states at
    each phase, allowed cleanup, and no replay following provider failure under
    the owner transaction.
 7. **Wrong vs correct:** checking only the shared machine owner's state or
    rolling back a provider-error response can bypass deletion or replay a grant.
    Lock the signed actor and commit one-use consumption before returning failure.
+
+### Startup revision and activity compatibility
+
+An integration merge allocates core schema generation 16 above the observed
+production generation 14 and shared Preview generation 15. A same-generation
+fingerprint mismatch still fails closed; never reset a deployed marker to make
+startup pass. Startup upgrade tests retain owner rows and unrelated additive
+columns, create the Preview Drive grant tables, and verify older instances skip
+the completed generation. PGlite regressions establish the contract; Cloud Run
+startup and live PostgreSQL checks establish deployment success separately.
+
+Private owner file-path previews retain main's absolute-path presentation, even
+outside the execution root. Commands, working directories, queries and patterns
+always use safe projection. Shared file paths remain relative or omitted; secret
+paths remain hidden in every scope. Steer HTTP events and Electron transcript
+tests verify the path contract before completion. The route admission contract
+includes the optional fifth browser approval-provenance argument.

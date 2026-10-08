@@ -13,10 +13,10 @@ describe("platform schema revision", () => {
     for (const file of files) {
       digest.update(file).update("\0").update(await readFile(`${base}/${file}`)).update("\0");
     }
-    // Credit-history main and bounded-recovery branch independently allocated
-    // generation 12 fingerprints. Their combined schema must advance beyond both.
-    // The merged core source must advance past it rather than conflict or skip.
-    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(12);
+    // Production has generation 14, while the shared Preview already applied a
+    // different generation 15 fingerprint. The merged schema must advance past
+    // both deployed predecessors rather than conflict or skip its new DDL.
+    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(15);
     expect(PLATFORM_SCHEMA_REVISION.fingerprint).toBe(digest.digest("hex"));
   });
 });

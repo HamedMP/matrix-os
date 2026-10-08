@@ -30,11 +30,11 @@ import {
   classifyAssistantCredentialBoundaryPrefix,
   createAssistantTextStreamProjector,
   isCompleteAssistantCredentialKeyword,
-  safeToolPreview,
   sanitizeAssistantText,
   projectAssistantTextWithCaptures,
   type CapturedAssistantText,
 } from "./safe-activity-projection.js";
+import { projectClaudeToolPreview } from "./claude-tool-preview.js";
 import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 
 const ClaudeChatStateSchema = z.object({
@@ -628,9 +628,7 @@ export function createClaudeChatProviderAdapter(options: {
           const activity = {
             activityId: block.id,
             ...claudeActivity(block.name),
-            ...safeToolPreview(block.name, block.input, {
-              homePath: options.homePath, executionRoot: input.executionRoot,
-            }),
+            ...projectClaudeToolPreview(block.name, block.input, pathProjection),
           };
           activityByIndex.set(line.event.index, activity);
           toolInputByIndex.set(line.event.index, "");
@@ -655,9 +653,7 @@ export function createClaudeChatProviderAdapter(options: {
               const parsedInput: unknown = JSON.parse(partialInput);
               completedActivity = {
                 ...activity,
-                ...safeToolPreview(toolName, parsedInput, {
-                  homePath: options.homePath, executionRoot: input.executionRoot,
-                }),
+                ...projectClaudeToolPreview(toolName, parsedInput, pathProjection),
               };
             } catch (error: unknown) {
               console.warn("[chat-claude] Ignoring malformed bounded tool input:", error instanceof Error ? error.name : "UnknownError");
