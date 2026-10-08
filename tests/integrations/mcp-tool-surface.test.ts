@@ -8,6 +8,7 @@ const fullBaseline = [
   "connect_service", "sync_services", "call_service", "disconnect_service",
   ...customDiscovery, "call_custom_mcp_tool", "jev_evaluate",
   "list_chat_agent_options", "create_chat_agent",
+  "brain_search", "brain_timeline", "brain_claims", "brain_brief", "brain_conflicts", "brain_impact",
 ];
 
 async function withClient(surface: string | undefined, inspect: (client: Client) => Promise<void>) {
