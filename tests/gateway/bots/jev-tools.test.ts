@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import type { BatchDocument, JevInboxBatchStore } from "../../../packages/gateway/src/jev/inbox-batch-store.js";
+import { BotBrokerActionError } from "../../../packages/gateway/src/bots/broker-actions.js";
 import { createBotJevTools } from "../../../packages/gateway/src/bots/jev-tools.js";
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { BotGrantRecord } from "../../../packages/gateway/src/bots/repositories/grants.js";
@@ -13,16 +15,45 @@ function setup() {
   const read = vi.fn(async (_owner, _scope, action) => action === "get_profile" ? { emailAddress: state.email } : { threads: [] });
   const evaluate = vi.fn();
   const fundedReady = vi.fn(async () => true);
+  let document: BatchDocument | null = null;
+  const batchStore: JevInboxBatchStore = {
+    async get() { return document ? structuredClone(document) : null; },
+    async open(value) { document = structuredClone(value); return structuredClone(document); },
+    async save(value, revision) { if (document?.revision !== revision) throw new Error("Revision conflict"); document = structuredClone(value); return structuredClone(document); },
+  };
   const tools = createBotJevTools({ agents: { get: vi.fn(async () => ({ id: binding.botId, revision: state.revision, recipeRef: { recipeId: state.recipeId, version: "1" } }) as never) },
     listGrants: async () => state.grants,
     signalFor: () => run.signal,
     recipes: { resolve: () => ({ capabilities: ["jev.inbox"], integrations: [{ service: "gmail", effects: ["read", "label"] }] }) } as never,
-    workflow: { read, evaluate, fundedReady, listGmailAccounts: async () => [
+    workflow: { read, evaluate, fundedReady, batchStore, listGmailAccounts: async () => [
       { id: "connection", service: "gmail", account_label: "Work", account_email: state.email, status: "active" } ] },
   });
   return { tools, state, read, evaluate, run, fundedReady };
 }
 describe("Pi Bot Jev authority", () => {
+  it("reads saved progress in a fresh unfunded run without Gmail calls, but still gates later work", async () => {
+    const { tools, fundedReady, read, evaluate, state } = setup();
+    const started = JSON.parse((await tools.call(binding, { operation: "batch_start" }, AbortSignal.timeout(1000))).content[0]!.text!);
+    const nextRun = { ...binding, runId: "run_status" };
+    fundedReady.mockResolvedValue(false); fundedReady.mockClear(); read.mockClear();
+    const status = JSON.parse((await tools.call(nextRun, { operation: "batch_status", jobId: started.jobId }, AbortSignal.timeout(1000))).content[0]!.text!);
+    expect(status).toMatchObject({ kind: "batch", processed: 0, unconfirmed: 0 });
+    expect(fundedReady).not.toHaveBeenCalled(); expect(read).not.toHaveBeenCalled(); expect(evaluate).not.toHaveBeenCalled();
+    await expect(tools.call(nextRun, { operation: "batch_next", jobId: started.jobId, revision: status.revision }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "unavailable" });
+    expect(fundedReady).toHaveBeenCalledOnce(); expect(read.mock.calls.every(call => call[2] === "get_profile")).toBe(true);
+    read.mockClear(); state.grants[0]!.revokedAt = new Date().toISOString();
+    await expect(tools.call(nextRun, { operation: "batch_status", jobId: started.jobId }, AbortSignal.timeout(1000))).rejects.toMatchObject({ code: "not_granted" });
+    expect(read).not.toHaveBeenCalled(); await tools.close();
+  });
+  it("maps a profile mismatch before batch_start to a known refusal", async () => {
+    const { tools, read, fundedReady } = setup();
+    read.mockResolvedValueOnce({ emailAddress: "different@example.com" });
+    const error = await tools.call(binding, { operation: "batch_start" }, AbortSignal.timeout(1000)).catch(error => error);
+    expect(error).toBeInstanceOf(BotBrokerActionError);
+    expect(error).toMatchObject({ code: "not_granted" });
+    expect(fundedReady).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledOnce(); await tools.close();
+  });
   it("does not dispatch a parallel request before admission funding has completed", async () => {
     const { tools, fundedReady, read } = setup();
     let settle!: (ready: boolean) => void;

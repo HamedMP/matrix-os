@@ -15,7 +15,7 @@ import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runti
 import type { BatchDocument, JevInboxBatchStore } from "../../../packages/gateway/src/jev/inbox-batch-store.js";
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
-it.each(["success", "revoke", "uncertain"])("Pi worker Jev workflow preserves checkpoint certainty (%s)", async mode => {
+it.each(["success", "revoke", "uncertain", "preflight_denied"])("Pi worker Jev workflow preserves checkpoint certainty (%s)", async mode => {
   const { db, destroy } = await createBotStateDatabase();
   const run = new AbortController();
   let tools: ReturnType<typeof createBotJevTools> | undefined;
@@ -36,7 +36,7 @@ it.each(["success", "revoke", "uncertain"])("Pi worker Jev workflow preserves ch
     const registry = new BotRuntimeRegistry(); registry.bind(binding);
     const mail = new Map(["thread1", "thread2"].map(id => [id, ["INBOX", "ExistingLabel"]]));
     const read = vi.fn(async (_owner, _scope, action, params) => {
-      if (action === "get_profile") return { emailAddress: "work@example.test" };
+      if (action === "get_profile") return { emailAddress: mode === "preflight_denied" ? "different@example.test" : "work@example.test" };
       if (action === "list_threads") return params?.pageToken ? { threads: [{ id: "thread2" }] } : { threads: [{ id: "thread1" }], nextPageToken: "page2" };
       if (action === "get_thread_ids") return { id: params.threadId, historyId: "h1", messages: [{ id: params.threadId + "msg", internalDate: String(observedTime) }] };
       if (action === "get_message") return { id: params.messageId, threadId: params.messageId.replace("msg", ""), internalDate: String(observedTime),
@@ -83,6 +83,13 @@ it.each(["success", "revoke", "uncertain"])("Pi worker Jev workflow preserves ch
       const result = await tool.execute(`call_${++calls}`, args, run.signal);
       return JSON.parse(result.content[0]!.text!);
     };
+    if (mode === "preflight_denied") {
+      await expect(execute({ operation: "batch_start" })).rejects.toThrow("does not have access");
+      const checkpoints = await createBotCheckpointsRepository(db).listForRun({ ownerId: OWNER, runId: binding.runId });
+      expect(checkpoints.map(row => row.phase)).toEqual(["observed_complete"]);
+      expect(document).toBeNull(); expect(evaluate).not.toHaveBeenCalled(); expect(label).not.toHaveBeenCalled();
+      return;
+    }
     const start = await execute({ operation: "batch_start" });
     if (mode === "revoke") {
       await expect(execute({ operation: "batch_next", jobId: start.jobId, revision: start.revision })).rejects.toThrow("unavailable");

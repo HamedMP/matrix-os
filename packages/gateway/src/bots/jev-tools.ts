@@ -17,7 +17,7 @@ export type JevBotWorkflowDependencies = Pick<Parameters<typeof createJevInboxBr
   listGmailAccounts(ownerId: string): Promise<readonly GmailAccountRow[]>;
   batchStore?: JevInboxBatchStore;
 };
-type Active = { scope: HermesJevScope; binding: BotRuntimeBinding; signal: AbortSignal; abort: () => void; expiresAt: number; ready: boolean };
+type Active = { scope: HermesJevScope; binding: BotRuntimeBinding; signal: AbortSignal; abort: () => void; expiresAt: number; ready: boolean; paidReady: boolean };
 const MAX_RUNS = 128;
 const TTL = 35 * 60_000;
 const key = (owner: string, run: string) => JSON.stringify([owner, run]);
@@ -84,6 +84,22 @@ export function createBotJevTools(deps: {
   const batch = deps.workflow.batchStore ? createJevInboxBatch({ store: deps.workflow.batchStore, authorize,
     read: deps.workflow.read, process: createInboxBatchProcessor(deps.workflow), now }) : undefined;
   const broker = createJevInboxBroker({ ...deps.workflow, authorize, batch, now });
+  async function prepare(entry: Active, signal: AbortSignal, paid: boolean) {
+    entry.ready = false;
+    try {
+      if (paid) {
+        await broker.preflight(entry.binding.ownerId, entry.scope, signal);
+        if (!await deps.workflow.fundedReady(signal)) throw new BotBrokerActionError("unavailable");
+      }
+      signal.throwIfAborted(); await authorize(entry.binding.ownerId, entry.scope);
+      entry.paidReady = paid; entry.ready = true;
+    } catch (error) {
+      clear(entry.binding.ownerId, entry.binding.runId);
+      // No processing effect has started during admission; known refusals are certain.
+      if (error instanceof InboxPreviewError) throw new BotBrokerActionError(error.code === "denied" ? "not_granted" : error.code === "invalid_request" ? "invalid_arguments" : "unavailable");
+      throw error;
+    }
+  }
   return {
     async call(binding: BotRuntimeBinding, args: unknown, signal: AbortSignal): Promise<BotToolResult> {
       if (closed) throw new BotBrokerActionError("unavailable");
@@ -104,18 +120,15 @@ export function createBotJevTools(deps: {
         if (active.size >= MAX_RUNS) throw new BotBrokerActionError("budget_exhausted");
         const abort = () => clear(binding.ownerId, binding.runId);
         if (active.has(key(binding.ownerId, binding.runId))) throw new BotBrokerActionError("unavailable");
-        const admitted = { scope, binding, signal: runSignal, abort, expiresAt: now() + TTL, ready: false };
+        const admitted: Active = { scope, binding, signal: runSignal, abort, expiresAt: now() + TTL, ready: false, paidReady: false };
         active.set(key(binding.ownerId, binding.runId), admitted);
         runSignal.addEventListener("abort", abort, { once: true });
-        try {
-          await broker.preflight(binding.ownerId, scope, bounded);
-          if (!await deps.workflow.fundedReady(bounded)) throw new BotBrokerActionError("unavailable");
-          bounded.throwIfAborted(); await authorize(binding.ownerId, scope); admitted.ready = true;
-        } catch (error) { clear(binding.ownerId, binding.runId); throw error; }
+        await prepare(admitted, bounded, input.data.operation !== "batch_status");
       }
       const entry = active.get(key(binding.ownerId, binding.runId));
       if (!entry) throw new BotBrokerActionError("stale_generation");
       if (!entry.ready) throw new BotBrokerActionError("unavailable");
+      if (input.data.operation !== "batch_status" && !entry.paidReady) await prepare(entry, bounded, true);
       // Historical uncertainty belongs to the batch, not to every later tool call.
       // Snapshot server progress before a new processing operation so only newly
       // unconfirmed work marks this call's effect checkpoint unknown.

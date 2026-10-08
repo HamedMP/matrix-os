@@ -27,6 +27,8 @@ Existing read-only Inbox Bots continue resolving their saved version without new
 - Jev uses the existing Matrix AI Gateway owner funding route. Main-model credentials remain governed by the owned Pi route resolver. No Hermes Python SDK or launch check applies to a Pi run.
 - Native task execution is optional. An authenticated shared-runtime reviewer can run an authorized Pi Bot with coordinator tools without accessing the runtime owner's native provider connections. Such a run never advertises `agent.task`. Owner runs with a saved native executor still require fresh admission; revoked or unavailable saved authorization blocks the run instead of silently dropping it.
 
+Saved batch status still checks live Bot/account authority but does not require paid Jev readiness or fetch Gmail. A later processing operation must complete normal admission; known profile preflight refusals are reported as refusals, not uncertain writes.
+
 ## Authentication and resource boundaries
 
 No new public endpoint is introduced. Existing boundaries remain authoritative:
@@ -51,5 +53,7 @@ The dedicated tool exposes the existing bounded discovery, evidence selection, e
 3. Native account consent and authority UI tests across the shared renderers. Old pending choices cannot authorize a newly introduced label effect without disclosure.
 4. Production wiring test: dependencies resolve at registration, owner-funded Jev route and exact Gmail transport are retained; missing dependencies fail closed.
 5. Current-head CI, exact published Preview bundle, Electron Desktop with a newly instantiated Pi Bot and explicitly granted Gmail account. Show real Jev calls, confirmed label readback, pagination/resume and a successful persisted English conversation. Record exact runtime, app and source versions plus screenshots in ENG-118.
+
+6. Publish separate public documentation in `FinnaAI/matrix-os-site` under `content/docs/`: Pi Bot setup, narrow Gmail consent, credits, legacy read-only compatibility and honest batch results. Companion delivery: [matrix-os-site PR175](https://github.com/FinnaAI/matrix-os-site/pull/175).
 
 No production channel promotion, fleet rollout or automatic migration is part of this change. Source tests and legacy Hermes success must be reported separately from Pi live acceptance.
