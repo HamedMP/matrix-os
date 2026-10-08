@@ -21,8 +21,9 @@ const SCOPE_TYPES: Readonly<Record<AskScope, readonly ("document" | "claim")[]>>
 };
 
 /**
- * Ask: ranked search over the project's documents and claims; every hit shows where it came from. A question that
- * looks like a repo path (`packages/gateway/src/brain/why.ts`) shows that path's history instead.
+ * Search (once called Ask): ranked search over the project's documents and claims, with no model; every hit shows
+ * where it came from. A query that looks like a repo path (`packages/gateway/src/brain/why.ts`) shows that path's
+ * history instead.
  */
 export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
   const [draft, setDraft] = useState("");
@@ -48,8 +49,8 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
       <form role="search" onSubmit={submit} className="flex flex-wrap items-center gap-2">
         <BrainInput
           type="search"
-          aria-label="Ask the Company Brain"
-          placeholder="Why did we choose Postgres for app data?"
+          aria-label="Search the Company Brain"
+          placeholder="Postgres for app data"
           maxLength={BRAIN_ASK_MAX_CHARS}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -63,8 +64,8 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
         <BrainButton type="submit"><Search className="size-4" aria-hidden="true" />Search</BrainButton>
       </form>
       {asked.q === "" && (
-        <BrainEmpty title="Ask about a decision, a file, a person or a pull request.">
-          Every answer links to the pull request, commit, spec or note it came from. Type a path, like
+        <BrainEmpty title="Search for a decision, a file, a person or a pull request.">
+          Every result links to the pull request, commit, spec or note it came from. Type a path, like
           packages/gateway/src/brain/why.ts, to see its history.
         </BrainEmpty>
       )}

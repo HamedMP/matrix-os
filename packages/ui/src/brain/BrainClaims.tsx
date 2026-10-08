@@ -39,8 +39,16 @@ async function readConflicts(api: BrainShellClient, projectId: string): Promise<
   return { items: items.slice(0, BRAIN_CONFLICTS_MAX), nextCursor: cursor };
 }
 
-/** Decisions, Commitments or Risks: claims with a verbatim quote, filtered by path, flagged when they conflict. */
-export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreenProps & { readonly kind: BrainClaimKind }) {
+/** The kinds the Decisions tab switches between. */
+const SHOWN_KINDS = ["decision", "commitment", "risk"] as const;
+
+/**
+ * Decisions, Commitments or Risks: claims with a verbatim quote, filtered by path, flagged when they conflict. With
+ * `onKindChange` it shows a switch between the three (the Decisions tab).
+ */
+export function BrainClaims({ api, projectId, onOpenSources, kind, onKindChange }: BrainScreenProps & {
+  readonly kind: BrainClaimKind; readonly onKindChange?: (kind: BrainClaimKind) => void;
+}) {
   const [draft, setDraft] = useState("");
   const [path, setPath] = useState("");
   const [onlyFlagged, setOnlyFlagged] = useState(false);
@@ -59,7 +67,19 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
-      <h2 className="text-base font-semibold">{text.plural}</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="mr-auto text-base font-semibold">{text.plural}</h2>
+        {onKindChange && (
+          <div role="group" aria-label="Claim kind" className="flex flex-wrap gap-1">
+            {SHOWN_KINDS.map((value) => (
+              <BrainButton key={value} size="sm" variant={kind === value ? "secondary" : "ghost"}
+                aria-pressed={kind === value} onClick={() => onKindChange(value)}>
+                {KIND_TEXT[value].plural}
+              </BrainButton>
+            ))}
+          </div>
+        )}
+      </div>
       <form onSubmit={apply} className="flex flex-wrap items-center gap-2" aria-label={`Filter ${text.noun}`}>
         <BrainInput
           aria-label="File or folder"
