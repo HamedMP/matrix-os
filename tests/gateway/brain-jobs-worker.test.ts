@@ -221,6 +221,16 @@ describe("brain job worker", () => {
     expect(await store.get(scopeA, erased)).toBeNull();
   });
 
+  it("saves a summary of wide text that would pass the stored byte cap unclipped", async () => {
+    // 16 values of 200 three-byte characters are 9.6 KB as jsonb: the write would fail and leave the job running.
+    const jobId = await queue("sync");
+    const summary = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`text${i}`, "\u754c".repeat(200)]));
+    start({ sync: async () => ({ caughtUp: true, stopCode: null, summary }) });
+    const view = await settled(jobId);
+    expect(Object.keys(view.result ?? {}).length).toBeGreaterThan(0);
+    expect(Object.keys(view.result ?? {}).length).toBeLessThan(16);
+  });
+
   it("runs at most `concurrency` jobs at once and picks up the rest", async () => {
     let active = 0;
     let peak = 0;
@@ -443,6 +453,11 @@ describe("brain job worker helpers", () => {
     expect(clipBrainJobSummary({
       ok: "x".repeat(300), n: Number.NaN, ["a".repeat(41)]: 1, "1x": 2, flag: true, none: null,
     })).toEqual({ ok: "x".repeat(200), flag: true, none: null });
+    expect(clipBrainJobSummary({ cut: `${"x".repeat(199)}\u{1F600}`, lone: "a\ud800b", list: [1] as never }))
+      .toEqual({ cut: "x".repeat(199), lone: "a\ufffdb" });
+    const wide = clipBrainJobSummary(Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, "\u754c".repeat(300)])));
+    expect(Object.values(wide).every((value) => value === "\u754c".repeat(200))).toBe(true);
+    expect(Object.keys(wide).length).toBeLessThan(16);
     expect(brainJobErrorCode(Object.assign(new Error("e"), { code: "sync_in_progress" }))).toBe("sync_in_progress");
     expect(brainJobErrorCode(Object.assign(new Error("e"), { code: "Bad" }))).toBe("step_failed");
     expect(brainJobErrorCode({ code: 7 })).toBe("step_failed");
