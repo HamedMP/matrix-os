@@ -33,6 +33,7 @@ import {
   applyRevise,
   applyUpsert,
   loadCapacity,
+  recordSourceUpdatedAt,
   type BrainCapacityLimits,
   type BrainWriteContext,
 } from "./documents.js";
@@ -294,6 +295,7 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
           continue;
         }
         counts[result.outcome] += 1;
+        if (result.outcome === "unchanged") await recordSourceUpdatedAt(context, result.document, content.sourceUpdatedAt);
         await syncDocumentRefs(trx, key, content.documentId, refs);
       }
       for (const documentId of batch.deletions) {

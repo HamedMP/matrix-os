@@ -217,4 +217,19 @@ describe("Google Calendar source", () => {
     const gone = await calendarRun({ "google_calendar.brain_list_events": () => ({ status: "not_found" }) }, calendarConfig);
     expect(gone.result.errorCode).toBe("remote_not_found");
   });
+
+  it("saves a newer event stamp even when nothing it renders changed, so later runs rebuild nothing", async () => {
+    harness = await connectorHarness("google_calendar");
+    let updated = "2026-09-30T12:00:00.000Z";
+    const routes: Record<string, FakeRoute> = {
+      "google_calendar.brain_list_events": () => ok({ items: [event("e1", { updated, colorId: updated })] }),
+    };
+    const config = { ...calendarConfig, calendarIds: ["primary"] };
+    expect((await calendarRun(routes, config)).result.counts).toMatchObject({ read: 1, written: 1 });
+    updated = "2026-10-01T08:00:00.000Z";
+    expect((await calendarRun(routes, config)).result.counts).toMatchObject({ read: 1, written: 0, unchanged: 1 });
+    const id = connectorDocumentId("google_calendar", harness.externalRef, ["event", "primary", "e1"]);
+    expect(await harness.repository.getDocument(connectorScope, id)).toMatchObject({ revision: 1, sourceUpdatedAt: updated });
+    expect((await calendarRun(routes, config)).result).toMatchObject({ caughtUp: true, counts: { read: 0, unchanged: 0 } });
+  });
 });
