@@ -15,7 +15,8 @@ lose runs: their leases expire and another claim picks them up.
 
 In scope: `brain/jobs/` (the `brain_jobs` table, the store, the worker, the service, the step adapters over the
 existing services, the four routes), the contract part `contracts/jobs.ts` (kinds, statuses, views, the service
-shape), the wiring listed under "Wiring" below, tests `tests/gateway/brain-jobs-*.test.ts` and this spec.
+shape), the wiring listed under "Wiring" below, tests `tests/gateway/brain-jobs-*.test.ts`, this spec, and the public
+documentation PR listed under "Public documentation" below.
 
 Out of scope: a screen listing past runs and schedules that queue runs. The app's Sources screen already queues its
 syncs and claim reading as runs and polls them (spec 563).
@@ -178,6 +179,14 @@ again after its lease expires.
 Every worker write is fenced by the lease; every list, loop, timer and map is bounded and cleared; no `catch {`;
 stored codes match the code pattern; bodies are strict zod under `bodyLimit`; no new dependency and no model call
 outside the existing extract step.
+
+## Public documentation
+
+A separate PR in the private `FinnaAI/matrix-os-site` repository under `content/docs/` documents background runs for
+users: queueing a sync, claim reading, refresh or brief as a run, following it to its end, cancelling it, what
+`deduped` means, the time and step caps, and why an interrupted model extraction is never re-run on its own (run it
+again by choice). It ships with the brain stack's app screens (spec 563), carries no customer data, hostnames or
+credentials, and is a deliverable of this spec alongside the tests and the implementation.
 
 ## Deferred
 
