@@ -70,7 +70,8 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
 - Routes: `createBrainApiRoutes` mounts `createBrainSourcesRoutes` in place of the 503 placeholder.
 - Cross-package: none. Config injection: the integration caller and account lookups
   (`createBrainLateBoundIntegrations`, bound in `server.ts`; unbound, integration kinds read `not_configured`), the
-  Notes reader, the chat repository and the home path come from `startup/owner-database.ts`; no environment reads.
+  Notes reader, the chat repository, the home path and `homeOwnerIds` (only the gateway's owner reads its Notes and
+  home) come from `startup/owner-database.ts`; no environment reads.
 
 ## Failure modes
 

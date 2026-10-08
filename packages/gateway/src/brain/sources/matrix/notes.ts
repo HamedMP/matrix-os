@@ -204,6 +204,7 @@ export function createBrainMatrixNotesHandler(
   deps: BrainMatrixNotesHandlerDeps,
 ): BrainSourceKindHandler<BrainMatrixNotesSourceConfig> {
   const now = deps.now ?? (() => new Date());
+  const owners = new Set(deps.ownerIds ?? []);
   return {
     kind: KIND,
     parseConfig: parseNotesConfig,
@@ -213,13 +214,14 @@ export function createBrainMatrixNotesHandler(
       const raw = await loadMatrixConfig(deps.kysely, KIND, scope, sourceId);
       return raw === null ? null : parseNotesConfig(raw);
     },
-    async createAdapter() {
-      if (deps.notes === null) return { ok: false, code: "not_connected" };
+    async createAdapter(ownerId) {
+      if (deps.notes === null || !owners.has(ownerId)) return { ok: false, code: "not_connected" };
       return { ok: true, adapter: createMatrixNotesAdapter(deps.notes) };
     },
     viewConfig: (config) => ({ folders: [...config.folders] }),
-    async availability() {
-      return deps.notes === null ? { available: false, reason: "not_configured" } : { available: true };
+    async availability(ownerId) {
+      if (deps.notes === null || !owners.has(ownerId)) return { available: false, reason: "not_configured" };
+      return { available: true };
     },
   };
 }

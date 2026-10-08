@@ -77,7 +77,7 @@ active chats, newest first, filtered by `q`.
 | Entry point | Authentication | Authorization and scope | Errors |
 | --- | --- | --- | --- |
 | `/sources` routes (spec 560) | `authMiddleware`, `requireRequestPrincipal` | project of the principal; scope `personal:project:<id>` | `BRAIN_FEATURE_ERRORS` |
-| handlers and adapters | server code | caller-resolved scope; chats only through owner-scoped `ChatRepository` calls | result codes, `source_config_invalid` |
+| handlers and adapters | server code | caller-resolved scope; notes and files only for the handler's `ownerIds` (the gateway's owner); chats only through owner-scoped `ChatRepository` calls | result codes, `source_config_invalid` |
 
 Validation: strict zod configs and cursors, bounded lists and strings, roots refused when absolute, hidden, `..`,
 `system`, `agents`, holding `data/browser-profiles`, nested, or holding a secret-like name; run-time realpath
