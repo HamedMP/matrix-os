@@ -87,23 +87,34 @@ export async function countPending(
   return Number(rows.rows[0]!.n);
 }
 
-const ROW_TABLES = ["brain_search_documents", "brain_search_claims"] as const;
-/** Every table holding rows of a document: the vectors go with its rows, whatever the provider. */
-const DOCUMENT_TABLES = [...ROW_TABLES, "brain_search_vectors"] as const;
+/**
+ * Every table holding rows of a document: the vectors go with its rows, whatever the provider (or none). The pgvector
+ * chunks table exists only when the bootstrap found the extension.
+ */
+const DOCUMENT_TABLES = ["brain_search_documents", "brain_search_claims", "brain_search_vectors"] as const;
+const CHUNKS_TABLE = "brain_search_chunks";
+
+/** DOCUMENT_TABLES, plus the chunks table when it exists. */
+async function documentTables(db: QueryExecutorProvider): Promise<string[]> {
+  const rows = await sql<{ chunks: boolean }>`SELECT to_regclass(${CHUNKS_TABLE}) IS NOT NULL AS chunks`.execute(db);
+  return rows.rows[0]?.chunks === true ? [...DOCUMENT_TABLES, CHUNKS_TABLE] : [...DOCUMENT_TABLES];
+}
 
 /** Rows `s` of the scope (and ids) whose document `d` is tombstoned; rows of erased documents went by cascade. */
 const tombstoned = (scope: BrainScopeKey, ids: readonly string[] | null): SqlFragment => sql`
   s.owner_id = ${scope.ownerId} AND s.scope_id = ${scope.scopeId}${idsFilter("s.document_id", ids)}
   AND d.owner_id = s.owner_id AND d.scope_id = s.scope_id AND d.document_id = s.document_id AND d.deleted_at IS NOT NULL`;
 
-/** Tombstoned documents that still have document or claim rows. */
+/** Tombstoned documents that still have rows in any search table: text rows, claim rows, vectors or chunks. */
 export async function selectOrphans(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, ids: readonly string[] | null, limit: number,
 ): Promise<BrainSearchOrphan[]> {
-  const from = (table: string) => sql`SELECT s.document_id, d.incarnation, d.revision
-    FROM ${sql.table(table)} s, brain_documents d WHERE ${tombstoned(scope, ids)}`;
-  const rows = await sql<BuiltRow>`${sql.join(ROW_TABLES.map(from), sql` UNION `)}
-    ORDER BY document_id LIMIT ${limit}`.execute(db);
+  const held = (table: string) => sql`EXISTS (SELECT 1 FROM ${sql.table(table)} s
+    WHERE s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id)`;
+  const rows = await sql<BuiltRow>`SELECT d.document_id, d.incarnation, d.revision FROM brain_documents d
+    WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NOT NULL
+      ${idsFilter("d.document_id", ids)} AND (${sql.join((await documentTables(db)).map(held), sql` OR `)})
+    ORDER BY d.document_id LIMIT ${limit}`.execute(db);
   return asBuilt(rows.rows);
 }
 
@@ -132,17 +143,18 @@ export function withSearchScopeWrite<T, DB extends BrainDatabase = BrainDatabase
 }
 
 /**
- * Deletes the document rows, claim rows and array vectors of the listed documents that are still tombstoned; counts
- * the documents.
+ * Deletes the document rows, claim rows, array vectors and pgvector chunks of the listed documents that are still
+ * tombstoned, with or without a provider; counts the documents.
  */
 export async function deleteOrphans(
   trx: Transaction<BrainDatabase>, scope: BrainScopeKey, ids: readonly string[],
 ): Promise<number> {
-  const [documents, claims, vectors] = DOCUMENT_TABLES.map((table) => sql`DELETE FROM ${sql.table(table)} s
-    USING brain_documents d WHERE ${tombstoned(scope, ids)} RETURNING s.document_id`);
-  const result = await sql<{ n: number }>`WITH r AS (${documents}), c AS (${claims}), v AS (${vectors})
-    SELECT count(*)::int AS n FROM (SELECT document_id FROM r UNION SELECT document_id FROM c
-      UNION SELECT document_id FROM v) gone`.execute(trx);
+  const deletes = (await documentTables(trx)).map((table, index) => sql`${sql.raw(`t${index}`)} AS (
+    DELETE FROM ${sql.table(table)} s USING brain_documents d WHERE ${tombstoned(scope, ids)}
+    RETURNING s.document_id)`);
+  const gone = deletes.map((_, index) => sql`SELECT document_id FROM ${sql.raw(`t${index}`)}`);
+  const result = await sql<{ n: number }>`WITH ${sql.join(deletes)}
+    SELECT count(*)::int AS n FROM (${sql.join(gone, sql` UNION `)}) gone`.execute(trx);
   return Number(result.rows[0]!.n);
 }
 

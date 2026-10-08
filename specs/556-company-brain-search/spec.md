@@ -49,8 +49,9 @@ weights and seams are `contracts/search.ts`; this spec adds the rest.
   the document's claim ids, extractors, revisions and spans) or, with meaning search on, not embedded under the
   current store and provider (`embedded_provider` holds `<store>:<provider id>`, so a switch of either re-embeds).
   `freshness` counts pending documents, tombstoned ones with rows left included, up to 1,000.
-- `refresh` first drops the chunks, then the document rows, claim rows and array vectors of tombstoned documents in
-  one transaction (a failure leaves the rows for the next refresh); the array vectors go even with no provider. Text
+- `refresh` first drops the chunks, then the document rows, claim rows, array vectors and pgvector chunks of
+  tombstoned documents in one transaction (a failure leaves the rows for the next refresh); the array vectors and
+  pgvector chunks go even with no provider, and a tombstoned document is found by a row in any of those tables. Text
   pass: outdated rows in id order, 25 documents per transaction, text vectors computed by Postgres in the statement
   that records the revision. Embedding pass (meaning search on): see Embeddings. Defaults 500 documents and 20 s
   (ceilings 5,000 and 120 s), signal and budget checked before each batch and each provider call.

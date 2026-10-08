@@ -1,6 +1,6 @@
 /**
- * The derived index and hook listener "search". refresh drops the chunks, then the rows (and array vectors), of
- * tombstoned documents; rebuilds outdated text rows in id order, a batch per transaction; then (meaning search on,
+ * The derived index and hook listener "search". refresh drops the chunks, then the rows, array vectors and pgvector
+ * chunks (with or without a provider), of tombstoned documents; rebuilds outdated text rows in id order, a batch per transaction; then (meaning search on,
  * for a scope of an owner the provider serves) runs the embedding pass (embed-pass.ts) over rows that lack this
  * provider's vectors, never-tried first, of the provenances the owner allows at the refresh's start. Count, budget
  * and signal bound both passes. With meaning search on, the result also carries the pass's token use and cost, and a
@@ -85,7 +85,11 @@ export function createBrainSearchIndex(deps: BrainSearchIndexDeps): BrainDerived
     }
   }
 
-  /** Chunks go first: when that fails, the rows stay and the next refresh finds the orphans again. */
+  /**
+   * The provider's store drops its chunks first: when that fails, the rows stay and the next refresh finds the orphans
+   * again. Then one transaction deletes every search row, array vector and pgvector chunk, so the chunks of a provider
+   * since turned off go too; selectOrphans finds a tombstoned document by any of those tables.
+   */
   async function sweep(scope: BrainScopeKey, ids: readonly string[] | null, limit: number): Promise<number> {
     const batch = await read((trx) => selectOrphans(trx, scope, ids, limit));
     if (batch.length === 0) return 0;
