@@ -42,11 +42,12 @@ exists and plain `real[]` arrays otherwise. Spec: `specs/556-company-brain-searc
   threw), and each query embedding logs `query embedding spend`; counts only, never ids or text. The hook listener and
   the index catch-up drop the refresh result, so these logs are their only trace; a `search_refresh` job step's
   summary carries `embeddingTokens` and `embeddingCostMicroUsd`. No per-owner total or cap across refreshes yet.
-- Both stores skip a write unless the document is live at the input's `(incarnation, revision)`, so a slow pass
-  never replaces a newer revision's vectors, and skip a removal (no chunks) while the document is live at another
-  one, so a late sweep of a tombstone never drops the vectors of the document restored since. `nearest` returns the
-  `(incarnation, revision)` of each match, and a search keeps a meaning match only while its document is still there
-  in the search snapshot, so a result never shows text its vectors were not built from.
+- Both stores skip a write unless the document is live at the input's `(incarnation, revision)` and, when the input
+  carries a claims key, its search row still holds that claims set, so a slow pass never replaces a newer revision's or
+  claims set's vectors, and skip a removal (no chunks) while the document is live at another one, so a late sweep of a
+  tombstone never drops the vectors of the document restored since. `nearest` returns the `(incarnation, revision)` of
+  each match, and a search keeps a meaning match only while its document is still there in the search snapshot, so a
+  result never shows text its vectors were not built from.
 - `snippet-plain.ts` reads stored text as plain text for snippets (markdown markup, link URLs, HTML tags and comments
   dropped, entities decoded, whitespace collapsed) and maps a stored index onto it; `snippet.ts` matches and
   highlights on that plain text only, so a word held only by dropped markup gets no highlight.
