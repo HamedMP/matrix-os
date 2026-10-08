@@ -24,6 +24,19 @@ function api(get: ApiClient["get"]): ApiClient {
 }
 
 describe("CanonicalChatRoute", () => {
+  it("does not probe or reload the list when WorkRail owns navigation", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chats?")) throw new Error("duplicate list read");
+      if (path.startsWith("/api/chat-providers")) throw new Error("catalog unavailable");
+      return { items: [] };
+    });
+    const view = render(<CanonicalChatRoute api={api(get)} projectId={null} active
+      initialView="draft" externalNavigation fallback={<p>Legacy fallback</p>} />);
+    await waitFor(() => expect(view.container.querySelector('[data-slot="canonical-chat-workspace"]')).toBeTruthy());
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chats?"))).toEqual([]);
+  });
+
+
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();

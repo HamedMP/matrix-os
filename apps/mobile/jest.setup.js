@@ -4,15 +4,6 @@
 require("react-native-unistyles/mocks");
 require("./lib/unistyles");
 
-// Product screens intentionally mark decorative/loading elements (Spacer,
-// Skeleton, RefreshControl wrappers, etc.) accessibilityElementsHidden so
-// screen readers skip them, but still assign them testIDs for assertions.
-// RNTL v12 excludes hidden elements from queries by default -- opt back in
-// globally so tests can find those nodes without threading
-// `{ includeHiddenElements: true }` through every query call.
-const { configure } = require("@testing-library/react-native");
-configure({ defaultIncludeHiddenElements: true });
-
 jest.mock("react-native-reanimated", () => {
   const { Text, View } = require("react-native");
   const mockReact = require("react");
@@ -45,6 +36,7 @@ jest.mock("react-native-reanimated", () => {
     withRepeat: (v) => v,
     withTiming: (v) => v,
     withSpring: (v) => v,
+    cancelAnimation: jest.fn(),
   };
 });
 

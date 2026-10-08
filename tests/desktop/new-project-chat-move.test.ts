@@ -26,3 +26,25 @@ it("cancels assignment on dialog cancel or authority switch",async()=>{prepare()
 it("keeps original assignment on a failed move, clears retry request, and reports safe recovery",async()=>{prepare();update.mockRejectedValue(new Error("private database details"));await moveChatToCreatedProject(project);expect(useUi.getState().pendingProjectChatMove).toBeNull();expect(useUi.getState().projectChatMoveError).toContain("original project is preserved");expect(useUi.getState().projectChatMoveError).not.toContain("private");});
 
 it("does not clear a newer pending request when an old move settles",async()=>{prepare();let finish!:(value:unknown)=>void;update.mockImplementation(()=>new Promise(resolve=>{finish=resolve}));const first=moveChatToCreatedProject(project);createProjectForChat({...record,chat:{...record.chat,id:"chat_newer"}});finish({});await first;expect(useUi.getState().pendingProjectChatMove?.chatId).toBe("chat_newer");});
+
+it("does not create an old Chat move after its same-store navigation authority is revoked", async()=>{
+ prepare();let epoch=0;createProjectForChat(record,()=>epoch===0);epoch++;
+ await moveChatToCreatedProject(project);
+ expect(update).not.toHaveBeenCalled();
+ expect(useUi.getState().pendingProjectChatMove).toBeNull();
+});
+it("rejects a late new-Project move completion after navigation revoke and recovery", async()=>{
+ prepare();let epoch=0;createProjectForChat(record,()=>epoch===0);
+ let finish!:(value:unknown)=>void;update.mockImplementation(()=>new Promise(resolve=>{finish=resolve}));
+ const before=useUi.getState().projectChatMoveRefreshRequest;
+ const completion=moveChatToCreatedProject(project);epoch++;
+ finish({chat:{...record.chat,title:"Old moved Chat"},projectId:project.id});
+ expect(await completion).toBeUndefined();
+ expect(useUi.getState().projectChatMoveRefreshRequest).toBe(before);
+});
+it("fences the deferred new-Project opener if authority is revoked after move completion", async()=>{
+ prepare();let epoch=0;createProjectForChat(record,()=>epoch===0);useTabs.setState({tabs:[],activeTabId:null});
+ update.mockResolvedValue({chat:{...record.chat,title:"Old moved Chat"},projectId:project.id});
+ const opener=await moveChatToCreatedProject(project);expect(opener).toBeTypeOf("function");epoch++;
+ opener?.();expect(useTabs.getState().tabs).toEqual([]);
+});
