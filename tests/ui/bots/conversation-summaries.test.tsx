@@ -1,17 +1,59 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, render, renderHook, waitFor } from '@testing-library/react';
+import { createElement, startTransition, Suspense, useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ChatAgentListResponse } from '@matrix-os/contracts';
 import { saved } from '../../desktop/chat-agents-fixture.js';
 import { useBotConversationSummaries } from '../../../packages/ui/src/chat-agents/bots/use-bot-conversation-summaries.js';
 import type { ChatAgentClient } from '../../../packages/ui/src/chat-agents/client.js';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers(); });
+
+it('does not let an abandoned concurrent list render stage already visible ordinary history', async () => {
+ let now=1_000_000; vi.spyOn(Date,'now').mockImplementation(()=>now);
+ const client=fixture(); vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
+ vi.mocked(client.bots!.directBot).mockImplementation(async id=>id==='chat_bot'?'bot_one':null);
+ const initial=['chat_regular','chat_bot','chat_waiting'];
+ let change!: (ids:string[])=>void;
+ const suspended=new Promise(()=>{});
+ function Projection({ids}:{ids:string[]}) {
+  const value=useBotConversationSummaries(client,ids);
+  if(ids.includes('chat_speculative')) throw suspended;
+  return createElement('output',{'data-loading':String(value.loading)},value.unresolvedChatIds.join(','));
+ }
+ function Host() {
+  const [ids,setIds]=useState(initial); change=setIds;
+  return createElement(Suspense,{fallback:'Suspended'},createElement(Projection,{ids}));
+ }
+ const view=render(createElement(Host));
+ const output=()=>view.container.querySelector('output')!;
+ await waitFor(()=>expect(output().getAttribute('data-loading')).toBe('false'));
+ await act(async()=>startTransition(()=>change([...initial,'chat_speculative'])));
+ expect(output().textContent).toBe('');
+ const pending: Record<string,(value:string|null)=>void>={};
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_regular'?Promise.resolve(null):new Promise(resolve=>{pending[id]=resolve}));
+ now+=5*60_000;
+ await act(async()=>window.dispatchEvent(new Event('focus')));
+ await waitFor(()=>expect(pending.chat_bot).toBeTypeOf('function'));
+ await act(async()=>pending.chat_bot!('bot_one'));
+ expect(output().textContent).toBe('');
+ await act(async()=>pending.chat_waiting!(null));
+ await waitFor(()=>expect(output().getAttribute('data-loading')).toBe('false'));
+});
 function fixture() {
  return { list: vi.fn(async () => ({ enabled: true, agents: [{ id: 'bot_one', name: 'Writer', recipeRef: {} }] })), bots: {
   directChat: vi.fn(async () => 'chat_bot'), directBot: vi.fn(async (id: string) => id === 'chat_old' ? 'bot_one' : null),
   interactions: vi.fn(async () => [{ kind: 'approval', status: 'pending', expiresAt:'2099-01-01T00:00:00.000Z' }, { kind: 'approval', status: 'pending', expiresAt:'2000-01-01T00:00:00.000Z' }, { kind: 'approval', status: 'resolved' }, { kind: 'input', status: 'pending' }]),
  }} as unknown as ChatAgentClient;
 }
+it('uses authoritative navigation classification without per-Chat Bot identity requests',async()=>{
+ const client=fixture();
+ const classifications=[{chatId:'chat_regular',classification:{kind:'ordinary' as const}},{chatId:'chat_old',classification:{kind:'bot' as const,agentId:'bot_one'}}];
+ const {result}=renderHook(()=>useBotConversationSummaries(client,['chat_regular','chat_old'],true,0,classifications));
+ expect(result.current.unresolvedChatIds).toEqual([]);
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(client.bots!.directBot).not.toHaveBeenCalled();
+ expect(result.current.conversations.find(item=>item.chatId==='chat_old')?.pendingApprovalCount).toBe(1);
+});
 it('uses bindings for current and older histories and counts only pending approvals', async () => {
  const client=fixture(); const { result }=renderHook(() => useBotConversationSummaries(client,['chat_old','chat_regular']));
  await waitFor(() => expect(result.current.loading).toBe(false));
@@ -237,13 +279,16 @@ it('hydrates verified ordinary and Bot identities synchronously across a real re
  second.unmount();
 });
 
-it('publishes verified fast ordinary identities while another cold-start identity is still pending', async () => {
+it('publishes a cold ordinary cohort together and keeps it staged across unrelated rerenders', async () => {
  const client=fixture(); let finish!: (value:string|null)=>void;
  vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
  vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_slow' ? new Promise(resolve=>{finish=resolve}) : Promise.resolve(null));
- const {result}=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow']));
+ const {result,rerender}=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow']));
  expect(result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow']);
- await waitFor(()=>expect(result.current.unresolvedChatIds).toEqual(['chat_slow']));
+ await waitFor(()=>expect(finish).toBeTypeOf('function'));
+ await act(async()=>{ await Promise.resolve(); });
+ rerender();
+ expect(result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow']);
  expect(result.current.loading).toBe(true);
  await act(async()=>finish(null));
  await waitFor(()=>expect(result.current.loading).toBe(false));
@@ -260,7 +305,7 @@ it('does not transfer cached ordinary classifications into a replacement owner/r
  expect(second.result.current.unresolvedChatIds).toEqual(['chat_regular']);
 });
 
-it('keeps verified Bot reminders while progressive identities publish ahead of fresh attention', async () => {
+it('keeps verified Bot reminders when the ordinary cohort publishes ahead of fresh attention', async () => {
  const client=fixture();
  const {result,rerender}=renderHook(({ids,key})=>useBotConversationSummaries(client,ids,true,key),{initialProps:{ids:['chat_old','chat_regular'],key:0}});
  await waitFor(()=>expect(result.current.loading).toBe(false));
@@ -272,7 +317,7 @@ it('keeps verified Bot reminders while progressive identities publish ahead of f
  expect(result.current.conversations.find(item=>item.chatId==='chat_old')?.pendingApprovalCount).toBe(1);
 });
 
-it('keeps mounted verified history visible when identity TTL expires during a progressive refresh', async () => {
+it('keeps mounted verified history visible when identity TTL expires during an atomic refresh', async () => {
  const client=fixture(); vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
  const {result}=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow']));
  await waitFor(()=>expect(result.current.loading).toBe(false));
@@ -285,4 +330,80 @@ it('keeps mounted verified history visible when identity TTL expires during a pr
  expect(result.current.unresolvedChatIds).toEqual([]);
  await act(async()=>finish(null));
  await waitFor(()=>expect(result.current.loading).toBe(false));
+});
+
+it('updates discovered Bots promptly without releasing staged ordinary IDs before the cohort settles', async () => {
+ const client=fixture(); let finish!: (value:string|null)=>void;
+ vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_slow' ? new Promise(resolve=>{finish=resolve}) : Promise.resolve(id==='chat_bot'?'bot_one':null));
+ const {result,rerender}=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_bot','chat_slow']));
+ await waitFor(()=>expect(result.current.conversations[0]?.chatId).toBe('chat_bot'));
+ rerender();
+ expect(result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow']);
+ await act(async()=>finish(null));
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.unresolvedChatIds).toEqual([]);
+});
+
+it('retains warm history while multiple new ordinary IDs wait for one cohort publication', async () => {
+ const client=fixture(); let finish!: (value:string|null)=>void;
+ const {result,rerender}=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_regular','chat_old']}});
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_slow'?new Promise(resolve=>{finish=resolve}):Promise.resolve(null));
+ rerender({ids:['chat_regular','chat_old','chat_fast','chat_slow']});
+ await waitFor(()=>expect(finish).toBeTypeOf('function'));
+ rerender({ids:['chat_regular','chat_old','chat_fast','chat_slow']});
+ expect(result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow']);
+ expect(result.current.conversations.find(item=>item.chatId==='chat_old')?.pendingApprovalCount).toBe(1);
+ await act(async()=>finish(null));
+ await waitFor(()=>expect(result.current.unresolvedChatIds).toEqual([]));
+});
+
+it('ignores a superseded cohort completion and keeps a failed new identity unresolved', async () => {
+ const client=fixture(); const pending: Record<string,(value:string|null)=>void>={};
+ vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_failed'?Promise.reject(new Error('unverified')):new Promise(resolve=>{pending[id]=resolve}));
+ const {result,rerender}=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_old_cohort']}});
+ await waitFor(()=>expect(pending.chat_old_cohort).toBeTypeOf('function'));
+ rerender({ids:['chat_new_cohort','chat_failed']});
+ await waitFor(()=>expect(pending.chat_new_cohort).toBeTypeOf('function'));
+ await act(async()=>pending.chat_old_cohort!(null));
+ expect(result.current.unresolvedChatIds).toEqual(['chat_new_cohort','chat_failed']);
+ await act(async()=>pending.chat_new_cohort!(null));
+ await waitFor(()=>expect(result.current.loading).toBe(false));
+ expect(result.current.unresolvedChatIds).toEqual(['chat_failed']);
+});
+
+it('publishes a cold ordinary cohort before slow Bot approval attention completes', async () => {
+ const client=fixture(); let finish!: (value:string|null)=>void;
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_slow'?new Promise(resolve=>{finish=resolve}):Promise.resolve(null));
+ vi.mocked(client.bots!.interactions).mockImplementation(()=>new Promise(()=>{}));
+ const {result}=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow']));
+ await waitFor(()=>expect(finish).toBeTypeOf('function'));
+ expect(result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow']);
+ await act(async()=>finish(null));
+ await waitFor(()=>expect(client.bots!.interactions).toHaveBeenCalledTimes(1));
+ expect(result.current.unresolvedChatIds).toEqual([]);
+ expect(result.current.loading).toBe(true);
+ expect(result.current.conversations[0]?.chatId).toBe('chat_bot');
+});
+
+it('does not hydrate staged ordinary cache entries into a changed cohort or a real remount', async () => {
+ const client=fixture(); let finish!: (value:string|null)=>void;
+ vi.mocked(client.list).mockResolvedValue({enabled:true,agents:[]});
+ vi.mocked(client.bots!.directBot).mockImplementation(id=>id==='chat_slow'?new Promise(resolve=>{finish=resolve}):Promise.resolve(null));
+ const first=renderHook(({ids})=>useBotConversationSummaries(client,ids),{initialProps:{ids:['chat_fast','chat_slow']}});
+ await waitFor(()=>expect(finish).toBeTypeOf('function'));
+ await act(async()=>{await Promise.resolve();});
+ first.rerender({ids:['chat_fast','chat_slow','chat_new']});
+ expect(first.result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow','chat_new']);
+ first.unmount();
+ const second=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow','chat_new']));
+ expect(second.result.current.unresolvedChatIds).toEqual(['chat_fast','chat_slow','chat_new']);
+ await act(async()=>finish(null));
+ await waitFor(()=>expect(second.result.current.loading).toBe(false));
+ expect(second.result.current.unresolvedChatIds).toEqual([]);
+ second.unmount();
+ const third=renderHook(()=>useBotConversationSummaries(client,['chat_fast','chat_slow','chat_new']));
+ expect(third.result.current.unresolvedChatIds).toEqual([]);
 });

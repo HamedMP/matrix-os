@@ -34,7 +34,8 @@ export class BotClientError extends Error {
 
 function safeError(error: unknown): BotClientError {
   const status = typeof error === "object" && error !== null && "status" in error
-    && typeof error.status === "number" ? error.status : null;
+    && typeof error.status === "number" ? error.status
+    : typeof error === "object" && error !== null && "category" in error && error.category === "unauthorized" ? 401 : null;
   return new BotClientError(status, status === null ? fallbackMessage : safeMessages[status] ?? fallbackMessage);
 }
 
