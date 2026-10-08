@@ -217,16 +217,40 @@ describe("Brain chat tab", () => {
     expect(await screen.findByTestId("chat-view")).toBeTruthy();
   });
 
-  it("asks to connect a source first, or says the brain is off, before any Bot is looked up", async () => {
-    const agents = fakeAgents();
+  it("shows not running and makes no thread on a gateway with no runtime host", async () => {
+    // Such a gateway lists no brain recipe and answers 503 from the thread routes (spec 567).
+    const noBot = fakeAgents({ agents: [] });
+    noBot.bots.recipes.mockResolvedValue([]);
+    renderChat(fakeHost(noBot.client).host);
+    expect(await screen.findByText(NOT_RUNNING)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
+    cleanup();
+    const withBot = fakeAgents({ threads: async () => { throw BOTS_DOWN(); } });
+    renderChat(fakeHost(withBot.client).host);
+    expect(await screen.findByText(NOT_RUNNING)).toBeTruthy();
+    expect(screen.queryByTestId("chat-view")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(withBot.threads.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved chats open when the project has no sources or the brain is off, and blocks only a new chat", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [thread("chat_a", "Bot chat sidebar")] }) });
     renderChat(fakeHost(agents.client).host, chatApi(async () => ({ items: [], kinds: [] })));
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("chat_a");
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(await screen.findByText("Connect this project's repository in Sources first.")).toBeTruthy();
+    expect(screen.queryByTestId("chat-view")).toBeNull();
+    fireEvent.click(within(screen.getByRole("list", { name: "Past chats" })).getByRole("button", { name: /Bot chat sidebar/ }));
+    expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_a");
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Sources" }));
     expect(screen.getByRole("tab", { selected: true })).toHaveTextContent("Sources");
     cleanup();
-    renderChat(fakeHost(agents.client).host, chatApi(async () => { throw apiError("server", "brain_unavailable"); }));
+    const none = fakeAgents();
+    renderChat(fakeHost(none.client).host, chatApi(async () => { throw apiError("server", "brain_unavailable"); }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The Company Brain is off right now. Try again later.");
-    expect(agents.list).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("chat-view")).toBeNull();
+    expect(screen.getByText("No brain chats for matrix-os yet.")).toBeTruthy();
   });
 
   it("opens a draft when past chats cannot load, and retries the list", async () => {
