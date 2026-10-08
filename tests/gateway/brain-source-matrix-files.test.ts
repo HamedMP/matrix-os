@@ -123,6 +123,18 @@ describe("matrix files source", () => {
     expect(last.nextCursor).toBeNull();
   });
 
+  it("cuts long titles and labels without leaving half of an emoji", async () => {
+    // 303 characters: the last 297 start with the second half of an emoji, which the title drops.
+    const path = `docs/${"\u{1F600}".repeat(60)}/${"x".repeat(174)}.md`;
+    put(path, "emoji path");
+    const { adapter, config, externalRef, sourceId, handler } = await setup({ roots: ["docs"] });
+    expect(await runMatrixLoop(harness, sourceId, externalRef, adapter, config)).toMatchObject({ caughtUp: true, written: 1 });
+    expect(await liveTitles(harness, sourceId)).toEqual([`...${path.slice(-296)}`]);
+    // 210 characters come before the emojis, so the 297-character cut ends inside one.
+    const label = handler.identify(project, { ...config, roots: ["r".repeat(200), `s${"\u{1F600}".repeat(100)}`] }).label;
+    expect(label).toBe(`Files: ${"r".repeat(200)}, s${"\u{1F600}".repeat(43)}...`);
+  });
+
   it("ends a page at the byte budget, counting binary files too", async () => {
     for (let index = 0; index < 18; index += 1) put(`bin/f${String(index).padStart(2, "0")}.txt`, Buffer.alloc(1_000_000));
     const { adapter, config, externalRef, sourceId } = await setup({ roots: ["bin"], extensions: ["txt"], maxFileBytes: 1_048_576 });

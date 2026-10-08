@@ -102,6 +102,16 @@ describe("matrix chat source", () => {
     expect((await harness.repository.getDocument(matrixScope, busy.documentId))!.body.split("\n")).toHaveLength(2_000);
   });
 
+  it("cuts a long message without leaving half of an emoji", async () => {
+    // 8,001 characters: the 8,000-character cut ends between the two halves of the last emoji.
+    chats.set("chat_a", { title: "A", messages: [message(1, "2026-10-01T08:00:00.000Z", `a${"\u{1F600}".repeat(4_000)}`)] });
+    const { adapter, config, externalRef, sourceId } = await source(["chat_a"]);
+    expect(await runMatrixLoop(harness, sourceId, externalRef, adapter, config)).toMatchObject({ caughtUp: true, written: 1 });
+    const [doc] = (await harness.repository.listDocuments(matrixScope, { sourceId })).items;
+    expect((await harness.repository.getDocument(matrixScope, doc!.documentId))!.body)
+      .toBe(`[08:00] user: a${"\u{1F600}".repeat(3_999)}`);
+  });
+
   it("keeps a whole day when a page ends after a chat's last day and the day then grows", async () => {
     chats.set("chat_a", { title: "A", messages: [
       message(1, "2026-10-01T08:00:00.000Z", "first"), message(2, "2026-10-01T08:01:00.000Z", "second"),

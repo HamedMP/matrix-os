@@ -45,10 +45,12 @@ function extensionOf(name: string): string | null {
   return dot <= 0 ? null : name.slice(dot + 1).toLowerCase();
 }
 
-/** The path as title; a long path keeps its end, where the file name is. */
+/** The path as title; a long path keeps its end, where the file name is, without half of an emoji the cut splits. */
 function pathTitle(relativePath: string): string {
   const clean = cleanText(relativePath);
-  return clean.length <= 300 ? clean : `...${clean.slice(-297)}`;
+  if (clean.length <= 300) return clean;
+  const tail = clean.slice(-297);
+  return `...${/^[\uDC00-\uDFFF]/.test(tail) ? tail.slice(1) : tail}`;
 }
 
 /** Whether a stored path is still inside a root, of a selected extension, within the depth bound and not secret-like. */
