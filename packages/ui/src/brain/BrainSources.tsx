@@ -21,9 +21,8 @@ const SOURCE_RUN_LABELS: Readonly<Record<string, string>> = { sync: "Sync" };
 const NO_JOBS: ReadonlyMap<string, BrainJobView> = new Map();
 
 /**
- * Sources: the project's repository (sync, find claims, receipts) and every other connected source. The project's
- * recent jobs are read once on open, so a card follows a run that is still going (after a reload or a reopen); a
- * gateway without the jobs route reads as none.
+ * Sources: the repository card and every other connected source. The project's recent jobs are read once on open, so
+ * a card follows a run still going after a reload or reopen; a gateway without the jobs route reads as none.
  */
 export function BrainSources({ api, projectId }: BrainScreenProps) {
   const jobs = useBrainLoad(async () => brainActiveJobs(await api.jobs(projectId, BRAIN_JOBS_READ_MAX)), "jobs");

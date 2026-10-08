@@ -63,8 +63,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
   const busy = action.busy !== null || job.running;
   const budgetText = brainModelBudgetText(spend);
   const spendText = brainModelSpendText(spend);
-  // Runs go to the background (a job polled until it ends); a gateway without the jobs route, or without that kind
-  // of job, runs them directly as before.
+  // Runs are polled background jobs; a gateway without the jobs route or that kind of job runs them directly.
   const runInBackground = (name: RunName, direct: () => Promise<string>) => action.run(name,
     () => brainStartOrRun(api, projectId, RUN_JOBS[name], direct), (outcome) => {
     if (!outcome.started) { done(outcome.text); return; }

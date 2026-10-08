@@ -60,10 +60,7 @@ function rememberProject(projectId: string): void {
   }
 }
 
-/**
- * The Company Brain view: pick a project, then one of the seven screens. It opens on the project this browser picked
- * last when it is still listed, else the first one.
- */
+/** The Company Brain view: a project (the last pick if still listed, else the first), then one of seven screens. */
 export function BrainApp({
   api, loadProjects, initialScreen = "ask", initialProjectId, showHeading = true,
 }: BrainAppProps) {

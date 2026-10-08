@@ -24,9 +24,8 @@ const KIND_TEXT: Readonly<Record<BrainClaimKind, { readonly plural: string; read
 };
 
 /**
- * Every conflict page up to BRAIN_CONFLICTS_MAX, so a claim on a later page is flagged too; `nextCursor` is left set
- * when more were cut. A failed page fails the whole read, never a partial set of flags. One page per request, at most
- * BRAIN_CONFLICTS_MAX / BRAIN_CONFLICTS_LIMIT requests, each with the client's timeout.
+ * Every conflict page up to BRAIN_CONFLICTS_MAX, so a claim on a later page is flagged too; `nextCursor` stays set
+ * when more were cut. A failed page fails the whole read, never a partial set of flags.
  */
 async function readConflicts(api: BrainShellClient, projectId: string): Promise<BrainConflictsView> {
   const items: BrainConflictView[] = [];
