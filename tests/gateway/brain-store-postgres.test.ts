@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Kysely, PostgresDialect, type KyselyPlugin } from "kysely";
+import { Kysely, PostgresDialect, sql, type KyselyPlugin } from "kysely";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -167,5 +167,31 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     } finally {
       await readerDb.destroy();
     }
+  });
+
+  it("commits a source update with the write made alongside it, so no connection sees one without the other", async () => {
+    const { source } = await first.createSource(scopeA, natural);
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const written = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const update = first.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Renamed" }, async (trx) => {
+      await sql`INSERT INTO side_config VALUES (${source.sourceId}, 'new')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    // Until the update commits, another connection sees neither the new revision nor the write made alongside it.
+    expect((await second.getSource(scopeA, source.sourceId))?.revision).toBe(1);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM "${schema}".side_config`)).rows).toEqual([{ n: 0 }]);
+    const stale = second.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Stale" });
+    held.resolve();
+    expect(await update).toMatchObject({ revision: 2, label: "Renamed" });
+    await expect(stale).rejects.toMatchObject({ code: "conflict" });
+    expect((await admin.query(`SELECT value FROM "${schema}".side_config`)).rows).toEqual([{ value: "new" }]);
+    // A write alongside that fails takes the revision back with it.
+    await expect(first.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 2, label: "Lost" }, async () => {
+      throw new Error("config refused");
+    })).rejects.toThrow("config refused");
+    expect(await second.getSource(scopeA, source.sourceId)).toMatchObject({ revision: 2, label: "Renamed" });
   });
 });

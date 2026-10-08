@@ -194,10 +194,21 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     return listSourcePage(this.kysely, key, parseBrainInput(BrainListOptionsSchema, options));
   }
 
-  async updateSource(scope: BrainScopeKey, input: BrainUpdateSourceInput): Promise<BrainSource> {
+  /**
+   * Compare-and-set on the source revision. `alongside` runs in the same transaction once the row has moved (the
+   * sources service writes a kind's config row there), so its failure leaves the source as it was.
+   */
+  async updateSource(
+    scope: BrainScopeKey, input: BrainUpdateSourceInput,
+    alongside?: (trx: Transaction<BrainDatabase>) => Promise<void>,
+  ): Promise<BrainSource> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const patch = parseBrainInput(BrainUpdateSourceSchema, input);
-    return this.withScopeWrite(key, (trx, now) => updateSourceRow(trx, key, patch, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      const updated = await updateSourceRow(trx, key, patch, now);
+      await alongside?.(trx);
+      return updated;
+    });
   }
 
   /**
