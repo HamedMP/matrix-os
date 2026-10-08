@@ -56,7 +56,11 @@ export class PinnedDirectory {
       if (count > maxBytes) throw new GalleryError(503, "File too large");
       // Template traversal retains these buffers. A subarray would retain the
       // entire read budget for every small file instead of its actual content.
-      return Buffer.from(bytes.subarray(0, count));
+      // Avoid the global small-buffer pool: dependencies may enlarge it, which
+      // would make every retained template file hold an oversized allocation.
+      const retained = Buffer.allocUnsafeSlow(count);
+      bytes.copy(retained, 0, 0, count);
+      return retained;
     } finally { await handle.close(); }
   }
 }
