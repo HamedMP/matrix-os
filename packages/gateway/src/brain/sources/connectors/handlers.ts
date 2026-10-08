@@ -85,7 +85,7 @@ function buildHandler<TConfig extends object>(
         label: clampTitle(named.label, spec.kind, BRAIN_SOURCE_LABEL_MAX_CHARS),
       };
     },
-    saveConfig: (scope, sourceId, config) => saveConnectorConfig(deps.kysely, spec.kind, scope, sourceId, config),
+    saveConfig: (scope, sourceId, config, db = deps.kysely) => saveConnectorConfig(db, spec.kind, scope, sourceId, config),
     async loadConfig(scope, sourceId) {
       const stored = await loadConnectorConfig(deps.kysely, spec.kind, scope, sourceId);
       return stored === null ? null : parseWith(spec.schema, stored);

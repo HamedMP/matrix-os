@@ -55,9 +55,9 @@ export function createBrainGithubSourceHandler(deps: BrainGithubSourceHandlerDep
     async checkConfig(scope, config) {
       if (!await matchesGitSource(deps.kysely, scope, config.repo)) throw new BrainFeatureError("source_conflict");
     },
-    async saveConfig(scope, sourceId, config) {
-      if (!await matchesGitSource(deps.kysely, scope, config.repo)) throw new BrainFeatureError("source_conflict");
-      await saveGithubConfig(deps.kysely, scope, sourceId, config, new Date());
+    async saveConfig(scope, sourceId, config, db = deps.kysely) {
+      if (!await matchesGitSource(db, scope, config.repo)) throw new BrainFeatureError("source_conflict");
+      await saveGithubConfig(db, scope, sourceId, config, new Date());
     },
     loadConfig: (scope, sourceId) => loadGithubConfig(deps.kysely, scope, sourceId),
     async createAdapter(ownerId, project, config) {
