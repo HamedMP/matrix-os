@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,6 +13,106 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
+
+// Stand-ins for the commands the dependency watcher runs. md5sum behaves like
+// Alpine's BusyBox build (no long options such as --status) and uses the
+// one-word fixture lockfile content as its digest so the events stay readable.
+const WATCHER_STUBS: Record<string, string> = {
+  md5sum: `#!/bin/sh
+case "$1" in
+  -c)
+    [ -f "$2" ] || { echo "md5sum: can't open '$2'" >&2; exit 1; }
+    while read -r digest file; do
+      if [ "$(cat "$file" 2>/dev/null)" = "$digest" ]; then
+        echo "$file: OK"
+      else
+        echo "$file: FAILED"
+        exit 1
+      fi
+    done < "$2"
+    ;;
+  -*)
+    echo "md5sum: unrecognized option '$1'" >&2
+    exit 1
+    ;;
+  *)
+    [ -f "$1" ] || { echo "md5sum: can't open '$1'" >&2; exit 1; }
+    printf '%s  %s\\n' "$(cat "$1")" "$1"
+    ;;
+esac
+`,
+  pnpm: `#!/bin/sh
+result=$(cat "$WATCH_FIXTURE/install-result")
+printf 'install %s %s\\n' "$(cat pnpm-lock.yaml)" "$result" >> "$WATCH_FIXTURE/events.log"
+[ "$result" = ok ]
+`,
+  // Each poll records which lockfile the hash says is installed, then applies
+  // the next scripted step. Running out of steps ends the watcher loop.
+  sleep: `#!/bin/sh
+printf 'installed %s\\n' "$(cut -d' ' -f1 node_modules/.pnpm-lock-hash 2>/dev/null)" >> "$WATCH_FIXTURE/events.log"
+step=$(( $(cat "$WATCH_FIXTURE/step") + 1 ))
+printf '%s\\n' "$step" > "$WATCH_FIXTURE/step"
+line=$(sed -n "\${step}p" "$WATCH_FIXTURE/steps")
+[ -n "$line" ] || exit 1
+set -- $line
+if [ "$1" = "-" ]; then rm -f pnpm-lock.yaml; else printf '%s\\n' "$1" > pnpm-lock.yaml; fi
+printf '%s\\n' "$2" > "$WATCH_FIXTURE/install-result"
+`,
+};
+
+type WatchStep = {
+  // null removes the lockfile, like a checkout caught mid-write.
+  lockfile: string | null;
+  install: "ok" | "fail";
+};
+
+function runDependencyWatcher(installedLockfile: string, steps: WatchStep[]) {
+  const fixture = mkdtempSync(join(tmpdir(), "matrix-dep-watch-"));
+  const bin = join(fixture, "bin");
+  const entrypoint = join(fixture, "distro/docker-dev-entrypoint.sh");
+  const events = join(fixture, "events.log");
+  mkdirSync(bin);
+  mkdirSync(join(fixture, "distro"));
+  mkdirSync(join(fixture, "node_modules"));
+  // The script runs from the directory above its own, so a copy keeps the
+  // watcher away from the repository's real lockfile and node_modules.
+  copyFileSync(join(root, "distro/docker-dev-entrypoint.sh"), entrypoint);
+  writeFileSync(join(fixture, "pnpm-lock.yaml"), `${installedLockfile}\n`);
+  writeFileSync(
+    join(fixture, "node_modules/.pnpm-lock-hash"),
+    `${installedLockfile}  pnpm-lock.yaml\n`,
+  );
+  writeFileSync(join(fixture, "step"), "0\n");
+  writeFileSync(
+    join(fixture, "steps"),
+    steps.map((step) => `${step.lockfile ?? "-"} ${step.install}\n`).join(""),
+  );
+  writeFileSync(events, "");
+  for (const [command, source] of Object.entries(WATCHER_STUBS)) {
+    writeFileSync(join(bin, command), source);
+    chmodSync(join(bin, command), 0o755);
+  }
+
+  try {
+    const result = spawnSync("bash", [entrypoint, "--watch-deps"], {
+      cwd: fixture,
+      env: {
+        ...process.env,
+        WATCH_FIXTURE: fixture,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return {
+      status: result.status,
+      stderr: result.stderr,
+      events: readFileSync(events, "utf8").trim().split("\n"),
+    };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
 
 describe("Docker development entrypoint dependency layout", () => {
   it("keeps the global virtual store for host worktrees", () => {
@@ -83,15 +184,29 @@ describe("Docker development entrypoint dependency layout", () => {
   });
 
   it("retries a failed dependency install only after the lockfile changes again", () => {
-    const entrypoint = readFileSync(
-      join(root, "distro/docker-dev-entrypoint.sh"),
-      "utf8",
-    );
-    const watcher = entrypoint.slice(entrypoint.indexOf("failed_lock_hash=\"\""));
+    const run = runDependencyWatcher("lock-b", [
+      { lockfile: "lock-a", install: "fail" },
+      { lockfile: "lock-a", install: "ok" },
+      { lockfile: null, install: "ok" },
+      { lockfile: "lock-c", install: "ok" },
+      { lockfile: "lock-c", install: "ok" },
+    ]);
 
-    expect(watcher).toContain('[ -n "$current_lock_hash" ] || continue');
-    expect(watcher).toContain('[ "$current_lock_hash" = "$failed_lock_hash" ] && continue');
-    expect(watcher).toMatch(/else\s+failed_lock_hash="\$current_lock_hash"/);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    expect(run.events).toEqual([
+      "installed lock-b",
+      "install lock-a fail",
+      // The failed hash is not recorded and the same content is not retried.
+      "installed lock-b",
+      // A missing lockfile is skipped instead of installed.
+      "installed lock-b",
+      "installed lock-b",
+      "install lock-c ok",
+      // A successful install records the hash, so the next poll is a no-op.
+      "installed lock-c",
+      "installed lock-c",
+    ]);
   });
 
   it("builds the terminal runtime before starting the gateway", () => {
