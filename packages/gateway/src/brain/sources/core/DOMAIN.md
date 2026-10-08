@@ -53,9 +53,12 @@ their types and limits. `../connectors/index.ts` re-exports `runBrainSourceSync`
 - Across processes the cap is settled after the create: a source that is not among the oldest
   `BRAIN_SOURCES_PER_KIND_MAX` of its kind by (createdAt, sourceId) removes itself (`source_conflict`). Two creates in
   the same millisecond in two processes can both stay; the queue rules this out within one process.
-- Update moves the source revision (compare-and-set) before saving a new config, so a stale client cannot save over
-  a newer one. A config that changes the identity is refused; one that turns calendar event bodies off removes the
-  source (purging stored revisions) and connects it again.
+- Update moves the source revision (compare-and-set) and saves the new config in one transaction: `updateSource`
+  runs the handler's `saveConfig` inside it (the core scope lock, then the kind's own lock), so a refused or failed
+  save leaves label, status, revision and config as they were, and a client that reads the new revision always reads
+  the new config. A config that changes the identity is refused. One that turns calendar event bodies off (purging
+  stored revisions), or changes a GitHub source's `since` or `include` (its cursor was read under the old ones),
+  removes the source and connects it again, so the next sync reads from the start.
 - Remove is `deleteSource` with the client's revision, then `purgeRemoved` (given by `api/start.ts`): the search,
   graph and brief listeners drop the derived rows of the documents that removal tombstoned (in batches of 500, at most
   5,000, under 15 s) before the answer, so the removed source's people and text are gone at once. When that cannot
@@ -65,6 +68,10 @@ their types and limits. `../connectors/index.ts` re-exports `runBrainSourceSync`
   `source_kind_unsupported`), never an empty list that reads as "nothing to pick".
 - Sync is one bounded run of the runner (pages, budget and provider timeout from `BRAIN_SOURCE_SYNC_DEFAULT_LIMITS`
   or the given limits). A crash leaves at most a running receipt, closed as interrupted by the next run.
+- A git source syncs through `gitSync`, which runs the project's git source (its oldest live one). Only that source is
+  synced here: another one a registration race left is `source_conflict`, never synced under the wrong id. A paused
+  git source answers the runner's failed view (`source_inactive`, no receipt) without running, also when it is paused
+  or removed while the run starts.
 
 ## Tests
 
