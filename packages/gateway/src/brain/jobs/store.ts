@@ -212,11 +212,17 @@ export class BrainJobStore {
     return { owned: row !== undefined, cancelRequested: row?.cancel_requested === true };
   }
 
-  /** Writes the final status; false when the job is no longer this claim's (nothing is written). */
+  /**
+   * Writes the final status; false when the job is no longer this claim's (nothing is written). A cancel recorded
+   * before this write wins over the outcome (cancelled, no error code), as in release and recover: the cancel can land
+   * while the last step completes, when the worker no longer looks for it.
+   */
   async finish(job: BrainClaimedJob, workerId: string, outcome: BrainJobOutcome): Promise<boolean> {
     const now = this.now();
     const row = await this.write((trx) => trx.updateTable("brain_jobs").set({
-      status: outcome.status, error_code: outcome.errorCode, steps: outcome.steps, result: json(outcome.result),
+      status: sql`CASE WHEN cancel_requested THEN 'cancelled' ELSE ${outcome.status}::text END`,
+      error_code: sql`CASE WHEN cancel_requested THEN NULL ELSE ${outcome.errorCode}::text END`,
+      steps: outcome.steps, result: json(outcome.result),
       lease_owner: null, lease_expires_at: null, finished_at: now, updated_at: now,
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
       .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
