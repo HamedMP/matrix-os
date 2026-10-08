@@ -427,6 +427,16 @@ describe("brain job worker helpers", () => {
     });
   });
 
+  it("keeps the heartbeat well inside the lease, whichever of the two is set", () => {
+    // A lease lowered alone would otherwise expire before the default 15 s heartbeat renews it.
+    expect(resolveBrainJobWorkerLimits({ leaseMs: 10_000 })).toMatchObject({ leaseMs: 10_000, heartbeatMs: 3_333 });
+    expect(resolveBrainJobWorkerLimits({ heartbeatMs: 60_000 })).toMatchObject({ leaseMs: 60_000, heartbeatMs: 20_000 });
+    expect(resolveBrainJobWorkerLimits({ leaseMs: 30_000, heartbeatMs: 5_000 })).toMatchObject({ heartbeatMs: 5_000 });
+    expect(resolveBrainJobWorkerLimits({ leaseMs: 2 })).toMatchObject({ leaseMs: 2, heartbeatMs: 1 });
+    const ceilings = resolveBrainJobWorkerLimits(BRAIN_JOB_WORKER_CEILINGS);
+    expect(ceilings.heartbeatMs * 3).toBeLessThanOrEqual(ceilings.leaseMs);
+  });
+
   it("clips summaries and reads error codes", () => {
     const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i]));
     expect(Object.keys(clipBrainJobSummary(many))).toHaveLength(16);

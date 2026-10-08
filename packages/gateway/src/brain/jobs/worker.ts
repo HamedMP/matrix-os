@@ -41,7 +41,13 @@ type StopReason = "cancelled" | "time_limit" | "lease_lost" | "shutdown";
 type RunEnd = BrainJobOutcome | { readonly status: "release" } | { readonly status: "lost" };
 type Progress = { steps: number; result: BrainJobSummary | null };
 
-/** Every limit clamped to 1..its ceiling (stepPauseMs may be 0). */
+/** Heartbeats a lease must fit: a heartbeat that is slow or fails leaves room for the next one before the lease ends. */
+const HEARTBEATS_PER_LEASE = 3;
+
+/**
+ * Every limit clamped to 1..its ceiling (stepPauseMs may be 0), and heartbeatMs to at most a third of leaseMs, so a
+ * healthy run's lease never expires between two heartbeats.
+ */
 export function resolveBrainJobWorkerLimits(limits: Partial<BrainJobWorkerLimits> = {}): BrainJobWorkerLimits {
   const out: Record<string, number> = {};
   for (const key of Object.keys(BRAIN_JOB_WORKER_DEFAULTS) as (keyof BrainJobWorkerLimits)[]) {
@@ -50,6 +56,7 @@ export function resolveBrainJobWorkerLimits(limits: Partial<BrainJobWorkerLimits
     const whole = Number.isFinite(value) ? Math.trunc(value) : BRAIN_JOB_WORKER_DEFAULTS[key];
     out[key] = Math.max(floor, Math.min(whole, BRAIN_JOB_WORKER_CEILINGS[key]));
   }
+  out.heartbeatMs = Math.max(1, Math.min(out.heartbeatMs!, Math.floor(out.leaseMs! / HEARTBEATS_PER_LEASE)));
   return out as unknown as BrainJobWorkerLimits;
 }
 
