@@ -387,3 +387,63 @@ describe("brain model spend cap", { timeout: 60_000 }, () => {
     });
   });
 });
+
+// Two gateway processes on one database: each loads its own module graph (its own in-process guard and classes), so
+// only the running run row decides. Only a disposable server is appropriate: the test creates its own schema.
+const databaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
+describe.skipIf(!databaseUrl)("brain model spend cap across PostgreSQL connections", { timeout: 60_000 }, () => {
+  let admin: pg.Pool;
+  let schema: string;
+  let url: URL;
+  const repositories: BrainRepository[] = [];
+  beforeEach(async () => {
+    schema = `brain_${randomUUID().replaceAll("-", "")}`;
+    admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    url = new URL(databaseUrl!);
+    url.searchParams.set("options", `-c search_path=${schema}`);
+  });
+  afterEach(async () => {
+    for (const repository of repositories.splice(0)) await repository.destroy();
+    if (schema && admin) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin?.end();
+  });
+
+  /** One process: a fresh module graph with its own repository on its own pool. */
+  const startProcess = async () => {
+    vi.resetModules();
+    const { runBrainExtraction: run } = await import("../../packages/gateway/src/brain/claims/job.js");
+    const { BrainRepository: Repository } = await import("../../packages/gateway/src/brain/index.js");
+    const clock = new Date("2026-10-01T10:00:00.000Z");
+    const repository = new Repository(new PostgresDialect({
+      pool: new pg.Pool({ connectionString: url.toString(), max: 2 }) }), { now: () => clock });
+    repositories.push(repository);
+    await repository.bootstrap();
+    return { run, repository };
+  };
+
+  it("lets one process run at a time and makes the next one see its spend", async () => {
+    const processes = [await startProcess(), await startProcess()];
+    expect(processes[0]!.run).not.toBe(processes[1]!.run);
+    for (const seed of ["d0", "d1", "d2"]) {
+      await processes[0]!.repository.upsertDocument(scopeA, manualDocument(seed, { body: BODY, provenance: "git_pr" }));
+    }
+    // The run that opens first waits in its first call until the other has been turned away.
+    let release = (): void => undefined;
+    const model = costing(1_000_000, new Promise<void>((resolve) => { release = resolve; }));
+    const limits = capped(1_000_000 + WORST);
+    const extractIn = ({ run, repository }: (typeof processes)[number]) =>
+      run({ repository, scope: scopeA, extractor: MODEL, model, limits });
+    const runs = processes.map(extractIn);
+    expect(await Promise.race(runs)).toMatchObject({ errorCode: "extraction_in_progress", run: null });
+    release();
+    const results = await Promise.all(runs);
+    expect(results.map((result) => result.errorCode).sort()).toEqual(["extraction_in_progress", "spend_cap_reached"]);
+    expect(model.extract).toHaveBeenCalledTimes(2);
+    for (const process of processes) {
+      expect(await extractIn(process)).toMatchObject({ errorCode: "spend_cap_reached", spend: { spentMicroUsd: 2_000_000 } });
+    }
+    expect(model.extract).toHaveBeenCalledTimes(2);
+    expect(await processes[1]!.repository.readModelSpend(scopeA)).toMatchObject({ costMicroUsd: 2_000_000, billedRuns: 1 });
+  });
+});
