@@ -38,7 +38,7 @@ function renderApp(api = fakeBrainApi(), props: Partial<React.ComponentProps<typ
 }
 
 async function ask(text: string) {
-  fireEvent.change(await screen.findByRole("searchbox", { name: "Ask the Company Brain" }), { target: { value: text } });
+  fireEvent.change(await screen.findByRole("searchbox", { name: "Search the Company Brain" }), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
 }
 
@@ -94,22 +94,23 @@ describe("BrainApp", () => {
     expect(screen.getByRole("navigation", { name: "Company Brain" })).toBeTruthy();
   });
 
-  it("shows the projects and the seven screens, and moves between them by keyboard and click", async () => {
+  it("opens on Chat, shows the six tabs, and moves between them by keyboard and click", async () => {
     const api = renderApp();
     expect(screen.getByRole("status")).toHaveTextContent("Loading projects...");
     const tabs = await screen.findAllByRole("tab");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Ask", "Today", "Decisions", "Commitments", "Risks", "Timeline", "Sources"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
     expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", tabs[0]!.id);
-    expect(screen.getByText("Ask about a decision, a file, a person or a pull request.")).toBeTruthy();
+    // Without a chat host (an older surface) the Chat tab says so and offers Search.
+    expect(screen.getByText("Chat is not available here.")).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue(PROJECT);
     const tablist = screen.getByRole("tablist");
     const selected = () => within(tablist).getByRole("tab", { selected: true }).textContent;
-    expect(selected()).toBe("Ask");
+    expect(selected()).toBe("Chat");
     fireEvent.keyDown(tablist, { key: "ArrowLeft" });
     expect(selected()).toBe("Sources");
     fireEvent.keyDown(tablist, { key: "ArrowRight" });
-    expect(selected()).toBe("Ask");
-    expect(document.activeElement).toBe(within(tablist).getByRole("tab", { name: "Ask" }));
+    expect(selected()).toBe("Chat");
+    expect(document.activeElement).toBe(within(tablist).getByRole("tab", { name: "Chat" }));
     fireEvent.keyDown(tablist, { key: "End" });
     expect(selected()).toBe("Sources");
     fireEvent.keyDown(tablist, { key: "Home" });
@@ -117,15 +118,36 @@ describe("BrainApp", () => {
     expect(selected()).toBe("Today");
     fireEvent.keyDown(tablist, { key: "ArrowUp" });
     fireEvent.keyDown(tablist, { key: "a" });
-    expect(selected()).toBe("Ask");
-    for (const name of ["Today", "Decisions", "Commitments", "Risks", "Timeline"]) {
+    expect(selected()).toBe("Chat");
+    fireEvent.click(screen.getByRole("button", { name: "Open Search" }));
+    expect(selected()).toBe("Search");
+    for (const name of ["Today", "Timeline", "Decisions"]) {
       fireEvent.click(within(tablist).getByRole("tab", { name }));
       expect(selected()).toBe(name);
     }
+    // Decisions switches between decisions, commitments and risks.
+    const kinds = screen.getByRole("group", { name: "Claim kind" });
+    expect(within(kinds).getByRole("button", { name: "Decisions" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(kinds).getByRole("button", { name: "Risks" }));
+    expect(screen.getByRole("heading", { level: 2, name: "Risks" })).toBeTruthy();
+    fireEvent.click(within(kinds).getByRole("button", { name: "Commitments" }));
     await waitFor(() => expect(api.claims).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ kind: "risk" })));
     expect(api.claims).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ kind: "decision" }));
     expect(api.claims).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ kind: "commitment" }));
     expect(api.brief).toHaveBeenCalled();
+  });
+
+  it("still opens the old screen ids: ask is Search, commitments and risks are kinds on Decisions", async () => {
+    renderApp(fakeBrainApi(), { initialScreen: "ask" });
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent("Search");
+    cleanup();
+    const api = renderApp(fakeBrainApi(), { initialScreen: "risks" });
+    expect(await screen.findByRole("tab", { selected: true })).toHaveTextContent("Decisions");
+    expect(screen.getByRole("button", { name: "Risks" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() => expect(api.claims).toHaveBeenCalledWith(PROJECT, expect.objectContaining({ kind: "risk" })));
+    cleanup();
+    renderApp(fakeBrainApi(), { initialScreen: "commitments" });
+    expect(await screen.findByRole("button", { name: "Commitments" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("opens the picked project and falls back to the first for an unknown one", async () => {
@@ -139,7 +161,7 @@ describe("BrainApp", () => {
   });
 });
 
-describe("Ask", () => {
+describe("Search", () => {
   it("searches, shows cited hits and pages", async () => {
     const api = renderApp(fakeBrainApi({
       search: vi.fn()
@@ -152,7 +174,7 @@ describe("Ask", () => {
         ], { nextCursor: "next", freshness: { caughtUp: false, pendingDocuments: 1000, pendingCapped: true } }))
         .mockRejectedValueOnce(apiError("timeout"))
         .mockResolvedValueOnce(searchView([hit("doc-2", { cite: cite("#1", { permalink: "" }) })])),
-    }) as never);
+    }) as never, { initialScreen: "search" });
     fireEvent.click(await screen.findByRole("button", { name: "Search" }));
     expect(api.search).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("combobox", { name: "Search in" }), { target: { value: "claim" } });
@@ -177,7 +199,7 @@ describe("Ask", () => {
       search: vi.fn()
         .mockResolvedValueOnce(searchView([]))
         .mockRejectedValueOnce(apiError("server", "git_source_missing")),
-    }) as never);
+    }) as never, { initialScreen: "search" });
     await ask("nothing");
     expect(await screen.findByText('No results for "postgres".')).toBeTruthy();
     await ask("again");
