@@ -2,7 +2,7 @@ import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BRAIN_JOB_INTERRUPTED_CODE, BRAIN_JOB_LIMITS, BrainJobError, BrainJobStore, bootstrapBrainJobsDatabase, brainJobTarget,
-  type BrainJobRequest,
+  clipBrainJobSummary, type BrainJobRequest, type BrainJobSummary,
 } from "../../packages/gateway/src/brain/jobs/index.js";
 import { createBrainHarness, scopeA, scopeB, scopeOtherOwner, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
@@ -248,6 +248,28 @@ describe("brain job store", () => {
     await store.cancel(scopeA, asked.job.jobId);
     expect(await store.release(claimed, W, { steps: 0, result: null })).toBe(true);
     expect(await store.get(scopeA, asked.job.jobId)).toMatchObject({ status: "cancelled", errorCode: null });
+  });
+
+  it("stores every clipped summary within the result cap", async () => {
+    const entries = (count: number, value: (i: number) => string | number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`k${i}`, value(i)]));
+    const summaries: BrainJobSummary[] = [
+      entries(16, () => "\u754c".repeat(300)),
+      // Control characters are escaped (\u0001 is six bytes in the stored text).
+      entries(16, () => "\u0001".repeat(200)),
+      // jsonb prints every digit of a number JSON writes in exponent form (about 310 bytes each here).
+      { ...entries(4, (i) => (i % 2 === 0 ? -1.7976931348623157e308 : -5e-324)),
+        ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`t${i}`, "\u754c".repeat(200)])) },
+      { cut: `${"x".repeat(199)}\u{1F600}`, lone: "a\udc00" },
+    ];
+    for (const summary of summaries) {
+      await sql`DELETE FROM brain_jobs`.execute(harness.db);
+      await store.enqueue(scopeA, "proj_a", sync);
+      const job = (await store.claim("owner_a", W, LEASE))!;
+      const result = clipBrainJobSummary(summary);
+      expect(await store.heartbeat(job, W, LEASE, { steps: 1, result })).toEqual({ owned: true, cancelRequested: false });
+      expect((await store.get(scopeA, job.jobId))!.result).toEqual(result);
+    }
   });
 
   it("erases a scope's jobs and reads a damaged stored request as its kind's defaults", async () => {

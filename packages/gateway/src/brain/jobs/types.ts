@@ -32,8 +32,11 @@ export const BRAIN_JOB_LIMITS = {
   finishedPerScope: 50,
   /** Jobs GET .../jobs returns at most, and its default. */
   listMax: 50, listDefault: 20,
-  /** Result summary: keys, key length, string value length. */
-  summaryKeysMax: 16, summaryKeyMaxChars: 40, summaryStringMaxChars: 200,
+  /**
+   * Result summary: keys, key length, string value length, and the bytes of the stored summary (jsonb text, the SQL
+   * CHECK on result).
+   */
+  summaryKeysMax: 16, summaryKeyMaxChars: 40, summaryStringMaxChars: 200, summaryMaxBytes: 8_192,
   /** POST bodies. */
   bodyMaxBytes: BRAIN_JOB_BODY_MAX_BYTES,
 } as const;

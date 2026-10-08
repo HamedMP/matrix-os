@@ -60,15 +60,51 @@ export function resolveBrainJobWorkerLimits(limits: Partial<BrainJobWorkerLimits
   return out as unknown as BrainJobWorkerLimits;
 }
 
-/** Keeps at most summaryKeysMax entries with well-formed keys, finite numbers and clipped strings. */
+type SummaryValue = string | number | boolean | null;
+const SUMMARY_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** `text` cut to `max` UTF-16 units without splitting a pair; lone surrogates (jsonb refuses them) become U+FFFD. */
+function clipSummaryText(text: string, max: number): string {
+  const last = text.charCodeAt(max - 1);
+  const end = text.length > max && last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
+  return text.slice(0, end).toWellFormed();
+}
+
+/**
+ * Bytes of a summary value as jsonb prints it: as JSON does, except that a number in JSON's exponent form is printed
+ * with every digit (numeric: 1e+21 is 22 characters, 1.5e-7 is 0.00000015).
+ */
+function summaryValueBytes(value: SummaryValue): number {
+  const text = JSON.stringify(value);
+  const exponent = typeof value === "number" ? /^(-?)\d(?:\.(\d+))?e([+-]\d+)$/.exec(text) : null;
+  if (exponent === null) return Buffer.byteLength(text, "utf8");
+  const sign = exponent[1]!.length;
+  const digits = 1 + (exponent[2]?.length ?? 0);
+  const point = 1 + Number(exponent[3]); // digits before the decimal point
+  if (point >= digits) return sign + point;
+  return point <= 0 ? sign + 2 - point + digits : sign + digits + 1;
+}
+
+/**
+ * Keeps at most summaryKeysMax entries with well-formed keys, finite numbers and clipped well-formed strings, within
+ * summaryMaxBytes as stored; an entry that would pass the byte cap is left out, so the stored result always fits.
+ */
 export function clipBrainJobSummary(summary: BrainJobSummary): BrainJobSummary {
-  const out: Record<string, string | number | boolean | null> = {};
+  const out: Record<string, SummaryValue> = {};
   let kept = 0;
+  let bytes = 2; // "{}"
   for (const [key, value] of Object.entries(summary)) {
     if (kept >= BRAIN_JOB_LIMITS.summaryKeysMax) break;
-    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key) || key.length > BRAIN_JOB_LIMITS.summaryKeyMaxChars) continue;
+    if (!SUMMARY_KEY_PATTERN.test(key) || key.length > BRAIN_JOB_LIMITS.summaryKeyMaxChars) continue;
+    const type = typeof value;
+    if (value !== null && type !== "string" && type !== "number" && type !== "boolean") continue;
     if (typeof value === "number" && !Number.isFinite(value)) continue;
-    out[key] = typeof value === "string" ? value.slice(0, BRAIN_JOB_LIMITS.summaryStringMaxChars) : value;
+    const clipped = typeof value === "string" ? clipSummaryText(value, BRAIN_JOB_LIMITS.summaryStringMaxChars) : value;
+    // The quoted key, ": ", the value and ", " (jsonb text puts a space after both separators).
+    const size = key.length + 2 + 2 + summaryValueBytes(clipped) + 2;
+    if (bytes + size > BRAIN_JOB_LIMITS.summaryMaxBytes) continue;
+    out[key] = clipped;
+    bytes += size;
     kept += 1;
   }
   return out;
