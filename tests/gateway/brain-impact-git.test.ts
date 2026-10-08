@@ -208,6 +208,21 @@ describe("scan caps", () => {
     expect([...starved.notices]).toEqual(["read_budget_exhausted"]);
   });
 
+  it("starts no package.json read once the run budget is spent", async () => {
+    const { git, grepCalls } = fakeGit([blob("src/a.ts"), blob("package.json"), blob("a/package.json"), blob("b/package.json")]);
+    let clock = 0;
+    const reads: string[] = [];
+    (git.repo as { readBlob: unknown }).readBlob = async () => {
+      reads.push("read");
+      clock = 10;
+      return bytes("{}");
+    };
+    const result = await run(git, {}, () => clock);
+    expect(reads).toHaveLength(1);
+    expect(grepCalls).toEqual([]);
+    expect([...result.notices]).toEqual(["run_budget_exhausted"]);
+  });
+
   it("rethrows a package.json read failure that is not a parse error", async () => {
     const { git } = fakeGit([blob("src/a.ts"), blob("package.json")]);
     (git.repo as { readBlob: unknown }).readBlob = async () => {
