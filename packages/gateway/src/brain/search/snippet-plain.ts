@@ -22,7 +22,9 @@ const LINK_DESTINATION_MAX = 2_048;
 const QUOTE = /^(?:[ \t]*>[ \t]?)+/;
 const FENCE_OPEN = /^[ \t]*(`{3,}|~{3,})/;
 const FENCE_CLOSE = /^[ \t]*(`{3,}|~{3,})[ \t]*$/;
-const RULE = /^ {0,3}(?:(?:[-*_][ \t]*){3,}|=+|-+)[ \t]*$/;
+/** A rule is marks and spaces only (3+ marks, isRule counts them); no two space repeats overlap, so it stays linear. */
+const RULE_MARKS = /^ {0,3}[-*_][-*_ \t]*$/;
+const UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
 const TABLE_RULE = /^[|:\- \t]+$/;
 /** An optional link title, then the end of the text. */
 const TITLE_END = String.raw`(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$`;
@@ -65,6 +67,17 @@ const pointAt = (source: string, index: number) =>
   (index >= source.length ? " " : String.fromCodePoint(source.codePointAt(index)!));
 const pointBefore = (source: string, index: number) =>
   (index <= 0 ? " " : String.fromCodePoint(source.codePointAt(brainSafeCut(source, index - 1))!));
+
+/** A thematic break (3+ of - * _ among spaces) or a setext underline (= or - run), up to 3 spaces in. */
+function isRule(line: string): boolean {
+  if (UNDERLINE.test(line)) return true;
+  if (!RULE_MARKS.test(line)) return false;
+  let marks = 0;
+  for (let at = 0; at < line.length && marks < 3; at += 1) {
+    if (line[at] === "-" || line[at] === "*" || line[at] === "_") marks += 1;
+  }
+  return marks >= 3;
+}
 
 /** A sticky pattern's match at `at` that ends by `to`, else null. */
 function stickyMatch(pattern: RegExp, source: string, at: number, to: number): RegExpExecArray | null {
@@ -338,7 +351,7 @@ export function brainPlainText(source: string): BrainPlainText {
       const rest = source.slice(from, end);
       const open = FENCE_OPEN.exec(rest);
       if (open !== null && !(open[1]![0] === "`" && rest.includes("`", open[0].length))) fence = open[1]!;
-      else if (!(RULE.test(rest) || LINK_DEFINITION.test(rest)
+      else if (!(isRule(rest) || LINK_DEFINITION.test(rest)
         || (TABLE_RULE.test(rest) && rest.includes("|") && rest.includes("-")))) {
         const heading = HEADING.exec(rest);
         const content = from + ((heading ?? BULLET.exec(rest))?.[0].length ?? 0);
