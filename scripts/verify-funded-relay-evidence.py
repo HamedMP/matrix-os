@@ -36,7 +36,7 @@ FIXED_ENV = {
     "MATRIX_FUNDED_AI_BETAS": ",".join(("claude-code-20250219", "structured-outputs-2025-11-13",
         "interleaved-thinking-2025-05-14", "fine-grained-tool-streaming-2025-05-14",
         "thinking-token-count-2026-05-13", "context-management-2025-06-27", "prompt-caching-scope-2026-01-05",
-        "mid-conversation-system-2026-04-07", "effort-2025-11-24")),
+        "mid-conversation-system-2026-04-07", "advisor-tool-2026-03-01", "effort-2025-11-24")),
 }
 
 
