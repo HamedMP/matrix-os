@@ -125,3 +125,106 @@ export interface BrainRankedHit {
   /** Best matching chunk, vector hits only. */
   readonly chunkIndex: number | null;
 }
+
+// Meaning search internals (the public seam is contracts/search.ts).
+
+/**
+ * not_configured: no usable key. auth_failed: the key or model was refused (401, 403, 404). invalid: the input was
+ * refused (400, 413, 422). unavailable: rate limits, quota, server errors, timeouts, network, or a bad response.
+ * status and detail (the provider's error code, checked to be a short slug) are safe to log; no provider text is kept.
+ */
+export type BrainEmbeddingsErrorCode = "not_configured" | "auth_failed" | "invalid" | "unavailable";
+export class BrainEmbeddingsError extends Error {
+  readonly code: BrainEmbeddingsErrorCode; readonly status: number | null; readonly detail: string | null;
+  constructor(
+    code: BrainEmbeddingsErrorCode, options: { status?: number; detail?: string | null; cause?: unknown } = {},
+  ) {
+    super(`Embeddings ${code}`, { cause: options.cause });
+    this.name = "BrainEmbeddingsError";
+    this.code = code;
+    this.status = options.status ?? null;
+    this.detail = options.detail ?? null;
+  }
+}
+
+/** Tokens billed and their cost in micro-USD. */
+export interface BrainEmbeddingsUsage { readonly tokens: number; readonly costMicroUsd: number }
+
+/**
+ * Provenances whose documents meaning search may send to the embeddings provider when the owner names none: the
+ * project's own git history and specs. Chats, notes, files, calendar events and connector text never leave unless
+ * the owner lists their provenance in brain.embeddings.provenances.
+ */
+export const BRAIN_SEARCH_EMBED_DEFAULT_PROVENANCES: readonly string[] = ["git_pr", "git_commit", "git_spec"];
+export const BRAIN_SEARCH_EMBED_PROVENANCES_MAX = 32;
+const PROVENANCE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * A provider may carry the provenances the owner allowed it to receive at start, and a reader of the owner's current
+ * list (read again for every refresh and search, so narrowing the list takes effect without a restart; an empty list
+ * sends nothing).
+ */
+export interface BrainSearchEmbeddingsAllowance {
+  readonly provenances?: readonly string[];
+  currentProvenances?(): Promise<readonly string[]>;
+}
+
+/** The provider's allowed provenances; absent, empty, malformed or too many: the git default. */
+export function brainEmbedProvenances(provider: BrainEmbeddingsProvider & BrainSearchEmbeddingsAllowance): string[] {
+  const listed: unknown = provider.provenances;
+  const valid = Array.isArray(listed) && listed.length > 0 && listed.length <= BRAIN_SEARCH_EMBED_PROVENANCES_MAX
+    && listed.every((value) => typeof value === "string" && PROVENANCE_PATTERN.test(value));
+  return [...new Set(valid ? listed as string[] : BRAIN_SEARCH_EMBED_DEFAULT_PROVENANCES)];
+}
+
+/** The owner's current list as read now: kept when well formed (an empty list sends nothing), else nothing. */
+export function brainCurrentEmbedProvenances(listed: unknown): string[] {
+  const valid = Array.isArray(listed) && listed.length <= BRAIN_SEARCH_EMBED_PROVENANCES_MAX
+    && listed.every((value) => typeof value === "string" && PROVENANCE_PATTERN.test(value));
+  return valid ? [...new Set(listed as string[])] : [];
+}
+
+/** What a refresh embeds: the marker a row carries once embedded, and the provenances whose documents may be sent. */
+export interface BrainSearchEmbedTarget { readonly marker: string; readonly provenances: readonly string[] }
+
+/** A provider that also reports usage; embedBrainTexts prefers embedMetered when it exists. */
+export interface BrainMeteredEmbeddingsProvider extends BrainEmbeddingsProvider {
+  embedMetered(texts: readonly string[], signal: AbortSignal): Promise<{
+    readonly vectors: readonly (readonly number[])[]; readonly usage: BrainEmbeddingsUsage;
+  }>;
+}
+
+type BrainVectorReplace = Parameters<BrainVectorStore["replaceChunks"]>[1];
+/** A chunk to store; textKey (32 hex characters, from the chunk's text) lets an unchanged chunk keep its vector. */
+export type BrainSearchChunkWrite = BrainVectorReplace["chunks"][number] & { readonly textKey?: string };
+
+/**
+ * The search stores: replaceChunks also keeps text keys, and is skipped (nothing deleted or written) unless the
+ * document is live at the input's (incarnation, revision). Optional: remaining() says how many more rows fit when
+ * the listed documents' rows are replaced; storedVectors() returns kept vectors by text key.
+ */
+export interface BrainSearchVectorStore extends BrainVectorStore {
+  replaceChunks(scope: BrainScopeKey, input: Omit<BrainVectorReplace, "chunks"> & {
+    readonly chunks: readonly BrainSearchChunkWrite[];
+  }): Promise<void>;
+  remaining?(scope: BrainScopeKey, documentIds?: readonly string[]): Promise<number>;
+  /** Vectors of these documents for this provider and size, by text key, for the listed keys only. */
+  storedVectors?(scope: BrainScopeKey, input: {
+    readonly providerId: string; readonly dimensions: number; readonly documentIds: readonly string[];
+    readonly textKeys: readonly string[];
+  }): Promise<ReadonlyMap<string, readonly number[]>>;
+}
+
+/** Thrown by a capped store when a write would pass the scope's cap; the transaction leaves the old rows. */
+export class BrainSearchVectorCapError extends Error {
+  constructor() {
+    super("Vector store full");
+    this.name = "BrainSearchVectorCapError";
+  }
+}
+
+/** Embedding spend of one refresh and why it stopped early, if it did (the contract's refresh view part). */
+export type BrainSearchEmbeddingView = BrainRefreshEmbeddingView;
+
+/** The capability view, store included (present only while vector is "available"). */
+export type BrainSearchCapability = BrainSearchCapabilityView;
