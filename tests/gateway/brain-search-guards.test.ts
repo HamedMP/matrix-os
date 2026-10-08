@@ -1,6 +1,6 @@
 /**
- * Search index guards over PGlite: embedding writes and marks fenced by the claims set, and refresh limits and paid
- * usage per provider call.
+ * Search index guards over PGlite: embedding writes and marks fenced by the claims set, refresh limits and paid usage
+ * per provider call, and restored documents' claims.
  */
 import { vector as pgvector } from "@electric-sql/pglite/vector";
 import { sql, type Kysely } from "kysely";
@@ -16,6 +16,8 @@ import {
   isLiveAt, markEmbedding, rebuildDocuments, selectEmbedPending, withSearchScopeWrite,
   type BrainSearchEmbedCandidate,
 } from "../../packages/gateway/src/brain/search/index-sql.js";
+import { parseBrainSearchQuery } from "../../packages/gateway/src/brain/search/query.js";
+import { rankBrainTextHits } from "../../packages/gateway/src/brain/search/text.js";
 import type { BrainEmbeddingsUsage, BrainSearchVectorStore } from "../../packages/gateway/src/brain/search/types.js";
 import { chunkBrainBody } from "../../packages/gateway/src/brain/search/vector.js";
 import { BRAIN_CLOCK_START, brainDocumentId } from "./helpers/brain-store-helpers.js";
@@ -216,5 +218,25 @@ describe("brain search guards", { timeout: 60_000 }, () => {
       expect(writes).toEqual([]);
       expect((await harness.row("long"))!.embed_failed_at).not.toBeNull();
     });
+  });
+
+  it("never matches a restored document's claim against the text indexed from its previous life", async () => {
+    h = await createHarness();
+    const claimHits = async (q: string) => (await rankBrainTextHits(h!.db, SCOPE,
+      parseBrainSearchQuery({ q, types: ["claim"] }), { limit: 10, after: null }, false)).map((hit) => hit.type);
+    await h.sync([{ seed: "a", body: "Alpha wording stays here." }]);
+    await h.claims("a", [{ kind: "invariant", statement: "the rule holds", quote: "Alpha wording stays here." }]);
+    await h.rebuild(["a"]);
+    expect(await claimHits("alpha")).toEqual(["claim"]);
+
+    // Deleted and restored (a new incarnation); extraction finds the same claim id, with a new quote, before refresh.
+    await h.sync([], ["a"]);
+    await h.sync([{ seed: "a", body: "Gamma wording now." }]);
+    await h.claims("a", [{ kind: "invariant", statement: "the rule holds", quote: "Gamma wording now." }]);
+    expect(await claimHits("alpha")).toEqual([]);
+    expect(await claimHits("gamma")).toEqual([]);
+    await h.rebuild(["a"]);
+    expect(await claimHits("alpha")).toEqual([]);
+    expect(await claimHits("gamma")).toEqual(["claim"]);
   });
 });

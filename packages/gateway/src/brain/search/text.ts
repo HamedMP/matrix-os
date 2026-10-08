@@ -71,9 +71,10 @@ const score = (column: string, tsquery: SqlFragment) =>
   sql`round(ts_rank_cd(${sql.ref(column)}, ${tsquery}, 32)::numeric, 6)`;
 
 /**
- * Hits best first, then by hit id (bytewise), after `after` when given, at most `limit`. Document rows count while
- * their document is live in the same incarnation (a newer revision still matches its indexed text until refresh);
- * claim rows count while their claim still exists.
+ * Hits best first, then by hit id (bytewise), after `after` when given, at most `limit`. Document and claim rows count
+ * while their document is live in the same incarnation (a newer revision still matches its indexed text until
+ * refresh); claim rows also while their claim still exists. A restored document's claim of the same id never matches
+ * the text indexed from its previous life.
  */
 export async function rankBrainTextHits(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, query: BrainParsedSearchQuery,
@@ -103,7 +104,7 @@ export async function rankBrainTextHits(
       JOIN brain_claims bc ON bc.owner_id = c.owner_id AND bc.scope_id = c.scope_id AND bc.claim_id = c.claim_id
         AND bc.extractor = c.extractor
       JOIN brain_documents d ON d.owner_id = c.owner_id AND d.scope_id = c.scope_id
-        AND d.document_id = c.document_id AND d.deleted_at IS NULL
+        AND d.document_id = c.document_id AND d.deleted_at IS NULL AND d.incarnation = c.incarnation
       WHERE c.owner_id = ${scope.ownerId} AND c.scope_id = ${scope.scopeId} AND c.tsv @@ ${tsquery}${kinds}${filters}
       ORDER BY c.claim_id, (c.extractor LIKE 'model:%') DESC, score DESC, c.extractor) one`);
   }
