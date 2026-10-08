@@ -63,13 +63,15 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   a document count, a wall-clock budget and the abort signal), re-reads pending until empty, then sweeps up to 1,000
   unreferenced entities; a document refused at the entity limit stays pending while the pass goes on (one that adds
   no entity may free some), then refresh sweeps and goes on when that made room.
-  A foreign-key violation (document erased mid-write) skips that document.
+  A hook with document ids that removed any document sweeps too, 1,000 at a time until fewer go or its budget ends,
+  so a removed source's people are gone when its purge reports done. A foreign-key violation (document erased
+  mid-write) skips that document.
 - Deriving or removing a document marks outdated the documents that read it, only when what they read changed
   (children through `parent` refs, never itself; git commits whose link disagrees with a github_pr's `commit` refs),
   each set marked in one write, never a capped list. Their state row stays, so refresh re-derives a live one and
   removes a tombstoned one.
 - Acceptable orphan states: entities first and last seen only widen; an entity whose last link went stays until the
-  next refresh sweep, but `GET entities` never lists it: the list keeps only the project, document entities of live
+  next sweep, but `GET entities` never lists it: the list keeps only the project, document entities of live
   documents, files and folders a live path ref names, and entities (or keys merged into them) at an end of a link
   from a live document, so a removed source's people are not shown while they wait; dependents of a document
   derived by a hook wait for the next refresh.
