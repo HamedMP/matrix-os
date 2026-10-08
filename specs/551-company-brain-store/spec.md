@@ -576,3 +576,279 @@ are read by this module.
 - Shutdown: no timers, subscribers, or in-memory registries exist, so there is
   nothing to drain. The shared pool is closed by its owner.
 
+## Resource management
+
+Every limit lives in `types.ts` and is mirrored by a Zod schema and, where a row
+stores the value, a SQL CHECK, except the list-cursor length (256), receipt count
+max (1e9), search default limit (10) and `next_action` pattern, which are private
+to `schemas.ts`, and the bytes-per-scope ceiling (`Number.MAX_SAFE_INTEGER`),
+private to `repository.ts`.
+
+| Limit | Value | Where enforced |
+| --- | --- | --- |
+| `owner_id`, `scope_id` | 1..256 chars | Zod, CHECK |
+| title | <= 300 chars (min 1 live) | Zod, CHECK |
+| body | <= 65536 bytes; title + body <= 65536 utf8 bytes | Zod refine, CHECK on `body` and `byte_count` |
+| permalink | <= 2048 chars | Zod, CHECK |
+| source label | 1..300 chars | Zod, CHECK |
+| source `external_ref` | 1..512 chars | Zod, CHECK |
+| cursor | 1..2048 chars | Zod, CHECK |
+| receipt `next_action` | <= 500 chars, slug regex or empty | Zod, CHECK |
+| receipt counts | 0..1000000000 | Zod; CHECK >= 0 |
+| revision | 1..2147483646 | Zod, CHECK > 0 |
+| documents per scope | default 10000, ceiling 100000; tombstones count | repository, under the scope lock |
+| bytes per scope | default 256 MiB of live title + body; floor 1, no ceiling; tombstones count 0 | repository, under the scope lock |
+| revision snapshots per document id | 10, newest kept | prune in every snapshot path |
+| receipts per source | 50, newest kept; `running` never pruned | prune in `openSyncReceipt` |
+| list page | limit 1..100, default 50; `limit + 1` fetched | Zod, query |
+| receipt list | limit 1..50, default 50 | Zod, query |
+| search | query 1..500 chars; limit 1..50, default 10 | Zod, query |
+| sync batch | <= 200 upserts and <= 200 deletions | Zod |
+| document refs | <= 200 per upsert, unique `(kind, value)`; <= 10000 per batch; value 1..512 bytes, no NUL | Zod; CHECK |
+| evidence proofs | <= 100 per call | Zod |
+
+- Memory: the repository keeps no `Map`, `Set`, cache, queue, or timer. Each call
+  holds at most one page of rows or one batch of at most 400 items and 10000 refs.
+- Retention: tombstones persist until `eraseScope`; revision history and receipts
+  are bounded by count, not time. There is no background sweeper to schedule or
+  stop.
+- Files: no file I/O; nothing to clean up.
+- Third-party data flow: none. The store sends nothing to any external service.
+  Document bodies are stored as the caller supplies them; stripping secrets from
+  provider content is the adapter's job (PR 3).
+- Connections: one transaction per write call, released on return; reads use the
+  pool directly. `destroy()` honors pool ownership.
+
+## Invariants
+
+- Source of truth: the owner Postgres `brain_*` tables. The GIN index and the
+  revision snapshots are derived and bounded; there is no in-memory registry or
+  second store to reconcile.
+- Lock and transaction scope: one per-scope advisory transaction lock around
+  every write, with 5s lock and 15s statement deadlines; capacity counting, CAS,
+  cursor advance, snapshot prune, receipt prune, and erase all sit inside it. No
+  network call inside any transaction.
+- Acceptable orphan states: none across tables, because every multi-row write is
+  one transaction. Only live documents have refs: every tombstone path removes
+  them and `eraseScope` deletes them first. Within a table, tombstones, bounded
+  snapshots, and bounded receipts are the only retained history, and each is
+  pruned by count.
+- Auth source of truth: the caller-resolved `BrainScopeKey`. The repository never
+  authorizes and has no fallback path.
+- Deferred scope: routes, agent tools, sync adapters, extraction, ranking,
+  startup wiring, the `company_brain_*` bridge.
+
+## Integration test checkpoint
+
+Unit tests run on PGlite. `tests/gateway/helpers/brain-store-helpers.ts` exports
+`createBrainHarness()`, which calls `KyselyPGlite.create()`, builds
+`new BrainRepository(pglite.dialect, { ...options, now: () => clock })` (harness
+options such as `maxDocumentsPerScope` pass through) with a fixed clock
+`2026-10-01T10:00:00.000Z` that tests advance through `tick()`, runs
+`bootstrap()`, and exposes `destroy()` for `afterEach`; the same file holds the
+scope keys, document input helpers (`brainDocumentId`, `brainContent`,
+`manualDocument`), scoped row counters, `expectBrainError`, and
+`seedBrainScope`. Imports are relative (`../../packages/gateway/src/brain/index.js`
+from the test files).
+The suite is split into `tests/gateway/brain-store.test.ts` (bootstrap,
+isolation, sources, documents, revisions, proofs, search, list),
+`tests/gateway/brain-store-capacity.test.ts` (capacity, connection ownership),
+`tests/gateway/brain-store-sync.test.ts` (batches,
+receipts, erase, source-delete history purge, clock-after-lock),
+`tests/gateway/brain-store-refs.test.ts` (refs lifecycle, replay, foreign reject,
+removal on every tombstone path, bounds; added with spec 552) and
+`tests/gateway/brain-store-postgres.test.ts` (real server, optional). Each test
+file and the helper stay under 500 LOC.
+
+Required cases:
+
+1. Bootstrap twice; `information_schema.tables` for `brain_%` equals the exact
+   six; `pg_indexes` contains the five named indexes; `brain_documents_search`
+   indexdef matches `/gin.*to_tsvector\('simple'/i` and `WHERE (deleted_at IS NULL)`.
+2. Scope isolation: the same `scopeId` under two owners, and two scopes under one
+   owner, never see each other's sources, documents, cursors, or receipts;
+   `getDocument` with the wrong owner returns `null`; `updateSource` with the
+   wrong scope throws `not_found`.
+3. `createSource` idempotent on `(kind, externalRef)` (`created: false`, same
+   `sourceId`); a tombstoned source frees the natural key for a new source id;
+   `updateSource` CAS `conflict`; `deleteSource` tombstones its live documents,
+   purges their revision rows and its cursor, keeps receipts; second delete
+   `not_found`.
+4. `upsertDocument`: `created` at revision 1; identical content `unchanged` with
+   the same revision; changed body `updated` at revision 2 with a snapshot of
+   revision 1 (`change: "updated"`); `expectedRevision: 0` on a live row
+   `conflict`; `expectedRevision: 1` after it advanced `conflict`; a different
+   `sourceId` on a live row `conflict`; invalid document id, 65537-byte body,
+   301-char title, and an extra field each give `invalid`.
+5. Tombstones: `deleteDocument` returns `deletedAt` set, empty body, revision 3;
+   the row keeps its `incarnation` and `published_at`; `getDocument`,
+   `listDocuments`, `searchDocuments` exclude it; second delete `not_found`;
+   `listRevisions` newest first contains the `deleted` snapshot; recreate via
+   upsert gives `created`, revision 1, a new incarnation, `publishedAt = now`.
+6. Revision bound: 12 updates leave exactly 10 snapshots.
+7. Capacity: `maxDocumentsPerScope: 2` makes the third create `capacity`;
+   tombstones still count; `eraseScope` frees; a small `maxBytesPerScope` gives
+   `capacity`.
+8. `assertCurrent`: matching proofs pass; stale revision, wrong incarnation,
+   tombstoned, and unknown id each give `forbidden`; empty proofs pass; 101
+   proofs give `invalid`.
+9. Search: a `plainto_tsquery` match returns a summary with no `body` key,
+   excludes tombstones and other scopes, and honors the limit.
+10. `applySyncBatch`: the first batch with `expectedCursor: null` creates the
+    cursor; a replay of the same batch counts all `unchanged`; a stale
+    `expectedCursor` gives `conflict` and rolls back document writes (assert no
+    rows written); a foreign-source live document ends in `rejected`; deletions
+    of foreign or missing ids are skipped; a paused source gives `conflict`; a
+    capacity breach rolls back the whole batch.
+11. Receipts: `openSyncReceipt` records `cursorBefore`; opening again marks the
+    first `interrupted` with `finishedAt`; `closeSyncReceipt` records counts,
+    `nextAction`, `errorCode`, `cursorAfter`; closing twice `conflict`; unknown
+    receipt `not_found`; 55 closed receipts leave 50; a raw error string is
+    rejected by the `errorCode` regex with `invalid`.
+12. `eraseScope` removes every row of the scope in all six tables and leaves
+    other scopes intact.
+13. A repository built on a shared `Kysely` does not destroy it on `destroy()`.
+14. Edge cases: the repository clock is sampled after the advisory lock
+    (observed through the Kysely query log) and never on reads; a NUL in a body,
+    title, scope key, source label, `externalRef`, cursor or search query gives
+    `invalid`; padded, control-character, uppercase-scheme and un-normalized
+    permalinks give `invalid`; `nextAction: "Error: ECONNRESET at Socket"` gives
+    `invalid`; `deleteSource` closes a running receipt as `interrupted` and purges
+    a snapshot the source contributed to a document id another source later
+    revived, leaving the other source's snapshot of that id and a manual
+    document's snapshots intact; a `maxBytesPerScope` above the default is
+    honored while the document cap is still clamped to its ceiling.
+
+`tests/gateway/brain-store-postgres.test.ts`, gated by `MATRIX_TEST_POSTGRES_URL`
+with `describe.skipIf` (a disposable server; every test creates and drops its own
+schema): concurrent bootstrap from two pools, concurrent `createSource` on one
+natural key yielding one `created: true` and the same `sourceId` twice, and two
+concurrent `applySyncBatch` calls on one scope (for the first cursor and for a
+cursor advance) where exactly one commits and the other is
+`BrainStoreError("conflict")` with nothing written; the loser's retry against the
+advanced cursor then applies cleanly.
+
+End-to-end path exercised by the tests: create source, upsert documents, apply a
+sync batch that advances the cursor, open and close a receipt, prove a citation
+with `assertCurrent`, delete the source, erase the scope. There is no route or
+provider in this PR, so no live-provider integration test applies yet; PR 3 adds
+the adapter path.
+
+Commands before the PR:
+
+```bash
+bun run typecheck
+bun run check:patterns
+pnpm exec vitest run tests/gateway/brain-store.test.ts tests/gateway/brain-store-capacity.test.ts \
+  tests/gateway/brain-store-sync.test.ts
+MATRIX_TEST_POSTGRES_URL=postgresql://user:pass@localhost:5432/disposable \
+  pnpm exec vitest run tests/gateway/brain-store-postgres.test.ts
+```
+
+`bun run typecheck` and `bun run check:patterns` are the repository's mandatory
+pre-PR gates; the focused `pnpm exec vitest run <path>` form is the documented
+fallback for `bun run test -- <path>` when the file filter fans out.
+
+Manual verification scenario: point `MATRIX_TEST_POSTGRES_URL` at a local
+Postgres (the dev compose `postgres:16-alpine` from `docker-compose.dev.yml`,
+`postgresql://matrixos:matrixos@localhost:5432/matrixos`, is sufficient because
+every test creates and drops its own schema), run the optional Postgres test,
+then confirm with `psql` that `\dt brain_*` lists exactly six tables,
+`\d brain_documents` shows both tombstone CHECKs and the partial GIN index, and
+`SELECT count(*) FROM brain_sync_receipts WHERE status = 'running'` is 0 after
+the suite. No image build or compose change ships with this PR.
+
+## Code review checklist
+
+- Every statement on all six tables carries both `owner_id` and `scope_id`; no
+  helper accepts a bare id.
+- Every write method is one transaction that sets both `SET LOCAL` deadlines and
+  takes the scope advisory lock before any read or write.
+- CAS lives in the UPDATE predicate (`revision`, `cursor`, `status = 'running'`,
+  `deleted_at IS NULL`), not only in a pre-read.
+- Creates use `INSERT ... ON CONFLICT ... DO NOTHING RETURNING *` and select the
+  existing row on the duplicate path.
+- Capacity is counted inside the lock, and tombstones count toward the document
+  cap with 0 bytes.
+- Every delete path filters `deleted_at IS NULL` so repeat deletes do not refresh
+  tombstones.
+- No `catch` returns a fallback; no `.catch(() => ...)`; no Postgres error is
+  turned into a `BrainStoreError`.
+- No Zod issue, column name, or Postgres message reaches a thrown error's
+  `message`; `cause` is the only carrier.
+- No `new Map` or `new Set` registry, no timer, no file I/O, no `fetch`.
+- `destroy()` destroys only a Kysely built from a `Dialect`.
+- Schemas import `BRAIN_*` constants; the only numbers typed in `schemas.ts`
+  are the list-cursor length, receipt count max and search default limit named
+  under Resource management; every schema is `.strict()`.
+- `database.ts` contains only `bootstrapBrainDatabase`; the advisory key is
+  `hashtext(current_schema()), hashtext('brain_schema')`, never `219784012`.
+- Row-to-domain mappers return camelCase fields matching `types.ts`; timestamps
+  are ISO strings; summaries omit `body`.
+- No `as` cast skips validation of caller input.
+- Files stay within budget: every file under `brain/` <= 450 LOC; each test
+  file and the helper <= 500 LOC.
+- Nothing touches `startup/`, `server.ts`, or `onboarding/`.
+
+## Delivery and evidence
+
+- [ ] PR 1: store (`brain_*` tables, bootstrap, schemas, `BrainRepository`,
+      `DOMAIN.md`, PGlite tests and helper). `bun run typecheck`,
+      `bun run check:patterns`, and the brain test files green; PR body carries
+      the Invariants section above and the OS-view surface matrix as N/A with the
+      rationale under "Scope of this increment"; merge only after Greptile scores
+      the current head 5/5.
+- [ ] PR 2: service plus routes plus startup wiring; auth matrix with real routes;
+      HTTP error mapping; OS-view surface matrix if any UI ships.
+- [ ] PR 3: sync adapters (Slack first) writing through `applySyncBatch` with
+      receipts; provider deadlines and secret stripping.
+- [ ] PR 4: agent tools and search ranking.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): nothing is
+      user-visible in PR 1, so no docs change ships with it; the Brain docs page
+      (what a Brain is, connected sources, sync receipts, citations and currency
+      proofs, scope erase) is opened as a separate site-repository PR alongside
+      PR 2, per the constitution's documentation-driven development rule.
+
+## Relationship to existing work
+
+- `packages/gateway/src/onboarding/company-brain-readiness.ts`: an in-memory
+  readiness service used by onboarding. This spec does not extend, wrap, or read
+  it. The two share the "company brain" name and nothing else.
+- PR #2078 (`origin/codex/slack-company-brain-store`,
+  `packages/gateway/src/company-brain/`, tables `company_brain_scopes` and
+  `company_brain_documents`): an independent, parallel store. This spec uses the
+  `brain_` prefix, the `brain/` folder, a different advisory lock key, and its own
+  tests, so the two can merge in either order without conflict. The document id
+  recipe (sha256 of a stable identity tuple), the incarnation plus revision
+  proof shape, and the `verifyEvidence` contract were kept compatible on purpose.
+  A later bridge is a field mapping: `brain_documents.document_id` to
+  `company_brain_documents.source_id`, and `brain_documents.scope_id` to the
+  audience scope id in `company_brain_scopes`. No bridge code ships here.
+  Name clash to keep in mind: both folders export `BrainSourceIdSchema`,
+  `BrainCitation` and `BrainEvidenceProof`, with opposite meanings.
+  `company-brain`'s `BrainSourceIdSchema` (`^[a-f0-9]{64}$`) and its
+  `BrainCitation.sourceId` / `BrainEvidenceProof.sourceId` correspond to this
+  store's `document_id` / `BrainDocumentIdSchema`; this store's
+  `BrainSourceIdSchema` (`^src_[a-f0-9]{32}$`) names a connected source and has
+  no counterpart there. PR 2+ modules import from exactly one of the two folders
+  and alias on import if they must touch both. Renaming the three overlapping
+  names to `BrainStore*` is a follow-up if both folders merge.
+- Spec 115 (`specs/115-knowledge-engine-demo/spec.md`, only on branch
+  `origin/115-knowledge-engine-demo`; main's `specs/115-*` is a different spec):
+  this store is the durable layer that later increments need to satisfy FR-006
+  (which requires source identity, source location, observed time, permission
+  scope, and extraction state for every durable derived claim: this store keeps
+  the first four per document via `source_id`, `permalink`, `source_updated_at`,
+  `provenance`, and the scope key; extraction state and derived claims are out
+  of scope here and land with claim extraction), FR-016 (bounded sync
+  receipts with counts, progress cursors, a machine error code, and a next
+  action, with no raw provider errors), FR-018 (citations carry `documentId`,
+  `revision`, `incarnation`, and `permalink`, and `assertCurrent` proves they are
+  still current), FR-022 (deterministic cursor advance tied to its batch, content
+  hashing for deduplication, and idempotent replays), and SC-004 (replaying an
+  unchanged sync produces zero new rows and all `unchanged` outcomes).
+- Spec 124: an organization brain's `scopeId` is a collaboration scope uuid, and
+  the PR 2 caller performs the fresh membership, role, and authority checks that
+  spec 124 requires before handing the key to this store. Personal brains use a
+  `personal:<ownerId>` key that only the owner's principal resolves. The store
+  itself has no notion of organization, role, or admin.
