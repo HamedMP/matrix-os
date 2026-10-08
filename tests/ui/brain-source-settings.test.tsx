@@ -63,6 +63,35 @@ describe("Connect settings", () => {
     await closed();
   });
 
+  it("turns GitHub reviews off with pull requests, as the gateway refuses reviews alone", async () => {
+    const api = renderConnect((kind) => ({ kind, ...one("HamedMP/matrix-os") }));
+    const choose = async () => {
+      await pick("github");
+      fireEvent.click(await screen.findByRole("radio", { name: "HamedMP/matrix-os" }));
+    };
+    await choose();
+    const reviews = screen.getByRole("checkbox", { name: "Reviews" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pull requests" }));
+    expect(reviews).not.toBeChecked();
+    expect(reviews).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pull requests" }));
+    expect(reviews).toBeChecked();
+    expect(reviews).toBeEnabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pull requests" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
+      kind: "github",
+      config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: false, reviews: false, issues: true } },
+    }));
+    await closed();
+    // Reviews alone are nothing the gateway reads.
+    await choose();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Pull requests" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Issues" }));
+    expect(screen.getByText("Pick at least one.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
+  });
+
   it("sets Matrix file endings and size, and the calendar window", async () => {
     const api = renderConnect((kind) => ({ kind, ...(kind === "matrix_files" ? one("docs") : none) }));
     await pick("matrix_files");
@@ -108,6 +137,12 @@ describe("Connect settings", () => {
     expect(brainSourceSettingsProblem("google_calendar", { ...BRAIN_SOURCE_DEFAULT_SETTINGS, pastDays: 1.5 }))
       .toBe("Days run from 0 to 90.");
     expect(brainSourceSettingsProblem("matrix_chat", BRAIN_SOURCE_DEFAULT_SETTINGS)).toBeNull();
+    const noPullRequests = { ...BRAIN_SOURCE_DEFAULT_SETTINGS, include: { pullRequests: false } };
+    expect(brainSourceSettingsProblem("github", noPullRequests)).toBeNull();
+    expect(brainSourceConfig("github", ["a/b"], noPullRequests))
+      .toMatchObject({ include: { pullRequests: false, reviews: false, issues: true } });
+    expect(brainSourceSettingsProblem("github", { ...noPullRequests, include: { pullRequests: false, issues: false } }))
+      .toBe("Pick at least one.");
     // A config is only built from valid settings; bad endings fall back to the defaults.
     expect(brainSourceConfig("matrix_files", ["docs"], { ...BRAIN_SOURCE_DEFAULT_SETTINGS, extensions: "!" }))
       .toEqual({ roots: ["docs"], extensions: ["md", "txt"], maxFileBytes: 262_144 });

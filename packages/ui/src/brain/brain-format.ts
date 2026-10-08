@@ -168,6 +168,19 @@ export const BRAIN_SOURCE_INCLUDE: Partial<Record<BrainConnectableSourceKind, re
   github: [["pullRequests", "Pull requests"], ["reviews", "Reviews"], ["issues", "Issues"]],
   linear: [["issues", "Issues"], ["comments", "Comments"], ["projectUpdates", "Project updates"]],
 };
+/** An item type read only with another: a GitHub review belongs to a pull request, and the gateway refuses it alone. */
+const BRAIN_SOURCE_INCLUDE_NEEDS: Partial<Record<BrainConnectableSourceKind, Readonly<Record<string, string>>>> = {
+  github: { reviews: "pullRequests" },
+};
+/** Whether a kind reads an item type: on unless switched off, and off while the type it needs is off. */
+export function brainIncludeOn(kind: BrainConnectableSourceKind, settings: BrainSourceSettings, key: string): boolean {
+  const need = BRAIN_SOURCE_INCLUDE_NEEDS[kind]?.[key];
+  return (settings.include[key] ?? true) && (need === undefined || brainIncludeOn(kind, settings, need));
+}
+/** The item type `key` is read only with (pull requests for GitHub reviews), or undefined. */
+export function brainIncludeNeed(kind: BrainConnectableSourceKind, key: string): string | undefined {
+  return BRAIN_SOURCE_INCLUDE_NEEDS[kind]?.[key];
+}
 /** Matrix files size choices, up to the gateway ceiling (1 MiB). */
 export const BRAIN_FILE_SIZE_CHOICES = [[65_536, "64 KiB"], [262_144, "256 KiB"], [1_048_576, "1 MiB"]] as const;
 /** The gateway's calendar window bound, each way. */
@@ -187,7 +200,7 @@ const validDays = (days: number) => Number.isInteger(days) && days >= 0 && days 
 /** Null when a kind's settings can be sent; else what to fix. */
 export function brainSourceSettingsProblem(kind: BrainConnectableSourceKind, settings: BrainSourceSettings): string | null {
   const include = BRAIN_SOURCE_INCLUDE[kind];
-  if (include !== undefined && !include.some(([key]) => settings.include[key] ?? true)) return "Pick at least one.";
+  if (include !== undefined && !include.some(([key]) => brainIncludeOn(kind, settings, key))) return "Pick at least one.";
   if (kind === "matrix_files" && brainExtensions(settings.extensions) === null) return "List 1 to 32 file endings.";
   if (kind === "google_calendar" && !(validDays(settings.pastDays) && validDays(settings.futureDays))) {
     return `Days run from 0 to ${BRAIN_CALENDAR_DAYS_MAX}.`;
@@ -202,7 +215,7 @@ export function brainSourceSettingsProblem(kind: BrainConnectableSourceKind, set
  */
 export function brainSourceConfig(kind: BrainConnectableSourceKind, ids: readonly string[],
   settings: BrainSourceSettings = BRAIN_SOURCE_DEFAULT_SETTINGS): unknown {
-  const on = (key: string) => settings.include[key] ?? true;
+  const on = (key: string) => brainIncludeOn(kind, settings, key);
   switch (kind) {
     case "github": return {
       repo: ids[0], mode: "integration", include: { pullRequests: on("pullRequests"), reviews: on("reviews"), issues: on("issues") },
