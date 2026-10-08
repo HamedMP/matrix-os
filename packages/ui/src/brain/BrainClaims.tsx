@@ -6,8 +6,10 @@ import { BRAIN_TONE } from "./brain-tone.js";
 import {
   BrainBadge, BrainCite, BrainEmpty, BrainLoadMore, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
-import { BRAIN_CONFLICTS_LIMIT, brainConflictFlags } from "./brain-format.js";
-import type { BrainClaimKind, BrainClaimView } from "./brain-types.js";
+import { BRAIN_CONFLICTS_LIMIT, BRAIN_CONFLICTS_MAX, brainConflictFlags } from "./brain-format.js";
+import type {
+  BrainClaimKind, BrainClaimView, BrainConflictView, BrainConflictsView, BrainShellClient,
+} from "./brain-types.js";
 import { useBrainLoad, useBrainPages } from "./use-brain-load.js";
 
 const PAGE_SIZE = 50;
@@ -21,6 +23,23 @@ const KIND_TEXT: Readonly<Record<BrainClaimKind, { readonly plural: string; read
   risk: { plural: "Risks", noun: "risks" },
 };
 
+/**
+ * Every conflict page up to BRAIN_CONFLICTS_MAX, so a claim on a later page is flagged too; `nextCursor` is left set
+ * when more were cut. A failed page fails the whole read, never a partial set of flags. One page per request, at most
+ * BRAIN_CONFLICTS_MAX / BRAIN_CONFLICTS_LIMIT requests, each with the client's timeout.
+ */
+async function readConflicts(api: BrainShellClient, projectId: string): Promise<BrainConflictsView> {
+  const items: BrainConflictView[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < BRAIN_CONFLICTS_MAX / BRAIN_CONFLICTS_LIMIT; page += 1) {
+    const view = await api.conflicts(projectId, { limit: BRAIN_CONFLICTS_LIMIT, ...(cursor === null ? {} : { cursor }) });
+    items.push(...view.items);
+    cursor = view.nextCursor;
+    if (cursor === null || items.length >= BRAIN_CONFLICTS_MAX) break;
+  }
+  return { items: items.slice(0, BRAIN_CONFLICTS_MAX), nextCursor: cursor };
+}
+
 /** Decisions, Commitments or Risks: claims with a verbatim quote, filtered by path, flagged when they conflict. */
 export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreenProps & { readonly kind: BrainClaimKind }) {
   const [draft, setDraft] = useState("");
@@ -29,7 +48,7 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
   const pages = useBrainPages(
     (cursor) => api.claims(projectId, { kind, path, limit: PAGE_SIZE, cursor }), `${kind}:${path}`,
   );
-  const conflicts = useBrainLoad(() => api.conflicts(projectId, { limit: BRAIN_CONFLICTS_LIMIT }), "conflicts");
+  const conflicts = useBrainLoad(() => readConflicts(api, projectId), "conflicts");
   const flags = brainConflictFlags(conflicts.state);
   const text = KIND_TEXT[kind];
   const shown = onlyFlagged ? pages.items.filter((claim) => flags.has(claim.claimId)) : pages.items;
@@ -59,6 +78,11 @@ export function BrainClaims({ api, projectId, onOpenSources, kind }: BrainScreen
       </form>
       {conflicts.state.status === "error" && (
         <p role="status" className="text-xs text-muted-foreground">Conflict checks are not available right now.</p>
+      )}
+      {conflicts.state.status === "ready" && conflicts.state.data.nextCursor !== null && (
+        <p role="status" className="text-xs text-muted-foreground">
+          Only the first {BRAIN_CONFLICTS_MAX} conflicts are checked.
+        </p>
       )}
       <BrainView state={pages.first.state} label={`Loading ${text.noun}...`} onRetry={pages.first.reload}
         onOpenSources={onOpenSources}>
