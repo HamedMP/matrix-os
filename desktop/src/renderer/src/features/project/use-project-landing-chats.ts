@@ -30,11 +30,11 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     records: CanonicalChatRecord[];
     error: boolean;
   } | null>(null);
-  useEffect(() => {
-    // A same-store revocation must also discard retained cards and identity data.
-    setSnapshot(previous => previous && previous.client === client && previous.scope === scope
-      && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous : null);
-  }, [client, scope, authorityEpoch, projectKey]);
+  // Discard old authority synchronously before children can retain its cards.
+  if (snapshot && (snapshot.client !== client || snapshot.scope !== scope
+    || snapshot.authorityEpoch !== authorityEpoch || snapshot.projectKey !== projectKey)) {
+    setSnapshot(null);
+  }
   useEffect(() => {
     if (!client || !active || !scoped) return;
     let current = true;
