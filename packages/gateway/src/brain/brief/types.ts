@@ -24,6 +24,8 @@ export const BRIEF_SCANS = {
   specDocuments: 500,
   shippedPullRequests: 5_000, staleItems: 500, commitments: 500, sources: 100, attentionConflicts: 10,
   attentionStale: 20, summaryLines: 200, summaryInputChars: 40_000,
+  /** Pages of open-commitment rows read past ones stated done (so at most 10 x 500 rows). */
+  commitmentPages: 10,
 } as const;
 
 /** A stored brief built before its window ended is rebuilt on read once the window ended or it is this old. */

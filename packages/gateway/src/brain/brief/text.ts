@@ -115,6 +115,8 @@ const DEFERRED_WORDS = new RegExp(String.raw`\b(?:deferred|defer|postponed?|late
 const STATE_WORD = new RegExp(`^(?:${[DONE_WORDS, DEFERRED_WORDS].map((r) => r.source.slice(5, -3)).join("|")})$`);
 const DONE_STATUSES = ["done", "completed", "closed", "merged", "resolved", "shipped"];
 const DEFERRED_STATUSES = ["backlog", "deferred", "later", "paused", "on_hold", "postponed"];
+/** Status refs that close a commitment (done or canceled). */
+export const CLOSED_STATUSES: readonly string[] = [...DONE_STATUSES, "canceled", "cancelled"];
 
 const DONE_WORD = new RegExp(DONE_WORDS.source, "g");
 /** Earlier in a done word's clause, these make it planned work: future, need, intent and condition words. */
@@ -163,11 +165,6 @@ export function commitmentState(statement: string, status: string | null): Commi
 /** Content words of a commitment without its state words, for matching what two commitments talk about. */
 export function commitmentWords(statement: string): readonly string[] {
   return shapeOf(statement).all.filter((word) => !STATE_WORD.test(word));
-}
-
-/** A status ref that closes a commitment (done or canceled). */
-export function closedStatus(status: string | null): boolean {
-  return status !== null && (DONE_STATUSES.includes(status) || status === "canceled" || status === "cancelled");
 }
 
 const STATUS_LINE = /^[ \t]*(?:[-*>][ \t]*)?(?:\*\*)?status(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*(.*)$/i;
