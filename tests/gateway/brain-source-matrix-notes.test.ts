@@ -110,23 +110,32 @@ describe("matrix notes source", () => {
       .toEqual(tags.slice(0, 20).map((value) => ({ kind: "label", value })));
   });
 
-  it("drops the tag cut off by the tags read bound instead of reading a part of it", async () => {
+  it("keeps a tag cut off by the tags read bound out of the refs but still selects the note by it", async () => {
     await createNotesTable();
     // 2,005 characters: the reader keeps 2,000, which ends inside "project".
     await addNote(1, { title: "Cut tags", content: "body", tags: `${"ab,".repeat(666)}project` });
+    await addNote(2, { title: "Spaced", content: "body", tags: "Misc #Project" });
     const reader = createBrainMatrixNotesReader(appDb);
-    const [row] = await reader.listNotes("", 10);
-    const [key] = await reader.listNoteKeys("", 10);
+    const [row] = await reader.listNotes("", 10, ["pr"]);
     expect(noteTags(row!.tags)).toEqual(["ab"]);
-    expect(noteTags(key!.tags)).toEqual(["ab"]);
+    expect(row!.selected).toBe(false);
+    expect(await reader.listNoteKeys("", 10, ["project"])).toEqual([
+      { id: uuid(1), selected: true }, { id: uuid(2), selected: true },
+    ]);
+    const adapter = createMatrixNotesAdapter(reader);
     const sourceId = await createMatrixSource(harness, "matrix_notes", "matrix_notes");
-    expect(await runMatrixLoop(harness, sourceId, "matrix_notes", createMatrixNotesAdapter(reader), { folders: ["pr"] }))
-      .toMatchObject({ caughtUp: true, written: 0, skipped: 1 });
+    expect(await runMatrixLoop(harness, sourceId, "matrix_notes", adapter, { folders: ["pr"] }))
+      .toMatchObject({ caughtUp: true, written: 0, skipped: 2 });
+    // "project" lies past the read bound of note 1: the scan keeps the note and the sweep does not tombstone it.
+    expect(await runMatrixLoop(harness, sourceId, "matrix_notes", adapter, { folders: ["project"] }))
+      .toMatchObject({ caughtUp: true, written: 2, deleted: 0 });
+    const doc = (await harness.repository.listDocuments(matrixScope, { sourceId })).items.find((d) => d.title === "Cut tags")!;
+    expect(await harness.repository.listDocumentRefs(matrixScope, doc.documentId)).toEqual([{ kind: "label", value: "ab" }]);
   });
 
   it("treats a missing notes table as no notes and reports reader failures as provider_unavailable", async () => {
     const reader = createBrainMatrixNotesReader(appDb);
-    expect(await reader.listNotes("", 10)).toEqual([]);
+    expect(await reader.listNotes("", 10, [])).toEqual([]);
     const sourceId = await createMatrixSource(harness, "matrix_notes", "matrix_notes");
     const adapter = createMatrixNotesAdapter(reader);
     expect(await runMatrixLoop(harness, sourceId, "matrix_notes", adapter, { folders: [] })).toMatchObject({ caughtUp: true, pages: 2 });
@@ -144,10 +153,10 @@ describe("matrix notes source", () => {
     const reader = createBrainMatrixNotesReader({
       raw: async () => ({ rows: [{ id: "bad id", tags: 1 }, { id: "n1", title: 5, content: null, tags: 7, updated_at: "nope" }] }),
     });
-    expect(await reader.listNotes("", 5)).toEqual([
-      { id: "n1", title: null, content: null, contentCut: false, tags: null, updatedAt: "1970-01-01T00:00:00.000Z" },
+    expect(await reader.listNotes("", 5, [])).toEqual([
+      { id: "n1", title: null, content: null, contentCut: false, tags: null, selected: false, updatedAt: "1970-01-01T00:00:00.000Z" },
     ]);
-    expect(await reader.listNoteKeys("", 5)).toEqual([{ id: "n1", tags: null }]);
+    expect(await reader.listNoteKeys("", 5, [])).toEqual([{ id: "n1", selected: false }]);
     const adapter = createMatrixNotesAdapter(reader);
     const context = {
       scope: matrixScope, sourceId: "src_" + "0".repeat(32), externalRef: "matrix_notes", config: { folders: [] },
@@ -166,7 +175,7 @@ describe("matrix notes source", () => {
   });
 
   it("stops the key scan at the pass cap", async () => {
-    const keys = Array.from({ length: 1_000 }, (_, index) => ({ id: `n${String(index).padStart(5, "0")}`, tags: null }));
+    const keys = Array.from({ length: 1_000 }, (_, index) => ({ id: `n${String(index).padStart(5, "0")}`, selected: false }));
     const reader: BrainMatrixNotesReader = { listNotes: async () => [], listNoteKeys: vi.fn(async () => keys) };
     const adapter = createMatrixNotesAdapter(reader);
     const result = await adapter.readPage({
