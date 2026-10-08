@@ -4,7 +4,7 @@ import { createBrainLinearHandler } from "../../packages/gateway/src/brain/sourc
 import { linearIssueDocumentId } from "../../packages/gateway/src/brain/sources/connectors/linear.js";
 import { connectorDocumentId } from "../../packages/gateway/src/brain/sources/connectors/text.js";
 import {
-  connectorHarness, connectorProject, connectorScope, fakeIntegrations, ok, type ConnectorHarness,
+  connectorHarness, connectorProject, connectorScope, fakeIntegrations, ok, recordingHooks, type ConnectorHarness,
   type FakeRoute,
 } from "./helpers/brain-source-connectors-fakes.js";
 
@@ -134,6 +134,35 @@ describe("Linear source", () => {
     const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
     expect(await run(issuesOnly, { refsPerPage: 2_000 })).toMatchObject({ status: "succeeded", counts: { written: 76 } });
     expect(integrations.calls[0]!.params.first).toBe(76);
+  });
+
+  it("announces a page whose only change is a document's refs, such as a new assignee", async () => {
+    harness = await connectorHarness("linear");
+    let assignee = "user-2";
+    const handler = createBrainLinearHandler({
+      kysely: harness.db, providerTimeoutMs: 10_000, isConnected: async () => true,
+      integrations: fakeIntegrations({ "linear.brain_issues": () => connection("issues", [issue(1, { assignee: { id: assignee } })]) }),
+    });
+    const hooks = recordingHooks();
+    const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
+    const run = async () => {
+      const created = await handler.createAdapter("owner_a", connectorProject, issuesOnly);
+      if (!created.ok) throw new Error(created.code);
+      hooks.events.length = 0;
+      return harness!.sync(created.adapter, issuesOnly, { hooks });
+    };
+    const id = linearIssueDocumentId(harness.externalRef, "issue-1");
+    expect(await run()).toMatchObject({ status: "succeeded", counts: { written: 1 } });
+    expect(hooks.events.map((event) => event.type === "documents_changed" && event.documentIds)).toEqual([[id]]);
+    expect((await run()).counts).toMatchObject({ written: 0, unchanged: 1 });
+    expect(hooks.events).toEqual([]);
+
+    assignee = "user-4";
+    expect((await run()).counts).toMatchObject({ written: 0, unchanged: 1 });
+    expect(await harness.repository.listDocumentRefs(connectorScope, id)).toContainEqual({ kind: "assignee", value: "linear:user-4" });
+    expect(hooks.events).toEqual([expect.objectContaining({
+      type: "documents_changed", scope: connectorScope, sourceId: harness.sourceId, documentIds: [id],
+    })]);
   });
 
   it("maps provider outcomes, refused output and timeouts to stable codes", async () => {
