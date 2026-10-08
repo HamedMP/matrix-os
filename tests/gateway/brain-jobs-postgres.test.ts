@@ -50,6 +50,31 @@ describe.skipIf(!databaseUrl)("brain jobs across independent PostgreSQL connecti
     expect(new Set(taken).size).toBe(scopes.length);
   });
 
+  it("answers a slot taken after its check as a dedupe through ON CONFLICT, not a unique violation", async () => {
+    // A writer outside the owner lock holds the slot in an open transaction: the store's check cannot see the row, so
+    // its insert waits on brain_jobs_active_slot and must turn into a dedupe once that row commits.
+    const other = new pg.Client({ connectionString: databaseUrl });
+    await other.connect();
+    const taken = `job_${"a".repeat(32)}`;
+    try {
+      await other.query("BEGIN");
+      await other.query(`INSERT INTO "${schema}".brain_jobs (owner_id, scope_id, job_id, project_id, kind, target,
+        request, status, created_at, updated_at) VALUES ($1, $2, $3, 'proj_0', 'sync', 'git', '{"kind":"sync"}',
+        'queued', now(), now())`, [scopes[0]!.ownerId, scopes[0]!.scopeId, taken]);
+      const enqueued = stores[0]!.enqueue(scopes[0]!, "proj_0", { kind: "sync" });
+      await vi.waitFor(async () => {
+        const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE 'insert into "brain_jobs"%'`);
+        expect(rows[0]!.n).toBeGreaterThan(0);
+      }, { timeout: 5_000, interval: 10 });
+      await other.query("COMMIT");
+      const result = await enqueued;
+      expect(result).toMatchObject({ created: false, job: { jobId: taken, status: "queued" } });
+    } finally {
+      await other.end();
+    }
+  });
+
   it("runs every job exactly once with two workers", async () => {
     for (const scope of scopes) await stores[0]!.enqueue(scope, "proj", { kind: "graph_refresh" });
     const runs = new Map<string, number>();
