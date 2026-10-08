@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import { createPlatformDb, type PlatformDb } from "../platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "../integrations/pipedream.js";
 import { createIntegrationRoutes } from "../integrations/routes.js";
+import { INTEGRATION_DEV_PRINCIPAL_ID, integrationClerkIdForPrincipal } from "../integrations/principal-identity.js";
 import { discoverComponentKeys } from "../integrations/registry.js";
 import type { ServerMessage } from "../server/types.js";
 import { getOptionalRequestPrincipal, readPrincipalRuntimeConfig } from "../request-principal.js";
@@ -119,8 +120,10 @@ export function createIntegrationUserResolver(
     }
 
     // ---- Path C: dev env-var fallback ----
-    const handle = env.MATRIX_HANDLE ?? "default";
-    const clerkId = env.MATRIX_CLERK_USER_ID ?? handle;
+    // The dev principal's Clerk id, by the same rule the Company Brain reads connections with (Path B returned in
+    // production, so the rule maps the dev principal here).
+    const handle = env.MATRIX_HANDLE ?? INTEGRATION_DEV_PRINCIPAL_ID;
+    const clerkId = integrationClerkIdForPrincipal(INTEGRATION_DEV_PRINCIPAL_ID, env);
     const containerId = env.HOSTNAME ?? "local";
 
     // Atomic upsert eliminates the SELECT->INSERT TOCTOU race that could
