@@ -105,11 +105,15 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
   const maxEntities = Math.min(deps.maxEntities ?? BRAIN_GRAPH_LIMITS.entitiesPerScope,
     BRAIN_GRAPH_LIMITS.entitiesPerScope);
 
-  /** Derives ids in order until done, aborted, out of budget or out of entity capacity (checked under the lock). */
+  /**
+   * Derives ids in order until done, aborted, out of budget or out of entity capacity (each document checks the limit
+   * under the graph lock). attempted counts the ids tried, the one refused for capacity included.
+   */
   async function run(scope: BrainScopeKey, ids: readonly string[], deadline: number, signal: AbortSignal) {
-    let [processed, removed] = [0, 0];
+    let [processed, removed, attempted] = [0, 0, 0];
     for (const id of ids) {
-      if (signal.aborted || clock() >= deadline) return { processed, removed, stopped: true, full: false };
+      if (signal.aborted || clock() >= deadline) return { processed, removed, attempted, stopped: true, full: false };
+      attempted += 1;
       let outcome: string;
       try {
         outcome = await withGraphLock(db, scope, (trx) => deriveGraphDocument(trx, scope, id, now(), maxEntities));
@@ -119,12 +123,12 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       }
       if (outcome === "capacity") {
         console.warn("[brain-graph] entity limit reached; derivation stopped");
-        return { processed, removed, stopped: true, full: true };
+        return { processed, removed, attempted, stopped: true, full: true };
       }
       if (outcome === "derived") processed += 1;
       if (outcome === "removed") removed += 1;
     }
-    return { processed, removed, stopped: false, full: false };
+    return { processed, removed, attempted, stopped: false, full: false };
   }
 
   /** A failed lookup (a deleted project, a lookup outage) keeps the stored name; logged by error name. */
@@ -164,9 +168,13 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
     for (let ids = await pendingIds(db, scope, documents); ids.length > 0;
       ids = attempted < documents ? await pendingIds(db, scope, documents - attempted) : []) {
       const pass = await run(scope, ids, deadline, signal);
-      [processed, removed, attempted] = [processed + pass.processed, removed + pass.removed, attempted + ids.length];
-      if (pass.full) return { processed, removed, caughtUp: false, stopReason: "graph_capacity" };
-      if (pass.stopped) return { processed, removed, caughtUp: false };
+      [processed, removed] = [processed + pass.processed, removed + pass.removed];
+      attempted += pass.attempted;
+      // Entities nothing references any more may be what fills the scope: sweep them, and go on when that made room.
+      if (pass.full && await sweep(scope) === 0) {
+        return { processed, removed, caughtUp: false, stopReason: "graph_capacity" };
+      }
+      if (pass.stopped && !pass.full) return { processed, removed, caughtUp: false };
     }
     const swept = await sweep(scope);
     return { processed, removed, caughtUp: swept < BRAIN_GRAPH_ORPHAN_SWEEP_MAX && (await freshness(scope)).caughtUp };
