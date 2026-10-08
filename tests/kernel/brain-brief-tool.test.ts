@@ -22,7 +22,10 @@ describe("brain_brief answer text", () => {
     const text = formatBrainBrief(view({
       summary: { text: "Quiet\nday." },
       sections: {
-        attention: [line({ text: "Spec 544 is still Draft", cites: [CITE, { ...CITE, kind: "spec", label: "specs/544-x" }] })],
+        attention: [line({ text: "Spec 544 is still Draft", cites: [
+          CITE, { ...CITE, kind: "spec", label: "specs/544-x", permalink: "https://x.test/specs/544" },
+          { ...CITE, kind: "commit", label: "abc1234", permalink: "" },
+        ] })],
         decisions: [line()],
         commitments: [line({ text: "Write docs", due: "2026-10-03", assignee: "ana", cites: [{ ...CITE, permalink: "" }] })],
         risks: [line({ text: "Costs may rise", severity: "high", cites: [] })],
@@ -39,6 +42,8 @@ describe("brain_brief answer text", () => {
       "1. Spec 544 is still Draft - PR #7 (2026-10-01)",
       "   https://x.test/pull/7",
       "   Also: Spec specs/544-x (2026-10-01)",
+      "         https://x.test/specs/544",
+      "   Also: Commit abc1234 (2026-10-01)",
       "Decisions:",
       "2. Decided to bound lists - PR #7 (2026-10-01)",
       "   https://x.test/pull/7",

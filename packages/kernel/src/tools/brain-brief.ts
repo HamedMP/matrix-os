@@ -31,7 +31,8 @@ function lineExtras(line: BrainBriefLine): string {
 function lineBlock(line: BrainBriefLine, position: number): string {
   const [primary, ...others] = line.cites;
   const source = primary ? ` - ${citeShort(primary)}` : "";
-  const also = others.length > 0 ? [`   Also: ${others.map(citeShort).join(", ")}`] : [];
+  // Each other source keeps its own link (a conflict cites both sides), aligned under its label.
+  const also = others.flatMap((cite) => [`   Also: ${citeShort(cite)}`, ...permalinkLines(cite, "         ")]);
   return [
     `${position}. ${oneLine(line.text)}${lineExtras(line)}${source}`,
     ...(primary ? permalinkLines(primary) : []),
