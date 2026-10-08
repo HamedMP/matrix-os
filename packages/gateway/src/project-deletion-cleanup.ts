@@ -7,6 +7,8 @@ import type { createWorktreeManager } from "./worktree-manager.js";
 import type { createReviewStore } from "./review-store.js";
 
 export type ProjectChatCleanup = (project: ProjectConfig, principal: RequestPrincipal) => Promise<void>;
+/** Erases the project's Company Brain scope; throws so the deletion is retried. */
+export type ProjectBrainCleanup = (project: ProjectConfig, principal: RequestPrincipal) => Promise<void>;
 
 /** Shared by the request and restart recovery paths. The project tombstone fences new work. */
 export function createProjectDeletionCleanup(options: {
@@ -15,10 +17,13 @@ export function createProjectDeletionCleanup(options: {
   threads?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
   terminal: Pick<TerminalRuntimeSocketClient, "listWorkspaces" | "deleteWorkspace" | "deleteTab">;
   deleteChats?: ProjectChatCleanup;
+  eraseBrain?: ProjectBrainCleanup;
   worktrees?: Pick<ReturnType<typeof createWorktreeManager>, "listWorktrees" | "deleteWorktree">;
 }) {
   return async (project: ProjectConfig, principal: RequestPrincipal): Promise<void> => {
     await options.deleteChats?.(project, principal);
+    // Before the worktree step, whose already-removed path returns early.
+    await options.eraseBrain?.(project, principal);
     if (options.threads) {
       const result = await options.threads.deleteProjectThreads(principal, project.slug);
       if (!result.ok) throw new Error("Project thread cleanup failed");
