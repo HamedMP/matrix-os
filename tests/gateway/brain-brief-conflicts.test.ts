@@ -211,3 +211,48 @@ describe("conflicts", () => {
     expect(await computeStale(db, BRIEF_SCOPE, options)).toEqual([]);
   });
 });
+
+describe("stale", () => {
+  it("lists outdated claims, overdue commitments and failing or old sources", async () => {
+    const git = await fx.source();
+    const old = await fx.source("linear", "Quiet");
+    await fx.sync(git, [
+      { seed: "a", body: "Decision: v1." },
+      { seed: "b", body: "Next steps: write docs.\nNext steps: ship it." },
+      { seed: "c", body: "Next steps: closed item.", refs: [{ kind: "status", value: "canceled" }] },
+    ]);
+    await fx.extract("a", [{ kind: "decision", statement: "v1." }]);
+    await fx.extract("b", [
+      { kind: "commitment", statement: "write docs.", fields: { due: "2026-09-30", assignee: "Bo" } },
+      { kind: "commitment", statement: "ship it.", fields: { due: "2026-10-30" } },
+    ]);
+    await fx.extract("c", [{ kind: "commitment", statement: "closed item.", fields: { due: "2026-09-01" } }]);
+    await fx.receipt(git, "failed", "source_auth_failed");
+    fx.harness.tick(1_000);
+    await fx.receipt(old, "succeeded");
+    fx.harness.tick(1_000);
+    await fx.sync(git, [{ seed: "a", body: "Decision: v2." }]);
+    fx.harness.tick(8 * 86_400_000);
+    const view = await stale();
+    expect(view.items.map((item) => [item.kind, item.since])).toEqual([
+      ["source_sync_old", "2026-10-08T10:00:01.000Z"],
+      ["source_sync_old", "2026-10-08T10:00:00.000Z"],
+      ["claim_outdated", "2026-10-01T10:00:02.000Z"],
+      ["source_failing", "2026-10-01T10:00:00.000Z"],
+      ["commitment_overdue", "2026-10-01T00:00:00.000Z"],
+    ]);
+    expect(view.items.map((item) => item.text)).toEqual([
+      "Source \"Quiet\" has not synced successfully since 2026-10-01",
+      "Source \"matrix-os\" has not synced successfully since it was connected on 2026-10-01",
+      "Outdated decision: v1.",
+      "Source \"matrix-os\" failed its last sync (source_auth_failed)",
+      "Overdue (due 2026-09-30): write docs.",
+    ]);
+    expect(view.items[2]).toMatchObject({ cite: { label: "Title a", revision: 2 }, sourceId: null });
+    expect(view.items[0]).toMatchObject({ cite: null, claimId: null });
+    expect((await stale({ kinds: ["commitment_overdue"], limit: 1 })).items).toHaveLength(1);
+    expect((await stale({ kinds: ["claim_outdated"] })).items.map((item) => item.kind)).toEqual(["claim_outdated"]);
+    const page = await stale({ limit: 2 });
+    expect((await stale({ limit: 2, cursor: page.nextCursor! })).items).toHaveLength(2);
+  });
+});
