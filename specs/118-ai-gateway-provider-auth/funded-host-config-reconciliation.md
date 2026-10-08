@@ -61,9 +61,27 @@ redirects and response bodies above their fixed limits. The archive is at most
 2 GiB; hashing the held snapshot and decoding its at-most-20-GiB expansion each
 have a separate 180-second deadline. Temporary snapshots are removed on exit.
 
-Fixed systemd-control subprocesses have 10-second timeouts. The maintenance unit
-has `TimeoutStartSec=180`; its protected stop-post recovery restores recorded
-service state. Platform admission sets a local PostgreSQL statement timeout of
+Fixed systemd-control subprocesses have 10-second timeouts. Maintenance queues
+recorded active-service stops with `--no-block`, then independently verifies all
+are inactive or failed within a 120-second monotonic stop window before any
+post-stop configuration inspection or write. This includes Terminal/Scope stop contracts
+of 30/45 seconds and the manager default stop deadline with query margin.
+An unfinished or failed stop retains the resume journal and performs no repair
+write. Restoration first waits for recorded deactivation to finish within its
+existing deadline, then queues fixed startup jobs with `--no-block`, verifies the
+recorded non-Sync services,
+then queues and verifies Sync last. Each restoration attempt has a 1,600-second
+monotonic deadline, with at most one final 10-second subprocess overrun; this
+covers the existing sequential Terminal and Gateway 720-second startup contracts.
+The maintenance unit retains `TimeoutStartSec=180`: interruption releases the
+restoration lock and its protected `ExecStopPost` retries from retained evidence
+under `TimeoutStopSec=1800`. Failed or unconfirmed restoration retains the exact
+resume journal; another maintenance invocation cannot replace it. Installed
+inactive or failed Gateway dependencies defer repair before any service stop or
+configuration change, while absent optional units remain absent. A successful
+stop-post restoration can leave the interrupted oneshot marked failed; acceptance
+requires independent service, configuration and journal readback rather than the
+oneshot status alone. Platform admission sets a local PostgreSQL statement timeout of
 5 seconds inside the read-only transaction. That bounds individual statements,
 not pool acquisition or the complete transaction. Response validity remains at
 most 30 seconds and is rechecked at host admission before any mutation.
@@ -75,7 +93,8 @@ provenance; do not call this a cryptographic signature. Inherit the existing
 owner-admin updater trust explicitly. Install privileged new payload beneath
 root-owned nonwritable ancestors, using fixed system Python, no-follow file
 descriptors, bounded same-descriptor archive snapshot/hash, narrowly selected
-regular members, atomic replacement and directory fsync. Do not execute
+regular members (plus an optional exact zero-size `funded-host-config/`
+directory header), atomic replacement and directory fsync. Do not execute
 unverified extracted Python as root or trust mutable application imports.
 
 Release metadata may contain a presigned object-store capability. Fetch the
@@ -109,8 +128,11 @@ and defers while an unresolved marker owns rollback authority; unchanged applied
 remains a no-op, and legacy journal IDs remain valid. Reject a changing apply with
 existing evidence before stopping services. Failure cleanup may roll back only the
 invocation-owned attempt, rechecking its exact ID under the protected lock. A validated explicit request
-for the installed version may retry maintenance after an unchanged trigger claim;
-missing/inconsistent protected receipts defer, while passive, repair and signal
+for the installed version may retry maintenance after an unchanged trigger claim.
+Retire only the consumed version/channel identities without deleting concurrent
+replacement targets or the prepared release marker, so a later trigger-only
+apply can still install its pending newer release. Missing/inconsistent
+protected receipts defer, while passive, repair and signal
 paths never schedule this retry. An explicit
 request for the saved prior repair release first schedules guarded field rollback
 on the currently installed protected component; it retains that component,
@@ -140,6 +162,20 @@ resuming recorded services. A subsequent successful update installs its matching
 protected receipt; the complete applied journal remains valid independently of
 the version originally used to name that journal. This exception makes no
 network admission request, financial change, field write or evidence deletion.
+
+A same-version artifact reinstall has separate recovery authority. Before any
+service stop, its root-sealed transaction pins the exact protected receipt and
+pre-swap app directory identity. The protected program independently hashes a
+held staged archive against the receipt checksum and verifies the enclosed
+component and unit bytes against their pinned digests. Version equality alone
+neither admits this path nor proves that the transaction committed. Staging
+cleaners retain only the exact archive referenced by a pending sealed same-version
+transaction until recovery resolves it; unrelated staging keeps its normal cleanup
+policy. The pinned app identity distinguishes pre-swap current state from the saved rollback app
+when both carry the same version. Missing, altered or inconsistent proof defers
+before service stop; recovery retains funded configuration and applied/journal
+evidence and cannot authorize manual field rollback. Verify both pre-swap and
+post-swap interruption paths in the actual generated updater lifecycle.
 
 For a two-hop repair, the saved prior artifact is the configuration-free first
 repair release. Restoring it is distinct from restoring the original customer
