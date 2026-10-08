@@ -313,6 +313,8 @@ describe("Brain chat tab", () => {
     const list = () => document.getElementById(toggle.getAttribute("aria-controls")!)!;
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(list()).toHaveClass("hidden", "@2xl:grid");
+    // One column that can be narrower than its content, so a phone screen never scrolls sideways.
+    expect(list().parentElement).toHaveClass("grid-cols-[minmax(0,1fr)]");
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(list()).not.toHaveClass("hidden");
