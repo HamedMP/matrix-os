@@ -62,10 +62,12 @@ describe("text rules", () => {
       "Docs to be merged after review.", "Complete the migration.", "Get the PR merged.",
       "Make sure the login bug is fixed.", "The migration is completed by Friday.",
       "Once the PR is merged, drop the flag.", "Needs to be resolved before launch.",
+      "Next steps: complete the migration by Friday.", "Ada to complete the export.", "Please complete the review.",
+      "Let's complete the rollout.", "We'll complete the rollout.", "It’ll be merged tomorrow.",
     ]) expect([planned, commitmentState(planned, null)]).toEqual([planned, null]);
     expect(commitmentState("Ensure the migration is completed by Friday.", "done")).toBe("done");
     expect(commitmentState("The export API will not be shipped.", null)).toBe("deferred");
-    expect(commitmentState("Migration complete.", null)).toBe("done");
+    for (const done of ["Migration complete.", "Phase 1: complete."]) expect(commitmentState(done, null)).toBe("done");
     expect(commitmentState("Fixed by this PR.", null)).toBe("done");
     expect(commitmentState("Docs merged; will write the guide next.", null)).toBe("done");
   });
