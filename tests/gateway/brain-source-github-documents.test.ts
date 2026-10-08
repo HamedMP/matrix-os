@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeGithubCursor, encodeGithubCursor } from "../../packages/gateway/src/brain/sources/github/cursor.js";
 import {
-  closingIssues, GITHUB_TRUNCATION_MARKER, githubDocumentId, issueDocument, personKey, pullRequestDocument,
-  reviewCommentDocument, reviewDocument,
+  closingIssues, GITHUB_TRUNCATION_MARKER, githubDocumentId, isSubmittedReview, issueDocument, personKey,
+  pullRequestDocument, reviewCommentDocument, reviewDocument,
 } from "../../packages/gateway/src/brain/sources/github/documents.js";
 import {
   GithubIssueListSchema, GithubPullSchema, GithubReviewCommentListSchema, GithubReviewListSchema,
@@ -126,6 +126,8 @@ describe("review and review comment documents", () => {
     expect(refsOf(approved.upsert.refs, "handle")).toEqual([]);
     expect(reviewDocument(ctx, 12, prId, reviews[1]!, "x")).toBeNull();
     expect(reviewDocument(ctx, 12, prId, reviews[2]!, "x")).toBeNull();
+    // The empty comment-only review has no document, but its author still reviewed; the pending one did not.
+    expect(reviews.map(isSubmittedReview)).toEqual([true, true, false]);
     const dismissed = reviewDocument(ctx, 12, prId, { id: 9, user: null, state: "DISMISSED" }, "2026-03-04T00:00:00Z")!;
     expect(dismissed.upsert.sourceUpdatedAt).toBe("2026-03-04T00:00:00Z");
     expect(dismissed.upsert.body).toContain("Reviewer: unknown");

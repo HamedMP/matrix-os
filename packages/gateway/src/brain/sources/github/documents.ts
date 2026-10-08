@@ -193,6 +193,11 @@ const REVIEW_STATES: Readonly<Record<string, string>> = {
   APPROVED: "approved", CHANGES_REQUESTED: "changes_requested", COMMENTED: "commented", DISMISSED: "dismissed",
 };
 
+/** Submitted (approved, changes requested, commented or dismissed), not pending: its author is a reviewer. */
+export function isSubmittedReview(review: GithubReview): boolean {
+  return REVIEW_STATES[review.state] !== undefined;
+}
+
 /** Null for pending reviews and for comment-only reviews without text (their comments are documents of their own). */
 export function reviewDocument(
   ctx: GithubDocumentContext, prNumber: number, prDocumentId: string, review: GithubReview, fallbackTime: string,

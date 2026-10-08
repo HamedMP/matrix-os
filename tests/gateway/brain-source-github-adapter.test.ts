@@ -333,6 +333,19 @@ describe("github adapter", () => {
     expect(refsOfDoc(await harness.repository.listDocumentRefs(scopeA, prId), "reviewer")).toEqual(["github:erin"]);
   });
 
+  it("links a submitted reviewer with no review text and no request, but not a pending one", async () => {
+    const base = fixtureResponder(listing(() => fixtureIssues));
+    const { adapter } = adapterFor((resource, call) => {
+      if (resource.kind === "pull") return ok({ ...githubFixture<Record<string, unknown>>("pull-12"), requested_reviewers: [] });
+      if (resource.kind === "pull_reviews") {
+        return ok([...githubFixture<Record<string, unknown>[]>("pull-12-reviews"), { id: 504, user: { login: "frank" }, body: "", state: "PENDING" }]);
+      }
+      return base(resource, call);
+    });
+    expect(await run(adapter)).toMatchObject({ status: "succeeded", written: 5 });
+    expect(refsOfDoc(await harness.repository.listDocumentRefs(scopeA, prId), "reviewer")).toEqual(["github:bob", "github:erin"]);
+  });
+
   it("moves past a listing that keeps returning items older than the watermark", async () => {
     const stale = Array.from({ length: 50 }, (_, i) => issue(i + 1, "2025-01-01T00:00:00Z"));
     const { adapter, client } = adapterFor((resource) => ok(resource.kind === "issues" ? stale : []));
