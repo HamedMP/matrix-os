@@ -79,6 +79,11 @@ export const BRAIN_MATRIX_LIMITS = {
   fileDepthMax: 12,
   dirEntriesMax: 5_000,
   fileEntriesPerPage: 5_000,
+  /**
+   * Directory entries read per page, skipped names included. More than fileDepthMax * dirEntriesMax: a page that
+   * resumes reads at most fileDepthMax folders on the way back to its position and still has room to move on.
+   */
+  dirReadsPerPage: 65_000,
   fileBytesPerPage: 16 * 1024 * 1024,
   /** Chats: messages read per page, per day, parts per day, bytes per part, characters per message. */
   chatReadsPerPage: 4_200,

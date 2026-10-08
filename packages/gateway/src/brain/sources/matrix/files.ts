@@ -108,6 +108,7 @@ async function scan(context: Context, homePath: string, cursor: Extract<FilesCur
   const { roots } = context.config;
   const state: ScanState = { bytes: 0 };
   let entries: number = BRAIN_MATRIX_LIMITS.fileEntriesPerPage;
+  let reads: number = BRAIN_MATRIX_LIMITS.dirReadsPerPage;
   let index = resumeIndex(roots, cursor.root);
   let after = roots[index] === cursor.root && cursor.after !== null ? cursor.after.split("/") : null;
   const stopAt = (root: string, last: readonly string[] | null): BrainSourceReadResult => {
@@ -117,7 +118,7 @@ async function scan(context: Context, homePath: string, cursor: Extract<FilesCur
   for (; index < roots.length; index += 1) {
     const root = roots[index]!;
     const budget: WalkBudget = {
-      entries, position: after, pathBytes: BRAIN_REF_VALUE_MAX_BYTES - Buffer.byteLength(root, "utf8") - 1,
+      entries, reads, position: after, pathBytes: BRAIN_REF_VALUE_MAX_BYTES - Buffer.byteLength(root, "utf8") - 1,
       truncated: () => draft.notices.add("items_truncated"),
     };
     const directory = await rootDirectory(realHome, root);
@@ -130,9 +131,10 @@ async function scan(context: Context, homePath: string, cursor: Extract<FilesCur
         }
         budget.position = entry.segments;
       }
-      if (budget.entries <= 0) return stopAt(root, budget.position);
+      if (budget.entries <= 0 || budget.reads <= 0) return stopAt(root, budget.position);
     }
     entries = budget.entries;
+    reads = budget.reads;
     after = null;
   }
   const next: FilesCursor = { v: 1, phase: "sweep", after: null };
