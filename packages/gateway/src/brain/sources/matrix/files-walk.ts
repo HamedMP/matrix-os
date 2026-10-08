@@ -72,12 +72,15 @@ export interface WalkEntry { readonly segments: readonly string[]; readonly path
 
 async function sortedEntries(directory: string, budget: WalkBudget) {
   const entries: { name: string; kind: "file" | "directory" }[] = [];
+  // Every entry read counts, skipped ones too, so no folder is read past dirEntriesMax.
+  let examined = 0;
   // The async iterator closes the directory when the loop ends, breaks or throws.
   for await (const entry of await opendir(directory, { bufferSize: 64 })) {
-    if (entries.length >= BRAIN_MATRIX_LIMITS.dirEntriesMax) {
+    if (examined >= BRAIN_MATRIX_LIMITS.dirEntriesMax) {
       budget.truncated();
       break;
     }
+    examined += 1;
     if (isSkippedName(entry.name)) continue;
     if (entry.isFile()) entries.push({ name: entry.name, kind: "file" });
     else if (entry.isDirectory() && !isSecretLikeName(entry.name)) entries.push({ name: entry.name, kind: "directory" });
