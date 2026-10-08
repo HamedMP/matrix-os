@@ -139,3 +139,83 @@ export function parseCount(stdout: Uint8Array): number {
   if (!COUNT_OUTPUT.test(text)) malformed();
   return Number.parseInt(text, 10);
 }
+
+// Metadata log: `%H%x1f%P%x1f%cI%x1f%aI%x1f%an%x1f%B` with -z.
+
+/**
+ * Records end in NUL. With `truncated` (the per-commit fallback hit its
+ * maxBuffer) a final record without its NUL is kept when its five header
+ * separators are present, and is marked messageTruncated.
+ */
+export function parseCommitMetadata(stdout: Uint8Array, options: { shaPattern: RegExp; truncated: boolean }): GitCommitMetadata[] {
+  const { tokens, tail } = splitNul(stdout);
+  if (tail.length > 0 && !options.truncated) malformed();
+  const records = tokens.map((record) => parseMetadataRecord(record, headerCuts(record) ?? malformed(), options.shaPattern, false));
+  const tailCuts = tail.length > 0 ? headerCuts(tail) : null;
+  if (tailCuts !== null) records.push(parseMetadataRecord(tail, tailCuts, options.shaPattern, true));
+  return records;
+}
+
+/** Offsets of the five header separators; null when the record has fewer. */
+function headerCuts(record: Uint8Array): number[] | null {
+  const cuts: number[] = [];
+  for (let from = 0; cuts.length < METADATA_HEADER_FIELDS;) {
+    const at = record.indexOf(UNIT_SEPARATOR, from);
+    if (at === -1) return null;
+    cuts.push(at);
+    from = at + 1;
+  }
+  return cuts;
+}
+
+function parseMetadataRecord(
+  record: Uint8Array, cuts: readonly number[], shaPattern: RegExp, partial: boolean,
+): GitCommitMetadata {
+  const field = (index: number): Uint8Array => record.subarray(index === 0 ? 0 : cuts[index - 1] + 1, cuts[index]);
+  const sha = asciiField(field(0), MAX_OID_CHARS);
+  const parentsText = asciiField(field(1), MAX_PARENTS * (MAX_OID_CHARS + 1));
+  const committedAt = asciiField(field(2), MAX_DATE_CHARS);
+  const authoredAt = asciiField(field(3), MAX_DATE_CHARS);
+  if (!shaPattern.test(sha) || !ISO_DATE.test(committedAt) || !ISO_DATE.test(authoredAt)) malformed();
+  const parents = parentsText === "" ? [] : parentsText.split(" ");
+  if (parents.length > MAX_PARENTS || !parents.every((parent) => shaPattern.test(parent))) malformed();
+  let message = record.subarray(cuts[METADATA_HEADER_FIELDS - 1] + 1);
+  let messageTruncated = partial;
+  if (partial) message = dropIncompleteTail(message);
+  if (message.length > GIT_COMMIT_MESSAGE_MAX_BYTES) {
+    message = cutUtf8(message, GIT_COMMIT_MESSAGE_MAX_BYTES);
+    messageTruncated = true;
+  }
+  const { subject, body } = splitCommitMessage(lossyUtf8.decode(message));
+  const authorName = cleanAuthorName(lossyUtf8.decode(field(4)));
+  return { sha, parents, committedAt, authoredAt, authorName, subject, body, messageTruncated };
+}
+
+function asciiField(bytes: Uint8Array, maxChars: number): string {
+  if (bytes.length > maxChars) malformed();
+  return latin1(bytes);
+}
+
+/**
+ * Control characters removed, at most GIT_AUTHOR_NAME_MAX_CHARS code points.
+ * A code point takes at most two UTF-16 units, so the bounded slice always
+ * holds the first MAX code points whole before Array.from splits it.
+ */
+function cleanAuthorName(raw: string): string {
+  const cleaned = raw.replace(AUTHOR_CONTROL_CHARS, "").trim();
+  const codePoints = Array.from(cleaned.slice(0, GIT_AUTHOR_NAME_MAX_CHARS * 2));
+  return codePoints.slice(0, GIT_AUTHOR_NAME_MAX_CHARS).join("").trimEnd();
+}
+
+/** git %s / %b semantics; nothing is normalized beyond trimming subject lines. */
+export function splitCommitMessage(message: string): { subject: string; body: string } {
+  const lines = dropLeadingBlankLines(message.split("\n"));
+  let index = 0;
+  const subjectLines: string[] = [];
+  while (index < lines.length && !isBlankLine(lines[index])) {
+    subjectLines.push(lines[index].trim());
+    index += 1;
+  }
+  const body = dropLeadingBlankLines(lines.slice(index)).join("\n").trimEnd();
+  return { subject: subjectLines.join(" "), body };
+}
