@@ -42,7 +42,8 @@ tests. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (a JSO
     10 pages, so finished work does not hide open work. The due date and assignee come from the claim's fields, else
     from the document's `due` ref (only a `YYYY-MM-DD` of a real calendar day; `2025-13-01` or `2026-02-30` count as
     no date) and `assignee` ref (a person key); trackers such as Linear put them in refs, and rules/v1 never sets the
-    fields. A past window (ended before now) sees commitments and conflicts only from documents dated before its end.
+    fields. A past window (ended before now) sees commitments, overdue ones included, and conflicts only from
+    documents dated before its end.
   - attention: up to 10 conflicts (those detected in the window first, then the rest in a daily rotation, so every
     open conflict shows in some brief), then up to 20 stale items per kind, 50 lines in all.
 - A line: plain one-line text (at most 400 characters), 1 to 4 cites (`BrainCiteView`, label rule of

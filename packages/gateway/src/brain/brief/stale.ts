@@ -87,9 +87,9 @@ async function outdatedClaims(
 }
 
 async function overdueCommitments(
-  db: Kysely<BrainDatabase>, scope: BrainScopeKey, before: string,
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { overdueBefore, before }: StaleOptions,
 ): Promise<StaleItem[]> {
-  const rows = await openCommitments(db, scope, { dueBefore: before, limit: BRIEF_SCANS.staleItems });
+  const rows = await openCommitments(db, scope, { dueBefore: overdueBefore, before, limit: BRIEF_SCANS.staleItems });
   return rows.flatMap((row) => {
     const { due, assignee } = commitmentTerms(row);
     const day = due === null ? null : parseUtcDate(due);
@@ -128,8 +128,8 @@ async function staleSources(db: Kysely<BrainDatabase>, scope: BrainScopeKey, now
 
 export interface StaleOptions {
   readonly kinds: readonly BrainStaleKind[]; readonly now: Date;
-  /** commitment_overdue: due before this YYYY-MM-DD. */
-  readonly overdueBefore: string;
+  /** commitment_overdue: due before this YYYY-MM-DD, of documents dated before `before` when set (a past brief). */
+  readonly overdueBefore: string; readonly before?: Date | null;
   /** claim_outdated: only claims that became outdated in this range. */
   readonly outdatedIn?: { readonly from: Date; readonly to: Date };
 }
@@ -143,7 +143,7 @@ export async function computeStale(
   const items: StaleItem[] = [];
   const { kinds } = options;
   if (kinds.includes("claim_outdated")) items.push(...await outdatedClaims(db, scope, options.outdatedIn ?? null));
-  if (kinds.includes("commitment_overdue")) items.push(...await overdueCommitments(db, scope, options.overdueBefore));
+  if (kinds.includes("commitment_overdue")) items.push(...await overdueCommitments(db, scope, options));
   if (kinds.some((kind) => kind === "source_sync_old" || kind === "source_failing")) {
     items.push(...(await staleSources(db, scope, options.now)).filter((item) => kinds.includes(item.kind)));
   }

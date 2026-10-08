@@ -74,9 +74,12 @@ describe("brief", () => {
   });
 
   it("sees the brain as it was at a past window's end and counts a note edited the day it was made as new", async () => {
-    await seedDay();
-    expect((await brief({ date: "2026-09-29" })).sections.commitments).toEqual([]);
-    expect((await brief()).sections.commitments).toHaveLength(1);
+    const { linear } = await seedDay();
+    await fx.sync(linear, [{ seed: "eng9", body: "Rotate keys.", refs: [{ kind: "due", value: "2026-09-20" }] }]);
+    await fx.extract("eng9", [{ kind: "commitment", statement: "Rotate keys." }]);
+    const past = await brief({ date: "2026-09-29" });
+    expect([past.sections.commitments, past.sections.attention]).toEqual([[], []]);
+    expect((await brief()).sections.commitments).toHaveLength(2);
     const notes = await fx.source("matrix_notes", "Notes");
     await fx.sync(notes, [{ seed: "n1", at: "2026-10-01T09:00:00.000Z" }]);
     await fx.sync(notes, [{ seed: "n1", body: "Edited.", at: "2026-10-01T09:30:00.000Z" }]);

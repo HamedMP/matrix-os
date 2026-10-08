@@ -132,7 +132,7 @@ async function attention(
   const lines = picked.map((conflict) => briefLine(
     "attention", conflict.conflictId, conflict.summary, conflict.sides.map((side) => side.cite)));
   const stale = await computeStale(db, scope, {
-    kinds: BRAIN_STALE_KINDS, now, overdueBefore: range.date, outdatedIn: { from: range.from, to: range.to },
+    kinds: BRAIN_STALE_KINDS, now, overdueBefore: range.date, before, outdatedIn: { from: range.from, to: range.to },
   });
   const anchors = stale.flatMap((item) => (item.sourceId !== null && item.anchor !== null ? [item.anchor] : []));
   const sourceCites = await loadCites(db, scope, anchors);
