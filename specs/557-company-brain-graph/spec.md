@@ -195,6 +195,14 @@ and refresh is capped; alias changes are fenced by the alias row's state (`alias
 bodies are strict zod under `bodyLimit`; a foreign-key refusal is a skipped document, never an error; no new
 dependency.
 
+## Delivery and evidence
+
+- [ ] Stacked PRs, each under 3,000 additions, checks green, Invariants and the OS-view matrix (N/A) in the body,
+      merged only after Greptile scores its current head 5/5: the graph layer with its derivation, read and refresh
+      tests; then its store, entity, merge suggestion and route tests.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): the graph routes (timeline, entities, links, merge
+      suggestions, aliases, refresh), what a link's mode and evidence mean, and how person merges and splits work.
+
 ## Deferred
 
 Everything under Deferred scope, plus entity renames across paths.
