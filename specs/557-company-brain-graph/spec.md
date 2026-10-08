@@ -66,7 +66,8 @@ reads, service, seven routes, person merge suggestions), tests and this spec. Ou
 - `refresh(scope, limits)`: tombstoned documents with a state row first (every document with graph rows keeps one), then live documents missing, at another
   `(incarnation, revision)` or with a changed decision digest, by document id; re-read until none is left or the
   document limit or budget is spent; then the project entity (named after the project through the resolver; a failed
-  lookup keeps the stored name) and a sweep of up to 1,000 entities nothing references.
+  lookup keeps the stored name) and a sweep of up to 1,000 entities nothing references. A document refused at the
+  entity limit stays pending while the pass goes on; the sweep then runs first, and refresh goes on when it made room.
   `freshness(scope)` counts pending documents, capped at 1,000.
 - Deriving or removing a document marks outdated (state row kept) the documents that read it, only when what they read
   changed: children through `parent` refs (never itself) when what it describes changed; git_commit documents whose
