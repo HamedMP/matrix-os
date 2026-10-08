@@ -1,6 +1,7 @@
 /**
  * The Claude claims client against a fake Messages endpoint (no network, synthetic key): request shape and caching,
- * structured output parsing, refusal, unusable output, SDK error mapping, abort and timeout, and skipped bodies.
+ * structured output parsing, refusal, unusable output, SDK error mapping (and which failures may be billed), abort and
+ * timeout, and skipped bodies.
  */
 import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
@@ -10,6 +11,7 @@ import {
   createAnthropicBrainClaimModel, withBoundedRetryWaits,
 } from "../../packages/gateway/src/brain/claims/model/client.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT } from "../../packages/gateway/src/brain/claims/model/prompt.js";
+import { brainModelAttemptWorstCostMicroUsd } from "../../packages/gateway/src/brain/claims/spend.js";
 import {
   BrainModelError, type BrainAnthropicModelOptions,
 } from "../../packages/gateway/src/brain/claims/model/types.js";
@@ -205,6 +207,8 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       expect((error as BrainModelError).code).toBe(code);
       expect((error as BrainModelError).message).toBe(code);
       expect((error as BrainModelError).cause).toBeInstanceOf(APIError);
+      // Every attempt was answered with a status, so nothing was billed.
+      expect((error as BrainModelError).unanswered).toBe(false);
       expect(requests).toHaveLength(fetches);
       expect(String(error)).not.toContain(SYNTHETIC_KEY);
       expect(inspect(error, { depth: 8 })).not.toContain(SYNTHETIC_KEY);
@@ -258,22 +262,78 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
       }
     });
 
-    it("maps a network failure to model_unavailable after one retry", async () => {
+    it("maps a lost connection to model_unavailable after one retry, unanswered so the job charges it", async () => {
       const { model, requests } = setup(() => { throw new TypeError("fetch failed"); });
       const error = await failure(run(model));
       expect(error).toBeInstanceOf(BrainModelError);
       expect((error as BrainModelError).code).toBe("model_unavailable");
       expect((error as BrainModelError).cause).toBeInstanceOf(APIConnectionError);
+      // The request may have reached the API before the connection dropped, so the call may be billed.
+      expect((error as BrainModelError).unanswered).toBe(true);
       expect(requests).toHaveLength(2);
       expect(inspect(error, { depth: 8 })).not.toContain(SYNTHETIC_KEY);
     });
 
-    it("rethrows a failure that is not an SDK error untouched (the job records model_failed)", async () => {
-      const { model, requests } = setup(() =>
-        new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }));
+    const neverConnected = (code: string) => {
+      const socket = Object.assign(new Error(`connect ${code}`), { code });
+      // Happy eyeballs: Node reports every address it tried in an AggregateError carrying the first code.
+      return new TypeError("fetch failed", { cause: Object.assign(new AggregateError([socket]), { code }) });
+    };
+    it.each(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH"])(
+      "keeps a call that never connected (%s) answered: nothing left, so nothing is charged", async (code) => {
+        const { model, requests } = setup(() => { throw neverConnected(code); });
+        const error = await failure(run(model));
+        expect(error).toMatchObject({ code: "model_unavailable", unanswered: false });
+        expect(requests).toHaveLength(2);
+      });
+
+    it("marks a status error unanswered when an earlier attempt of the call was lost", async () => {
+      const { model, requests } = setup((_request, call) => {
+        if (call === 1) throw new TypeError("fetch failed");
+        return errorResponse(529, "overloaded_error");
+      });
+      expect(await failure(run(model))).toMatchObject({ code: "model_unavailable", unanswered: true });
+      const notSent = setup((_request, call) => {
+        if (call === 1) throw neverConnected("ECONNREFUSED");
+        return errorResponse(529, "overloaded_error");
+      });
+      expect(await failure(run(notSent.model))).toMatchObject({ code: "model_unavailable", unanswered: false });
+      expect([requests.length, notSent.requests.length]).toEqual([2, 2]);
+    });
+
+    it("adds an attempt lost before the answered retry to the usage at its worst case", async () => {
+      const lost = setup((_request, call) => {
+        if (call === 1) throw new TypeError("fetch failed");
+        return jsonResponse(200, messageBody());
+      });
+      const inputBytes = Buffer.byteLength(INPUT.title, "utf8") + Buffer.byteLength(BODY, "utf8");
+      expect(await run(lost.model)).toEqual({ claims: [], usage: {
+        ...DEFAULT_USAGE, costMicroUsd: DEFAULT_USAGE.costMicroUsd + brainModelAttemptWorstCostMicroUsd(inputBytes) } });
+      // An attempt that never connected sent nothing: only the answered one is counted.
+      const notSent = setup((_request, call) => {
+        if (call === 1) throw neverConnected("ENOTFOUND");
+        return jsonResponse(200, messageBody());
+      });
+      expect(await run(notSent.model)).toEqual({ claims: [], usage: DEFAULT_USAGE });
+      expect([lost.requests.length, notSent.requests.length]).toEqual([2, 2]);
+    });
+
+    it.each([
+      ["is not JSON", () => new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }),
+        SyntaxError],
+      ["is cut off", () => new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{\"id\":\"msg_synthetic\","));
+          controller.error(new TypeError("terminated"));
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }), TypeError],
+    ] as const)("treats a 2xx whose body %s as a billed, lost answer: model_unavailable, unanswered", async (_name,
+      respond, cause) => {
+      const { model, requests } = setup(respond);
       const error = await failure(run(model));
-      expect(error).toBeInstanceOf(SyntaxError);
-      expect(error).not.toBeInstanceOf(AnthropicError);
+      expect(error).toMatchObject({ code: "model_unavailable", unanswered: true });
+      expect((error as BrainModelError).cause).toBeInstanceOf(cause);
+      expect((error as BrainModelError).cause).not.toBeInstanceOf(AnthropicError);
       expect(requests).toHaveLength(1);
     });
 

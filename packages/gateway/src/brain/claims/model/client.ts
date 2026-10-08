@@ -4,11 +4,13 @@
  * server-side refusal fallbacks ("default"), adaptive thinking at the configured effort. The response is read in a
  * fixed order: usage, refusal, stop reason, then the single text block parsed against the wire schema. SDK errors map
  * to BrainModelError codes by class; a caller abort is rethrown untouched so the job can tell its own signals apart.
- * The key is held by the SDK client of one request only, never follows a redirect and is never logged.
+ * An attempt that may have reached the API but lost its answer is reported, so its possible cost is counted. The key
+ * is held by the SDK client of one call only, never follows a redirect and is never logged.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { BrainClaimCandidateSchema, BrainClaimFieldsSchema, type BrainClaimFields } from "../types.js";
+import { brainModelAttemptWorstCostMicroUsd } from "../spend.js";
 import { brainModelUsage } from "./pricing.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT, brainModelSkipCode, brainModelUserContent } from "./prompt.js";
 import {
@@ -64,24 +66,71 @@ export function withBoundedRetryWaits(fetch: BrainModelFetch, timeoutMs: number)
   };
 }
 
-export function createAnthropicBrainClaimModel(options: BrainAnthropicModelOptions): BrainAnthropicClaimModel {
-  const client = new Anthropic({
+/**
+ * Connect-phase codes, as Node and undici set them on a fetch's cause: the connection never opened (DNS, refused,
+ * unreachable, connect timeout), so the request never left and that attempt cannot be billed.
+ */
+const NOT_SENT_CODES: ReadonlySet<string> = new Set([
+  "ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT",
+]);
+/** undici wraps the socket error once ("fetch failed"), Node's happy eyeballs once more (an AggregateError). */
+const CAUSE_DEPTH_MAX = 4;
+
+function neverSent(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < CAUSE_DEPTH_MAX && current instanceof Error; depth += 1) {
+    const { code } = current as Error & { readonly code?: unknown };
+    if (typeof code === "string" && NOT_SENT_CODES.has(code)) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+/**
+ * One call's attempts as its fetch saw them. lost: attempts whose fetch rejected after the request may have left (a
+ * dropped connection, a timeout, an abort), so they may be billed with no usage. answered: a 2xx arrived, so the call
+ * is billed even if its body then fails to read.
+ */
+interface CallTally { lost: number; answered: boolean }
+
+function tallied(fetch: BrainModelFetch, tally: CallTally): BrainModelFetch {
+  return async (input, init) => {
+    let response: Response;
+    try {
+      response = await fetch(input, init);
+    } catch (error) {
+      if (!neverSent(error)) tally.lost += 1;
+      throw error;
+    }
+    if (response.ok) tally.answered = true;
+    return response;
+  };
+}
+
+/** One SDK client per call, so its fetch tallies that call's attempts alone; dropped with the call. */
+function callClient(options: BrainAnthropicModelOptions, tally: CallTally): Anthropic {
+  return new Anthropic({
     apiKey: options.apiKey, // explicit: the SDK never reads ANTHROPIC_API_KEY or a login profile
     authToken: null, // never ANTHROPIC_AUTH_TOKEN: both auth headers together are a 401
     baseURL: BRAIN_MODEL_API_BASE_URL, // never ANTHROPIC_BASE_URL: document text goes to the API only
     timeout: options.timeoutMs, // per attempt
     maxRetries: BRAIN_MODEL_MAX_RETRIES,
     logLevel: "off", // ANTHROPIC_LOG=debug would log request bodies
-    fetch: withBoundedRetryWaits(options.fetch ?? globalThis.fetch, options.timeoutMs),
+    fetch: tallied(withBoundedRetryWaits(options.fetch ?? globalThis.fetch, options.timeoutMs), tally),
     // A redirect would carry x-api-key and the document text to another origin; fail instead of following it.
     fetchOptions: { redirect: "error" },
   });
+}
+
+export function createAnthropicBrainClaimModel(options: BrainAnthropicModelOptions): BrainAnthropicClaimModel {
   const skipCode = (input: { readonly body: string }) => brainModelSkipCode(input.body, options.bodyMaxBytes);
   return {
     skip: skipCode,
     async extract(input, signal) {
       const skip = skipCode(input);
       if (skip !== null) return { claims: [], usage: { ...ZERO_USAGE }, outcome: { status: "skipped", code: skip } };
+      const tally: CallTally = { lost: 0, answered: false };
+      const client = callClient(options, tally);
       let message: Anthropic.Beta.BetaMessage;
       try {
         // No thinking, sampling parameters, tools, tool_choice or prefill: Claude Opus 5.5 rejects the disabled and
@@ -96,18 +145,33 @@ export function createAnthropicBrainClaimModel(options: BrainAnthropicModelOptio
           output_config: { effort: options.effort, format: BRAIN_MODEL_WIRE_FORMAT },
         }, { signal });
       } catch (error) {
-        throw callError(error, signal);
+        throw callError(error, signal, tally);
       }
-      return readMessage(message, options.modelId);
+      return withLostAttempts(readMessage(message, options.modelId), tally.lost, input);
     },
   };
 }
 
-/** A caller abort stays as thrown; SDK errors become BrainModelError; anything else is rethrown untouched. */
-function callError(error: unknown, signal: AbortSignal): unknown {
+/**
+ * A caller abort stays as thrown. SDK errors become BrainModelError, unanswered when an attempt was lost. A 2xx whose
+ * body could not be read (the connection dropped mid-body) was billed with its usage lost: model_unavailable,
+ * unanswered. Anything else is rethrown untouched.
+ */
+function callError(error: unknown, signal: AbortSignal, tally: CallTally): unknown {
   if (signal.aborted || error instanceof Anthropic.APIUserAbortError) return error;
   const code = errorCode(error);
-  return code === null ? error : new BrainModelError(code, { cause: error });
+  if (code !== null) return new BrainModelError(code, { cause: error, unanswered: tally.lost > 0 });
+  return tally.answered ? new BrainModelError("model_unavailable", { cause: error, unanswered: true }) : error;
+}
+
+/** Attempts lost before the one that answered (the SDK retried them) may be billed too: each at its worst case. */
+function withLostAttempts(
+  output: BrainModelOutput, lost: number, input: { readonly title: string; readonly body: string },
+): BrainModelOutput {
+  if (lost === 0) return output;
+  const inputBytes = Buffer.byteLength(input.title, "utf8") + Buffer.byteLength(input.body, "utf8");
+  const costMicroUsd = output.usage.costMicroUsd + lost * brainModelAttemptWorstCostMicroUsd(inputBytes);
+  return { ...output, usage: { ...output.usage, costMicroUsd } };
 }
 
 /** Most specific class first: the connection errors extend APIError. A status is read only for 402 and 408. */

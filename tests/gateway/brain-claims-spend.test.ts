@@ -21,8 +21,8 @@ import { createBrainClaimModelProvider, parseBrainModelConfig } from "../../pack
 import { BRAIN_MODEL_PRICES, brainModelUsage } from "../../packages/gateway/src/brain/claims/model/pricing.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT, brainModelUserContent } from "../../packages/gateway/src/brain/claims/model/prompt.js";
 import {
-  BRAIN_MODEL_BILLED_ATTEMPTS_PER_CALL, BRAIN_MODEL_PROMPT_OVERHEAD_TOKENS, brainModelCallWorstCostMicroUsd,
-  brainModelSpendView, brainSpendStop, readBrainModelSpend,
+  BRAIN_MODEL_BILLED_ATTEMPTS_PER_CALL, BRAIN_MODEL_PROMPT_OVERHEAD_TOKENS, brainModelAttemptWorstCostMicroUsd,
+  brainModelCallWorstCostMicroUsd, brainModelSpendView, brainSpendStop, readBrainModelSpend,
 } from "../../packages/gateway/src/brain/claims/spend.js";
 import type { BrainRepository, BrainScopeKey } from "../../packages/gateway/src/brain/index.js";
 import { SYNTHETIC_KEY } from "./helpers/brain-model-fetch.js";
@@ -83,6 +83,7 @@ describe("brain model spend cap", { timeout: 60_000 }, () => {
       // (8,192 prompt tokens at 6.3 + 8,192 output tokens at 25 micro-USD), rounded up, six times.
       expect(brainModelCallWorstCostMicroUsd(0)).toBe(1_538_460);
       expect(brainModelCallWorstCostMicroUsd(10_000) - brainModelCallWorstCostMicroUsd(0)).toBe(6 * 63_000);
+      expect(brainModelAttemptWorstCostMicroUsd(0)).toBe(1_538_460 / 2); // one SDK attempt: three hops, no retry
     });
 
     it("covers the dearest usage pricing.ts can bill for one call, every hop and retry included", () => {

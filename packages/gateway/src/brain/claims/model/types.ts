@@ -155,22 +155,33 @@ export interface BrainAnthropicClaimModel extends BrainClaimModel {
 /**
  * A failed call; any other throw from a model stays the document's model_failed. runBrainExtraction maps:
  * - model_auth_failed (401, 402, 403, 404): the run stops failed, nextAction configure_model, no document state.
- * - model_unavailable (429, 5xx including 529, network after retries): the run stops failed, retry_later, no state.
+ * - model_unavailable (429, 5xx including 529, network after retries, a 2xx whose body could not be read): the run
+ *   stops failed, retry_later, no state.
  * - model_rejected (400, 413, 422, any other status): the document fails model_failed, then the run stops failed with
  *   contact_support, so a request the API refuses cannot fail a whole page of documents.
  * - model_timeout (the SDK's own per-attempt timeout): the document fails model_timeout, the call is charged at its
  *   worst case (it may still be billed), and the run goes on within its budgets.
+ * Whatever the code, an unanswered call (BrainModelError.unanswered) is charged at its worst case as well.
  * A caller abort is rethrown as the SDK's abort error: the job checks its own signals before anything else.
  */
 export const BRAIN_MODEL_ERROR_CODES =
   ["model_auth_failed", "model_unavailable", "model_rejected", "model_timeout"] as const;
 export type BrainModelErrorCode = (typeof BRAIN_MODEL_ERROR_CODES)[number];
 
+/**
+ * unanswered: an attempt of the call may have reached the API but its answer was lost (the connection dropped, or a
+ * 2xx body could not be read), so the call may be billed with no usage to count. A connection that never opened
+ * (DNS, refused, unreachable) sent nothing and does not count; neither does an attempt answered with an error status.
+ */
+export interface BrainModelErrorOptions extends ErrorOptions { readonly unanswered?: boolean }
+
 /** The message is the code; the SDK error is only the cause and is never logged beyond its name. */
 export class BrainModelError extends Error {
-  constructor(readonly code: BrainModelErrorCode, options?: ErrorOptions) {
+  readonly unanswered: boolean;
+  constructor(readonly code: BrainModelErrorCode, options?: BrainModelErrorOptions) {
     super(code, options);
     this.name = "BrainModelError";
+    this.unanswered = options?.unanswered ?? false;
   }
 }
 
