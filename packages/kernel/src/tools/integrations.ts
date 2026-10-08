@@ -1,3 +1,4 @@
+import { INTEGRATION_ACTION_FAILURES, INTEGRATION_PRESENTATION } from "@matrix-os/contracts/integration-marketplace";
 import {
   JevEmailTriageResultSchema,
   JevEmailTriageScoresSchema,
@@ -47,7 +48,7 @@ export type GatewayFetcher = (
   init: RequestInit,
 ) => Promise<GatewayFetchResponse>;
 
-interface ToolResult {
+export interface ToolResult {
   [key: string]: unknown;
   isError?: boolean;
   content: Array<{ type: "text"; text: string }>;
@@ -169,7 +170,8 @@ export async function describeServiceHandler(
       );
       return `- ${name} [${action.risk ?? "read"}]${action.description ? ` — ${action.description}` : ""}${params.length > 0 ? ` (${params.join(", ")})` : ""}`;
     });
-    return textResult(`${service.name} actions:\n${actions.length > 0 ? actions.join("\n") : "No approved actions are currently available."}`);
+    const guidance = input.service === "discord" ? `\n${INTEGRATION_PRESENTATION.discord.description}` : "";
+    return textResult(`${service.name} actions:\n${actions.length > 0 ? actions.join("\n") : "No approved actions are currently available."}${guidance}`);
   } catch (err: unknown) {
     console.error("[integrations] describe service error:", err instanceof Error ? err.message : err);
     return textResult("Integration service details are currently unavailable.");
@@ -326,8 +328,24 @@ export async function callServiceHandler(
     });
 
     if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      return textResult(data.error ?? `Call to ${input.service}/${input.action} failed (status ${res.status})`);
+      const data = (await res.json()) as { error?: string; code?: string };
+      if (typeof data.code === "string" && Object.hasOwn(INTEGRATION_ACTION_FAILURES, data.code)) {
+        const failure = INTEGRATION_ACTION_FAILURES[data.code as keyof typeof INTEGRATION_ACTION_FAILURES];
+        if (res.status === failure.status) {
+          const discoveryHint = (input.service === "discord" || input.service === "discord_bot")
+            && input.action === "list_channels" && data.code === "integration_authorization_required"
+            ? " Do not read messages after failed channel discovery." : "";
+          return errorResult(failure.message + discoveryHint);
+        }
+      }
+      if (input.service === "discord" || input.service === "discord_bot") {
+        const message = res.status === 401 ? INTEGRATION_ACTION_FAILURES.integration_authorization_required.message
+          : res.status === 403 ? INTEGRATION_ACTION_FAILURES.discord_access_denied.message
+          : res.status === 429 ? "Rate limited by provider. Please try again later."
+          : "Integration call failed. Check the selected connection in Settings > Integrations.";
+        return errorResult(message + (input.action === "list_channels" ? " Do not read messages after failed channel discovery." : ""));
+      }
+      return errorResult(data.error ?? `Call to ${input.service}/${input.action} failed (status ${res.status})`);
     }
 
     const data = await res.json();
@@ -339,7 +357,9 @@ export async function callServiceHandler(
     );
   } catch (err: unknown) {
     console.error("[integrations] call_service error:", err instanceof Error ? err.message : err);
-    return textResult("Integration service is temporarily unavailable. Please try again later.");
+    return errorResult("Integration service is temporarily unavailable. Please try again later."
+      + ((input.service === "discord" || input.service === "discord_bot") && input.action === "list_channels"
+        ? " Do not read messages after failed channel discovery." : ""));
   }
 }
 
@@ -543,3 +563,5 @@ export async function callCustomMcpToolHandler(
     return textResult("The Custom MCP tool is temporarily unavailable.");
   }
 }
+
+export { createDiscordDiscoveryGuard } from "./discord-discovery-guard.js";

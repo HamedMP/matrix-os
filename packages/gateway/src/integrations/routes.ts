@@ -1,3 +1,4 @@
+import { assertDiscordCapability } from "./registry-discord.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
@@ -580,6 +581,12 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     const { service, action, label, params, connectionId } = parsed.data;
+
+    try {
+      assertDiscordCapability(service, action);
+    } catch (err: unknown) {
+      return integrationActionFailure(c, err, service, action);
+    }
 
     const def = getService(service);
     if (!def) {

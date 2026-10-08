@@ -13,6 +13,8 @@ import { CATALOG_SERVICE_REGISTRY } from "./registry-catalog.js";
 import { MANAGED_SERVICE_REGISTRY } from "./registry-managed.js";
 import { BOKIO_SERVICE } from "./registry-bokio.js";
 
+import { DISCORD_SERVICE_REGISTRY } from "./registry-discord.js";
+
 const LOGO_BASE = "https://pipedream.com/s.v0";
 
 // GitHub repo names follow `owner/repo` where each segment matches GitHub's
@@ -35,17 +37,6 @@ function encodeOwnerRepo(value: unknown): string {
     throw new Error(`repo contains invalid characters: ${value}`);
   }
   return `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-}
-
-// Discord snowflakes are 17-20 digit numeric strings. Strict numeric check
-// refuses path traversal and any non-digit input before we interpolate it
-// into a real Discord API URL.
-const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/;
-function encodeDiscordSnowflake(value: unknown): string {
-  if (typeof value !== "string" || !DISCORD_SNOWFLAKE_RE.test(value)) {
-    throw new Error(`Discord ID must be a 17-20 digit numeric string, got: ${String(value)}`);
-  }
-  return value;
 }
 
 function cappedPositiveInt(value: unknown, fallback: number, max: number): number {
@@ -644,99 +635,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     },
   },
 
-  discord: {
-    id: "discord",
-    name: "Discord",
-    category: "communication",
-    pipedreamApp: "discord",
-    icon: "message-circle",
-    logoUrl: `${LOGO_BASE}/discord/logo/48`,
-    // Discord-specific note: most "user OAuth" scopes are read-only. Listing
-    // a server's channels and reading channel messages technically need a
-    // Bot token with the appropriate gateway intent enabled at the Discord
-    // app level. Pipedream's Discord connect flow can issue either depending
-    // on the configured app type. If callers see `403 Missing Access`, the
-    // connected account is OAuth-only and they need to use the bot variant.
-    // Discord IDs (snowflakes) are numeric strings; we validate to refuse
-    // path-injection attempts.
-    actions: {
-      // Discord REST: POST /channels/{channel.id}/messages. Requires the bot
-      // to have SEND_MESSAGES permission on the channel. Snowflake is
-      // strictly validated before interpolation.
-      send_message: {
-        description: "Send a message to a channel",
-        risk: "write",
-        params: {
-          channelId: { type: "string", required: true },
-          content: { type: "string", required: true },
-        },
-        directApi: {
-          method: "POST",
-          url: (p) =>
-            `https://discord.com/api/v10/channels/${encodeDiscordSnowflake(p.channelId)}/messages`,
-          mapBody: (p) => ({ content: String(p.content) }),
-        },
-      },
-      // GET /users/@me/guilds returns the list of servers (guilds) the
-      // authenticated user is a member of. Works with the standard `guilds`
-      // OAuth scope.
-      list_servers: {
-        description: "List servers the bot is in",
-        risk: "read",
-        paramsSchema: listValidation.servers,
-        params: {
-          before: { type: "string" },
-          after: { type: "string" },
-          limit: { type: "number" },
-        },
-        directApi: {
-          method: "GET",
-          url: "https://discord.com/api/v10/users/@me/guilds",
-          mapParams: (p) => ({
-            ...(p.before !== undefined ? { before: String(p.before) } : {}),
-            ...(p.after !== undefined ? { after: String(p.after) } : {}),
-            ...(p.limit !== undefined ? { limit: String(p.limit) } : {}),
-          }),
-        },
-      },
-      // GET /guilds/{guild.id}/channels. Requires bot membership with
-      // VIEW_CHANNEL permission.
-      list_channels: {
-        description: "List channels in a server",
-        risk: "read",
-        params: {
-          serverId: { type: "string", required: true },
-        },
-        directApi: {
-          method: "GET",
-          url: (p) =>
-            `https://discord.com/api/v10/guilds/${encodeDiscordSnowflake(p.serverId)}/channels`,
-        },
-      },
-      // GET /channels/{channel.id}/messages. Returns most recent first.
-      list_messages: {
-        description: "List messages in a channel",
-        risk: "read",
-        paramsSchema: listValidation.discordMessages,
-        params: {
-          before: { type: "string" },
-          after: { type: "string" },
-          channelId: { type: "string", required: true },
-          limit: { type: "number" },
-        },
-        directApi: {
-          method: "GET",
-          url: (p) =>
-            `https://discord.com/api/v10/channels/${encodeDiscordSnowflake(p.channelId)}/messages`,
-          mapParams: (p) => ({
-            ...(p.before !== undefined ? { before: String(p.before) } : {}),
-            ...(p.after !== undefined ? { after: String(p.after) } : {}),
-            limit: p.limit ? String(Math.min(100, Number(p.limit))) : "20",
-          }),
-        },
-      },
-    },
-  },
+  ...DISCORD_SERVICE_REGISTRY,
   ...X_SERVICE_REGISTRY,
   ...EXPANSION_SERVICE_REGISTRY,
   ...MANAGED_SERVICE_REGISTRY,

@@ -1,3 +1,4 @@
+import { assertDiscordCapability, validateDiscordChannelDiscovery } from "./registry-discord.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
@@ -32,6 +33,8 @@ export async function executeIntegrationAction(opts: {
   params?: Record<string, unknown>;
 }): Promise<{ data: unknown; summary?: string }> {
   const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
+
+  assertDiscordCapability(serviceId, actionId);
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
@@ -86,16 +89,17 @@ export async function executeIntegrationAction(opts: {
     const accountId = connection.pipedream_account_id;
 
     switch (api.method) {
-      case "GET":
-        return {
-          data: await pipedream.proxyGet({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
+      case "GET": {
+        const data = await pipedream.proxyGet({
+          externalUserId,
+          accountId,
+          url,
+          params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+          ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+        });
+        if (serviceId === "discord_bot" && actionId === "list_channels") validateDiscordChannelDiscovery(data);
+        return { data };
+      }
       case "DELETE":
         return {
           data: await pipedream.proxyDelete({

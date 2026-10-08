@@ -7,7 +7,7 @@ import type { PipedreamConnectClient } from "../../packages/gateway/src/integrat
 const apps = ["asana", "airtable", "clickup", "todoist", "dropbox", "box", "microsoft_outlook", "microsoft_onedrive", "microsoft_teams", "hubspot", "zoom", "google_slides"];
 describe("OAuth marketplace expansion", () => {
   it("exposes the expanded OAuth catalog with executable actions", () => {
-    expect(listServices()).toHaveLength(38);
+    expect(listServices()).toHaveLength(39);
     for (const id of apps) {
       const service = getService(id)!;
       expect(service.authType).toBe("oauth");

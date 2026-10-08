@@ -20,7 +20,8 @@ export const INTEGRATION_PRESENTATION: Record<string, { description: string; aut
   github: { description: "Manage repos, issues, and pull requests", authType: "oauth" },
   linear: { description: "Manage issues, projects & team workflows", authType: "oauth" },
   slack: { description: "Send messages and manage channels", authType: "oauth" },
-  discord: { description: "Read servers and channels, send messages", authType: "oauth" },
+  discord: { description: "List your servers. Connect Discord Bot separately to read channels and messages.", authType: "oauth" },
+  discord_bot: { description: "Connect an existing bot token; invite the bot to your server with View Channel and Read Message History. Enable Message Content Intent to summarize message text.", authType: "keys" },
   notion: { description: "Search, update, and organize workspace", authType: "oauth" },
   figma: { description: "Read design files and comments", authType: "oauth" },
   posthog: { description: "Existing API-key connection for product analytics", authType: "keys" },
@@ -82,3 +83,11 @@ export function buildIntegrationSections<T extends IntegrationCatalogItem>(servi
   return titles.map(title => ({ title, services: filtered.filter(service => integrationCategory(service) === title) }))
     .filter(section => section.services.length > 0);
 }
+
+/** Fixed recovery copy shared by the gateway and its agent tools. Never render upstream error text. */
+export const INTEGRATION_ACTION_FAILURES = {
+  integration_authorization_required: { status: 401, message: "Integration authorization expired or was revoked. Reconnect the selected account in Settings > Integrations." },
+  integration_access_denied: { status: 403, message: "Integration access denied. Check the selected account permissions." },
+  discord_access_denied: { status: 403, message: "Discord Bot access denied. Check bot membership, View Channel and Read Message History permissions; sending also requires Send Messages. Do not read messages after failed channel discovery." },
+  discord_bot_required: { status: 403, message: "Connect Discord Bot in Settings > Integrations using an existing bot token. Invite it to the server with View Channel and Read Message History; sending also requires Send Messages. Enable Message Content Intent to summarize message text. Do not read messages after failed channel discovery." },
+} as const;
