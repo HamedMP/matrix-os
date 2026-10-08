@@ -33,18 +33,21 @@ export async function deleteDocumentRefs(db: BrainExecutor, scope: BrainScopeKey
     .execute();
 }
 
-/** Makes the stored set equal `refs`: an identical set writes nothing, any difference replaces it wholesale. */
+/**
+ * Makes the stored set equal `refs`: an identical set writes nothing, any difference replaces it wholesale.
+ * Returns whether the stored set changed.
+ */
 export async function syncDocumentRefs(
   db: BrainExecutor,
   scope: BrainScopeKey,
   documentId: string,
   refs: readonly BrainDocumentRef[],
-): Promise<void> {
+): Promise<boolean> {
   const current = (await selectDocumentRefs(db, scope, documentId)).map(refKey).sort();
   const next = refs.map(refKey).sort();
-  if (current.length === next.length && current.every((key, index) => key === next[index])) return;
+  if (current.length === next.length && current.every((key, index) => key === next[index])) return false;
   await deleteDocumentRefs(db, scope, documentId);
-  if (refs.length === 0) return;
+  if (refs.length === 0) return true;
   await db.insertInto("brain_document_refs").values(refs.map((ref) => ({
     owner_id: scope.ownerId,
     scope_id: scope.scopeId,
@@ -52,6 +55,7 @@ export async function syncDocumentRefs(
     kind: ref.kind,
     value: ref.value,
   }))).execute();
+  return true;
 }
 
 /** deleteSource: drops the refs of every document the source owns (its tombstones already have none). */
