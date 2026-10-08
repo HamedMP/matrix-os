@@ -107,3 +107,139 @@ export const BRAIN_GITHUB_ACTIONS: Record<string, ServiceAction> = {
     "comments",
   ),
 };
+
+// Linear. Field, argument and filter names checked against Linear's public GraphQL schema
+// (github.com/linear/linear, packages/sdk/src/schema.graphql): Query.issues / comments / projectUpdates take
+// first, after, includeArchived, orderBy (PaginationOrderBy: createdAt | updatedAt) and filter;
+// DateComparator.gte is DateTimeOrDuration; StringComparator.in is [String!]; ProjectFilter.accessibleTeams is a
+// TeamCollectionFilter with `some`.
+
+const LINEAR_TEAMS_MAX = 20;
+const BrainLinearParams = z.strictObject({
+  teamKeys: z.array(z.string().regex(/^[A-Z][A-Z0-9]{0,9}$/)).min(1).max(LINEAR_TEAMS_MAX),
+  updatedSince: z.iso.datetime({ offset: true }),
+  first: z.number().int().min(1).max(100).optional(),
+  after: z.string().min(1).max(512).nullable().optional(),
+});
+const brainLinearParamDefs = {
+  teamKeys: { type: "array", required: true },
+  updatedSince: { type: "string", required: true },
+  first: { type: "number" },
+  after: { type: "string" },
+} as const;
+
+function brainLinearVariables(p: Record<string, unknown>): Record<string, unknown> {
+  const teamKeys = Array.isArray(p.teamKeys) ? p.teamKeys.filter((key) => typeof key === "string") : [];
+  return {
+    teamKeys: teamKeys.slice(0, LINEAR_TEAMS_MAX),
+    since: String(p.updatedSince),
+    first: cappedPositiveInt(p.first, 50, 100),
+    after: typeof p.after === "string" && p.after !== "" ? p.after : null,
+  };
+}
+
+// One page of `field` for the given teams, updated at or after $since, archived items included so the caller can
+// remove them. GraphQL variables carry every caller value; nothing is spliced into the query text.
+function brainLinearAction(description: string, operation: string, field: string, filter: string, nodes: string): ServiceAction {
+  return {
+    description,
+    risk: "read",
+    paramsSchema: BrainLinearParams,
+    params: brainLinearParamDefs,
+    directApi: {
+      method: "POST",
+      url: "https://api.linear.app/graphql",
+      mapBody: (p) => linearGraphqlBody(`
+        query ${operation}($teamKeys: [String!]!, $since: DateTimeOrDuration!, $first: Int!, $after: String) {
+          ${field}(first: $first, after: $after, includeArchived: true, orderBy: updatedAt,
+            filter: ${filter}) {
+            nodes { ${nodes} }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      `, brainLinearVariables(p)),
+    },
+  };
+}
+
+export const BRAIN_LINEAR_ACTIONS: Record<string, ServiceAction> = {
+  // Twenty labels per issue: the most label refs one brain document keeps.
+  brain_issues: brainLinearAction(
+    "Company Brain: one page of the teams' issues updated since a time, archived included",
+    "MatrixBrainIssues",
+    "issues",
+    "{ team: { key: { in: $teamKeys } }, updatedAt: { gte: $since } }",
+    "id identifier title description url updatedAt dueDate priority archivedAt trashed "
+      + "creator { id } assignee { id } state { name type } labels(first: 20) { nodes { name } } project { name }",
+  ),
+  brain_comments: brainLinearAction(
+    "Company Brain: one page of issue comments of the teams updated since a time, archived included",
+    "MatrixBrainComments",
+    "comments",
+    "{ issue: { team: { key: { in: $teamKeys } } }, updatedAt: { gte: $since } }",
+    "id body url updatedAt archivedAt user { id } issue { id identifier title }",
+  ),
+  brain_project_updates: brainLinearAction(
+    "Company Brain: one page of project updates of the teams' projects updated since a time, archived included",
+    "MatrixBrainProjectUpdates",
+    "projectUpdates",
+    "{ project: { accessibleTeams: { some: { key: { in: $teamKeys } } } }, updatedAt: { gte: $since } }",
+    "id body url updatedAt archivedAt health user { id } project { id name }",
+  ),
+};
+
+// Google Drive (API v3). Drive ids use letters, digits, `-` and `_` only, so a checked id can sit inside a Drive
+// query string literal or a URL path with nothing to escape.
+
+const DRIVE_ID_RE = /^[A-Za-z0-9_-]{1,256}$/;
+const driveId = z.string().regex(DRIVE_ID_RE);
+
+function checkedDriveId(value: unknown, name: string): string {
+  if (typeof value !== "string" || !DRIVE_ID_RE.test(value)) throw new Error(`${name} must be a Drive id`);
+  return value;
+}
+
+const DRIVE_LIST_FIELDS = "nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,webViewLink,"
+  + "lastModifyingUser(emailAddress),capabilities(canDownload))";
+
+export const BRAIN_GOOGLE_DRIVE_ACTIONS: Record<string, ServiceAction> = {
+  // Drive API v3: files.list over one folder's direct children that are not trashed, shared drives included.
+  brain_list_folder: {
+    description: "Company Brain: one page of a folder's files that are not trashed; continue with nextPageToken",
+    risk: "read",
+    paramsSchema: z.strictObject({
+      folderId: driveId,
+      pageSize: z.number().int().min(1).max(1000).optional(),
+      pageToken,
+    }),
+    params: {
+      folderId: { type: "string", required: true },
+      pageSize: { type: "number" },
+      pageToken: { type: "string" },
+    },
+    directApi: {
+      method: "GET",
+      url: "https://www.googleapis.com/drive/v3/files",
+      mapParams: (p) => ({
+        q: `'${checkedDriveId(p.folderId, "folderId")}' in parents and trashed = false`,
+        fields: DRIVE_LIST_FIELDS,
+        pageSize: String(cappedPositiveInt(p.pageSize, 1000, 1000)),
+        supportsAllDrives: "true",
+        includeItemsFromAllDrives: "true",
+        ...(p.pageToken !== undefined ? { pageToken: String(p.pageToken) } : {}),
+      }),
+    },
+  },
+  // Drive API v3: files.export of a Google Doc as text/plain (Google caps exports at 10 MB).
+  brain_export_text: {
+    description: "Company Brain: export a Google Doc as plain text",
+    risk: "read",
+    paramsSchema: z.strictObject({ fileId: driveId }),
+    params: { fileId: { type: "string", required: true } },
+    directApi: {
+      method: "GET",
+      url: (p) => `https://www.googleapis.com/drive/v3/files/${checkedDriveId(p.fileId, "fileId")}/export`,
+      mapParams: () => ({ mimeType: "text/plain" }),
+    },
+  },
+};
