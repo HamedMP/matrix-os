@@ -95,9 +95,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const { records, update: updateUnreadRecords, refresh: refreshUnread } = unreadNavigation;
   const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[], invalidateUnread = true) => {
     updateUnreadRecords(update, invalidateUnread);
-    // Streaming content updates selected detail and known unread rows. Durable
-    // changes reconcile global membership without invalidating a cold snapshot
-    // for every token (including content for rows outside the loaded window).
+    // Streaming patches use the non-invalidating store path at the event boundary;
+    // durable changes reconcile membership and fence older list responses.
     if (!invalidateUnread) return;
     navigation.store?.update(current => {
       const updated = update(current);
@@ -260,6 +259,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
+        if (event.eventType === "run.message") navigation.store?.patch(record);
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
           ? mergeChatNavigationRecord(item, record) : item), event.eventType !== "run.message");
         if (event.chatId === activeChatId) {
@@ -286,7 +286,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       subscription.dispose();
       selectedRefresh.dispose();
     };
-  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread]);
+  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread, navigation.store]);
 
   useEffect(() => {
     let cancelled = false;

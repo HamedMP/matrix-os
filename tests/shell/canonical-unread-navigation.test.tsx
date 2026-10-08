@@ -33,8 +33,10 @@ function item(id: string, unread = true): CanonicalChatNavigationItem {
 }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { resolve, promise }; }
 let unreadFetch: ReturnType<typeof vi.fn>;
+let recoveredBot = false;
 beforeEach(() => {
   state.listeners = [];
+  recoveredBot = false;
   state.navigation = { items: [item("chat_recent", false)], truncated: false, fresh: true, status: "ready", updatedAt: 1, error: null,
     store: createChatNavigationStore({ load: async () => ({ version: 1, items: [], truncated: false }) }) };
   unreadFetch = vi.fn(async () => Response.json({ items: [record("chat_older")] }));
@@ -43,7 +45,7 @@ beforeEach(() => {
     if (input.includes("/api/chats?") && input.includes("unread=true")) return unreadFetch(input);
     if (input.includes("/api/chat-agents")) return Response.json({ enabled: true, agents: [] });
     if (input.includes("/chat_unknown/bot?")) return Response.json({ error: { code: "unavailable" } }, { status: 503 });
-    if (input.includes("/bot?")) return Response.json({ agentId: input.includes("chat_bot") ? "bot_12345678" : null });
+    if (input.includes("/bot?")) return Response.json({ agentId: (input.includes("chat_bot") || (recoveredBot && input.includes("chat_older"))) ? "bot_12345678" : null });
     return Response.json({ error: { code: "unavailable" } }, { status: 503 });
   }));
 });
@@ -95,12 +97,54 @@ describe("Web unread navigation", () => {
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.messages.some(message => message.content === "Unread Chats could not be refreshed. Try again.")).toBe(true));
     expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_older"]);
-    const revoke = vi.spyOn(state.navigation.store!, "revoke");
+    const store = state.navigation.store!;
+    const revokeOriginal = store.revoke;
+    const revoke = vi.spyOn(store, "revoke").mockImplementation(() => {
+      revokeOriginal();
+      // Model the shared hook's synchronous external-store notification.
+      state.navigation = { ...store.getSnapshot(), store };
+    });
     unreadFetch.mockResolvedValueOnce(Response.json({ error: { code: "unauthorized" } }, { status: 403 }));
     state.navigation = { ...state.navigation, updatedAt: state.navigation.updatedAt + 1, items: [...state.navigation.items] };
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.conversations).toEqual([]));
     expect(revoke).toHaveBeenCalledOnce();
+  });
+  it("does not resurrect unread rows or identity caches after same-store revocation and recovery", async () => {
+    state.navigation.truncated = true;
+    const hook = mount();
+    await act(async () => hook.result.current.setUnreadOnly?.(true));
+    await waitFor(() => expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_older"]));
+    await act(async () => {
+      state.navigation.store!.revoke();
+      state.navigation = { ...state.navigation, items: [], truncated: false, updatedAt: 0 };
+      hook.rerender({ scope: "owner/runtime/main" });
+    });
+    expect(hook.result.current.conversations).toEqual([]);
+    const pending = deferred<Response>();
+    unreadFetch.mockImplementationOnce(() => pending.promise);
+    state.navigation = { ...state.navigation, truncated: true, updatedAt: 2 };
+    hook.rerender({ scope: "owner/runtime/main" });
+    expect(hook.result.current.conversations).toEqual([]);
+    await act(async () => pending.resolve(Response.json({ error: { code: "unavailable" } }, { status: 503 })));
+    expect(hook.result.current.conversations).toEqual([]);
+    recoveredBot = true;
+    state.navigation = { ...state.navigation, updatedAt: 3 };
+    hook.rerender({ scope: "owner/runtime/main" });
+    await waitFor(() => expect(hook.result.current.navigationClassifications).toContainEqual({ chatId: "chat_older", classification: { kind: "bot", agentId: "bot_12345678" } }));
+  });
+  it("rejects unread completion after global revoke even before effect cleanup runs", async () => {
+    state.navigation.truncated = true;
+    const pending = deferred<Response>();
+    unreadFetch.mockImplementationOnce(() => pending.promise);
+    const hook = mount();
+    await act(async () => hook.result.current.setUnreadOnly?.(true));
+    await waitFor(() => expect(unreadFetch).toHaveBeenCalledOnce());
+    await act(async () => {
+      state.navigation.store!.revoke();
+      pending.resolve(Response.json({ items: [record("chat_old_authority")] }));
+    });
+    expect(hook.result.current.conversations).toEqual([]);
   });
   it("bounds a server's repeated unread cursor and cancels results when the filter closes", async () => {
     state.navigation.truncated = true;
@@ -170,14 +214,20 @@ describe("Web unread navigation", () => {
     const hook = mount();
     for (let index = 0; index < 4; index++) {
       const recordValue = record("chat_known");
-      recordValue.chat = { ...recordValue.chat, title: "Streaming title", titleVersion: index + 2, revision: index + 2 };
+      recordValue.chat = { ...recordValue.chat, title: "Streaming title", titleVersion: index + 2, revision: index + 2, messageCount: index + 10, updatedAt: "2026-10-08T01:00:00.000Z" };
       const event = { cursor: index + 1, chatId: recordValue.chat.id, revision: recordValue.chat.revision, eventType: "run.message" as const, createdAt: recordValue.chat.createdAt };
       await act(async () => {
         for (const listener of [...state.listeners]) listener({ type: "chat.changed", ...event,
           content: { type: "chat.content", event, content: { record: recordValue } } });
       });
     }
+    if (known) {
+      expect(state.navigation.store.getSnapshot().items[0]?.chat).toMatchObject({
+        title: "Streaming title", messageCount: 13, updatedAt: "2026-10-08T01:00:00.000Z",
+      });
+    }
     await act(async () => { pending.resolve(value); await request; });
+    if (known) expect(state.navigation.store.getSnapshot().items[0]?.chat.messageCount).toBe(13);
     expect(load).toHaveBeenCalledTimes(known ? 2 : 1);
     expect(state.navigation.store.getSnapshot().items.map(item => item.chat.id)).toEqual(["chat_known"]);
     expect(hook.result.current.messages).toEqual([]);
