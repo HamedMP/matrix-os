@@ -147,3 +147,140 @@ weights and seams are `contracts/search.ts`; this spec adds the rest.
   a vector-only hit starts where its best chunk's span start lands in the plain text. Documents use body then title;
   claims use statement, then quote, then label (field `label`, so a claim matched only by its label shows the label
   highlighted). Cites follow the shared rule in `brain/cite.ts`.
+
+## Routes
+
+Spec 553's rules with project ids or slugs (`BRAIN_PROJECT_REF_PATTERN`): principal first, `service === null` is 503,
+a malformed reference is the missing-project 404, `exactQuery` then a strict zod schema, `Cache-Control: private,
+no-store` on every answer, one error mapper. No `app.use("*")`.
+
+| Method, path | Input | Success | Errors |
+| --- | --- | --- | --- |
+| GET `/projects/:projectId/search` | `q`, `types`, `kinds`, `claimKinds`, `source`, `from`, `to`, `path`, `mode`, `limit` 1..50 (20), `cursor` | 200 `BrainSearchView` | 400 401 404 409 503 |
+| POST `/projects/:projectId/search/refresh` | bodyLimit 1 KiB; empty or `{}` | 200 `BrainRefreshView` | 400 401 404 413 503 |
+
+## Security architecture
+
+| Entry point | Authentication | Authorization and scope | Errors |
+| --- | --- | --- | --- |
+| GET `.../search`, POST `.../search/refresh` | `authMiddleware`, `requireRequestPrincipal` | project of the principal via `BrainProjectResolver`; scope `personal:project:<id>` | as routes |
+| hook listener `search` | server code | the event's scope key | logged by the bus |
+
+- Input validation: project reference pattern; bodyLimit and a strict empty body; strict query schema (lengths,
+  enums, unique lists, real dates, `from < to`, path normalization, source id); strict cursors; bound SQL parameters.
+- Errors: fixed bodies from `BRAIN_API_ERRORS` and `BRAIN_FEATURE_ERRORS`; store errors map through
+  `BRAIN_FEATURE_STORE_ERROR_CODES`; anything else is logged by error name and is 503. No SQL, path, provider name
+  or provider text reaches a client.
+- Credentials: the owner's OpenAI key (see Embeddings), read bounded from the owner's config file (a symlink, non-file
+  or file over 64 KiB reads as absent) for each call, sent only to `api.openai.com`, never cached, logged, stored,
+  returned or put in an error. Logs carry the key source (`owner_key` or `environment`), never the key.
+
+## Integration wiring
+
+`api/start.ts` calls `bootstrapBrainSearchDatabase(kysely)` after the core store (a failure leaves only search off),
+then `createBrainSearch({ repository, resolver, capability, embeddings })` with `embeddings` from
+`createBrainSearchEmbeddings({ homePath, env: process.env })` (null without a key): its `index` is the `search` hook
+listener, its `service` is `BrainServices.search` (at most two refreshes at once, more is 503).
+`api/feature-routes.ts` mounts the routes with the shared guard of `api/feature-route-kit.ts`. Environment:
+`OPENAI_API_KEY` (used only when `openai_key` is `"${OPENAI_API_KEY}"`) and `OPENAI_BASE_URL` (when set, it is not
+used). Agent tools use the
+service.
+
+## Failure modes
+
+- Timeouts: every read 10 s (`SET LOCAL statement_timeout`), each write 15 s with a 5 s lock wait, the query
+  embedding and each provider batch 10 s (`AbortSignal.timeout`, retries included), a route refresh 30 s.
+- Provider: a missing or refused key or an outage ends the embedding pass with nothing recorded; search in `auto`
+  falls back to text. Free-tier keys hit rate limits during a first index: each refresh embeds what it can and the
+  rest stays pending. Two refreshes of one scope at once can embed a document twice (bounded by each budget). Each
+  store write first checks, under the search lock, that the document is still live at the revision it embedded, so
+  a slower pass for an older revision writes nothing and never replaces a newer revision's vectors; marking the row
+  embedded also needs that revision, so the document stays pending until its current revision is stored.
+- Concurrency: writes serialize per scope on the search lock; claims written between rebuild statements leave the
+  document pending; search rows reference only `brain_documents`, so a refresh racing an extraction never waits on,
+  or deadlocks with, its claim writes. A search ranks, hydrates and reads freshness in one snapshot.
+- Crash recovery: every batch commits whole or not at all; an interrupted refresh leaves pending documents, and a
+  crash between storing chunks and marking the row embedded only re-embeds that document.
+- Errors: unexpected store errors reject the refresh (the bus logs the listener by name) or the request (503); a
+  document or scope erased meanwhile is a skip.
+
+## Resource management
+
+| Limit | Value | Enforced in |
+| --- | --- | --- |
+| q / terms / list items / page / cursor | 500 characters / 16 / 8 / 50 / 512 characters | `query.ts`, `routes.ts` |
+| candidates per retriever / fused window / RRF k | 200 / 200 / 60 | `service.ts`, `vector.ts` |
+| snippet / highlights / matches per field | 280 units / 16 / 256 | `snippet.ts` |
+| refresh documents / budget; rebuild batch; pending count | 500 (ceiling 5,000) / 20 s (120 s); 25; 1,000 | `indexer.ts`, `index-sql.ts` |
+| chunks per document / chunk / overlap; embed batch; dimensions | 40 / 2,000 / 200; 64; 1..4,096 | `vector.ts`, `pgvector.ts`, SQL CHECK |
+| body chunks + claims chunk / claims chunk characters | 39 + 1 / 2,000 | `vector.ts`, `index-sql.ts` |
+| stored vectors read back per batch / room check per group | 64 documents and 2,560 keys / 64 documents | `pgvector.ts`, `array-store.ts`, `embed-pass.ts` |
+| OpenAI inputs per call / characters per input / dimensions / retries / longest wait | 32 / 2,730 / 1..1,536 / 2 / 2 s | `openai.ts`, `openai-config.ts` |
+| answer body / error body / config file | 2 MiB / 16 KiB / 64 KiB | `openai.ts`, `openai-config.ts` |
+| refresh embedding budget / array rows per scope | 1,000,000 tokens and 20,000 micro-USD / 50,000 | `types.ts`, `embed-pass.ts`, `array-store.ts` |
+
+In-memory sets and maps live for one request or one refresh, bounded by the page or the candidate window. No files,
+timers or caches.
+
+Third-party data flow: nothing leaves the gateway unless the owner opts in by setting `brain.embeddings.openai_key`
+(their key, or `"${OPENAI_API_KEY}"` for the gateway's own). Then the titles, body chunks and claim statements of the
+documents in the scopes the owner indexes whose provenance is allowed (by default only the git ones: `git_pr`,
+`git_commit`, `git_spec`), and the text of each hybrid or auto search, go to OpenAI's embeddings API, and nothing else
+does. Chat transcripts (`matrix_chat`), notes, files, calendar events, Linear, Drive, GitHub and Slack text leave only
+when the owner lists their provenance. A chunk whose text did not change is not sent again. An empty or absent `openai_key` keeps it off even when
+the gateway's environment holds an `OPENAI_API_KEY` for another use (voice, a platform key).
+
+## Invariants
+
+- **Source of truth**: owner Postgres core tables; `brain_search_*` rows are derived, record the revision they came
+  from, and are rebuilt by `refresh`; search never writes core tables.
+- **Lock/transaction scope**: one transaction per rebuild batch, orphan delete or chunk replace (with the array
+  cap check), under `brain-search:<scopeId>`; search reads in one read transaction; no provider call, and no config
+  file read, inside a transaction.
+- **Acceptable orphan states** (never returned: ranking joins live documents and current claims): rows of a
+  tombstoned document until the next refresh; rows of removed claims until their document is rebuilt; chunks and
+  array vectors of a replaced provider, a replaced store or an older revision until the document is embedded again
+  in that store, swept or erased (erase cascades); vectors written as their document was tombstoned until the next
+  sweep.
+- **Auth source of truth**: the request principal and the project resolver's `personal:project:<id>` scope.
+- **Deferred scope**: a Settings screen for the key (today it is the config file), other providers or models, an
+  approximate vector index, organization scopes, cross-project search, query suggestions.
+
+## Integration test checkpoint
+
+`pnpm exec vitest run tests/gateway/brain-search-*.test.ts` (PGlite, no network, fake provider and fake OpenAI fetch):
+parsing, snippets, cites, fusion; bootstrap with and without pgvector; index, orphans, hooks and limits; ranking,
+filters, paging and notices; hybrid with a fake vector store; routes; the OpenAI request, batching, errors, retries,
+cost and the owner's opt-in; the array store against a brute-force scan, its CHECK, cap and cleanup; refresh budgets
+and stops; only changed chunks sent; a revised document re-embedded in a full store; a slower pass never replacing a
+newer revision's vectors; a store switch re-embedding; spend logs from the hook listener, a failed pass and a query. With `MATRIX_TEST_POSTGRES_URL` the array store also runs on real PostgreSQL. Manual (dev Docker stack, project
+`proj_db779ebd-56fb-4c55-a253-34add36251b7`, 2,129 documents): `POST .../search/refresh` until `caughtUp` (5 calls,
+under 3 s each), then `?q=transaction`, `?q="source of truth"&types=claim`, `?q=brain*&kinds=pr` and
+`?q=onboarding&path=packages/gateway/src/onboarding/` each answer in under 0.5 s (`vector`: `extension_missing`). With
+a key: refresh until `caughtUp` (each answer shows `embedding.tokens` and `costMicroUsd`), then `?q=...&mode=hybrid`
+answers with `store: "array"` and hits matched by `vector`.
+
+## Code review checklist
+
+No raw text reaches `to_tsquery`; every catch checks the error (SQLSTATE, typed error or abort) or rethrows; every
+list, loop, set, window and body read is bounded; writes take only the search lock; no core-table write or DDL; no
+provider call inside a transaction; the key is never logged; OpenAI is called with plain `fetch`, no new dependency.
+
+## Delivery and evidence
+
+- [ ] Two stacked PRs, each under 3,000 additions, checks green, Invariants and the OS-view matrix (N/A) in the
+      body, merged only after Greptile scores its current head 5/5: first full-text and hybrid search with the
+      pgvector store; then embeddings (`openai.ts`, `openai-config.ts`, `array-store.ts`, `embed-pass.ts`, the
+      matching changes to the other search files, their tests and this spec).
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): search, refresh, the capability flag, and how to
+      add an OpenAI key (and what it sends to OpenAI).
+
+## Relationship to existing work
+
+Spec 551's store and refs, spec 552's documents and footer, spec 553's project resolution, path rules and routes,
+spec 554's claims. Spec 562 exposes search to agents, spec 563 renders it.
+
+## Deferred
+
+Everything under Deferred scope above, plus ranking signals beyond text (recency, source weight), per-field boosts in
+the query, and search history.
