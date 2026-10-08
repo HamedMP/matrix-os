@@ -1,8 +1,9 @@
 /**
  * Impact brief: what the brain already knows about the changed paths. Plain bounded SELECTs on the core tables (no
- * writes, no locks): the project's git source and its sync position, the newest pull requests per changed path, the
- * current invariant and decision claims of live documents with a path ref equal to a changed path, and one
- * git_spec document per touched spec folder. Path refs are exact values, so `IN` lists of bound parameters suffice.
+ * writes, no locks), all run by the caller in one bounded read (withBrainRead): the project's git source and its sync
+ * position, the newest pull requests per changed path, the current invariant and decision claims of live documents
+ * with a path ref equal to a changed path, and one git_spec document per touched spec folder. Path refs are exact
+ * values, so `IN` lists of bound parameters suffice.
  * Earlier pull requests and claims come from documents dated at or before the merge base (`asOf`), so a range the
  * brain already synced never lists its own pull requests or decisions as history.
  */
@@ -11,7 +12,7 @@ import { normalizeBrainClaimText } from "../claims/types.js";
 import { loadBrainCites } from "../cite.js";
 import type { BrainCiteView, BrainImpactClaim, BrainImpactPrior } from "../contracts.js";
 import { parseGitCursor } from "../git/cursor.js";
-import type { BrainRepository } from "../repository.js";
+import { selectCursor } from "../sync.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
 
 const PR_PROVENANCES = ["git_pr", "github_pr"];
@@ -19,21 +20,20 @@ const PR_PROVENANCES = ["git_pr", "github_pr"];
 const CLAIM_ROWS_PER_KIND = 200;
 /** Changed paths listed per claim. */
 export const IMPACT_CLAIM_PATHS_MAX = 20;
-const SOURCES_SCAN_LIMIT = 100;
 
 type Db = Kysely<BrainDatabase>;
 
 /** The project's oldest live git source and the last first-parent commit its sync fully applied. */
 export async function findGitSource(
-  repository: BrainRepository, scope: BrainScopeKey,
+  db: Db, scope: BrainScopeKey,
 ): Promise<{ readonly sourceId: string; readonly position: string | null } | null> {
-  const page = await repository.listSources(scope, { limit: SOURCES_SCAN_LIMIT });
-  const key = (source: { createdAt: string; sourceId: string }) =>
-    Buffer.from(`${source.createdAt} ${source.sourceId}`);
-  const git = page.items.filter((source) => source.kind === "git").sort((a, b) => Buffer.compare(key(a), key(b)))[0];
+  const git = await db.selectFrom("brain_sources").select("source_id")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("kind", "=", "git")
+    .where("deleted_at", "is", null).orderBy("created_at").orderBy("source_id").limit(1).executeTakeFirst();
   if (git === undefined) return null;
-  const cursor = await repository.getSyncCursor(scope, git.sourceId);
-  return { sourceId: git.sourceId, position: cursor === null ? null : parseGitCursor(cursor.cursor)?.position ?? null };
+  const cursor = await selectCursor(db, scope, git.source_id);
+  const position = cursor === undefined ? null : parseGitCursor(cursor.cursor)?.position ?? null;
+  return { sourceId: git.source_id, position };
 }
 
 /**

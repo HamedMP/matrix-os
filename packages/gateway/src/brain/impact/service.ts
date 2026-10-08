@@ -98,20 +98,20 @@ export function createBrainImpactService(deps: BrainImpactServiceDeps): BrainImp
     });
     for (const notice of scan.notices) notices.add(notice);
 
-    const source = await findGitSource(deps.repository, scope);
-    if (source === null) notices.add("no_git_source");
-    else if (await brainBehind(git, source.position, mergeBase)) notices.add("brain_behind_head");
     const lookup = [...new Set(changed.flatMap((file) => [file.path, file.previousPath ?? file.path]))];
     const priorPaths = [...lookup.filter((path) => !isTestPath(path)), ...lookup.filter(isTestPath)]
       .slice(0, limits.filesWithPriorMax * 2);
     const touched = specsTouched(changed, limits.specsMax);
     const asOf = await git.commitTime(mergeBase);
-    const [prior, invariants, decisions, cites] = await withBrainRead(deps.repository.kysely, async (db) => [
+    const [source, prior, invariants, decisions, cites] = await withBrainRead(deps.repository.kysely, async (db) => [
+      await findGitSource(db, scope),
       await priorPullRequests(db, scope, priorPaths, limits.priorPerFile, limits.filesWithPriorMax, asOf),
       await currentClaims(db, scope, lookup, "invariant", limits.claimsPerKindMax, asOf),
       await currentClaims(db, scope, lookup, "decision", limits.claimsPerKindMax, asOf),
       await specCites(db, scope, touched.map((spec) => spec.spec)),
     ] as const);
+    if (source === null) notices.add("no_git_source");
+    else if (await brainBehind(git, source.position, mergeBase)) notices.add("brain_behind_head");
     return {
       base, head, mergeBase,
       changedFiles: changed.map((file) => ({ ...file, isTest: isTestPath(file.path) })),
