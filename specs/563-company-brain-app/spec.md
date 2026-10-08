@@ -43,7 +43,8 @@ shows the budget left, which is per owner, not per project), every other source 
 pause or resume, recent syncs, disconnect after a second click) and a connect form. The form lists every
 kind with its availability ("Ready", "Connect the account in Settings", or "Not set up on this server" for
 `not_configured`, which covers every server-side gap, not only a missing integration key), offers the first page of the kind's options, or a typed value when the kind lists none (GitHub
-`owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note), and per-kind
+`owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note, Linear team keys,
+Google Drive folder ids, Google Calendar ids; the last three list no options yet, so they are always typed), and per-kind
 settings: GitHub and Linear item types (at least one), Matrix file endings (1 to 32) and largest file (64 KiB,
 256 KiB or 1 MiB), calendar days back and ahead (0 to 90, no event bodies). Defaults: every item type, Markdown and
 text files up to 256 KiB, 14 days each way. The gateway validates every config.
