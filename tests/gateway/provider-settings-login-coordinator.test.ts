@@ -126,7 +126,7 @@ describe("provider terminal login coordinator", () => {
       cwd: "~",
       agent: "claude",
       exclusive: false,
-      cmd: expect.stringContaining("; claude"),
+      cmd: expect.stringContaining("; exec "),
     }));
   });
 

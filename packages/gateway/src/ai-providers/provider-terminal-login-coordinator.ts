@@ -1,3 +1,4 @@
+import { claudeNativeTerminalCommand } from "./claude-native-executable.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
@@ -37,12 +38,6 @@ type LoginInput = Parameters<ProviderLoginCoordinator["startLogin"]>[0];
 type ReceiptDocument = z.infer<typeof ReceiptDocumentSchema>;
 type ReceiptWriter = (path: string, value: ReceiptDocument) => Promise<void>;
 
-const LOGIN_COMMANDS = {
-  claude: {
-    agent: "claude" as const,
-    command: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; claude'",
-  },
-} as const;
 
 function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error
@@ -264,7 +259,7 @@ export function createProviderTerminalLoginCoordinator(options: {
         }
         const hash = payloadHash(input);
         const recoveryHash = recoveryIdentityHash(input);
-        const command = LOGIN_COMMANDS[input.harness.harness];
+        const command = { agent: "claude" as const, command: claudeNativeTerminalCommand(options.homePath) };
         const canonicalSessionName = loginSessionName(recoveryHash);
         const document = await readReceipts(receiptsPath);
         const recoveryDocument = await readReceipts(recoveryPath);

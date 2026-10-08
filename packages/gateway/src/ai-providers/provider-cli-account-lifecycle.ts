@@ -1,3 +1,4 @@
+import { resolveClaudeNativeExecutable } from "./claude-native-executable.js";
 import { isBoundClaudeNativeSignedOut, verifyClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, assertClaudeLifecycleSignedOut, type ClaudeAccountReaderUnderLease } from "./claude-account-lifecycle-proof.js";
 import { isNativeClaudeLifecycleAccount } from "./provider-lifecycle-credential-identity.js";
@@ -237,7 +238,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
             await revokeOwnerAnthropicKey(homePath);
           } else {
           const command = COMMANDS[driver];
-          CommandResultSchema.parse(await run(command.command, [...command.args], {
+          CommandResultSchema.parse(await run(driver === "claude_code" ? resolveClaudeNativeExecutable(homePath, lifecycleEnvironment(homePath)) : command.command, [...command.args], {
             cwd: homePath,
             timeoutMs: COMMAND_TIMEOUT_MS,
             maxOutputBytes: MAX_OUTPUT_BYTES,
