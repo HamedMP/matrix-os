@@ -319,6 +319,10 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           bounces={false}
           hideKeyboardAccessoryView={false}
           keyboardDisplayRequiresUserAction={false}
+          // Left on, the WebView puts back the status bar style it found when
+          // it was created each time any window shows or hides (the keyboard,
+          // a system prompt), over the one the app has set since.
+          autoManageStatusBarEnabled={false}
           androidLayerType="hardware"
           setBuiltInZoomControls={false}
           style={styles.web}

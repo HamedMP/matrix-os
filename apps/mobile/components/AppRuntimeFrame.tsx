@@ -71,6 +71,10 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
         renderError={() => <AppRuntimeUnavailable title={title} />}
         allowsBackForwardNavigationGestures
         allowsInlineMediaPlayback
+        // Left on, the WebView puts back the status bar style it found when it
+        // was created each time any window shows or hides, over the one the
+        // app has set since (a theme change, a screen with its own style).
+        autoManageStatusBarEnabled={false}
         javaScriptEnabled
         domStorageEnabled
         pullToRefreshEnabled
