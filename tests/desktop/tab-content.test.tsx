@@ -15,6 +15,7 @@ const homeMock = vi.hoisted(() => vi.fn(() => <div>Browser</div>));
 const browserMock = vi.hoisted(() => vi.fn(() => <div>Web Browser</div>));
 const editorMock = vi.hoisted(() => vi.fn(() => <div>Editor</div>));
 const notesMock = vi.hoisted(() => vi.fn(() => <div>Notes</div>));
+const brainMock = vi.hoisted(() => vi.fn(() => <div>Company Brain</div>));
 
 vi.mock("@desktop/renderer/src/features/work/WorkTab", () => ({ default: workTabMock }));
 vi.mock("@desktop/renderer/src/features/workspace/TaskWorkspace", () => ({ default: taskWorkspaceMock }));
@@ -23,6 +24,7 @@ vi.mock("@desktop/renderer/src/features/mission-control/HomeTab", () => ({ defau
 vi.mock("@desktop/renderer/src/features/browser/BrowserTab", () => ({ default: browserMock }));
 vi.mock("@desktop/renderer/src/features/editor/DesktopEditorWorkspace", () => ({ default: editorMock }));
 vi.mock("@desktop/renderer/src/features/notes/NotesWorkspace", () => ({ default: notesMock }));
+vi.mock("@desktop/renderer/src/features/brain/DesktopBrainView", () => ({ default: brainMock }));
 vi.mock("@desktop/renderer/src/features/embeds/EmbedHost", () => ({ default: () => <div>Native content</div> }));
 
 afterEach(() => {
@@ -294,6 +296,7 @@ describe("current desktop tab panes", () => {
     ["browser", browserMock],
     ["editor", editorMock],
     ["notes", notesMock],
+    ["brain", brainMock],
   ] as const)("renders the current %s workspace", (kind, workspaceMock) => {
     render(<TabPane tab={{ id: kind, kind, title: kind, closable: true }} active />);
     expect(workspaceMock).toHaveBeenCalled();
