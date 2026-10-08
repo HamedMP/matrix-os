@@ -91,7 +91,7 @@ export const BRAIN_MODEL_PROVENANCES = ["git_pr", "git_commit", "git_spec"] as c
  * document is retried until it failed this often on one revision. tokensPerRun: input plus output tokens, checked
  * before each model call, so one call may overrun it. spendMicroUsdPer30d: model spend of the scope over the last 30
  * days (spend.ts), checked before each model call against that call's worst case; only a call whose usage never
- * reaches the run row (a timeout, an abort, or the call in flight when a run is lost) can pass it.
+ * reaches the run row (a timeout, an abort, a lost answer, or the call in flight when a run is lost) can pass it.
  */
 export interface BrainExtractionLimits {
   readonly documentsPerRun: number; readonly bodyBytesPerRun: number; readonly runBudgetMs: number;

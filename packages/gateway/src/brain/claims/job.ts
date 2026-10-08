@@ -144,9 +144,9 @@ function rulesOutcome(state: Extraction, document: BrainDocument): BrainDocument
 }
 
 /**
- * A call that was sent but never answered (it timed out, or the caller aborted it) or answered without valid usage may
- * still be billed, and no usable usage comes back: its worst case is added to the run's cost, so the run row, the
- * per-run budget and the 30-day cap count it.
+ * A call that was sent but never answered (it timed out, the caller aborted it, or its answer was lost) or answered
+ * without valid usage may still be billed, and no usable usage comes back: its worst case is added to the run's cost,
+ * so the run row, the per-run budget and the 30-day cap count it.
  */
 function chargeUnanswered(state: Extraction, inputBytes: number): void {
   state.usage.costMicroUsd += brainModelCallWorstCostMicroUsd(inputBytes);
@@ -155,7 +155,8 @@ function chargeUnanswered(state: Extraction, inputBytes: number): void {
 /**
  * Null when the caller aborted during the call: the run stops and the document keeps its state. A BrainModelError
  * either fails the document (model_timeout, model_rejected) or stops the run (model_auth_failed, model_unavailable).
- * A timeout, an abort after the call started or invalid usage is charged at its worst case (chargeUnanswered).
+ * A timeout, an abort after the call started, an unanswered BrainModelError or invalid usage is charged at its worst
+ * case (chargeUnanswered).
  */
 async function modelOutcome(
   state: Extraction, model: BrainClaimModel, document: BrainDocument,
@@ -198,6 +199,8 @@ async function modelOutcome(
       return { status: "failed", errorCode: "model_timeout" };
     }
     if (modelError !== null) {
+      // An answer lost on its way back may still be billed, whatever the code does next.
+      if (modelError.unanswered) chargeUnanswered(state, inputBytes);
       if (modelError.code === "model_rejected") {
         state.stopAfter = modelError;
         return { status: "failed", errorCode: "model_failed" };

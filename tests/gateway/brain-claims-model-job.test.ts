@@ -1,6 +1,7 @@
 /**
  * runBrainExtraction with a model on PGlite: newest-first selection, skipped and invalid outcomes, BrainModelError
- * codes, the cost cap, cache counts on runs, and abort and timeout through the Claude client over a fake fetch.
+ * codes and lost answers, the cost cap, cache counts on runs, and abort, timeout and a dropped connection through the
+ * Claude client over a fake fetch.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -153,6 +154,18 @@ describe("brain claim extraction with a model", { timeout: 60_000 }, () => {
     expect(await states()).toEqual({});
   });
 
+  it.each(["model_unavailable", "model_auth_failed", "model_rejected"] as const)(
+    "charges a %s call whose answer was lost at its worst case, and one answered with a status nothing", async (code) => {
+      await seed(1);
+      const worst = brainModelCallWorstCostMicroUsd(Buffer.byteLength(`Title d0${body(0)}`, "utf8"));
+      const lost = fakeModel(async () => { throw new BrainModelError(code, { unanswered: true }); });
+      expect(await extract({ model: lost })).toMatchObject({
+        status: "failed", errorCode: code, usage: { costMicroUsd: worst }, run: { usage: { costMicroUsd: worst } },
+        spend: { spentMicroUsd: worst },
+      });
+      expect((await extract({ model: failingWith(code) })).usage.costMicroUsd).toBe(0);
+    });
+
   it("fails the newest document on model_rejected then stops; model_timeout fails only its document", async () => {
     await seed(3);
     const rejecting = failingWith("model_rejected");
@@ -254,6 +267,25 @@ describe("brain claim extraction with a model", { timeout: 60_000 }, () => {
       });
       expect(fake.requests).toHaveLength(0);
       expect(await states()).toEqual({ d2: ["skipped", "body_too_short", 1], d1: ["skipped", "document_too_large", 1] });
+    });
+
+    it("stops on a lost connection and charges the call at its worst case; one never opened costs nothing", async () => {
+      await seed(1);
+      const worst = brainModelCallWorstCostMicroUsd(Buffer.byteLength(`Title d0${body(0)}`, "utf8"));
+      const dropped = fakeAnthropic(() => { throw new TypeError("fetch failed"); });
+      expect(await (await resolve(dropped.fetch))()).toMatchObject({
+        status: "failed", errorCode: "model_unavailable", nextAction: "retry_later", counts: { documentsProcessed: 0 },
+        usage: { costMicroUsd: worst }, run: { usage: { costMicroUsd: worst } }, spend: { spentMicroUsd: worst },
+      });
+      expect(dropped.requests).toHaveLength(2);
+      const refused = fakeAnthropic(() => {
+        throw new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) });
+      });
+      expect(await (await resolve(refused.fetch))()).toMatchObject({
+        errorCode: "model_unavailable", usage: { costMicroUsd: 0 }, spend: { spentMicroUsd: worst },
+      });
+      expect(refused.requests).toHaveLength(2);
+      expect(await states()).toEqual({});
     });
 
     it("fails the document as model_timeout when the call outlives the per-call timeout", async () => {
