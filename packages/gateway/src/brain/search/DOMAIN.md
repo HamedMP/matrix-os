@@ -31,6 +31,9 @@ exists and plain `real[]` arrays otherwise. Spec: `specs/556-company-brain-searc
   any other principal searches by text, sees the text-only capability, and its documents and queries are never sent.
 - A refresh whose embedding pass cannot go on says why in `stopReason`: `embedding_unavailable` (the provider is
   not configured, refused the key or is unavailable) or `vector_cap`.
+- Every refresh entry point (the route, and the returned index the hook listener, job steps and index catch-up run)
+  shares one cap of `BRAIN_HEAVY_CALLS_MAX` refreshes at once; past it a refresh answers `brain_unavailable`. A
+  `scope_erased` event only deletes rows and is never refused.
 - `embed-pass.ts` is the refresh's embedding pass: batches across documents, the per-refresh token and cost budget,
   the store's room net of the group's own rows, and which failures stop the pass. A chunk keeps its stored vector when
   its text key (SHA-256 of the text sent) is unchanged for this provider and size, so only changed chunks are sent.
