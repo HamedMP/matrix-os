@@ -6,12 +6,16 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { ItemRow, SectionLabel } from "@/components/ui";
 
+import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
 import { ComponentsGallery } from "./ComponentsGallery";
 
 // Development only: app/design-preview/[frame].tsx loads this module behind
 // __DEV__, so nothing here reaches a production bundle.
 const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "components", Frame: ComponentsGallery },
+  { name: "C1", Frame: ChatHomeFrame },
+  { name: "C1b", Frame: ChatInProgressFrame },
+  { name: "C1c", Frame: ChatTypingFrame },
 ];
 
 export function DesignPreview({ frame }: { frame: string | undefined }) {

@@ -30,6 +30,12 @@ interface CanonicalChatSessionContextValue {
    */
   startDraftChat: (projectId?: string | null) => void;
   /**
+   * How many times `startDraftChat` has been called. The chat screen puts the
+   * cursor in its composer when this changes: asking for a new chat is the
+   * one thing that should open the keyboard without a tap on the composer.
+   */
+  draftChatRequests: number;
+  /**
    * Binds the id of a chat the draft flow just lazily created on first send —
    * unlike `selectChat`, this does not reset `selectionOverride` (the
    * selection that was just used to create it stays authoritative).
@@ -59,6 +65,7 @@ const CanonicalChatSessionContext = createContext<CanonicalChatSessionContextVal
   activeChatId: null,
   selectChat: () => {},
   startDraftChat: () => {},
+  draftChatRequests: 0,
   bindDraftChatId: () => {},
   selectionOverride: null,
   setSelectionOverride: () => {},
@@ -76,6 +83,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [selectionOverride, setSelectionOverride] = useState<CanonicalChatModelSelection | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [draftChatRequests, setDraftChatRequests] = useState(0);
   const [streamLive, setStreamLive] = useState(false);
   const { getToken, userId } = useAuth();
   const { computer } = useCanonicalChats();
@@ -141,6 +149,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
     setActiveChatId(null);
     setSelectionOverride(null);
     setSelectedProjectId(projectId);
+    setDraftChatRequests((count) => count + 1);
   }, []);
 
   const bindDraftChatId = useCallback((id: string) => {
@@ -158,6 +167,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       activeChatId,
       selectChat,
       startDraftChat,
+      draftChatRequests,
       bindDraftChatId,
       selectionOverride,
       setSelectionOverride,
@@ -170,6 +180,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
       activeChatId,
       selectChat,
       startDraftChat,
+      draftChatRequests,
       bindDraftChatId,
       selectionOverride,
       selectedProjectId,
