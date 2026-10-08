@@ -44,6 +44,7 @@ export interface BrainJobWorkerLimits {
   readonly concurrency: number;
   /** A claimed job's lease; renewed by every heartbeat. A job whose lease expires is queued again. */
   readonly leaseMs: number;
+  /** Lease renewal while a step runs; at most a third of leaseMs (a longer one is shortened to that). */
   readonly heartbeatMs: number;
   /** How often the worker looks for queued jobs and expired leases when nothing woke it. */
   readonly pollMs: number;
