@@ -26,6 +26,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
     "@aws-sdk/client-s3": "^3.1001.0",
     "@aws-sdk/s3-request-presigner": "^3.1001.0",
     "@hono/node-server": "^1.19.9",
