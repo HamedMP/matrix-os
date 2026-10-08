@@ -1,15 +1,18 @@
 "use client";
 
-import { Brain } from "lucide-react";
+import { Brain, MessageSquare } from "lucide-react";
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { BrainSelect } from "./brain-controls.js";
+import { readRemembered, writeRemembered } from "./brain-memory.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import {
-  BRAIN_SHELL_SCREENS, BRAIN_SHELL_VIEW, type BrainProjectOption, type BrainShellClient, type BrainShellScreen,
+  BRAIN_SHELL_SCREEN_ALIASES, BRAIN_SHELL_SCREENS, BRAIN_SHELL_VIEW, type BrainClaimKind, type BrainProjectOption,
+  type BrainShellClient, type BrainShellScreen, type BrainShellScreenId,
 } from "./brain-types.js";
 import { brainTabIndexForKey } from "./brain-format.js";
 import { BrainEmpty, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import { BrainAsk } from "./BrainAsk.js";
+import { BrainChat, type BrainChatHost } from "./BrainChat.js";
 import { BrainClaims } from "./BrainClaims.js";
 import { BrainSources } from "./BrainSources.js";
 import { BrainTimeline } from "./BrainTimeline.js";
@@ -21,52 +24,41 @@ export interface BrainAppProps {
   readonly api: BrainShellClient;
   /** The owner's projects (listBrainProjects over the same transport). */
   readonly loadProjects: () => Promise<readonly BrainProjectOption[]>;
-  readonly initialScreen?: BrainShellScreen;
+  /** The tab it opens on; older ids (ask, commitments, risks) still open the screen that took them over. */
+  readonly initialScreen?: BrainShellScreenId;
   readonly initialProjectId?: string;
   /** The in-app heading; off where the window title bar already names the app. Default true. */
   readonly showHeading?: boolean;
+  /** The surface's chat view for the Chat tab; without it the tab says chat is not available here. */
+  readonly chat?: BrainChatHost;
 }
 
 const SCREEN_LABELS: Readonly<Record<BrainShellScreen, string>> = {
-  ask: "Ask", today: "Today", decisions: "Decisions", commitments: "Commitments", risks: "Risks",
-  timeline: "Timeline", sources: "Sources",
+  chat: "Chat", today: "Today", decisions: "Decisions", timeline: "Timeline", search: "Search", sources: "Sources",
+};
+const ALIAS_KINDS: Readonly<Partial<Record<BrainShellScreenId, BrainClaimKind>>> = {
+  commitments: "commitment", risks: "risk",
 };
 
 /** The project this viewer picked last (a per-browser convenience; the gateway still decides access). */
 const PROJECT_STORAGE_KEY = "matrix-os:brain-project";
-const STORED_ID_MAX_CHARS = 200;
 
-/** Logs a storage failure by its name only (a DOMException such as SecurityError, or an Error). */
-function storageFailure(error: unknown): void {
-  const name = typeof error === "object" && error !== null ? (error as { readonly name?: unknown }).name : undefined;
-  console.warn("[brain] remembered project unavailable", typeof name === "string" ? name.slice(0, 64) : typeof error);
+function openingScreen(id: BrainShellScreenId): BrainShellScreen {
+  return id in BRAIN_SHELL_SCREEN_ALIASES ? BRAIN_SHELL_SCREEN_ALIASES[id as keyof typeof BRAIN_SHELL_SCREEN_ALIASES]
+    : id as BrainShellScreen;
 }
 
-function rememberedProject(): string {
-  if (typeof window === "undefined") return "";
-  try {
-    return (window.localStorage.getItem(PROJECT_STORAGE_KEY) ?? "").slice(0, STORED_ID_MAX_CHARS);
-  } catch (error: unknown) {
-    storageFailure(error);
-    return "";
-  }
-}
-
-function rememberProject(projectId: string): void {
-  try {
-    window.localStorage.setItem(PROJECT_STORAGE_KEY, projectId.slice(0, STORED_ID_MAX_CHARS));
-  } catch (error: unknown) {
-    storageFailure(error);
-  }
-}
-
-/** The Company Brain view: a project (the last pick if still listed, else the first), then one of seven screens. */
+/**
+ * The Company Brain view: pick a project, then chat with its brain or open one of the other screens. It opens on the
+ * Chat tab and on the project this browser picked last when it is still listed, else the first one.
+ */
 export function BrainApp({
-  api, loadProjects, initialScreen = "ask", initialProjectId, showHeading = true,
+  api, loadProjects, initialScreen = "chat", initialProjectId, showHeading = true, chat,
 }: BrainAppProps) {
   const projects = useBrainLoad(loadProjects, "projects");
-  const [screen, setScreen] = useState<BrainShellScreen>(initialScreen);
-  const [picked, setPicked] = useState(() => initialProjectId ?? rememberedProject());
+  const [screen, setScreen] = useState<BrainShellScreen>(() => openingScreen(initialScreen));
+  const [claimKind, setClaimKind] = useState<BrainClaimKind>(() => ALIAS_KINDS[initialScreen] ?? "decision");
+  const [picked, setPicked] = useState(() => initialProjectId ?? readRemembered(PROJECT_STORAGE_KEY, "project"));
   const baseId = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -102,20 +94,24 @@ export function BrainApp({
           }
           const props: BrainScreenProps = { api, projectId: project.id, onOpenSources: () => setScreen("sources") };
           return (
-            <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] @2xl:grid-cols-[12rem_minmax(0,1fr)] @2xl:grid-rows-1">
+            <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
               <nav aria-label="Company Brain"
-                className={`grid content-start gap-3 border-b p-3 @2xl:border-r @2xl:border-b-0 ${BRAIN_TONE.border}`}>
-                <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+                className={`flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-3 py-2 ${BRAIN_TONE.border}`}>
+                <label className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
                   Project
                   <BrainSelect
+                    className="min-w-0 max-w-48"
                     value={project.id}
-                    onChange={(event) => { setPicked(event.target.value); rememberProject(event.target.value); }}
+                    onChange={(event) => {
+                      setPicked(event.target.value);
+                      writeRemembered(PROJECT_STORAGE_KEY, event.target.value, "project");
+                    }}
                   >
                     {list.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
                   </BrainSelect>
                 </label>
                 <div role="tablist" aria-label="Screens" onKeyDown={onTabKey}
-                  className="flex gap-1 overflow-x-auto @2xl:flex-col @2xl:overflow-visible">
+                  className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
                   {BRAIN_SHELL_SCREENS.map((value, index) => (
                     <button
                       key={value}
@@ -127,8 +123,11 @@ export function BrainApp({
                       aria-controls={`${baseId}-panel`}
                       tabIndex={value === screen ? 0 : -1}
                       onClick={() => setScreen(value)}
-                      className={`shrink-0 rounded-md px-3 py-1.5 text-left text-sm font-medium text-muted-foreground ${BRAIN_TONE.hover} ${BRAIN_TONE.focus} ${BRAIN_TONE.selected}`}
+                      className={`inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm ${
+                        value === "chat" ? "font-semibold text-foreground" : "font-medium text-muted-foreground"
+                      } ${BRAIN_TONE.hover} ${BRAIN_TONE.focus} ${BRAIN_TONE.selected}`}
                     >
+                      {value === "chat" && <MessageSquare className={`size-4 ${BRAIN_TONE.accentText}`} aria-hidden="true" />}
                       {SCREEN_LABELS[value]}
                     </button>
                   ))}
@@ -139,9 +138,12 @@ export function BrainApp({
                 role="tabpanel"
                 id={`${baseId}-panel`}
                 aria-labelledby={`${baseId}-tab-${screen}`}
-                className="min-h-0 overflow-auto p-4"
+                className={screen === "chat" ? "flex min-h-0 flex-col" : "min-h-0 overflow-auto p-4"}
               >
-                <BrainScreen screen={screen} props={props} />
+                {screen === "chat" ? (
+                  <BrainChat host={chat} api={api} projectId={project.id} projectName={project.name}
+                    onOpenSearch={() => setScreen("search")} onOpenSources={props.onOpenSources} />
+                ) : <BrainScreen screen={screen} props={props} claimKind={claimKind} onClaimKind={setClaimKind} />}
               </section>
             </div>
           );
@@ -151,13 +153,14 @@ export function BrainApp({
   );
 }
 
-function BrainScreen({ screen, props }: { readonly screen: BrainShellScreen; readonly props: BrainScreenProps }) {
+function BrainScreen({ screen, props, claimKind, onClaimKind }: {
+  readonly screen: Exclude<BrainShellScreen, "chat">; readonly props: BrainScreenProps;
+  readonly claimKind: BrainClaimKind; readonly onClaimKind: (kind: BrainClaimKind) => void;
+}) {
   switch (screen) {
-    case "ask": return <BrainAsk {...props} />;
+    case "search": return <BrainAsk {...props} />;
     case "today": return <BrainToday {...props} />;
-    case "decisions": return <BrainClaims {...props} kind="decision" />;
-    case "commitments": return <BrainClaims {...props} kind="commitment" />;
-    case "risks": return <BrainClaims {...props} kind="risk" />;
+    case "decisions": return <BrainClaims {...props} kind={claimKind} onKindChange={onClaimKind} />;
     case "timeline": return <BrainTimeline {...props} />;
     case "sources": return <BrainSources {...props} />;
   }
