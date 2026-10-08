@@ -209,6 +209,27 @@ describe("Docker development entrypoint dependency layout", () => {
     ]);
   });
 
+  it("retries a failed lockfile again after a return to the installed one", () => {
+    const run = runDependencyWatcher("lock-b", [
+      { lockfile: "lock-a", install: "fail" },
+      { lockfile: "lock-b", install: "ok" },
+      { lockfile: "lock-a", install: "ok" },
+      { lockfile: "lock-a", install: "ok" },
+    ]);
+
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    expect(run.events).toEqual([
+      "installed lock-b",
+      "install lock-a fail",
+      "installed lock-b",
+      "installed lock-b",
+      "install lock-a ok",
+      "installed lock-a",
+      "installed lock-a",
+    ]);
+  });
+
   it("builds the terminal runtime before starting the gateway", () => {
     const fixture = mkdtempSync(join(tmpdir(), "matrix-entrypoint-"));
     const bin = join(fixture, "bin");

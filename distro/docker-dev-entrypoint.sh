@@ -40,7 +40,12 @@ watch_deps() {
   # every poll.
   local failed_lock_hash="" current_lock_hash
   while sleep 5; do
-    lockfile_unchanged && continue
+    if lockfile_unchanged; then
+      # Back on the installed lockfile: returning to the failed one later is a
+      # new change and gets a fresh install attempt.
+      failed_lock_hash=""
+      continue
+    fi
     current_lock_hash="$(md5sum pnpm-lock.yaml 2>/dev/null)" || current_lock_hash=""
     [ -n "$current_lock_hash" ] || continue
     [ "$current_lock_hash" = "$failed_lock_hash" ] && continue
