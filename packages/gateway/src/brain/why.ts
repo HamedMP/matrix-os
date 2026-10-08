@@ -48,6 +48,8 @@ const GIT_TRAILER = /^[A-Za-z][A-Za-z0-9-]*: \S/;
 const MAX_HEADING_INDENT = 3;
 const MAX_HEADING_LEVEL = 6;
 const MIN_FENCE_LENGTH = 3;
+/** After a closing fence's run: spaces or tabs only (a CRLF message leaves its "\r" on the line). */
+const FENCE_CLOSE_TAIL = /^[ \t]*\r?$/;
 
 // Paths.
 
@@ -122,6 +124,13 @@ export function fenceOf(line: string): { readonly char: string; readonly length:
   return end - start >= MIN_FENCE_LENGTH ? { char, length: end - start } : null;
 }
 
+/** Whether `line` closes `open`: a fence of the same character at least as long, then only spaces or tabs. */
+export function closesFence(open: { readonly char: string; readonly length: number }, line: string): boolean {
+  const fence = fenceOf(line);
+  if (fence === null || fence.char !== open.char || fence.length < open.length) return false;
+  return FENCE_CLOSE_TAIL.test(line.slice(indentOf(line) + fence.length));
+}
+
 /** ATX only: up to 3 spaces, 1..6 `#`, then a space, tab or the line end; trailing spaces, tabs and `#` dropped. */
 export function headingOf(line: string): { readonly level: number; readonly text: string } | null {
   const start = indentOf(line);
@@ -138,16 +147,16 @@ export function headingOf(line: string): { readonly level: number; readonly text
   return { level, text: rest.slice(from, end) };
 }
 
-/** Headings outside fenced code; a fence closes on the same character at least as long. */
+/** Headings outside fenced code; a fence closes on the same character at least as long, with nothing after it. */
 function scanHeadings(lines: readonly string[]): Heading[] {
   const headings: Heading[] = [];
   let open: { readonly char: string; readonly length: number } | null = null;
   lines.forEach((line, index) => {
-    const fence = fenceOf(line);
     if (open !== null) {
-      if (fence !== null && fence.char === open.char && fence.length >= open.length) open = null;
+      if (closesFence(open, line)) open = null;
       return;
     }
+    const fence = fenceOf(line);
     if (fence !== null) {
       open = fence;
       return;

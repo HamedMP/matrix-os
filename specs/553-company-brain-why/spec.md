@@ -62,9 +62,10 @@ control character, leading `/`, or empty, `.` or `..` segment), so `""`, `/`, `a
 
 ## Excerpts
 
-- Headings: ATX only, outside backtick or tilde fences, scanned by character. Summary: the heading (at most 200
-  chars, lowercased, one trailing `:` dropped) is `summary`, `tl;dr`, `outcome` or starts `summary `; Invariants: it
-  matches `\binvariants?\b`. The first non-empty section of each class wins.
+- Headings: ATX only, outside backtick or tilde fences, scanned by character; a fence closes on a run of its
+  character at least as long with only spaces or tabs after it. Summary: the heading (at most 200 chars, lowercased,
+  one trailing `:` dropped) is `summary`, `tl;dr`, `outcome` or starts `summary `; Invariants: it matches
+  `\binvariants?\b`. The first non-empty section of each class wins.
 - Section: lines after the heading up to the next heading of the same or a higher level, or the end, trimmed of blank
   lines. Fallback (pr and commit without a Summary): the lead paragraph before the first heading, `heading: null`;
   none when it is only the message's closing git trailers (`Co-authored-by: ...`) or only repeats the title (a
