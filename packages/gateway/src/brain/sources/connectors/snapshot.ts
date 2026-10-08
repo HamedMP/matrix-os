@@ -8,8 +8,11 @@
  * returns that failure without calling the provider again.
  *
  * Cursor ("<prefix>:" + base64url JSON): { v: 1, f: fingerprint, m: re-render (or its sweep) in progress, p: last
- * re-rendered [stamp, documentId] or null }: a progress marker only; the store decides what changed.
+ * re-rendered [stamp, documentId] or null, n: random token }: a progress marker only; the store decides what changed.
+ * Every page that writes takes a new n, so a run that read the cursor before another run committed fails its
+ * compare-and-set (cursor_conflict) instead of writing older content over newer; a page that writes nothing keeps it.
  */
+import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
 import type { BrainSourceAdapter, BrainSourceNotice, BrainSourceReadContext, BrainSourceReadResult } from "../../contracts.js";
 import { BRAIN_DOCUMENT_ID_PATTERN, type BrainSyncUpsertInput } from "../../types.js";
@@ -62,6 +65,7 @@ export interface SnapshotSpec<TConfig, TItem extends SnapshotItem> {
 const CursorSchema = z.object({
   v: z.literal(1), f: z.string().max(128), m: z.boolean(),
   p: z.tuple([z.string().max(64), z.string().regex(BRAIN_DOCUMENT_ID_PATTERN)]).nullable(),
+  n: z.string().regex(/^[A-Za-z0-9_-]{16}$/).optional(),
 }).strict();
 type Position = readonly [string, string];
 
@@ -76,6 +80,8 @@ interface Plan<TItem extends SnapshotItem> {
   halted: BrainSourceReadResult | null;
   /** Returned by the page after the last sweep page (access revoked). */
   readonly revoked: BrainSourceReadResult | null;
+  /** The cursor's token; replaced by every page that writes. */
+  nonce: string | undefined;
 }
 
 function compareKey(item: SnapshotItem, position: Position): number {
@@ -128,7 +134,8 @@ async function makePlan<TConfig, TItem extends SnapshotItem>(
   const notices = [...listed.value.notices];
   if (!stored.complete) notices.push("items_truncated");
   const revoked = listed.value.revoked ?? null;
-  const plan = { pending, deletions: [...deletions], notices, migrating, position, halted: null, revoked };
+  const nonce = cursor?.n;
+  const plan = { pending, deletions: [...deletions], notices, migrating, position, halted: null, revoked, nonce };
   return { ok: true, value: { ...plan, sweepPending: migrationSweep && !complete } };
 }
 
@@ -172,7 +179,8 @@ async function nextPage<TConfig, TItem extends SnapshotItem>(
   }
   const migrating = (plan.migrating && !caughtUp) || plan.sweepPending;
   const p = migrating ? plan.position : null;
-  const nextCursor = encodeCursor(spec.cursorPrefix, { v: 1, f: spec.fingerprint, m: migrating, p });
+  if (upserts.length > 0 || deletions.length > 0) plan.nonce = randomBytes(12).toString("base64url");
+  const nextCursor = encodeCursor(spec.cursorPrefix, { v: 1, f: spec.fingerprint, m: migrating, p, n: plan.nonce });
   return { ok: true, page: { upserts, deletions, nextCursor, caughtUp, skipped, notices: [...new Set(notices)] } };
 }
 

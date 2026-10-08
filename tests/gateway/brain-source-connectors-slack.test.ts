@@ -98,6 +98,37 @@ describe("Slack bridge source", () => {
       .toEqual([[2, 2, false], [2, 2, false], [1, 1, true]]);
   });
 
+  it("moves the cursor with every page it writes, so an older overlapping read cannot overwrite a newer one", async () => {
+    harness = await connectorHarness("slack_bridge");
+    const version = (text: string, updatedAt: string) => reader(() => ({
+      status: "ok", truncated: false, documents: [capture("a", "C111", { text, updatedAt })],
+    })).capture;
+    await run(version("v0", "2026-09-20T10:00:00.000Z"));
+    const settled = (await harness.repository.getSyncCursor(connectorScope, harness.sourceId))!.cursor;
+    expect((await run(version("v0", "2026-09-20T10:00:00.000Z"))).counts.read).toBe(0);
+    expect((await harness.repository.getSyncCursor(connectorScope, harness.sourceId))!.cursor).toBe(settled);
+
+    // Two processes read the same cursor; the one holding the older thread commits last.
+    const page = async (capturer: BrainSlackCaptureReader) => {
+      const created = await createBrainSlackBridgeHandler({ kysely: harness!.db, capture: capturer })
+        .createAdapter("owner_a", connectorProject, config);
+      if (!created.ok) throw new Error(created.code);
+      const read = await created.adapter.readPage({
+        scope: connectorScope, sourceId: harness!.sourceId, externalRef: harness!.externalRef, config, cursor: settled,
+        limits: { maxUpserts: 10, maxDeletions: 10, maxRefs: 100 }, signal: new AbortController().signal,
+        documents: harness!.repository, now: () => harness!.now(),
+      });
+      if (!read.ok) throw new Error(read.code);
+      const { upserts, deletions, nextCursor } = read.page;
+      return { sourceId: harness!.sourceId, expectedCursor: settled, nextCursor, upserts, deletions };
+    };
+    const older = await page(version("v1", "2026-09-21T10:00:00.000Z"));
+    const newer = await page(version("v2", "2026-09-22T10:00:00.000Z"));
+    await harness.repository.applySyncBatch(connectorScope, newer);
+    await expect(harness.repository.applySyncBatch(connectorScope, older)).rejects.toMatchObject({ code: "conflict" });
+    expect((await harness.repository.getDocument(connectorScope, threadId("a")))!.body).toMatch(/^v2\n/);
+  });
+
   it("removes every copied thread when the owner loses the company scope, then fails the run", async () => {
     harness = await connectorHarness("slack_bridge");
     let status: "ok" | "forbidden" | "not_found" = "ok";
