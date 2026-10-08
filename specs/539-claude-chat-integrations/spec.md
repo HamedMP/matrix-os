@@ -67,6 +67,52 @@ boundary, body limits and default preview denial. The new route handler is extra
 a focused module rather than adding behavior to the large startup composition.
 Gateway approval projection is likewise extracted from the large Claude adapter.
 
+## Shared Preview Google Drive acceptance extension
+
+Shared Preview machine credentials are accessible from Terminal and never grant
+personal integration authority. Only an authenticated browser turn can establish
+an actor/handle/run scoped Preview Drive lease. The canonical Chat approval
+must bind the exact `google_drive.list_files` request digest; Platform issues
+and atomically consumes a short-lived one-use grant for an explicit account
+label and `maxResults` from 1 to 3. Preview discovery exposes only the Google
+Drive connection and schema. Connect, sync, disconnect, file content, other
+services, full-access bypass and Custom MCP remain denied. Provider credentials
+stay with Platform. Returned metadata may be visible to other shared Terminal
+users; this is an explicit acceptance risk, not a confidentiality guarantee.
+
+For shared Preview acceptance without a personal Claude subscription, Chat
+projects a separate Claude Code instance only when the CLI is installed and the
+Matrix-funded source and exact model are ready. Selecting that instance always
+requests a short-lived `matrix_included` credential for the run, even when an
+owner Claude credential exists; it never falls back to that owner credential.
+Native funded execution uses a dedicated credential factory, not
+`buildKernelCredentialLaunch(matrix_included)`; the SDK-funded route stays denied.
+The factory validates the exact Run claim before leasing interactive credit,
+uses an allowlist of runtime environment variables plus the relay token/base URL
+and claim header, and caps the run deadline by the provider and lease limits.
+A separate persistent `system/provider-profiles/claude-matrix` directory holds
+funded native sessions for resume. It never borrows the subscription profile;
+model discovery does not acquire a funded lease. Native launch continues to
+ignore owner/project settings and use the explicit Matrix MCP configuration.
+The standard Claude Code instance retains its independent authentication state.
+Funding limits and model policy remain enforced by Platform and the relay.
+
+Preview proof redemption may yield while other admissions or shutdown proceed.
+Keep the initial dispatch guard to avoid unnecessary redemption, then recheck
+current owner/global capacity, stopping execution and shutdown synchronously
+before dispatch registers its active Run. No await separates a successful final
+guard from registration. Rejected admitted Runs become terminal failed with the
+canonical generic busy/stopping/shutdown response, and pending admission ownership
+is released even if failure persistence throws. Existing limits, provider
+credentials and Preview grant permissions are unchanged. A redeemed pending lease
+returns an idempotent disposer bound to its exact actor, Chat, Run and grant.
+Rejection or synchronous failure to start disposes the pending entry before
+invoking best-effort Platform revocation, including when failure persistence
+throws. Cleanup errors are logged and pending admission ownership is always
+released. A successful dispatch transfers revocation ownership to the issued
+capability; stale disposers cannot remove replacement leases. The existing
+bounded revocation client and lease expiry remain the fallback on network failure.
+
 ## Published provider compatibility
 
 The latest Codex provider gate qualifies published 0.162.1 against its tagged
@@ -82,30 +128,57 @@ published-package CI checks must pass for the current commit before merge.
 
 ## Validation and delivery
 
-Owner tests cover native approve/decline/cancel, exact one-use receipts, replay,
-fresh and resumed Chat, independent Custom MCP policy, installed MCP launcher,
-company Drive composition and provider Settings Terminal handoff.
+1. Red/green public MCP transport tests for inventory/schema/action discovery.
+2. Authenticated Gateway contract tests for exact grants, replay, wrong arguments,
+   owner isolation, expiry, review, full access and revocation.
+3. Native Claude control-protocol tests for pending, approve, decline, cancel,
+   proof failures and fresh/resumed runs; preserve Custom MCP receipts.
+4. Platform route tests reject invalid proofs, unauthenticated identities and
+   ordinary Preview personal-account access. Preview one-use grants are stored
+   as expiring hashes in Platform Postgres; no provider credential is exposed.
+5. Publish an exact-head PR Preview VPS; check immutable release/health, synthetic
+   acceptance and machine-only denial. The narrow browser-bound Drive path is
+   the only Preview exception to personal integration denial.
+6. With the account owner's explicit acceptance of shared-Terminal result
+   visibility, verify inventory, schema and one approved bounded Drive metadata
+   read in fresh Claude Chat. Record the serving Platform revision, host bundle
+   and actual Chat outcome; repeat in a new run only with a fresh browser grant.
 
-Private owner file paths retain absolute presentation when safe. Commands and
-working directories keep safe projection; secret paths remain hidden. Review
-runs remain discovery-only. Preview runtimes retain ordinary personal-account
-denial. Native account resolution preserves run and selected instance binding.
+The separate Platform Preview service uses staging data and cannot validate a
+production Drive connection. For the shared Preview acceptance, keep a tagged
+revision of the production Platform service at zero default traffic and route
+only one exact Preview Chat's browser turn and approval POSTs to that revision.
+The operator-label workflow admits only a bounded current same-repository PR.
+A freshly reviewed `preview-chat-candidate-pr-<N>` secret must bind `prNumber`,
+`approvedHeadSha`, `approvedHeadRef`, `handle`, `chatId`, `candidateOrigin` and
+`expiresAt` to that frozen PR. Old PR payloads fail closed. Exact-head tests and
+the Production environment gate precede secret work. Fresh PR number/open-state,
+repository/branch/SHA/label checks run before selector secret access and again
+immediately before Edge mutation, with another expiry check after the read-only
+Cloudflare probe. Configuring that private payload is a separate operator
+precondition; owner Main acceptance does not require deploying this selector.
 
-Delivery requires matching immutable Gateway and Platform versions, green CI,
-fresh Greptile 5/5, and owner runtime testing using the owner's existing Claude
-subscription. A tool checkpoint alone is not a visible Chat continuation pass.
-No provider credentials, OAuth tokens, owner data, or update channel are copied
-between machines. Public-site documentation is outside this support-fix scope.
+The temporary Edge Router selector requires the exact Preview handle, Chat ID,
+same-service candidate origin, and an expiry within two hours. It preserves
+the trusted external host and Edge secret; Platform still verifies the browser
+session before minting an actor proof. All other routes continue to the default
+production Platform revision. The operator must verify the selected response
+marker, wrong-Chat default routing, and removal or expiry of the selector.
 
-## Preview Platform and optional approval protocol
+The gateway contract is shared by Electron Desktop, Web Desktop and Web Canvas.
+No shell business logic is duplicated. Record live surface coverage separately.
+Public support guidance and the harness support matrix live in this repository;
+the private site documentation track is outside this support-fix scope.
 
-Authenticated Preview turn requests mint short-lived body-bound actor proofs.
-Platform grant redemption, inventory, exact-action issuance and execution use
-stored actor/handle/run identity. Only google_drive.list_files with an explicit
-label and maxResults from 1 to 3 is permitted. Account-deletion admission locks
-the signed actor; provider failure consumes the one-use action grant. Nonces and
-grants have TTL cleanup. Machine bearer or unsigned actor headers alone never
-select a personal connection. Owner approvals may omit the new digest.
+## Main integration compatibility and owner-runtime acceptance
+
+The Claude discovery surface composes personal integration inventory with company
+Drive context tools. Company context keeps its independent membership and resource
+authorization; discovering either surface does not grant personal action authority.
+Shared Preview discovery and calls remain restricted to their browser-bound Drive
+lease and must reject company context tools. The installed host launcher recognizes
+the explicit `preview-drive-call` surface so an approved request reaches the same
+scoped Gateway boundary as the development launcher.
 
 Action grants bind the selected immutable connection ID and provider account ID
 at issuance. Execution revalidates both IDs, active owner scope and the unchanged
@@ -121,9 +194,93 @@ before issuing new authority; an admitted provider call may finish.
 Generation 17 adds nullable binding columns while preserving the deployed
 generation 16 fingerprint, nonce rows and unrelated owner data.
 Tests cover proof replay/expiry/body binding, transactional grant consumption,
-actor deletion and shared Web/Electron/Mobile optional-digest parity. The runtime
-consumer is deliberately absent in this layer; Preview remains denied until it
-is deployed with the separate run-capability layer and explicit scoped policy.
+actor deletion and shared Web/Electron/Mobile optional-digest parity. Preview
+access requires the scoped runtime capability layer and explicit policy.
+
+Provider-login discovery retries must use the latest Terminal session snapshot.
+A newer missing or ended snapshot cannot be overridden by a delayed result from an
+older poll. Tool activity detail must retain the Canonical event schema shape and
+sanitized command preview; private reply path projection must not change that
+separate activity contract.
+
+An explicitly authorized owner-runtime acceptance may install the immutable PR
+bundle on the owner's Main computer through scoped registered-bundle deployment.
+Record its prior version as the rollback target, preserve owner files, database,
+sessions, update subscription and provider credentials, and verify the installed
+release and Gateway/Shell/Sync health. Use the owner's existing Claude subscription
+and ordinary personal integration authorization. Do not transfer shared Preview
+model credentials, actor selectors or funding policy to the owner runtime.
+
+Acceptance requires a fresh Claude Chat with native approval, an explicit connected
+account and `google_drive.list_files` capped at three metadata records, followed by
+visible model continuation. Credential-file presence alone is not provider
+readiness. Record actual authentication and live surface coverage before claiming
+success; file content and write operations are outside this acceptance scope.
+
+## Revised review and rollout order
+
+The owner approved source and regression verification of Claude built-in integrations
+and Custom MCP, followed by fresh Greptile 5/5 and green CI on the final PR head,
+then merge. Real Google Drive acceptance is performed after merge by the affected
+user on a matching runtime and Platform revision. Owner subscription login and an
+owner-runtime live test are no longer pre-merge gates. This changes rollout order,
+not the authorization contract or the evidence required to claim live success.
+
+## 2026-10-09 owner acceptance and current-main compatibility
+
+The owner renewed the Claude subscription and explicitly resumed pre-merge Main
+computer acceptance after merging current main. This supersedes the previous
+rollout order: verify the immutable PR bundle on the owner's runtime first, then
+require fresh Greptile 5/5 and green CI on the final head before merge. Keep the
+existing affected-user post-merge verification separate from owner acceptance.
+
+Current main uses managed Pi for Matrix AI Chat. Preserve that managed broker
+and the retired Claude SDK Chat behavior; the separate installed Claude Code
+adapter retains its native subscription and Matrix-funded source boundaries.
+Native launch capabilities must keep `chat_call` or `chat_discovery` rather than
+downgrading either to a Custom-MCP-only scope. Funded credentials resolve by both
+instance ID and run ID; they cannot replace native subscription credentials.
+
+### Preview actor deletion admission contract
+
+1. **Scope:** shared Preview personal Drive authorization must honor the actual
+   actor's account deletion state, independently of the shared machine owner.
+2. **Signatures:** `/internal/containers/:handle/preview-drive/{turn/redeem,
+   discover,grant,execute}` resolves the signed actor/run before calling
+   `withAccountDeletionOwnerLock(db, actorId, callback, env)`.
+3. **Contract:** keep the owner lock through grant writes and provider execution.
+   The grant store participates in the ambient transaction. A failed provider
+   operation still commits consumption of the one-use action grant.
+4. **Errors:** scheduled, processing and completed deletion deny new work with
+   409; admission infrastructure failure returns generic 503. Revoke cleanup
+   remains permitted. Provider failure cannot restore a consumed action grant.
+5. **Cases:** active actor may redeem/discover/grant/execute; actor with deletion
+   pending cannot use an otherwise valid run; cleanup may revoke an existing run.
+6. **Tests:** database-backed PGlite tests assert denial in all deletion states at
+   each phase, allowed cleanup, and no replay following provider failure under
+   the owner transaction.
+7. **Wrong vs correct:** checking only the shared machine owner's state or
+   rolling back a provider-error response can bypass deletion or replay a grant.
+   Lock the signed actor and commit one-use consumption before returning failure.
+
+### Startup revision and activity compatibility
+
+The current additive union allocates core schema generation 19 above main 18
+and deployed Preview 17 (the immutable-binding successor to original 16).
+A same-generation fingerprint mismatch still fails closed; never reset a deployed
+marker to make startup pass. Actual disposable PostgreSQL 16 tests upgrade foreign
+17 and main 18, preserve grant/owner rows, balances and additive columns, and
+verify older instances skip. Main 18's waiver indexes and the full union schema
+baseline match after upgrade. PGlite covers older predecessors independently.
+These tests establish compatibility; Cloud Run startup and installed runtime
+provenance must establish deployment success separately.
+
+Private owner file-path previews retain main's absolute-path presentation, even
+outside the execution root. Commands, working directories, queries and patterns
+always use safe projection. Shared file paths remain relative or omitted; secret
+paths remain hidden in every scope. Steer HTTP events and Electron transcript
+tests verify the path contract before completion. The route admission contract
+includes the optional fifth browser approval-provenance argument.
 
 ### Preview endpoint authorization matrix
 

@@ -2,6 +2,7 @@ import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./c
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
+import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import { z } from "zod/v4";
 import { classifyClaudeUsageFailure } from "./claude-usage-failure.js";
@@ -160,6 +161,7 @@ export function createClaudeChatProviderAdapter(options: {
   /** The run id doubles as the funded priority claim key for this turn. */
   resolveCredentialLaunch?: (context: { runId: string; instanceId: string }) => Promise<KernelCredentialLaunch>;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
+  previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -197,9 +199,12 @@ export function createClaudeChatProviderAdapter(options: {
       ...(input.context?.drives?.length ? { driveContext: true } : {}),
     }) ?? null;
     if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
+    const previewDrive = capability?.surface === "preview_drive_call";
     const recipeGuidance = input.context?.agent?.recipe
       ? (capability
-          ? "Discover built-in integrations with list_integration_inventory and describe_service. Preserve the exact account label for calls. "
+          ? previewDrive
+            ? "Discover the connected Google Drive account with list_integration_inventory and describe_service. Preserve its exact account label. Only call google_drive/list_files with maxResults from 1 to 3 after this user's approval. "
+            : "Discover built-in integrations with list_integration_inventory and describe_service. Preserve the exact account label for calls. "
             + "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
             + (mcpScope === "chat_call"
               ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
@@ -207,7 +212,7 @@ export function createClaudeChatProviderAdapter(options: {
           : "No Matrix tools are available for this run.")
       : undefined;
     const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
-    let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
+    let approvalClient = approvalReady && capability && !previewDrive && selectedPermission === "default" && input.interactionMode === "default"
       ? options.customMcpApprovalClient : undefined;
     let registeredGeneration: number | undefined;
     let launch: ReturnType<typeof buildAgentLaunch>;
@@ -230,7 +235,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
         matrixDriveContext: Boolean(input.context?.drives?.length),
-        matrixCustomMcpScope: mcpScope,
+        matrixCustomMcpScope: previewDrive ? "preview_drive_call" : mcpScope,
       });
       if (resumeState) {
         const separator = launch.args.indexOf("--");
@@ -308,6 +313,7 @@ export function createClaudeChatProviderAdapter(options: {
     const integrationApproval = capability ? createClaudeIntegrationApprovalControl({
       runId: input.runId, homePath: options.homePath, capability,
       verify: options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient),
+      ...(previewDrive && options.previewDriveClient ? { previewDriveClient: options.previewDriveClient } : {}),
       emit: event => queue.push(event), onError: () => processController.abort(),
     }) : undefined;
     let approvalRevoked = false;
@@ -340,7 +346,7 @@ export function createClaudeChatProviderAdapter(options: {
       emit: event => queue.push(event),
       onError: () => processController.abort(),
       onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
-        || (approvalControl?.onToolPermission ?? (approvalReady && capability && selectedPermission === "default"
+        || (approvalControl?.onToolPermission ?? (approvalReady && capability && !previewDrive && selectedPermission === "default"
         && input.interactionMode === "default" ? (request, respond) => {
           if (request.toolName !== CALL_TOOL) return false;
           // The broker remains the policy authority. An unavailable approval
