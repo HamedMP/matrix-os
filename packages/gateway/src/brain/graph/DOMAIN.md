@@ -75,6 +75,8 @@ the synced documents, their refs and their current decision claims. Spec: `specs
   derived by a hook wait for the next refresh.
 - The project entity is named after the project (looked up through the resolver at each refresh sweep, at most 200
   characters); a failed lookup keeps the stored name (logged by error name) and the first one falls back to the id.
+  It is written only while the scope has a `brain_sources` row: a project erase removes those first, then the graph
+  rows under the graph lock, so a refresh that outlives the erase writes nothing back.
 - Reads (the freshness scan and the entity an alias change answers with included) run read-only with a 10 s
   statement deadline (`brain/bounded.ts`); at most two refreshes run at once.
 - Merge suggestions scan at most 5,000 persons (those `GET entities` would list), their split rows and name and email
