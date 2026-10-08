@@ -63,6 +63,9 @@ const json = (value: BrainJobSummary | null): string | null => (value === null ?
  */
 const PAID = sql<boolean>`(kind = 'extract' AND target = 'model')`;
 
+/** The predicate of brain_jobs_active_slot, as literals so Postgres matches ON CONFLICT to it under any plan. */
+const ACTIVE_SLOT = sql<boolean>`status IN ('queued', 'running')`;
+
 export interface BrainJobStoreOptions { readonly now?: () => Date }
 
 export class BrainJobStore {
@@ -87,17 +90,21 @@ export class BrainJobStore {
   }
 
   /**
-   * Queues a job, or returns the queued or running job of the same (scope, kind, target) with created false.
-   * Throws jobs_full past BRAIN_JOB_LIMITS.activePerOwner; prunes the scope's finished jobs to finishedPerScope.
+   * Queues a job, or returns the queued or running job of the same (scope, kind, target) with created false. The
+   * insert is ON CONFLICT DO NOTHING on brain_jobs_active_slot, so the slot holds even against a writer outside the
+   * owner lock; the lock keeps the active cap exact. Throws jobs_full past BRAIN_JOB_LIMITS.activePerOwner; prunes the
+   * scope's finished jobs to finishedPerScope.
    */
   enqueue(scope: BrainScopeKey, projectId: string, request: BrainJobRequest):
     Promise<{ readonly job: BrainJobView; readonly created: boolean }> {
     const target = brainJobTarget(request);
     return this.write(async (trx) => {
-      const existing = await trx.selectFrom("brain_jobs").selectAll()
+      const active = () => trx.selectFrom("brain_jobs").selectAll()
         .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
         .where("kind", "=", request.kind).where("target", "=", target)
-        .where("status", "in", BRAIN_JOB_ACTIVE_STATUSES).executeTakeFirst();
+        .where("status", "in", BRAIN_JOB_ACTIVE_STATUSES);
+      // Checked before the cap, so asking again for a held slot dedupes even when the owner is at the cap.
+      const existing = await active().executeTakeFirst();
       if (existing !== undefined) return { job: toView(existing), created: false };
       const { n } = await trx.selectFrom("brain_jobs").select((eb) => eb.fn.countAll<number>().as("n"))
         .where("owner_id", "=", scope.ownerId).where("status", "in", BRAIN_JOB_ACTIVE_STATUSES)
@@ -109,7 +116,10 @@ export class BrainJobStore {
         project_id: projectId, kind: request.kind, target, request: JSON.stringify(request), status: "queued",
         attempts: 0, steps: 0, lease_owner: null, lease_expires_at: null, cancel_requested: false, result: null,
         error_code: null, created_at: now, started_at: null, heartbeat_at: null, finished_at: null, updated_at: now,
-      }).returningAll().executeTakeFirstOrThrow();
+      }).onConflict((oc) => oc.columns(["owner_id", "scope_id", "kind", "target"]).where(ACTIVE_SLOT).doNothing())
+        .returningAll().executeTakeFirst();
+      // The slot was taken after the check by a writer outside the owner lock (brain_jobs_active_slot): a dedupe.
+      if (row === undefined) return { job: toView(await active().executeTakeFirstOrThrow()), created: false };
       await sql`
         DELETE FROM brain_jobs
         WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND finished_at IS NOT NULL
