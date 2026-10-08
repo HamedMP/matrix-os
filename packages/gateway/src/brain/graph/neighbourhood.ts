@@ -1,9 +1,9 @@
 /**
  * Neighbourhoods: the center's direct links (stored links of the entity and its merged aliases, plus `changed` from
  * path refs when the center is a file or a document), newest first and keyset paged, a page stopping before the link
- * that would pass the node cap; with hops = 2, the neighbours' stored links (both directions) and `changed` links
- * too, within the node and link caps (descriptions, authors, specs and parent PRs before file changes). Endpoints
- * show as their merged entity.
+ * that would pass the node cap; with hops = 2, the stored links (both directions) and `changed` links of the
+ * neighbours as their merged entities (every key merged into them) too, within the node and link caps (descriptions,
+ * authors, specs and parent PRs before file changes). Endpoints show as their merged entity.
  */
 import { sql } from "kysely";
 import {
@@ -73,6 +73,26 @@ function fitNodeCap(page: readonly LinkRow[], members: ReadonlySet<string>): rea
   return page;
 }
 
+/**
+ * The entities the neighbours show as (a merged alias as its entity; never the center) and every key merged into
+ * them: the ends the second hop reads.
+ */
+async function neighbourMembers(
+  db: BrainGraphExecutor, scope: BrainScopeKey, neighbours: readonly string[], center: ReadonlySet<string>,
+): Promise<string[]> {
+  if (neighbours.length === 0) return [];
+  const aliases = () => db.selectFrom("brain_graph_aliases").where("owner_id", "=", scope.ownerId)
+    .where("scope_id", "=", scope.scopeId).where("state", "=", "merged");
+  const merged = await aliases().select(["alias_entity_id", "entity_id"]).where("alias_entity_id", "in", neighbours)
+    .execute();
+  const rootOf = new Map(merged.map((row) => [row.alias_entity_id, row.entity_id]));
+  const roots = [...new Set(neighbours.map((id) => rootOf.get(id) ?? id))].filter((id) => !center.has(id));
+  if (roots.length === 0) return [];
+  const members = await aliases().select("alias_entity_id").where("entity_id", "in", roots)
+    .limit(roots.length * BRAIN_GRAPH_LIMITS.aliasesPerEntity).execute();
+  return [...roots, ...members.map((row) => row.alias_entity_id)];
+}
+
 export async function graphNeighbourhood(
   db: BrainGraphExecutor, scope: BrainScopeKey, entity: string, query: BrainLinksParsedQuery,
 ): Promise<BrainNeighbourhoodView> {
@@ -104,11 +124,8 @@ export async function graphNeighbourhood(
   let hop2: LinkRow[] = [];
   let truncated = page.length < full.length;
   const neighbours = [...new Set(page.flatMap(endpoints))].filter((id) => !memberSet.has(id));
-  if (query.hops === 2 && neighbours.length > 0) {
-    const ids = [...neighbours, ...(await db.selectFrom("brain_graph_aliases").select("alias_entity_id")
-      .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("entity_id", "in", neighbours)
-      .where("state", "=", "merged").limit(BRAIN_GRAPH_LIMITS.neighbourhoodNodesMax).execute())
-      .map((row) => row.alias_entity_id)];
+  const ids = query.hops === 2 ? await neighbourMembers(db, scope, neighbours, memberSet) : [];
+  if (ids.length > 0) {
     const room = BRAIN_GRAPH_LIMITS.neighbourhoodLinksMax - page.length;
     const touching = sql`(${inList("l.from_entity_id", ids)} OR ${inList("l.to_entity_id", ids)})
       AND NOT (${inList("l.from_entity_id", members)}) AND NOT (${inList("l.to_entity_id", members)})`;
