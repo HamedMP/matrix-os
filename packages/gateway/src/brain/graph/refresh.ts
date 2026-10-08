@@ -2,8 +2,8 @@
  * The graph as a derived index (hook listener "graph"). A hook only nudges: correctness comes from refresh, which
  * removes rows of tombstoned documents, derives live documents that are missing, at another (incarnation, revision)
  * or whose source time, refs, decision claims or quoted decision paths changed or linked parent went, then sweeps
- * orphan entities.
- * Every pass is bounded by a document count, a wall-clock budget and the abort signal.
+ * orphan entities. A hook with document ids that removed any document sweeps too. Every pass is bounded by a document
+ * count, a wall-clock budget and the abort signal.
  */
 import { sql, type Kysely } from "kysely";
 import {
@@ -147,6 +147,13 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
     return { processed, removed, attempted, stopped: false, full };
   }
 
+  /** Sweeps until less than a full batch went, the signal aborts or the deadline passes. */
+  async function sweepOrphans(scope: BrainScopeKey, deadline: number, signal: AbortSignal): Promise<void> {
+    while (!signal.aborted && clock() < deadline) {
+      if (await withGraphLock(db, scope, (trx) => sweepEntities(trx, scope)) < BRAIN_GRAPH_ORPHAN_SWEEP_MAX) return;
+    }
+  }
+
   /** A failed lookup (a deleted project, a lookup outage) keeps the stored name; logged by error name. */
   async function projectNameOf(scope: BrainScopeKey): Promise<string | null> {
     if (deps.projectName === undefined) return null;
@@ -219,7 +226,9 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       } else {
         const ids = [...new Set(event.documentIds)].filter((id) => DOCUMENT_ID.test(id));
         const deadline = clock() + BRAIN_HOOK_LISTENER_BUDGET_MS;
-        await run(event.scope, ids.slice(0, BRAIN_HOOK_DOCUMENT_IDS_MAX), deadline, signal);
+        const pass = await run(event.scope, ids.slice(0, BRAIN_HOOK_DOCUMENT_IDS_MAX), deadline, signal);
+        // People and items only the removed documents named go now (a removed source's purge relies on it).
+        if (pass.removed > 0) await sweepOrphans(event.scope, deadline, signal);
       }
     },
     refresh,
