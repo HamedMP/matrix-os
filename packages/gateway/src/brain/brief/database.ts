@@ -117,6 +117,15 @@ async function anyMissing(
   return rows[0]!.n < ids.length;
 }
 
+/** True while the scope holds a source or a document row: eraseScope removes both before the scope's briefs. */
+async function scopeHoldsRows(trx: Transaction<BriefDatabase>, scope: BrainScopeKey): Promise<boolean> {
+  const { rows } = await sql<{ held: boolean }>`SELECT
+    EXISTS (SELECT 1 FROM brain_sources WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId})
+    OR EXISTS (SELECT 1 FROM brain_documents WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId})
+    AS held`.execute(trx);
+  return rows[0]!.held;
+}
+
 /** True when a document the brief cites or a source it names was tombstoned or erased since it was built. */
 export async function citesDeleted(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, brief: BrainStoredBrief,
@@ -139,8 +148,10 @@ async function storedAhead(trx: Transaction<BriefDatabase>, scope: BrainScopeKey
 /**
  * Stores the brief and returns true only when the row now holds it. False when its JSON is over storedMaxBytes, a
  * copy generated later is stored, storedPerScope newer briefs are stored (the prune would drop it), a document it
- * cites was tombstoned while it was built, or a source it names is gone (the scope was erased and the scope_erased
- * listener, under the same lock, already ran). Older dates beyond storedPerScope are pruned in the same transaction.
+ * cites was tombstoned while it was built, a source it names is gone, or the scope holds no source or document row
+ * (even for a brief that cites nothing): the scope was erased while it was built (or never had a row), and the
+ * scope_erased listener, under the same lock, already ran. Older dates beyond storedPerScope are pruned in the same
+ * transaction.
  */
 export async function writeStoredBrief(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, brief: BrainStoredBrief,
@@ -151,7 +162,8 @@ export async function writeStoredBrief(
   if (bytes > LIMITS.storedMaxBytes) return false;
   const named = namedIds(brief);
   return withScopeLock(db, scope, async (trx) => {
-    if (await anyMissing(trx, scope, "brain_documents", named.documents, true)
+    if (!await scopeHoldsRows(trx, scope)
+      || await anyMissing(trx, scope, "brain_documents", named.documents, true)
       || await anyMissing(trx, scope, "brain_sources", named.sources)) return false;
     if (await storedAhead(trx, scope, brief) >= LIMITS.storedPerScope) return false;
     const written = await trx.insertInto("brain_brief_briefs").values({

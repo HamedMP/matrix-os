@@ -16,7 +16,8 @@ contract: `../contracts/brief.ts`.
 
 - Briefs, conflicts and stale items are derived from current claims and documents at read time.
 - A stored brief is a snapshot for `(scope, date, window)`: at most 60 per scope, newest date first, each at most
-  256 KiB of JSON. `stored: true` only when the row holds the brief after the write.
+  256 KiB of JSON. `stored: true` only when the row holds the brief after the write, and only while the scope holds
+  a source or document row: a scope with neither has nothing to brief, and its empty brief is rebuilt on each read.
 - Commitment due dates and assignees: claim fields, else the document's `due` (a real calendar day only,
   `CALENDAR_DATE` in SQL) and `assignee` refs.
 - No in-memory state besides the scheduler's one timer, one abort controller and one running pass.
@@ -48,9 +49,10 @@ contract: `../contracts/brief.ts`.
   last (two concurrent builds are both valid); the prune runs in the same transaction.
 - Reads take no lock, except a GET deleting a stored copy that cites a deleted document. A document tombstoned
   between two reads drops the line that cites it.
-- A write first checks under the lock that every cited document is live and every named source still has a row, so
-  a build that outlives a tombstone, an erase or the listener stores nothing. `scope_erased` deletes every stored
-  brief of the scope; each scheduled pass and `documents_changed` event deletes those citing a tombstoned document.
+- A write first checks under the lock that the scope still holds a source or document row, every cited document is
+  live and every named source still has a row, so a build that outlives a tombstone, an erase or the listener stores
+  nothing, even a quiet day's brief that cites nothing. `scope_erased` deletes every stored brief of the scope; each
+  scheduled pass and `documents_changed` event deletes those citing a tombstoned document.
 - A scheduler pass is bounded by `BRAIN_BRIEF_SCHEDULE.passBudgetMs` and an abort signal and shares the two-build
   cap; it skips a scope whose project no longer resolves and counts, logs by name and retries a failed scope.
 
