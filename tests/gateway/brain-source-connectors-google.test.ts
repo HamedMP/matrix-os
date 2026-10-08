@@ -131,3 +131,90 @@ describe("Google Drive source", () => {
     expect(await harness.liveIds()).toEqual([id("old"), id("new")].sort());
   });
 });
+
+const calendarConfig: BrainGoogleCalendarSourceConfig = {
+  calendarIds: ["primary", "team@group.calendar.google.com"], includeEventBodies: false, pastDays: 7, futureDays: 14,
+};
+const event = (id: string, extra: Record<string, unknown> = {}) => ({
+  id, status: "confirmed", htmlLink: `https://www.google.com/calendar/event?eid=${id}`, summary: `Meeting ${id}`,
+  start: { dateTime: "2026-10-02T09:00:00+02:00" }, end: { dateTime: "2026-10-02T10:00:00+02:00" },
+  updated: "2026-09-30T12:00:00.000Z", organizer: { email: "Lead@Example.com" }, ...extra,
+});
+
+describe("Google Calendar source", () => {
+  it("stores times and attendees, keeps bodies private unless opted in and deletes cancelled events", async () => {
+    harness = await connectorHarness("google_calendar");
+    let cancelled = false;
+    let left = false;
+    const routes: Record<string, FakeRoute> = {
+      "google_calendar.brain_list_events": (params) => {
+        if (params.calendarId !== "primary") return ok({ items: [event("t1", { summary: "", description: "notes" })] });
+        if (params.pageToken === undefined) {
+          return ok({ nextPageToken: "n", items: [cancelled ? { id: "e1", status: "cancelled" } : event("e1", {
+            description: "Agenda", location: "Room 4", attendees: [
+              { email: "Bo@Example.com", responseStatus: "accepted" }, { email: "room@resource.calendar.google.com", resource: true },
+              { email: "", responseStatus: "needsAction" }, { email: "cy@example.com" },
+            ],
+          }), ...(left ? [] : [event("e2", { visibility: "private", summary: "Doctor", location: "Clinic" })])] });
+        }
+        return ok({ items: [event("e3", { start: { date: "2026-10-05" }, end: { date: "2026-10-06" }, status: "tentative",
+          description: "d".repeat(70_000) }),
+          event("e4", { updated: undefined }), event("e5", { start: undefined, end: undefined, organizer: undefined, status: undefined })] });
+      },
+    };
+    const { integrations, result } = await calendarRun(routes, calendarConfig);
+    expect(result).toMatchObject({ status: "succeeded", counts: { written: 5 }, notices: ["private_body_omitted"] });
+    expect(integrations.calls[0]!.params).toEqual({
+      calendarId: "primary", timeMin: "2026-09-24T00:00:00.000Z", timeMax: "2026-10-16T00:00:00.000Z", maxResults: 250,
+    });
+    const id = (eventId: string, calendarId = "primary") =>
+      connectorDocumentId("google_calendar", harness!.externalRef, ["event", calendarId, eventId]);
+    expect(await harness.repository.getDocument(connectorScope, id("e1"))).toMatchObject({
+      title: "Meeting e1", provenance: "calendar_event",
+      body: "Starts: 2026-10-02T07:00:00.000Z\nEnds: 2026-10-02T08:00:00.000Z\nOrganizer: lead@example.com\nAttendees: bo@example.com (accepted), cy@example.com",
+    });
+    expect(await harness.repository.listDocumentRefs(connectorScope, id("e1"))).toEqual([
+      { kind: "attendee", value: "email:bo@example.com" }, { kind: "attendee", value: "email:cy@example.com" },
+      { kind: "author", value: "email:lead@example.com" },
+      { kind: "starts_at", value: "2026-10-02T07:00:00.000Z" }, { kind: "status", value: "confirmed" },
+    ]);
+    expect((await harness.repository.getDocument(connectorScope, id("e2")))!.title).toBe("Private event");
+    expect((await harness.repository.getDocument(connectorScope, id("e3")))!.body).toContain("Starts: 2026-10-05\nEnds: 2026-10-06");
+    expect(await harness.repository.listDocumentRefs(connectorScope, id("e3"))).toContainEqual({ kind: "starts_at", value: "2026-10-05T00:00:00.000Z" });
+    expect((await harness.repository.getDocument(connectorScope, id("e5")))!.body).toBe("Starts: unknown\nEnds: unknown");
+    expect((await harness.repository.getDocument(connectorScope, id("t1", "team@group.calendar.google.com")))!.title).toBe("(No title)");
+
+    cancelled = true;
+    const opened = await calendarRun(routes, { ...calendarConfig, includeEventBodies: true, accountLabel: "work" });
+    expect(opened.integrations.calls[0]!.label).toBe("work");
+    expect(opened.result.notices).toEqual(["body_truncated"]);
+    expect(opened.result.counts).toMatchObject({ deleted: 1 });
+    expect(await harness.repository.getDocument(connectorScope, id("e1"))).toBeNull();
+    expect(await harness.repository.getDocument(connectorScope, id("e2"))).toMatchObject({ title: "Doctor" });
+    expect((await harness.repository.getDocument(connectorScope, id("e2")))!.body).toMatch(/^Location: Clinic\n\nStarts:/);
+    expect((await harness.repository.getDocument(connectorScope, id("t1", "team@group.calendar.google.com")))!.body)
+      .toMatch(/^notes\n\nStarts:/);
+
+    left = true;
+    const closed = await calendarRun(routes, { ...calendarConfig, calendarIds: ["primary"] });
+    expect(closed.result.counts).toMatchObject({ deleted: 2 });
+    expect(await harness.repository.getDocument(connectorScope, id("e2"))).toBeNull();
+    expect(await harness.repository.getDocument(connectorScope, id("t1", "team@group.calendar.google.com"))).toBeNull();
+    expect((await harness.repository.getDocument(connectorScope, id("e3")))!.body)
+      .toBe("Starts: 2026-10-05\nEnds: 2026-10-06\nOrganizer: lead@example.com");
+  });
+
+  it("caps listings and maps failures", async () => {
+    harness = await connectorHarness("google_calendar");
+    const endless = await calendarRun({
+      "google_calendar.brain_list_events": (params) => ok({ items: [], nextPageToken: `${Number(params.pageToken ?? 0) + 1}` }),
+    }, calendarConfig);
+    expect(endless.result.notices).toEqual(["pages_capped"]);
+    const crowded = await calendarRun({
+      "google_calendar.brain_list_events": () => ok({ items: Array.from({ length: 2_001 }, (_, index) => event(`m${index}`)) }),
+    }, calendarConfig, { pagesPerRun: 1 });
+    expect(crowded.result).toMatchObject({ notices: ["items_truncated"], counts: { written: 100 } });
+    const gone = await calendarRun({ "google_calendar.brain_list_events": () => ({ status: "not_found" }) }, calendarConfig);
+    expect(gone.result.errorCode).toBe("remote_not_found");
+  });
+});
