@@ -10,7 +10,7 @@ import {
 import {
   BRAIN_SEARCH_BODY_CHUNKS_MAX, BRAIN_SEARCH_EMBED_BATCH_MAX, BRAIN_SEARCH_EMBED_TIMEOUT_MS,
   BRAIN_SEARCH_PROVIDER_ID_PATTERN, BrainEmbeddingsError, brainSafeCut, errorName, isBrainVectorValue,
-  type BrainMeteredEmbeddingsProvider, type BrainRankedHit,
+  type BrainEmbeddingsUsage, type BrainMeteredEmbeddingsProvider, type BrainRankedHit,
 } from "./types.js";
 
 export interface BrainChunkSpan { readonly spanStart: number; readonly spanEnd: number }
@@ -58,6 +58,23 @@ export class BrainEmbeddingsOutputError extends Error {
 /** Vectors in input order plus the usage of every call (zero for a provider that does not report it). */
 export interface BrainEmbedded { readonly vectors: number[][]; readonly tokens: number; readonly costMicroUsd: number }
 
+/** Thrown by embedBrainTexts when its beforeCall hook refuses the next provider call. */
+export class BrainEmbeddingsStoppedError extends Error {
+  constructor() {
+    super("Embeddings stopped before a call");
+    this.name = "BrainEmbeddingsStoppedError";
+  }
+}
+
+/**
+ * beforeCall: asked before each provider call; false stops there (BrainEmbeddingsStoppedError). paid: each call's
+ * checked usage as soon as that call returns, so a later call's failure never hides what was already paid.
+ */
+export interface BrainEmbedHooks {
+  readonly beforeCall?: () => boolean;
+  readonly paid?: (usage: BrainEmbeddingsUsage) => void;
+}
+
 const isUsage = (value: unknown): boolean => Number.isSafeInteger(value) && Number(value) >= 0;
 
 /**
@@ -65,7 +82,7 @@ const isUsage = (value: unknown): boolean => Number.isSafeInteger(value) && Numb
  * unavailable, a caller abort is rethrown); every vector and usage figure is checked before it is used.
  */
 export async function embedBrainTexts(
-  provider: BrainEmbeddingsProvider, texts: readonly string[], signal: AbortSignal,
+  provider: BrainEmbeddingsProvider, texts: readonly string[], signal: AbortSignal, hooks: BrainEmbedHooks = {},
 ): Promise<BrainEmbedded> {
   const batchSize = Math.min(provider.maxBatch, BRAIN_SEARCH_EMBED_BATCH_MAX);
   const metered = "embedMetered" in provider && typeof provider.embedMetered === "function"
@@ -74,6 +91,7 @@ export async function embedBrainTexts(
   let tokens = 0;
   let costMicroUsd = 0;
   for (let at = 0; at < texts.length; at += batchSize) {
+    if (hooks.beforeCall !== undefined && !hooks.beforeCall()) throw new BrainEmbeddingsStoppedError();
     const batch = texts.slice(at, at + batchSize)
       .map((text) => text.slice(0, brainSafeCut(text, provider.maxInputChars)));
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(BRAIN_SEARCH_EMBED_TIMEOUT_MS)]);
@@ -86,6 +104,7 @@ export async function embedBrainTexts(
       }
       tokens += result?.usage.tokens ?? 0;
       costMicroUsd += result?.usage.costMicroUsd ?? 0;
+      if (result !== null) hooks.paid?.(result.usage);
     } catch (error: unknown) {
       if (signal.aborted || !deadline.aborted) throw error;
       throw new BrainEmbeddingsError("unavailable", { cause: error });

@@ -2,13 +2,15 @@
  * The embedding pass of one refresh. Candidates are read a provider batch at a time (title, body and the statements
  * of current claims). A chunk whose text the store already holds a vector for (same text key, provider and size)
  * keeps it; only the other chunks are sent, grouped so one provider call carries the chunks of several documents.
- * Before each call: the signal and time budget, the refresh's token and cost budget, and the store's room net of the
- * rows the group's documents already hold. A provider that is not configured, refuses the key or is unavailable ends
- * the pass and records nothing; any other failure of a group of several documents retries them one by one, and one
- * document's failure is recorded on its row and ends the pass. Vectors are stored, and the row marked, only while the
- * row still holds the claims set they were embedded for. A pass that paid anything logs its tokens, cost and early
- * stop (counts only, never ids or text), even when it then throws: the hook listener, the job step and the index
- * catch-up run it too, and only the refresh route returns the figures.
+ * Before each group: the store's room net of the rows the group's documents already hold; before each provider call
+ * (a document of more chunks than one call takes needs several): the signal and time budget, and the refresh's token
+ * and cost budget. Usage counts as each call returns, so a later call's failure never hides it. A provider that is
+ * not configured, refuses the key or is unavailable ends the pass and records nothing; any other failure of a group
+ * of several documents retries them one by one, and one document's failure is recorded on its row and ends the pass.
+ * Vectors are stored, and the row marked, only while the row still holds the claims set they were embedded for. A
+ * pass that paid anything logs its tokens, cost and early stop (counts only, never ids or text), even when it then
+ * throws: the hook listener, the job step and the index catch-up run it too, and only the refresh route returns the
+ * figures.
  */
 import type { Kysely } from "kysely";
 import type { BrainEmbeddingsProvider, BrainRefreshStopReason } from "../contracts.js";
@@ -23,7 +25,8 @@ import {
   type BrainSearchEmbeddingView, type BrainSearchEmbedTarget, type BrainSearchVectorStore,
 } from "./types.js";
 import {
-  brainEmbedChunks, brainEmbeddingsFailure, embedBrainTexts, type BrainEmbedChunk, type BrainEmbedded,
+  brainEmbedChunks, brainEmbeddingsFailure, BrainEmbeddingsStoppedError, embedBrainTexts, type BrainEmbedChunk,
+  type BrainEmbedded,
 } from "./vector.js";
 
 /** store: the kind of vector store, part of the embedded marker so that a store switch embeds again. */
@@ -76,9 +79,18 @@ interface Job {
   readonly built: BrainSearchEmbedCandidate; readonly chunks: readonly BrainEmbedChunk[];
   readonly kept: readonly (readonly number[] | null)[];
 }
-type Outcome = "embedded" | "split" | "stopped" | "failed" | "aborted" | "vector_cap";
+/** halted: the signal or time budget ran out; budget: the refresh's token or cost budget did. */
+type Limit = "halted" | "budget";
+type Outcome = "embedded" | "split" | "stopped" | "failed" | "aborted" | "vector_cap" | Limit;
 /** Tokens and micro-USD the pass has paid for so far. */
 type Usage = { tokens: number; costMicroUsd: number };
+
+/** Why no further provider call may start, checked before each one; null when one may. */
+function limitReached(context: BrainEmbedPassContext, usage: Usage): Limit | null {
+  if (context.halted()) return "halted";
+  const budget = BRAIN_SEARCH_EMBED_REFRESH_BUDGET;
+  return usage.tokens >= budget.tokens || usage.costMicroUsd >= budget.costMicroUsd ? "budget" : null;
+}
 
 const sent = (job: Job): BrainEmbedChunk[] => job.chunks.filter((_, index) => job.kept[index] === null);
 
@@ -144,10 +156,18 @@ async function write(context: BrainEmbedPassContext, job: Job, fresh: readonly n
 
 async function embedGroup(context: BrainEmbedPassContext, group: readonly Job[], usage: Usage): Promise<Outcome> {
   let embedded: BrainEmbedded;
+  const check: { limit: Limit | null } = { limit: null };
   try {
     embedded = await embedBrainTexts(context.meaning.provider,
-      group.flatMap((job) => sent(job).map((chunk) => chunk.text)), context.signal);
+      group.flatMap((job) => sent(job).map((chunk) => chunk.text)), context.signal, {
+        beforeCall: () => (check.limit = limitReached(context, usage)) === null,
+        paid: (paid) => {
+          usage.tokens += paid.tokens;
+          usage.costMicroUsd += paid.costMicroUsd;
+        },
+      });
   } catch (error: unknown) {
+    if (error instanceof BrainEmbeddingsStoppedError) return check.limit ?? "halted";
     if (context.signal.aborted) return "aborted";
     console.error("[brain-search] embeddings failed:", brainEmbeddingsFailure(error));
     if (error instanceof BrainEmbeddingsError && error.code !== "invalid") return "stopped";
@@ -156,8 +176,6 @@ async function embedGroup(context: BrainEmbedPassContext, group: readonly Job[],
       (trx) => markEmbedding(trx, context.scope, group[0]!.built, null, context.now()));
     return "failed";
   }
-  usage.tokens += embedded.tokens;
-  usage.costMicroUsd += embedded.costMicroUsd;
   let at = 0;
   for (const job of group) {
     const count = sent(job).length;
@@ -193,12 +211,12 @@ async function embedCandidates(
   const end = (stopped: boolean, by: BrainSearchEmbeddingView["stopped"] = null,
     stopReason: BrainEmbedPassResult["stopReason"] = by === "vector_cap" ? "vector_cap" : null): BrainEmbedPassResult =>
     ({ stopped, embedding: { ...usage, stopped: by }, stopReason });
-  const budget = BRAIN_SEARCH_EMBED_REFRESH_BUDGET;
+  const stop = (limit: Limit) => end(true, limit === "budget" ? "budget" : null);
   for (let at = 0; at < candidates.length; at += size) {
     const queue = groupJobs(await loadJobs(context, candidates.slice(at, at + size)), size);
     for (let group = queue.shift(); group !== undefined; group = queue.shift()) {
-      if (context.halted()) return end(true);
-      if (usage.tokens >= budget.tokens || usage.costMicroUsd >= budget.costMicroUsd) return end(true, "budget");
+      const limit = limitReached(context, usage);
+      if (limit !== null) return stop(limit);
       // The write replaces the group's own rows, so only the rest of the scope counts against the cap.
       const need = group.reduce((sum, job) => sum + job.chunks.length, 0);
       const room = vectors.remaining === undefined ? Number.POSITIVE_INFINITY
@@ -206,6 +224,7 @@ async function embedCandidates(
       if (need > room) return end(true, "vector_cap");
       const outcome = await embedGroup(context, group, usage);
       if (outcome === "split") queue.unshift(...group.map((job) => [job]));
+      else if (outcome === "halted" || outcome === "budget") return stop(outcome);
       else if (outcome === "stopped") return end(true, null, "embedding_unavailable");
       else if (outcome !== "embedded") return end(outcome !== "failed", outcome === "vector_cap" ? outcome : null);
     }

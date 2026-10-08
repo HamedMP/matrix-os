@@ -65,9 +65,11 @@ weights and seams are `contracts/search.ts`; this spec adds the rest.
   not hold for this provider and size are sent: a claims change sends the claims chunk alone, the same statements
   from another run send nothing, and a body edit sends only the chunks it changed. The rest keep their vectors.
 - Pass: rows at their live revision without this provider's vectors, never-tried first, then oldest failure, read a
-  batch at a time; documents are grouped so one call carries up to a full batch of chunks. Before each call: signal,
-  time budget, the refresh's budget (1,000,000 tokens and 20,000 micro-USD; one call can pass it by one batch), and the
-  store's room not counting the rows the group's own documents hold (their write replaces them). Every vector is checked (count, length, a float4 number) and every usage figure (a non-negative
+  batch at a time; documents are grouped so one call carries up to a full batch of chunks. Before each group: the
+  store's room not counting the rows the group's own documents hold (their write replaces them). Before each provider
+  call (a document of more chunks than one call takes needs several): signal, time budget and the refresh's budget
+  (1,000,000 tokens and 20,000 micro-USD; one call can pass it by one batch). Usage counts as each call returns, so a
+  later call's failure never hides what an earlier one paid. Every vector is checked (count, length, a float4 number) and every usage figure (a non-negative
   integer). Failures: `not_configured`, `auth_failed` and `unavailable` end the pass and record nothing; any other
   failure of several documents retries them one by one; one document's failure is recorded on its row
   (`embed_failed_at`) and ends the pass. A refresh with meaning search on answers `embedding: { tokens,

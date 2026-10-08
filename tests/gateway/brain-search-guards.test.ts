@@ -1,4 +1,7 @@
-/** Search index guards over PGlite: embedding writes and marks fenced by the claims set they were embedded for. */
+/**
+ * Search index guards over PGlite: embedding writes and marks fenced by the claims set, and refresh limits and paid
+ * usage per provider call.
+ */
 import { vector as pgvector } from "@electric-sql/pglite/vector";
 import { sql, type Kysely } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
@@ -11,8 +14,10 @@ import { bootstrapBrainSearchDatabase } from "../../packages/gateway/src/brain/s
 import { runBrainEmbedPass, type BrainEmbedPassContext } from "../../packages/gateway/src/brain/search/embed-pass.js";
 import {
   isLiveAt, markEmbedding, rebuildDocuments, selectEmbedPending, withSearchScopeWrite,
+  type BrainSearchEmbedCandidate,
 } from "../../packages/gateway/src/brain/search/index-sql.js";
 import type { BrainEmbeddingsUsage, BrainSearchVectorStore } from "../../packages/gateway/src/brain/search/types.js";
+import { chunkBrainBody } from "../../packages/gateway/src/brain/search/vector.js";
 import { BRAIN_CLOCK_START, brainDocumentId } from "./helpers/brain-store-helpers.js";
 
 const SCOPE: BrainScopeKey = { ownerId: "owner_a", scopeId: "personal:project:proj_guards" };
@@ -159,5 +164,57 @@ describe("brain search guards", { timeout: 60_000 }, () => {
     expect(writes).toEqual([`${fresh!.documentId.slice(0, 8)}:2`]);
     expect((await h.row("a"))!.embedded_provider).toBe(TARGET.marker);
     expect(await h.pending()).toEqual([]);
+  });
+
+  describe("a document needing several provider calls", () => {
+    const body = Array.from({ length: 4 }, (_, index) => `Part ${index} ${"word ".repeat(190)}`).join("\n");
+    let candidate: BrainSearchEmbedCandidate;
+    const setup = async () => {
+      h = await createHarness();
+      expect(chunkBrainBody(body)).toHaveLength(3);
+      await h.sync([{ seed: "long", body }]);
+      await h.rebuild(["long"]);
+      [candidate] = await h.pending() as [BrainSearchEmbedCandidate];
+      return h;
+    };
+
+    it("stops before the next call once the first spends the refresh budget", async () => {
+      const harness = await setup();
+      const { provider, calls } = meteredProvider(() => ({ tokens: 1_000_000, costMicroUsd: 20 }));
+      const { store, writes } = guardedStore(harness.db);
+      vi.spyOn(console, "info").mockImplementation(() => undefined);
+      expect(await runBrainEmbedPass(passContext(harness, provider, store), [candidate])).toEqual({
+        stopped: true, stopReason: null, embedding: { tokens: 1_000_000, costMicroUsd: 20, stopped: "budget" },
+      });
+      expect(calls).toEqual([2]);
+      expect(writes).toEqual([]);
+    });
+
+    it("stops before the next call once the time budget or signal runs out", async () => {
+      const harness = await setup();
+      const { provider, calls } = meteredProvider(() => ({ tokens: 10, costMicroUsd: 1 }));
+      const { store, writes } = guardedStore(harness.db);
+      vi.spyOn(console, "info").mockImplementation(() => undefined);
+      expect(await runBrainEmbedPass(passContext(harness, provider, store, () => calls.length >= 1), [candidate]))
+        .toEqual({ stopped: true, stopReason: null, embedding: { tokens: 10, costMicroUsd: 1, stopped: null } });
+      expect(calls).toEqual([2]);
+      expect(writes).toEqual([]);
+    });
+
+    it("counts and logs what an earlier call paid when a later call fails", async () => {
+      const harness = await setup();
+      const { provider, calls } = meteredProvider((call) => (call === 1 ? { tokens: 10, costMicroUsd: 1 }
+        : new Error("provider down")));
+      const { store, writes } = guardedStore(harness.db);
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const result = await runBrainEmbedPass(passContext(harness, provider, store), [candidate]);
+      expect(calls).toEqual([2, 1]);
+      expect(result.embedding).toEqual({ tokens: 10, costMicroUsd: 1, stopped: null });
+      expect(info).toHaveBeenCalledWith("[brain-search] embedding spend",
+        { tokens: 10, costMicroUsd: 1, stopped: null });
+      expect(writes).toEqual([]);
+      expect((await harness.row("long"))!.embed_failed_at).not.toBeNull();
+    });
   });
 });
