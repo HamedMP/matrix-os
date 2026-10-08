@@ -1,6 +1,6 @@
 /**
  * Meaning search with a fake embeddings provider and a fake vector store over a plain table, fused with full text by
- * reciprocal rank; fallbacks, errors, capability and the candidate cap.
+ * reciprocal rank; fallbacks, errors, capability, the candidate cap and the refresh cap every entry point shares.
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type {
@@ -9,8 +9,8 @@ import type {
 import { createBrainSearch } from "../../packages/gateway/src/brain/search/index.js";
 import { brainDocumentId } from "./helpers/brain-store-helpers.js";
 import {
-  OWNER, PROJECT_ID, SCOPE, createSearchHarness, createSeeder, fakeProvider, fakeVectorStore, resolver, seedClaims,
-  type FakeProvider, type SearchHarness,
+  OWNER, PROJECT_ID, SCOPE, createSearchHarness, createSeeder, fakeProvider, fakeVector, fakeVectorStore, resolver,
+  seedClaims, type FakeProvider, type SearchHarness,
 } from "./helpers/brain-search-fakes.js";
 
 /** What the bootstrap reports where pgvector exists. */
@@ -154,5 +154,30 @@ describe("brain search hybrid", { timeout: 60_000 }, () => {
     expect(page.notices).toEqual(["candidates_capped"]);
     for (let pages = 1; pages < 4; pages += 1) page = await search({ q: "money rule", limit: 50, cursor: page.nextCursor! });
     expect(page.nextCursor).toBeNull();
+  });
+
+  it("shares one refresh cap between the route and the index it returns, never refusing a scope erase", async () => {
+    let release = () => undefined as void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let waiting = 0;
+    provider.fail = async (texts) => {
+      waiting += 1;
+      await gate;
+      return texts.map((text) => fakeVector(text, provider.dimensions));
+    };
+    await seeder.sync([{ seed: "fresh", title: "Fresh", body: "a new money ledger note" }]);
+    const { service, index } = feature();
+    const signal = () => AbortSignal.timeout(30_000);
+    const running = [service.refresh(OWNER, PROJECT_ID), index.refresh(SCOPE, {}, signal())];
+    await vi.waitFor(() => expect(waiting).toBe(2), { timeout: 10_000 });
+    const changed = { type: "documents_changed", scope: SCOPE, sourceId: null, documentIds: null, at: h.iso() } as const;
+    for (const refused of [() => service.refresh(OWNER, PROJECT_ID), () => index.refresh(SCOPE, {}, signal()),
+      () => index.handle(changed, signal())]) await expect(refused()).rejects.toMatchObject({ code: "brain_unavailable" });
+    const elsewhere = { ownerId: "owner_b", scopeId: SCOPE.scopeId };
+    await expect(index.handle({ type: "scope_erased", scope: elsewhere, at: h.iso() }, signal())).resolves.toBeUndefined();
+    release();
+    expect(await Promise.all(running)).toMatchObject([{ caughtUp: true }, { caughtUp: true }]);
+    await expect(index.handle(changed, signal())).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith("[brain] search refresh refused: 2 already running");
   });
 });
