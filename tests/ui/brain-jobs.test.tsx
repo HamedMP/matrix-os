@@ -301,9 +301,9 @@ describe("Model budget and other sources' background runs", () => {
     await flush();
     expect(api.claims).toHaveBeenCalledWith(PROJECT, { limit: 1 });
     expect(within(repository).getByRole("dialog", { name: "Read with the model" }))
-      .toHaveTextContent("Model budget (per owner, all projects): 3.74 of 5.00 USD left for the last 30 days.");
+      .toHaveTextContent("Background model work (claims, all projects): 3.74 of 5.00 USD left for the last 30 days.");
     // The spend is on screen by itself too, not only inside the confirm.
-    expect(within(repository).getByText("Model spend in the last 30 days, all projects: 1.25 of 5.00 USD."))
+    expect(within(repository).getByText("Background model work in the last 30 days, all projects: 1.25 of 5.00 USD. Chat answers are billed like any Chat."))
       .toBeTruthy();
     fireEvent.click(within(repository).getByRole("button", { name: "Read with the model" }));
     await flush();
