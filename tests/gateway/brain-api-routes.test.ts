@@ -106,14 +106,20 @@ describe("brain api routes", () => {
       .toEqual({ status: 200, body: { source: SOURCE, created: false } });
     expect(service.registerGitSource).toHaveBeenLastCalledWith("owner_a", "proj_widgets", { webBase });
     expect(await call(app, post(`${BASE}/git-source`, "", EMPTY_JSON))).toMatchObject({ status: 201 });
+    expect(await call(app, post(`${BASE}/git-source`, ""))).toMatchObject({ status: 201 });
+    expect(service.registerGitSource).toHaveBeenLastCalledWith("owner_a", "proj_widgets", {});
   });
 
   it("runs a sync and returns the view unchanged; absent, empty and {} bodies are accepted", async () => {
     const { app, service } = setup();
-    for (const request of [post(`${BASE}/sync`), post(`${BASE}/sync`, "{}"), post(`${BASE}/sync`, "", EMPTY_JSON)]) {
+    const requests = [
+      post(`${BASE}/sync`), post(`${BASE}/sync`, "{}"), post(`${BASE}/sync`, "", EMPTY_JSON),
+      post(`${BASE}/sync`, ""), post(`${BASE}/sync`, "", { "Content-Type": "application/json", "Transfer-Encoding": "chunked" }),
+    ];
+    for (const request of requests) {
       expect(await call(app, request)).toEqual({ status: 200, body: SYNC });
     }
-    expect(service.sync.mock.calls).toEqual(Array.from({ length: 3 }, () => ["owner_a", "proj_widgets"]));
+    expect(service.sync.mock.calls).toEqual(Array.from({ length: requests.length }, () => ["owner_a", "proj_widgets"]));
   });
 
   it("lists receipts with the default and an explicit limit, for the principal's user", async () => {

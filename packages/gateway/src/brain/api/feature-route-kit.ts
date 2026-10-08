@@ -7,7 +7,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { requestHasBody } from "../../http-body.js";
 import { isRequestPrincipalError, mapRequestPrincipalError } from "../../request-principal.js";
 import {
   BRAIN_FEATURE_ERRORS, BRAIN_FEATURE_STORE_ERROR_CODES, BRAIN_PROJECT_REF_PATTERN, BrainFeatureError,
@@ -67,7 +66,12 @@ export function brainBodyLimit(maxSize: number): MiddlewareHandler {
   return bodyLimit({ maxSize, onError: (c) => brainFail(c, "body_too_large") });
 }
 
-/** The JSON body through a strict schema; no body reads as {}. */
+/**
+ * The JSON body through a strict schema. The body is read as text under the route's bodyLimit, so an empty one reads
+ * as {} however it arrives (no body, Content-Length: 0, or an empty chunked or typed stream); bad JSON is a
+ * SyntaxError, which the error mapper answers as invalid_request.
+ */
 export async function readBrainBody<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
-  return schema.parse(requestHasBody(c) ? await c.req.json() : {});
+  const text = await c.req.text();
+  return schema.parse(text.trim() === "" ? {} : JSON.parse(text));
 }
