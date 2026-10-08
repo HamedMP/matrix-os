@@ -206,6 +206,22 @@ describe("update and remove", () => {
     expect(await codeOf(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 2 }))).toBe("invalid_request");
   });
 
+  it("leaves the source as it was when its new config cannot be saved", async () => {
+    const handler = fakeHandler("linear", {
+      saveConfig: async (config) => { if (config.includeEventBodies === true) throw new Error("config save failed"); },
+    });
+    const sources = service([handler]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    await expect(sources.update(OWNER, "proj_a", source.sourceId, {
+      expectedRevision: 1, label: "Renamed", status: "paused", config: { items: ["a"], includeEventBodies: true },
+    })).rejects.toThrow("config save failed");
+    expect(await harness.repository.getSource(SCOPE_A, source.sourceId))
+      .toMatchObject({ revision: 1, label: source.label, status: "active" });
+    expect([...handler.configs.values()]).toEqual([{ items: ["a"] }]);
+    // The revision the client holds is still the current one.
+    expect((await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, label: "Renamed" })).revision).toBe(2);
+  });
+
   it("saves a new config that keeps the identity and the pinned account, and refuses one that changes it", async () => {
     const handler = fakeHandler("linear");
     const sources = service([handler], { accounts: accountsOf(["work"]) });
