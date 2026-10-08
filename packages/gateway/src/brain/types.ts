@@ -170,3 +170,161 @@ export interface BrainDatabase extends BrainClaimTables {
   brain_sync_cursors: BrainSyncCursorsTable;
   brain_sync_receipts: BrainSyncReceiptsTable;
 }
+
+// Domain values. Timestamps are ISO-8601 strings.
+
+/** Resolved by the caller (route/service) before any repository call. */
+export interface BrainScopeKey {
+  readonly scopeId: string;
+  readonly ownerId: string;
+}
+
+export interface BrainSource {
+  readonly scopeId: string;
+  readonly ownerId: string;
+  readonly sourceId: string;
+  readonly kind: string;
+  readonly externalRef: string;
+  readonly label: string;
+  readonly status: BrainSourceStatus;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly deletedAt: string | null;
+}
+
+export interface BrainCitation {
+  readonly documentId: string;
+  readonly scopeId: string;
+  readonly revision: number;
+  readonly incarnation: string;
+  readonly permalink: string;
+  readonly sourceUpdatedAt: string;
+  readonly publishedAt: string;
+}
+
+export interface BrainDocumentSummary extends BrainCitation {
+  readonly ownerId: string;
+  readonly sourceId: string | null;
+  readonly title: string;
+  readonly provenance: string;
+  readonly contentHash: string;
+  readonly byteCount: number;
+  readonly updatedAt: string;
+  readonly deletedAt: string | null;
+}
+
+export interface BrainDocument extends BrainDocumentSummary {
+  readonly body: string;
+}
+
+export interface BrainDocumentRevision {
+  readonly scopeId: string;
+  readonly documentId: string;
+  readonly incarnation: string;
+  readonly revision: number;
+  readonly change: BrainDocumentChange;
+  readonly title: string;
+  readonly body: string;
+  readonly permalink: string;
+  readonly provenance: string;
+  readonly contentHash: string;
+  readonly byteCount: number;
+  readonly sourceUpdatedAt: string;
+  readonly supersededAt: string;
+}
+
+export interface BrainSyncCursor {
+  readonly scopeId: string;
+  readonly sourceId: string;
+  readonly cursor: string;
+  readonly updatedAt: string;
+}
+
+export interface BrainSyncCounts {
+  readonly read: number;
+  readonly written: number;
+  readonly unchanged: number;
+  readonly deleted: number;
+  readonly failed: number;
+}
+
+export interface BrainSyncReceipt {
+  readonly scopeId: string;
+  readonly sourceId: string;
+  readonly receiptId: string;
+  readonly status: BrainSyncReceiptStatus;
+  readonly counts: BrainSyncCounts;
+  readonly nextAction: string;
+  readonly errorCode: string | null;
+  readonly cursorBefore: string | null;
+  readonly cursorAfter: string | null;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+}
+
+/** What a caller must present to prove a citation is still current. */
+export interface BrainEvidenceProof {
+  readonly documentId: string;
+  readonly incarnation: string;
+  readonly revision: number;
+}
+
+// Repository inputs. Zod schemas in schemas.ts bound every field.
+
+export interface BrainCreateSourceInput {
+  readonly kind: string;
+  readonly externalRef: string;
+  readonly label: string;
+  readonly status?: BrainSourceStatus;
+}
+
+export interface BrainUpdateSourceInput {
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly label?: string;
+  readonly status?: BrainSourceStatus;
+}
+
+export interface BrainDeleteSourceInput {
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+}
+
+export interface BrainDocumentContentInput {
+  readonly documentId: string;
+  readonly title: string;
+  readonly body: string;
+  /** Empty string when the document has no external link. */
+  readonly permalink: string;
+  readonly sourceUpdatedAt: string;
+  readonly provenance: string;
+}
+
+export interface BrainUpsertDocumentInput extends BrainDocumentContentInput {
+  /** Null for manual publication; otherwise a live source in the same scope. */
+  readonly sourceId: string | null;
+  /** Omitted: unconditional. 0: must not exist live. N: live revision must equal N. */
+  readonly expectedRevision?: number;
+}
+
+export interface BrainReviseDocumentInput {
+  readonly documentId: string;
+  readonly expectedRevision: number;
+  readonly title?: string;
+  readonly body?: string;
+  readonly permalink?: string;
+  readonly sourceUpdatedAt?: string;
+}
+
+export interface BrainDeleteDocumentInput {
+  readonly documentId: string;
+  /** Omitted: tombstone whatever live revision exists. */
+  readonly expectedRevision?: number;
+}
+
+/** A ref kind follows BRAIN_KIND_PATTERN (`path`, `pr`, `spec`); the value is opaque text. */
+export interface BrainDocumentRef {
+  readonly kind: string;
+  readonly value: string;
+}
