@@ -2,10 +2,11 @@
  * Company Brain git adapter: where a repository may live. A checkout is
  * accepted only when its real path, its real git directory, its real common
  * directory, its real objects directory and every object alternates entry are
- * strictly inside the real Matrix home and never inside home's own `.git`. So
- * a `.git` file or symlink, a linked worktree, a linked objects directory or
- * an alternates file cannot lead git to history outside home, or to Matrix
- * home's own history. Read-only filesystem checks,
+ * strictly inside the real Matrix home and never inside home's own history
+ * (home's `.git`, the git and common directories it leads to, and their
+ * objects). So a `.git` file or symlink, a linked worktree, a linked objects
+ * directory or an alternates file cannot lead git to history outside home, or
+ * to Matrix home's own history. Read-only filesystem checks,
  * each bounded; repository files are opened non-blocking and read only when
  * regular, so a FIFO cannot stall them; any refusal is
  * GitSourceError("not_a_repository").
@@ -24,13 +25,20 @@ const ALTERNATES_MAX_BYTES = 64 * 1024;
 const ALTERNATES_MAX_DEPTH = 5;
 /** Alternate object directories checked per repository, across every level. */
 const ALTERNATES_MAX_ENTRIES = 64;
+/** A `.git` file (`gitdir: <path>`) or a `commondir` file: one path line. */
+const GIT_POINTER_MAX_BYTES = INPUT_PATH_MAX_CHARS + 64;
+const GITFILE_PREFIX = "gitdir: ";
 /** Opening a FIFO this way returns at once instead of waiting for a writer. */
 const READ_NONBLOCKING = constants.O_RDONLY | constants.O_NONBLOCK;
 
 export interface GitHomeBounds {
   readonly realHome: string;
-  /** realpath of `<home>/.git` when it exists: Matrix home's own history. */
-  readonly homeGitDir: string | null;
+  /**
+   * Real paths of Matrix home's own history when home is versioned: its
+   * `.git` entry, the git directory a `.git` file names, that directory's
+   * common directory and the common directory's objects.
+   */
+  readonly homeGitPaths: readonly string[];
 }
 
 function refuse(cause?: unknown): never {
@@ -67,21 +75,71 @@ export function isStrictlyInside(parent: string, child: string): boolean {
   return rel !== "" && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
 }
 
+interface RealEntry { readonly real: string; readonly isFile: boolean; readonly isDirectory: boolean }
+
+/** realpath and type of an existing entry, or null when the path does not resolve. */
+async function realEntry(path: string): Promise<RealEntry | null> {
+  try {
+    const real = await realpath(path);
+    const info = await stat(real);
+    return { real, isFile: info.isFile(), isDirectory: info.isDirectory() };
+  } catch (err: unknown) {
+    if (isMissingPathError(err)) return null;
+    throw err;
+  }
+}
+
+async function realDirectoryOrNull(path: string): Promise<string | null> {
+  const entry = await realEntry(path);
+  return entry !== null && entry.isDirectory ? entry.real : null;
+}
+
+/**
+ * The directory a one-line git pointer file names (`gitdir: <path>` in a
+ * `.git` file, `<path>` in `commondir`), or null. A relative path is joined
+ * to `base` without lexical normalization, so realpath resolves `..` the way
+ * git does.
+ */
+async function pointedDirectory(file: string, base: string, prefix: string): Promise<string | null> {
+  const text = await readRegularFile(file, GIT_POINTER_MAX_BYTES);
+  if (text === null) return null;
+  const line = text.replace(/[\r\n]+$/, "");
+  if (!line.startsWith(prefix)) return null;
+  const target = line.slice(prefix.length);
+  if (target === "" || target.includes("\u0000")) return null;
+  return realDirectoryOrNull(isAbsolute(target) ? target : `${base}/${target}`);
+}
+
+/**
+ * Where Matrix home's own history lives. git follows a `.git` file to the
+ * real git directory and a `commondir` file to the shared one, so excluding
+ * only `<home>/.git` would leave a git directory elsewhere in home open to a
+ * project's `.git` file.
+ */
+async function resolveHomeGitPaths(realHome: string): Promise<string[]> {
+  const dotGit = await realEntry(join(realHome, ".git"));
+  if (dotGit === null) return [];
+  const paths = new Set([dotGit.real]);
+  const gitDir = dotGit.isFile
+    ? await pointedDirectory(dotGit.real, realHome, GITFILE_PREFIX)
+    : dotGit.isDirectory ? dotGit.real : null;
+  if (gitDir === null) return [...paths];
+  paths.add(gitDir);
+  const commonDir = (await pointedDirectory(join(gitDir, "commondir"), gitDir, "")) ?? gitDir;
+  paths.add(commonDir);
+  const objects = await realDirectoryOrNull(join(commonDir, "objects"));
+  if (objects !== null) paths.add(objects);
+  return [...paths];
+}
+
 export async function homeBounds(homePath: string): Promise<GitHomeBounds> {
   const realHome = await realDirectory(homePath);
-  let homeGitDir: string | null = null;
-  try {
-    homeGitDir = await realpath(join(realHome, ".git"));
-  } catch (err: unknown) {
-    if (!isMissingPathError(err)) throw err;
-  }
-  return { realHome, homeGitDir };
+  return { realHome, homeGitPaths: await resolveHomeGitPaths(realHome) };
 }
 
 function isAllowed(bounds: GitHomeBounds, real: string): boolean {
   if (!isStrictlyInside(bounds.realHome, real)) return false;
-  const own = bounds.homeGitDir;
-  return own === null || (real !== own && !isStrictlyInside(own, real));
+  return bounds.homeGitPaths.every((own) => real !== own && !isStrictlyInside(own, real));
 }
 
 /** The real path of a git-reported directory, refused unless it is allowed. */
@@ -144,7 +202,7 @@ async function assertAlternatesAllowed(bounds: GitHomeBounds, objectsDir: string
 /**
  * The checkout's git directories, as git reports them, and the objects
  * directory git reads its history from must stay inside home and outside
- * home's own `.git`.
+ * home's own history.
  */
 export async function assertGitDirectoriesAllowed(
   bounds: GitHomeBounds,
