@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { createChatNavigationStore } from "@matrix-os/ui";
 import type { CanonicalChatNavigationItem, CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { AppError } from "@desktop/shared/app-error";
@@ -11,7 +12,7 @@ const navigation = vi.hoisted(() => ({
   truncated: false,
   status: "ready" as "ready" | "loading" | "error",
   error: null as string | null,
-  store: {} as object | null,
+  store: null as ReturnType<typeof createChatNavigationStore> | null,
 }));
 vi.mock("@desktop/renderer/src/features/work/use-work-navigation", () => ({ useWorkNavigation: () => navigation }));
 beforeEach(() => {
@@ -19,9 +20,9 @@ beforeEach(() => {
   navigation.truncated = false;
   navigation.status = "ready";
   navigation.error = null;
-  navigation.store = {};
+  navigation.store = createChatNavigationStore({ load: async () => ({ version: 1, items: [], truncated: false }) });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); navigation.store?.dispose(); });
 const project = { id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };
 function record(id: string, projectId = project.id): CanonicalChatRecord {
   return { chat: { id, title: id, createdAt: "2026-10-03T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }, projectId } as CanonicalChatRecord;
@@ -134,7 +135,7 @@ it("fences delayed scoped reads when the snapshot becomes complete or its author
   await act(async () => resolve({ items: [record("chat_stale")] }));
   expect(result.current.chats.map(x => x.chat.id)).toEqual(["chat_current"]);
   navigation.items = [];
-  navigation.store = {};
+  navigation.store = createChatNavigationStore({ load: async () => ({ version: 1, items: [], truncated: false }) });
   rerender();
   expect(result.current.chats).toEqual([]);
 });
@@ -163,7 +164,7 @@ it("hides old scoped cards immediately when the verified scope changes on the sa
   const { result, rerender } = renderHook(() => useProjectLandingChats(project, client));
   await waitFor(() => expect(result.current.chats).toHaveLength(1));
   vi.mocked(client.list).mockImplementation(() => new Promise(() => {}));
-  navigation.store = {};
+  navigation.store = createChatNavigationStore({ load: async () => ({ version: 1, items: [], truncated: false }) });
   rerender();
   expect(result.current.chats).toEqual([]);
   navigation.store = null;
@@ -185,4 +186,71 @@ it("ignores a delayed scoped Project response after another Project's cards have
   await waitFor(() => expect(result.current.chats.map(x => x.chat.id)).toEqual(["chat_beta"]));
   await act(async () => resolveAlpha({ items: [record("chat_alpha", alpha.id)] }));
   expect(result.current.chats.map(x => x.chat.id)).toEqual(["chat_beta"]);
+});
+
+
+function pending<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+it("discards Project cards across same-store revocation and failed truncated recovery", async () => {
+  navigation.truncated = true;
+  const selected = { ...project, slug: project.id };
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [record("chat_private")] });
+  const hook = renderHook(() => useProjectLandingChats(selected, client));
+  await waitFor(() => expect(hook.result.current.chats).toHaveLength(1));
+  act(() => { navigation.store!.revoke(); navigation.truncated = false; hook.rerender(); });
+  expect(hook.result.current.chats).toEqual([]);
+  const recovery = pending<{ items: CanonicalChatRecord[] }>();
+  vi.mocked(client.list).mockImplementationOnce(() => recovery.promise);
+  navigation.truncated = true;
+  hook.rerender();
+  expect(hook.result.current.chats).toEqual([]);
+  await act(async () => recovery.reject(new AppError("server")));
+  await waitFor(() => expect(hook.result.current.error).toBe(true));
+  expect(hook.result.current.chats).toEqual([]);
+});
+
+it("rejects a late Project response after revocation before React effect cleanup", async () => {
+  navigation.truncated = true;
+  const delayed = pending<{ items: CanonicalChatRecord[] }>();
+  const client = clientWithBots();
+  vi.mocked(client.list).mockImplementationOnce(() => delayed.promise);
+  const hook = renderHook(() => useProjectLandingChats({ ...project, slug: project.id }, client));
+  await act(async () => {
+    navigation.store!.revoke();
+    delayed.resolve({ items: [record("chat_late_private")] });
+  });
+  expect(hook.result.current.chats).toEqual([]);
+  expect(client.agents!.bots!.directBot).not.toHaveBeenCalled();
+});
+
+it("rechecks Project Bot identity after same-store authority recovery", async () => {
+  navigation.truncated = true;
+  const selected = { ...project, slug: project.id };
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [record("chat_reclassified")] });
+  const hook = renderHook(() => useProjectLandingChats(selected, client));
+  await waitFor(() => expect(hook.result.current.chats).toHaveLength(1));
+  vi.mocked(client.agents!.bots!.directBot).mockResolvedValue("agent_alpha");
+  act(() => { navigation.store!.revoke(); navigation.truncated = false; hook.rerender(); });
+  navigation.truncated = true;
+  hook.rerender();
+  await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledTimes(2));
+  expect(hook.result.current.chats).toEqual([]);
+});
+
+it("revokes shared navigation on a scoped Project authorization rejection", async () => {
+  navigation.truncated = true;
+  const client = clientWithBots();
+  vi.mocked(client.list).mockRejectedValue(new AppError("unauthorized"));
+  const revoke = vi.spyOn(navigation.store!, "revoke");
+  const hook = renderHook(() => useProjectLandingChats({ ...project, slug: project.id }, client));
+  await waitFor(() => expect(revoke).toHaveBeenCalledOnce());
+  expect(navigation.store!.getSnapshot().items).toEqual([]);
+  expect(hook.result.current.chats).toEqual([]);
 });

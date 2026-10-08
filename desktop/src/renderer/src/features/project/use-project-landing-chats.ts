@@ -16,20 +16,33 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
   // Only that case needs the existing scoped history and binding reads.
   const scoped = Boolean(client && navigation.store && navigation.truncated);
   const scope = navigation.store;
+  const authorityEpoch = scope?.getAuthorityEpoch() ?? 0;
+  const botAuthority = useMemo(() => ({
+    epoch: authorityEpoch,
+    client: scope && client?.agents ? { ...client.agents } : undefined,
+  }), [client, scope, authorityEpoch]);
   const projectKey = JSON.stringify([project.id, project.slug]);
   const [snapshot, setSnapshot] = useState<{
     client: CanonicalChatClient;
     scope: typeof scope;
+    authorityEpoch: number;
     projectKey: string;
     records: CanonicalChatRecord[];
     error: boolean;
   } | null>(null);
   useEffect(() => {
+    // A same-store revocation must also discard retained cards and identity data.
+    setSnapshot(previous => previous && previous.client === client && previous.scope === scope
+      && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous : null);
+  }, [client, scope, authorityEpoch, projectKey]);
+  useEffect(() => {
     if (!client || !active || !scoped) return;
     let current = true;
+    const isCurrent = () => current && scope?.getAuthorityEpoch() === authorityEpoch;
     let pending = false;
     let again = false;
     const refresh = async () => {
+      if (!isCurrent()) return;
       if (pending) { again = true; return; }
       pending = true;
       do {
@@ -40,23 +53,31 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
           const unique = new Map<string, CanonicalChatRecord>(); // at most two bounded 1,000-row pages
           for (const record of pages.flat()) unique.set(record.chat.id, record);
           const loaded = [...unique.values()].sort(compareCanonicalChatActivity).slice(0, 1000);
-          if (!current) return;
+          if (!isCurrent()) return;
           setSnapshot(previous => {
-            const known = previous?.client === client && previous.scope === scope && previous.projectKey === projectKey ? previous.records : [];
-            return { client, scope, projectKey, error: false, records: loaded.map(record => {
+            if (!isCurrent()) return previous;
+            const known = previous?.client === client && previous.scope === scope
+              && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous.records : [];
+            return { client, scope, authorityEpoch, projectKey, error: false, records: loaded.map(record => {
               const existing = known.find(item => item.chat.id === record.chat.id);
               return existing ? mergeCanonicalChatRecord(existing, record) : record;
             }) };
           });
         } catch (error: unknown) {
           console.warn("[project] Chat cards unavailable:", error instanceof Error ? error.name : "UnknownError");
-          if (current) setSnapshot(previous => ({ client, scope, projectKey,
-            records: !(error instanceof AppError && error.category === "unauthorized")
-              && previous?.client === client && previous.scope === scope && previous.projectKey === projectKey ? previous.records : [],
+          if (!isCurrent()) return;
+          if (error instanceof AppError && error.category === "unauthorized") {
+            scope?.revoke();
+            setSnapshot(null);
+            return;
+          }
+          setSnapshot(previous => !isCurrent() ? previous : ({ client, scope, authorityEpoch, projectKey,
+            records: previous?.client === client && previous.scope === scope
+              && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous.records : [],
             error: true,
           }));
         }
-      } while (current && again);
+      } while (isCurrent() && again);
       pending = false;
     };
     void refresh();
@@ -65,11 +86,11 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
       void refresh();
     });
     return () => { current = false; subscription?.dispose(); };
-  }, [client, active, scoped, scope, eventSource, project.id, project.slug, projectKey, refreshRequest]);
-  const records = useMemo(() => scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.projectKey === projectKey ? snapshot.records : [], [scoped, snapshot, client, scope, projectKey]);
+  }, [client, active, scoped, scope, authorityEpoch, eventSource, project.id, project.slug, projectKey, refreshRequest]);
+  const records = useMemo(() => scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey ? snapshot.records : [], [scoped, snapshot, client, scope, authorityEpoch, projectKey]);
   const ids = useMemo(() => records.map(record => record.chat.id), [records]);
   const authoritative = useMemo(() => navigation.items.map(item => ({ chatId: item.chat.id, classification: item.classification })), [navigation.items]);
-  const bots = useBotConversationSummaries(client?.agents, ids, active && scoped && ids.length > 0, undefined, authoritative);
+  const bots = useBotConversationSummaries(botAuthority.client, ids, active && scoped && ids.length > 0, undefined, authoritative);
   const chats = useMemo<ChatNavigationRecord[]>(() => {
     if (!client) return [];
     const matchesProject = (record: ChatNavigationRecord) => record.projectId === project.id || record.projectId === project.slug;
@@ -86,6 +107,6 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
       && !bots.unresolvedChatIds.includes(record.chat.id)
       && !bots.conversations.some(bot => bot.chatId === record.chat.id));
   }, [client, scoped, active, navigation.items, records, project.id, project.slug, bots.unresolvedChatIds, bots.conversations]);
-  const scopedError = scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.projectKey === projectKey && snapshot.error;
+  const scopedError = scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey && snapshot.error;
   return { chats, error: Boolean(navigation.error || scopedError) };
 }
