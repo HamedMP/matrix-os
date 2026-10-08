@@ -121,3 +121,128 @@ lastSync }`; null with an empty page).
   its CR, VT, FF, NEL, U+2028 and U+2029 become `\n` (excerpt lines stay indented, one-line fields stay on one line),
   so it cannot forge an item, citation, `More:` line or wrapper marker; the answer goes through `wrapExternalContent`.
 
+## Security architecture
+
+**Auth matrix.** Principals: JWT, platform-verified, `MATRIX_USER_ID` container, or `default` in local dev without an
+auth token; a principal error is 401 `{ "error": "Unauthorized" }` (misconfiguration 500, logged by name).
+
+| Entry point | Authentication | Authorization and scope | Errors |
+| --- | --- | --- | --- |
+| POST `.../git-source`, `.../sync` | `authMiddleware` (bearer or platform JWT), `requireRequestPrincipal` | project owned by the principal; scope `personal:project:<id>`; `repoPath` from the project record | 400 401 404 409 413 503 |
+| GET `.../receipts`, `.../why` | same | same; read-only | 400 401 404 503 |
+| `brain_why` IPC tool | in-process kernel IPC server, agent only | owner bound in the gateway at construction; project resolved for it | fixed texts |
+| service, `brainWhy`, `listDocumentsByRef` | server code | caller-resolved scope key; `(owner_id, scope_id)` in every statement | API and store codes |
+
+**Input validation plan.** `projectId` pattern before any lookup; bodyLimit, strict zod bodies; `exactQuery` then
+strict zod queries (`path` refined by `normalizeBrainWhyPath`); the same bounds on agent input; `parseWebBase`; strict
+store parsing and cursor decoding; bound SQL parameters. `repoPath` only from `resolveProjectWorkingDirectory`.
+
+**Error response policy.** Body `{ "error": { "code", "message" } }` with fixed `BRAIN_API_ERRORS` messages; never
+zod issues, paths, stderr, SQL, stacks or another owner's project's existence. Logs (`[brain-api]`, `[brain-agent]`,
+`[brain-why]`) carry an error name, numeric status or code only.
+
+| Code | Status | When |
+| --- | --- | --- |
+| `invalid_request` | 400 | zod or `SyntaxError` at the boundary; bad `webBase`, path or cursor (store `invalid`) |
+| `project_not_found` | 404 | malformed id or slug; missing, foreign, archived or deleting project |
+| `git_source_missing` / `git_source_conflict` | 409 | no source, store `not_found`/`forbidden` / other `webBase`, store `conflict` |
+| `git_source_unavailable` / `checkout_unavailable` | 409 | source paused, removed or not git / no eligible checkout |
+| `sync_in_progress` / `brain_capacity` | 409 | a run on this source in this process / store `capacity` |
+| `body_too_large` / `brain_unavailable` | 413 / 503 | bodyLimit / no Postgres, index unavailable, receipt-less failure, unknown |
+
+**Credential handling.** No secrets; nothing contacts a remote; permalinks are credential-free https (spec 552).
+
+## Integration wiring
+
+- `startup/owner-database.ts`, after the messaging repository: `services.brainService = await
+  startBrainProjectService(kysely, { projects: codingAgentProjectManager, homePath })` builds the repository on the
+  shared Kysely, bootstraps it and returns the service; without Postgres it stays `null`.
+- `server.ts`: `brainTools: createBrainAgentTools(ownerDatabaseServices?.brainService ?? null)` in `createDispatcher`
+  (passed to both kernel configs, then `createIpcServer`, which registers and allows the tool), and
+  `app.route("/api/brain", createBrainRoutes({ service, getPrincipal }))` after `authMiddleware`. Dependency injection
+  only. `/api/brain` joins the `data-features` route inventory group. No new environment variable.
+- Teardown: none; the repository shares the owner Kysely, the service holds no timers or caches, `appDb.destroy()`
+  releases the pool. No import cycle (`brain/index.ts` re-exports neither `why.ts` nor `api/`).
+
+## Failure modes
+
+- No Postgres: routes 503, no tool. Brain bootstrap hits a lock or statement deadline (`55P03`, `57014`): logged
+  with the code, `brainService` stays `null` (routes 503, no tool) and the next start retries, so an optional feature
+  never takes owner data down; any other bootstrap error fails owner startup closed, like the other repositories.
+- Project index unavailable or identity conflict: 503, status logged. Checkout missing, a symlink or outside home:
+  409 `checkout_unavailable`, no git. Not a repository, shallow, no branch, no web base, git timeout: a failed
+  receipt, HTTP 200 with its code and `nextAction`.
+- Concurrent sync and abort: see Sync policy. Crash mid-run: spec 552 recovery (`interrupted` receipt, replay).
+- Slow database: writes keep the 551 deadlines; reads are bounded by the page, the 1,001-row count and the ref cap; a
+  Postgres error is 503, logged by name. Stale history: nothing fetches; `source.lastSync` says how old answers are.
+
+## Resource management
+
+| Limit | Value | Enforced in |
+| --- | --- | --- |
+| why page / total / cursor / raw path | 10 default, 50 max / 1,000 / 256 / 1,024 chars | route, tool and store schemas |
+| excerpt; specs; matched paths (brief / full) | 480 / 4,000 units; 4 / 16; 3 / 20 | `why.ts` |
+| refs per document / receipts / sources scanned | 200 / 10 default, 50 max / 100 | refs query, route, service |
+| bodies / sync per request / tool answer | 4 KiB, 1 KiB / one run, 500 commits, 20 s / 8,000, 32,000 chars | bodyLimit, service, tool |
+| memory per why call / long-lived state / third-party data flow | 51 documents of 64 KiB, 10,000 ref rows / spec 552's 16-key guard set; no timers, caches or files / none | page and ref limits |
+
+## Invariants
+
+- Read paths never write; `why` never syncs, fetches or runs git; a sync request is at most one run. Client errors
+  are fixed codes. Excerpts are verbatim substrings; `truncated` marks every cut.
+- Scope keys come only from the principal (or bound agent owner) and the resolved project id; foreign projects read
+  exactly like missing ones. Only live documents match; a cursor walk returns each match once, newest first.
+- Source of truth stays the spec 551 store over spec 552's git history; this increment adds one index, no state.
+- Acceptable orphan state: deleting a project leaves its `personal:project:<id>` brain scope in Postgres until
+  project deletion erases it (Deferred); no route or tool can reach it, since every lookup is `project_not_found`.
+- A `project:<id>` source reports `webBase: null` (registration runs no git); item permalinks carry the base the
+  adapter derived from origin.
+
+## Integration test checkpoint
+
+PGlite-backed or pure, fixture repositories from `helpers/brain-git-fixture.ts`, no network:
+1. `brain-why.test.ts`: file, folder and `exact_or_under` matches (`src/a-b`, `src/a.b`, `src/a0`, `src/ab`
+   excluded), tombstones, provenances, scopes, keyset ties, `totalCapped`, bad cursors; a synced fixture; path,
+   footer, excerpt and lead-paragraph tables.
+2. `brain-api-service.test.ts` (real repository and git, stub lookup): registration, conflicts, foreign and slug
+   lookups, one run per `sync()` until caught up, pre-receipt codes, receipts, `why`, the deadline-deferred
+   bootstrap, and the agent path end to end (real sync, `createBrainAgentTools`, the kernel handler citing
+   `<web base>/pull/1` with `Summary: - Adds alpha.`).
+3. `brain-api-routes.test.ts`: statuses and exact bodies, `Cache-Control`, 401 without a service call, malformed id
+   equals missing, 400 and 413 inputs, error mapping, logs by name, no leaked internals.
+4. `brain-wiring.test.ts` (source order, like `project-deletion-wiring.test.ts`): owner-database starts the brain;
+   `server.ts` hands it to `createDispatcher` and mounts `/api/brain` with `requireRequestPrincipal` after
+   `authMiddleware`. Plus `brain-why-tool` (forged breaks, zero-width markers, hard caps), kernel registration and
+   options, `brain-agent-tools`, `dispatcher-overrides`, `route-inventory`, owner-database suites.
+
+Manual end-to-end (dev Docker stack, principal `default`, full-history clone in `projects/matrix-os`): create the
+folder project, `POST .../git-source` (201, `project:<id>`), `POST .../sync` until `nextAction` is not `run_again`,
+then `GET .../why?path=packages/gateway/src/project-manager.ts&limit=5`: first-parent PRs #1771, #1328, #1252 with
+permalinks and verbatim `## Summary`; `proj_missing` is 404 `project_not_found`.
+
+## Code review checklist
+
+- Routes: bodyLimit, `exactQuery` and strict zod, principal first, one error mapper, no echoed input; foreign equals
+  missing. `sync` runs once. No `catch {`; logs carry names or codes. Range predicate, no LIKE; every list, count and
+  excerpt bounded; the tool answer cleaned, wrapped and capped; files under 450 LOC; wiring-only server edits.
+
+## Delivery and evidence
+
+- [ ] One PR under 3,000 additions and 50 files, checks green, Invariants and the OS-view matrix (N/A) in the body,
+      merged only after Greptile scores its current head 5/5.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): project brain API, `brain_why`, receipts, syncing.
+
+## Relationship to existing work
+
+- Spec 551: adds `listDocumentsByRef` and `brain_documents_recent` and delivers its planned `owner-database.ts` wiring.
+  Spec 552: the "next" increment it names; narrows registration (above) and makes its `run_again` loop one run per
+  request. Spec 115: delivers its cited-permalink "why" for git. Spec 124: organization projects are
+  `project_not_found` until organization brain scopes land. PR #2078's `company-brain/` and `/api/company-brain` are
+  unrelated and untouched.
+
+## Deferred
+
+Organization scopes, scheduled sync, UI, source pause and delete routes, fetching, ranking, forge data; erasing a
+deleted project's brain scope (a `createProjectDeletionCleanup` hook calling `eraseScope`); renames
+(spec 552 uses `--no-renames`, so older history sits under the old path); refs beyond a commit's first 200 paths;
+documents of force-pushed-away commits (they answer until a cleanup); matching on `spec` refs.
