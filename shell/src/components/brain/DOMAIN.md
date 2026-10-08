@@ -12,9 +12,10 @@ the client is made once per page, `ClientApiError` carries the category and code
   recovery notice), driven by `hooks/useCanonicalChatThread.ts`: a controller for one Chat that reuses the Chat app's
   transcript, content deltas and snapshot refresh, calls the slot's `createChat` on a draft's first send, never
   changes the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the
-  slot (`botId`), so a draft already sends as the Bot. Open in Chat switches the Chat app to the same Chat and focuses
-  or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans to it). Rows rename and delete over the
-  shell chat client.
+  slot (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own
+  model). When a new thread's first turn is refused, the question goes back into its composer. Open in Chat switches
+  the Chat app to the same Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans
+  to it). Rows rename and delete over the shell chat client.
 - The client and the one event stream come from the shell chat state (`useCanonicalChatState` returns them as
   `chatRuntime`), so the shell still opens one stream. The thread view drops a snapshot answer meant for an older
   request, falls back to a snapshot on a content gap, and polls every 2 s while an answer runs without an open stream.
@@ -22,5 +23,5 @@ the client is made once per page, `ClientApiError` carries the category and code
   `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the palette in `Desktop.tsx`,
   `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`. Tests in `tests/shell/`:
   `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, the embedded layout, a draft sent as a
-  brain thread, Open in Chat), `canonical-chat-client.test.ts` (the Chat delete), `builtin-apps.test.ts`,
-  `web-desktop-app-launch.test.ts` and `window-manager.test.ts`.
+  brain thread, a refused first question given back, Open in Chat), `canonical-chat-client.test.ts` (the Chat
+  delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts` and `window-manager.test.ts`.
