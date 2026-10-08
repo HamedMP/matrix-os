@@ -40,3 +40,13 @@ Production-built Electron fixture evidence must exercise actual application-root
 
 ## Delivery
 Use an isolated manual codex/ worktree and Conventional Commit implementation PR, one English Linear issue ENG-168, and a separate public documentation PR in FinnaAI/matrix-os-site content/docs. Stop with an exact-head runnable Electron Desktop and concise Human Review flow. Greptile and merge follow explicit user review approval; no production rollout is authorized by this task.
+
+## Shared Settings evidence expiry (ENG-178)
+
+A short local credential observation is a validity bound, not an instruction to repeatedly reload the complete Settings snapshot. Idle Agents & providers and retained Chat onboarding must not renew `/api/ai/provider-settings` merely because Hermes's five-second `present_unverified` evidence expires. This shared controller contract applies to Web Canvas, Web Desktop, and Electron Desktop; the application-owned Electron catalog schedule above remains independent.
+
+Keep display-only local expiry rerenders and canonical admission. Expired historical Hermes profile presence remains recoverable and must not become fabricated authentication or a logout. Preserve the existing stale connection presentation and saved configuration. Do not increase the server TTL to hide repeated reads.
+
+Initial identity-scoped reads, explicit Refresh, connection revalidation and bounded active login/workflow completion keep their existing safe transport and request/revision/identity fences. Only these actual accepted snapshots may trigger their normal workflow capabilities or expanded connection reads. Idle expiry must retain expanded rows, scroll and enabled controls without global busy transitions or secondary network fanout.
+
+Regression evidence must cover fresh successive short-TTL responses, hidden mounted Chat, truthful expiry, one explicit refresh, and stale-identity cancellation. Required production Electron coverage observes idle Settings beyond two complete TTLs and manual Refresh without rearming a timer. Fixture and live QA evidence are separate facts. Deliver ENG-178's implementation PR and a separate public documentation PR; stop at Human Review before Greptile or merge.
