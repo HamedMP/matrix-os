@@ -27,6 +27,8 @@ import { createBrainHarness, type BrainHarness } from "./helpers/brain-store-hel
 let fixture: BrainGitFixture;
 let harness: BrainHarness;
 let history: ImpactHistory;
+/** Every statement the brain database runs, in order. */
+const trace: string[] = [];
 /** Later than every fixture commit: currentClaims reads documents dated at or before it. */
 const AS_OF = "2100-01-01T00:00:00.000Z";
 
@@ -100,7 +102,8 @@ async function expectCode(promise: Promise<unknown>, type: typeof BrainApiError 
 
 beforeEach(async () => {
   fixture = await createBrainGitFixture();
-  harness = await createBrainHarness();
+  trace.length = 0;
+  harness = await createBrainHarness({}, trace);
   history = await buildImpactHistory(fixture);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -285,6 +288,24 @@ describe("impact brief", { timeout: 120_000 }, () => {
     const empty = await service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "main" });
     expect([empty.changedFiles, empty.dependents, empty.prior, empty.invariants, empty.specs, empty.notices])
       .toEqual([[], [], [], [], [], ["brain_behind_head"]]);
+  });
+
+  it("reads the brain in one read-only transaction with a statement deadline", async () => {
+    await connectAndSync();
+    trace.length = 0;
+    await service().impact(IMPACT_OWNER, IMPACT_PROJECT, { head: "feature" });
+    const tables = new Set<string>();
+    let [open, deadline] = [false, false];
+    for (const statement of trace) {
+      if (statement === "BEGIN") [open, deadline] = [true, false];
+      else if (statement === "COMMIT" || statement === "ROLLBACK") open = false;
+      else if (statement.includes("statement_timeout")) deadline = open;
+      else if (!statement.startsWith("SET ")) {
+        expect({ statement, open, deadline }).toEqual({ statement, open: true, deadline: true });
+        for (const table of statement.match(/\bbrain_[a-z_]+/g) ?? []) tables.add(table);
+      }
+    }
+    expect([...tables]).toEqual(expect.arrayContaining(["brain_sources", "brain_sync_cursors", "brain_claims"]));
   });
 
   it("flags a sync position that does not contain the merge base", async () => {
