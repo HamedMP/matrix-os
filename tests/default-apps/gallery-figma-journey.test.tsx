@@ -20,3 +20,12 @@ it('offers installed apps, a working build request and a returnable full app det
   fireEvent.click(screen.getByRole('button',{name:'Back to gallery'}));
   expect(screen.getByRole('heading',{name:'Apps'})).toBeTruthy();
 });
+it('announces a failed installed-strip launch even when search hides its card', async () => {
+  const app=catalog.apps[0];
+  window.MatrixOS={gatewayFetch:async()=>({version:1,apps:[{...app,installed:true,launchPath:`apps/${app.id}`}]}),integrations:async()=>[],openApp:async()=>{throw new Error('unavailable');}};
+  render(<Gallery/>);
+  await screen.findByRole('button',{name:`Launch ${app.name}`});
+  fireEvent.change(screen.getByRole('textbox',{name:'Search apps'}),{target:{value:'not present'}});
+  fireEvent.click(screen.getByRole('button',{name:`Launch ${app.name}`}));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent','The app could not open. Try again.');
+});

@@ -201,6 +201,8 @@ export default function App() {
           </div>
           {installed.length ? <div className="installed-strip">{installed.map(app => <button key={app.id} disabled={pending !== null} aria-label={`Launch ${app.name}`} onClick={() => void action(app)}><AppIdentity app={app} /><span>{app.installedName ?? app.name}</span></button>)}</div>
             : <p className="installed-empty">{loading ? "Loading your apps…" : "Your installed apps will appear here."}</p>}
+          {installed.filter(app => actionErrors[app.id] && !visible.some(item => item.id === app.id)).map(app =>
+            <p className="card-error" role="alert" key={app.id}>{actionErrors[app.id]}</p>)}
         </section>
         <section className="catalog-section" aria-labelledby="catalog-title">
           <div className="section-heading"><h2 id="catalog-title">Gallery</h2>

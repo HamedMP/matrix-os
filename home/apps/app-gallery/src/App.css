@@ -30,6 +30,7 @@ h1,h2,h3,p { margin:0; } h1,h2,h3 { font-family:var(--display-font); font-weight
 .search img { flex:none; }
 .search input { width:100%; min-width:0; border:0; outline:0; background:transparent; font-size:13px; }
 .search input:focus-visible { outline:none; }
+.search:focus-within { outline:2px solid var(--brand-forest); outline-offset:3px; }
 .icon-button { width:36px; height:36px; display:grid; place-items:center; background:transparent; border-radius:8px; }
 .build-composer { border:1px solid var(--border); border-radius:16px; padding:20px; box-shadow:0 12px 16px -4px #2423230d,0 2px 2px -1px #24232304; }
 .build-composer h2 { display:flex; align-items:center; gap:8px; font-size:16px; line-height:24px; }
