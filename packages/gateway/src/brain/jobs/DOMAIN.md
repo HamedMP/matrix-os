@@ -61,8 +61,9 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
   call after it and aborts the call in flight. The heartbeat timer stops renewing the lease once the run is aborted.
 - Cancel of a running run records `cancel_requested`, then the service tells this gateway's worker
   (`BrainJobWorker.cancel`), which aborts the run at once; a run on another gateway stops at its next heartbeat. A
-  recorded cancel always wins: finish, release and recovery all end the run `cancelled`, even when its last step
-  had completed.
+  run reads the flag (a heartbeat) before its first step, so a cancel that lands between its claim and its launch,
+  when the worker has no run to abort yet, still ends it before any work. A recorded cancel always wins: finish,
+  release and recovery all end the run `cancelled`, even when its last step had completed.
 - A refresh step whose result has a `stopReason` (`embedding_unavailable`, `vector_cap`, `graph_capacity`) and is
   not caught up stops the run with that code, so a refresh that cannot progress is never run again 500 times.
 - Busy answers (another run holds the same sync or extraction lock) are tried again every `retryDelayMs` until the

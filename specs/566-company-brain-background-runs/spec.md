@@ -64,6 +64,8 @@ syncs and claim reading as runs and polls them (spec 563).
   take the same run.
 - Cancel: a queued run is cancelled at once; a running run gets `cancelRequested`, and the service tells this
   gateway's worker, which stops it at once. A run held by another gateway stops at its next heartbeat or step.
+  A run reads the stored cancel before its first step, so a cancel that lands between its claim and its launch
+  still ends it before any (paid) work starts.
   A recorded cancel always wins: the final write, the shutdown hand-back and lease recovery all end such a run
   `cancelled` (with its steps and summary so far), even when its last step had completed. Cancelling a finished run
   returns it unchanged.
