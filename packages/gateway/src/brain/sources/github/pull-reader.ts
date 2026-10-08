@@ -8,8 +8,8 @@ import type { BrainSourceErrorCode, BrainSourceNotice, BrainSourceReadContext, B
 import type { BrainDatabase } from "../../index.js";
 import { listGithubChildren } from "./database.js";
 import {
-  githubDocumentId, pullRequestDocument, reviewCommentDocument, reviewDocument, type GithubDocumentContext,
-  type GithubUpsert,
+  githubDocumentId, isSubmittedReview, pullRequestDocument, reviewCommentDocument, reviewDocument,
+  type GithubDocumentContext, type GithubUpsert,
 } from "./documents.js";
 import {
   GithubCommitListSchema, GithubPullSchema, GithubReviewCommentListSchema, GithubReviewListSchema, type GithubIssue,
@@ -72,12 +72,13 @@ export async function readPullRequest(input: {
     );
     if (!comments.ok) return comments;
     for (const review of reviews.items) {
+      // Every submitted reviewer, including one whose empty comment-only review has no document of its own.
+      if (review.user && isSubmittedReview(review)) reviewers.push(review.user.login);
       const built = reviewDocument(input.doc, number, prDocumentId, review, issue.updated_at);
       if (built === null) {
         skipped += 1;
         continue;
       }
-      if (review.user) reviewers.push(review.user.login);
       children.push(built.upsert);
       if (built.truncated) notices.push("body_truncated");
     }
