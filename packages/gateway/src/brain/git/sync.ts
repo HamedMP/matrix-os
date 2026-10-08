@@ -164,3 +164,170 @@ function errorCodeOf(error: unknown): GitSyncErrorCode {
   logSyncError("unexpected sync failure", error, "internal_error");
   return "internal_error";
 }
+
+function earlyResult(code: GitSyncErrorCode): GitSyncResult {
+  return {
+    status: "failed", errorCode: code, nextAction: NEXT_ACTIONS[code], receipt: null, counts: ZERO_COUNTS,
+    cursorBefore: null, cursorAfter: null, commitsProcessed: 0, commitsRemaining: 0, caughtUp: false,
+    historyRewritten: false, batches: 0, rejectedDocumentIds: [], notices: [],
+  };
+}
+
+function resolveLimits(partial: Partial<GitSyncLimits> | undefined): GitSyncLimits {
+  const limits: Record<keyof GitSyncLimits, number> = { ...GIT_SYNC_DEFAULT_LIMITS };
+  for (const key of LIMIT_KEYS) {
+    limits[key] = Math.min(partial?.[key] ?? GIT_SYNC_DEFAULT_LIMITS[key], GIT_SYNC_LIMIT_CEILINGS[key]);
+  }
+  return limits;
+}
+
+/** Null when the options are invalid (never recorded on a receipt). */
+function parseOptions(options: GitSyncOptions): SyncRun | null {
+  const parsed = GitSyncOptionsSchema.safeParse({
+    scope: options.scope, sourceId: options.sourceId, repoPath: options.repoPath,
+    homePath: options.homePath, config: options.config, limits: options.limits,
+  });
+  if (!parsed.success) return null;
+  if (options.runner !== undefined && typeof options.runner !== "function") return null;
+  if (options.now !== undefined && typeof options.now !== "function") return null;
+  // The schema already checked every glob and the 1..8 count, so this cannot throw invalid_options.
+  const matcher = compileSpecGlobs(parsed.data.config?.specGlobs ?? GIT_DEFAULT_SPEC_GLOBS);
+  return {
+    repository: options.repository, scope: parsed.data.scope, sourceId: parsed.data.sourceId,
+    repoPath: parsed.data.repoPath, homePath: parsed.data.homePath, branch: parsed.data.config?.branch ?? null,
+    matcher, runner: options.runner ?? defaultGitRunner, limits: resolveLimits(parsed.data.limits),
+    now: options.now ?? Date.now,
+  };
+}
+
+interface OpenedRun { readonly source: BrainSource; readonly receipt: BrainSyncReceipt }
+
+/** Pre-receipt checks; a code here is returned, never recorded. */
+async function openRun(run: SyncRun): Promise<OpenedRun | GitSyncErrorCode> {
+  try {
+    const source = await storeCall(() => run.repository.getSource(run.scope, run.sourceId));
+    if (source === null || source.deletedAt !== null) return "source_unavailable";
+    if (source.kind !== GIT_SOURCE_KIND) return "source_kind_mismatch";
+    if (source.status !== "active") return "source_inactive";
+    const receipt = await storeCall(() => run.repository.openSyncReceipt(run.scope, { sourceId: run.sourceId }));
+    return { source, receipt };
+  } catch (error) {
+    if (error instanceof BrainStoreError && error.code === "conflict") return "source_inactive";
+    return errorCodeOf(error);
+  }
+}
+
+interface WindowRun {
+  readonly repo: GitRepository;
+  readonly ctx: GitDocumentContext;
+  readonly tip: string;
+  readonly receiptId: string;
+}
+
+/**
+ * One window: commit documents (newest wins per id), final spec parts, then
+ * batches. Non-final batches hold the cursor at this run's in-progress token;
+ * only the final batch moves it to the window end.
+ */
+async function applyWindow(
+  run: SyncRun,
+  window: WindowRun,
+  range: { readonly from: string | null; readonly to: string },
+  commits: readonly GitCommitRecord[],
+  progress: RunProgress,
+): Promise<void> {
+  const documents = new Map<string, GitUpsertDraft>();
+  for (const commit of commits) {
+    const built = buildCommitDocument(commit, window.ctx);
+    progress.addNotices(built.notices);
+    documents.delete(built.draft.documentId);
+    documents.set(built.draft.documentId, built.draft);
+  }
+  const specs = await buildWindowSpecs({
+    repo: window.repo, ctx: window.ctx, commits, windowEnd: range.to, tip: window.tip,
+    notice: (notice) => progress.notice(notice),
+  });
+  const plans = planWindowBatches([...documents.values(), ...specs.upserts], [...new Set(specs.deletions)], run.limits);
+  const token = inProgressCursor(range.from, window.tip, window.receiptId);
+  for (const plan of plans) {
+    const expected = progress.cursor;
+    const result = await storeCall(() => run.repository.applySyncBatch(run.scope, {
+      sourceId: run.sourceId,
+      expectedCursor: expected,
+      nextCursor: plan.final ? appliedCursor(range.to, window.tip) : token,
+      upserts: plan.upserts,
+      deletions: plan.deletions,
+    }));
+    progress.recordBatch(plan, result);
+  }
+}
+
+/** The cursor's position, and the tip its run worked toward, are both still on the way to this tip. */
+async function cursorStillValid(repo: GitRepository, cursor: GitCursor, tipSha: string): Promise<boolean> {
+  for (const sha of [cursor.tip, cursor.position]) {
+    if (sha === null || sha === tipSha) continue;
+    if (!repo.shaPattern.test(sha) || !(await repo.isAncestor(sha, tipSha))) return false;
+  }
+  return true;
+}
+
+/**
+ * The exclusive lower bound of this run: the cursor's position, or the root
+ * before the first window; undefined when already at the tip. Any other
+ * cursor means rewritten history (a force-push, a garbage-collected object,
+ * or commits a stopped run read ahead that are gone): rescan from the root.
+ */
+async function startingPoint(repo: GitRepository, progress: RunProgress, tipSha: string): Promise<string | null | undefined> {
+  if (progress.cursor === null) return null;
+  const cursor = parseGitCursor(progress.cursor);
+  if (cursor !== null && await cursorStillValid(repo, cursor, tipSha)) {
+    return cursor.position === tipSha ? undefined : cursor.position;
+  }
+  progress.rewritten = true;
+  return null;
+}
+
+async function runWindows(run: SyncRun, opened: OpenedRun, progress: RunProgress): Promise<void> {
+  const start = run.now();
+  const stored = await storeCall(() => run.repository.getSyncCursor(run.scope, run.sourceId));
+  progress.cursorBefore = stored?.cursor ?? null;
+  progress.cursor = progress.cursorBefore;
+  const repo = await openGitRepository({
+    repoPath: run.repoPath, homePath: run.homePath, runner: run.runner, limits: run.limits,
+  });
+  const web = resolveGitWebBase({ externalRef: opened.source.externalRef, remoteUrl: await repo.readOriginUrl() });
+  if (!web.ok) throw new GitSourceError(web.code);
+  const tip = await repo.resolveTip(run.branch);
+  const ctx: GitDocumentContext = { identity: opened.source.externalRef, webBase: web.webBase, matcher: run.matcher };
+  const window: WindowRun = { repo, ctx, tip: tip.sha, receiptId: opened.receipt.receiptId };
+  const begin = await startingPoint(repo, progress, tip.sha);
+  if (begin === undefined) return;
+  let from: string | null = begin;
+  let rechecked = false;
+  progress.remaining = await repo.countFirstParent({ from, to: tip.sha });
+  while (progress.remaining > 0 && progress.processed < run.limits.commitsPerRun) {
+    if (progress.processed > 0 && run.now() - start >= run.limits.runBudgetMs) {
+      progress.notice("run_budget_exhausted");
+      break;
+    }
+    const take = Math.min(progress.remaining, run.limits.commitsPerWindow, run.limits.commitsPerRun - progress.processed);
+    const windowEnd: string = take === progress.remaining
+      ? tip.sha
+      : await repo.firstParentAt({ from, to: tip.sha }, progress.remaining - take);
+    const commits = await repo.readCommits({ from, to: windowEnd }, { isSpecPath: (path) => run.matcher.matches(path) });
+    if (commits.length !== take) throw new GitSourceError("git_output_malformed");
+    if (from !== null && commits[0]!.parents[0] !== from) {
+      // The cursor is an ancestor but not on the first-parent chain: rescan once from the root.
+      if (rechecked) throw new GitSourceError("git_output_malformed");
+      rechecked = true;
+      progress.rewritten = true;
+      from = null;
+      progress.remaining = await repo.countFirstParent({ from: null, to: tip.sha });
+      continue;
+    }
+    await applyWindow(run, window, { from, to: windowEnd }, commits, progress);
+    progress.processed += take;
+    progress.remaining -= take;
+    from = windowEnd;
+  }
+}
