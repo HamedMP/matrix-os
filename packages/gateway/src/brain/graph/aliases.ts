@@ -54,7 +54,17 @@ async function writeAlias(
     .execute();
 }
 
-/** Re-decides the automatic alias of each `name:` key (manual and split rows are never touched). */
+/** Merged aliases that resolve to `entityId`. */
+async function mergedCount(trx: Trx, scope: BrainScopeKey, entityId: string): Promise<number> {
+  const row = await aliases(trx, scope).select((eb) => eb.fn.countAll<number>().as("n"))
+    .where("entity_id", "=", entityId).where("state", "=", "merged").executeTakeFirstOrThrow();
+  return Number(row.n);
+}
+
+/**
+ * Re-decides the automatic alias of each `name:` key (manual and split rows are never touched). An entity holds at
+ * most aliasesPerEntity merged aliases, automatic ones too: past that the name stays its own person.
+ */
 export async function reconcileNameAliases(
   trx: Trx, scope: BrainScopeKey, nameKeys: readonly string[], now: Date,
 ): Promise<void> {
@@ -68,10 +78,14 @@ export async function reconcileNameAliases(
       const email = brainEntityId("person", emails[0]!);
       const target = await rootOf(trx, scope, email);
       const via = target === email ? null : email;
-      if (target !== aliasId && (existing?.entity_id !== target || existing.via_entity_id !== via)) {
+      if (target === aliasId || (existing?.entity_id === target && existing.via_entity_id === via)) continue;
+      if (existing?.entity_id === target
+        || await mergedCount(trx, scope, target) < BRAIN_GRAPH_LIMITS.aliasesPerEntity) {
         await writeAlias(trx, scope, `person:${nameKey}`, target, via, "single_email_for_name", now);
+        continue;
       }
-    } else if (existing !== undefined) {
+    }
+    if (existing !== undefined) {
       await trx.deleteFrom("brain_graph_aliases").where("owner_id", "=", scope.ownerId)
         .where("scope_id", "=", scope.scopeId).where("alias_entity_id", "=", aliasId).execute();
     }
