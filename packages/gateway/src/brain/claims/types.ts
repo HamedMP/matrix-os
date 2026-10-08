@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import type { ColumnType, Generated } from "kysely";
 import { z } from "zod/v4";
 import type { BrainDocument, BrainRefMatchMode, BrainScopeKey } from "../types.js";
-import type { BrainClaimModelOutcome } from "./model/types.js";
+import type { BrainClaimModelOutcome, BrainModelSkipCode } from "./model/types.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null, Date | string | null>;
@@ -410,7 +410,12 @@ export interface BrainClaimModelOutput {
   readonly outcome?: BrainClaimModelOutcome;
 }
 
+/**
+ * skip: why this model would not send a revision (no call, so no cost), or null to call extract. The job asks before
+ * the spend cap, which such a revision must never wait on; extract still skips it for any other caller.
+ */
 export interface BrainClaimModel {
+  skip?(input: BrainClaimModelInput): BrainModelSkipCode | null;
   extract(input: BrainClaimModelInput, signal: AbortSignal): Promise<BrainClaimModelOutput>;
 }
 

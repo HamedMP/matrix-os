@@ -15,7 +15,7 @@ import {
 import { createBrainClaimModelProvider } from "../../packages/gateway/src/brain/claims/model/config.js";
 import { brainModelCallWorstCostMicroUsd } from "../../packages/gateway/src/brain/claims/spend.js";
 import { brainDocumentId, createBrainHarness, manualDocument, scopeA, type BrainHarness } from "./helpers/brain-store-helpers.js";
-import { fakeAnthropic, SYNTHETIC_KEY } from "./helpers/brain-model-fetch.js";
+import { fakeAnthropic, jsonResponse, messageBody, SYNTHETIC_KEY } from "./helpers/brain-model-fetch.js";
 
 const MODEL = { kind: "model", modelId: "claude-opus-5-5", promptVersion: BRAIN_MODEL_PROMPT_VERSION } as const;
 const USAGE = { inputTokens: 100, outputTokens: 10, costMicroUsd: 5, cacheReadTokens: 40, cacheWriteTokens: 20 };
@@ -178,6 +178,22 @@ describe("brain claim extraction with a model", { timeout: 60_000 }, () => {
     expect(await states()).toEqual({ d2: ["failed", "model_timeout", 2], d1: ["done", null, 1], d0: ["done", null, 1] });
   });
 
+  it("takes a model's free skips before the spend cap, so a budget too small for a call never holds them up", async () => {
+    await seed(2);
+    const model: BrainClaimModel = {
+      skip: vi.fn((input: { body: string }) => input.body === body(1) ? "document_too_large" : "bogus") as never,
+      extract: vi.fn(async () => ({ claims: [], usage: USAGE })),
+    };
+    expect(await extract({ model, limits: { spendMicroUsdPer30d: 1 } })).toMatchObject({
+      status: "failed", errorCode: "spend_cap_reached", nextAction: "raise_budget",
+      counts: { documentsProcessed: 1 }, usage: { costMicroUsd: 0 },
+    });
+    // An unknown skip code is not trusted: that document goes on to the spend cap, which stops the run.
+    expect(model.skip).toHaveBeenCalledTimes(2);
+    expect(model.extract).not.toHaveBeenCalled();
+    expect(await states()).toEqual({ d1: ["skipped", "document_too_large", 1] });
+  });
+
   it("stops before a call once the cost cap is reached and records cache counts on the run row", async () => {
     await seed(3);
     const model = returning({ usage: { ...USAGE, costMicroUsd: 300_000 } });
@@ -222,6 +238,22 @@ describe("brain claim extraction with a model", { timeout: 60_000 }, () => {
         .toMatchObject({ status: "succeeded", nextAction: "run_again", caughtUp: false, counts: { documentsProcessed: 0 } });
       expect(fake.requests).toHaveLength(1);
       expect(await states()).toEqual({});
+    });
+
+    it("skips an oversized or short body without a call even when the budget left covers no call", async () => {
+      const add = (seed: string, docBody: string, day: number) => h.repository.upsertDocument(scopeA, manualDocument(seed,
+        { body: docBody, provenance: "git_pr", sourceUpdatedAt: `2026-09-0${day}T00:00:00Z` }));
+      await add("d0", body(0), 1);
+      await add("d1", `${body(1)}\n${"- More detail on the storage choice.\n".repeat(1_200)}`, 2);
+      await add("d2", "Short body.", 3);
+      const fake = fakeAnthropic(() => jsonResponse(200, messageBody()));
+      const run = await resolve(fake.fetch);
+      // Newest first: the two free skips are recorded, then the sendable document stops the run on the cap.
+      expect(await run({ limits: { spendMicroUsdPer30d: 1 } })).toMatchObject({
+        status: "failed", errorCode: "spend_cap_reached", counts: { documentsProcessed: 2 }, usage: { costMicroUsd: 0 },
+      });
+      expect(fake.requests).toHaveLength(0);
+      expect(await states()).toEqual({ d2: ["skipped", "body_too_short", 1], d1: ["skipped", "document_too_large", 1] });
     });
 
     it("fails the document as model_timeout when the call outlives the per-call timeout", async () => {

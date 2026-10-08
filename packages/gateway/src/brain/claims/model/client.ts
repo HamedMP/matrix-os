@@ -76,9 +76,11 @@ export function createAnthropicBrainClaimModel(options: BrainAnthropicModelOptio
     // A redirect would carry x-api-key and the document text to another origin; fail instead of following it.
     fetchOptions: { redirect: "error" },
   });
+  const skipCode = (input: { readonly body: string }) => brainModelSkipCode(input.body, options.bodyMaxBytes);
   return {
+    skip: skipCode,
     async extract(input, signal) {
-      const skip = brainModelSkipCode(input.body, options.bodyMaxBytes);
+      const skip = skipCode(input);
       if (skip !== null) return { claims: [], usage: { ...ZERO_USAGE }, outcome: { status: "skipped", code: skip } };
       let message: Anthropic.Beta.BetaMessage;
       try {

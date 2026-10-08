@@ -146,6 +146,7 @@ export interface BrainModelOutput {
 }
 
 export interface BrainAnthropicClaimModel extends BrainClaimModel {
+  skip(input: BrainClaimModelInput): BrainModelSkipCode | null;
   extract(input: BrainClaimModelInput, signal: AbortSignal): Promise<BrainModelOutput>;
 }
 
