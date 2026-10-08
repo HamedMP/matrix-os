@@ -1046,6 +1046,11 @@ describe('CI workflows', () => {
     expect(workflow).toContain('- ".github/workflows/platform-cloud-run.yml"');
   });
 
+  it('redeploys platform-owned integration validation when its gateway source changes', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    expect(workflow).toContain('- "packages/gateway/src/integrations/**"');
+  });
+
   it('verifies platform Cloud Run promotion sends all traffic to the production-role revision', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

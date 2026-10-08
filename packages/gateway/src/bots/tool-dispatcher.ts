@@ -56,6 +56,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "agent.task": "write",
   "artifact.read": "read",
   "artifact.write": "write",
+  "jev.inbox": "write",
   "integration.inventory": "read",
   "integration.call": "write",
   "integration.describe": "read",

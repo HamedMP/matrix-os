@@ -7,6 +7,7 @@ const pageToken = z.string().min(1).max(2048).regex(/^[^\s\x00-\x1f\x7f]+$/).opt
 const maxResults = z.number().int().min(1).max(500).optional();
 const query = z.string().max(4096);
 const pagination = { maxResults, pageToken };
+const inboxPageToken = z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/).optional();
 // TRASH is deliberately unsupported, including through generic label mutation.
 const mutableLabelId = identifier.refine((id) => id !== "TRASH");
 const labelIds = z.array(mutableLabelId).max(100)
@@ -41,7 +42,7 @@ export const GMAIL_SERVICE: ServiceDefinition = {
     },
     list_threads: {
       risk: "read", description: "List one bounded Inbox thread page",
-      params: { pageToken: { type: "string" } }, paramsSchema: z.strictObject({ pageToken }),
+      params: { pageToken: { type: "string" } }, paramsSchema: z.strictObject({ pageToken: inboxPageToken }),
       directApi: { method: "GET", url: `${BASE}/threads`, mapParams: p => ({ labelIds: "INBOX", maxResults: "30", ...(p.pageToken ? { pageToken: String(p.pageToken) } : {}) }) },
     },
     get_thread_ids: {
