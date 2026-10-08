@@ -2,14 +2,23 @@
 const MAX_GENERATED_TITLE_LENGTH = 56;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
+/** Paths read by their last part ("src/chat/retire.ts" is "retire.ts"); web links stay whole. */
+function lastPathParts(title: string): string {
+  return title.replace(/(?<=^|\s)(?![^\s]*:\/\/)\S*\/(?=\S)/g, "");
+}
+
 function boundGeneratedTitle(title: string): string {
   if (title.length <= MAX_GENERATED_TITLE_LENGTH) return title;
+  const shorter = lastPathParts(title);
+  if (shorter.length <= MAX_GENERATED_TITLE_LENGTH) return shorter;
   let prefix = "";
-  for (const { segment } of graphemes.segment(title)) {
+  for (const { segment } of graphemes.segment(shorter)) {
     if (prefix.length + segment.length >= MAX_GENERATED_TITLE_LENGTH) break;
     prefix += segment;
   }
-  return `${prefix.replace(/\s+\S*$/, "").trimEnd()}…`;
+  const words = prefix.replace(/\s+\S*$/, "").trimEnd();
+  // Dropping a long cut word (a path, a long name) would leave almost nothing, so its cut start stays.
+  return `${words.length >= MAX_GENERATED_TITLE_LENGTH / 2 ? words : prefix.trimEnd()}\u2026`;
 }
 
 function structuredPromptTitle(prompt: string): string | null {
