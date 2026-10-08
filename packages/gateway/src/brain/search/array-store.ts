@@ -5,8 +5,8 @@
  * statement (a scalar unnest subquery with JIT off, about 15 us a row on Postgres 16) under the search statement
  * deadline, joined to live documents at the indexed revision. A scope holds at most maxPerScope rows: a write past it
  * is refused (BrainSearchVectorCapError), and remaining() lets the indexer stop before it pays for vectors. A write is
- * skipped unless the document is live at its (incarnation, revision); a removal (no chunks) while the document is live
- * at another one.
+ * skipped unless the document is live at its (incarnation, revision) and, given a claims key, its search row still
+ * holds that claims set; a removal (no chunks) while the document is live at another one.
  */
 import { sql, type Kysely, type QueryExecutorProvider } from "kysely";
 import { z } from "zod/v4";
