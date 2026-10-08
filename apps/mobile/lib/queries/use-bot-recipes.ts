@@ -18,6 +18,8 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
     recipes: query.data ?? [],
     isPending: query.isPending,
     isError: query.isError,
+    /** Reads the templates again, as after a failed read. */
+    refetch: () => query.refetch(),
     /** `name` is what the person calls the new agent; without one it takes the template's name. */
     create: async (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection, name?: string) => {
       const token = await getToken();

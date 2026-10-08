@@ -2,12 +2,14 @@ import { Platform } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import { Tabs, type BottomTabBarProps } from "expo-router/tabs";
 
+import { useAgentsWaitingCount } from "@/components/agents/use-agents-waiting-count";
 import { TABS, TabBar } from "@/components/shell/TabBar";
 import { focusedNestedRouteName, isTabBarHidden } from "@/lib/tab-bar-visibility";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
 function ShellTabBar({ state, navigation }: BottomTabBarProps) {
   const keyboardVisible = useKeyboardVisible();
+  const agentsWaiting = useAgentsWaitingCount();
   const focused = state.routes[state.index];
 
   if (isTabBarHidden(focused.name, focusedNestedRouteName(focused))) return null;
@@ -18,7 +20,7 @@ function ShellTabBar({ state, navigation }: BottomTabBarProps) {
   return (
     <TabBar
       activeRoute={focused.name}
-      agentsBadgeCount={0}
+      agentsBadgeCount={agentsWaiting}
       onTabPress={(name) => {
         const route = state.routes.find((candidate) => candidate.name === name);
         if (!route) return;

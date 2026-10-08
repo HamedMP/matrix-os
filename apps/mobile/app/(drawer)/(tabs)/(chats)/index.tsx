@@ -5,6 +5,7 @@ import { Linking, type TextInput } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 
+import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
 import { BotChatControls } from "@/components/BotChatControls";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
@@ -108,6 +109,16 @@ export default function ChatScreen() {
     const timer = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(timer);
   }, [draftChatRequests]);
+
+  // Another screen can ask for text in the new chat's composer, as "Set up in
+  // chat instead" does. It is taken once, and only by the new chat: while a
+  // chat is still open it waits for the new chat that was asked for with it.
+  const draftRequest = useChatDraftRequest();
+  useEffect(() => {
+    if (!draftRequest || activeChatId !== null) return;
+    setDraft(draftRequest.text);
+    consumeChatDraftRequest(draftRequest.id);
+  }, [draftRequest, activeChatId, setDraft]);
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text);

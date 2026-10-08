@@ -3,7 +3,9 @@
  * route names inside that tab's own navigator (`new`, `[agentId]`). The tab
  * bar is hidden while one of them is focused.
  */
-export const TAB_BAR_HIDDEN_ROUTES: Readonly<Record<string, readonly string[]>> = {};
+export const TAB_BAR_HIDDEN_ROUTES: Readonly<Record<string, readonly string[]>> = {
+  agents: ["new"],
+};
 
 /**
  * Whether the tab bar is hidden for the focused tab (`routeName`) and the
