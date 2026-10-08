@@ -8,6 +8,12 @@ The owned Pi Bot launch left two different Inbox implementations. The native Bot
 
 The native `jev-inbox-triage` recipe becomes Jev Inbox Triage: its main reasoning runs in the existing Matrix-owned Pi worker; Gmail and funded Jev operations execute in the authenticated gateway broker. Users do not select or install Hermes, provide a Jev key, or configure a Hermes primary model.
 
+## Built-in discovery for every user
+
+The default authenticated recipe catalog advertises exactly one current `jev-inbox-triage` version named **Jev Inbox Triage**. Discovery is independent of Gmail connections, label grants, selected model, funding balance, owner allowlists or personal API keys. The shared Web Canvas, Web Desktop and Electron Desktop recipe panel can find it by “Jev” and open the native Bot setup. Service and funding requirements are checked during setup/execution, never used to hide the recipe. An unavailable catalog remains an explicit unavailable state, not a legacy Hermes fallback.
+
+Existing read-only Inbox Bots continue resolving their saved version without new permissions. New Bots use the Jev version and obtain fresh read-plus-label consent. The label constraint upgrade is migration 7, after the already shipped provider-connections migration 5 and ChatGPT-plan-devices migration 6; released migration identities are unchanged.
+
 ## Authority and data flow
 
 - The recipe declares a dedicated `jev.inbox` capability and Gmail `read` plus narrow `label` effects. It does not expose `integration.call`, shell execution, arbitrary Gmail mutation or credential access.

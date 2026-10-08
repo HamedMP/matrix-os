@@ -51,6 +51,7 @@ describe("bounded Inbox thread pagination at integration validation", () => {
     const action = getAction("gmail", "list_threads")!;
     const token = "opaque+/=&labelIds=TRASH";
     const url = new URL(typeof action.directApi!.url === "function" ? action.directApi!.url({ pageToken: token }) : action.directApi!.url);
+    for (const [key, value] of Object.entries(action.directApi!.mapParams?.({ pageToken: token }) ?? {})) url.searchParams.set(key, String(value));
     expect(url.searchParams.get("pageToken")).toBe(token);
     expect(url.searchParams.getAll("labelIds")).toEqual(["INBOX"]);
     expect(url.searchParams.get("maxResults")).toBe("30");

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React from "react";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
+import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
 
 afterEach(cleanup);
@@ -112,4 +113,17 @@ it("negotiates Bot run IDs and accepts older task summaries", async () => {
   const result = await createBotClient(request).tasks("chat_research");
   expect(request).toHaveBeenCalledWith("/api/chats/chat_research/bot-tasks?includeRunIds=true", "GET", undefined);
   expect(result[0]?.runId).toBeUndefined();
+});
+
+// Catalog discovery is independent of Gmail grants and model funding.
+it("shows the built-in Jev recipe to a fresh user without connections or model choices", () => {
+  const create = vi.fn();
+  render(<AgentRecipesPanel botRecipes={createBotRecipeCatalog().list()} connections={[]} matrixModels={[]}
+    onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Use Jev Inbox Triage" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "jev" } });
+  expect(screen.getAllByRole("button", { name: "Use Jev Inbox Triage" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(create).not.toHaveBeenCalled();
 });
