@@ -55,6 +55,7 @@ import TerminalSessionLayout from "../app/terminal-session/_layout";
 import AppRuntimeFrame from "../components/AppRuntimeFrame";
 import { TerminalSurface } from "../components/TerminalSurface";
 import { saveSettings } from "../lib/storage";
+import { mobileQueryClient } from "../lib/query-client";
 import { applyMobileThemePreference } from "../lib/theme-preference";
 
 type ThemeName = keyof UnistylesThemes;
@@ -184,6 +185,10 @@ describe("status bar content", () => {
     // Nothing unmounts a rendered tree between tests here, and a status bar
     // left mounted keeps its say in the next test's merged style.
     app?.unmount();
+    // Unmount schedules the real QueryClient's five-minute cache GC timers.
+    // This suite owns the rendered root and must dispose its cached queries.
+    mobileQueryClient.clear();
+    expect(mobileQueryClient.getQueryCache().getAll()).toHaveLength(0);
     jest.restoreAllMocks();
   });
 

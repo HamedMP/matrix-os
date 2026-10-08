@@ -38,7 +38,8 @@ jest.mock("@/lib/requests", () => ({
 }));
 
 import React from "react";
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useChatComposer } from "../lib/use-chat-composer";
@@ -96,8 +97,9 @@ describe("chat composer send lifecycle", () => {
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
   });
 
-  afterEach(() => {
-    queryClient.clear();
+  afterEach(async () => {
+    cleanup();
+    await disposeTestQueryClient(queryClient);
     jest.clearAllMocks();
   });
 

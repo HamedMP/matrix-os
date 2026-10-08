@@ -34,9 +34,10 @@ jest.mock("@/lib/shell-session-names", () => ({
 
 import React, { type ReactNode } from "react";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useComputerTerminals } from "../lib/queries/use-computer-terminals";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const COMPUTER_URL = "https://app.matrix-os.com/vm/solar-vale";
 const WORKSPACE = "tws_00000000000000000000000000000001";
@@ -58,8 +59,16 @@ notifyManager.setNotifyFunction((notify) => {
   act(notify);
 });
 
+let client: QueryClient;
+beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+});
+afterEach(async () => {
+  cleanup();
+  await disposeTestQueryClient(client);
+});
+
 function wrapper({ children }: { children: ReactNode }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 

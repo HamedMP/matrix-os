@@ -36,9 +36,10 @@ jest.mock("@/lib/requests", () => {
 
 import React, { type ReactNode } from "react";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useAccountDeletion, useAccountExport } from "../lib/queries/use-account-deletion";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const none = { status: "none", erasesAfter: null, completesBy: null, billingStopped: false };
 const scheduled = {
@@ -54,8 +55,16 @@ notifyManager.setNotifyFunction((notify) => {
   act(notify);
 });
 
+let client: QueryClient;
+beforeEach(() => {
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+});
+afterEach(async () => {
+  cleanup();
+  await disposeTestQueryClient(client);
+});
+
 function wrapper({ children }: { children: ReactNode }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }
 
