@@ -34,6 +34,10 @@ describe("Desktop analytics allowlist", () => {
     }).success).toBe(true);
     expect(DesktopAnalyticsDetailSchema.safeParse({
       name: "desktop_app_opened",
+      appKind: "brain",
+    }).success).toBe(true);
+    expect(DesktopAnalyticsDetailSchema.safeParse({
+      name: "desktop_app_opened",
       appKind: "customer-roadmap",
     }).success).toBe(false);
   });
