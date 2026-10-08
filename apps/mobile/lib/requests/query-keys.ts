@@ -6,6 +6,23 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  // The two keys below extend `canonicalChats`, so refreshing the chat list
+  // (a sent message, a chat event) marks them stale along with it.
+  canonicalChatsOlder: (userId: string, computerKey: string) => [
+    "mobile",
+    "chats",
+    userId,
+    computerKey,
+    "older",
+  ] as const,
+  projectChats: (userId: string, computerKey: string, projectId: string) => [
+    "mobile",
+    "chats",
+    userId,
+    computerKey,
+    "project",
+    projectId,
+  ] as const,
   canonicalChatDetail: (userId: string, computerKey: string, chatId: string) => [
     "mobile",
     "chats",
@@ -13,6 +30,16 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
     chatId,
+  ] as const,
+  /** `scope` is a project id, "global" for chats in no project, or "all". */
+  chatSearch: (userId: string, computerKey: string, scope: string, query: string) => [
+    "mobile",
+    "chats",
+    "search",
+    userId,
+    computerKey,
+    scope,
+    query,
   ] as const,
   botChat: (userId: string, gatewayUrl: string, chatId: string) => [
     "native-bot-chat", userId, gatewayUrl, chatId,
@@ -28,6 +55,27 @@ export const mobileQueryKeys = {
     "projects",
     userId,
     computerKey,
+  ] as const,
+  matrixCredit: (userId: string, computerKey: string) => [
+    "mobile",
+    "credit",
+    userId,
+    computerKey,
+  ] as const,
+  agents: (userId: string, computerKey: string) => [
+    "mobile",
+    "agents",
+    userId,
+    computerKey,
+  ] as const,
+  /** `agentIds` names the agents the statuses were read for, so a changed list reads again. */
+  agentStatuses: (userId: string, computerKey: string, agentIds: string) => [
+    "mobile",
+    "agents",
+    "status",
+    userId,
+    computerKey,
+    agentIds,
   ] as const,
   files: (userId: string, computerKey: string, path: string) => [
     "mobile",
