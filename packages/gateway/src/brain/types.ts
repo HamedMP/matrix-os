@@ -328,3 +328,93 @@ export interface BrainDocumentRef {
   readonly kind: string;
   readonly value: string;
 }
+
+export interface BrainSyncUpsertInput extends BrainDocumentContentInput {
+  /** The document's complete ref set; omitted means none. */
+  readonly refs?: readonly BrainDocumentRef[];
+}
+
+export interface BrainSyncBatchInput {
+  readonly sourceId: string;
+  /** Null when the source has no cursor row yet. */
+  readonly expectedCursor: string | null;
+  readonly nextCursor: string;
+  readonly upserts: readonly BrainSyncUpsertInput[];
+  readonly deletions: readonly string[];
+}
+
+export interface BrainOpenSyncReceiptInput {
+  readonly sourceId: string;
+}
+
+export interface BrainCloseSyncReceiptInput {
+  readonly sourceId: string;
+  readonly receiptId: string;
+  readonly status: BrainSyncReceiptOutcome;
+  readonly counts: BrainSyncCounts;
+  readonly nextAction?: string;
+  /** A stable machine code only; never a raw provider message. */
+  readonly errorCode?: string | null;
+}
+
+export interface BrainListOptions {
+  readonly limit?: number;
+  /** Opaque; the last item id of the previous page. */
+  readonly cursor?: string | null;
+}
+
+export interface BrainListDocumentsOptions extends BrainListOptions {
+  readonly sourceId?: string;
+}
+
+export interface BrainSearchInput {
+  readonly query: string;
+  readonly limit?: number;
+}
+
+// Repository results.
+
+export interface BrainPage<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+export interface BrainCreateSourceResult {
+  readonly source: BrainSource;
+  readonly created: boolean;
+}
+
+export type BrainUpsertOutcome = "created" | "updated" | "unchanged";
+
+export interface BrainUpsertDocumentResult {
+  readonly outcome: BrainUpsertOutcome;
+  readonly document: BrainDocument;
+}
+
+export interface BrainSyncBatchResult {
+  readonly cursor: BrainSyncCursor;
+  readonly created: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly deleted: number;
+  /** Document ids left untouched because a live row belongs to another source. */
+  readonly rejected: readonly string[];
+}
+
+export interface BrainRepositoryOptions {
+  readonly now?: () => Date;
+  readonly maxDocumentsPerScope?: number;
+  readonly maxBytesPerScope?: number;
+  /** Claims across a scope; may only lower BRAIN_CLAIMS_PER_SCOPE_MAX. */
+  readonly maxClaimsPerScope?: number;
+}
+
+export type BrainStoreErrorCode = "not_found" | "forbidden" | "conflict" | "capacity" | "invalid";
+
+/** The code is the only client-facing detail; the message never varies. */
+export class BrainStoreError extends Error {
+  constructor(readonly code: BrainStoreErrorCode, options?: ErrorOptions) {
+    super("Brain store request failed", options);
+    this.name = "BrainStoreError";
+  }
+}
