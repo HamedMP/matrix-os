@@ -50,11 +50,12 @@ reads, service, seven routes, person merge suggestions), tests and this spec. Ou
   exactly one email was ever seen with that name in the scope's live documents (`single_email_for_name`); the merge
   goes when that stops holding. Email keys are the identity, so every observation of an email lands on one entity;
   `same_email` is reserved for sources that pair another key with an email. `github:` keys merge only by hand
-  (`manual`). Links keep their raw endpoints and reads resolve aliases, so a merge or split rewrites no link. A merge
-  moves the aliases of the merged entity along and records the entity each came in through (`via_entity_id`), so a
-  split or an unmerge sends them back. A split ("not the same person") row stays, and derivation never re-merges
-  that key. An unmerge (the app's Undo of a manual merge) deletes the manual row instead, so nothing of the merge is
-  left: the pair can be suggested again, and a `name:` key goes back to derivation.
+  (`manual`). Links keep their raw endpoints and reads resolve aliases, so a merge or split rewrites no link. A merge,
+  automatic or manual, moves the aliases of the merged entity along (they count toward the cap) and records the
+  entity each came in through (`via_entity_id`), so a split, an unmerge or a dropped automatic merge sends them back.
+  A split ("not the same person") row stays, and derivation never re-merges that key. An unmerge (the app's Undo of
+  a manual merge) deletes the manual row instead, so nothing of the merge is left: the pair can be suggested again,
+  and a `name:` key goes back to derivation.
 - State (`brain_graph_state`, per document): `(incarnation, revision)`, an md5 digest of the current decision claim
   ids (the same SQL expression in derivation and in the pending scan), the name and email pairs, the link count.
 
