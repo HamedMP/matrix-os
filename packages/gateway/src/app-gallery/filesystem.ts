@@ -14,6 +14,9 @@ export async function readTemplate(templatePath: string, limits: GalleryLimits):
   async function visit(directory: PinnedDirectory, prefix: string, depth: number): Promise<void> {
     if (depth > 16) throw new GalleryError(503, "Template nesting limit");
     for await (const entry of await directory.entries()) {
+      // The template builder installs pnpm here. Only source and compiled
+      // assets are install payload; never traverse its build-only dependency store.
+      if (depth === 0 && entry.name === "node_modules") continue;
       if (++entries > limits.maxEntries) throw new GalleryError(503, "Template entry limit");
       if (entry.isSymbolicLink()) throw new GalleryError(503, "Template contains symlink");
       const key = prefix ? `${prefix}/${entry.name}` : entry.name;

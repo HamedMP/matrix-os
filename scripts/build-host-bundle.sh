@@ -164,7 +164,9 @@ fi
 # build-time dependency stores; carrying them to every VPS bloats R2 artifacts
 # and slows upgrades without changing runtime behavior.
 rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"
-find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +
+# Portable gallery starters live under app-templates, outside home/apps.
+# Their dependency stores are build-only too; preserve source, lockfiles and dist.
+find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
 
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
