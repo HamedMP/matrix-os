@@ -113,7 +113,8 @@ registry action code, scheduled syncs and UI (see Deferred). No routes; OS-view 
 
 | Limit | Value | Enforced in |
 | --- | --- | --- |
-| pages per run, upserts and refs per page, run budget, provider timeout | 20 / 100 / 5,000 / 20 s / 10 s (ceilings 200 / 200 / 10,000 / 120 s / 30 s); one page at most 120 s | `runner.ts` |
+| pages per run, upserts and refs per page, run budget | 20 / 100 / 5,000 / 20 s (ceilings 200 / 200 / 10,000 / 120 s); one page at most 120 s | `runner.ts` |
+| provider call timeout | 10 s (handler option, 1 to 30 s; the runner takes no per-run value) | `handlers.ts`, `provider.ts` |
 | Linear page size, first window | 100 nodes (fewer when refs per page / 26 is lower), 365 days | `linear.ts` |
 | Drive files, folders, depth, list calls, exports per page | 2,000 / 30 / 2 / 40 / 10 | `google-drive.ts` |
 | Calendar events per listing and documents kept per source, page size, attendees, list calls | 2,000 / 250 / 50 / 40 | `google-calendar.ts`, `snapshot.ts` |
