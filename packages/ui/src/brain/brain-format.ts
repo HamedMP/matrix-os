@@ -101,8 +101,15 @@ export const BRAIN_SOURCE_CHOICES_MAX: Readonly<Record<BrainConnectableSourceKin
   matrix_chat: 50,
 };
 
-export interface BrainTypedSourceInput { readonly label: string; readonly example: string; readonly hint: string; readonly pattern: RegExp }
-/** Kinds whose handler may list no options: the owner types the value instead, and the gateway checks it again. */
+export interface BrainTypedSourceInput {
+  readonly label: string; readonly example: string; readonly hint: string; readonly pattern: RegExp;
+  /** How one typed value is written before the pattern check (a tag lowercased, a team key uppercased). */
+  readonly normalize?: (value: string) => string;
+}
+/**
+ * Kinds whose handler may list no options: the owner types the value instead, and the gateway checks it again.
+ * Linear, Google Drive and Google Calendar list none yet, so they are always typed.
+ */
 export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKind, BrainTypedSourceInput>> = {
   github: {
     label: "Repository (owner/name)", example: "owner/name", hint: "The GitHub repository of this project.",
@@ -115,19 +122,33 @@ export const BRAIN_TYPED_SOURCE_INPUTS: Partial<Record<BrainConnectableSourceKin
   },
   matrix_notes: {
     label: "Tags (optional)", example: "design, roadmap", hint: "Leave empty to include every note.",
-    pattern: /^[a-z][a-z0-9-]{1,40}$/,
+    pattern: /^[a-z][a-z0-9-]{1,40}$/, normalize: (value) => value.replace(/^#/, "").toLowerCase(),
+  },
+  // The gateway's LinearConfigSchema, GoogleDriveConfigSchema and GoogleCalendarConfigSchema item patterns.
+  linear: {
+    label: "Team keys", example: "ENG, DESIGN", hint: "The key in each team's issue ids (ENG-123).",
+    pattern: /^[A-Z][A-Z0-9]{0,9}$/, normalize: (value) => value.toUpperCase(),
+  },
+  google_drive: {
+    label: "Folder ids", example: "1aBcD2eFgH3iJkL4mNoP5qRsT6uVwXyZ7",
+    hint: "The part after /folders/ in each folder's link.", pattern: /^[A-Za-z0-9_-]{1,256}$/,
+  },
+  google_calendar: {
+    label: "Calendar ids", example: "primary",
+    hint: "primary is your own calendar; another calendar shows its id in its settings.",
+    pattern: /^(?!\.{1,2}$)[^\s\p{Cc}]{1,256}$/u,
   },
 };
 
 /**
- * What the owner typed for a kind: one value, or for Matrix notes tags split on commas or spaces (a leading "#"
- * dropped, lowercased, de-duplicated). Empty when nothing was typed; null when a value is not valid.
+ * What the owner typed for a kind: one value, or for a kind that takes several, values split on commas or spaces.
+ * Each is normalized (a tag's leading "#" dropped and lowercased, a team key uppercased) and de-duplicated. Empty
+ * when nothing was typed; null when a value is not valid.
  */
 export function brainTypedValues(kind: BrainConnectableSourceKind, text: string): readonly string[] | null {
   const input = BRAIN_TYPED_SOURCE_INPUTS[kind];
-  const values = kind === "matrix_notes"
-    ? text.split(/[\s,]+/).map((value) => value.replace(/^#/, "").toLowerCase()).filter((value) => value !== "")
-    : [text.trim()].filter((value) => value !== "");
+  const typed = BRAIN_SOURCE_CHOICES_MAX[kind] > 1 ? text.split(/[\s,]+/) : [text.trim()];
+  const values = typed.map((value) => input?.normalize?.(value) ?? value).filter((value) => value !== "");
   if (input === undefined) return values.length === 0 ? [] : null;
   return values.every((value) => input.pattern.test(value)) ? [...new Set(values)] : null;
 }

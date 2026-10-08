@@ -15,7 +15,7 @@ import type {
 import { useBrainAction, useBrainLoad, type BrainLoad } from "./use-brain-load.js";
 
 const LABEL_MAX_CHARS = 120;
-/** One repository or scope id, or up to 20 tags. */
+/** One repository or scope id, or a list: 20 tags, team keys or folder ids, or 10 calendar ids. */
 const TYPED_MAX_CHARS = 1_000;
 
 /**
