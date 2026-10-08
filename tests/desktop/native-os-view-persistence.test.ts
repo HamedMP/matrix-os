@@ -10,6 +10,7 @@ describe("Electron Desktop OS-view persistence projection", () => {
     expect(nativeTabOsViewPath({ id: "files", kind: "files", title: "Files", closable: false }, [])).toBe("__file-browser__");
     expect(nativeTabOsViewPath({ id: "term", kind: "terminal", title: "Terminal", sessionName: "calm-cedar", closable: true }, []))
       .toBe("__terminal__:calm-cedar");
+    expect(nativeTabOsViewPath({ id: "brain", kind: "brain", title: "Company Brain", closable: true }, [])).toBe("__brain__");
   });
 
   it.each(["Plugins", "Connect Apps"])("preserves the canonical shortcut path for %s windows", title => {

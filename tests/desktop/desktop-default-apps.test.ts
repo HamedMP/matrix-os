@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS } from "@matrix-os/contracts";
+import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS, OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 
 describe("native desktop default apps", () => {
-  it("ships Chat first with the ten canonical desktop destinations in product order", () => {
+  it("ships Chat first with the ten canonical desktop destinations in product order, then Company Brain", () => {
     expect(FIXED_DESKTOP_APPS.map((app) => app.id)).toEqual([
       "work",
       "terminal",
@@ -15,8 +15,10 @@ describe("native desktop default apps", () => {
       "browser",
       "notes",
       "whiteboard",
+      "brain",
     ]);
-    expect(FIXED_DESKTOP_APPS.map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
+    // Company Brain is in the launcher but not placed on the desktop by default, as on Web Desktop.
+    expect(FIXED_DESKTOP_APPS.slice(0, 10).map((app) => app.path)).toEqual(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS);
   });
 
   it("keeps every desktop destination identity unique even when surfaces are shared", () => {
@@ -43,6 +45,13 @@ describe("native desktop default apps", () => {
     expect(FIXED_DESKTOP_APPS.find((app) => app.id === "whiteboard")).toMatchObject({
       kind: "app",
       slug: "whiteboard",
+    });
+    expect(FIXED_DESKTOP_APPS.find((app) => app.id === "brain")).toMatchObject({
+      kind: "brain",
+      path: "__brain__",
+      name: "Company Brain",
+      color: OS_VIEW_FIXED_APP_APPEARANCES.brain.background,
+      iconColor: OS_VIEW_FIXED_APP_APPEARANCES.brain.foreground,
     });
   });
 });
