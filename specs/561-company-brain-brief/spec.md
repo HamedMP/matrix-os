@@ -33,16 +33,16 @@ tests. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (a JSO
   - decisions and risks: current claims (read from the live revision) first seen in the window: the document is
     dated in the window and is at revision 1, or the claim was written after the document's last revision. So a
     revised spec lists only its new claims.
-  - commitments: every open commitment, due date first, then newest. Open means current, not stated done, and not on
-    a document whose `status` ref is done, completed, closed, merged, resolved, shipped or canceled. Planned wording
-    is not stated done: a done word after a future, need, intent or condition word of its clause (`will be
-    shipped`, `ensure it is completed`, `once merged`), before a deadline (`completed by Friday`) or an imperative
-    `Complete ...`. Closed documents are filtered in SQL before the limit; commitments stated done are skipped by
-    reading on in pages of the limit, at most 10 pages, so finished work does not hide open work. The due date and
-    assignee come from the claim's fields, else from the document's `due` ref (only a `YYYY-MM-DD` of a real
-    calendar day; `2025-13-01` or `2026-02-30` count as no date) and `assignee` ref (a person key); trackers such
-    as Linear put them in refs, and rules/v1 never sets the fields. A past window (ended before now) sees
-    commitments and conflicts only from documents dated before its end.
+  - commitments: every open commitment, due date first, then newest. Open means current, not stated done, and not on a
+    document whose `status` ref is done, completed, closed, merged, resolved, shipped or canceled. Planned wording is
+    not stated done: a done word after a future, need, intent or condition word of its clause (`will be shipped`,
+    `we'll`, `ensure it is completed`, `once merged`), before a deadline (`completed by Friday`) or the verb
+    `complete` (`Complete it`, `Next steps: complete it`, `to`, `please` or `let's complete`). Closed documents are
+    filtered in SQL before the limit; commitments stated done are skipped by reading on in pages of the limit, at most
+    10 pages, so finished work does not hide open work. The due date and assignee come from the claim's fields, else
+    from the document's `due` ref (only a `YYYY-MM-DD` of a real calendar day; `2025-13-01` or `2026-02-30` count as
+    no date) and `assignee` ref (a person key); trackers such as Linear put them in refs, and rules/v1 never sets the
+    fields. A past window (ended before now) sees commitments and conflicts only from documents dated before its end.
   - attention: up to 10 conflicts (those detected in the window first, then the rest in a daily rotation, so every
     open conflict shows in some brief), then up to 20 stale items per kind, 50 lines in all.
 - A line: plain one-line text (at most 400 characters), 1 to 4 cites (`BrainCiteView`, label rule of
