@@ -34,7 +34,10 @@ tests. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A (a JSO
     dated in the window and is at revision 1, or the claim was written after the document's last revision. So a
     revised spec lists only its new claims.
   - commitments: every open commitment, due date first, then newest. Open means current, not stated done, and not on
-    a document whose `status` ref is done, completed, closed, merged, resolved, shipped or canceled. The due date and
+    a document whose `status` ref is done, completed, closed, merged, resolved, shipped or canceled. Planned wording
+    is not stated done: a done word after a future, need, intent or condition word of its clause (`will be
+    shipped`, `ensure it is completed`, `once merged`), before a deadline (`completed by Friday`) or an imperative
+    `Complete ...`. The due date and
     assignee come from the claim's fields, else from the document's `due` ref (only a `YYYY-MM-DD` of a real
     calendar day; `2025-13-01` or `2026-02-30` count as no date) and `assignee` ref (a person key); trackers such
     as Linear put them in refs, and rules/v1 never sets the fields. A past window (ended before now) sees

@@ -116,15 +116,46 @@ const STATE_WORD = new RegExp(`^(?:${[DONE_WORDS, DEFERRED_WORDS].map((r) => r.s
 const DONE_STATUSES = ["done", "completed", "closed", "merged", "resolved", "shipped"];
 const DEFERRED_STATUSES = ["backlog", "deferred", "later", "paused", "on_hold", "postponed"];
 
+const DONE_WORD = new RegExp(DONE_WORDS.source, "g");
+/** Earlier in a done word's clause, these make it planned work: future, need, intent and condition words. */
+const PLANNED_BEFORE = new RegExp(String.raw`\b(?:will|shall|should|must|would|could|can|may|might|needs?|ha(?:s|ve) to`
+  + String.raw`|going to|plan(?:s|ned)? to|to be|get|ensure|make sure|verify|confirm|until|once|before|after|when`
+  + String.raw`|unless|if|todo|pending)\b`);
+/** Right after a done word, a deadline makes it planned work ("completed by Friday"). */
+const DEADLINE_AFTER = new RegExp(String.raw`^ by (?:(?:mon|tues|wednes|thurs|fri|satur|sun)day|tomorrow|tonight|eod`
+  + String.raw`|eow|(?:the )?end of|next (?:week|month|sprint|release)|q[1-4]|\d{4}-\d{2}-\d{2})\b`);
+
+/**
+ * A clause states finished work: a done word not after a planned-work word of its clause, not before a deadline and
+ * not an imperative `complete` at the clause start ("Complete the migration").
+ */
+function statesFinished(text: string): boolean {
+  return text.split(CLAUSE_BREAK).some((raw) => {
+    const clause = raw.trimStart();
+    for (const match of clause.matchAll(DONE_WORD)) {
+      const imperative = match.index === 0 && match[0] === "complete";
+      const planned = PLANNED_BEFORE.test(clause.slice(0, match.index))
+        || DEADLINE_AFTER.test(clause.slice(match.index + match[0].length));
+      if (!imperative && !planned) return true;
+    }
+    return false;
+  });
+}
+
 export type CommitmentState = "done" | "deferred";
 
-/** From the statement's words (a negated done word is deferred), else from the document's status ref. */
+/**
+ * From the statement's words, else from the document's status ref. A negated done word is deferred; done words of
+ * planned work ("will be shipped", "ensure it is completed by Friday") say nothing, so the status ref decides.
+ */
 export function commitmentState(statement: string, status: string | null): CommitmentState | null {
   const text = normalizeBrainClaimText(statement);
   const done = DONE_WORDS.test(text);
   const deferred = DEFERRED_WORDS.test(text);
-  if (done !== deferred) return done && !shapeOf(text).negated ? "done" : "deferred";
-  if (done) return null;
+  if (done !== deferred) {
+    if (deferred || shapeOf(text).negated) return "deferred";
+    if (statesFinished(text)) return "done";
+  } else if (done) return null;
   if (status !== null && DONE_STATUSES.includes(status)) return "done";
   return status !== null && DEFERRED_STATUSES.includes(status) ? "deferred" : null;
 }
