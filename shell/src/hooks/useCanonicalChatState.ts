@@ -119,7 +119,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const navigationIdentity = authority.identity;
   const [detailError, setDetailError] = useState<{ scope: string; chatId: string; notFound: boolean } | null>(null);
   const [activeChatId, setActiveChatId] = useCanonicalChatSelection({
-    scope: navigationIdentity, candidates: records, authoritativeItems: navigation.items,
+    scope: composerIdentity, candidates: records, authoritativeItems: navigation.items,
     fresh: navigation.fresh, truncated: navigation.truncated,
     missingId: detailError?.scope === navigationIdentity && detailError.notFound ? detailError.chatId : undefined,
     initialExplicit: Boolean(initialDraft || initialCollaborationView),

@@ -2,10 +2,11 @@
 import { useCallback, useState } from "react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 
-type Selection = { scope: string; id?: string; explicit: boolean; rejected: string[] };
-/** Cache restoration is provisional; explicit user choices are never inferred from list membership. */
+type Selection = { scope: object; id?: string; explicit: boolean; rejected: string[] };
+/** Stable owner/runtime scope preserves intent through token/epoch recovery.
+ * Cache restoration is provisional; explicit choices never follow list membership. */
 export function useCanonicalChatSelection({ scope, candidates, authoritativeItems, fresh, truncated, missingId, initialExplicit }: {
-  scope: string;
+  scope: object;
   candidates: readonly ChatNavigationRecord[];
   authoritativeItems: readonly ChatNavigationRecord[];
   fresh: boolean;

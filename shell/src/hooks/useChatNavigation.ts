@@ -1,9 +1,21 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { ChatNavigationAuthorityRevoked, clearChatNavigationScopes, createBrowserChatNavigationPersistence, legacyChatNavigation, useChatNavigation, type CanonicalChatEventSource } from "@matrix-os/ui";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { ChatNavigationAuthorityRevoked, clearChatNavigationScopes, createBrowserChatNavigationPersistence, legacyChatNavigation, useChatNavigation, type CanonicalChatEventSource, type ChatAgentClient, type ChatNavigationStore } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalShellChatClient } from "@/lib/canonical-chat-client";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
+// Weak store keys retain at most one identity per live store, never a revoked
+// epoch's Bot classification. Surface remounts in the same store share reads.
+const legacyClients = new WeakMap<ChatNavigationStore, { source: ChatAgentClient; epoch: number; client: ChatAgentClient }>();
+function legacyReadClient(store: ChatNavigationStore, source: ChatAgentClient | undefined) {
+  if (!source) return undefined;
+  const epoch = store.getAuthorityEpoch();
+  const current = legacyClients.get(store);
+  if (current?.source === source && current.epoch === epoch) return current.client;
+  const client = { ...source };
+  legacyClients.set(store, { source, epoch, client });
+  return client;
+}
 let transientSequence = 0;
 const transientScopes = new WeakMap<CanonicalShellChatClient, string>();
 function transientScope(client: CanonicalShellChatClient): string {
@@ -47,7 +59,18 @@ export function useShellChatNavigation(client: CanonicalShellChatClient, eventSo
       return undefined;
     }
   }, [scope]);
+  const loadAuthority = useRef<{ client: CanonicalShellChatClient; scope: string | undefined; generation: string; store: ChatNavigationStore | null } | null>(null);
   const load = useCallback(async () => {
+    const authority = loadAuthority.current;
+    if (!authority?.store || authority.client !== client || authority.scope !== scope || authority.generation !== generation) {
+      throw new Error("NavigationAuthorityUnavailable");
+    }
+    const store = authority.store;
+    const epoch = store.getAuthorityEpoch();
+    const agents = legacyReadClient(store, client.agents);
+    const assertCurrent = () => {
+      if (store.getAuthorityEpoch() !== epoch) throw new Error("NavigationAuthorityChanged");
+    };
     if (client.navigation) {
       try {
         return await client.navigation();
@@ -62,17 +85,21 @@ export function useShellChatNavigation(client: CanonicalShellChatClient, eventSo
       }
     }
     try {
+      assertCurrent();
       const records: CanonicalChatRecord[] = [];
       let cursor: string | undefined;
       for (let index = 0; index < 10; index++) {
         const page = await client.list({ ...(cursor ? { cursor } : {}) });
+        assertCurrent();
         records.push(...page.items);
         if (!page.nextCursor || page.nextCursor === cursor) {
           break;
         }
         cursor = page.nextCursor;
       }
-      return await legacyChatNavigation(records, client.agents);
+      const value = await legacyChatNavigation(records, agents);
+      assertCurrent();
+      return value;
     }
     catch (error: unknown) {
       if (error instanceof CanonicalShellChatRequestError && (error.status === 401 || error.status === 403)) {
@@ -80,6 +107,10 @@ export function useShellChatNavigation(client: CanonicalShellChatClient, eventSo
       }
       throw error;
     }
-  }, [client]);
-  return useChatNavigation({ scope: scope ?? transient, generation, load, persistence, eventSource });
+  }, [client, scope, generation]);
+  const navigation = useChatNavigation({ scope: scope ?? transient, generation, load, persistence, eventSource });
+  // Layout runs before the store's passive initial load. Capture the actual
+  // store at request start, so replacing this binding cannot retarget a read.
+  useLayoutEffect(() => { loadAuthority.current = { client, scope, generation, store: navigation.store }; }, [client, scope, generation, navigation.store]);
+  return navigation;
 }

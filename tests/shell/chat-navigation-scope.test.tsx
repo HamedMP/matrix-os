@@ -51,3 +51,47 @@ it("clears selected detail when the verified viewer changes while the next snaps
   expect(hook.result.current.messages).toEqual([]);
   vi.unstubAllGlobals();
 });
+
+it.each([401, 403])("reclassifies legacy Bot bindings after same-store %s recovery and reuses the recovered cache on warm reads", async status => {
+  const { act } = await import("@testing-library/react");
+  const { createCanonicalShellChatClient } = await import("../../shell/src/lib/canonical-chat-client");
+  let revoked = false;
+  let recovered = false;
+  const fetcher = vi.fn(async (input: string) => {
+    if (input.includes("/api/chat-navigation?")) return Response.json({ error: { code: "not_found" } }, { status: 404 });
+    if (input.includes("/api/chats?")) return revoked
+      ? Response.json({ error: { code: "unauthorized" } }, { status })
+      : Response.json({ items: [{ chat: { ...snapshot.items[0]!.chat, ownerScope: { type: "personal", ownerId: "owner_legacy" }, currentSelection: { instanceId: "pi_default", model: "model" } } }] });
+    if (input.includes("/api/chat-agents")) return Response.json({ enabled: true, agents: [] });
+    if (input.includes("/bot?")) return Response.json({ agentId: recovered ? "bot_12345678" : null });
+    throw new Error("Unexpected test request");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://runtime.test" });
+    const hook = renderHook(() => useShellChatNavigation(client, events, "legacy/runtime/main", "same_session"));
+    await waitFor(() => expect(hook.result.current.items[0]?.classification.kind).toBe("ordinary"));
+    const store = hook.result.current.store!;
+    const bindingReads = () => fetcher.mock.calls.filter(([url]) => url.includes("/bot?")).length;
+    expect(bindingReads()).toBe(1);
+    revoked = true;
+    await act(async () => store.refresh());
+    expect(hook.result.current.store).toBe(store);
+    expect(hook.result.current.items).toEqual([]);
+    expect(store.getAuthorityEpoch()).toBeGreaterThan(0);
+    revoked = false;
+    recovered = true;
+    await act(async () => store.refresh());
+    expect(hook.result.current.items[0]?.classification).toEqual({ kind: "bot", agentId: "bot_12345678" });
+    expect(bindingReads()).toBe(2);
+    const calls = fetcher.mock.calls.length;
+    hook.rerender();
+    expect(fetcher.mock.calls.length).toBe(calls);
+    hook.unmount();
+    const remounted = renderHook(() => useShellChatNavigation(client, events, "legacy/runtime/main", "same_session"));
+    expect(remounted.result.current.store).toBe(store);
+    await act(async () => store.refresh());
+    expect(bindingReads()).toBe(2);
+    expect(remounted.result.current.items[0]?.classification.kind).toBe("bot");
+  } finally { vi.unstubAllGlobals(); }
+});

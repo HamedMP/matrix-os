@@ -191,3 +191,22 @@ it.each(["approval", "input", "queue", "cancel"])("does not publish a late %s fa
   expect(state.client.detail).toHaveBeenCalledTimes(detailCalls);
   expect(hook.result.current.messages).toHaveLength(1);
 });
+it.each(["chat_explicit", undefined])("preserves explicit selection %s through epoch and token recovery, but resets for another owner/runtime", async selected => {
+  const hook = renderHook(({ scope, generation }) => useCanonicalChatState({ navigationScope: scope, navigationGeneration: generation }), {
+    initialProps: { scope: "owner/runtime/main", generation: "session_1" },
+  });
+  await waitFor(() => expect(hook.result.current.sessionId).toBe("chat_same"));
+  await act(async () => selected ? hook.result.current.switchConversation(selected) : hook.result.current.newChat());
+  expect(hook.result.current.sessionId).toBe(selected);
+  act(() => state.store.revoke());
+  expect(hook.result.current.sessionId).toBe(selected);
+  await act(async () => state.store.refresh());
+  expect(hook.result.current.sessionId).toBe(selected);
+  await act(async () => hook.rerender({ scope: "owner/runtime/main", generation: "session_2" }));
+  expect(hook.result.current.sessionId).toBe(selected);
+  await act(async () => hook.rerender({ scope: "owner/runtime/review", generation: "session_2" }));
+  expect(hook.result.current.sessionId).toBe("chat_same");
+  await act(async () => selected ? hook.result.current.switchConversation(selected) : hook.result.current.newChat());
+  await act(async () => hook.rerender({ scope: "another/runtime/review", generation: "session_3" }));
+  expect(hook.result.current.sessionId).toBe("chat_same");
+});

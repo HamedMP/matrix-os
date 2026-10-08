@@ -142,3 +142,17 @@ it("checks a live host authority fence before a pending Bot opener settles", asy
   await act(async () => finish("chat_previous_authority"));
   expect(open).not.toHaveBeenCalled();
 });
+
+it("announces Bot selection intent before waiting for its direct Chat binding", async () => {
+  const raw = clientFixture(); raw.list.mockResolvedValue(library);
+  let finish!: (chatId: string) => void;
+  const ensureDirectChat = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+  const client = { ...raw, bots: { ensureDirectChat } } as unknown as ChatAgentClient;
+  const intent = vi.fn(); const open = vi.fn();
+  render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onSelectionIntent={intent} onOpenBotChat={open} /></ChatAgentsWorkspace>);
+  fireEvent.click(await screen.findByRole("button", { name: `Chat with ${saved.name}` }));
+  expect(intent).toHaveBeenCalledOnce();
+  expect(open).not.toHaveBeenCalled();
+  await act(async () => finish("chat_bot_intent"));
+  expect(open).toHaveBeenCalledExactlyOnceWith("chat_bot_intent");
+});

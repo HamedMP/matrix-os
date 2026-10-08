@@ -10,7 +10,7 @@ import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 
 export const CREATE_AGENT_CHAT_PROMPT = "Help me create an agent. Ask what work I want to delegate, suggest a focused role and capabilities, then create it with me through this Chat.";
 
-export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isCurrent: isCurrentAuthority, visible = true, onSetup, onOpen, onStartChat, onOpenBotChat, expanded: controlledExpanded, onExpandedChange, activeAgentId, menuZIndex = 100 }: {
+export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isCurrent: isCurrentAuthority, visible = true, onSetup, onOpen, onSelectionIntent, onStartChat, onOpenBotChat, expanded: controlledExpanded, onExpandedChange, activeAgentId, menuZIndex = 100 }: {
   /** Hosts supply an authenticated binding and scoped presentation preferences. */
   menuZIndex?: number; activeAgentId?: string | null; expanded?: boolean; onExpandedChange?: (expanded: boolean) => void;
   /** Actual rail visibility, including retained tabs and collapsed host sidebars. */
@@ -19,6 +19,8 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
   summaryClient?: ChatAgentClient;
   /** Synchronous authority fence for callbacks pending across a host revocation. */
   isCurrent?: () => boolean;
+  /** Cancel pending host selections immediately when an Agent action is chosen. */
+  onSelectionIntent?: () => void;
   activeChatId?: string; client?: ChatAgentClient; onSetup?: () => void; onOpen?: () => void; onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void | Promise<void>;
 }) {
   const navigation = useChatAgentsNavigation();
@@ -55,7 +57,7 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
   const statuses = useBotRailStatuses(dataClient, visibleAgents, `${activeChatId ?? ""}:${navigation?.generation ?? 0}`, expanded && active);
   if (!navigation || !client || !state?.enabled) return null;
   const start: StartAgentChat | undefined = onStartChat
-    ? (text, resources) => { if (!(isCurrentAuthority?.() ?? true)) return; navigation.close(); if (resources) onStartChat(text, resources); else onStartChat(text); }
+    ? (text, resources) => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.close(); if (resources) onStartChat(text, resources); else onStartChat(text); }
     : undefined;
   const openAgent = async (agent: ChatAgent, details = false) => {
     if (!(isCurrentAuthority?.() ?? true)) return;
@@ -65,6 +67,7 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
       return;
     }
     if (!client.bots || !onOpenBotChat || opening.current) return;
+    onSelectionIntent?.();
     opening.current = true;
     const sequence = ++openSequence.current;
     const navigationGeneration = navigation.getGeneration();
@@ -97,11 +100,11 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
   };
   return <section className="matrix-chat-agents-rail mb-1 flex shrink-0 flex-col gap-0.5">
     <div data-slot="chat-sidebar-section-heading" className="matrix-chat-agents-group-heading">
-      <button type="button" aria-label="Agents" aria-pressed={navigation.opened?.client === client && navigation.opened.view === "library"} className="matrix-chat-agents-heading" onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; navigation.open({ client, onSetup, view: "library" }, event.currentTarget); onOpen?.(); }}><Sparkle aria-hidden="true" size={15} strokeWidth={1.5}/><span>Agents</span></button>
+      <button type="button" aria-label="Agents" aria-pressed={navigation.opened?.client === client && navigation.opened.view === "library"} className="matrix-chat-agents-heading" onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, onSetup, view: "library" }, event.currentTarget); onOpen?.(); }}><Sparkle aria-hidden="true" size={15} strokeWidth={1.5}/><span>Agents</span></button>
       <button type="button" aria-label={expanded ? "Collapse agents" : "Expand agents"} aria-expanded={expanded} className="matrix-chat-agents-disclosure" onClick={toggleExpanded}><ChevronRight aria-hidden="true" size={12} strokeWidth={1.5} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`}/></button>
       <span className="matrix-chat-agents-heading-spacer" />
       {!expanded && visibleAgents.length > 0 ? <span className="matrix-chat-agents-count" aria-label={`${visibleAgents.length} ${visibleAgents.length === 1 ? "agent" : "agents"}`}>{visibleAgents.length}</span> : null}
-      <button type="button" aria-label="Add new agent" title="New agent" className="matrix-chat-agents-create" onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; navigation.open({ client, onSetup, onStartChat: start, view: "recipes" }, event.currentTarget); onOpen?.(); }}><Plus aria-hidden="true" size={16} strokeWidth={1.5}/></button>
+      <button type="button" aria-label="Add new agent" title="New agent" className="matrix-chat-agents-create" onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, onSetup, onStartChat: start, view: "recipes" }, event.currentTarget); onOpen?.(); }}><Plus aria-hidden="true" size={16} strokeWidth={1.5}/></button>
     </div>
     <div aria-hidden={!expanded} inert={!expanded} data-slot="chat-rail-collapse" data-expanded={expanded} className="grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none" style={{gridTemplateRows:expanded ? "1fr" : "0fr",opacity:expanded ? 1 : 0}}><div className="min-h-0 overflow-hidden"><div className="matrix-chat-agents-rail__items flex flex-col gap-0.5">
       {state.agents.map(agent => <ChatAgentRailRow key={agent.id} agent={agent} status={statuses[agent.id]}
