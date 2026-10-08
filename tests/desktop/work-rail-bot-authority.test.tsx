@@ -8,6 +8,7 @@ import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-ch
 import { AppError } from "@desktop/shared/app-error";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import { useWorkNavigation } from "@desktop/renderer/src/features/work/use-work-navigation";
+import type { Project } from "@desktop/renderer/src/stores/board";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
 const initialConnection = useConnection.getState();
@@ -35,10 +36,10 @@ function navigation(): CanonicalChatNavigationResponse {
   }] };
 }
 const approvals = [{ kind: "approval", status: "pending", agentId: "bot_private00", chatId: "chat_private_bot", expiresAt: "2099-01-01T00:00:00Z" }];
-function fixture(withOrdinary = false) {
+function fixture(withOrdinary = false, projects: Project[] = [], projectId?: string) {
   const initial = navigation();
   if (withOrdinary) initial.items.push({ ...initial.items[0]!,
-    chat: { ...initial.items[0]!.chat, id: "chat_private_ordinary", title: "Private pending Chat", userState: { readThroughSeq: 0, pinned: true, muted: false } }, classification: { kind: "ordinary" },
+    chat: { ...initial.items[0]!.chat, id: "chat_private_ordinary", title: "Private pending Chat", userState: { readThroughSeq: 0, pinned: true, muted: false } }, classification: { kind: "ordinary" }, projectId,
   });
   const client = {
     navigation: vi.fn(async () => initial),
@@ -62,10 +63,10 @@ function fixture(withOrdinary = false) {
     useLayoutEffect(() => { captured = state; capturedAgents = agents; }, [state, agents]);
     return null;
   }
-  const actions = { onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn(), onOpenBotChat: vi.fn(), onChatDeleted: vi.fn(), onChatRenamed: vi.fn() };
-  const view = (activeChatId?: string) => <ChatAgentsWorkspace><WorkRail client={client} projects={[]} active activeChatId={activeChatId} {...actions} /><Probe /></ChatAgentsWorkspace>;
+  const actions = { onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(), onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn(), onOpenBotChat: vi.fn(), onChatDeleted: vi.fn(), onChatRenamed: vi.fn(), onOpenAgents: vi.fn(), onStartAgentChat: vi.fn() };
+  const view = (activeChatId?: string, currentProjects = projects) => <ChatAgentsWorkspace><WorkRail client={client} projects={currentProjects} active activeChatId={activeChatId} {...actions} /><Probe /></ChatAgentsWorkspace>;
   const rendered = render(view());
-  return { client, actions, agents: () => capturedAgents, store: () => captured!.store!, rerender: (id?: string) => rendered.rerender(view(id)) };
+  return { client, actions, agents: () => capturedAgents, store: () => captured!.store!, rerender: (id?: string, currentProjects = projects) => rendered.rerender(view(id, currentProjects)) };
 }
 async function loaded() {
   await screen.findByRole("button", { name: "Review Old private bot approval" });
@@ -241,3 +242,48 @@ for (const revoked of [false, true]) {
     expect(actions.onChatRenamed).not.toHaveBeenCalled();
   });
 }
+
+async function pendingSelection(context: ReturnType<typeof fixture>) {
+  const detail = pending<Awaited<ReturnType<CanonicalChatClient["getDetail"]>>>();
+  context.client.getDetail = vi.fn(() => detail.promise);
+  fireEvent.click(await screen.findByRole("button", { name: "Private pending Chat" }));
+  await waitFor(() => expect(context.client.getDetail).toHaveBeenCalledOnce());
+  const record = context.store().getSnapshot().items.find(item => item.chat.id === "chat_private_ordinary")!;
+  return { detail, record };
+}
+
+it.each(["library", "draft", "bot"] as const)("a later %s intent cancels a pending ordinary Chat detail", async intent => {
+  const context = fixture(true);
+  await loaded();
+  if (intent === "draft") fireEvent.click(screen.getByRole("button", { name: "Add new agent" }));
+  const { detail, record } = await pendingSelection(context);
+  let binding: ReturnType<typeof pending<string>> | undefined;
+  if (intent === "library") fireEvent.click(screen.getByRole("button", { name: "Agents" }));
+  if (intent === "draft") act(() => context.agents()?.opened?.onStartChat?.("Make a research agent"));
+  if (intent === "bot") {
+    binding = pending<string>();
+    vi.mocked(context.client.agents!.bots!.ensureDirectChat).mockImplementation(() => binding!.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Old private bot" }));
+    await waitFor(() => expect(context.client.agents!.bots!.ensureDirectChat).toHaveBeenCalledOnce());
+  }
+  await act(async () => detail.resolve({ record } as Awaited<ReturnType<CanonicalChatClient["getDetail"]>>));
+  expect(context.actions.onSelectChat).not.toHaveBeenCalled();
+  if (intent === "library") expect(context.agents()?.opened?.client).toBe(context.client.agents);
+  if (intent === "draft") expect(context.actions.onStartAgentChat).toHaveBeenCalledExactlyOnceWith("Make a research agent");
+  if (binding) {
+    await act(async () => binding!.resolve("chat_private_bot"));
+    expect(context.actions.onOpenBotChat).toHaveBeenCalledExactlyOnceWith("chat_private_bot");
+  }
+});
+
+it.each(["project_beta", undefined, "project_unknown"])("opens fresh Project membership %s instead of cached Alpha", async projectId => {
+  const alpha: Project = { id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" };
+  const beta: Project = { id: "project_beta", slug: "beta", name: "Beta", kind: "folder" };
+  const context = fixture(true, [alpha], alpha.id);
+  const { detail, record } = await pendingSelection(context);
+  context.rerender(undefined, [alpha, beta]);
+  const fresh = { ...record, projectId };
+  await act(async () => detail.resolve({ record: fresh } as Awaited<ReturnType<CanonicalChatClient["getDetail"]>>));
+  if (projectId === beta.id) expect(context.actions.onSelectChat).toHaveBeenCalledExactlyOnceWith(fresh, beta);
+  else expect(context.actions.onSelectChat).toHaveBeenCalledExactlyOnceWith(fresh);
+});

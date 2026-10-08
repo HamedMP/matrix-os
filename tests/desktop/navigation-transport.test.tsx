@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { CanonicalChatNavigationResponseSchema } from "@matrix-os/contracts";
@@ -70,4 +70,30 @@ describe("navigation through the actual runtime transport", () => {
     expect(hook.result.current.items).toEqual([]);
     expect(hook.result.current.fresh).toBe(false);
   });
+});
+
+it.each([false, true])("reclassifies legacy Bot bindings after same-store revocation while retaining warm reads (initial Bot=%s)", async initiallyBot => {
+  let revoked = false; let bot = initiallyBot;
+  const app = new Hono();
+  const chat = { id: "chat_binding", ownerScope: { type: "personal", ownerId: "navigation_owner" }, title: "Binding changes", titleVersion: 1, revision: 1, lifecycle: "active", attention: "none", messageCount: 0, createdAt: "2026-10-08T00:00:00Z", updatedAt: "2026-10-08T00:00:00Z" };
+  app.get("/api/chats", context => revoked ? context.json({ error: "Request failed" }, 401) : context.json({ items: [{ chat }] }));
+  app.get("/api/chat-agents", context => context.json({ enabled: true, agents: [] }));
+  app.get("/api/chats/:chatId/bot", context => context.json({ agentId: bot ? "bot_changed00" : null }));
+  const { client, requests } = transport(app);
+  const hook = renderHook(() => useWorkNavigation(client, undefined, true));
+  await waitFor(() => expect(hook.result.current.fresh).toBe(true));
+  expect(hook.result.current.items[0]?.classification).toEqual(initiallyBot ? { kind: "bot", agentId: "bot_changed00" } : { kind: "ordinary" });
+  revoked = true;
+  await act(async () => { await hook.result.current.store!.refresh(); });
+  expect(hook.result.current.items).toEqual([]);
+  revoked = false; bot = !initiallyBot;
+  await act(async () => { await hook.result.current.store!.refresh(); });
+  expect(hook.result.current.items[0]?.classification).toEqual(initiallyBot ? { kind: "ordinary" } : { kind: "bot", agentId: "bot_changed00" });
+  const bindings = requests.filter(url => url.pathname.endsWith("/bot")).length;
+  const store = hook.result.current.store;
+  hook.unmount();
+  const remount = renderHook(() => useWorkNavigation(client, undefined, true));
+  expect(remount.result.current.store).toBe(store);
+  await act(async () => { await remount.result.current.store!.refresh(); });
+  expect(requests.filter(url => url.pathname.endsWith("/bot"))).toHaveLength(bindings);
 });

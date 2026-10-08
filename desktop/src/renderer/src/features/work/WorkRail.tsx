@@ -14,7 +14,7 @@ import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
 import { useTabs } from "../../stores/tabs";
 import { type CanonicalChatRecord } from "@matrix-os/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -103,6 +103,8 @@ export function WorkRail({
 }) {
   const agentsNavigation = useChatAgentsNavigation();
   const selectionAttempt = useRef(0);
+  const currentProjects = useRef(projects);
+  useLayoutEffect(() => { currentProjects.current = projects; }, [projects]);
   const [selectionError,setSelectionError]=useState<string|null>(null);
   const invalidateSelection = () => { selectionAttempt.current++; setSelectionError(null); };
   const onNewGlobalChat = () => { invalidateSelection(); agentsNavigation?.close(); newGlobalChat(); };
@@ -110,13 +112,14 @@ export function WorkRail({
   const onSelectProject = (project: Project) => { invalidateSelection(); agentsNavigation?.close(); selectProject?.(project); };
   const onNewProjectChat = (project: Project) => { invalidateSelection(); agentsNavigation?.close(); newProjectChat(project); };
   useEffect(() => () => { selectionAttempt.current++; }, []);
-  const onSelectChat = (record:ChatNavigationRecord,project?:Project) => {
+  const onSelectChat = (record:ChatNavigationRecord) => {
     if(!client || !isCurrentScope(routeScopeRef.current)) return;
     const attempt = ++selectionAttempt.current;
     const scope=routeScopeRef.current;
     setSelectionError(null);
     void Promise.resolve().then(()=>isCurrentScope(scope) ? client.getDetail(record.chat.id,{limit:1}) : null).then(detail=>{
       if(!detail || selectionAttempt.current!==attempt || !isCurrentScope(scope)) return;
+      const project = detail.record.projectId ? currentProjects.current.find(candidate => candidate.id === detail.record.projectId || candidate.slug === detail.record.projectId) : undefined;
       agentsNavigation?.close(); if(project) selectChat(detail.record,project);else selectChat(detail.record);
     }).catch((error:unknown)=>{
       console.warn("[chat-navigation] Open failed:",error instanceof Error?error.name:"UnknownError");
@@ -465,7 +468,7 @@ export function WorkRail({
     onToggleRead={() => { void toggleRead(record); }} readPending={readPending}
     onRenameStart={() => { if (renamePending) return; setRenameError(null); setRenamingChatId(record.chat.id); }}
     onRenameCommit={(title) => { void renameChat(record, title); }} onRenameCancel={() => setRenamingChatId(null)}
-    onSelect={() => { const project = projectGroups.find(group => group.id === record.projectId || group.slug === record.projectId)?.project; if (project) onSelectChat(record, project); else onSelectChat(record); }}
+    onSelect={() => onSelectChat(record)}
     onPin={() => updatePinned(record)} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
 
   return (
@@ -485,13 +488,13 @@ export function WorkRail({
       <div className="ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen} /></div>
       <WorkRailScrollArea>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
-      <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
+      <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
-        onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
+        onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; invalidateSelection(); agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
-        organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
+        organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat ? (text, resources) => { invalidateSelection(); if (resources) onStartAgentChat(text, resources); else onStartAgentChat(text); } : undefined} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
         ) : null}
@@ -541,10 +544,9 @@ export function WorkRail({
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
         onClose={() => setSearchOpen(false)}
         onOpenShared={() => setSharedWithMeOpen(true)}
-        onSelect={(record, project) => {
+        onSelect={(record) => {
           setSearchOpen(false);
-          if (project) onSelectChat(record, project);
-          else onSelectChat(record);
+          onSelectChat(record);
         }}
       />
       <DesktopSharedWithMeDialog open={sharedWithMeOpen} onClose={() => setSharedWithMeOpen(false)}
