@@ -1,0 +1,141 @@
+/**
+ * Company Brain git adapter: where a repository may live. A checkout is
+ * accepted only when its real path, its real git directory, its real common
+ * directory and every object alternates entry are strictly inside the real
+ * Matrix home and never inside home's own `.git`. So a `.git` file or
+ * symlink, a linked worktree or an alternates file cannot lead git to history
+ * outside home, or to Matrix home's own history. Read-only filesystem checks,
+ * each bounded; any refusal is GitSourceError("not_a_repository").
+ */
+import { open, realpath, stat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { GitSourceError } from "./types.js";
+
+/** realpath / stat / open failures that mean "this path is not a usable checkout". */
+const MISSING_PATH_ERRNO: readonly string[] = ["ENOENT", "ENOTDIR", "EACCES", "ELOOP", "ENAMETOOLONG"];
+const INPUT_PATH_MAX_CHARS = 4096;
+/** One alternates file; git's own files are a few lines. */
+const ALTERNATES_MAX_BYTES = 64 * 1024;
+/** git follows alternates of alternates five levels deep. */
+const ALTERNATES_MAX_DEPTH = 5;
+/** Alternate object directories checked per repository, across every level. */
+const ALTERNATES_MAX_ENTRIES = 64;
+
+export interface GitHomeBounds {
+  readonly realHome: string;
+  /** realpath of `<home>/.git` when it exists: Matrix home's own history. */
+  readonly homeGitDir: string | null;
+}
+
+function refuse(cause?: unknown): never {
+  throw new GitSourceError("not_a_repository", cause === undefined ? undefined : { cause });
+}
+
+function isMissingPathError(err: unknown): boolean {
+  return err instanceof Error && "code" in err && typeof err.code === "string" && MISSING_PATH_ERRNO.includes(err.code);
+}
+
+export function assertInputPath(path: string): void {
+  if (typeof path !== "string" || path.length === 0 || path.length > INPUT_PATH_MAX_CHARS) {
+    throw new GitSourceError("invalid_options");
+  }
+  if (path.includes("\u0000") || !isAbsolute(path)) throw new GitSourceError("invalid_options");
+}
+
+/** realpath of an existing directory; a missing path, a file or a loop is not_a_repository. */
+export async function realDirectory(path: string): Promise<string> {
+  try {
+    const real = await realpath(path);
+    if (!(await stat(real)).isDirectory()) refuse();
+    return real;
+  } catch (err: unknown) {
+    if (err instanceof GitSourceError) throw err;
+    if (isMissingPathError(err)) refuse(err);
+    throw err;
+  }
+}
+
+/** True when `child` is strictly below `parent` (both real, absolute paths). */
+export function isStrictlyInside(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== "" && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`);
+}
+
+export async function homeBounds(homePath: string): Promise<GitHomeBounds> {
+  const realHome = await realDirectory(homePath);
+  let homeGitDir: string | null = null;
+  try {
+    homeGitDir = await realpath(join(realHome, ".git"));
+  } catch (err: unknown) {
+    if (!isMissingPathError(err)) throw err;
+  }
+  return { realHome, homeGitDir };
+}
+
+function isAllowed(bounds: GitHomeBounds, real: string): boolean {
+  if (!isStrictlyInside(bounds.realHome, real)) return false;
+  const own = bounds.homeGitDir;
+  return own === null || (real !== own && !isStrictlyInside(own, real));
+}
+
+/** The real path of a git-reported directory, refused unless it is allowed. */
+async function allowedDirectory(bounds: GitHomeBounds, path: string): Promise<string> {
+  const real = await realDirectory(path);
+  if (!isAllowed(bounds, real)) refuse();
+  return real;
+}
+
+function hasCode(err: unknown, code: string): boolean {
+  return err instanceof Error && "code" in err && err.code === code;
+}
+
+/** `<objects>/info/alternates` as text (at most ALTERNATES_MAX_BYTES), or null when there is none. */
+async function readAlternates(objectsDir: string): Promise<string | null> {
+  try {
+    const handle = await open(join(objectsDir, "info", "alternates"), "r");
+    try {
+      const buffer = Buffer.alloc(ALTERNATES_MAX_BYTES + 1);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      if (bytesRead > ALTERNATES_MAX_BYTES) refuse();
+      return buffer.subarray(0, bytesRead).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch (err: unknown) {
+    if (err instanceof GitSourceError) throw err;
+    if (hasCode(err, "ENOENT")) return null;
+    if (isMissingPathError(err) || hasCode(err, "EISDIR")) refuse(err);
+    throw err;
+  }
+}
+
+/**
+ * Every alternate object directory (git's `objects/info/alternates`, followed
+ * recursively) must be allowed too, or an object store outside home could
+ * stand in for the checkout's history. Quoted entries are refused.
+ */
+async function assertAlternatesAllowed(bounds: GitHomeBounds, commonDir: string): Promise<void> {
+  const pending: Array<{ objectsDir: string; depth: number }> = [{ objectsDir: join(commonDir, "objects"), depth: 0 }];
+  let checked = 0;
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    const text = await readAlternates(next.objectsDir);
+    if (text === null) continue;
+    for (const raw of text.split("\n")) {
+      const line = raw.trim();
+      if (line === "" || line.startsWith("#")) continue;
+      if (line.startsWith("\"") || next.depth >= ALTERNATES_MAX_DEPTH || ++checked > ALTERNATES_MAX_ENTRIES) refuse();
+      const real = await allowedDirectory(bounds, resolve(next.objectsDir, line));
+      pending.push({ objectsDir: real, depth: next.depth + 1 });
+    }
+  }
+}
+
+/** The checkout's git directories, as git reports them, must stay inside home and outside home's own `.git`. */
+export async function assertGitDirectoriesAllowed(
+  bounds: GitHomeBounds,
+  dirs: { readonly gitDir: string; readonly commonDir: string },
+): Promise<void> {
+  await allowedDirectory(bounds, dirs.gitDir);
+  const commonDir = await allowedDirectory(bounds, dirs.commonDir);
+  await assertAlternatesAllowed(bounds, commonDir);
+}
