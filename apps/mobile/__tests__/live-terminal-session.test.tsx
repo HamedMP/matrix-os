@@ -16,6 +16,7 @@ const mockScreenOptions = jest.fn();
 const mockUseComputerTerminals = jest.fn();
 const SESSION_ID = "tws_00000000000000000000000000000001:tt_00000000000000000000000000000001";
 let mockSessionParam: string | undefined;
+let mockHeaderHeight = 0;
 
 jest.mock("expo-router", () => ({
   Stack: {
@@ -25,6 +26,10 @@ jest.mock("expo-router", () => ({
     },
   },
   useLocalSearchParams: () => ({ session: mockSessionParam }),
+}));
+
+jest.mock("expo-router/react-navigation", () => ({
+  useHeaderHeight: () => mockHeaderHeight,
 }));
 
 jest.mock("@/lib/queries/use-computer-terminals", () => ({
@@ -83,6 +88,7 @@ jest.mock("@/components/TerminalControlBar", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { KeyboardAvoidingView } from "react-native";
 
 import TerminalSessionScreen from "../app/terminal-session/[session]";
 
@@ -90,6 +96,7 @@ describe("live terminal session modal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSessionParam = SESSION_ID;
+    mockHeaderHeight = 0;
     mockUseComputerTerminals.mockReturnValue({ sessions: [{ id: SESSION_ID, name: "swift-falcon" }] });
     mockConnect.mockResolvedValue({
       detach: mockDetach,
@@ -162,6 +169,17 @@ describe("live terminal session modal", () => {
     fireEvent.press(screen.getByLabelText("Report terminal viewport"));
 
     expect(mockResize).toHaveBeenCalledWith(49, 18);
+    rendered.unmount();
+  });
+
+  it("lifts the key rows clear of the keyboard by counting the header above the screen", async () => {
+    mockHeaderHeight = 116;
+    const rendered = render(<TerminalSessionScreen />);
+    await waitFor(() => expect(mockConnect).toHaveBeenCalled());
+
+    // The avoiding view starts below the modal's header, so without the
+    // header's height its lift falls short by exactly that much.
+    expect(screen.UNSAFE_getByType(KeyboardAvoidingView).props.keyboardVerticalOffset).toBe(116);
     rendered.unmount();
   });
 

@@ -1,4 +1,5 @@
 import { Stack, useLocalSearchParams } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -32,6 +33,7 @@ export default function TerminalSessionScreen() {
   const rawSession = Array.isArray(params.session) ? params.session[0] : params.session;
   const session = rawSession && isSafeSessionId(rawSession) ? rawSession : null;
   const { client } = useGateway();
+  const headerHeight = useHeaderHeight();
   const { sessions } = useComputerTerminals();
   const listedSession = session ? sessions.find((candidate) => candidate.id === session) : undefined;
   const sessionName = listedSession?.name;
@@ -224,6 +226,10 @@ export default function TerminalSessionScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      // This view starts below the modal's header and measures itself from
+      // there, so the header's height has to be counted or the key rows stop
+      // that far short of the keyboard.
+      keyboardVerticalOffset={headerHeight}
       style={styles.screen}
     >
       <Stack.Screen options={{ title: sessionName ?? "Terminal" }} />
