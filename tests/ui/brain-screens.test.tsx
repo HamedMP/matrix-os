@@ -143,3 +143,105 @@ describe("Claims", () => {
     expect(screen.getByText("Try another path or clear the filters.")).toBeTruthy();
   });
 });
+
+describe("Timeline", () => {
+  const view = (items: BrainTimelineView["items"], extra: Partial<BrainTimelineView> = {}): BrainTimelineView => ({
+    entity: { entityId: "ent_1", kind: "file", key: "a.ts", displayName: "a.ts" }, items, nextCursor: null,
+    freshness: FRESH, ...extra,
+  });
+
+  it("follows a file, a folder and a spec", async () => {
+    const timeline = vi.fn()
+      .mockResolvedValueOnce(view([
+        { cite: cite("#5"), linkTypes: ["changed", "implements_spec"], mode: "inferred", matchedPaths: ["a.ts"] },
+        { cite: cite("#6"), linkTypes: ["authored"], mode: "explicit", matchedPaths: [] },
+      ], { nextCursor: "n", freshness: { caughtUp: false, pendingDocuments: 3, pendingCapped: false } }))
+      .mockResolvedValueOnce(view([{ cite: cite("#7"), linkTypes: ["mentions"], mode: "explicit", matchedPaths: [] }]))
+      .mockResolvedValueOnce(view([]))
+      .mockRejectedValueOnce(apiError("notFound", "entity_not_found"));
+    const p = props(fakeBrainApi({ timeline }));
+    render(<BrainTimeline {...p} />);
+    expect(screen.getByText("Pick a file, a person or a spec.")).toBeTruthy();
+    const input = screen.getByRole("textbox", { name: "Name, path or spec" });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(timeline).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "a.ts" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    const list = await screen.findByRole("list", { name: "Timeline" });
+    expect(timeline).toHaveBeenCalledWith(PROJECT, { entity: "file:a.ts", limit: 20, cursor: undefined });
+    expect(within(list).getByText("implements spec")).toBeTruthy();
+    expect(within(list).getByText("inferred")).toBeTruthy();
+    expect(screen.getByText(/Still reading 3 new documents/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(3));
+    fireEvent.change(input, { target: { value: "src/brain/" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByText("Nothing touches this yet.")).toBeTruthy();
+    expect(timeline).toHaveBeenLastCalledWith(PROJECT, { entity: "folder:src/brain", limit: 20, cursor: undefined });
+    fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "spec" } });
+    fireEvent.change(input, { target: { value: "551-company-brain-store" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Nothing in the brain matches that yet.");
+    expect(timeline).toHaveBeenLastCalledWith(PROJECT, { entity: "spec:specs/551-company-brain-store", limit: 20, cursor: undefined });
+    expect(brainTimelineRef("spec", "specs/1-x")).toBe("spec:specs/1-x");
+  });
+
+  it("finds a person first, then follows the chosen one", async () => {
+    const entities = vi.fn()
+      .mockResolvedValueOnce({ items: [{ entityId: "ent_ann", kind: "person", key: "email:ann@x.co", displayName: "Ann" }], nextCursor: null })
+      .mockResolvedValueOnce({ items: [], nextCursor: null });
+    const p = props(fakeBrainApi({ entities, timeline: vi.fn(async () => view([])) }));
+    render(<BrainTimeline {...p} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "person" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Name, path or spec" }), { target: { value: "Ann" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    const people = await screen.findByRole("list", { name: "People" });
+    expect(entities).toHaveBeenCalledWith(PROJECT, { kind: "person", q: "Ann", limit: 10 });
+    fireEvent.click(within(people).getByRole("button", { name: /Ann/ }));
+    await waitFor(() => expect(p.api.timeline).toHaveBeenCalledWith(PROJECT, { entity: "ent_ann", limit: 20, cursor: undefined }));
+    expect(screen.queryByRole("list", { name: "People" })).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Name, path or spec" }), { target: { value: "Zed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(await screen.findByText('No one called "Zed" yet.')).toBeTruthy();
+  });
+});
+
+// jsdom has no layout, so the 390 px rules are checked as the classes that make each long line shrink or wrap.
+describe("Narrow screens (390 px)", () => {
+  it("lets Ask results, cite titles, person keys and the kind select shrink instead of widening the screen", async () => {
+    const longTitle = "A very long pull request title ".repeat(8);
+    const api = fakeBrainApi({
+      search: vi.fn(async () => ({
+        q: "postgres", mode: "text", nextCursor: null, freshness: FRESH, notices: [],
+        capability: { fullText: true, vector: "provider_not_configured", providerId: null },
+        items: [{ hitId: "h1", type: "document", score: 1, matchedBy: ["text"], claim: null,
+          snippet: { field: "body", text: "We chose Postgres", highlights: [], truncatedStart: false, truncatedEnd: false },
+          cite: cite("#1", { title: longTitle }) }],
+      })),
+      entities: vi.fn(async () => ({ items: [{ entityId: "ent_ann", kind: "person",
+        key: `email:${"ann.long.address".repeat(6)}@example.com`, displayName: "Ann" }], nextCursor: null })),
+    });
+    const { container, unmount } = render(<BrainAsk {...props(api)} />);
+    expect(container.firstElementChild).toHaveClass("grid-cols-[minmax(0,1fr)]");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Ask the Company Brain" }), { target: { value: "postgres" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    const results = await screen.findByRole("list", { name: "Results" });
+    expect(results).toHaveClass("grid-cols-[minmax(0,1fr)]");
+    expect(within(results).getByRole("listitem")).toHaveClass("min-w-0");
+    expect(within(results).getByText(longTitle.trim(), { exact: false })).toHaveClass("min-w-0", "truncate");
+    unmount();
+
+    render(<BrainTimeline {...props(api)} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "person" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Name, path or spec" }), { target: { value: "Ann" } });
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    const person = within(await screen.findByRole("list", { name: "People" })).getByRole("button", { name: /Ann/ });
+    expect(person).toHaveClass("h-auto", "max-w-full", "whitespace-normal", "break-all");
+    cleanup();
+
+    render(<BrainSourceConnect api={api} projectId={PROJECT} onConnected={vi.fn()}
+      kinds={[{ kind: "slack_bridge", available: false, reason: "not_configured" }]} />);
+    expect(screen.getByRole("combobox")).toHaveClass("w-full", "min-w-0", "max-w-full");
+    expect(screen.getByRole("region", { name: "Connect a source" })).toHaveClass("grid-cols-[minmax(0,1fr)]");
+  });
+});
