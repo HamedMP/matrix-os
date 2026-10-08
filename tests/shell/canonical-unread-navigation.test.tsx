@@ -2,13 +2,25 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatNavigationItem, CanonicalChatRecord } from "@matrix-os/contracts";
-import { createChatNavigationStore } from "@matrix-os/ui";
+import { createChatNavigationStore, type CanonicalChatInvalidation } from "@matrix-os/ui";
 import type { useShellChatNavigation } from "../../shell/src/hooks/useChatNavigation";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
-const state = vi.hoisted(() => ({ navigation: {} as ReturnType<typeof useShellChatNavigation> }));
+const state = vi.hoisted(() => ({ navigation: {} as ReturnType<typeof useShellChatNavigation>, listeners: [] as Array<(event: CanonicalChatInvalidation) => void> }));
 vi.mock("../../shell/src/hooks/useChatNavigation", () => ({ useShellChatNavigation: () => state.navigation }));
+vi.mock("@matrix-os/ui", async importOriginal => ({
+  ...await importOriginal<typeof import("@matrix-os/ui")>(),
+  createSharedCanonicalChatEventSource: () => ({
+    subscribe: (listener: (event: CanonicalChatInvalidation) => void) => {
+      state.listeners.push(listener);
+      return { dispose: () => { state.listeners = state.listeners.filter(value => value !== listener); } };
+    },
+    subscribeConnectionState: () => ({ dispose() {} }),
+    connectionState: () => "open",
+    start: async () => {}, dispose() {},
+  }),
+}));
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
 function record(id: string, unread = true): CanonicalChatRecord {
   const { chat: { project, activeRun, providerBinding, ...chat } } = createCanonicalChatFixture("completed").snapshot;
@@ -22,6 +34,7 @@ function item(id: string, unread = true): CanonicalChatNavigationItem {
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { resolve, promise }; }
 let unreadFetch: ReturnType<typeof vi.fn>;
 beforeEach(() => {
+  state.listeners = [];
   state.navigation = { items: [item("chat_recent", false)], truncated: false, fresh: true, status: "ready", updatedAt: 1, error: null,
     store: createChatNavigationStore({ load: async () => ({ version: 1, items: [], truncated: false }) }) };
   unreadFetch = vi.fn(async () => Response.json({ items: [record("chat_older")] }));
@@ -78,13 +91,13 @@ describe("Web unread navigation", () => {
     await act(async () => hook.result.current.setUnreadOnly?.(true));
     await waitFor(() => expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_older"]));
     unreadFetch.mockResolvedValueOnce(Response.json({ error: { code: "unavailable" } }, { status: 503 }));
-    state.navigation = { ...state.navigation, items: [...state.navigation.items] };
+    state.navigation = { ...state.navigation, updatedAt: state.navigation.updatedAt + 1, items: [...state.navigation.items] };
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.messages.some(message => message.content === "Unread Chats could not be refreshed. Try again.")).toBe(true));
     expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_older"]);
     const dispose = vi.spyOn(state.navigation.store!, "dispose");
     unreadFetch.mockResolvedValueOnce(Response.json({ error: { code: "unauthorized" } }, { status: 403 }));
-    state.navigation = { ...state.navigation, items: [...state.navigation.items] };
+    state.navigation = { ...state.navigation, updatedAt: state.navigation.updatedAt + 1, items: [...state.navigation.items] };
     hook.rerender({ scope: "owner/runtime/main" });
     await waitFor(() => expect(hook.result.current.conversations).toEqual([]));
     expect(dispose).toHaveBeenCalledWith(true);
@@ -105,6 +118,61 @@ describe("Web unread navigation", () => {
     await act(async () => hook.result.current.setUnreadOnly?.(false));
     await act(async () => pending.resolve(Response.json({ items: [record("chat_late")] })));
     expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_recent"]);
+  });
+  it("finishes older unread pagination during stream deltas and keeps local known-row updates", async () => {
+    state.navigation.truncated = true;
+    unreadFetch.mockResolvedValueOnce(Response.json({ items: [record("chat_known")] }));
+    const hook = mount();
+    await act(async () => hook.result.current.setUnreadOnly?.(true));
+    await waitFor(() => expect(hook.result.current.conversations).toHaveLength(1));
+    const older = deferred<Response>();
+    unreadFetch.mockResolvedValueOnce(Response.json({ items: [record("chat_known")], nextCursor: "chatcur_older" }))
+      .mockImplementationOnce(() => older.promise);
+    state.navigation = { ...state.navigation, updatedAt: 2, items: [...state.navigation.items] };
+    hook.rerender({ scope: "owner/runtime/main" });
+    await waitFor(() => expect(unreadFetch).toHaveBeenCalledTimes(3));
+    for (let index = 0; index < 4; index++) {
+      const value = record(index % 2 ? "chat_absent" : "chat_known");
+      value.chat = { ...value.chat, title: "Streaming title", titleVersion: 10, revision: 10 };
+      const event = { cursor: index + 1, chatId: value.chat.id, revision: 10, eventType: "run.message" as const, createdAt: value.chat.createdAt };
+      await act(async () => {
+        for (const listener of [...state.listeners]) listener({ type: "chat.changed", ...event,
+          content: { type: "chat.content", event, content: { record: value } } });
+      });
+      // Local global-store updates replace the array without a server refresh.
+      state.navigation = { ...state.navigation, items: [...state.navigation.items] };
+      hook.rerender({ scope: "owner/runtime/main" });
+    }
+    expect(unreadFetch).toHaveBeenCalledTimes(3);
+    expect(hook.result.current.conversations[0]?.title).toBe("Streaming title");
+    await act(async () => older.resolve(Response.json({ items: [record("chat_oldest")] })));
+    await waitFor(() => expect(hook.result.current.conversations.map(value => value.id)).toEqual(["chat_known", "chat_oldest"]));
+    expect(hook.result.current.conversations[0]?.title).toBe("Streaming title");
+    expect(unreadFetch).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      for (const listener of [...state.listeners]) listener({ type: "chat.full_refresh", cursor: 20 });
+    });
+    await waitFor(() => expect(unreadFetch).toHaveBeenCalledTimes(4));
+  });
+  it("refreshes unread membership for non-stream content and applies read-state changes immediately", async () => {
+    state.navigation.truncated = true;
+    unreadFetch.mockResolvedValueOnce(Response.json({ items: [record("chat_known")] }));
+    const hook = mount();
+    await act(async () => hook.result.current.setUnreadOnly?.(true));
+    await waitFor(() => expect(hook.result.current.conversations).toHaveLength(1));
+    const refreshed = deferred<Response>();
+    unreadFetch.mockImplementationOnce(() => refreshed.promise);
+    const value = record("chat_known", false);
+    value.readState = { ...value.readState!, version: 2 };
+    const event = { cursor: 1, chatId: value.chat.id, revision: value.chat.revision, eventType: "chat.updated" as const, createdAt: value.chat.createdAt };
+    await act(async () => {
+      for (const listener of [...state.listeners]) listener({ type: "chat.changed", ...event,
+        content: { type: "chat.content", event, content: { record: value } } });
+    });
+    expect(hook.result.current.conversations).toEqual([]);
+    await waitFor(() => expect(unreadFetch).toHaveBeenCalledTimes(2));
+    await act(async () => refreshed.resolve(Response.json({ items: [record("chat_newly_unread")] })));
+    await waitFor(() => expect(hook.result.current.conversations.map(item => item.id)).toEqual(["chat_newly_unread"]));
   });
   it("removes a recovered navigation error without erasing an unrelated detail error", async () => {
     state.navigation.error = "Chats could not be refreshed. Try again.";

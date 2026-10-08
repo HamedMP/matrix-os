@@ -93,8 +93,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const navigation = useShellChatNavigation(client, eventSource, navigationScope, navigationGeneration);
   const unreadNavigation = useUnreadChatNavigation(client, navigation, unreadOnly);
   const { records, update: updateUnreadRecords, refresh: refreshUnread } = unreadNavigation;
-  const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[]) => {
-    updateUnreadRecords(update);
+  const setRecords = useCallback((update: (records: ChatNavigationRecord[]) => ChatNavigationRecord[], invalidateUnread = true) => {
+    updateUnreadRecords(update, invalidateUnread);
     navigation.store?.update(current => {
       const updated = update(current);
       if (updated === current) return current;
@@ -257,7 +257,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       if (event.type === "chat.changed" && event.content) {
         const record = event.content.content.record;
         setRecords((current) => current.map((item) => item.chat.id === record.chat.id
-          ? mergeChatNavigationRecord(item, record) : item));
+          ? mergeChatNavigationRecord(item, record) : item), event.eventType !== "run.message");
         if (event.chatId === activeChatId) {
           const current = detailRef.current;
           const next = current ? applyCanonicalChatContent(current, event.content) : null;
@@ -270,6 +270,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         return;
       }
+      if (event.type === "chat.full_refresh" || event.eventType !== "run.message") {
+        refreshUnread();
+      }
       if (event.type === "chat.full_refresh" || event.chatId === activeChatId) {
         selectedRefresh.schedule(EVENT_INVALIDATION_COALESCE_MS);
       }
@@ -279,7 +282,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       subscription.dispose();
       selectedRefresh.dispose();
     };
-  }, [activeChatId, eventSource, loadDetail, loadList, setRecords]);
+  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread]);
 
   useEffect(() => {
     let cancelled = false;

@@ -50,7 +50,13 @@ export function useUnreadChatNavigation(client: CanonicalShellChatClient, naviga
         // Publish only after all bounded pages and authenticated classifications settle.
         const unique = [...new Map(records.map(record => [record.chat.id, record])).values()]; // at most 1,000 rows
         const classified = await legacyChatNavigation(unique, agents);
-        if (isCurrent()) setSnapshot({ client, scope, items: classified.items, error: null });
+        if (isCurrent()) setSnapshot(previous => {
+          const known = previous?.client === client && previous.scope === scope ? previous.items : EMPTY;
+          return { client, scope, error: null, items: classified.items.map(item => {
+            const updated = known.find(value => value.chat.id === item.chat.id);
+            return updated ? mergeChatNavigationRecord(item, updated) : item;
+          }) };
+        });
       } catch (error: unknown) {
         console.warn("[chat-navigation] Unread history unavailable:", error instanceof Error ? error.name : "UnknownError");
         if (!isCurrent()) return;
@@ -64,13 +70,15 @@ export function useUnreadChatNavigation(client: CanonicalShellChatClient, naviga
       }
     })();
     return () => { current = false; };
-  }, [client, agents, scope, scoped, navigation.items, revision]);
+  }, [client, agents, scope, scoped, navigation.updatedAt, revision]);
 
   const visible = scoped && snapshot?.client === client && snapshot.scope === scope ? snapshot : null;
   const items = scoped ? visible?.items ?? EMPTY : navigation.items;
   const records = useMemo(() => items.filter(item => !unreadOnly || item.readState.unread), [items, unreadOnly]);
-  const update = useCallback((apply: Update) => {
-    if (scoped) refresh();
+  const update = useCallback((apply: Update, invalidate = true) => {
+    // Content deltas patch known rows without restarting an older unread page.
+    // Explicit mutations still fence stale reads and reconcile membership.
+    if (scoped && invalidate) refresh();
     setSnapshot(previous => {
       if (!previous || previous.client !== client || previous.scope !== scope) return previous;
       return { ...previous, items: apply(previous.items).flatMap(record => {
