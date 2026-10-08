@@ -69,6 +69,15 @@ secret version or pricing interval requires new matching acceptance; production
 does not resolve these mounts through `latest`. Staging retains its prior secret
 IDs and `latest` selection.
 
+These fixed Secret Manager identifiers are this deployment contract, not a
+Cloudflare requirement to mint fresh tokens. An existing authorized credential
+may be explicitly approved for reuse after validity, permissions, account and
+request restrictions are checked. Separate tokens in one Cloudflare account
+do not provide per-gateway authorization isolation; they support independent
+rotation and revocation. See [Cloudflare authentication](https://developers.cloudflare.com/ai-gateway/configuration/authentication/).
+Funding-summary reads call Platform only; a successful credit display does not
+establish upstream inference readiness or GA acceptance.
+
 ## Metadata packet contract
 
 Create a ZIP containing `receipt.json` and the referenced, public-safe metadata
@@ -128,6 +137,35 @@ must be current and at most seven days. Source must equal the import and deploy
 run SHA; previous-head receipts cannot be carried forward. Sonnet/GLM price
 reviews must be current, at most 31 days; Jev at most 90 days. Versions remain
 immutable and timestamps are not renewed relative to startup.
+
+## Canonical Platform control-plane staging
+
+Before production candidate acceptance, deploy the reviewed Platform control
+plane at the canonical origin with `MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=true`
+and `MATRIX_FUNDED_AI_RUNTIME_ENABLED=false`. The workflow permits this staged
+combination, while requiring bounded probe budgets and a reviewed HTTPS Relay
+origin whenever control is enabled. Add-on checkout stays disabled. Read back
+actual default traffic, source and mounted control-token version; a tagged
+Platform Preview is not a production substitute.
+
+Deploy the isolated Relay candidate before its production-chain acceptance,
+then bind this control-only Platform's reviewed Relay origin to that exact
+tagged **production** candidate. Platform's paid model probes use its configured
+Relay origin; leaving them on the inert default baseline cannot establish
+model readiness. The Platform origin itself remains canonical. Verify that
+the reviewed operator canary is the only active funded caller using this
+temporary binding; keep customer-host migration deferred. Disabling runtime
+provisioning does not revoke existing machines' funded credentials or policy.
+If existing customer callers already depend on this canonical funded route,
+defer this sequence until a separately reviewed isolation/window is established.
+After promotion, rebind the Platform to the canonical production Relay origin
+and verify fresh readiness and actual routing before enabling provisioning.
+
+Existing hosts remain unchanged and new runtime provisioning stays disabled
+through Relay acceptance. Enable runtime provisioning only after the accepted
+Relay is promoted and verified, then apply the separately guarded existing-host
+migration. Preserve persistent probe counters throughout; the control-only
+stage does not justify resetting budgets or renewing price timestamps.
 
 ## Import and two-stage release
 

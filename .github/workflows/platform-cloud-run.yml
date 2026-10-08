@@ -211,11 +211,14 @@ jobs:
                 ;;
             esac
           done
-          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" ]; then
-            echo "Funded AI control-plane and runtime flags must be enabled or disabled together." >&2
+          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ] &&
+             [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ]; then
+            echo "Funded AI runtime provisioning requires the control plane." >&2
             exit 1
           fi
-          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ]; then
+          # Control-only deployment supports operator canary acceptance before
+          # customer provisioning. Its paid probes still need bounded budgets.
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             for name in MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT; do
               if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,4}$ ]]; then
                 echo "$name must be a positive bounded integer when funded AI is enabled." >&2
@@ -391,20 +394,46 @@ jobs:
             ai-relay-control-token
             ai-funded-credential-hash-secret
           )
+          accessor_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
+          validate_access_policy() {
+            jq -e '
+              type == "object" and
+              (.bindings == null or (.bindings | type == "array")) and
+              all(.bindings[]?;
+                type == "object" and (.role | type == "string") and
+                (.members | type == "array") and
+                all(.members[]; type == "string"))
+            ' >/dev/null
+          }
+          has_unconditional_accessor() {
+            jq -e --arg member "$accessor_member" '
+              any(.bindings[]?;
+                .role == "roles/secretmanager.secretAccessor" and
+                .condition == null and
+                any(.members[]?; . == $member))
+            ' >/dev/null
+          }
+          project_policy=""
           for secret_name in "${required_funded_ai_secrets[@]}"; do
             gcloud secrets versions describe latest \
               --secret "$secret_name" \
               --project "$GCP_PROJECT_ID" >/dev/null
-            accessor_member="$(
-              gcloud secrets get-iam-policy "$secret_name" \
-                --project "$GCP_PROJECT_ID" \
-                --flatten='bindings[].members' \
-                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                --format='value(bindings.members)' \
-                | head -1
-            )"
-            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
+            secret_policy="$(gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" --format=json --quiet)"
+            # Malformed/unreadable IAM metadata is an error, not absent access.
+            printf '%s\n' "$secret_policy" | validate_access_policy
+            if printf '%s\n' "$secret_policy" | has_unconditional_accessor; then
+              continue
+            fi
+            # Project grants are inherited by secrets. Inspect existing access;
+            # never grant a new role or assume a conditional grant is effective.
+            if [ -z "$project_policy" ]; then
+              project_policy="$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" \
+                --project "$GCP_PROJECT_ID" --format=json --quiet)"
+              printf '%s\n' "$project_policy" | validate_access_policy
+            fi
+            if ! printf '%s\n' "$project_policy" | has_unconditional_accessor; then
+              echo "$secret_name requires verified unconditional secret or project accessor access for ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
               exit 1
             fi
           done

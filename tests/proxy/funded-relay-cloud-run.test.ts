@@ -252,7 +252,7 @@ describe("funded relay Cloud Run service", () => {
 
 function runDeploymentValidation(reviewedAt: string, validThrough: string) {
   const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
-  const block = workflow.split("- name: Validate preview deployment configuration")[1]!
+  const block = workflow.split("- name: Validate deployment configuration")[1]!
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
   const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
