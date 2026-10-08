@@ -1,6 +1,7 @@
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import { Stack, useRouter } from "expo-router";
 
+import { AppStatusBar } from "@/components/AppStatusBar";
 import { IconButton } from "@/components/ui";
 import { appColors, appFonts } from "@/lib/theme-v2";
 
@@ -20,22 +21,26 @@ export default function TerminalSessionLayout() {
   );
 
   return (
-    <Stack
-      screenOptions={{
-        headerShadowVisible: false,
-        headerStyle: { backgroundColor: appColors.light.terminal },
-        headerTintColor: appColors.light.surface,
-        headerTitleStyle: { fontFamily: appFonts.mono, fontSize: 14 },
-        headerBackVisible: false,
-        headerBackButtonDisplayMode: "minimal",
-        headerLeft: closeButton,
-        unstable_headerLeftItems: () => [{
-          type: "custom",
-          element: closeButton(),
-          hidesSharedBackground: true,
-        }],
-        contentStyle: { backgroundColor: appColors.light.terminal },
-      }}
-    />
+    <>
+      {/* The terminal is a dark console in both themes. */}
+      <AppStatusBar surface="dark" />
+      <Stack
+        screenOptions={{
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: appColors.light.terminal },
+          headerTintColor: appColors.light.surface,
+          headerTitleStyle: { fontFamily: appFonts.mono, fontSize: 14 },
+          headerBackVisible: false,
+          headerBackButtonDisplayMode: "minimal",
+          headerLeft: closeButton,
+          unstable_headerLeftItems: () => [{
+            type: "custom",
+            element: closeButton(),
+            hidesSharedBackground: true,
+          }],
+          contentStyle: { backgroundColor: appColors.light.terminal },
+        }}
+      />
+    </>
   );
 }

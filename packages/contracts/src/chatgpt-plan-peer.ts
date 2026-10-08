@@ -21,10 +21,11 @@ export const ChatGptPlanPeerSnapshotSchema = z.object({ deviceId: z.string().reg
     models: z.array(ChatGptPlanPeerModelSchema).max(64),
 }).strict().refine(v => (!v.background || v.enabled) && (!v.enabled || v.accountId !== null && v.grantRevision > 0 && v.models.length > 0)
     && (v.accountId !== null || v.models.length === 0) && new Set(v.models.map(m => m.id)).size === v.models.length);
+const replacementSchema = z.object({ expectedDeviceId: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const ChatGptPlanPeerChallengeSchema = z.object({ version: z.literal(1), challenge: z.string().regex(/^[a-f0-9]{64}$/),
-    ownerId: reference, computerId: reference, expiresAt: z.string().datetime() }).strict();
+    ownerId: reference, computerId: reference, expiresAt: z.string().datetime(), replacement: replacementSchema.optional() }).strict();
 export const ChatGptPlanPeerConnectSchema = z.object({ version: z.literal(1), challenge: z.string().regex(/^[a-f0-9]{64}$/),
-    publicKey: z.string().min(32).max(1024).regex(/^[A-Za-z0-9_-]+$/), signature: z.string().min(64).max(128).regex(/^[A-Za-z0-9_-]+$/), snapshot: ChatGptPlanPeerSnapshotSchema }).strict();
+    publicKey: z.string().min(32).max(1024).regex(/^[A-Za-z0-9_-]+$/), signature: z.string().min(64).max(128).regex(/^[A-Za-z0-9_-]+$/), snapshot: ChatGptPlanPeerSnapshotSchema, replacement: replacementSchema.optional() }).strict();
 export const ChatGptPlanPeerSessionSchema = z.object({ version: z.literal(1), sessionId: z.uuid() }).strict();
 export const ChatGptPlanPeerRequestSchema = z.discriminatedUnion('action', [
     z.object({ version: z.literal(1), action: z.literal('infer'), id: z.uuid(), sequence: z.number().int().min(1).max(CHATGPT_PLAN_PEER_MAX_SEQUENCE), expiresAt: z.string().datetime(), accountId: reference, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
@@ -46,8 +47,9 @@ export function chatGptPlanPeerProof(input: {
     ownerId: string;
     computerId: string;
     snapshot: ChatGptPlanPeerSnapshot;
+    replacement?: { expectedDeviceId: string };
 }): string {
-    return JSON.stringify({ version: 1, challenge: input.challenge, ownerId: input.ownerId, computerId: input.computerId, snapshot: input.snapshot });
+    return JSON.stringify({ version: 1, challenge: input.challenge, ownerId: input.ownerId, computerId: input.computerId, snapshot: input.snapshot, ...(input.replacement ? { replacement: input.replacement } : {}) });
 }
 export const ChatGptPlanPeerPollSchema = z.object({
     version: z.literal(1), requests: z.array(ChatGptPlanPeerRequestSchema).max(32),

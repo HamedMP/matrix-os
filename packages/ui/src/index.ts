@@ -239,3 +239,10 @@ export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
 export { ChatRailSection } from "./chat/ChatRailSection.js";
 
 export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
+
+export * from "./chat-navigation/store.js";
+export * from "./chat-navigation/use-chat-navigation.js";
+export * from "./chat-navigation/browser-cache.js";
+export * from "./chat-navigation/projection.js";
+export * from "./chat-navigation/legacy.js";
+export * from "./chat-navigation/metrics.js";

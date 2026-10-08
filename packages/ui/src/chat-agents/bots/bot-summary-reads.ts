@@ -7,7 +7,7 @@ const ATTENTION_TTL_MS = 15_000;
 const FAILURE_TTL_MS = 1_000;
 const MAX_QUEUED_READS = 2_301;
 const MAX_LIBRARY_SUBSCRIBERS = 256;
-type Entry<T> = { value?: T; error?: unknown; failed: boolean; touchedAt: number; verifiedAt?: number; token?: string; pending?: Promise<T> };
+type Entry<T> = { value?: T; error?: unknown; failed: boolean; touchedAt: number; verifiedAt?: number; publishedOrdinary?: boolean; token?: string; pending?: Promise<T> };
 
 /** Client objects already fence owner, runtime and auth generation. Weak keys do
  * not retain signed-out clients; each live client's caches and queue are capped. */
@@ -34,7 +34,7 @@ function createReads(client: ChatAgentClient) {
       if (running < 4) start(); else queue.push(start);
     });
   }
-  function cache<T>(capacity: number, ttl: number, forceFailuresOnly = false, onSuccess?: (value: T) => void) {
+  function cache<T>(capacity: number, ttl: number, forceFailuresOnly = false, onSuccess?: (value: T) => void, stageOrdinary = false) {
     const entries = new Map<string, Entry<T>>();
     const read = (key: string, work: () => Promise<T>, token?: string, replacePending = false): Promise<T> => {
       let entry = entries.get(key);
@@ -72,6 +72,7 @@ function createReads(client: ChatAgentClient) {
           try {
             const value = await schedule(work);
             if (requested !== current.token) continue;
+            if (stageOrdinary && value === null && current.value !== null) current.publishedOrdinary = false;
             current.value = value; current.verifiedAt = Date.now(); current.failed = false; current.error = undefined;
             if (entries.get(key) === current) onSuccess?.(value);
             return value;
@@ -85,11 +86,17 @@ function createReads(client: ChatAgentClient) {
       })().finally(() => { current.pending = undefined; });
       return current.pending;
     };
-    // A synchronous successful identity projection shares the same bounded LRU
-    // and TTL as async discovery. Undefined is unknown; null is verified ordinary.
+    // A synchronous identity projection shares the same bounded LRU and TTL.
+    // Newly ordinary identities hydrate only after their cohort publishes.
     return Object.assign(read, { snapshot: (key: string): T | undefined => {
       const entry = entries.get(key);
+      if (stageOrdinary && entry?.value === null && !entry.publishedOrdinary) return undefined;
       return entry?.verifiedAt !== undefined && Date.now() - entry.verifiedAt < ttl ? entry.value : undefined;
+    }, publishOrdinary: (keys: readonly string[]) => {
+      for (const key of keys.slice(0, capacity)) {
+        const entry = entries.get(key);
+        if (entry?.verifiedAt !== undefined && entry.value === null) entry.publishedOrdinary = true;
+      }
     } });
   }
   // One bounded verified definition snapshot survives transient failures and
@@ -115,7 +122,7 @@ function createReads(client: ChatAgentClient) {
     }
   });
   const directChats = cache<string | null>(100, DISCOVERY_TTL_MS);
-  const identities = cache<string | null>(1_000, IDENTITY_TTL_MS, true);
+  const identities = cache<string | null>(1_000, IDENTITY_TTL_MS, true, undefined, true);
   const attention = cache<BotInteraction[]>(1_100, ATTENTION_TTL_MS);
   const tasks = cache<BotTaskSummary[]>(100, ATTENTION_TTL_MS);
   return {
@@ -127,6 +134,7 @@ function createReads(client: ChatAgentClient) {
     }, token, replacePending),
     directChatSnapshot: (agentId: string) => directChats.snapshot(agentId),
     directBotSnapshot: (chatId: string) => identities.snapshot(chatId),
+    publishOrdinaryIdentities: (chatIds: readonly string[]) => identities.publishOrdinary(chatIds),
     directChat: (agentId: string, token?: string) => directChats(agentId, () => client.bots!.directChat(agentId), token),
     directBot: (chatId: string, token?: string) => identities(chatId, () => client.bots!.directBot(chatId), token),
     tasks: (chatId: string, token?: string) => tasks(chatId, () => client.bots!.tasks(chatId), token),

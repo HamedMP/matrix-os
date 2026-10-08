@@ -20,6 +20,7 @@ export function createDesktopChatgptPlanClient(session: ChatgptPlanSession, isCu
   return {
     status: signal => request("chatgpt-plan:status", signal),
     connect: (input, signal) => request("chatgpt-plan:connect", signal, input),
+    rebind: (input, signal) => request("chatgpt-plan:rebind", signal, input),
     cancel: signal => request("chatgpt-plan:cancel", signal),
     disconnect: signal => request("chatgpt-plan:disconnect", signal),
     refreshModels: signal => request("chatgpt-plan:refresh-models", signal),

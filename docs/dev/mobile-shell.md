@@ -17,9 +17,23 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
 - Apps open full screen through `MobileAppSurface` in Web Mobile and native runtime routes in Expo.
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
+- The native Terminal list is the computer's terminal workspace tabs
+  (`GET /api/terminal/workspaces`). A session is addressed by its
+  `workspaceId:tabId` TerminalRef and shown under its tab name, which may
+  repeat. Create, rename and delete use the same workspace tab routes as Web
+  Desktop. Tabs that belong to a chat are not listed, because they only attach
+  with that chat's context. The legacy `/api/terminal/sessions` routes answer
+  `426` and must not be called.
 - The focused native Terminal participates in gateway-coordinated presentation
   ownership: it owns one canonical grid while visible, releases on blur or app
   background, and offers **Resume here** after another renderer takes over.
+- While it holds the write lease, the native Terminal sizes the workspace's
+  shared grid to the phone with a `hard` resize, sent once the `attached` frame
+  confirms the lease and again when the surface changes size. A `soft` resize
+  carries no dimensions the runtime uses. The emulator always shows the grid
+  the computer reports (`attached`, `snapshot`, `canonical-size`) and never
+  refits itself: a grid another client keeps wider is scaled down to a 10px
+  text floor and then panned sideways.
 
 ## Local Dev Build
 
@@ -608,18 +622,21 @@ The mobile terminal path should be checked at three layers:
 
 ```bash
 bun run test tests/gateway/terminal-ws.test.ts
-pnpm --dir apps/mobile exec jest --runInBand __tests__/terminal-client.test.ts __tests__/terminal-state.test.ts __tests__/terminal-screen.test.tsx __tests__/TerminalControlBar.test.tsx
+pnpm --dir apps/mobile exec jest --runInBand __tests__/requests-terminals.test.ts __tests__/use-computer-terminals.test.tsx __tests__/terminal-client.test.ts __tests__/terminal-state.test.ts __tests__/terminal-screen.test.tsx __tests__/live-terminal-session.test.tsx __tests__/terminal-surface.test.tsx __tests__/TerminalControlBar.test.tsx
 bun run test tests/shell/terminal-app-component.test.tsx
 ```
 
 Manual terminal checks on a phone:
 
-1. Open Terminal from Apps.
-2. Create a new session and confirm the current folder is visible.
-3. Run `pwd`.
-4. Use Tab, Escape, arrows, Control, paste, and font size controls.
+1. Open Terminal from the drawer and confirm the computer's sessions are listed.
+2. Create a new session and confirm the prompt is visible as soon as it opens.
+3. Run `pwd`, then `tput cols; tput lines`, and confirm a long command wraps at
+   the edge of the screen instead of running off it.
+4. Use Tab, Escape, arrows, Control and paste. Open the keyboard and the
+   expanded key rows and confirm `tput lines` follows the smaller surface.
 5. Leave and reopen Terminal, then continue the running session.
-6. End the session and confirm the resume card disappears or shows the safe recovery message.
+6. Rename a session to a name with spaces, and delete one.
+7. End a session and confirm it moves to Closed sessions and opens as ended.
 
 ## Coding-Agent Project Workspace Validation
 

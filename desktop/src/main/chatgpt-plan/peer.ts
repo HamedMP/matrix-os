@@ -80,7 +80,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         }
         await previousTask;
     }
-    async function start(binding: PlanPeerBinding, snapshot: ChatGptPlanPeerSnapshot, qualified = () => true) {
+    async function start(binding: PlanPeerBinding, snapshot: ChatGptPlanPeerSnapshot, qualified = () => true, replaceDevice = false) {
         await stop();
         if (!qualified()) throw new Error('source changed');
         const controller = new AbortController();
@@ -88,16 +88,17 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             controller, binding, sessionId: undefined as string | undefined
         };
         connection = value;
-        const challenge = ChatGptPlanPeerChallengeSchema.parse(await post(binding, 'challenge', {}, controller.signal));
+        const challenge = ChatGptPlanPeerChallengeSchema.parse(await post(binding, replaceDevice ? 'rebind-challenge' : 'challenge', {}, controller.signal));
         if (!qualified()) throw new Error('source changed');
         if (challenge.ownerId !== binding.ownerId || challenge.computerId !== binding.computerId || Date.parse(challenge.expiresAt) <= Date.now())
             throw new Error('peer identity mismatch');
+        if (replaceDevice !== Boolean(challenge.replacement)) throw new Error('peer intent mismatch');
         const proof = chatGptPlanPeerProof({
             ...challenge, snapshot
         });
         const signature = sign(null, Buffer.from(proof), binding.privateKey).toString('base64url');
         const session = ChatGptPlanPeerSessionSchema.parse(await post(binding, 'connect', {
-            version: 1, challenge: challenge.challenge, publicKey: binding.publicKey, snapshot, signature
+            version: 1, challenge: challenge.challenge, publicKey: binding.publicKey, snapshot, signature, ...(challenge.replacement ? { replacement: challenge.replacement } : {})
         }, controller.signal));
         value.sessionId = session.sessionId;
         if (connection !== value || !qualified())

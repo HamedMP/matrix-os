@@ -1,3 +1,5 @@
+import { createChatNavigationService } from "./navigation-service.js";
+import type { ChatNavigationReader } from "./navigation-repository.js";
 import type { OwnerToolOutputProjection } from "./owner-tool-output.js";
 import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema } from "@matrix-os/contracts";
@@ -141,6 +143,7 @@ export function createCanonicalChatService(
     orchestrator?: Pick<CanonicalChatOrchestrator,
       "admitTurn" | "enqueueQueuedTurn" | "steerRun" | "steerQueuedTurn" | "cancelRun" | "submitInput" | "submitApproval" | "retryTurn" | "reconcileActiveRuns"
     >;
+    navigation?: ChatNavigationReader;
     projectOwnerToolOutput?: OwnerToolOutputProjection;
     executionRoots?: Pick<ChatExecutionRootResolver, "resolve">;
     collaborationGuard?: {
@@ -163,6 +166,7 @@ export function createCanonicalChatService(
     }
   };
   return {
+    navigation: createChatNavigationService({ navigation: options.navigation }),
     async create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord> {
       const request = CanonicalCreateChatRequestSchema.parse(input);
       const create = (target: Pick<ChatRepository, "create">) => target.create(owner, {
