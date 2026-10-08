@@ -25,7 +25,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); navigation.store?.dispose(); });
 const project = { id: "project_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };
 function record(id: string, projectId = project.id): CanonicalChatRecord {
-  return { chat: { id, title: id, createdAt: "2026-10-03T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }, projectId } as CanonicalChatRecord;
+  return { chat: { id, title: id, ownerScope: { type: "personal", ownerId: "project_fixture" },
+    revision: 1, titleVersion: 1, lifecycle: "active", attention: "none", messageCount: 0,
+    createdAt: "2026-10-03T00:00:00Z", updatedAt: "2026-10-03T00:00:00Z" }, projectId };
 }
 function item(id: string, projectId = project.id, kind: "ordinary" | "bot" = "ordinary"): CanonicalChatNavigationItem {
   return { ...record(id, projectId), classification: kind === "ordinary" ? { kind } : { kind, agentId: "agent_alpha" }, persistence: "personal" };
@@ -330,4 +332,47 @@ it("retains only newly authorized global cards during failed truncated recovery"
   await act(async () => recovery.reject(new AppError("server")));
   await waitFor(() => expect(hook.result.current.error).toBe(true));
   expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_new_global"]);
+});
+
+it.each([
+  { name: "newer scoped move into Project", globalProjectId: "other", globalRevision: 1, scopedProjectId: project.id, scopedRevision: 2, visible: true },
+  { name: "newer scoped move out of Project", globalProjectId: project.id, globalRevision: 1, scopedProjectId: "other", scopedRevision: 2, visible: false },
+  { name: "newer scoped removal from Project", globalProjectId: project.id, globalRevision: 1, scopedProjectId: undefined, scopedRevision: 2, visible: false },
+  { name: "older scoped move against newer global", globalProjectId: "other", globalRevision: 2, scopedProjectId: project.id, scopedRevision: 1, visible: false },
+  { name: "equal revision global outside Project", globalProjectId: "other", globalRevision: 2, scopedProjectId: project.id, scopedRevision: 2, visible: false },
+  { name: "equal revision global inside Project", globalProjectId: project.id, globalRevision: 2, scopedProjectId: "other", scopedRevision: 2, visible: true },
+  { name: "known Bot despite newer scoped membership", globalProjectId: "other", globalRevision: 1, scopedProjectId: project.id, scopedRevision: 2, visible: false, bot: true },
+])("merges membership by canonical revision: $name", async test => {
+  navigation.truncated = true;
+  const global = { ...item("chat_revision", test.globalProjectId, test.bot ? "bot" : "ordinary"),
+    chat: { ...item("chat_revision").chat, revision: test.globalRevision, titleVersion: 1, title: "Global title", activityAt: "2026-10-08T00:00:00Z" } };
+  const scoped = { ...record("chat_revision"), projectId: test.scopedProjectId,
+    chat: { ...record("chat_revision").chat, revision: test.scopedRevision, titleVersion: 1, title: "Scoped title", activityAt: "2026-10-01T00:00:00Z" } };
+  navigation.items = [global];
+  const deferred = pending<{ items: CanonicalChatRecord[] }>();
+  const client = clientWithBots();
+  vi.mocked(client.list).mockImplementation(() => deferred.promise);
+  const hook = renderHook(() => useProjectLandingChats(project, client));
+  await act(async () => deferred.resolve({ items: [scoped] }));
+  await waitFor(() => expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(test.visible ? ["chat_revision"] : []));
+  if (test.visible) {
+    expect(hook.result.current.chats[0]?.projectId).toBe(project.id);
+    expect(hook.result.current.chats[0]?.chat.title).toBe(test.scopedRevision > test.globalRevision ? "Scoped title" : "Global title");
+    expect(hook.result.current.chats[0]?.chat.revision).toBe(Math.max(test.globalRevision, test.scopedRevision));
+  }
+  expect(client.agents!.bots!.directBot).not.toHaveBeenCalledWith("chat_revision");
+});
+
+it("keeps unknown scoped cards hidden until their Bot classification settles", async () => {
+  navigation.truncated = true;
+  navigation.items = [item("chat_confirmed")];
+  const identity = pending<string | null>();
+  const client = clientWithBots();
+  vi.mocked(client.list).mockResolvedValue({ items: [record("chat_unknown_scoped")] });
+  vi.mocked(client.agents!.bots!.directBot).mockImplementation(() => identity.promise);
+  const hook = renderHook(() => useProjectLandingChats(project, client));
+  await waitFor(() => expect(client.agents!.bots!.directBot).toHaveBeenCalledWith("chat_unknown_scoped"));
+  expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_confirmed"]);
+  await act(async () => identity.resolve(null));
+  await waitFor(() => expect(hook.result.current.chats.map(row => row.chat.id)).toEqual(["chat_confirmed", "chat_unknown_scoped"]));
 });

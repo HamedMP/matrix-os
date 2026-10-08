@@ -97,9 +97,9 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     if (!scoped) return navigation.items.filter(item => item.classification.kind === "ordinary" && matchesProject(item));
     // An inactive identity hook carries no classification; do not expose its Bot rows.
     if (!active) return [];
-    // Global membership/classification is authoritative for every known row.
-    // Retain confirmed cards while scoped history loads; older responses must
-    // never move a known Chat back into this Project or turn a Bot ordinary.
+    // Retain confirmed cards while scoped history loads. Known Bot classification
+    // remains authoritative; ordinary membership follows canonical revisions,
+    // with the global projection winning equal-revision conflicts.
     const known = new Map(navigation.items.map(item => [item.chat.id, item]));
     const cohort = new Map<string, ChatNavigationRecord>(navigation.items
       .filter(item => item.classification.kind === "ordinary" && matchesProject(item))
@@ -107,9 +107,12 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
     for (const record of records) {
       const authoritative = known.get(record.chat.id);
       if (authoritative) {
-        if (cohort.has(record.chat.id)) cohort.set(record.chat.id, {
-          ...mergeChatNavigationRecord(authoritative, record), projectId: authoritative.projectId,
-        });
+        if (authoritative.classification.kind === "bot") continue;
+        const merged = record.chat.revision > authoritative.chat.revision
+          ? mergeChatNavigationRecord(authoritative, record)
+          : mergeChatNavigationRecord(record, authoritative);
+        if (matchesProject(merged)) cohort.set(record.chat.id, merged);
+        else cohort.delete(record.chat.id);
         continue;
       }
       if (!client.agents?.bots || !matchesProject(record)
