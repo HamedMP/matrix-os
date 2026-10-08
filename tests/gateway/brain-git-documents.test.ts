@@ -201,6 +201,14 @@ describe("buildCommitDocument", () => {
     expect(built.notices).toEqual(["message_truncated"]);
   });
 
+  it("marks a message the reader cut inside its subject", () => {
+    const built = buildCommitDocument(commit({ subject: "s".repeat(500), body: "", messageTruncated: true }), ctx);
+    expect(built.draft.title).toBe("s".repeat(300));
+    expect(built.draft.body).toBe(`${GIT_TRUNCATION_MARKER.trimStart()}\n\nCommit: ${SHA}\nAuthor: Fixture Author\n`
+      + "Committed: 2026-09-01T00:01:00+00:00\nChanged paths: 0");
+    expect(built.notices).toEqual(["message_truncated"]);
+  });
+
   it("clamps a long title without splitting a surrogate pair and replaces NUL", () => {
     const title = `${"t".repeat(299)}\ud83d\ude00 rest`;
     const built = buildCommitDocument(commit({ subject: title, body: "a\u0000b" }), ctx);

@@ -158,20 +158,25 @@ function commitFooter(commit: GitCommitRecord, classification: GitCommitClassifi
   return sanitizeText(lines.join("\n"));
 }
 
-/** Message verbatim, then the footer; the message is cut with a marker to fit the store byte limit. */
+/**
+ * Message verbatim, then the footer; the message is cut with a marker to fit
+ * the store byte limit, and the marker stays when the reader cut the message
+ * inside its subject and left no body.
+ */
 function composeBody(
   message: string,
   messageTruncated: boolean,
   title: string,
   footer: string,
 ): { body: string; truncated: boolean } {
-  if (message === "") return { body: footer, truncated: false };
+  if (message === "" && !messageTruncated) return { body: footer, truncated: false };
   const budget = BRAIN_DOCUMENT_MAX_BYTES - utf8ByteLength(title) - utf8ByteLength(footer) - 2;
   if (utf8ByteLength(message) <= budget && !messageTruncated) {
     return { body: `${message}\n\n${footer}`, truncated: false };
   }
   const kept = truncateUtf8(message, Math.max(0, budget - utf8ByteLength(GIT_TRUNCATION_MARKER))).value;
-  return { body: `${kept}${GIT_TRUNCATION_MARKER}\n\n${footer}`, truncated: true };
+  const cut = kept === "" ? GIT_TRUNCATION_MARKER.trimStart() : `${kept}${GIT_TRUNCATION_MARKER}`;
+  return { body: `${cut}\n\n${footer}`, truncated: true };
 }
 
 /** One first-parent commit as a pull request document (squash or merge of #N / !N) or a commit document. */
