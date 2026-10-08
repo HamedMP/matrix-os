@@ -191,3 +191,210 @@ export interface BrainSearchView {
   };
   readonly freshness: BrainIndexFreshness; readonly notices: readonly string[];
 }
+
+// Graph (spec 557).
+
+export type BrainEntityKind =
+  "person" | "file" | "folder" | "spec" | "pull_request" | "issue" | "project" | "document";
+export type BrainLinkType =
+  | "authored" | "reviewed" | "changed" | "mentions" | "implements_spec" | "references_issue" | "decided_in"
+  | "describes" | "part_of";
+export interface BrainEntityRefView {
+  readonly entityId: string; readonly kind: BrainEntityKind; readonly key: string; readonly displayName: string;
+}
+export interface BrainTimelineItemView {
+  readonly cite: BrainCiteView; readonly linkTypes: readonly BrainLinkType[]; readonly mode: "explicit" | "inferred";
+  readonly matchedPaths: readonly string[];
+}
+export interface BrainTimelineView {
+  readonly entity: BrainEntityRefView; readonly items: readonly BrainTimelineItemView[];
+  readonly nextCursor: string | null; readonly freshness: BrainIndexFreshness;
+}
+export interface BrainEntitiesView { readonly items: readonly BrainEntityRefView[]; readonly nextCursor: string | null }
+export interface BrainTimelineQuery {
+  readonly entity: string; readonly linkTypes?: readonly BrainLinkType[]; readonly from?: string;
+  readonly to?: string; readonly limit?: number; readonly cursor?: string;
+}
+export interface BrainEntitiesQuery {
+  readonly kind?: BrainEntityKind; readonly q?: string; readonly limit?: number; readonly cursor?: string;
+}
+export interface BrainLinksQuery {
+  readonly hops?: 1 | 2; readonly types?: readonly BrainLinkType[]; readonly direction?: "out" | "in" | "both";
+  readonly limit?: number; readonly cursor?: string;
+}
+/** merge; split: "not the same person" (kept); unmerge: Undo of a manual merge (leaves nothing behind). */
+export interface BrainAliasInput { readonly action: "merge" | "split" | "unmerge"; readonly aliasKey: string }
+/** signal: why two people look like one (same_github_login, name_matches_login, ...); detail: the login or name. */
+export interface BrainMergeEvidenceView {
+  readonly signal: string; readonly detail: string; readonly documents: number | null;
+}
+/**
+ * entity stays; alias would merge into it (POST entities/:entityId/aliases with aliasKey). Never merged without the
+ * owner. score: 0.5 to 0.99. counts: links of each side and how many entities would move.
+ */
+export interface BrainMergeSuggestionView {
+  readonly suggestionId: string; readonly score: number; readonly entity: BrainEntityRefView;
+  readonly alias: BrainEntityRefView; readonly aliasKey: string; readonly evidence: readonly BrainMergeEvidenceView[];
+  readonly counts: { readonly entityLinks: number; readonly aliasLinks: number; readonly aliasEntities: number };
+}
+export interface BrainMergeSuggestionsView {
+  readonly items: readonly BrainMergeSuggestionView[]; readonly nextCursor: string | null; readonly truncated: boolean;
+}
+export interface BrainMergeSuggestionsQuery { readonly limit?: number; readonly cursor?: string }
+
+// Sources (specs 558-560).
+
+export type BrainSourceKind =
+  | "git" | "github" | "matrix_notes" | "matrix_files" | "matrix_chat" | "linear" | "google_drive"
+  | "google_calendar" | "slack_bridge";
+export type BrainConnectableSourceKind = Exclude<BrainSourceKind, "git">;
+export type BrainSourceConfigView = Readonly<Record<string, string | number | boolean | readonly string[] | null>>;
+export interface BrainSourceView {
+  readonly sourceId: string; readonly kind: BrainSourceKind; readonly label: string;
+  readonly externalRef: string | null; readonly status: BrainSourceStatus; readonly revision: number;
+  readonly createdAt: string; readonly updatedAt: string; readonly config: BrainSourceConfigView | null;
+  readonly lastSync: Omit<BrainReceiptView, "receiptId" | "counts"> | null;
+}
+export interface BrainSourceKindView {
+  readonly kind: BrainSourceKind; readonly available: boolean; readonly reason: "not_connected" | "not_configured" | null;
+}
+export interface BrainSourcesView { readonly items: readonly BrainSourceView[]; readonly kinds: readonly BrainSourceKindView[] }
+export interface BrainConnectSourceInput {
+  readonly kind: BrainConnectableSourceKind; readonly config: unknown; readonly label?: string;
+}
+export interface BrainConnectSourceResult { readonly source: BrainSourceView; readonly created: boolean }
+export interface BrainSourceOptionsQuery { readonly q?: string; readonly cursor?: string }
+export interface BrainSourceOptionView { readonly id: string; readonly label: string; readonly detail: string | null }
+export interface BrainSourceOptionsView {
+  readonly kind: BrainConnectableSourceKind; readonly items: readonly BrainSourceOptionView[];
+  readonly nextCursor: string | null;
+}
+export interface BrainUpdateSourceInput {
+  readonly expectedRevision: number; readonly status?: "active" | "paused"; readonly config?: unknown;
+  readonly label?: string;
+}
+export interface BrainSourceSyncView {
+  readonly sourceId: string; readonly status: "succeeded" | "partial" | "failed"; readonly errorCode: string | null;
+  readonly nextAction: string; readonly caughtUp: boolean; readonly pages: number; readonly counts: BrainSyncCounts;
+  readonly notices: readonly string[]; readonly retryAfterSeconds: number | null;
+  readonly receipt: BrainReceiptView | null;
+}
+export interface BrainSourceReceiptsView { readonly source: BrainSourceView; readonly receipts: readonly BrainReceiptView[] }
+
+// Brief (spec 561).
+
+export type BrainBriefWindow = "day" | "week";
+export interface BrainBriefLine {
+  readonly lineId: string; readonly text: string; readonly cites: readonly BrainCiteView[];
+  readonly claimId: string | null; readonly claimKind: BrainClaimKind | null; readonly due: string | null;
+  readonly assignee: string | null; readonly severity: "low" | "medium" | "high" | null;
+}
+export interface BrainBriefChangeGroup {
+  readonly sourceId: string | null; readonly sourceKind: string | null; readonly label: string;
+  readonly created: number; readonly revised: number; readonly items: readonly BrainBriefLine[];
+}
+export interface BrainBriefView {
+  readonly date: string; readonly window: BrainBriefWindow; readonly from: string; readonly to: string;
+  readonly generatedAt: string;
+  readonly sections: {
+    readonly changes: readonly BrainBriefChangeGroup[]; readonly decisions: readonly BrainBriefLine[];
+    readonly commitments: readonly BrainBriefLine[]; readonly risks: readonly BrainBriefLine[];
+    readonly attention: readonly BrainBriefLine[];
+  };
+  readonly summary: { readonly text: string; readonly modelId: string; readonly generatedAt: string } | null;
+  readonly truncated: boolean; readonly stored: boolean;
+}
+export interface BrainBriefQuery { readonly date?: string; readonly window?: BrainBriefWindow }
+export interface BrainBriefGenerateInput {
+  readonly date?: string; readonly window?: BrainBriefWindow; readonly summary?: boolean;
+}
+export type BrainConflictRule = "label_disagreement" | "draft_spec_shipped" | "commitment_reversed";
+export interface BrainConflictSideView {
+  readonly cite: BrainCiteView; readonly claimId: string | null; readonly statement: string | null;
+  readonly quote: string;
+}
+export interface BrainConflictView {
+  readonly conflictId: string; readonly rule: BrainConflictRule; readonly summary: string;
+  readonly sides: readonly [BrainConflictSideView, BrainConflictSideView]; readonly detectedAt: string;
+}
+export interface BrainConflictsView { readonly items: readonly BrainConflictView[]; readonly nextCursor: string | null }
+export interface BrainConflictsQuery {
+  readonly rules?: readonly BrainConflictRule[]; readonly limit?: number; readonly cursor?: string;
+}
+export type BrainStaleKind = "claim_outdated" | "source_sync_old" | "source_failing" | "commitment_overdue";
+export interface BrainStaleQuery { readonly kinds?: readonly BrainStaleKind[]; readonly limit?: number; readonly cursor?: string }
+
+// Impact (spec 564).
+
+export interface BrainImpactQuery { readonly head: string; readonly base?: string; readonly depth?: 1 | 2 }
+/** One method per /api/brain route; every method takes a project id or slug. */
+export interface BrainShellApi {
+  registerGitSource(projectId: string, input: BrainRegisterGitSourceInput): Promise<BrainRegisterGitSourceResult>;
+  syncGit(projectId: string): Promise<BrainSyncView>;
+  gitReceipts(projectId: string, limit?: number): Promise<BrainReceiptsView>;
+  why(projectId: string, query: BrainWhyQuery): Promise<BrainWhyResult>;
+  extract(projectId: string, input: BrainExtractInput): Promise<BrainExtractView>;
+  claims(projectId: string, query: Partial<BrainClaimsQuery>): Promise<BrainClaimsView>;
+  search(projectId: string, query: BrainSearchQuery): Promise<BrainSearchView>;
+  refreshSearch(projectId: string): Promise<unknown>;
+  timeline(projectId: string, query: BrainTimelineQuery): Promise<BrainTimelineView>;
+  entities(projectId: string, query: BrainEntitiesQuery): Promise<BrainEntitiesView>;
+  entity(projectId: string, entityId: string): Promise<unknown>;
+  entityLinks(projectId: string, entityId: string, query: BrainLinksQuery): Promise<unknown>;
+  updateAlias(projectId: string, entityId: string, input: BrainAliasInput): Promise<unknown>;
+  refreshGraph(projectId: string): Promise<unknown>;
+  sources(projectId: string): Promise<BrainSourcesView>;
+  connectSource(projectId: string, input: BrainConnectSourceInput): Promise<BrainConnectSourceResult>;
+  sourceOptions(projectId: string, kind: BrainConnectableSourceKind, query: BrainSourceOptionsQuery):
+    Promise<BrainSourceOptionsView>;
+  updateSource(projectId: string, sourceId: string, input: BrainUpdateSourceInput): Promise<BrainSourceView>;
+  removeSource(projectId: string, sourceId: string, expectedRevision: number): Promise<BrainSourceView>;
+  syncSource(projectId: string, sourceId: string): Promise<BrainSourceSyncView>;
+  sourceReceipts(projectId: string, sourceId: string, limit?: number): Promise<BrainSourceReceiptsView>;
+  brief(projectId: string, query: BrainBriefQuery): Promise<BrainBriefView>;
+  generateBrief(projectId: string, input: BrainBriefGenerateInput): Promise<BrainBriefView>;
+  conflicts(projectId: string, query: BrainConflictsQuery): Promise<BrainConflictsView>;
+  stale(projectId: string, query: BrainStaleQuery): Promise<unknown>;
+  impact(projectId: string, query: BrainImpactQuery): Promise<unknown>;
+  mergeSuggestions(projectId: string, query: BrainMergeSuggestionsQuery): Promise<BrainMergeSuggestionsView>;
+  // Background runs: the answers are read field by field (use-brain-job.ts), so they stay `unknown` here.
+  /** 202 { job, deduped }: the new job, or the queued or running one of the same kind and target. */
+  startJob(projectId: string, input: BrainJobStartInput): Promise<unknown>;
+  job(projectId: string, jobId: string): Promise<unknown>;
+  jobs(projectId: string, limit?: number): Promise<unknown>;
+  cancelJob(projectId: string, jobId: string): Promise<unknown>;
+}
+
+// Background runs (spec 566).
+
+export type BrainJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+/** POST .../jobs body, one shape per kind (the gateway's BrainJobRequestInput). */
+export type BrainJobStartInput =
+  | { readonly kind: "sync"; readonly sourceId?: string }
+  | { readonly kind: "extract"; readonly extractor?: "rules" | "model" }
+  | { readonly kind: "search_refresh" } | { readonly kind: "graph_refresh" }
+  | { readonly kind: "brief"; readonly window?: BrainBriefWindow };
+/** Why a run stopped, beyond the API error codes: the run's own limits. */
+export const BRAIN_JOB_CODE_COPY: Readonly<Record<string, string>> = {
+  ...BRAIN_ERROR_COPY,
+  time_limit: "It ran out of time; start it again to go on.",
+  step_limit: "It reached its step limit; start it again to go on.",
+  attempts_exhausted: "It stopped after several restarts. Try again later.",
+  interrupted: "It stopped early when the server restarted; run it again to continue.",
+  embedding_unavailable: "Meaning search could not reach its provider; try again later.",
+  vector_cap: "The search index is full.",
+  graph_capacity: "The graph is full.",
+};
+/**
+ * A job as the screens show it; errorCode is a known code or null, nextAction is worded by a fixed table. waiting: a
+ * running job that is waiting for another run of the project to finish (present only then).
+ */
+export interface BrainJobView {
+  readonly jobId: string; readonly status: BrainJobStatus; readonly steps: number | null;
+  readonly errorCode: string | null; readonly nextAction: string; readonly waiting?: true;
+}
+/** What the screens call: every mirrored route. */
+export type BrainShellClient = BrainShellApi;
+
+/** A project the owner can open the brain of (GET /api/workspace/projects). */
+export interface BrainProjectOption { readonly id: string; readonly name: string; readonly slug: string }
