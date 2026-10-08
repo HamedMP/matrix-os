@@ -80,6 +80,25 @@ describe("brain graph store", { timeout: 60_000 }, () => {
     expect(locks).toEqual([[OWNER, `brain:${SCOPE.scopeId}`]]);
   });
 
+  it("reads the seeded project as project_not_found for another owner and writes nothing", async () => {
+    await seedProject(harness);
+    const other = "owner_b";
+    const alice = brainEntityId("person", "email:alice@acme.dev");
+    for (const call of [
+      () => service().timeline(other, PROJECT, { entity: "pull_request:12" }),
+      () => service().listEntities(other, PROJECT, {}),
+      () => service().mergeSuggestions(other, PROJECT, {}),
+      () => service().getEntity(other, PROJECT, alice),
+      () => service().links(other, PROJECT, alice, {}),
+      () => service().updateAlias(other, PROJECT, alice, { action: "merge", aliasKey: "person:github:alice" }),
+      () => service().refresh(other, PROJECT),
+    ]) {
+      await rejectsWith(call(), BrainApiError, "project_not_found");
+    }
+    expect(await count("brain_graph_aliases")).toBe(1);
+    expect((await service().getEntity(OWNER, PROJECT, alice)).aliases).toHaveLength(1);
+  });
+
   it("answers file, folder, person, pull request, spec and issue timelines newest first", async () => {
     await seedProject(harness);
     const file = await timeline("file:src/alpha.ts");
