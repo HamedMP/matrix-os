@@ -158,3 +158,74 @@ export const BrainDeleteDocumentSchema = z.object({
   documentId: BrainDocumentIdSchema,
   expectedRevision: revisionSchema.optional(),
 }).strict();
+
+export const BrainSyncBatchSchema = z.object({
+  sourceId: BrainSourceIdSchema,
+  expectedCursor: cursorTextSchema.nullable(),
+  nextCursor: cursorTextSchema,
+  upserts: z.array(BrainSyncUpsertSchema).max(BRAIN_SYNC_BATCH_MAX_ITEMS),
+  deletions: z.array(BrainDocumentIdSchema).max(BRAIN_SYNC_BATCH_MAX_ITEMS),
+}).strict().refine((input) =>
+  uniqueStrings(input.upserts.map((upsert) => upsert.documentId)) && uniqueStrings(input.deletions)
+  && input.upserts.reduce((total, upsert) => total + upsert.refs.length, 0) <= BRAIN_SYNC_BATCH_MAX_REFS);
+
+export const BrainOpenSyncReceiptSchema = z.object({ sourceId: BrainSourceIdSchema }).strict();
+
+export const BrainCloseSyncReceiptSchema = z.object({
+  sourceId: BrainSourceIdSchema,
+  receiptId: BrainReceiptIdSchema,
+  status: z.enum(["succeeded", "partial", "failed"]),
+  counts: z.object({
+    read: countSchema,
+    written: countSchema,
+    unchanged: countSchema,
+    deleted: countSchema,
+    failed: countSchema,
+  }).strict(),
+  nextAction: z.string().max(BRAIN_NEXT_ACTION_MAX_CHARS).regex(NEXT_ACTION_PATTERN).optional(),
+  errorCode: z.string().regex(BRAIN_ERROR_CODE_PATTERN).nullable().optional(),
+}).strict();
+
+export const BrainListOptionsSchema = z.object({
+  limit: z.number().int().min(1).max(BRAIN_LIST_MAX_LIMIT).default(BRAIN_LIST_DEFAULT_LIMIT),
+  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(noNul).nullable().default(null),
+}).strict();
+
+export const BrainListDocumentsOptionsSchema = BrainListOptionsSchema.extend({
+  sourceId: BrainSourceIdSchema.optional(),
+}).strict();
+
+export const BrainListReceiptsOptionsSchema = z.object({
+  limit: z.number().int().min(1).max(BRAIN_RECEIPTS_PER_SOURCE).default(BRAIN_RECEIPTS_PER_SOURCE),
+}).strict();
+
+export const BrainSearchSchema = z.object({
+  query: z.string().trim().min(1).max(BRAIN_SEARCH_QUERY_MAX_CHARS).refine(noNul),
+  limit: z.number().int().min(1).max(BRAIN_SEARCH_MAX_LIMIT).default(DEFAULT_SEARCH_LIMIT),
+}).strict();
+
+/** listDocumentsByRef: the cursor is opaque here and decoded strictly by refs-reads.ts. */
+export const BrainRefMatchQuerySchema = z.object({
+  kind: kindSchema,
+  value: BrainDocumentRefSchema.shape.value,
+  mode: z.enum(["exact_or_under", "under"]),
+  provenances: z.array(kindSchema).min(1).max(BRAIN_REF_MATCH_MAX_PROVENANCES).refine(uniqueStrings),
+  extraRefKinds: z.array(kindSchema).max(BRAIN_REF_MATCH_MAX_EXTRA_KINDS).refine(uniqueStrings).default([]),
+  limit: z.number().int().min(1).max(BRAIN_REF_MATCH_MAX_LIMIT).default(BRAIN_REF_MATCH_DEFAULT_LIMIT),
+  cursor: z.string().min(1).max(LIST_CURSOR_MAX_CHARS).refine(noNul).nullable().default(null),
+}).strict();
+
+export const BrainEvidenceProofsSchema = z.array(z.object({
+  documentId: BrainDocumentIdSchema,
+  incarnation: z.uuid(),
+  revision: revisionSchema,
+}).strict()).max(BRAIN_EVIDENCE_PROOFS_MAX);
+
+/** Parses or throws `BrainStoreError("invalid")`; Zod issues never leave the module. */
+export function parseBrainInput<S extends z.ZodType>(schema: S, value: unknown): z.output<S> {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    throw new BrainStoreError("invalid", { cause: result.error });
+  }
+  return result.data as z.output<S>;
+}
