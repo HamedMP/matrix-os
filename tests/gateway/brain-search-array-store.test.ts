@@ -14,7 +14,7 @@ import { brainUnitVector } from "../../packages/gateway/src/brain/search/array-s
 import {
   bootstrapBrainSearchDatabase, createBrainArrayVectorStore, createBrainSearch,
 } from "../../packages/gateway/src/brain/search/index.js";
-import { BrainSearchVectorCapError } from "../../packages/gateway/src/brain/search/types.js";
+import { BrainSearchVectorCapError, type BrainSearchVectorStore } from "../../packages/gateway/src/brain/search/types.js";
 import { BRAIN_CLOCK_START, brainDocumentId } from "./helpers/brain-store-helpers.js";
 import {
   OWNER, PROJECT_ID, SCOPE, createSearchHarness, createSeeder, fakeProvider, resolver, type SearchHarness,
@@ -37,6 +37,14 @@ const vectorRows = async (h: SearchHarness, documentId?: string) => Number((awai
 
 async function documentOf(h: SearchHarness, seed: string) {
   return (await h.repository.getDocument(SCOPE, brainDocumentId(seed)))!;
+}
+
+/** The document's (incarnation, revision), tombstoned or not. */
+async function stateOf(h: SearchHarness, seed: string) {
+  const rows = await sql<{ incarnation: string; revision: number }>`SELECT incarnation, revision FROM brain_documents
+    WHERE owner_id = ${SCOPE.ownerId} AND scope_id = ${SCOPE.scopeId} AND document_id = ${brainDocumentId(seed)}`
+    .execute(h.db);
+  return { documentId: brainDocumentId(seed), ...rows.rows[0]! };
 }
 
 async function replace(h: SearchHarness, store: BrainVectorStore, seed: string, vectors: number[][], providerId = "p") {
@@ -168,6 +176,52 @@ describe("brain search array store", { timeout: 60_000 }, () => {
     }
     await expect(store.storedVectors!(SCOPE, { ...ask, textKeys: ["xyz"] })).rejects.toBeInstanceOf(BrainStoreError);
     await expect(write(await documentOf(h, "a"), [1, 0], "XYZ")).rejects.toBeInstanceOf(BrainStoreError);
+  });
+
+  it("skips a removal while the document is live at another revision, so a late sweep keeps restored vectors", async () => {
+    const store = createBrainArrayVectorStore(h.db);
+    const seeder = await createSeeder(h);
+    await seeder.sync([{ seed: "a" }]);
+    await seeder.sync([], ["a"]);
+    const tombstone = await stateOf(h, "a");
+    await seeder.sync([{ seed: "a", body: "restored" }]);
+    await replace(h, store, "a", [[1, 0]]);
+    const remove = () => store.replaceChunks(SCOPE, { ...tombstone, providerId: "p", chunks: [] });
+    await remove();
+    expect(await vectorRows(h)).toBe(1);
+    // Tombstoned again, the document holds no vectors worth keeping: the late removal goes ahead.
+    await seeder.sync([], ["a"]);
+    await remove();
+    expect(await vectorRows(h)).toBe(0);
+  });
+
+  it("keeps a document restored and embedded while a refresh sweeps its old tombstone", async () => {
+    const provider = fakeProvider();
+    const store = createBrainArrayVectorStore(h.db);
+    const feature = (vectors: BrainSearchVectorStore) => createBrainSearch({ repository: h.repository, resolver,
+      capability: h.capability, embeddings: provider, vectors, now: h.now });
+    let restore: (() => Promise<void>) | null = null;
+    // The sweep's removal waits on the restore, as if the sync and another refresh ran between its read and write.
+    const late: BrainSearchVectorStore = { ...store, async replaceChunks(scope, input) {
+      const run = input.chunks.length === 0 ? restore : null;
+      restore = null;
+      await run?.();
+      return store.replaceChunks(scope, input);
+    } };
+    const seeder = await createSeeder(h);
+    await seeder.sync([{ seed: "a", body: "kittens" }]);
+    await feature(store).service.refresh(OWNER, PROJECT_ID);
+    await seeder.sync([], ["a"]);
+    restore = async () => {
+      await seeder.sync([{ seed: "a", body: "kittens again" }]);
+      expect(await feature(store).index.refresh(SCOPE, {}, AbortSignal.timeout(30_000)))
+        .toMatchObject({ processed: 1, caughtUp: true });
+    };
+    expect(await feature(late).service.refresh(OWNER, PROJECT_ID)).toMatchObject({ removed: 0, caughtUp: true });
+    expect(restore).toBeNull();
+    expect(await vectorRows(h, brainDocumentId("a"))).toBe(1);
+    const view = await feature(store).service.search(OWNER, PROJECT_ID, { q: "kittens", mode: "hybrid" });
+    expect(view.items.map((item) => [item.hitId, item.matchedBy])).toEqual([[brainDocumentId("a"), ["text", "vector"]]]);
   });
 
   it("is the default store without pgvector and loses tombstoned and erased documents' vectors", async () => {

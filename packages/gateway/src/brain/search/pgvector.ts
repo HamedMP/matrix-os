@@ -1,8 +1,9 @@
 /**
  * BrainVectorStore over brain_search_chunks (pgvector). Use only when bootstrapBrainSearchDatabase found the
  * extension. Exact cosine-distance scan per scope and provider, under the search statement deadline; an approximate
- * index is later work. A write is skipped unless the document is live at its (incarnation, revision); stored vectors
- * can be read back by text key, so an unchanged chunk is never embedded twice.
+ * index is later work. A write is skipped unless the document is live at its (incarnation, revision), and a removal
+ * (no chunks) while the document is live at another one; stored vectors can be read back by text key, so an unchanged
+ * chunk is never embedded twice.
  */
 import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
@@ -11,7 +12,7 @@ import {
 } from "../contracts.js";
 import { BrainDocumentIdSchema, BrainScopeKeySchema, parseBrainInput } from "../schemas.js";
 import { BRAIN_MAX_REVISION, BRAIN_UUID_PATTERN, type BrainDatabase, type BrainScopeKey } from "../types.js";
-import { isLiveAt, withSearchRead, withSearchScopeWrite } from "./index-sql.js";
+import { mayReplaceVectors, withSearchRead, withSearchScopeWrite } from "./index-sql.js";
 import {
   BRAIN_SEARCH_EMBED_BATCH_MAX, BRAIN_SEARCH_PROVIDER_ID_PATTERN, BRAIN_SEARCH_TEXT_KEY_PATTERN, isBrainVectorValue,
   type BrainSearchTables, type BrainSearchVectorStore,
@@ -72,7 +73,7 @@ export function createBrainPgVectorStore(db: Kysely<BrainDatabase>): BrainSearch
       const key = parseBrainInput(BrainScopeKeySchema, scope);
       const replace = parseBrainInput(BrainVectorReplaceSchema, input);
       await withSearchScopeWrite(kysely, key, async (trx) => {
-        if (replace.chunks.length > 0 && !await isLiveAt(trx, key, replace)) return;
+        if (!await mayReplaceVectors(trx, key, replace, replace.chunks.length === 0)) return;
         await trx.deleteFrom("brain_search_chunks").where("owner_id", "=", key.ownerId)
           .where("scope_id", "=", key.scopeId).where("document_id", "=", replace.documentId).execute();
         if (replace.chunks.length === 0) return;

@@ -5,14 +5,15 @@
  * statement (a scalar unnest subquery with JIT off, about 15 us a row on Postgres 16) under the search statement
  * deadline, joined to live documents at the indexed revision. A scope holds at most maxPerScope rows: a write past it
  * is refused (BrainSearchVectorCapError), and remaining() lets the indexer stop before it pays for vectors. A write is
- * skipped unless the document is live at its (incarnation, revision).
+ * skipped unless the document is live at its (incarnation, revision); a removal (no chunks) while the document is live
+ * at another one.
  */
 import { sql, type Kysely, type QueryExecutorProvider } from "kysely";
 import { z } from "zod/v4";
 import type { BrainVectorMatch } from "../contracts.js";
 import { BrainDocumentIdSchema, BrainScopeKeySchema, parseBrainInput } from "../schemas.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
-import { isLiveAt, withSearchRead, withSearchScopeWrite } from "./index-sql.js";
+import { mayReplaceVectors, withSearchRead, withSearchScopeWrite } from "./index-sql.js";
 import {
   BrainVectorNearestSchema, BrainVectorReplaceSchema, BrainVectorStoredSchema, selectStoredVectors,
 } from "./pgvector.js";
@@ -61,7 +62,7 @@ export function createBrainArrayVectorStore(
         return unit === null ? [] : [{ index, unit, textKey: chunk.textKey ?? null }];
       });
       await withSearchScopeWrite(kysely, key, async (trx) => {
-        if (replace.chunks.length > 0 && !await isLiveAt(trx, key, replace)) return;
+        if (!await mayReplaceVectors(trx, key, replace, replace.chunks.length === 0)) return;
         await trx.deleteFrom("brain_search_vectors").where("owner_id", "=", key.ownerId)
           .where("scope_id", "=", key.scopeId).where("document_id", "=", replace.documentId).execute();
         if (rows.length === 0) return;
