@@ -3,8 +3,9 @@
  * missing, foreign or malformed project is project_not_found), then the source inside that project's scope (a
  * missing, foreign, tombstoned or malformed source is source_not_found). Connect runs parseConfig, account pinning,
  * identify, checkConfig, createSource, saveConfig, and removes the new source again when anything after createSource
- * fails, so a refused config never leaves a live source. Sync is exactly one bounded run of the shared runner (git
- * sources delegate to gitSync). Holds no state between calls; every call outside the store has a deadline.
+ * fails, so a refused config never leaves a live source. An update saves the config in the transaction that moves the
+ * revision. Sync is exactly one bounded run of the shared runner (git sources delegate to gitSync). Holds no state
+ * between calls; every call outside the store has a deadline.
  */
 import { BrainApiError } from "../../api/types.js";
 import {
@@ -279,11 +280,11 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
       });
       return view(scope, again.source);
     }
-    // The revision moves first, so a client holding the old one cannot save a config over this one.
+    // The config is written in the transaction that moves the revision: both land or neither does, and a client that
+    // reads the new revision always sees the new config, so it never saves an older one over it.
     const updated = await repository.updateSource(scope, {
       sourceId: source.sourceId, expectedRevision: input.expectedRevision, label, status,
-    });
-    await handler.saveConfig(scope, source.sourceId, config);
+    }, (trx) => handler.saveConfig(scope, source.sourceId, config, trx));
     return view(scope, { ...updated, kind: source.kind });
   }
 

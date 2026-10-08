@@ -162,6 +162,29 @@ describe("start and kind rules", () => {
       .rejects.toMatchObject({ code: "source_conflict" });
   });
 
+  it("writes each family's config in the update's transaction, so a refused write leaves the source as it was", async () => {
+    const sources = await start({ accounts: async () => ["work", "home"] });
+    const github = { ...(CONFIGS.github as object), accountLabel: "work" };
+    const linear = { ...(CONFIGS.linear as object), accountLabel: "work" };
+    const cases: readonly [BrainConnectableSourceKind, string, object, object][] = [
+      ["github", "brain_github_sources", github, { ...github, accountLabel: "home" }],
+      ["matrix_notes", "brain_matrix_sources", CONFIGS.matrix_notes as object, { folders: ["work"] }],
+      ["linear", "brain_connector_sources", linear, { ...linear, include: { issues: true, comments: false, projectUpdates: true } }],
+    ];
+    for (const [kind, table, config, next] of cases) {
+      const { source } = await sources.connect(OWNER, "proj_a", { kind, config });
+      await sql`ALTER TABLE ${sql.table(table)} ADD CONSTRAINT refuse_writes CHECK (false) NOT VALID`.execute(harness.db);
+      await expect(sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, label: "Renamed", config: next }))
+        .rejects.toThrow();
+      const kept = (await sources.list(OWNER, "proj_a")).items.find((item) => item.sourceId === source.sourceId);
+      expect(kept, kind).toMatchObject({ revision: 1, label: source.label, config: source.config });
+      await sql`ALTER TABLE ${sql.table(table)} DROP CONSTRAINT refuse_writes`.execute(harness.db);
+      const updated = await sources.update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, label: "Renamed", config: next });
+      expect(updated, kind).toMatchObject({ sourceId: source.sourceId, revision: 2, label: "Renamed" });
+      expect(updated.config, kind).not.toEqual(source.config);
+    }
+  });
+
   it("passes the optional dependencies through: token owners, fetch, limits, git sync and the runner", async () => {
     const runner = vi.fn<BrainSourceSyncRunner>(runBrainSourceSync);
     const network = vi.fn(async () => { throw new Error("no network in tests"); });
