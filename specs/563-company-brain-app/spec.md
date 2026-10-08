@@ -133,7 +133,8 @@ shows the `search` image there. No environment variables and no new dependencies
 ## Resource management
 
 Lists keep at most 500 items (then Load more stops); pages are 20 (search, timeline, path history), 50 (claims,
-conflicts) and 10 (people, merge suggestions); 200 projects; 5 receipts; the first page of connect options (at most
+conflicts) and 10 (people, merge suggestions); a claims screen reads every conflict page up to 500 conflicts, so a
+claim on a later page is still flagged, and says when more were cut; 200 projects; 5 receipts; the first page of connect options (at most
 100); 5 reasons per suggestion. One poll timer per followed job, cleared on unmount; no sockets or caches; every
 request ends with its timeout. The view sends nothing to a third party; a confirmed model run makes the gateway
 send project text to Anthropic (see Security architecture).
