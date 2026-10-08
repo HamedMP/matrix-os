@@ -15,15 +15,18 @@ import {
   cutUtf8, decodeMatrixCursor, documentTitle, guardRead, isoInstant, resumeIndex,
 } from "../../packages/gateway/src/brain/sources/matrix/shared.js";
 import { parseChatConfig } from "../../packages/gateway/src/brain/sources/matrix/config.js";
+import { BRAIN_MATRIX_LIMITS } from "../../packages/gateway/src/brain/sources/matrix/types.js";
 import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
 import { z } from "zod/v4";
 import { createBrainHarness, type BrainHarness } from "./helpers/brain-store-helpers.js";
 import { createMatrixSource, liveTitles, matrixScope, runMatrixLoop } from "./helpers/brain-source-matrix-loop.js";
 
+interface FakeListing { readonly entries: readonly { name: string; kind: "file" | "directory" }[]; read: number }
 const faults = vi.hoisted(() => ({
   realpath: new Map<string, Error | string>(),
   lstat: new Map<string, Error | "other-inode">(),
   afterOpen: null as (() => void) | null,
+  listings: new Map<string, FakeListing>(),
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -39,6 +42,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (fault instanceof Error) throw fault;
       const stats = await actual.lstat(path);
       return fault === "other-inode" ? Object.assign(Object.create(Object.getPrototypeOf(stats)), stats, { ino: stats.ino + 1 }) : stats;
+    },
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      const listing = faults.listings.get(String(args[0]));
+      if (listing === undefined) return actual.opendir(...args);
+      return (async function* () {
+        for (const { name, kind } of listing.entries) {
+          listing.read += 1;
+          yield { name, isFile: () => kind === "file", isDirectory: () => kind === "directory" };
+        }
+      })();
     },
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
@@ -64,6 +77,7 @@ afterEach(async () => {
   faults.afterOpen = null;
   faults.realpath.clear();
   faults.lstat.clear();
+  faults.listings.clear();
   rmSync(home, { recursive: true, force: true });
   await harness.destroy();
 });
@@ -142,6 +156,23 @@ describe("matrix sources shared pieces", () => {
     const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home });
     const project = { projectId: "proj_a", slug: "a", name: "A", scope: matrixScope };
     await expect(handler.listOptions!("owner_a", project, {}, new AbortController().signal)).rejects.toThrow("io");
+  });
+
+  it("counts skipped names against the entries read from one folder", async () => {
+    mkdirSync(join(home, "docs"));
+    writeFileSync(join(home, "docs/z.md"), "z");
+    const max = BRAIN_MATRIX_LIMITS.dirEntriesMax;
+    // Hidden names are skipped, but each one is still an entry read from the folder.
+    const hidden = Array.from({ length: 2 * max }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    const listing: FakeListing = { entries: [...hidden, { name: "z.md", kind: "file" }], read: 0 };
+    faults.listings.set(join(home, "docs"), listing);
+    const truncated = vi.fn();
+    const budget: WalkBudget = { entries: 10, pathBytes: 1_000, position: null, truncated };
+    const found: string[] = [];
+    for await (const entry of walkFiles(join(home, "docs"), [], null, budget)) found.push(entry.path);
+    expect(found).toEqual([]);
+    expect(truncated).toHaveBeenCalledTimes(1);
+    expect(listing.read).toBe(max + 1);
   });
 
   it("refuses a file whose folder is swapped for a symlink while the walk is reading", async () => {
