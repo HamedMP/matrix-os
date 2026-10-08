@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { PostgresDialect } from "kysely";
+import { Kysely, PostgresDialect, type KyselyPlugin } from "kysely";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   BrainRepository,
   BrainStoreError,
+  type BrainDatabase,
   type BrainSyncBatchInput,
   type BrainSyncBatchResult,
 } from "../../packages/gateway/src/brain/index.js";
@@ -36,6 +37,7 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
   let schema: string;
   let first: BrainRepository;
   let second: BrainRepository;
+  let dialect: () => PostgresDialect;
 
   beforeEach(async () => {
     schema = `brain_${randomUUID().replaceAll("-", "")}`;
@@ -44,7 +46,7 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     const url = new URL(databaseUrl!);
     url.searchParams.set("options", `-c search_path=${schema}`);
     const clock = new Date("2026-10-01T10:00:00.000Z");
-    const dialect = (): PostgresDialect =>
+    dialect = (): PostgresDialect =>
       new PostgresDialect({ pool: new pg.Pool({ connectionString: url.toString(), max: 2 }) });
     first = new BrainRepository(dialect(), { now: () => clock });
     second = new BrainRepository(dialect(), { now: () => clock });
@@ -118,5 +120,52 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     });
     expect(retry.created).toBe(1);
     expect((await first.listDocuments(scopeA)).items).toHaveLength(3);
+  });
+
+  it("reads a ref page, its total and its refs from one snapshot while a sync batch commits", async () => {
+    const { source } = await first.createSource(scopeA, natural);
+    const document = brainContent("why", { body: "old body" });
+    const path = { kind: "path", value: "src/a.ts" };
+    await first.applySyncBatch(scopeA, {
+      sourceId: source.sourceId, expectedCursor: null, nextCursor: "c1",
+      upserts: [{ ...document, refs: [path, { kind: "spec", value: "old-spec" }] }], deletions: [],
+    });
+    let batch: Promise<BrainSyncBatchResult> | null = null;
+    // Once the page has read the old body, a sync batch on another connection commits a new body, new refs and a
+    // second matching document before the reader's next statement runs.
+    const commitBetweenStatements: KyselyPlugin = {
+      transformQuery: (args) => args.node,
+      async transformResult(args) {
+        if (batch === null && args.result.rows.some((row) => "cursor_at" in row)) {
+          batch = second.applySyncBatch(scopeA, {
+            sourceId: source.sourceId, expectedCursor: "c1", nextCursor: "c2", deletions: [],
+            upserts: [
+              { ...document, body: "new body", refs: [path, { kind: "spec", value: "new-spec" }] },
+              { ...brainContent("later"), refs: [path] },
+            ],
+          });
+          await batch;
+        }
+        return args.result;
+      },
+    };
+    const readerDb = new Kysely<BrainDatabase>({ dialect: dialect(), plugins: [commitBetweenStatements] });
+    const query = {
+      kind: "path", value: "src/a.ts", mode: "exact_or_under", provenances: ["manual"], extraRefKinds: ["spec"],
+    } as const;
+    try {
+      const page = await new BrainRepository(readerDb).listDocumentsByRef(scopeA, query);
+      expect(await batch).toMatchObject({ created: 1, updated: 1 });
+      expect(page.items.map((item) => [item.document.body, item.document.revision, item.refs])).toEqual([
+        ["old body", 1, [path, { kind: "spec", value: "old-spec" }]],
+      ]);
+      expect([page.total, page.totalCapped, page.nextCursor]).toEqual([1, false, null]);
+      const after = await first.listDocumentsByRef(scopeA, query);
+      expect(after.total).toBe(2);
+      expect(after.items.find((item) => item.document.documentId === document.documentId)?.refs)
+        .toEqual([path, { kind: "spec", value: "new-spec" }]);
+    } finally {
+      await readerDb.destroy();
+    }
   });
 });

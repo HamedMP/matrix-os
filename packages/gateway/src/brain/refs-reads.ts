@@ -2,16 +2,16 @@
  * Ref matching: live documents with a ref of one kind equal to or under a value (a repository file or folder), newest
  * source_updated_at first, keyset paged, with a capped total. brain_document_refs.value is COLLATE "C", so "starts
  * with v/" is the bytewise range [v + "/", v + "0") ("0" is the byte after "/"), served by brain_document_refs_lookup.
- * No LIKE, so nothing to escape; values are bound parameters. Reads take no lock.
+ * No LIKE, so nothing to escape; values are bound parameters. Reads take no lock; one page reads one snapshot.
  */
-import { sql, type Expression, type SqlBool } from "kysely";
+import { sql, type Expression, type Kysely, type SqlBool } from "kysely";
 import { z } from "zod/v4";
 import type { BrainExecutor } from "./documents.js";
 import { toBrainDocument } from "./mappers.js";
 import { BrainDocumentIdSchema, parseBrainInput } from "./schemas.js";
 import {
-  BRAIN_DOCUMENT_REFS_MAX, BRAIN_REF_MATCH_COUNT_CAP, BrainStoreError, type BrainDocumentRef, type BrainRefMatchPage,
-  type BrainRefMatchQuery, type BrainScopeKey,
+  BRAIN_DOCUMENT_REFS_MAX, BRAIN_REF_MATCH_COUNT_CAP, BrainStoreError, type BrainDatabase, type BrainDocumentRef,
+  type BrainRefMatchPage, type BrainRefMatchQuery, type BrainScopeKey,
 } from "./types.js";
 
 /** A BrainRefMatchQuery after BrainRefMatchQuerySchema (defaults applied). */
@@ -115,35 +115,41 @@ async function selectPageRefs(
 }
 
 /**
- * One page of matches. The total is counted on every page, independent of
- * the cursor; `countCap` is a parameter so tests can reach the cap cheaply.
+ * One page of matches. The page, its total and its refs are three statements in one REPEATABLE READ, READ ONLY
+ * transaction, so all three see the first one's snapshot: a sync batch committing in between can never pair a
+ * document's old body with its new refs, or count documents the page did not see. A read-only snapshot blocks no
+ * writer and never fails to serialize. The total is counted on every page, independent of the cursor; `countCap` is
+ * a parameter so tests can reach the cap cheaply.
  * Memory: at most limit + 1 documents (64 KiB each) and limit x 200 ref rows.
  */
 export async function selectDocumentsByRef(
-  db: BrainExecutor,
+  db: Kysely<BrainDatabase>,
   scope: BrainScopeKey,
   query: BrainRefMatchParsedQuery,
   countCap: number = BRAIN_REF_MATCH_COUNT_CAP,
 ): Promise<BrainRefMatchPage> {
   const cursor = query.cursor === null ? null : decodeRefMatchCursor(query.cursor);
-  let pageQuery = matchingDocuments(db, scope, query).selectAll("d")
-    .select(sql<string>`to_char(${sql.ref("d.source_updated_at")} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
-      .as("cursor_at"));
-  if (cursor !== null) {
-    pageQuery = pageQuery.where(sql<SqlBool>`(${sql.ref("d.source_updated_at")}, ${sql.ref("d.document_id")})
-      < (${cursor.at}::timestamptz, ${cursor.documentId})`);
-  }
-  const [rows, total] = await Promise.all([
-    pageQuery.orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc").limit(query.limit + 1).execute(),
-    countMatches(db, scope, query, countCap),
-  ]);
-  const page = rows.slice(0, query.limit);
-  const refs = await selectPageRefs(db, scope, query, page.map((row) => row.document_id));
-  const last = rows.length > query.limit ? page[page.length - 1] : undefined;
-  return {
-    items: page.map((row) => ({ document: toBrainDocument(row), refs: refs.get(row.document_id) ?? [] })),
-    nextCursor: last === undefined ? null : encodeRefMatchCursor({ at: last.cursor_at, documentId: last.document_id }),
-    total: Math.min(total, countCap),
-    totalCapped: total > countCap,
-  };
+  return db.transaction().setIsolationLevel("repeatable read").setAccessMode("read only").execute(async (trx) => {
+    const updatedAt = sql.ref("d.source_updated_at");
+    let pageQuery = matchingDocuments(trx, scope, query).selectAll("d")
+      .select(sql<string>`to_char(${updatedAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.as("cursor_at"));
+    if (cursor !== null) {
+      pageQuery = pageQuery.where(sql<SqlBool>`(${updatedAt}, ${sql.ref("d.document_id")})
+        < (${cursor.at}::timestamptz, ${cursor.documentId})`);
+    }
+    const rows = await pageQuery.orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc")
+      .limit(query.limit + 1).execute();
+    const total = await countMatches(trx, scope, query, countCap);
+    const page = rows.slice(0, query.limit);
+    const refs = await selectPageRefs(trx, scope, query, page.map((row) => row.document_id));
+    const last = rows.length > query.limit ? page[page.length - 1] : undefined;
+    return {
+      items: page.map((row) => ({ document: toBrainDocument(row), refs: refs.get(row.document_id) ?? [] })),
+      nextCursor: last === undefined
+        ? null
+        : encodeRefMatchCursor({ at: last.cursor_at, documentId: last.document_id }),
+      total: Math.min(total, countCap),
+      totalCapped: total > countCap,
+    };
+  });
 }
