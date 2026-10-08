@@ -178,3 +178,167 @@ export interface BrainIntegrationCaller {
 }
 export const BRAIN_INTEGRATION_RESPONSE_MAX_BYTES = 4 * 1024 * 1024;
 export const BRAIN_INTEGRATION_RETRY_AFTER_MAX_SECONDS = 3_600;
+
+// Connect configs. Every list is bounded and validated by the kind handler; credentials are never part of a config.
+
+export interface BrainGithubSourceConfig {
+  /**
+   * "owner/name"; must equal the git source's github.com repository when known (its web base, or the repository in
+   * its synced git_pr / git_commit permalinks).
+   */
+  readonly repo: string;
+  /** integration: the owner's connected GitHub account. token: MATRIX_BRAIN_GITHUB_TOKEN, read per run (self-host). */
+  readonly mode: "integration" | "token";
+  readonly accountLabel?: string;
+  readonly include: { readonly pullRequests: boolean; readonly reviews: boolean; readonly issues: boolean };
+  /** YYYY-MM-DD; nothing updated before it is read. Default: 365 days before the first run. */
+  readonly since?: string;
+}
+/** folders: Notes folders to include (empty: every note of the owner). */
+export interface BrainMatrixNotesSourceConfig { readonly folders: readonly string[] }
+/** roots: 1..8 home-relative folders; extensions: lowercase without dot, 1..32; files over maxFileBytes are skipped. */
+export interface BrainMatrixFilesSourceConfig {
+  readonly roots: readonly string[]; readonly extensions: readonly string[]; readonly maxFileBytes: number;
+}
+/** chatIds: 1..50 chats the owner opted in explicitly; never any other chat. */
+export interface BrainMatrixChatSourceConfig { readonly chatIds: readonly string[] }
+export interface BrainLinearSourceConfig {
+  readonly teamKeys: readonly string[]; readonly accountLabel?: string;
+  readonly include: { readonly issues: boolean; readonly comments: boolean; readonly projectUpdates: boolean };
+}
+export interface BrainGoogleDriveSourceConfig { readonly folderIds: readonly string[]; readonly accountLabel?: string }
+/** includeEventBodies: descriptions are stored only when true; attendees and times always. */
+export interface BrainGoogleCalendarSourceConfig {
+  readonly calendarIds: readonly string[]; readonly accountLabel?: string; readonly includeEventBodies: boolean;
+  readonly pastDays: number; readonly futureDays: number;
+}
+/** companyScopeId: the Company Brain (company_brain_*) scope whose captured Slack threads are read. */
+export interface BrainSlackBridgeSourceConfig { readonly companyScopeId: string; readonly channelIds: readonly string[] }
+
+export interface BrainSourceConfigByKind {
+  github: BrainGithubSourceConfig; matrix_notes: BrainMatrixNotesSourceConfig;
+  matrix_files: BrainMatrixFilesSourceConfig; matrix_chat: BrainMatrixChatSourceConfig;
+  linear: BrainLinearSourceConfig; google_drive: BrainGoogleDriveSourceConfig;
+  google_calendar: BrainGoogleCalendarSourceConfig; slack_bridge: BrainSlackBridgeSourceConfig;
+}
+
+export const BRAIN_SOURCE_CONFIG_LIMITS = {
+  /** JSON bytes of one stored config. */
+  configMaxBytes: 8 * 1024, listItemMaxChars: 256, githubSinceMaxDays: 3_650,
+  matrixFileRoots: 8, matrixFileExtensions: 32, matrixFileMaxBytesDefault: 262_144, matrixFileMaxBytesCeiling: 1_048_576,
+  matrixChats: 50, linearTeams: 20, driveFolders: 20, calendars: 10, calendarPastDaysMax: 90, calendarFutureDaysMax: 90,
+  slackChannels: 50,
+} as const;
+
+// Kind handlers (one per connectable kind; sources/core keeps the registry and the /sources routes).
+
+/** A redacted, client-safe config: no token, no home path outside the configured roots, bounded values. */
+export type BrainSourceConfigView = Readonly<Record<string, string | number | boolean | readonly string[] | null>>;
+
+export type BrainSourceAdapterResolution<TConfig> =
+  | { readonly ok: true; readonly adapter: BrainSourceAdapter<TConfig> }
+  | { readonly ok: false; readonly code: "not_connected" | "auth_failed" | "config_invalid" };
+
+export interface BrainSourceOptionsQuery { readonly q?: string; readonly cursor?: string }
+export interface BrainSourceOptionView { readonly id: string; readonly label: string; readonly detail: string | null }
+export interface BrainSourceOptionsView {
+  readonly kind: BrainConnectableSourceKind; readonly items: readonly BrainSourceOptionView[];
+  readonly nextCursor: string | null;
+}
+export const BRAIN_SOURCE_OPTIONS_MAX = 100;
+
+/**
+ * Config rows live in the handler's own prefixed table keyed by (owner_id, scope_id, source_id), referencing
+ * brain_sources ON DELETE CASCADE. parseConfig throws BrainFeatureError("source_config_invalid"). identify never
+ * touches the network. createAdapter reads credentials per run and never keeps them. The sources service connects in
+ * this order: parseConfig, checkConfig, createSource, saveConfig, and deleteSource when saveConfig still throws, so a
+ * refused config never leaves a live brain_sources row.
+ */
+export interface BrainSourceKindHandler<TConfig> {
+  readonly kind: BrainConnectableSourceKind;
+  parseConfig(raw: unknown): TConfig;
+  /** Refuses a config before the source row is created (for example source_conflict); never writes. */
+  checkConfig?(scope: BrainScopeKey, config: TConfig): Promise<void>;
+  identify(project: BrainResolvedProject, config: TConfig): { readonly externalRef: string; readonly label: string };
+  saveConfig(scope: BrainScopeKey, sourceId: string, config: TConfig): Promise<void>;
+  loadConfig(scope: BrainScopeKey, sourceId: string): Promise<TConfig | null>;
+  createAdapter(ownerId: string, project: BrainResolvedProject, config: TConfig): Promise<BrainSourceAdapterResolution<TConfig>>;
+  viewConfig(config: TConfig): BrainSourceConfigView;
+  /** Whether the kind can be connected now (account connected, environment configured); no provider content. */
+  availability(ownerId: string): Promise<BrainSourceKindAvailability>;
+  listOptions?(ownerId: string, project: BrainResolvedProject, query: BrainSourceOptionsQuery, signal: AbortSignal):
+    Promise<BrainSourceOptionsView>;
+}
+/** Method parameters are bivariant, so every BrainSourceKindHandler<TConfig> is assignable here. */
+export type BrainAnySourceKindHandler = BrainSourceKindHandler<unknown>;
+
+export type BrainSourceKindAvailability =
+  | { readonly available: true } | { readonly available: false; readonly reason: "not_connected" | "not_configured" };
+
+// /sources views.
+
+export interface BrainSourceLastSyncView {
+  readonly status: BrainReceiptView["status"]; readonly startedAt: string; readonly finishedAt: string | null;
+  readonly nextAction: string; readonly errorCode: string | null;
+}
+
+/** externalRef is shown only for git and github (a repository identity); null for every other kind. */
+export interface BrainSourceView {
+  readonly sourceId: string; readonly kind: BrainSourceKind; readonly label: string;
+  readonly externalRef: string | null; readonly status: BrainSourceStatus; readonly revision: number;
+  readonly createdAt: string; readonly updatedAt: string; readonly config: BrainSourceConfigView | null;
+  readonly lastSync: BrainSourceLastSyncView | null;
+}
+export interface BrainSourceKindView {
+  readonly kind: BrainSourceKind; readonly available: boolean;
+  readonly reason: "not_connected" | "not_configured" | null;
+}
+export interface BrainSourcesView { readonly items: readonly BrainSourceView[]; readonly kinds: readonly BrainSourceKindView[] }
+
+export interface BrainConnectSourceInput {
+  readonly kind: BrainConnectableSourceKind; readonly config: unknown; readonly label?: string;
+}
+export interface BrainConnectSourceResult { readonly source: BrainSourceView; readonly created: boolean }
+/** expectedRevision: the source revision the client loaded; a miss is revision_conflict. */
+export interface BrainUpdateSourceInput {
+  readonly expectedRevision: number; readonly status?: "active" | "paused"; readonly config?: unknown;
+  readonly label?: string;
+}
+
+export interface BrainSourceSyncView {
+  readonly sourceId: string; readonly status: BrainSourceSyncResult["status"];
+  readonly errorCode: BrainSourceErrorCode | BrainSourceInfoCode | null; readonly nextAction: BrainSourceNextAction;
+  readonly caughtUp: boolean; readonly pages: number; readonly counts: BrainSyncCounts;
+  readonly notices: readonly BrainSourceNotice[]; readonly retryAfterSeconds: number | null;
+  readonly receipt: BrainReceiptView | null;
+}
+export interface BrainSourceReceiptsView { readonly source: BrainSourceView; readonly receipts: readonly BrainReceiptView[] }
+
+export const BRAIN_SOURCES_BODY_MAX_BYTES = { connect: 16 * 1024, update: 16 * 1024, sync: 1_024, remove: 1_024 } as const;
+
+/**
+ * Built by sources/core createBrainSourcesService. gitSync: BrainProjectService.sync mapped to a sync view, used
+ * when POST /sources/:sourceId/sync names the git source (absent: that request is source_kind_unsupported); the
+ * service sets the view's sourceId to the source the client named. accounts: the owner's connection labels of a
+ * service (no provider call); present, a connect pins one account (several and none named: source_config_invalid).
+ */
+export interface BrainSourcesServiceDeps {
+  readonly repository: BrainRepository; readonly resolver: BrainProjectResolver;
+  readonly handlers: readonly BrainAnySourceKindHandler[]; readonly runner: BrainSourceSyncRunner;
+  readonly hooks?: BrainChangeHooks; readonly limits?: Partial<BrainSourceSyncLimits>;
+  readonly gitSync?: (ownerId: string, projectRef: string) => Promise<BrainSourceSyncView>;
+  readonly accounts?: (ownerId: string, service: BrainIntegrationService) => Promise<readonly string[]>;
+}
+
+/** Owner-scoped /sources service (sources/core). sync: exactly one bounded run; git sources delegate to gitSync. */
+export interface BrainSourcesService {
+  list(ownerId: string, projectRef: string): Promise<BrainSourcesView>;
+  connect(ownerId: string, projectRef: string, input: BrainConnectSourceInput): Promise<BrainConnectSourceResult>;
+  options(ownerId: string, projectRef: string, kind: BrainConnectableSourceKind, query: BrainSourceOptionsQuery):
+    Promise<BrainSourceOptionsView>;
+  update(ownerId: string, projectRef: string, sourceId: string, input: BrainUpdateSourceInput): Promise<BrainSourceView>;
+  remove(ownerId: string, projectRef: string, sourceId: string, expectedRevision: number): Promise<BrainSourceView>;
+  /** signal: the caller's stop (a background run's cancel, time cap or shutdown); it ends the run between pages. */
+  sync(ownerId: string, projectRef: string, sourceId: string, signal?: AbortSignal): Promise<BrainSourceSyncView>;
+  receipts(ownerId: string, projectRef: string, sourceId: string, limit: number): Promise<BrainSourceReceiptsView>;
+}
