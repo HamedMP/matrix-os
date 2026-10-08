@@ -13,7 +13,8 @@ it('offers installed apps, a working build request and a returnable full app det
   fireEvent.change(screen.getByRole('textbox',{name:'Describe an app'}),{target:{value:'My weekly plan'}});
   fireEvent.click(screen.getByRole('button',{name:'Build app'}));
   expect(generate).toHaveBeenCalledTimes(1);
-  await screen.findByText('Sent to Matrix. Follow the build in Chat.');
+  await screen.findByText('Build requested. Check Chat for delivery. Your prompt is kept here.');
+  expect(screen.getByRole('textbox',{name:'Describe an app'})).toHaveProperty('value','My weekly plan');
   fireEvent.click(screen.getByRole('button',{name:`Explore ${catalog.apps[0].name}`}));
   expect(await screen.findByRole('button',{name:'Back to gallery'})).toBeTruthy();
   expect(screen.queryByRole('dialog')).toBeNull();
@@ -28,4 +29,23 @@ it('announces a failed installed-strip launch even when search hides its card', 
   fireEvent.change(screen.getByRole('textbox',{name:'Search apps'}),{target:{value:'not present'}});
   fireEvent.click(screen.getByRole('button',{name:`Launch ${app.name}`}));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent','The app could not open. Try again.');
+});
+
+it.each(['Explore', 'Details for'])('returns focus to the exact %s trigger after details', async (prefix) => {
+  const app=catalog.apps[0];
+  window.MatrixOS={integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:[{...app,installed:false}]})};
+  render(<Gallery/>);
+  const trigger=await screen.findByRole('button',{name:`${prefix} ${app.name}`});
+  trigger.focus();
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('button',{name:'Back to gallery'}));
+  expect(document.activeElement).toBe(screen.getByRole('button',{name:`${prefix} ${app.name}`}));
+});
+it('preserves a typed request when the host rejects the build handoff', async () => {
+  window.MatrixOS={generate:async()=>{throw new Error('unavailable');},integrations:async()=>[],gatewayFetch:async()=>({version:1,apps:[]})};
+  render(<Gallery/>);
+  fireEvent.change(screen.getByRole('textbox',{name:'Describe an app'}),{target:{value:'Track my receipts'}});
+  fireEvent.click(screen.getByRole('button',{name:'Build app'}));
+  await screen.findByText('The build request could not be sent. Try again in Chat.');
+  expect(screen.getByRole('textbox',{name:'Describe an app'})).toHaveProperty('value','Track my receipts');
 });

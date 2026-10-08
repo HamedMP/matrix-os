@@ -41,12 +41,13 @@ export default function App() {
   });
   const browseScroll = useRef(0);
   const lastSelected = useRef<string | null>(null);
+  const lastTrigger = useRef("card-preview");
   const galleryRef = useRef<HTMLElement>(null);
-  const chooseApp = (id: string) => { browseScroll.current = galleryRef.current?.scrollTop ?? 0; lastSelected.current = id; setSelected(id); };
+  const chooseApp = (id: string, trigger = "card-preview") => { lastTrigger.current = trigger; browseScroll.current = galleryRef.current?.scrollTop ?? 0; lastSelected.current = id; setSelected(id); };
   useEffect(() => {
     if (selected) { if (galleryRef.current) galleryRef.current.scrollTop = 0; return; }
     if (lastSelected.current) {
-      const button = galleryRef.current?.querySelector<HTMLButtonElement>(`article[aria-labelledby="gallery-title-${lastSelected.current}"] .card-preview`);
+      const button = galleryRef.current?.querySelector<HTMLButtonElement>(`article[aria-labelledby="gallery-title-${lastSelected.current}"] .${lastTrigger.current}`);
       button?.focus({ preventScroll: true });
       if (galleryRef.current) galleryRef.current.scrollTop = browseScroll.current;
     }
@@ -151,12 +152,14 @@ export default function App() {
   const build = async (input = buildPrompt) => {
     if (buildBusy.current) return;
     buildBusy.current = true;
+    setBuildPrompt(input);
     setBuilding(true);
     setNotice("");
     try {
       await requestAppBuild(window.MatrixOS ?? {}, input);
-      setBuildPrompt("");
-      setNotice("Sent to Matrix. Follow the build in Chat.");
+      // Legacy generate is fire-and-forget in both hosts, not a delivery receipt.
+      // Keep the draft so disconnection or an expired host queue cannot lose it.
+      setNotice("Build requested. Check Chat for delivery. Your prompt is kept here.");
     } catch (error) {
       console.warn("App build handoff unavailable", error instanceof Error ? error.name : "Unknown error");
       setNotice("The build request could not be sent. Try again in Chat.");

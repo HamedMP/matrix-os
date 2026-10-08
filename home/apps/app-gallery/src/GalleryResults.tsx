@@ -12,7 +12,7 @@ interface Props {
   bridgeUnavailable: boolean;
   pending: string | null;
   actionErrors: Record<string, string>;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, trigger?: "card-preview" | "card-identity") => void;
   onAction: (app: GalleryAppListing) => Promise<void>;
   onRefresh: () => Promise<void>;
   onClear: () => void;
@@ -47,7 +47,7 @@ function AppCard({ app, props }: { app: GalleryAppListing; props: Props }) {
     <article className="gallery-card" aria-labelledby={`gallery-title-${app.id}`}>
       <button className="card-preview" aria-label={`Explore ${app.name}`} onClick={() => props.onSelect(app.id)}><Preview app={app} /></button>
       <div className="card-info">
-        <button className="card-identity" aria-label={`Details for ${app.name}`} onClick={() => props.onSelect(app.id)}><AppIdentity app={app} /><div><h2 id={`gallery-title-${app.id}`}>{app.name}</h2><p>{app.tagline}</p></div></button>
+        <button className="card-identity" aria-label={`Details for ${app.name}`} onClick={() => props.onSelect(app.id, "card-identity")}><AppIdentity app={app} /><div><h2 id={`gallery-title-${app.id}`}>{app.name}</h2><p>{app.tagline}</p></div></button>
         <Action app={app} pending={props.pending} error={error} onAction={props.onAction} />
       </div>
       <div className="card-connections"><span>{app.services.every(service => service.optional) ? "Optional" : "Works with"}</span>
