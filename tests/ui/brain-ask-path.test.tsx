@@ -27,7 +27,7 @@ function why(items: readonly BrainWhyItem[], extra: Partial<BrainWhyResult> = {}
 }
 
 function ask(text: string) {
-  fireEvent.change(screen.getByRole("searchbox", { name: "Ask the Company Brain" }), { target: { value: text } });
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search the Company Brain" }), { target: { value: text } });
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
 }
 
