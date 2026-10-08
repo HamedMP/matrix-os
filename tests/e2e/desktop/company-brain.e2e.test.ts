@@ -42,7 +42,7 @@ suite("Electron Desktop Company Brain", () => {
 
   const brainWindow = () => page.getByRole("dialog", { name: "Company Brain window", exact: true });
 
-  it("opens from the launcher with the title bar, the project picker and the six tabs", async () => {
+  it("opens from the launcher on the Chat tab, with the title bar, the project picker and the six tabs", async () => {
     await page.getByRole("button", { name: "Open App Launcher", exact: true }).click();
     const launcher = page.getByRole("dialog", { name: "App launcher", exact: true });
     await launcher.getByRole("button", { name: "Company Brain", exact: true }).click();
@@ -54,11 +54,10 @@ suite("Electron Desktop Company Brain", () => {
     expect(await picker.locator("option").allTextContents()).toEqual(["Matrix OS"]);
     const tabs = view.getByRole("tablist", { name: "Screens" }).getByRole("tab");
     expect(await tabs.allTextContents()).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
-    // The Brain tab lends no chat view yet, so it opens on Search and the Chat tab says chat is not available here.
-    expect(await view.getByRole("tab", { name: "Search", exact: true }).getAttribute("aria-selected")).toBe("true");
+    expect(await view.getByRole("tab", { name: "Chat", exact: true }).getAttribute("aria-selected")).toBe("true");
     expect(await view.getByRole("heading", { level: 1 }).count()).toBe(0);
-    await view.getByRole("tab", { name: "Chat", exact: true }).click();
-    await view.getByText("Chat is not available here.").first().waitFor();
+    // The stub gateway has no brain routes, so the Chat tab stops at the sources check; the other tabs still work.
+    await view.getByText("This part of the Company Brain is not turned on yet.").first().waitFor();
     await view.getByRole("tab", { name: "Search", exact: true }).click();
     await view.getByRole("searchbox", { name: "Search the Company Brain" }).waitFor();
     await page.screenshot({ path: join(evidence, "electron-desktop-ask.png") });
