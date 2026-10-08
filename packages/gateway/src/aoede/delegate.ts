@@ -224,7 +224,11 @@ export function createAoedeDelegation(options: {
           } });
         const result = await actions.execute(action, ctx.sessionId); await speak(ctx, result.message); return;
       }
-      const { existing, selection: initial } = await selectionReadiness(ctx.principal);
+      const existing = await options.repository.get(owner, `chat_aoede_${digest}`);
+      const catalog = await options.catalog.getCatalog(ctx.principal, existing?.chat.currentSelection);
+      const defaults = catalog.instances.find(i => i.availability === "available" && i.supports.rootChat && i.defaultSelection);
+      const initial = existing?.chat.currentSelection ?? defaults?.defaultSelection;
+      if (!initial) throw new AoedeTaskNotStartedError();
       const created = existing ?? await options.repository.create(owner, { id: `chat_aoede_${digest}`,
         clientRequestId: `req_aoede_${digest}`, title: "Aoede", currentSelection: initial });
       const w: Watch = { ctx, chatId: created.chat.id, title: bound(text.replace(/\s+/g, " ")), admitted: false, terminal: false };
@@ -233,7 +237,9 @@ export function createAoedeDelegation(options: {
         for (let attempt = 0; attempt < 2; attempt++) {
           const current = await options.repository.get(owner, w.chatId);
           if (!current) throw new Error("Chat unavailable");
-          const { selection, instance } = await selectionReadiness(ctx.principal);
+          const selection = current.chat.currentSelection ?? initial;
+          const instance = catalog.instances.find(i => i.id === selection.instanceId && i.availability === "available");
+          if (!instance || !instance.supports.rootChat) throw new AoedeTaskNotStartedError();
           const detail = await options.repository.getDetailPage(owner, w.chatId, { limit: 1 });
           const last = detail?.runs.at(-1);
           const mode = (allowed: string[], preferred?: string) => preferred && allowed.includes(preferred) ? preferred

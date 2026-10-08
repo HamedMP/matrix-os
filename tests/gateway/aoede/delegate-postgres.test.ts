@@ -5,6 +5,7 @@ import { PostgresDialect } from "kysely";
 import { CanonicalProviderCatalogSchema, type AoedeServerMessage } from "@matrix-os/contracts";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
+import { CanonicalChatOrchestrationError, canonicalChatSafeError } from "../../../packages/gateway/src/chat/orchestration-errors.js";
 import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { createCanonicalChatEventStream } from "../../../packages/gateway/src/chat/event-stream.js";
 import { createAoedeRepository } from "../../../packages/gateway/src/aoede/repository.js";
@@ -344,11 +345,31 @@ it("missing root access discloses setup and never creates Chat or admits work", 
 it("advisory readiness cannot authorize a provider rejected at the actual admission boundary", async () => {
   expect(await delegate.readiness(principal)).toMatchObject({ status: "ready" });
   const available = await catalog.getCatalog();
-  vi.spyOn(catalog, "getCatalog").mockResolvedValueOnce(available).mockResolvedValueOnce(available)
+  vi.spyOn(catalog, "getCatalog").mockResolvedValueOnce(available)
     .mockResolvedValue({ revision: "revoked", drivers: [], instances: [] });
   const write = vi.spyOn(repository, "admitTurn");
   await expect(delegate.dispatch(ctx)).rejects.toThrow("Delegated task setup required");
   expect(write).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("discovers once before canonical admission, including conflict retry=%s", async retry => {
+  await delegate.shutdown();
+  const available = await catalog.getCatalog();
+  // Chat retains its own live discovery; Aoede must not repeat the preceding probe.
+  const discover = vi.fn().mockResolvedValueOnce(available)
+    .mockRejectedValue(new Error("Unexpected duplicate Aoede discovery"));
+  delegate = createAoedeDelegation({ ...composition, catalog: { getCatalog: discover } });
+  const admit = vi.spyOn(orchestrator, "admitTurn");
+  if (retry) admit.mockRejectedValueOnce(new CanonicalChatOrchestrationError(
+    canonicalChatSafeError("chat_conflict", "Chat changed", true), 409));
+  await delegate.dispatch(ctx);
+  expect(discover).toHaveBeenCalledTimes(1);
+  expect(admit).toHaveBeenCalledTimes(retry ? 2 : 1);
+  const binding = (await sessions.delegations(ctx.sessionId))[0];
+  const history = (await repository.exportChat(owner, binding.chat_id!))!;
+  expect(history.turns).toHaveLength(1);
+  expect(history.runs[0].selection).toEqual(selection);
+  expect(binding.run_id).toBe(history.runs[0].id);
 });
 
 it.each(["instance", "model", "options"])("saved unavailable %s is not silently replaced by the available default", async kind => {
