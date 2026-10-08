@@ -139,3 +139,97 @@ function build(ctx: GithubDocumentContext, parts: DocumentParts): GithubBuiltDoc
     truncated: composed.truncated,
   };
 }
+
+export function pullRequestDocument(
+  ctx: GithubDocumentContext, issue: GithubIssue, pull: GithubPull, commits: readonly string[], reviewers: readonly string[],
+): GithubBuiltDocument {
+  const n = issue.number;
+  const status = pullStatus(issue, pull);
+  const labels = labelNames(issue);
+  const linked = closingIssues(issue.body ?? "", ctx.repo);
+  const mergedAt = pull.merged_at ?? issue.pull_request?.merged_at ?? null;
+  // An open pull request's merge_commit_sha is a temporary test merge, never on the default branch.
+  const mergeSha = mergedAt === null ? null : pull.merge_commit_sha?.toLowerCase() ?? null;
+  const refs = new RefSet();
+  refs.add("handle", `#${n}`).add("pr", String(n)).add("status", status).add("author", personKey(issue.user?.login));
+  for (const login of logins(issue.assignees)) refs.add("assignee", personKey(login));
+  for (const login of [...reviewers, ...logins(pull.requested_reviewers)]) refs.add("reviewer", personKey(login));
+  for (const ref of linked) refs.add("issue", ref);
+  for (const name of labels) refs.add("label", name);
+  for (const sha of mergeSha === null ? commits : [mergeSha, ...commits]) if (BRAIN_COMMIT_SHA_PATTERN.test(sha)) refs.add("commit", sha);
+  return build(ctx, {
+    kind: GITHUB_DOCUMENT_KINDS.pr, key: n, title: issue.title, fallbackTitle: `Pull request #${n}`, text: issue.body ?? "",
+    footer: [
+      `Pull request: #${n}`, `State: ${status}`, `Author: ${issue.user?.login ?? "unknown"}`,
+      mergedAt === null ? null : `Merged: ${mergedAt}`, labels.length > 0 ? `Labels: ${labels.join(", ")}` : null,
+      linked.length > 0 ? `Linked issues: ${linked.join(", ")}` : null,
+      `Commits: ${commits.length}`, mergeSha !== null ? `Merge commit: ${mergeSha}` : null,
+    ],
+    path: `pull/${n}`, sourceUpdatedAt: issue.updated_at, provenance: BRAIN_PROVENANCES.githubPr, refs,
+  });
+}
+
+export function issueDocument(ctx: GithubDocumentContext, issue: GithubIssue): GithubBuiltDocument {
+  const n = issue.number;
+  const labels = labelNames(issue);
+  const assignees = logins(issue.assignees);
+  const refs = new RefSet();
+  refs.add("handle", `#${n}`).add("issue", `#${n}`).add("status", issue.state).add("author", personKey(issue.user?.login));
+  for (const login of assignees) refs.add("assignee", personKey(login));
+  for (const name of labels) refs.add("label", name);
+  const reason = issue.state === "closed" && issue.state_reason ? ` (${issue.state_reason})` : "";
+  return build(ctx, {
+    kind: GITHUB_DOCUMENT_KINDS.issue, key: n, title: issue.title, fallbackTitle: `Issue #${n}`, text: issue.body ?? "",
+    footer: [
+      `Issue: #${n}`, `State: ${issue.state}${reason}`, `Author: ${issue.user?.login ?? "unknown"}`,
+      assignees.length > 0 ? `Assignees: ${assignees.join(", ")}` : null,
+      labels.length > 0 ? `Labels: ${labels.join(", ")}` : null, issue.closed_at ? `Closed: ${issue.closed_at}` : null,
+    ],
+    path: `issues/${n}`, sourceUpdatedAt: issue.updated_at, provenance: BRAIN_PROVENANCES.githubIssue, refs,
+  });
+}
+
+const REVIEW_STATES: Readonly<Record<string, string>> = {
+  APPROVED: "approved", CHANGES_REQUESTED: "changes_requested", COMMENTED: "commented", DISMISSED: "dismissed",
+};
+
+/** Null for pending reviews and for comment-only reviews without text (their comments are documents of their own). */
+export function reviewDocument(
+  ctx: GithubDocumentContext, prNumber: number, prDocumentId: string, review: GithubReview, fallbackTime: string,
+): GithubBuiltDocument | null {
+  const state = REVIEW_STATES[review.state];
+  const text = review.body ?? "";
+  if (state === undefined || (state === "commented" && text.trim() === "")) return null;
+  const reviewer = review.user?.login ?? "unknown";
+  const person = personKey(review.user?.login);
+  const submitted = review.submitted_at ?? fallbackTime;
+  return build(ctx, {
+    kind: GITHUB_DOCUMENT_KINDS.review, key: review.id, title: `Review of #${prNumber} by ${reviewer}: ${state.replace("_", " ")}`,
+    fallbackTitle: `Review of #${prNumber}`, text,
+    footer: [`Review of pull request: #${prNumber}`, `Reviewer: ${reviewer}`, `State: ${state}`, `Submitted: ${submitted}`],
+    path: `pull/${prNumber}#pullrequestreview-${review.id}`, sourceUpdatedAt: submitted,
+    provenance: BRAIN_PROVENANCES.githubReview,
+    refs: new RefSet().add("pr", String(prNumber)).add("parent", prDocumentId).add("status", state)
+      .add("author", person).add("reviewer", person),
+  });
+}
+
+export function reviewCommentDocument(
+  ctx: GithubDocumentContext, prNumber: number, prDocumentId: string, comment: GithubReviewComment,
+): GithubBuiltDocument {
+  const author = comment.user?.login ?? "unknown";
+  const path = comment.path !== null && comment.path !== undefined && isIndexablePath(comment.path) ? comment.path : null;
+  return build(ctx, {
+    kind: GITHUB_DOCUMENT_KINDS.reviewComment, key: comment.id, fallbackTitle: `Comment on #${prNumber}`,
+    title: `Comment on #${prNumber}${path === null ? "" : ` ${path}`} by ${author}`, text: comment.body,
+    footer: [
+      `Review comment on pull request: #${prNumber}`, `Author: ${author}`, path !== null ? `Path: ${path}` : null,
+      typeof comment.line === "number" ? `Line: ${comment.line}` : null,
+      comment.in_reply_to_id ? `In reply to: ${comment.in_reply_to_id}` : null,
+    ],
+    path: `pull/${prNumber}#discussion_r${comment.id}`, sourceUpdatedAt: comment.updated_at,
+    provenance: BRAIN_PROVENANCES.githubReviewComment,
+    refs: new RefSet().add("pr", String(prNumber)).add("parent", prDocumentId)
+      .add("author", personKey(comment.user?.login)).add("path", path),
+  });
+}
