@@ -7,6 +7,7 @@ import {
   mergeCanonicalChatRecord,
   mergeChatReadState,
   type CanonicalChatEventSource,
+  type ChatAgentDraftRequest,
 } from "@matrix-os/ui";
 import type {
   CanonicalChatDetailResponse,
@@ -78,6 +79,9 @@ export function useCanonicalChatThread({
   const [safeError, setError] = useState<{ text: string; at: number } | null>(null);
   const setSafeError = useCallback((text: string | null) => setError(text === null ? null : { text, at: Date.now() }), []);
   const [botEventRevision, setBotEventRevision] = useState(0);
+  // The question of a first send whose new Chat refused the turn: the view's composer for that Chat gets it back.
+  const [returnedDraft, setReturnedDraft] = useState<ChatAgentDraftRequest | null>(null);
+  const returnedDrafts = useRef(0);
   const detailRef = useRef(detail);
   const chatIdRef = useRef(chatId);
   const submittingRef = useRef(false);
@@ -187,6 +191,10 @@ export function useCanonicalChatThread({
       (error: unknown) => {
         console.warn("[canonical-chat] Thread turn failed:", error instanceof Error ? error.name : "UnknownError");
         setSafeError(canonicalShellChatFailureMessage(error));
+        if (!record && chatIdRef.current !== null) {
+          returnedDrafts.current += 1;
+          setReturnedDraft({ id: returnedDrafts.current, text, ...(options.resources?.length ? { resources: options.resources } : {}) });
+        }
         return false;
       },
     ).finally(() => {
@@ -205,6 +213,10 @@ export function useCanonicalChatThread({
       setSafeError("The run could not be stopped. Try again.");
     });
   }, [client, loadDetail, setSafeError]);
+
+  const onComposerDraftConsumed = useCallback((id: number) => {
+    setReturnedDraft((current) => (current?.id === id ? null : current));
+  }, []);
 
   const onUpdateReadState = useCallback(async (id: string, input: CanonicalUpdateChatReadStateRequest) => {
     try {
@@ -237,5 +249,7 @@ export function useCanonicalChatThread({
     queuedTurns: shown?.queuedTurns ?? [],
     providerSelection: shown?.record.chat.currentSelection,
     boundProviderInstanceId: shown?.record.providerBinding?.instanceId,
+    composerDraftRequest: returnedDraft,
+    onComposerDraftConsumed,
   };
 }
