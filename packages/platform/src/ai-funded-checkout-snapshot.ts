@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
@@ -32,6 +33,7 @@ export async function readCheckoutFundingSnapshot(input: {
     const remainingMs = deadlineAtMs - Date.now();
     if (remainingMs <= 0) throw new Error("Checkout funding read timed out");
     await sql`select set_config('statement_timeout', ${`${remainingMs}ms`}, true)`.execute(trx.executor);
+    await readUnknownUsageWaivers(trx.executor, identity.ownerId);
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const result = await sql<CheckoutRow>`
       select machine.clerk_user_id, machine.runtime_slot as machine_runtime_slot,
