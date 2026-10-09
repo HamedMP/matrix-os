@@ -357,8 +357,13 @@ export interface BrainModelSpend {
 export interface BrainExtractionStore {
   getDocument(scope: BrainScopeKey, documentId: string): Promise<BrainDocument | null>;
   listPendingExtractions(scope: BrainScopeKey, query: BrainPendingExtractionQuery): Promise<BrainPendingExtractionPage>;
-  /** Throws conflict while a run younger than the lease is running in the scope. */
-  openExtractionRun(scope: BrainScopeKey, input: { readonly extractor: string }): Promise<BrainExtractionRun>;
+  /**
+   * Throws conflict while a run younger than the lease is running in the scope. `admit` runs under the scope lock
+   * first and refuses by throwing (the caller checks the project is still live): a scope erase takes the same lock.
+   */
+  openExtractionRun(
+    scope: BrainScopeKey, input: { readonly extractor: string }, admit?: () => Promise<unknown>,
+  ): Promise<BrainExtractionRun>;
   applyDocumentExtraction(
     scope: BrainScopeKey, input: BrainApplyDocumentExtractionInput,
   ): Promise<BrainApplyDocumentExtractionResult>;
@@ -429,12 +434,13 @@ export type BrainExtractorChoice = { readonly kind: "rules" } | {
 
 /**
  * model: required for a model choice, else model_not_configured. provenances: only these are listed, and a document of
- * any other is skipped provenance_not_allowed before it is extracted (absent: all). now: milliseconds clock.
+ * any other is skipped provenance_not_allowed before it is extracted (absent: all). now: milliseconds clock. admit:
+ * passed to openExtractionRun; its refusal ends the extraction store_unavailable before any run row exists.
  */
 export interface BrainExtractionOptions {
   readonly repository: BrainExtractionStore; readonly scope: BrainScopeKey; readonly extractor: BrainExtractorChoice;
   readonly model?: BrainClaimModel; readonly limits?: Partial<BrainExtractionLimits>; readonly signal?: AbortSignal;
-  readonly provenances?: readonly string[]; readonly now?: () => number;
+  readonly provenances?: readonly string[]; readonly now?: () => number; readonly admit?: () => Promise<unknown>;
 }
 
 /**

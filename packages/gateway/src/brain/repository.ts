@@ -404,11 +404,19 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     return selectPendingExtractions(this.kysely, key, parseBrainInput(BrainPendingExtractionQuerySchema, query));
   }
 
-  /** Interrupts a running run past its lease; a younger running run is conflict. */
-  async openExtractionRun(scope: BrainScopeKey, input: { readonly extractor: string }): Promise<BrainExtractionRun> {
+  /**
+   * Interrupts a running run past its lease; a younger running run is conflict. `admit` runs under the scope lock
+   * before the open and refuses by throwing: a scope erase takes the same lock, so no run opens after the erase.
+   */
+  async openExtractionRun(
+    scope: BrainScopeKey, input: { readonly extractor: string }, admit?: () => Promise<unknown>,
+  ): Promise<BrainExtractionRun> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const target = parseBrainInput(BrainOpenExtractionRunSchema, input);
-    return this.withScopeWrite(key, (trx, now) => openRun(trx, key, target.extractor, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      await admit?.();
+      return openRun(trx, key, target.extractor, now);
+    });
   }
 
   /** Replaces one document's claims for the extractor and records its state, fenced by the running run. */
