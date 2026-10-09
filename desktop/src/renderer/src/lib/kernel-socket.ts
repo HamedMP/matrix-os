@@ -48,6 +48,7 @@ const SEND_QUEUE_CAP = 32;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const OFFLINE_AFTER_FAILURES = 3;
+const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_FRAME_CHARS = 1_000_000;
 
 const requestIdField = z.string().min(1).max(256).optional();
@@ -133,6 +134,7 @@ export class KernelSocket {
   private readonly stateHandlers = new Set<StateHandler>();
   private readonly sendQueue: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private consecutiveFailures = 0;
   private currentState: KernelConnectionState = "connecting";
@@ -191,6 +193,7 @@ export class KernelSocket {
       this.currentConnectionEpoch++;
       this.setState("connected");
       this.drainQueue();
+      this.scheduleHeartbeat();
     };
 
     socket.onmessage = (event) => {
@@ -281,6 +284,7 @@ export class KernelSocket {
     if (this.disposed) return;
     this.disposed = true;
     this.clearReconnectTimer();
+    this.clearHeartbeatTimer();
     const socket = this.socket;
     this.socket = null;
     if (socket) {
@@ -332,6 +336,7 @@ export class KernelSocket {
 
   private handleConnectionLoss(): void {
     if (this.disposed) return;
+    this.clearHeartbeatTimer();
     this.consecutiveFailures++;
     this.setState(this.consecutiveFailures >= OFFLINE_AFTER_FAILURES ? "offline" : "reconnecting");
     const delay = this.backoffDelay(this.attempt);
@@ -376,6 +381,25 @@ export class KernelSocket {
           err instanceof Error ? err.message : err,
         );
       }
+    }
+  }
+
+  private scheduleHeartbeat(): void {
+    this.clearHeartbeatTimer();
+    if (this.disposed || this.currentState !== "connected") return;
+    // A pong keeps idle reverse proxies from dropping a live voice session.
+    // Heartbeats belong only to this connection and must never be queued.
+    this.heartbeatTimer = this.setTimeoutFn(() => {
+      this.heartbeatTimer = null;
+      this.sendConnected({ type: "ping" });
+      this.scheduleHeartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private clearHeartbeatTimer(): void {
+    if (this.heartbeatTimer !== null) {
+      this.clearTimeoutFn(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 

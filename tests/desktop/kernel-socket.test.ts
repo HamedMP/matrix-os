@@ -130,6 +130,31 @@ describe("buildKernelWsUrl", () => {
 });
 
 describe("KernelSocket: connection and routing", () => {
+  it("keeps idle connections alive without replaying heartbeats after reconnect or disposal", () => {
+    const h = createHarness();
+    h.socket.connect();
+    expect(h.timers.pending()).toHaveLength(0);
+    h.last().open();
+    const first = h.last();
+    expect(h.timers.pending()[0]!.delay).toBeLessThan(60_000);
+    h.timers.runNext();
+    h.timers.runNext();
+    expect(first.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "ping" },
+      { type: "ping" },
+    ]);
+    first.fail();
+    expect(h.timers.pending()).toHaveLength(1);
+    h.timers.runNext();
+    expect(h.timers.pending()).toHaveLength(0);
+    h.last().open();
+    expect(h.last().sent).toEqual([]);
+    h.timers.runNext();
+    expect(h.last().sent.map((frame) => JSON.parse(frame))).toEqual([{ type: "ping" }]);
+    h.socket.dispose();
+    expect(h.timers.pending()).toHaveLength(0);
+  });
+
   it("does not invoke browser timers with the socket as their receiver", () => {
     const sockets: FakeWebSocket[] = [];
     const strictTimer = vi.fn(function (this: unknown, fn: () => void) {
