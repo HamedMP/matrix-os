@@ -24,7 +24,10 @@ export interface BrainAppProps {
   readonly api: BrainShellClient;
   /** The owner's projects (listBrainProjects over the same transport). */
   readonly loadProjects: () => Promise<readonly BrainProjectOption[]>;
-  /** The tab it opens on; older ids (ask, commitments, risks) still open the screen that took them over. */
+  /**
+   * The tab it opens on: by default Chat where `chat` is given, else Search. Older ids (ask, commitments, risks) still
+   * open the screen that took them over.
+   */
   readonly initialScreen?: BrainShellScreenId;
   readonly initialProjectId?: string;
   /** The in-app heading; off where the window title bar already names the app. Default true. */
@@ -50,14 +53,16 @@ function openingScreen(id: BrainShellScreenId): BrainShellScreen {
 
 /**
  * The Company Brain view: pick a project, then chat with its brain or open one of the other screens. It opens on the
- * Chat tab and on the project this browser picked last when it is still listed, else the first one.
+ * Chat tab where the surface lends a chat view (else on Search, as Chat could only say it is not available) and on the
+ * project this browser picked last when it is still listed, else the first one.
  */
 export function BrainApp({
-  api, loadProjects, initialScreen = "chat", initialProjectId, showHeading = true, chat,
+  api, loadProjects, initialScreen, initialProjectId, showHeading = true, chat,
 }: BrainAppProps) {
   const projects = useBrainLoad(loadProjects, "projects");
-  const [screen, setScreen] = useState<BrainShellScreen>(() => openingScreen(initialScreen));
-  const [claimKind, setClaimKind] = useState<BrainClaimKind>(() => ALIAS_KINDS[initialScreen] ?? "decision");
+  const opening = initialScreen ?? (chat ? "chat" : "search");
+  const [screen, setScreen] = useState<BrainShellScreen>(() => openingScreen(opening));
+  const [claimKind, setClaimKind] = useState<BrainClaimKind>(() => ALIAS_KINDS[opening] ?? "decision");
   const [picked, setPicked] = useState(() => initialProjectId ?? readRemembered(PROJECT_STORAGE_KEY, "project"));
   const baseId = useId();
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
