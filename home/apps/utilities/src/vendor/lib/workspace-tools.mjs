@@ -1,3 +1,4 @@
+import { reportToolFailure } from "./diagnostics.mjs";
 // Pure bounded transforms shared by the public website and Matrix Utilities.
 const MAX = 100_000;
 function boundedText(value) {
@@ -30,7 +31,7 @@ export function replaceText(input, search, replacement) {
 export function jsonCsvTable(input) {
   boundedText(input);
   let value;
-  try { value = JSON.parse(input); } catch { throw new Error("Enter valid JSON."); }
+  try { value = JSON.parse(input); } catch (cause) { reportToolFailure(cause); throw new Error("Enter valid JSON."); }
   if (!Array.isArray(value) || !value.length || value.length > 1000 || value.some((row) => !row || typeof row !== "object" || Array.isArray(row))) throw new Error("Enter an array of 1 to 1,000 objects.");
   const keys = new Set();
   for (const row of value) for (const key of Object.keys(row)) {

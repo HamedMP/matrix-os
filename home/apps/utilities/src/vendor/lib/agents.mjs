@@ -20,7 +20,7 @@ export function agentTool(slug, input) {
       return feedback.join("\n");
     }
     case "mcp-config-validator": {
-      let config; try { config = JSON.parse(input); } catch { throw new Error("Enter valid JSON."); }
+      let config; try { config = JSON.parse(input); } catch (error) { reportToolFailure(error); throw new Error("Enter valid JSON."); }
       const servers = config?.mcpServers;
       if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error("Add an mcpServers object.");
       const entries = Object.entries(servers);
@@ -30,7 +30,7 @@ export function agentTool(slug, input) {
         if (!server || typeof server !== "object" || Array.isArray(server)) { problems.push(`${name}: expected an object`); continue; }
         if (typeof server.command !== "string" && typeof server.url !== "string") problems.push(`${name}: add command or url`);
         if (typeof server.url === "string") {
-          try { validUrl(server.url); } catch { problems.push(`${name}: URL must be HTTP or HTTPS`); }
+          try { validUrl(server.url); } catch (error) { reportToolFailure(error); problems.push(`${name}: URL must be HTTP or HTTPS`); }
         }
         if (server.args !== undefined && (!Array.isArray(server.args) || server.args.some((arg) => typeof arg !== "string"))) problems.push(`${name}: args must be strings`);
       }
@@ -60,3 +60,4 @@ export function agentTool(slug, input) {
     default: throw new Error("Unknown agent tool.");
   }
 }
+import { reportToolFailure } from "./diagnostics.mjs";

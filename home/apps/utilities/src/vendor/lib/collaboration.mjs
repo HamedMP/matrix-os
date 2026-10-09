@@ -26,7 +26,7 @@ export function parseSignal(text, expected) {
   if (typeof text !== "string" || text.length > MAX_SIGNAL_CHARS) throw new Error("Connection code is too long.");
   let parsed;
   try { parsed = JSON.parse(text); }
-  catch { throw new Error(`Enter a valid ${expected || "connection"} code.`); }
+  catch (error) { reportToolFailure(error); throw new Error(`Enter a valid ${expected || "connection"} code.`); }
   return validDescription(parsed, expected);
 }
 
@@ -109,7 +109,7 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
       if (data.length > MAX_CONTROL_CHARS) { fail("Peer sent an oversized control message."); return; }
       let message;
       try { message = JSON.parse(data); }
-      catch { fail("Peer sent an invalid control message."); return; }
+      catch (error) { reportToolFailure(error); fail("Peer sent an invalid control message."); return; }
       if (message?.type === "file-start") {
         if (receiving || !ID.test(message.id || "") || !Number.isSafeInteger(message.size) || message.size < 0 || message.size > MAX_TRANSFER_BYTES || typeof message.name !== "string" || message.name.length > 250 || typeof message.mime !== "string" || message.mime.length > 100) { fail("Peer file must be valid and 20 MB or smaller."); return; }
         receiving = { id: message.id, name: cleanName(message.name), size: message.size, mime: message.mime, parts: [], bytes: 0 };
@@ -125,7 +125,7 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
         if (pendingAck && message.id === pendingAck.id) { const ack = pendingAck; pendingAck = null; clearTimeout(ack.timer); ack.resolve(); }
       } else if (message?.type === "board-stroke") {
         try { onStroke(validateStroke(message.stroke)); }
-        catch { fail("Peer sent an invalid whiteboard stroke."); }
+        catch (error) { reportToolFailure(error); fail("Peer sent an invalid whiteboard stroke."); }
       } else if (message?.type === "board-clear") { onClear(); }
       else fail("Peer sent an unsupported message.");
       return;

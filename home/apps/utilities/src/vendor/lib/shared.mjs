@@ -6,7 +6,7 @@ export function escapeHtml(value) {
 
 export function validUrl(value, { httpsOnly = false } = {}) {
   let url;
-  try { url = new URL(value.trim()); } catch { throw new Error("Enter a valid absolute URL."); }
+  try { url = new URL(value.trim()); } catch (error) { reportToolFailure(error); throw new Error("Enter a valid absolute URL."); }
   if ((httpsOnly && url.protocol !== "https:") || !["https:", "http:"].includes(url.protocol)) {
     throw new Error(httpsOnly ? "Enter an HTTPS URL." : "Enter an HTTP or HTTPS URL.");
   }
@@ -31,3 +31,4 @@ export function decodeEntities(input) {
     return named[entity.toLowerCase()] ?? all;
   });
 }
+import { reportToolFailure } from "./diagnostics.mjs";

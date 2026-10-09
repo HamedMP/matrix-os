@@ -1,7 +1,7 @@
 import { escapeHtml, decodeEntities } from "./shared.mjs";
 
 function parseJson(input) {
-  try { return JSON.parse(input); } catch { throw new Error("Enter valid JSON."); }
+  try { return JSON.parse(input); } catch (error) { reportToolFailure(error); throw new Error("Enter valid JSON."); }
 }
 
 function csvRows(input) {
@@ -51,7 +51,7 @@ async function regexResult(input) {
   if (typeof window !== "undefined") throw new Error("This browser does not support an isolated regex worker.");
   if (/[+*}][^\n]{0,12}[+*{]/.test(pattern)) throw new Error("Potentially costly pattern is not supported here.");
   let regex;
-  try { regex = new RegExp(pattern, "g"); } catch { throw new Error("Enter a valid regular expression."); }
+  try { regex = new RegExp(pattern, "g"); } catch (error) { reportToolFailure(error); throw new Error("Enter a valid regular expression."); }
   const hits = [...sample.matchAll(regex)].slice(0, 100).map((match) => `${match[0]} @ ${match.index}`);
   return hits.length ? hits.join("\n") : "No matches.";
 }
@@ -81,10 +81,10 @@ export async function developerTool(slug, input) {
     }
     case "base64-decode": {
       try { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(input.trim()), (char) => char.charCodeAt(0))); }
-      catch { throw new Error("Enter valid Base64 encoded UTF-8 text."); }
+      catch (error) { reportToolFailure(error); throw new Error("Enter valid Base64 encoded UTF-8 text."); }
     }
     case "url-encoder": return encodeURIComponent(input);
-    case "url-decoder": { try { return decodeURIComponent(input); } catch { throw new Error("Enter valid URL-encoded text."); } }
+    case "url-decoder": { try { return decodeURIComponent(input); } catch (error) { reportToolFailure(error); throw new Error("Enter valid URL-encoded text."); } }
     case "html-encoder": return escapeHtml(input);
     case "html-decoder": return decodeEntities(input);
     case "hash-generator": {
@@ -132,3 +132,4 @@ export async function developerTool(slug, input) {
     default: throw new Error("Unknown developer tool.");
   }
 }
+import { reportToolFailure } from "./diagnostics.mjs";

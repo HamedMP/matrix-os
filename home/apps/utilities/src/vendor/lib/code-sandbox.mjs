@@ -4,12 +4,24 @@ export function sandboxApiLockdownDiagnostic(cause) {
   return "Sandbox isolation could not disable one browser API (type).";
 }
 
+export function sandboxFailureDiagnostic(cause) {
+  const error_type = cause instanceof TypeError ? "type"
+    : cause instanceof SyntaxError ? "syntax"
+    : cause instanceof RangeError ? "range"
+    : cause instanceof Error ? cause.name === "AbortError" ? "aborted" : "error"
+    : "unknown";
+  return { error_type };
+}
+
 const FRAME_DOCUMENT = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src 'none'; img-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'"></head><body><script>
+const sandboxFailureDiagnostic = ${sandboxFailureDiagnostic.toString()};
 window.addEventListener('message', function (event) {
   if (event.source !== parent || !event.data || event.data.type !== 'run') return;
   const nonce = event.data.nonce;
   const workerSource = \`const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   const sandboxApiLockdownDiagnostic = ${sandboxApiLockdownDiagnostic.toString()};
+  const sandboxFailureDiagnostic = ${sandboxFailureDiagnostic.toString()};
+  const reportToolFailure = (cause) => console.warn('Utility operation failed.', sandboxFailureDiagnostic(cause));
   const lockdownDiagnostics = [];
   const send = self.postMessage.bind(self);
   for (const name of ['postMessage', 'Worker', 'SharedWorker', 'importScripts', 'BroadcastChannel']) {
@@ -20,7 +32,7 @@ window.addEventListener('message', function (event) {
     const lines = lockdownDiagnostics.slice();
     const format = (value) => {
       if (typeof value === 'string') return value;
-      try { return JSON.stringify(value); } catch { return String(value); }
+      try { return JSON.stringify(value); } catch (error) { reportToolFailure(error); return String(value); }
     };
     const write = (...args) => { if (lines.length < 100) lines.push(args.map(format).join(' ').slice(0, 2000)); };
     const safeConsole = { log: write, info: write, warn: write, error: write };
@@ -30,13 +42,14 @@ window.addEventListener('message', function (event) {
       if (result !== undefined) write(result);
       send({ type: 'done', output: lines.join('\\\\n') || 'Completed without console output.' });
     } catch (error) {
+      reportToolFailure(error);
       send({ type: 'error', output: error instanceof Error ? error.message.slice(0, 1000) : 'Execution failed.' });
     }
   };\`;
   const blobUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
   let worker;
   try { worker = new Worker(blobUrl); }
-  catch { URL.revokeObjectURL(blobUrl); parent.postMessage({ type: 'error', nonce, output: 'This browser blocked the isolated worker.' }, '*'); return; }
+  catch (error) { console.warn('Utility operation failed.', sandboxFailureDiagnostic(error)); URL.revokeObjectURL(blobUrl); parent.postMessage({ type: 'error', nonce, output: 'This browser blocked the isolated worker.' }, '*'); return; }
   URL.revokeObjectURL(blobUrl);
   const timer = setTimeout(() => { worker.terminate(); parent.postMessage({ type: 'error', nonce, output: 'Code exceeded the 3-second limit.' }, '*'); }, 3000);
   worker.onmessage = function (message) {

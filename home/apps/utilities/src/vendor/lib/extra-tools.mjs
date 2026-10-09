@@ -1,4 +1,6 @@
 /** Browser-only utilities. Nothing in this module sends tool input to a server. */
+import { reportToolFailure } from "./diagnostics.mjs";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const jwtAlgorithms = {
@@ -15,13 +17,13 @@ function base64urlBytes(input) {
   try {
     const padded = input.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(input.length / 4) * 4, "=");
     return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-  } catch { throw new Error("JWT has invalid Base64URL content."); }
+  } catch (cause) { reportToolFailure(cause); throw new Error("JWT has invalid Base64URL content."); }
 }
 
 function jsonObject(input, label) {
   let value;
   try { value = JSON.parse(decoder.decode(base64urlBytes(input))); }
-  catch { throw new Error(`JWT ${label} must contain valid UTF-8 JSON.`); }
+  catch (cause) { reportToolFailure(cause); throw new Error(`JWT ${label} must contain valid UTF-8 JSON.`); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`JWT ${label} must be a JSON object.`);
   return value;
 }
@@ -45,16 +47,19 @@ function parsePublicKey(input) {
   if (!/-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----/.test(input)) throw new Error("Paste an SPKI PEM public key for RSA verification.");
   const body = input.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s/g, "");
   try { return Uint8Array.from(atob(body), (character) => character.charCodeAt(0)); }
-  catch { throw new Error("The PEM public key is invalid."); }
+  catch (cause) { reportToolFailure(cause); throw new Error("The PEM public key is invalid."); }
 }
 
-/** Signature verification is separate from decoding, and never accepts an algorithm from key material. */
-export async function verifyJwt(token, keyText, nowSeconds = Date.now() / 1000) {
+/** The caller chooses the expected algorithm independently of the untrusted token header. */
+export async function verifyJwt(token, keyText, expectedAlgorithm, nowSeconds = Date.now() / 1000) {
+  if (typeof expectedAlgorithm !== "string" || !Object.hasOwn(jwtAlgorithms, expectedAlgorithm)) throw new Error("Choose a supported expected signing algorithm.");
   const { header, payload } = decodeJwt(token);
-  const selected = Object.hasOwn(jwtAlgorithms, header.alg) ? jwtAlgorithms[header.alg] : undefined;
-  if (!selected) throw new Error("This JWT signature algorithm is unsupported. Use HS256/384/512 or RS256/384/512.");
+  if (!Object.hasOwn(jwtAlgorithms, header.alg)) throw new Error("This JWT signature algorithm is unsupported. Use HS256/384/512 or RS256/384/512.");
+  if (header.alg !== expectedAlgorithm) throw new Error("JWT signing algorithm does not match the expected signing algorithm.");
+  const selected = jwtAlgorithms[expectedAlgorithm];
   if (header.crit !== undefined) throw new Error("JWT critical extensions are unsupported.");
   if (typeof keyText !== "string" || !keyText || keyText.length > 16_384) throw new Error("Enter a secret or public key of up to 16 KB.");
+  if (selected.kind === "secret" && /-----BEGIN [^-]+-----|^\s*(?:ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+)\s/i.test(keyText)) throw new Error("Use a shared secret rather than public-key material for HMAC verification.");
   if (!Number.isFinite(nowSeconds)) throw new Error("The current time is invalid.");
   const subtle = globalThis.crypto?.subtle;
   if (!subtle) throw new Error("This browser does not support secure signature verification.");
@@ -63,7 +68,7 @@ export async function verifyJwt(token, keyText, nowSeconds = Date.now() / 1000) 
     key = selected.kind === "secret"
       ? await subtle.importKey("raw", encoder.encode(keyText), { name: selected.name, hash: selected.hash }, false, ["verify"])
       : await subtle.importKey("spki", parsePublicKey(keyText), { name: selected.name, hash: selected.hash }, false, ["verify"]);
-  } catch { throw new Error(selected.kind === "secret" ? "Could not use that verification secret." : "Could not import that RSA public key."); }
+  } catch (cause) { reportToolFailure(cause); throw new Error(selected.kind === "secret" ? "Could not use that verification secret." : "Could not import that RSA public key."); }
   const [encodedHeader, encodedPayload, encodedSignature] = token.trim().split(".");
   const signatureValid = await subtle.verify({ name: selected.name }, key, base64urlBytes(encodedSignature), encoder.encode(`${encodedHeader}.${encodedPayload}`));
   if (!signatureValid) return { signatureValid: false, claimsValid: false, status: "Invalid signature" };

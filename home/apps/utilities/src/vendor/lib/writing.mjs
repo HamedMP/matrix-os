@@ -1,3 +1,4 @@
+import { reportToolFailure } from "./diagnostics.mjs";
 import { decodeEntities, escapeHtml, validUrl } from "./shared.mjs";
 import { replaceText } from "./workspace-tools.mjs";
 
@@ -22,7 +23,7 @@ function markdown(input) {
       else {
         const label = inline(match[2], false);
         try { rendered = `<a href="${escapeHtml(validUrl(decodeEntities(match[3])).href)}" rel="noopener noreferrer">${label}</a>`; }
-        catch { rendered = label; }
+        catch (cause) { reportToolFailure(cause); rendered = label; }
       }
       output += `\uE000${protectedSpans.length}\uE001`;
       protectedSpans.push(rendered);
