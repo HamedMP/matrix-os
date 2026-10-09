@@ -5,6 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import sharp from "sharp";
+
+async function expectSameArtwork(actual: Buffer, expected: Buffer): Promise<void> {
+  const [actualPixels, expectedPixels] = await Promise.all([
+    sharp(actual).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+    sharp(expected).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  ]);
+  expect(actualPixels.info).toEqual(expectedPixels.info);
+  expect(actualPixels.data).toEqual(expectedPixels.data);
+}
 
 function readPngDimensions(path: string): { width: number; height: number } {
   const png = readFileSync(path);
@@ -21,6 +31,20 @@ function sha256(path: string): string {
 }
 
 describe("desktop packaging", () => {
+  it("compares exact artwork pixels independently of PNG compression", async () => {
+    const image = {
+      create: { width: 2, height: 2, channels: 4 as const, background: "#103425" },
+    };
+    const uncompressed = await sharp(image).png({ compressionLevel: 0 }).toBuffer();
+    const compressed = await sharp(image).png({ compressionLevel: 9 }).toBuffer();
+    expect(uncompressed).not.toEqual(compressed);
+    await expectSameArtwork(uncompressed, compressed);
+    const changed = await sharp({
+      create: { width: 2, height: 2, channels: 4, background: "#103426" },
+    }).png().toBuffer();
+    await expect(expectSameArtwork(changed, compressed)).rejects.toThrow();
+  });
+
   it("uses an electron-builder version that preserves branded DMG backgrounds", () => {
     const packageJson = JSON.parse(
       readFileSync(join(process.cwd(), "desktop/package.json"), "utf8"),
@@ -178,7 +202,7 @@ describe("desktop packaging", () => {
     expect(desktopPackageJson.dependencies?.["@fontsource/instrument-serif"]).toMatch(/^\^5\./);
   });
 
-  it("renders the committed DMG artwork with the packaged brand fonts", () => {
+  it("renders the committed DMG artwork with the packaged brand fonts", async () => {
     const root = process.cwd();
     const outputDirectory = mkdtempSync(join(tmpdir(), "matrix-dmg-background-"));
 
@@ -192,14 +216,14 @@ describe("desktop packaging", () => {
       for (const filename of ["dmg-background.png", "dmg-background@2x.png"]) {
         const committedPath = join(root, "desktop/build", filename);
         const generatedPath = join(outputDirectory, filename);
-        expect(readFileSync(generatedPath)).toEqual(readFileSync(committedPath));
+        await expectSameArtwork(readFileSync(generatedPath), readFileSync(committedPath));
       }
 
       expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
-        "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
+        "d8ab7fd1e2a900213fb61814a0604518fd80a253e02eb8b766e7a279f06fd3c9",
       );
       expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
-        "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
+        "a21d53a1cb8051f3b68471e43e0c71ae885fd13bc1a01f64f7bf5260beccddd4",
       );
     } finally {
       rmSync(outputDirectory, { recursive: true, force: true });
