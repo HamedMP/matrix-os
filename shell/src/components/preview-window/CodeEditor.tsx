@@ -1,13 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 // react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: this whole module is code-split via React.lazy() at its only consumer (PreviewTab.tsx imports CodeEditor with `lazy(() => import("./CodeEditor"))`), so the entire @codemirror/* graph is already a separate chunk loaded on demand. CodeMirror is mounted imperatively into a ref in the effect below, so an extra in-effect dynamic import() would only add a redundant code-split layer plus async/unmount race handling with no bundle benefit.
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 // react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- already lazy: see note on the @codemirror/view import above; this module is loaded via React.lazy() at PreviewTab.tsx, so EditorState ships in that on-demand chunk rather than the initial bundle.
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { useTheme } from "@/hooks/useTheme";
+import { codeMirrorThemeStyles } from "@matrix-os/brand/themes/editor";
+import { getThemeVariant } from "@matrix-os/brand/themes";
+// react-doctor-disable-next-line react-doctor/prefer-dynamic-import -- the entire editor module is already loaded by React.lazy; this compartment belongs to the same lazy CodeMirror chunk.
+import { Compartment } from "@codemirror/state";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
@@ -48,6 +54,8 @@ interface CodeEditorProps {
 }
 
 export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
+  const theme = useTheme();
+  const [themeCompartment] = useState(() => new Compartment());
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
@@ -67,7 +75,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
         getLanguageExtension(filename),
-        oneDark,
+        themeCompartment.of([]),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             onChangeRef.current?.(update.state.doc.toString());
@@ -75,7 +83,7 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
         }),
         EditorView.theme({
           "&": { height: "100%", fontSize: "13px" },
-          ".cm-scroller": { overflow: "auto" },
+          ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)" },
         }),
       ],
     });
@@ -89,6 +97,27 @@ export function CodeEditor({ content, filename, onChange }: CodeEditorProps) {
     };
     // react-doctor-disable-next-line react-doctor/exhaustive-deps -- `content` is intentionally omitted: it only seeds the editor's initial `doc` on (re)creation. Ongoing external content changes are applied in-place by the separate effect below; adding `content` here would destroy and rebuild the editor on every keystroke, dropping cursor/scroll/undo state.
   }, [filename]); // Re-create editor when filename changes
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const update = () => {
+      const mode = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+      const e = getThemeVariant(theme.appearance?.themeId ?? "matrix", mode, theme.appearance?.customTheme).editor;
+      view.dispatch({ effects: themeCompartment.reconfigure([
+        EditorView.theme(codeMirrorThemeStyles(e), { dark: mode === "dark" }),
+        syntaxHighlighting(HighlightStyle.define([
+          { tag: tags.keyword, color: e.keyword }, { tag: tags.string, color: e.string },
+          { tag: tags.comment, color: e.comment }, { tag: tags.number, color: e.number },
+          { tag: tags.function(tags.variableName), color: e.function }, { tag: tags.typeName, color: e.type },
+        ])),
+      ]) });
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, [theme, filename]);
 
   // Update content when prop changes (external reload)
   useEffect(() => {
