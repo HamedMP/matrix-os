@@ -36,6 +36,18 @@ describe("useBrainLoad", () => {
     expect(result.current.state).toEqual({ status: "loading" });
   });
 
+  it("reads the same key again on a new ask, keeping its data meanwhile", async () => {
+    let answer = 1;
+    const { result, rerender } = renderHook(({ ask }) => useBrainLoad(async () => answer, "a", ask), {
+      initialProps: { ask: 1 },
+    });
+    await waitFor(() => expect(result.current.state).toEqual({ status: "ready", data: 1 }));
+    answer = 2;
+    rerender({ ask: 2 });
+    expect(result.current.state).toEqual({ status: "ready", data: 1 });
+    await waitFor(() => expect(result.current.state).toEqual({ status: "ready", data: 2 }));
+  });
+
   it("drops a replace made for a key the view has left", async () => {
     const { result, rerender } = renderHook(({ key }) => useBrainLoad(async () => key, key), { initialProps: { key: "day" } });
     await waitFor(() => expect(result.current.state).toEqual({ status: "ready", data: "day" }));

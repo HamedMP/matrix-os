@@ -14,11 +14,11 @@ const MATCHED_SHOWN = 3;
  * The history of one repo path (the why route): every pull request, commit and spec that touched it, newest first.
  * "Search the words instead" sits outside the loaded view, so it works while loading and after any error too.
  */
-export function BrainPathHistory({ api, projectId, onOpenSources, path, onSearchWords }: BrainScreenProps & {
-  readonly path: string; readonly onSearchWords: () => void;
+export function BrainPathHistory({ api, projectId, onOpenSources, path, ask, onSearchWords }: BrainScreenProps & {
+  readonly path: string; readonly ask: number; readonly onSearchWords: () => void;
 }) {
   const pages = useBrainPages(
-    (cursor) => api.why(projectId, { path, limit: PAGE_SIZE, cursor, detail: "brief" }), `why:${path}`,
+    (cursor) => api.why(projectId, { path, limit: PAGE_SIZE, cursor, detail: "brief" }), `why:${path}`, ask,
   );
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-3">

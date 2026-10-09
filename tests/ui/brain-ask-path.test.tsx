@@ -116,23 +116,28 @@ describe("Ask with a path", () => {
     expect(screen.queryByRole("list", { name: "Path history" })).toBeNull();
   });
 
-  it("reads the same question and the same path again when asked again", async () => {
+  it("reads the same question and the same path again when asked again, keeping the answer meanwhile", async () => {
+    const never = () => new Promise(() => undefined);
     const api = fakeBrainApi({
-      why: vi.fn(async () => why([])),
-      search: vi.fn(async () => ({
+      why: vi.fn().mockResolvedValueOnce(why([])).mockImplementation(never),
+      search: vi.fn().mockResolvedValueOnce({
         q: "postgres", mode: "text", items: [], nextCursor: null, freshness: FRESH, notices: [],
         capability: { fullText: true, vector: "extension_missing", providerId: null },
-      })),
+      }).mockImplementation(never),
     });
     render(<BrainAsk api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
     ask("postgres");
     expect(await screen.findByText('No results for "postgres".')).toBeTruthy();
     ask("postgres");
     await waitFor(() => expect(api.search).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('No results for "postgres".')).toBeTruthy();
+    expect(screen.queryByText("Searching...")).toBeNull();
     ask("a.ts");
     expect(await screen.findByText(/Nothing in the history touches/)).toBeTruthy();
     ask("a.ts");
     await waitFor(() => expect(api.why).toHaveBeenCalledTimes(2));
+    expect(screen.getByText(/Nothing in the history touches/)).toBeTruthy();
+    expect(screen.queryByText("Reading the history...")).toBeNull();
   });
 
   it("says when nothing touches a folder, when the repository is missing, and when the read fails", async () => {

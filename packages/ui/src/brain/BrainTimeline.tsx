@@ -28,15 +28,14 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
   const [draft, setDraft] = useState("");
   const [entity, setEntity] = useState("");
   const [person, setPerson] = useState("");
-  // Counts the requests sent, so showing the same one again reads it again.
+  // Counts the requests sent, so showing the same one again reads it again, keeping it on screen meanwhile.
   const [sent, setSent] = useState(0);
   const people = useBrainPages(
     (cursor) => api.entities(projectId, { kind: "person", q: person, limit: PEOPLE_LIMIT, cursor }),
-    person === "" ? null : `${sent}:${person}`,
+    person === "" ? null : person, sent,
   );
   const pages = useBrainPages(
-    (cursor) => api.timeline(projectId, { entity, limit: PAGE_SIZE, cursor }),
-    entity === "" ? null : `${sent}:${entity}`,
+    (cursor) => api.timeline(projectId, { entity, limit: PAGE_SIZE, cursor }), entity === "" ? null : entity, sent,
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {

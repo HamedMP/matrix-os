@@ -28,12 +28,12 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
   const [draft, setDraft] = useState("");
   const [scope, setScope] = useState<AskScope>("all");
   // `path` is the repo path the question names (its history is shown), or null to search the words. `n` counts the
-  // questions sent, so asking the same one again reads it again.
+  // questions sent, so asking the same one again reads it again, keeping the answer on screen meanwhile.
   const [asked, setAsked] = useState<{ q: string; scope: AskScope; path: string | null; n: number }>(
     { q: "", scope: "all", path: null, n: 0 });
   const pages = useBrainPages(
     (cursor) => api.search(projectId, { q: asked.q, types: SCOPE_TYPES[asked.scope], limit: PAGE_SIZE, cursor }),
-    asked.q === "" || asked.path !== null ? null : `${asked.n}:${asked.scope}:${asked.q}`,
+    asked.q === "" || asked.path !== null ? null : `${asked.scope}:${asked.q}`, asked.n,
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -69,7 +69,7 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
         </BrainEmpty>
       )}
       {asked.path !== null && (
-        <BrainPathHistory key={asked.n} api={api} projectId={projectId} onOpenSources={onOpenSources} path={asked.path}
+        <BrainPathHistory api={api} projectId={projectId} onOpenSources={onOpenSources} path={asked.path} ask={asked.n}
           onSearchWords={() => setAsked({ ...asked, path: null })} />
       )}
       <BrainView state={pages.first.state} label="Searching..." onRetry={pages.first.reload} onOpenSources={onOpenSources}>
