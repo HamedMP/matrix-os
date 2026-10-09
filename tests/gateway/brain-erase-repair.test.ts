@@ -2,8 +2,8 @@
  * The project erase and the removed source purge over PGlite with the graph: a refresh already running when the
  * project is erased writes nothing back, and a purge drops the derived rows of every tombstoned document of the
  * removed source, whenever it was tombstoned, and leaves no person only that source named readable; the start's
- * catch-up finishes a sweep a shutdown cut short. A source connect, git registration or job enqueue that resolved the
- * project before its deletion creates no source or job after the erase.
+ * catch-up finishes a sweep a shutdown cut short. A source connect, git registration, job enqueue or extraction that
+ * resolved the project before its deletion creates no source, job or extraction run after the erase.
  */
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,7 +96,7 @@ describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
   });
 });
 
-describe("source and job creation racing a project deletion", { timeout: 60_000 }, () => {
+describe("source, job and extraction run creation racing a project deletion", { timeout: 60_000 }, () => {
   let harness: SourcesHarness;
   let deleted: boolean;
   beforeEach(async () => { harness = await sourcesHarness(); deleted = false; });
@@ -107,8 +107,16 @@ describe("source and job creation racing a project deletion", { timeout: 60_000 
     deleted = true;
     await eraseBrainProject(harness.db, OWNER, "proj_a");
   }
-  const sourceRows = async () => Number((await sql<{ n: number }>`SELECT count(*)::int AS n FROM brain_sources
-    WHERE owner_id = ${SCOPE_A.ownerId} AND scope_id = ${SCOPE_A.scopeId}`.execute(harness.db)).rows[0]!.n);
+  const scopeRows = async (table: string) => Number((await sql<{ n: number }>`SELECT count(*)::int AS n
+    FROM ${sql.table(table)} WHERE owner_id = ${SCOPE_A.ownerId} AND scope_id = ${SCOPE_A.scopeId}`
+    .execute(harness.db)).rows[0]!.n);
+  const sourceRows = () => scopeRows("brain_sources");
+  /** The project lookup of the project API: proj_a until it is deleted. */
+  const projects = {
+    getProjectById: async () => deleted
+      ? { ok: false, status: 404, error: { code: "not_found", message: "Project was not found" } }
+      : { ok: true, project: { id: "proj_a", slug: "alpha", name: "Alpha" } },
+  } as unknown as BrainProjectLookup;
 
   it("connects no source when the project is deleted while the connect waits on its config check", async () => {
     const checking = gate();
@@ -134,11 +142,6 @@ describe("source and job creation racing a project deletion", { timeout: 60_000 
   });
 
   it("registers no git source when the project is deleted while the registration looks for one", async () => {
-    const projects = {
-      getProjectById: async () => deleted
-        ? { ok: false, status: 404, error: { code: "not_found", message: "Project was not found" } }
-        : { ok: true, project: { id: "proj_a", slug: "alpha", name: "Alpha" } },
-    } as unknown as BrainProjectLookup;
     const listSources = harness.repository.listSources.bind(harness.repository);
     vi.spyOn(harness.repository, "listSources").mockImplementationOnce(async (scope, options) => {
       const page = await listSources(scope, options);
@@ -165,9 +168,22 @@ describe("source and job creation racing a project deletion", { timeout: 60_000 
     const wake = vi.fn();
     const jobs = createBrainJobsService({ store: new BrainJobStore(harness.db), resolver, kinds: ["sync"], wake });
     await rejectsWith(jobs.enqueue(OWNER, "proj_a", { kind: "sync" }), BrainApiError, "project_not_found");
-    const { rows } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM brain_jobs
-      WHERE owner_id = ${SCOPE_A.ownerId} AND scope_id = ${SCOPE_A.scopeId}`.execute(harness.db);
-    expect(rows[0]!.n).toBe(0);
+    expect(await scopeRows("brain_jobs")).toBe(0);
     expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("opens no extraction run when the project is deleted while the extract waits on its model", async () => {
+    const model = { extract: vi.fn() };
+    // The deletion finishes while the request reads the model configuration, after it resolved the project.
+    const claimModels = async () => {
+      await deleteProject();
+      return { model, modelId: "claude-test", promptVersion: "v1", limits: {} };
+    };
+    const project = createBrainProjectService({
+      repository: harness.repository, projects, homePath: "/home", claimModels,
+    });
+    await rejectsWith(project.extract(OWNER, "proj_a", { extractor: "model" }), BrainApiError, "project_not_found");
+    expect(await scopeRows("brain_extraction_runs")).toBe(0);
+    expect(model.extract).not.toHaveBeenCalled();
   });
 });
