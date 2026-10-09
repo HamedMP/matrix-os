@@ -41,8 +41,8 @@ const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
     color: "var(--matrix-fg)",
   },
   destructive: {
-    background: "var(--matrix-destructive)",
-    color: "var(--matrix-destructive-fg, var(--destructive-foreground, var(--text-on-danger, #ffffff)))",
+    background: "var(--destructive, var(--danger, var(--matrix-destructive)))",
+    color: "var(--destructive-foreground, var(--text-on-danger, var(--matrix-destructive-fg, #ffffff)))",
   },
 };
 

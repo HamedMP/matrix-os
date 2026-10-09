@@ -1,5 +1,6 @@
 "use client";
 
+import { legacyThemeMode } from "@matrix-os/brand/themes/customization";
 import { RETIRED_THEME_IDS } from "@matrix-os/brand/themes";
 import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
 import { normalizeAppearance, type AppearancePreferences } from "@matrix-os/brand/themes/preferences";
@@ -40,7 +41,7 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   if (Object.keys(value).length === 0) return fallbackTheme;
 
   if (typeof value.name === 'string' && (RETIRED_THEME_IDS as readonly string[]).includes(value.name) && !value.appearance) {
-    const mode = value.mode === 'light' || value.mode === 'dark' ? value.mode : typeof (value.colors as Record<string, unknown> | undefined)?.background === 'string' && parseInt(String((value.colors as Record<string, unknown>).background).slice(1, 3), 16) < 128 ? 'dark' : 'light';
+    const mode = value.mode === 'light' || value.mode === 'dark' ? value.mode : legacyThemeMode(String(stringEntries(value.colors).background ?? '#ffffff'));
     return buildWebTheme({ ...normalizeAppearance({}), mode });
   }
   const colors = { ...fallbackTheme.colors, ...stringEntries(value.colors) };
@@ -101,14 +102,7 @@ function applyTheme(saved: Theme) {
 
 /** Infer light/dark mode from the background color luminance */
 function inferMode(theme: Theme): "light" | "dark" {
-  const bg = theme.colors.background || "#ffffff";
-  const hex = bg.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16);
-  const g = parseInt(hex.substring(2, 4), 16);
-  const b = parseInt(hex.substring(4, 6), 16);
-  // Relative luminance approximation
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5 ? "dark" : "light";
+  return legacyThemeMode(theme.colors.background ?? '#ffffff');
 }
 
 export function getThemeFallback(): Theme {
