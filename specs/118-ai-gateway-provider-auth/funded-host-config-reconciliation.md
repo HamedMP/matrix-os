@@ -76,7 +76,16 @@ covers the existing sequential Terminal and Gateway 720-second startup contracts
 The maintenance unit retains `TimeoutStartSec=180`: interruption releases the
 restoration lock and its protected `ExecStopPost` retries from retained evidence
 under `TimeoutStopSec=1800`. Failed or unconfirmed restoration retains the exact
-resume journal; another maintenance invocation cannot replace it. Installed
+resume journal; another maintenance invocation cannot replace it. Before stopping
+services, the journal binds the original service list to exact protected receipt
+bytes and the guarded original environment digest. Persist the same baseline
+before field writes, and authorize a complete post-image only after successful
+stopped inspection. Resume holds the environment writer lock in shared mode,
+verifies the installed component and bundle, and restarts runtimes only when the
+environment matches the original baseline or explicitly verified post-image. An
+unknown image permits only originally recorded Sync to resume; repeated partial
+recovery preserves the full journal unchanged. Missing, legacy or corrupt safety
+proof defers without restarting runtimes. Installed
 inactive or failed Gateway dependencies defer repair before any service stop or
 configuration change, while absent optional units remain absent. A successful
 stop-post restoration can leave the interrupted oneshot marked failed; acceptance
@@ -133,7 +142,15 @@ Retire only the consumed version/channel identities without deleting concurrent
 replacement targets or the prepared release marker, so a later trigger-only
 apply can still install its pending newer release. Missing/inconsistent
 protected receipts defer, while passive, repair and signal
-paths never schedule this retry. An explicit
+paths never schedule this retry. Installation and maintenance share the fixed
+root-only `resume.lock` with
+restoration. Installation acquires it before `install.lock`; all acquisitions
+are nonblocking. A pending restoration journal prevents every changing install
+before staging or receipt replacement. A verified unchanged installation may
+remain a no-op, preserving that journal and its matching receipt. Hold the
+maintenance lock across service admission, journal creation and restoration;
+restoration must use the existing lock rather than acquire it recursively.
+An explicit
 request for the saved prior repair release first schedules guarded field rollback
 on the currently installed protected component; it retains that component,
 receipt and app version until field rollback is independently confirmed. Keep cohort configuration enabled
@@ -169,9 +186,58 @@ pre-swap app directory identity. The protected program independently hashes a
 held staged archive against the receipt checksum and verifies the enclosed
 component and unit bytes against their pinned digests. Version equality alone
 neither admits this path nor proves that the transaction committed. Staging
-cleaners retain only the exact archive referenced by a pending sealed same-version
-transaction until recovery resolves it; unrelated staging keeps its normal cleanup
-policy. The pinned app identity distinguishes pre-swap current state from the saved rollback app
+cleaners and every apply failure cleanup retain only the exact archive referenced
+by a pending sealed same-version transaction until recovery resolves it; unrelated
+staging keeps its normal cleanup policy. A subsequent apply must defer before
+download or phase replacement while this recovery pin remains. Retention is a
+transaction dependency, not a special case confined to TTL cleanup: changing
+recovery proof requirements must update every producer, remover and retry path.
+After verified health, committed release metadata and required post-install
+migrations, retire only the completed same-version recovery pin, independently
+verifying the current receipt, installed component/unit hashes and new/rollback
+app identities. Retain manual rollback transaction artifacts and financial
+evidence. A successful reinstall must admit a subsequent normal update. Unknown
+proof or cleanup failure retains the pending phase and recovery evidence. Death
+after pin retirement but before phase clearance is an ambiguous orphan: an
+active phase with funded applied evidence still blocks another apply before
+download; pin absence alone never proves a same-version commit.
+An absent, corrupt or symlinked pin permits only conservative retention of the
+exact root-sealed candidate archive with complete applied evidence and an active
+known update phase (`prepare`, `download`, `verify`, `extract`, `terminal-runtime`,
+`app-install`, `host-bin`, or `health`); unknown phases grant no retention proof.
+Retention grants no commit, recovery or subsequent apply authority.
+Confirmed pre-stop cancellation first verifies unchanged installed app and saved
+release metadata; a failed stop also requires successful recorded-service resume,
+terminal health and the original running Gateway version. Fully restored rollback
+must pass protected artifact verification, service restoration, health and Symphony
+cleanup. Only these fixed paths retire a restored original-inode pin and clear the
+bounded phase marker. Funded completion retains the complete sealed transaction;
+it does not recursively delete the only recovery snapshot. Failures of proof,
+preservation or phase retirement retain the blocker, exact archive and financial
+evidence. A safely completed cancellation or rollback admits an explicit retry.
+If the failed candidate differs from the restored current version, phase retirement
+precedes atomic relocation of the unchanged sealed snapshot to the one fixed
+`update-transaction.completed` slot. This preserves failed-candidate provenance
+without presenting completed rollback evidence as an active transaction to the
+protected current-version admission check. Only a validated sealed prior snapshot
+in that fixed slot may be replaced; owner, applied, resume and financial evidence
+remain untouched. Failed relocation conservatively restores only the original
+bounded phase marker where possible, fully writing and syncing a fixed exclusive
+temporary file before publishing complete bytes without replacing another phase.
+Death before removal of the fixed temporary name permits retention only when both
+fixed names identify the same complete root-owned inode with exactly two links;
+this grants no retirement, recovery or subsequent apply authority.
+Retention may then inspect that fixed completed
+slot if the active slot is absent; this remains retention authority only.
+Death after phase retirement but before relocation is a completed-rollback orphan:
+the original candidate snapshot remains and may withhold current-version maintenance.
+It grants no automatic recovery, configuration or financial authority. Once rollback
+was independently confirmed complete, the failed-candidate archive need not persist
+forever. A remaining phase or pin still requires its exact recovery archive.
+Executable regressions must fail restoration and service resumption independently,
+then exercise a later protected retry against the same retained archive and verify
+unchanged configuration, applied evidence and journals. The pinned app identity
+distinguishes pre-swap current state from the saved rollback app
 when both carry the same version. Missing, altered or inconsistent proof defers
 before service stop; recovery retains funded configuration and applied/journal
 evidence and cannot authorize manual field rollback. Verify both pre-swap and
