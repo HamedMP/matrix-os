@@ -126,11 +126,12 @@ export interface OnboardingPromptInput {
   answer: string;
   appConnected: boolean;
   simpler: boolean;
+  context?: string;
 }
 
 const BRIEF_RULES = "Keep the final answer short: a one-line headline, then at most five bullet points.";
 
-export function buildOnboardingPrompt({ taskId, answer, appConnected, simpler }: OnboardingPromptInput): string {
+export function buildOnboardingPrompt({ taskId, answer, appConnected, simpler, context }: OnboardingPromptInput): string {
   switch (taskId) {
     case "research":
       return simpler
@@ -148,7 +149,7 @@ export function buildOnboardingPrompt({ taskId, answer, appConnected, simpler }:
     case "work-on-code":
       return simpler
         ? `Give me a short overview of the ${answer} repository.`
-        : `Clone the ${answer} repository into a project, read it, and tell me in three lines what it does. Then wait for my next instruction.`;
+        : `Clone the ${context ?? answer} repository into a project, read it, and tell me in three lines what it does. Then wait for my next instruction.`;
     case "custom":
       return answer;
   }
@@ -159,8 +160,8 @@ export function onboardingFollowUpPrompt(taskId: OnboardingTaskId, choice: strin
   switch (taskId) {
     case "research": return `Watch ${answer} for me and send me an updated brief every week.`;
     case "plan-week": return "Do this every Monday at 8:00.";
+    case "work-on-code": return `${choice} in the ${answer} repository.`;
     case "build-website":
-    case "work-on-code":
     case "custom": return choice;
   }
 }

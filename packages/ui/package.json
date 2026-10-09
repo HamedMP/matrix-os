@@ -11,7 +11,8 @@
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
-    "./chat-agents.css": "./src/chat-agents/chat-agents.css"
+    "./chat-agents.css": "./src/chat-agents/chat-agents.css",
+    "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
@@ -23,7 +24,10 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "zod": "^4.3.6",
-    "lucide-react": "^0.563.0"
+    "lucide-react": "^0.563.0",
+    "@hugeicons/core-free-icons": "^4.3.0",
+    "@hugeicons/react": "^1.1.9",
+    "@matrix-os/brand": "workspace:*"
   },
   "peerDependencies": {
     "react": "^19.0.0",

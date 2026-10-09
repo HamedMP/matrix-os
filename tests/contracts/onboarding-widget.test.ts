@@ -6,6 +6,7 @@ import {
   deriveOnboardingBubble,
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
+  onboardingAiLabel,
   parseOnboardingRepoUrl,
   reduceOnboardingWidget,
   type OnboardingRunSource,
@@ -48,7 +49,8 @@ describe("reduceOnboardingWidget", () => {
     const state = fresh();
     expect(state.screen).toEqual({ kind: "tasks" });
     expect(state.started).toBe(false);
-    expect(state.aiLabel).toBe("Matrix AI");
+    expect(state.aiChoice).toBe("matrix");
+    expect(onboardingAiLabel(state.aiChoice)).toBe("Matrix AI");
   });
 
   it("asks one question for research and starts a run from a chip", () => {
@@ -97,6 +99,18 @@ describe("reduceOnboardingWidget", () => {
     expect(picked.notice).toBe("GitHub connected");
     const started = run(picked, { type: "answer.submitted", text: "portfolio" });
     expect(started.screen).toMatchObject({ kind: "run", taskId: "work-on-code", answer: "portfolio" });
+  });
+
+  it("keeps only a validated repo link as run context, including on retry", () => {
+    const repo = run(fresh(), { type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] });
+    const valid = run(repo, { type: "answer.submitted", text: "portfolio", context: "https://github.com/acme/portfolio.git" });
+    expect(valid.screen).toMatchObject({ context: "https://github.com/acme/portfolio" });
+    const failed = run(valid, { type: "run.failedToStart" }, { type: "run.retried", simpler: false });
+    expect(failed.screen).toMatchObject({ context: "https://github.com/acme/portfolio" });
+    const invalid = run(repo, { type: "answer.submitted", text: "portfolio", context: "https://evil.com/x/y" });
+    expect(invalid.screen.kind === "run" && invalid.screen.context).toBeUndefined();
+    expect(buildOnboardingPrompt({ taskId: "work-on-code", answer: "portfolio", appConnected: true, simpler: false, context: "https://github.com/acme/portfolio" }))
+      .toContain("https://github.com/acme/portfolio");
   });
 
   it("tracks the run through admission and completion and records the first task", () => {
@@ -148,6 +162,10 @@ describe("reduceOnboardingWidget", () => {
     expect(settled.followUpUsed).toBe(false);
     const dismissed = run(settled, { type: "followUp.dismissed" });
     expect(dismissed.followUpUsed).toBe(true);
+    const followed = run(settled, { type: "followUp.chosen", choice: "Yes", prompt: "Do this every Monday at 8:00." });
+    expect(followed.echo).toBe("Yes");
+    expect(followed.followUpUsed).toBe(true);
+    expect(followed.screen).toMatchObject({ kind: "run", taskId: "custom", answer: "Do this every Monday at 8:00.", phase: "starting" });
   });
 
   it("caps free-form text before it becomes a prompt", () => {
@@ -178,12 +196,17 @@ describe("reduceOnboardingWidget", () => {
     expect(run(waiting, { type: "ai.failed" }).ai).toEqual({ step: "waiting", provider: "claude", status: "failed" });
     const key = run(method, { type: "ai.methodPicked", method: "api_key" });
     expect(key.ai).toEqual({ step: "key", provider: "claude", status: "idle" });
-    const connected = run(key, { type: "ai.connected", label: "Claude" });
+    const connected = run(key, { type: "ai.connected", provider: "claude" });
     expect(connected.ai).toBeNull();
-    expect(connected.aiLabel).toBe("Claude");
+    expect(connected.aiChoice).toBe("claude");
     expect(connected.notice).toBe("Claude connected");
     expect(connected.screen).toEqual({ kind: "tasks" });
     expect(run(method, { type: "ai.cancelled" }).ai).toBeNull();
+    const switched = run(menu, { type: "ai.selected", provider: "codex" });
+    expect(switched.ai).toBeNull();
+    expect(switched.aiChoice).toBe("codex");
+    expect(switched.notice).toBeNull();
+    expect(onboardingAiLabel("codex")).toBe("ChatGPT");
   });
 
   it("counts results that finish while minimized and clears them on open", () => {

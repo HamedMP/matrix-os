@@ -1,6 +1,7 @@
 import {
   ONBOARDING_FREEFORM_MAX_CHARS,
   onboardingTask,
+  parseOnboardingRepoUrl,
   type OnboardingRequiredService,
   type OnboardingStarterTaskId,
   type OnboardingTaskId,
@@ -8,6 +9,13 @@ import {
 
 export type OnboardingWidgetSize = "bubble" | "corner";
 export type OnboardingAiProvider = "claude" | "codex";
+export type OnboardingAiChoice = "matrix" | OnboardingAiProvider;
+
+const AI_LABELS: Record<OnboardingAiChoice, string> = { matrix: "Matrix AI", claude: "Claude", codex: "ChatGPT" };
+
+export function onboardingAiLabel(choice: OnboardingAiChoice): string {
+  return AI_LABELS[choice];
+}
 export type OnboardingRunPhase = "waiting_computer" | "starting" | "running" | "done" | "failed";
 
 export interface OnboardingRunScreen {
@@ -16,6 +24,7 @@ export interface OnboardingRunScreen {
   answer: string;
   appConnected: boolean;
   simpler: boolean;
+  context?: string;
   phase: OnboardingRunPhase;
   requestId: number;
   runId?: string;
@@ -38,7 +47,7 @@ export type OnboardingAiPanel =
 export interface OnboardingWidgetState {
   screen: OnboardingScreen;
   ai: OnboardingAiPanel | null;
-  aiLabel: string;
+  aiChoice: OnboardingAiChoice;
   echo: string | null;
   notice: string | null;
   size: OnboardingWidgetSize;
@@ -52,7 +61,7 @@ export interface OnboardingWidgetState {
 
 export type OnboardingWidgetEvent =
   | { type: "task.selected"; taskId: OnboardingStarterTaskId; connectedServices: readonly OnboardingRequiredService[] }
-  | { type: "answer.submitted"; text: string }
+  | { type: "answer.submitted"; text: string; context?: string }
   | { type: "freeform.submitted"; text: string }
   | { type: "connect.started" }
   | { type: "connect.succeeded" }
@@ -67,7 +76,7 @@ export type OnboardingWidgetEvent =
   | { type: "run.failedToStart" }
   | { type: "run.settled"; runId: string; outcome: "completed" | "failed" }
   | { type: "run.retried"; simpler: boolean }
-  | { type: "followUp.chosen" }
+  | { type: "followUp.chosen"; choice: string; prompt: string | null }
   | { type: "followUp.dismissed" }
   | { type: "ai.menuToggled" }
   | { type: "ai.providerPicked"; provider: OnboardingAiProvider }
@@ -75,7 +84,8 @@ export type OnboardingWidgetEvent =
   | { type: "ai.keySubmitted" }
   | { type: "ai.failed" }
   | { type: "ai.retried" }
-  | { type: "ai.connected"; label: string }
+  | { type: "ai.connected"; provider: OnboardingAiProvider }
+  | { type: "ai.selected"; provider: OnboardingAiChoice }
   | { type: "ai.cancelled" }
   | { type: "ai.keepMatrix" }
   | { type: "size.changed"; size: OnboardingWidgetSize };
@@ -83,7 +93,7 @@ export type OnboardingWidgetEvent =
 export interface OnboardingWidgetInit {
   size: OnboardingWidgetSize;
   firstTaskCompleted: boolean;
-  aiLabel?: string;
+  aiChoice?: OnboardingAiChoice;
   chatId?: string | null;
 }
 
@@ -91,7 +101,7 @@ export function initialOnboardingWidgetState(init: OnboardingWidgetInit): Onboar
   return {
     screen: { kind: "tasks" },
     ai: null,
-    aiLabel: init.aiLabel ?? "Matrix AI",
+    aiChoice: init.aiChoice ?? "matrix",
     echo: null,
     notice: null,
     size: init.size,
@@ -110,7 +120,7 @@ function boundedText(text: string): string {
 
 function startRun(
   state: OnboardingWidgetState,
-  run: Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler">,
+  run: Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler" | "context">,
   patch: Partial<OnboardingWidgetState> = {},
 ): OnboardingWidgetState {
   return {
@@ -118,7 +128,7 @@ function startRun(
     ...patch,
     ai: null,
     started: true,
-    followUpUsed: false,
+    followUpUsed: patch.followUpUsed ?? false,
     nextRequestId: state.nextRequestId + 1,
     screen: { kind: "run", ...run, phase: "starting", requestId: state.nextRequestId },
   };
@@ -161,7 +171,8 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
         return startRun(state, { taskId: screen.taskId, answer, appConnected: true, simpler: false }, { echo: answer });
       }
       if (screen.kind === "repo") {
-        return startRun(state, { taskId: "work-on-code", answer, appConnected: true, simpler: false }, { echo: answer });
+        const repo = event.context ? parseOnboardingRepoUrl(event.context) : null;
+        return startRun(state, { taskId: "work-on-code", answer, appConnected: true, simpler: false, ...(repo ? { context: repo.url } : {}) }, { echo: answer });
       }
       return reduceOnboardingWidget(state, { type: "freeform.submitted", text: answer });
     }
@@ -215,8 +226,12 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     }
     case "run.retried":
       if (screen.kind !== "run" || screen.phase !== "failed") return state;
-      return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler });
-    case "followUp.chosen":
+      return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler, ...(screen.context ? { context: screen.context } : {}) });
+    case "followUp.chosen": {
+      const prompt = event.prompt ? boundedText(event.prompt) : "";
+      if (!prompt) return { ...state, followUpUsed: true };
+      return startRun(state, { taskId: "custom", answer: prompt, appConnected: false, simpler: false }, { echo: event.choice, notice: null, followUpUsed: true });
+    }
     case "followUp.dismissed":
       return { ...state, followUpUsed: true };
     case "ai.menuToggled":
@@ -243,7 +258,9 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       if (state.ai?.step === "key") return { ...state, ai: { ...state.ai, status: "idle" } };
       return state;
     case "ai.connected":
-      return { ...state, ai: null, aiLabel: event.label, echo: null, notice: `${event.label} connected`, screen: { kind: "tasks" } };
+      return { ...state, ai: null, aiChoice: event.provider, echo: null, notice: `${onboardingAiLabel(event.provider)} connected`, screen: { kind: "tasks" } };
+    case "ai.selected":
+      return { ...state, ai: null, aiChoice: event.provider };
     case "ai.cancelled":
     case "ai.keepMatrix":
       return { ...state, ai: null };
