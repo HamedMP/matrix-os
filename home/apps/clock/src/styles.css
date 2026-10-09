@@ -616,7 +616,7 @@ h2 {
 .day--on {
   background: var(--app-accent);
   border-color: var(--app-accent);
-  color: #fff;
+  color: var(--app-primary-fg);
 }
 
 .edit-actions {
