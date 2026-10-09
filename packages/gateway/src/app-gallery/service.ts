@@ -5,6 +5,7 @@ import { AppGalleryCatalogSchema, type GalleryApp, type GalleryAppListing, type 
 import { AppManifestSchema } from "../app-runtime/manifest-schema.js";
 import { createPrivateStage, DEFAULT_LIMITS, GalleryError, isFsError, pinDirectory, readLimited, readTemplate, type GalleryLimits } from "./filesystem.js";
 import type { PinnedDirectory } from "./pinned-directory.js";
+import { indexOwnerApps, readOwnerManifest } from "./owner-index.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
 
 const IdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,47}$/);
@@ -60,9 +61,9 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
     let directory: PinnedDirectory | undefined;
     try {
       directory = await apps.child(id);
-      const parsed = AppManifestSchema.safeParse(JSON.parse((await directory.readFile("matrix.json", 32_768)).toString("utf8")));
-      if (!parsed.success || parsed.data.slug !== id) return null;
-      return { status: "already_installed", slug: id, name: parsed.data.name, path: `apps/${id}` };
+      const { manifest } = await readOwnerManifest(directory);
+      if (!manifest || manifest.slug !== id) return null;
+      return { status: "already_installed", slug: id, name: manifest.name, path: `apps/${id}` };
     } catch (error) {
       if (isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError) return null;
       throw error;
@@ -74,8 +75,15 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
     try {
       try { apps = await owner.child("apps"); }
       catch (error) { if (!isFsError(error, "ENOENT")) throw error; }
+      const index = apps ? await indexOwnerApps(apps) : null;
+      if (index?.entries.has(definition.id)) {
+        const indexed = index.entries.get(definition.id);
+        if (!indexed) throw new GalleryError(409, "Duplicate owner app slug");
+        return indexed;
+      }
       const installed = apps ? await existing(apps, definition.id) : null;
       if (installed) return installed;
+      if (index?.unavailable) throw new GalleryError(409, "Owner app identity cannot be verified");
       // Validate and prepare everything privately before creating any discoverable app folder.
       const icon = await readLimited(join(BUNDLED_HOME, "apps/app-gallery/src/assets/icons", `${definition.id}.png`), limits.maxFileBytes);
       const files = injectedFiles(await readTemplate(templatePath, limits), definition, icon);
@@ -140,6 +148,8 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
             if (a.dev !== b.dev || a.ino !== b.ino) throw new GalleryError(409, "App directory changed during installation");
           } finally { await bound.close(); }
         }
+        const finalIndex = await indexOwnerApps(apps);
+        if (finalIndex.unavailable || finalIndex.entries.has(definition.id)) throw new GalleryError(409, "Owner app changed before publication");
         await stage.publish(manifestName, destination, "matrix.json");
         return { status: "installed", slug: definition.id, name: definition.name, path: `apps/${definition.id}` };
       } finally {
@@ -157,9 +167,10 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       try {
         try { apps = await owner.child("apps"); }
         catch (error) { if (!isFsError(error, "ENOENT")) throw error; }
+        const index = apps ? await indexOwnerApps(apps) : null;
         const result: GalleryAppListing[] = [];
         for (const definition of definitions) {
-          const installed = apps ? await existing(apps, definition.id) : null;
+          const installed = index?.entries.has(definition.id) ? index.entries.get(definition.id) : apps ? await existing(apps, definition.id) : null;
           result.push({ ...definition, installed: Boolean(installed), ...(installed ? { installedName: installed.name, launchPath: installed.path } : {}) });
         }
         return result;

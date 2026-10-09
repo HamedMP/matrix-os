@@ -5,6 +5,10 @@ import { basename, dirname, parse, resolve, sep } from "node:path";
 export class GalleryError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 503, message: string) { super(message); }
 }
+/** Expected bounded-file rejection; do not conflate I/O or directory failures with invalid owner content. */
+export class GalleryFileError extends GalleryError {
+  constructor(message: string) { super(503, message); }
+}
 export function isFsError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
@@ -45,7 +49,7 @@ export class PinnedDirectory {
     const handle = await this.openFile(name, constants.O_RDONLY | constants.O_NONBLOCK);
     try {
       const info = await handle.stat();
-      if (!info.isFile() || info.size > maxBytes) throw new GalleryError(503, "Invalid file");
+      if (!info.isFile() || info.size > maxBytes) throw new GalleryFileError("Invalid file");
       const bytes = Buffer.alloc(maxBytes + 1);
       let count = 0;
       while (count < bytes.length) {
@@ -53,7 +57,7 @@ export class PinnedDirectory {
         if (result.bytesRead === 0) break;
         count += result.bytesRead;
       }
-      if (count > maxBytes) throw new GalleryError(503, "File too large");
+      if (count > maxBytes) throw new GalleryFileError("File too large");
       // Template traversal retains these buffers. A subarray would retain the
       // entire read budget for every small file instead of its actual content.
       // Avoid the global small-buffer pool: dependencies may enlarge it, which
