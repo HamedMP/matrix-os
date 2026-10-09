@@ -27,19 +27,39 @@ export function commitmentDue() {
   return sql<string | null>`COALESCE(CASE WHEN ${own} ~ ${date} THEN ${own} END, ${documentRef("due")})`;
 }
 
-/** Current claims; callers add kind filters, order and limit. Columns are the BriefClaimRow fields. */
-export function currentClaims(db: Kysely<BrainDatabase>, scope: BrainScopeKey) {
+/** Live documents `a` as of `at` (null: now): the row if dated before `at`, else its newest snapshot dated before it,
+ * with when that version was stored (`written`) and replaced (`until`, null for the row). */
+export function documentsAsOf(scope: BrainScopeKey, at: Date | null) {
+  const end = at ?? sql`'infinity'::timestamptz`;
+  return sql<{ document_id: string; dated: Date | string; revision: number; written: Date | string | null;
+    until: Date | string | null; title: string; body: string }>`
+    ((SELECT d.document_id, d.source_updated_at AS dated, d.revision, d.updated_at AS written,
+      NULL::timestamptz AS until, d.title, d.body FROM brain_documents d WHERE d.owner_id = ${scope.ownerId}
+      AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL AND d.source_updated_at < ${end})
+    UNION ALL (SELECT DISTINCT ON (v.document_id) v.document_id, v.source_updated_at, v.revision,
+      lag(v.superseded_at) OVER (PARTITION BY v.document_id ORDER BY v.revision), v.superseded_at, v.title, v.body
+    FROM brain_document_revisions v JOIN brain_documents d ON d.owner_id = v.owner_id AND d.scope_id = v.scope_id
+      AND d.document_id = v.document_id AND d.incarnation = v.incarnation AND d.deleted_at IS NULL
+    WHERE v.owner_id = ${scope.ownerId} AND v.scope_id = ${scope.scopeId} AND d.source_updated_at >= ${end}
+      AND v.source_updated_at < ${end} ORDER BY v.document_id, v.source_updated_at DESC, v.revision DESC))`.as("a");
+}
+
+/** Current claims as of `at` (documentsAsOf): of the live revision, or (read from a snapshot) written before it was
+ * replaced; `source_updated_at` is that version's date. Callers add kind filters, order and limit. */
+export function currentClaims(db: Kysely<BrainDatabase>, scope: BrainScopeKey, at: Date | null = null) {
   return db.selectFrom("brain_claims as c")
     .innerJoin("brain_documents as d", (join) => join.onRef("d.owner_id", "=", "c.owner_id")
       .onRef("d.scope_id", "=", "c.scope_id").onRef("d.document_id", "=", "c.document_id"))
+    .innerJoin(documentsAsOf(scope, at), (join) => join.onRef("a.document_id", "=", "c.document_id"))
     .select([
       "c.claim_id", "c.kind", "c.label", "c.statement", "c.quote", "c.fields", "c.document_id", "d.source_id",
-      "d.source_updated_at", documentRef("status").as("status"), documentRef("due").as("due_ref"),
+      "a.dated as source_updated_at", documentRef("status").as("status"), documentRef("due").as("due_ref"),
       documentRef("assignee").as("assignee_ref"),
     ])
     .where("c.owner_id", "=", scope.ownerId).where("c.scope_id", "=", scope.scopeId)
-    .where("d.deleted_at", "is", null)
-    .whereRef("c.revision", "=", "d.revision").whereRef("c.incarnation", "=", "d.incarnation");
+    .whereRef("c.incarnation", "=", "d.incarnation")
+    .where((eb) => eb.or([eb.and([eb("a.until", "is", null), eb("c.revision", "=", eb.ref("d.revision"))]),
+      eb("c.created_at", "<", eb.ref("a.until"))]));
 }
 
 /** Rules and model extractors can both hold a claim id; the first row of each id wins. */

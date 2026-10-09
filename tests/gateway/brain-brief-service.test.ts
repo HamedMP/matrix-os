@@ -124,15 +124,20 @@ describe("brief", () => {
     expect(seen.size).toBe(13);
   });
 
-  it("lists only claims first seen in the window for revised documents", async () => {
+  it("lists claims first seen in the window, and in a past brief the documents and claims as they were", async () => {
     const git = await fx.source();
-    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A." }]);
-    await fx.extract("spec", [{ kind: "decision", statement: "use A." }]);
+    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A.\nShip A.", at: "2026-09-30T08:00:00.000Z" }]);
+    await fx.extract("spec", [{ kind: "decision", statement: "use A." }, { kind: "commitment", statement: "Ship A." }]);
     fx.harness.tick(60_000);
-    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A.\nDecision: use B." }]);
+    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A.\nShip A.\nDecision: use B." }]);
     fx.harness.tick(60_000);
-    await fx.extract("spec", [{ kind: "decision", statement: "use A." }, { kind: "decision", statement: "use B." }]);
-    expect((await brief()).sections.decisions.map((line) => line.text)).toEqual(["use B."]);
+    await fx.extract("spec", [{ kind: "decision", statement: "use A." }, { kind: "commitment", statement: "Ship A." }, { kind: "decision", statement: "use B." }]);
+    const read = async (date: string) => {
+      const { changes, decisions, commitments } = (await brief({ date })).sections;
+      return [changes.map((group) => group.created), decisions.map((line) => line.text), commitments.map((line) => line.text)];
+    };
+    expect(await read("2026-09-30")).toEqual([[1], ["use A."], ["Ship A."]]);
+    expect(await read("2026-10-01")).toEqual([[1], ["use B."], ["Ship A."]]);
   });
 
   it("refuses dates in the future, too far back or not on the calendar", async () => {

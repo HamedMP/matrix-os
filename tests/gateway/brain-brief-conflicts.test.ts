@@ -108,6 +108,8 @@ describe("conflicts", () => {
       "specs/100-x still reads Draft, but #3 shipped work for it", "specs/300-w still reads Draft, but #4 shipped work for it",
     ]);
     (BRIEF_SCANS as { shippedPullRequests: number }).shippedPullRequests = 5_000;
+    await fx.sync(git, [{ ...spec("s5", "W", "Status: Approved", day(10)), refs: [{ kind: "spec", value: "specs/300-w" }] }]);
+    expect((await computeConflicts(fx.harness.db, BRIEF_SCOPE, ["draft_spec_shipped"], new Date(day(3)))).map((item) => item.summary)).toEqual(["specs/300-w still reads Draft, but #4 shipped work for it"]);
   });
 
   it("finds commitments marked done after being deferred, and the reverse", async () => {
