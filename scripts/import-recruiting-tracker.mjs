@@ -25,7 +25,7 @@ for(const candidate of candidates){
   const attachments=[];
   for(const file of files.filter(file=>file.candidate_id===candidate.id)){
     if(!['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.mime_type))continue;
-    const chunks=await query('file_chunks',{where:{file_id:file.id}});
+    const chunks=await query('file_chunks',{filter:{file_id:file.id}});
     if(chunks.length!==file.chunk_count)throw Error('Incomplete stored CV');
     attachments.push({filename:file.name,contentType:file.mime_type,base64:chunks.sort((a,b)=>a.idx-b.idx).map(chunk=>chunk.data).join('')});
   }
@@ -43,7 +43,9 @@ for(const mail of inbox.filter(mail=>!mail.candidate_id)){
 const child = spawn('ssh', [host, '/opt/matrix/runtime/node/bin/node', '--input-type=module'], { stdio: ['pipe', 'pipe', 'inherit'] });
 const done = new Promise((resolve, reject) => { child.on('error', reject); child.on('close', code => code === 0 ? resolve() : reject(Error('Stored tracker export failed'))); });
 // Install a rejection handler immediately; failures are rethrown after the stream drains.
-done.catch(() => {});
+done.catch((error) => {
+  console.error('Stored tracker export failed:', error instanceof Error ? error.name : typeof error);
+});
 child.stdin.end(remote);
 let count = 0;
 let mailCount = 0;

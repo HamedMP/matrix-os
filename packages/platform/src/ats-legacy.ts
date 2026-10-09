@@ -26,8 +26,10 @@ export async function importLegacyCandidate(db: AtsDB, value: z.input<typeof Leg
       if (!row) throw new Error('Previously imported candidate is unavailable');
       return mapApplication(row);
     }
-    let row = await trx.executor.selectFrom('ats_applications').select(applicationColumns).where('candidate_email', '=', input.email)
-      .where('deleted_at', 'is', null).where('disposition', '=', 'active').orderBy('created_at', 'desc').executeTakeFirst();
+    const matches = await trx.executor.selectFrom('ats_applications').select(applicationColumns).where('candidate_email', '=', input.email)
+      .where('role_slug', '=', input.roleSlug).where('deleted_at', 'is', null).where('disposition', '=', 'active').limit(2).execute();
+    if (matches.length > 1) throw new Error('Ambiguous historical application match; explicit reconciliation required');
+    let row = matches[0];
     if (!row) row = await trx.executor.insertInto('ats_applications').values({
       id: randomUUID(), submission_key: createHash('sha256').update(`legacy:${input.legacyKey}`).digest('hex'),
       role_slug: input.roleSlug, candidate_name: input.name, candidate_email: input.email,

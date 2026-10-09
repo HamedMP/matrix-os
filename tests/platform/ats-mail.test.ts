@@ -53,4 +53,14 @@ describe('ATS email intake and notifications', () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect((await db.executor.selectFrom('ats_notification_outbox').selectAll().execute())[0].slack_ts).toBe('123.456');
   });
+
+  it('promotes only the selected message when a sender applies for different roles', async () => {
+    const first = await importAtsMail(db, mail, at);
+    const second = await importAtsMail(db, { ...mail, messageId: 'other-role', threadId: 'other-thread' }, at);
+    const engineer = await promoteAtsMail(db, first.id, 'founding-engineer', 'user_reviewer', at);
+    expect((await db.executor.selectFrom('ats_inbox_messages').selectAll().where('id', '=', second.id).executeTakeFirstOrThrow()).application_id).toBeNull();
+    const commercial = await promoteAtsMail(db, second.id, 'senior-go-to-market-lead', 'user_reviewer', at);
+    expect(commercial.id).not.toBe(engineer.id);
+    expect(commercial.roleSlug).toBe('senior-go-to-market-lead');
+  });
 });

@@ -75,7 +75,7 @@ export async function promoteAtsMail(db: AtsDB, inboxId: string, roleSlug: strin
         from_stage: null, to_stage: 'applied', detail: JSON.stringify({ messageId: mail.message_id, source: 'group_email' }), created_at: at }).execute();
     }
     await trx.executor.updateTable('ats_inbox_messages').set({ application_id: candidate.id, category: 'candidate' })
-      .where('sender_email', '=', mail.sender_email).where('application_id', 'is', null).where('category', 'not in', ['moderation', 'vendor']).execute();
+      .where('id', '=', inboxId).where('application_id', 'is', null).where('category', 'not in', ['moderation', 'vendor']).execute();
     return mapApplication(candidate);
   });
 }

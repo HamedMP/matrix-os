@@ -25,3 +25,16 @@ it('never resets reviewer edits when a historical import is replayed', async () 
   await importLegacyCandidate(db, input, 'user_owner', at);
   expect((await getAtsApplication(db, first.id))?.stage).toBe('offer');
 });
+it('keeps history for different roles in separate applications', async () => {
+  const engineer = await importLegacyCandidate(db, input, 'user_owner', at);
+  const commercial = await importLegacyCandidate(db, { ...input, legacyKey: 'owner:candidate2', roleSlug: 'senior-go-to-market-lead' }, 'user_owner', at);
+  expect(commercial.id).not.toBe(engineer.id);
+  expect(commercial.roleSlug).toBe('senior-go-to-market-lead');
+});
+it('does not choose between multiple existing applications for the same role', async () => {
+  const original = await importLegacyCandidate(db, input, 'user_owner', at);
+  const row = await db.executor.selectFrom('ats_applications').selectAll().where('id', '=', original.id).executeTakeFirstOrThrow();
+  await db.executor.insertInto('ats_applications').values({ ...row, id: 'other-app', submission_key: 'other-submission' }).execute();
+  await expect(importLegacyCandidate(db, { ...input, legacyKey: 'owner:ambiguous' }, 'user_owner', at)).rejects.toThrow('Ambiguous');
+  expect(await db.executor.selectFrom('ats_legacy_imports').selectAll().where('legacy_key', '=', 'owner:ambiguous').execute()).toHaveLength(0);
+});
