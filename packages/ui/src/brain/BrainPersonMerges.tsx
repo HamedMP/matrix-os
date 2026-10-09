@@ -20,6 +20,17 @@ export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "ap
   const pages = useBrainPages(
     (cursor) => api.mergeSuggestions(projectId, { limit: PAGE_SIZE, cursor }), "merge-suggestions",
   );
+  // Suggestions merged here. A card naming a person one of them merged away waits for its Undo: the gateway now
+  // resolves that person to the one who stayed, so its Merge would join someone else and its Undo would fail.
+  const [merged, setMerged] = useState<ReadonlySet<string>>(new Set());
+  const mark = (id: string, on: boolean) => setMerged((previous) => {
+    const next = new Set(previous);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  const away = pages.items.filter((item) => merged.has(item.suggestionId));
+  const heldBy = ({ suggestionId, entity, alias }: BrainMergeSuggestionView) => away.find((item) =>
+    item.suggestionId !== suggestionId && [entity.entityId, alias.entityId].includes(item.alias.entityId))?.alias;
   return (
     <section aria-label="Possible duplicates" className="grid gap-2">
       <h2 className="text-sm font-semibold">Possible duplicates</h2>
@@ -29,7 +40,9 @@ export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "ap
             {pages.items.length === 0 ? <p className="text-xs text-muted-foreground">No likely duplicates.</p> : (
               <ul className="grid gap-2">
                 {pages.items.map((suggestion) => (
-                  <MergeCard key={suggestion.suggestionId} api={api} projectId={projectId} suggestion={suggestion} />
+                  <MergeCard key={suggestion.suggestionId} api={api} projectId={projectId} suggestion={suggestion}
+                    merged={merged.has(suggestion.suggestionId)} heldBy={heldBy(suggestion)}
+                    onMerged={(on) => mark(suggestion.suggestionId, on)} />
                 ))}
               </ul>
             )}
@@ -58,14 +71,17 @@ function Person({ person, links, keeps }: {
   );
 }
 
-function MergeCard({ api, projectId, suggestion }: Pick<BrainScreenProps, "api" | "projectId"> & {
-  readonly suggestion: BrainMergeSuggestionView;
-}) {
+interface MergeCardProps extends Pick<BrainScreenProps, "api" | "projectId"> {
+  readonly suggestion: BrainMergeSuggestionView; readonly merged: boolean; readonly onMerged: (merged: boolean) => void;
+  /** The person of this card that another merge here moved away; Merge waits until that merge is undone. */
+  readonly heldBy: BrainEntityRefView | undefined;
+}
+
+function MergeCard({ api, projectId, suggestion, merged, heldBy, onMerged }: MergeCardProps) {
   const action = useBrainAction();
-  const [merged, setMerged] = useState(false);
   const { entity, alias, aliasKey, counts } = suggestion;
   const update = (kind: "merge" | "unmerge") => action.run(kind,
-    () => api.updateAlias(projectId, entity.entityId, { action: kind, aliasKey }), () => setMerged(kind === "merge"));
+    () => api.updateAlias(projectId, entity.entityId, { action: kind, aliasKey }), () => onMerged(kind === "merge"));
   const moving = counts.aliasEntities - 1;
   // Each reason once, so its words are its key.
   const reasons = [...new Set(suggestion.evidence.map(brainMergeEvidenceText))].slice(0, EVIDENCE_SHOWN);
@@ -98,10 +114,13 @@ function MergeCard({ api, projectId, suggestion }: Pick<BrainScreenProps, "api" 
             </BrainButton>
           </>
         ) : (
-          <BrainButton size="sm" wrap className="max-w-full break-all" disabled={action.busy !== null}
-            onClick={() => update("merge")}>
-            {action.busy === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
-          </BrainButton>
+          <>
+            <BrainButton size="sm" wrap className="max-w-full break-all"
+              disabled={action.busy !== null || heldBy !== undefined} onClick={() => update("merge")}>
+              {action.busy === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
+            </BrainButton>
+            {heldBy && <p className="text-xs text-muted-foreground">Undo the merge of {heldBy.displayName} first.</p>}
+          </>
         )}
       </div>
       {action.error && <BrainError error={action.error} />}
