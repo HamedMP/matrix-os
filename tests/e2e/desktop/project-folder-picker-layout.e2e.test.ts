@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFailed } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -81,24 +81,39 @@ suite("Desktop Add Project compact folder picker", () => {
   }, 30_000);
 
   it("keeps the sticky list header flush with the toolbar while rows scroll beneath it", async () => {
-    await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
+    let phase = "open Chat";
+    onTestFailed(async () => {
+      console.error("[MAT-335] Failed phase:", phase, "Page:", page.url().split("?")[0]);
+      try {
+        console.error("[MAT-335] Visible content:", (await page.locator("body").innerText({ timeout: 2_000 })).slice(0, 2_000));
+        await page.screenshot({ path: join(SCREENSHOT_DIR, "failure.png"), timeout: 2_000 });
+      } catch (error: unknown) {
+        console.error("[MAT-335] Failure evidence unavailable:", error instanceof Error ? error.name : "UnknownError");
+      }
+    });
+    await page.getByRole("button", { name: "Chat", exact: true }).dblclick({ timeout: 10_000 });
     const chatNavigation = page.getByRole("navigation", { name: "Chat navigation" });
+    phase = "reveal Chat navigation";
     if (!await chatNavigation.isVisible()) {
-      await page.getByRole("button", { name: /^(Show Chat navigation|Toggle Chat sidebar)$/ }).click();
+      await page.getByRole("button", { name: /^(Show Chat navigation|Toggle Chat sidebar)$/ }).click({ timeout: 10_000 });
     }
-    await chatNavigation.waitFor();
-    await chatNavigation.getByRole("button", { name: "Projects", exact: true }).hover();
-    await chatNavigation.getByRole("button", { name: "Create project" }).click();
+    await chatNavigation.waitFor({ timeout: 10_000 });
+    phase = "reveal Create project";
+    await chatNavigation.getByRole("button", { name: "Projects", exact: true }).hover({ timeout: 10_000 });
+    await chatNavigation.getByRole("button", { name: "Create project" }).click({ timeout: 10_000 });
     const dialog = page.getByRole("dialog", { name: "Create a project" });
-    await dialog.waitFor();
-    await dialog.getByRole("button", { name: /Existing folder/ }).click();
-    await dialog.getByText("Connect an existing folder", { exact: true }).waitFor();
-    await dialog.getByRole("button", { name: "List view" }).click();
+    phase = "open existing folder picker";
+    await dialog.waitFor({ timeout: 10_000 });
+    await dialog.getByRole("button", { name: /Existing folder/ }).click({ timeout: 10_000 });
+    await dialog.getByText("Connect an existing folder", { exact: true }).waitFor({ timeout: 10_000 });
+    phase = "switch to List view";
+    await dialog.getByRole("button", { name: "List view" }).click({ timeout: 10_000 });
 
     const listHeader = page.getByRole("button", { name: "Sort by name" }).locator("..");
     const listing = page.locator("[data-files-listing]");
     await listHeader.waitFor({ timeout: 10_000 });
 
+    phase = "check toolbar and sticky header geometry";
     const toolbarBox = await listing.evaluate((element) => {
       const toolbar = element.previousElementSibling;
       if (!(toolbar instanceof HTMLElement)) return null;
@@ -111,6 +126,7 @@ suite("Desktop Add Project compact folder picker", () => {
     expect(Math.abs((initialHeaderBox?.y ?? 0) - ((toolbarBox?.y ?? 0) + (toolbarBox?.height ?? 0))))
       .toBeLessThanOrEqual(1);
 
+    phase = "scroll listing and check sticky header geometry";
     await listing.evaluate((element) => {
       element.scrollTop = 96;
     });
