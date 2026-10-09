@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-
 
 import ChatScreen from "../app/(drawer)/(tabs)/(chats)/index";
 
+let mockHandoffParams: Record<string,unknown>={};
+const mockSelectChat=jest.fn();
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
 jest.mock("@/lib/use-shell-navigation", () => ({ useOpenSidePanel: () => mockOpenSidePanel }));
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -20,6 +22,7 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
+    selectChat: mockSelectChat,
     activeChatId: null,
     selectionOverride: null,
     setSelectionOverride: jest.fn(),
@@ -48,7 +51,7 @@ jest.mock("@/lib/queries/use-cancel-run", () => ({
 jest.mock("@/lib/queries/use-canonical-chats", () => ({
   useCanonicalChats: () => ({ chats: [] }),
 }));
-jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }), useLocalSearchParams: () => mockHandoffParams }));
 const catalog = { instances: [{
   id: "codex_default", driverKind: "codex", availability: "available", options: [],
   defaultSelection: { instanceId: "codex_default", model: "gpt-test" },

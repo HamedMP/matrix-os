@@ -32,7 +32,10 @@
         "light": "./assets/ios-light.png",
         "dark": "./assets/ios-dark.png",
         "tinted": "./assets/ios-tinted.png"
-      }
+      },
+      "associatedDomains": [
+        "applinks:app.matrix-os.com"
+      ]
     },
     "android": {
       "adaptiveIcon": {

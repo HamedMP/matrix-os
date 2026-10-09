@@ -1,4 +1,5 @@
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { useLocalSearchParams } from "expo-router";
+import { CanonicalChatIdSchema, MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { TextInput } from "react-native";
@@ -26,16 +27,27 @@ import { useOpenSidePanel } from "@/lib/use-shell-navigation";
 
 export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
+  const { chat: requestedChat } = useLocalSearchParams();
+  const consumedHandoff = useRef<string | null>(null);
   const warmSessionToken = useSessionTokenWarmup();
   const openSidePanel = useOpenSidePanel();
   const {
     activeChatId,
+    selectChat,
     startDraftChat,
     draftChatRequests,
     selectionOverride,
     setSelectionOverride,
     selectedProjectId,
   } = useCanonicalChatSession();
+
+  useEffect(() => {
+    const target = CanonicalChatIdSchema.safeParse(requestedChat);
+    const key = JSON.stringify([userId, target.success ? target.data : null]);
+    if (!isSignedIn || !userId || !target.success || consumedHandoff.current === key) return;
+    consumedHandoff.current = key;
+    selectChat(target.data);
+  }, [isSignedIn, userId, requestedChat, selectChat]);
 
   const {
     detail, computer, refresh, isError: chatReadFailed, reload: reloadChat,
