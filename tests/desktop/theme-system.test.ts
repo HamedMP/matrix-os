@@ -48,14 +48,14 @@ describe("unified theme registry", () => {
   });
 
   it("uses the specified default dark palette", () => {
-    const chrome = getThemeChrome(DEFAULT_THEME_ID, "dark");
+    const chrome = getThemeChrome("operator", "dark");
     expect(chrome.background).toBe("#282c34");
     expect(chrome.card).toBe("#2c313c");
     expect(chrome.muted).toBe("#333842");
-    expect(chrome.destructive).toBe("#e06c75");
+    expect(chrome.destructive).toBe("#e37981");
     expect(chrome.ring).toBe("#61afef");
 
-    const editor = getThemeEditorColors(DEFAULT_THEME_ID, "dark");
+    const editor = getThemeEditorColors("operator", "dark");
     expect(editor.keyword).toBe("#c678dd");
     expect(editor.string).toBe("#98c379");
     expect(editor.function).toBe("#61afef");
@@ -65,9 +65,9 @@ describe("unified theme registry", () => {
   });
 
   it("falls back across variants and to the default theme", () => {
-    // one-dark ships dark-only: light mode must still resolve its dark variant.
+    // Every preset now has a dedicated light companion.
     const variant = getThemeVariant("one-dark", "light");
-    expect(variant.chrome.background).toBe("#282c34");
+    expect(variant.chrome.background).toBe("#fafafa");
     // Unknown ids resolve to the default theme.
     expect(getUnifiedTheme("does-not-exist").id).toBe(DEFAULT_THEME_ID);
     expect(isThemeId("does-not-exist")).toBe(false);
@@ -86,10 +86,10 @@ describe("applyUnifiedTheme", () => {
   });
 
   it("maps every managed semantic variable from the chrome layer", () => {
-    const vars = chromeToSemanticVars(getThemeChrome(DEFAULT_THEME_ID, "dark"));
+    const vars = chromeToSemanticVars(getThemeChrome("operator", "dark"));
     expect(vars["--bg-app"]).toBe("#282c34");
-    expect(vars["--danger"]).toBe("#e06c75");
-    expect(vars["--accent"]).toBe("#61afef");
+    expect(vars["--danger"]).toBe("#e37981");
+    expect(vars["--accent"]).toBe("#ffffff");
     // Highlight and warning must stay distinguishable signals.
     expect(vars["--highlight"]).not.toBe(vars["--warning"]);
     for (const [name, value] of Object.entries(vars)) {
@@ -101,7 +101,7 @@ describe("applyUnifiedTheme", () => {
   it("builds a valid focus ring for non-hex ring colors", () => {
     // The Operator light variant uses an oklch() ring; appending a hex alpha
     // suffix would produce an unparseable box-shadow that browsers discard.
-    const vars = chromeToSemanticVars(getThemeChrome(DEFAULT_THEME_ID, "light"));
+    const vars = chromeToSemanticVars({ ...getThemeChrome("operator", "light"), ring: "oklch(0.55 0 0)" });
     expect(vars["--focus-ring"]).toBe("0 0 0 3px color-mix(in srgb, oklch(0.55 0 0) 33%, transparent)");
   });
 
@@ -149,19 +149,19 @@ describe("applyUnifiedTheme", () => {
     expect(root.style.getPropertyValue("--bg-app")).toBe(getThemeChrome("dracula", "dark").background);
   });
 
-  it("clears overrides for the Matrix theme so the stylesheet wins", () => {
+  it("applies the shared Matrix palette after other themes", () => {
     applyUnifiedTheme("dracula", "dark");
     applyUnifiedTheme("matrix", "light");
     const root = document.documentElement;
     expect(root.getAttribute("data-theme")).toBe("light");
     expect(root.getAttribute("data-theme-id")).toBe("matrix");
-    expect(root.style.getPropertyValue("--bg-app")).toBe("");
+    expect(root.style.getPropertyValue("--bg-app")).toBe("#fafafa");
   });
 
-  it("keeps data-theme coherent for single-variant themes", () => {
-    // one-dark is dark-only: even in light mode the document renders dark.
+  it("renders the dedicated light companion", () => {
+    // Light mode no longer silently falls back to dark.
     applyUnifiedTheme("one-dark", "light");
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("resolves system mode from the media query", () => {

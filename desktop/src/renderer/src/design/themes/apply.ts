@@ -1,10 +1,9 @@
 import type { ChromeColors } from "./theme-types";
-import { DEFAULT_THEME_ID, getThemeChrome, getUnifiedTheme } from "./index";
+import type { CustomTheme } from "./index";
+import { getThemeChrome, getUnifiedTheme } from "./index";
 
-// tokens.css defines the semantic variables both statically (the Matrix brand
-// theme, no flash before JS runs) and as the vocabulary every component
-// consumes. Non-default themes override those variables inline on <html>;
-// the Matrix theme removes the overrides so the stylesheet values win again.
+// tokens.css supplies the first paint. Every selected theme uses this same
+// mapping so previews and the running interface remain consistent.
 
 export type ThemeMode = "dark" | "light" | "system";
 
@@ -25,6 +24,11 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--bg-active": chrome.secondary,
     "--bg-selected": chrome.secondary,
 
+    "--sidebar": chrome.sidebar,
+    "--sidebar-foreground": chrome.sidebarForeground,
+    "--sidebar-accent": chrome.sidebarAccent,
+    "--sidebar-accent-foreground": chrome.sidebarAccentForeground,
+    "--sidebar-border": chrome.sidebarBorder,
     "--forest": chrome.sidebar,
     "--forest-deep": chrome.surface0,
     "--forest-foreground": chrome.sidebarForeground,
@@ -40,7 +44,7 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--text-disabled": chrome.mutedForeground,
     "--text-on-accent": chrome.primaryForeground,
 
-    "--accent": chrome.ring,
+    "--accent": chrome.primary,
     "--accent-hover": chrome.sidebarPrimary,
     "--accent-muted": chrome.accent,
     "--highlight": chrome.chart4,
@@ -53,6 +57,12 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--danger-muted": chrome.accent,
     "--info": chrome.chart1,
     "--info-muted": chrome.accent,
+    "--surface-base-background": chrome.background,
+    "--surface-primary": chrome.card,
+    "--surface-card-foreground-subtle": chrome.card,
+    "--surface-tertiary": chrome.secondary,
+    "--text-subtle": chrome.mutedForeground,
+    "--text-danger": chrome.destructive,
 
     "--status-todo": chrome.mutedForeground,
     "--status-running": chrome.chart1,
@@ -68,14 +78,14 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
   };
 }
 
-const MANAGED_VARS = Object.keys(chromeToSemanticVars(getThemeChrome(DEFAULT_THEME_ID, "dark")));
+
 
 /**
  * Applies a unified theme to the document: sets data-theme for the stylesheet
- * variant and, for non-Matrix themes, overrides the semantic variables with
+ * variant and overrides the semantic variables with
  * the theme's chrome layer.
  */
-export function applyUnifiedTheme(themeId: string, mode: ThemeMode): void {
+export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: CustomTheme | null): void {
   const root = document.documentElement;
   const theme = getUnifiedTheme(themeId);
   const requested = resolveThemeMode(mode);
@@ -87,12 +97,8 @@ export function applyUnifiedTheme(themeId: string, mode: ThemeMode): void {
       ? "dark"
       : "light";
   root.setAttribute("data-theme", effective);
-  root.setAttribute("data-theme-id", theme.id);
-  if (theme.id === "matrix") {
-    for (const name of MANAGED_VARS) root.style.removeProperty(name);
-    return;
-  }
-  const vars = chromeToSemanticVars(getThemeChrome(theme.id, effective));
+  root.setAttribute("data-theme-id", themeId === "custom" && custom ? "custom" : theme.id);
+  const vars = chromeToSemanticVars(getThemeChrome(themeId, effective, custom));
   for (const [name, value] of Object.entries(vars)) {
     root.style.setProperty(name, value);
   }
