@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { desktopPalette, desktopFonts } from '@matrix-os/brand';
@@ -25,4 +26,25 @@ it('uses the launcher artwork and Matrix typography while keeping note creation 
   expect(screen.getByRole('heading', { name: 'A little space for your thoughts' }).style.fontFamily).toBe(desktopFonts.display);
   fireEvent.click(create);
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/bridge/query', expect.objectContaining({ app: 'notes', action: 'insert' })));
+});
+
+it('keeps the empty and failed Notes panes scrollable without shrinking their actions', async () => {
+  api.forRuntime.mockReturnValue(api);
+  let failed = true;
+  api.post.mockImplementation(async () => {
+    if (failed) throw new Error('Simulated load failure');
+    return [];
+  });
+  const { container } = render(<NotesWorkspace active />);
+  const retry = await screen.findByRole('button', { name: 'Try again' });
+  expect(container.querySelector('[aria-label="Note"]')?.classList.contains('notes-pane')).toBe(true);
+  expect(retry.closest('.notes-empty-state')).toBeTruthy();
+  const css = readFileSync('desktop/src/renderer/src/features/notes/notes.css', 'utf8');
+  expect(css).toMatch(/\.notes-pane\s*\{[^}]*overflow-y:\s*auto/);
+  expect(css).toMatch(/\.notes-empty-state\s*\{[^}]*flex:\s*0 0 auto;[^}]*min-height:\s*100%/);
+  expect(css).toMatch(/\.notes-empty-state > \*\s*\{[^}]*flex-shrink:\s*0/);
+  failed = false;
+  fireEvent.click(retry);
+  await screen.findByRole('button', { name: 'Create a note' });
+  expect(api.post).toHaveBeenCalledWith('/api/bridge/query', expect.objectContaining({ app: 'notes', action: 'find' }));
 });

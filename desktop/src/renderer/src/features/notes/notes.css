@@ -1,6 +1,9 @@
 /* Native Notes shares Matrix typography and launcher artwork, while its
    neutral surfaces follow the owner's selected light/dark theme. */
 .notes-workspace { --notes-ink-accent: color-mix(in srgb, var(--text-primary) 75%, var(--notes-brand-teal)); container: notes / inline-size; background: var(--bg-surface); }
+.notes-pane { overflow-y: auto; }
+.notes-empty-state { flex: 0 0 auto; min-height: 100%; justify-content: safe center; }
+.notes-empty-state > * { flex-shrink: 0; }
 .notes-library { width: 270px; min-width: 0; background: color-mix(in srgb, var(--bg-surface) 93%, var(--notes-brand-gold)); }
 .notes-library header { min-height: 72px; gap: 8px; }
 .notes-tool { width: 40px; height: 44px; flex-shrink: 0; }

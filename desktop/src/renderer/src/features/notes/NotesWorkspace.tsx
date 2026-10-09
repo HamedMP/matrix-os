@@ -127,11 +127,11 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
           <div className="px-4 py-3 text-[11px] text-[var(--text-tertiary)]">{state.notes.length} {state.notes.length === 1 ? "note" : "notes"}</div>
         </aside>
       </OSWindowSafeView>
-      <OSWindowSafeView area="sidebar" aria-label="Note" className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <OSWindowSafeView area="sidebar" aria-label="Note" className="notes-pane relative flex min-h-0 min-w-0 flex-1 flex-col">
         {note ? <>
           <div className="min-h-0 flex-1 overflow-y-auto"><NoteEditor key={note.id} note={note} controller={controller} /></div>
           {state.error && <div role="alert" className="absolute bottom-4 left-4 right-4 rounded-lg bg-[var(--bg-sunken)] p-3 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-2)]">{state.error} <button type="button" className="underline" onClick={() => void controller.flush()}>Retry</button></div>}
-        </> : <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+        </> : <div className="notes-empty-state flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <img data-notes-artwork src={notesArtwork} alt="" width={88} height={88} className="mb-2 object-contain" />
           <h2 className="text-[28px] font-medium leading-tight" style={{ fontFamily: desktopFonts.display }}>A little space for your thoughts</h2>
           <p className="max-w-64 text-sm text-[var(--text-tertiary)]">Ideas, lists, and everything in between.</p>
