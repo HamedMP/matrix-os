@@ -86,6 +86,8 @@ describe("Brain chat tab", () => {
     renderChat(view.host);
     expect(await screen.findByTestId("chat-view"))
       .toHaveTextContent("chat_a | Ask about matrix-os | Answers come only from this project's brain, with a link to every source.");
+    // A surface that lends a chat view opens the app on Chat.
+    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent("Chat");
     expect(agents.threads.list).toHaveBeenCalledWith("agent_brain", { projectId: PROJECT, limit: 50 });
     // The first pick is remembered too, so every surface opens the chat the same way after a reload.
     await waitFor(() => expect(window.localStorage.getItem(REMEMBERED)).toBe("chat_a"));
@@ -156,6 +158,35 @@ describe("Brain chat tab", () => {
     await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(3));
     expect(screen.getByRole("button", { name: /An older question/ })).toHaveAttribute("aria-current", "true");
     expect(screen.getByText("An older question", { selector: "p" })).toBeTruthy();
+  });
+
+  it("drops the Show more pages when a chat pushed off the first page would fall between them, then loads it again", async () => {
+    const chats = Array.from({ length: 60 }, (_, index) =>
+      thread(`chat_${index}`, `Question ${index}`, new Date(NOW - (index + 1) * 60_000).toISOString()));
+    let order: unknown[] = chats;
+    const agents = fakeAgents({ threads: async (_agentId, input) => {
+      const start = input.cursor === undefined ? 0 : Number(input.cursor.slice("chatcur_".length));
+      const end = start + 50;
+      return { items: order.slice(start, end), ...(end < order.length ? { nextCursor: `chatcur_${end}` } : {}) };
+    } });
+    renderChat(fakeHost(agents.client).host);
+    await screen.findByTestId("chat-view");
+    const rows = () => within(screen.getByRole("list", { name: "Past chats" })).getAllByRole("button")
+      .map((row) => row.querySelector("span")?.textContent);
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(rows()).toHaveLength(60));
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+    // Question 55 gets a new turn elsewhere: it moves to the top and pushes Question 49 off the first page.
+    order = [chats[55], ...chats.filter((_, index) => index !== 55)];
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(rows()[0]).toBe("Question 55"));
+    expect(rows()).toHaveLength(50);
+    expect(rows()).not.toContain("Question 49");
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await waitFor(() => expect(rows()).toHaveLength(60));
+    expect(rows()[50]).toBe("Question 49");
+    expect(new Set(rows()).size).toBe(60);
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
 
   it("asks once to start the brain chat with a fixed request id and no model, so the server picks Automatic", async () => {
@@ -283,15 +314,27 @@ describe("Brain chat tab", () => {
     const renamed = await screen.findByRole("button", { name: /^Where bot chats show/ });
     await waitFor(() => expect(renamed).toHaveFocus());
     expect(screen.getByText("Where bot chats show", { selector: "p" })).toBeTruthy();
+    // The rename made here stays over the list only until a reloaded list has it: a later rename elsewhere shows.
+    agents.threads.list.mockResolvedValue({ items: [
+      thread("chat_a", "Where bot chats show"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+    ] });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(3));
+    agents.threads.list.mockResolvedValue({ items: [
+      thread("chat_a", "Renamed on the phone"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+    ] });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    expect(await screen.findByRole("button", { name: /^Renamed on the phone/ })).toBeTruthy();
+    expect(screen.getByText("Renamed on the phone", { selector: "p" })).toBeTruthy();
 
-    fireEvent.keyDown(screen.getByRole("button", { name: "More for Where bot chats show" }), { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Renamed on the phone" }), { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    const confirm = within(await screen.findByRole("group", { name: "Delete Where bot chats show" }));
+    const confirm = within(await screen.findByRole("group", { name: "Delete Renamed on the phone" }));
     fireEvent.click(confirm.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(rows.remove).toHaveBeenCalledWith("chat_a"));
     // The open chat was deleted: the next one opens, and the deleted row stays gone until the server agrees.
     await waitFor(() => expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_b"));
-    expect(screen.queryByRole("button", { name: /Where bot chats show|Bot chat sidebar/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Renamed on the phone|Bot chat sidebar/ })).toBeNull();
     expect(screen.getByRole("button", { name: "New chat" })).toHaveFocus();
   });
 
