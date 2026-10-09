@@ -196,10 +196,10 @@ describe("desktop packaging", () => {
       }
 
       expect(sha256(join(root, "desktop/build/dmg-background.png"))).toBe(
-        "b452452bf5a9a2dc23c3bc9de1acd3f6aa880733ae501bdb322665d831f09e93",
+        "d8ab7fd1e2a900213fb61814a0604518fd80a253e02eb8b766e7a279f06fd3c9",
       );
       expect(sha256(join(root, "desktop/build/dmg-background@2x.png"))).toBe(
-        "676b042d7498fde42cf84266cf056bfd2db05d9fb4c8b62aa11470530edb518e",
+        "a21d53a1cb8051f3b68471e43e0c71ae885fd13bc1a01f64f7bf5260beccddd4",
       );
     } finally {
       rmSync(outputDirectory, { recursive: true, force: true });
