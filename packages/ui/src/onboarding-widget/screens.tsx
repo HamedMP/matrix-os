@@ -197,8 +197,10 @@ export function RunScreen({ run, state, runView, creditsExhausted, actions }: { 
       <>
         <p className="mxo-text">Got it. I'll start once your computer is ready.</p>
         <div className="mxo-card mxo-starting">
-          <span className="mxo-result__title">Starting your computer</span>
-          <span className="mxo-muted">~1 min</span>
+          <span className="mxo-starting__row">
+            <span className="mxo-result__title">Starting your computer</span>
+            <span className="mxo-muted">~1 min</span>
+          </span>
           <span className="mxo-progress" aria-hidden><span /></span>
         </div>
       </>

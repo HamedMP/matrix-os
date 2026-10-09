@@ -1,17 +1,21 @@
 import type { OnboardingAiChoice, OnboardingAiPanel, OnboardingAiProvider } from "@matrix-os/contracts";
 import { Alert02Icon, CheckmarkCircle02Icon, Key01Icon, UserIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, type FormEvent } from "react";
-import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "../coding-agent-artwork.js";
+import { codingAgentArtworkSrc } from "../coding-agent-artwork.js";
 import { ButtonRow, Icon, RabbitAvatar } from "./parts.js";
 import { AI_KEY_MAX_CHARS, PROVIDER_COPY } from "./helpers.js";
 import type { OnboardingWidgetActions } from "./types.js";
 
+const PROVIDER_MARKS: Record<OnboardingAiProvider, string> = {
+  claude: "/agents/settings/claude.svg",
+  codex: "/agents/settings/openai.svg",
+};
+
 function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
-  if (provider === "matrix") return <RabbitAvatar size={28} />;
-  const art = CODING_AGENT_ARTWORK[provider];
+  if (provider === "matrix") return <span className="mxo-logo mxo-logo--matrix" aria-hidden><RabbitAvatar size={20} /></span>;
   return (
-    <span className="mxo-logo mxo-logo--agent" style={{ background: art.background }} aria-hidden>
-      <img src={codingAgentArtworkSrc(art.src)} alt="" width={28} height={28} />
+    <span className="mxo-logo mxo-logo--provider" aria-hidden>
+      <img src={codingAgentArtworkSrc(PROVIDER_MARKS[provider])} alt="" width={18} height={18} draggable={false} />
     </span>
   );
 }

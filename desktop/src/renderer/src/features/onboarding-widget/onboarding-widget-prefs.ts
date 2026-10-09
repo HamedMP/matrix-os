@@ -14,7 +14,7 @@ const StoredPrefsSchema = z.strictObject({
 export type OnboardingStoredPrefs = z.infer<typeof StoredPrefsSchema>;
 
 export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
-  keepInCorner: true,
+  keepInCorner: false,
   side: "right",
   showOnLogin: true,
   firstTaskCompleted: false,

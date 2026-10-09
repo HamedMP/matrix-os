@@ -142,10 +142,10 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
             {status ? <span className="mxo-header__status"><StatusDot tone={status.tone} />{status.label}</span> : null}
           </span>
           <span className="mxo-header__actions">
-            {keepInCorner ? <span className="mxo-icon-btn mxo-icon-btn--active" title="Kept in the corner"><Icon icon={PinIcon} size={14} /></span> : null}
             <button type="button" className="mxo-icon-btn" aria-label="More" aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen((value) => !value)}>
               <Icon icon={MoreHorizontalIcon} size={16} />
             </button>
+            {keepInCorner ? <span className="mxo-icon-btn mxo-icon-btn--active" title="Kept in the corner"><Icon icon={PinIcon} size={14} /></span> : null}
             <button type="button" className="mxo-icon-btn" aria-label="Minimize" onClick={minimize}>
               <Icon icon={MinusSignIcon} size={16} />
             </button>

@@ -60,8 +60,8 @@ describe("onboarding widget prefs", () => {
   it("auto-opens in the corner until the first task is done, then follows the menu choices", () => {
     expect(onboardingLoginPresentation({ ...DEFAULT_ONBOARDING_PREFS, keepInCorner: false, showOnLogin: false })).toBe("corner");
     const done = { ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: true };
-    expect(onboardingLoginPresentation(done)).toBe("corner");
-    expect(onboardingLoginPresentation({ ...done, keepInCorner: false })).toBe("bubble");
+    expect(onboardingLoginPresentation(done)).toBe("bubble");
+    expect(onboardingLoginPresentation({ ...done, keepInCorner: true })).toBe("corner");
     expect(onboardingLoginPresentation({ ...done, showOnLogin: false })).toBe("hidden");
   });
 });

@@ -61,7 +61,7 @@ function OnboardingWidgetLoader({ api, prefsKey }: { api: ApiClient; prefsKey: s
     const settle = (existingUser: boolean) => {
       if (settled) return;
       settled = true;
-      const next = { ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: existingUser, keepInCorner: !existingUser };
+      const next = { ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: existingUser };
       writeOnboardingPrefs(prefsKey, next);
       setPrefs(next);
     };
