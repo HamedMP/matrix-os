@@ -30,7 +30,9 @@ beforeEach(() => {
   useCanvasTransform.setState({ zoom: 1, panX: 0, panY: 0, isAnimating: false, isScrolling: false, containerRect: { left: 0, top: 0, width: 1200, height: 800 } });
   useWindowManager.setState({ windows: [galleryWindow], nextZ: 2, closedPaths: new Set(), closedLayouts: new Map(), focusedWindowId: galleryWindow.id, fullscreenWindowId: null, appLaunchTimes: {} });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
-  vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/session")
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+    ? new Response(JSON.stringify(["focus", "files"].map(slug => ({ slug, name: slug === "focus" ? "Focus" : "Files", path: `/files/apps/${slug}/index.html` }))))
+    : String(url).endsWith("/session")
     ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 }), { headers: { "Content-Type": "application/json" } })
     : new Response('<!doctype html><html><head><title>App Gallery</title></head><body></body></html>')));
 });
@@ -58,17 +60,17 @@ async function mountedGalleryFrame(surface: "canvas" | "desktop" = "canvas"): Pr
   await waitFor(() => expect(frame.getAttribute("srcdoc")).toContain("window.MatrixOS"));
   return frame;
 }
-function requestOpen(frame: HTMLIFrameElement, path: string, app = "app-gallery") {
-  act(() => window.dispatchEvent(new MessageEvent("message", {
+async function requestOpen(frame: HTMLIFrameElement, path: string, app = "app-gallery") {
+  await act(async () => { window.dispatchEvent(new MessageEvent("message", {
     source: frame.contentWindow, origin: "null",
     data: { type: "os:open-app", app, payload: { name: "Focus", path } },
-  })));
+  })); });
 }
 
 describe("Web Canvas app bridge launches", () => {
   it("opens a Gallery directory launch through the real AppViewer bridge at the canonical launcher path", async () => {
     const frame = await mountedGalleryFrame();
-    requestOpen(frame, "apps/focus");
+    await requestOpen(frame, "apps/focus");
     const focused = useWindowManager.getState().windows.find(win => win.path === "apps/focus/index.html");
     expect(focused).toMatchObject({ title: "Focus", minimized: false });
     expect(useWindowManager.getState().focusedWindowId).toBe(focused!.id);
@@ -79,7 +81,7 @@ describe("Web Canvas app bridge launches", () => {
     const focus: AppWindow = { ...galleryWindow, id: "focus", title: "Focus", path: "apps/focus/index.html", x: 1000, minimized: true };
     useWindowManager.setState({ windows: [galleryWindow, focus], nextZ: 3 });
     const frame = await mountedGalleryFrame();
-    requestOpen(frame, "/files/apps/focus");
+    await requestOpen(frame, "/files/apps/focus");
     expect(useWindowManager.getState().windows).toHaveLength(2);
     expect(useWindowManager.getState().getWindow(focus.id)).toMatchObject({ minimized: false });
     expect(useWindowManager.getState().focusedWindowId).toBe(focus.id);
@@ -87,7 +89,7 @@ describe("Web Canvas app bridge launches", () => {
   });
   it("keeps the real bridge app-identity validation when launching from Canvas", async () => {
     const frame = await mountedGalleryFrame();
-    requestOpen(frame, "apps/focus", "different-app");
+    await requestOpen(frame, "apps/focus", "different-app");
     expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
   });
 });
@@ -95,7 +97,7 @@ describe("Web Canvas app bridge launches", () => {
 describe("Web Desktop app bridge launches", () => {
   it("opens a Gallery directory launch through the real AppViewer callback at the canonical launcher path", async () => {
     const frame = await mountedGalleryFrame("desktop");
-    requestOpen(frame, "apps/focus");
+    await requestOpen(frame, "apps/focus");
     const focused = useWindowManager.getState().windows.find(win => win.path === "apps/focus/index.html");
     expect(focused).toMatchObject({ title: "Focus", minimized: false });
     expect(useWindowManager.getState().focusedWindowId).toBe(focused!.id);
@@ -105,19 +107,19 @@ describe("Web Desktop app bridge launches", () => {
     const focus: AppWindow = { ...galleryWindow, id: "focus", title: "Focus", path: "apps/focus/index.html", minimized: true };
     useWindowManager.setState({ windows: [galleryWindow, focus], nextZ: 3 });
     const frame = await mountedGalleryFrame("desktop");
-    requestOpen(frame, "/files/apps/focus");
+    await requestOpen(frame, "/files/apps/focus");
     expect(useWindowManager.getState().windows).toHaveLength(2);
     expect(useWindowManager.getState().getWindow(focus.id)).toMatchObject({ minimized: false });
     expect(useWindowManager.getState().focusedWindowId).toBe(focus.id);
   });
   it.each(["__file-browser__", "__terminal__:legacy-session", "https://example.invalid/work/"])("preserves existing special launch path %s through the callback", async (path) => {
     const frame = await mountedGalleryFrame("desktop");
-    requestOpen(frame, path);
+    await requestOpen(frame, path);
     expect(useWindowManager.getState().windows.find(win => win.path === path)).toMatchObject({ title: "Focus" });
   });
   it("keeps the real bridge app-identity validation when launching from Web Desktop", async () => {
     const frame = await mountedGalleryFrame("desktop");
-    requestOpen(frame, "apps/focus", "different-app");
+    await requestOpen(frame, "apps/focus", "different-app");
     expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
   });
 });
@@ -127,13 +129,13 @@ for (const surface of ["canvas", "desktop"] as const) {
     it.each(["__browser__", "apps/browser", "apps/browser/dist/index.html"])("opens Browser through its existing external destination for %s", async (path) => {
       const open = vi.spyOn(window, "open").mockImplementation(() => null);
       const frame = await mountedGalleryFrame(surface);
-      requestOpen(frame, path);
+      await requestOpen(frame, path);
       expect(open).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
       expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
     });
     it("opens Editor as the existing Files surface with its canonical title", async () => {
       const frame = await mountedGalleryFrame(surface);
-      requestOpen(frame, "__editor__");
+      await requestOpen(frame, "__editor__");
       const files = useWindowManager.getState().windows.find(win => win.path === "__file-browser__");
       expect(files).toMatchObject({ title: "Files", minimized: false });
       expect(useWindowManager.getState().focusedWindowId).toBe(files!.id);
@@ -142,13 +144,13 @@ for (const surface of ["canvas", "desktop"] as const) {
     it("opens VS Code at its configured editor URL without creating an empty app window", async () => {
       const open = vi.spyOn(window, "open").mockImplementation(() => null);
       const frame = await mountedGalleryFrame(surface);
-      requestOpen(frame, "__vscode__");
+      await requestOpen(frame, "__vscode__");
       expect(open).toHaveBeenCalledWith(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
       expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
     });
     it.each(["canvas", "desktop"] as const)("switches the remembered presentation to %s without opening a synthetic app window", async (mode) => {
       const frame = await mountedGalleryFrame(surface);
-      requestOpen(frame, OS_VIEW_DESTINATION_PATHS[mode]);
+      await requestOpen(frame, OS_VIEW_DESTINATION_PATHS[mode]);
       expect(useDesktopMode.getState().mode).toBe(mode);
       expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
     });
@@ -158,8 +160,61 @@ for (const surface of ["canvas", "desktop"] as const) {
 for (const surface of ["canvas", "desktop"] as const) {
   it.each(["apps/files", "/files/apps/files/index.html"])(`opens the installed Files app on ${surface} rather than the built-in file browser for %s`, async (path) => {
     const frame = await mountedGalleryFrame(surface);
-    requestOpen(frame, path);
+    await requestOpen(frame, path);
     expect(useWindowManager.getState().windows.find(win => win.path === "apps/files/index.html")).toMatchObject({ minimized: false });
     expect(useWindowManager.getState().windows.some(win => win.path === "__file-browser__")).toBe(false);
   });
 }
+
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it.each(["apps/renamed-ledger", "apps/finance/renamed-ledger", "apps/My Finance/Owner Ledger"])(`launches moved owner folder %s with its manifest runtime and bridge on Web ${surface}`, async (path) => {
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith("/api/apps")) return new Response(JSON.stringify([{ slug: "folio", name: "Owner Ledger", path: `/files/${path}/index.html`, launchUrl: "/apps/folio/" }]));
+      return String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 }))
+        : new Response('<html><head></head><body>Ledger</body></html>');
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, path);
+    await waitFor(() => expect(useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")).toMatchObject({ title: "Owner Ledger" }));
+    const win = useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")!;
+    render(<CanvasWindow win={win} />);
+    await waitFor(() => expect(screen.getByTitle(win.path).getAttribute("srcdoc")).toContain("window.MatrixOS"));
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/apps/folio/session"))).toBe(true);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/apps/folio/"))).toBe(true);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).includes("/files/apps/"))).toBe(false);
+  });
+}
+
+
+it.each(["dispose", "close"])("does not launch after a pending catalog lookup outlives app %s", async (change) => {
+  let finish!: (response: Response) => void;
+  const fetchFn = vi.fn(async (url: string | URL | Request) => {
+    if (String(url).endsWith("/api/apps")) return new Promise<Response>(resolve => { finish = resolve; });
+    return String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 })) : new Response('<html><head></head><body></body></html>');
+  });
+  vi.stubGlobal("fetch", fetchFn);
+  const frame = await mountedGalleryFrame();
+  await requestOpen(frame, "apps/finance/renamed-ledger");
+  if (change === "close") cleanup();
+  else act(() => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "null", data: { type: "os:bridge-dispose", app: "app-gallery" } })));
+  await act(async () => finish(new Response(JSON.stringify([{ slug: "folio", name: "Ledger", path: "/files/apps/finance/renamed-ledger/index.html" }]))));
+  expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+});
+
+it("keeps an unavailable moved app closed rather than launching its legacy file iframe", async () => {
+  const frame = await mountedGalleryFrame();
+  await requestOpen(frame, "apps/My Finance/Owner Ledger");
+  expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+});
+
+
+it.each(["apps/legacy/index.html", "apps/legacy.html"])("preserves catalog-backed legacy app %s without inventing a runtime identity", async (path) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+    ? new Response(JSON.stringify([{ name: "Legacy", path: `/files/${path}` }]))
+    : String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 })) : new Response('<html><head></head><body></body></html>')));
+  const frame = await mountedGalleryFrame();
+  await requestOpen(frame, path);
+  expect(useWindowManager.getState().windows.find(win => win.path === path)).toMatchObject({ title: "Legacy" });
+});

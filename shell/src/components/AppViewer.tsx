@@ -1,5 +1,6 @@
 "use client";
 
+import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 
@@ -176,12 +177,21 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   // Handle bridge messages from iframe
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers a window "message" listener; the fetch fires from the iframe bridge handler when a postMessage arrives (event-driven, not on mount/render) and already carries AbortSignal.timeout.
   useEffect(() => {
+    const launches = new Set<AbortController>();
     const handler: BridgeHandler = {
       sendToKernel(text) {
         send({ type: "message", text, sessionId });
       },
       fetchData: bridgeDataHandler,
-      openApp: onOpenApp,
+      openApp(name, requestedPath) {
+        if (!onOpenApp || launches.size >= 8) return;
+        const controller = new AbortController();
+        launches.add(controller);
+        void resolveAppBridgeLaunch(name, requestedPath, controller.signal)
+          .then(target => { if (!controller.signal.aborted) onOpenApp(target.name, target.path); })
+          .catch((error: unknown) => console.warn("[app-viewer] App launch unavailable", error instanceof Error ? error.name : "UnknownError"))
+          .finally(() => launches.delete(controller));
+      },
     };
 
     const pending = new Map<MessagePort, AbortController>();
@@ -191,6 +201,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         && (event.origin === window.location.origin || event.origin === "null") && data.app === appName) {
         for (const [port, controller] of pending) { controller.abort(); port.close(); }
         pending.clear();
+        for (const controller of launches) controller.abort();
+        launches.clear();
         return;
       }
       if (
@@ -219,6 +231,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       window.removeEventListener("message", onMessage);
       for (const [port, controller] of pending) { controller.abort(); port.close(); }
       pending.clear();
+      for (const controller of launches) controller.abort();
+      launches.clear();
     };
   }, [send, sessionId, onOpenApp, appName, path, refreshKey]);
 
