@@ -151,9 +151,10 @@ import { createAgentCredentialStatusService } from "./onboarding/agent-credentia
 import type { CodingSetupStatus } from "./onboarding/coding-setup.js";
 import { createCompanyBrainReadinessService } from "./onboarding/company-brain-readiness.js";
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
-import { createBrainApiRoutes, stopBrainServices } from "./brain/api/index.js";
+import { createBrainApiRoutes, createBrainProjectResolver, stopBrainServices } from "./brain/api/index.js";
 import { createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart } from "./server/brain-wiring.js";
 import { createHealingLog, logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure } from "./server/gateway-logging.js";
+import { createBotBrainProjects } from "./bots/brain-projects.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
@@ -1546,6 +1547,12 @@ export async function createGateway(config: GatewayConfig) {
       ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
+      brain: {
+        services: ownerDatabaseServices?.brainServices ?? null,
+        projects: createBotBrainProjects({
+          resolver: createBrainProjectResolver({ projects: codingAgentProjectManager, homePath }), projects: codingAgentProjectManager,
+        }),
+      },
     });
     canonicalChatProviderCatalog = composePhaseCatalog(baseCanonicalChatProviderCatalog, canonicalPhaseDiscovery.canonical, base => {
       const sourceCatalog = matrixAnthropicRuntime?.service
