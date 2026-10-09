@@ -43,7 +43,7 @@ function fixture({ tracked = true, currentStem = 'game-center', nextStem = 'ches
   const saveTemplate = () => write(template, '.template-manifest.json', JSON.stringify(templateHashes));
   saveTemplate();
   const sync = () => {
-    const result = spawnSync('bash', [script], {
+    const result = spawnSync(process.platform === 'darwin' ? '/bin/bash' : 'bash', [script], {
       cwd: root, encoding: 'utf8', timeout: 10_000,
       env: { ...process.env, APP_DIR: appDir, MATRIX_HOME: home, MATRIX_NODE_BIN: process.execPath },
     });
