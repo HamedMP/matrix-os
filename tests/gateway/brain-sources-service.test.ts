@@ -125,6 +125,27 @@ describe("connect", () => {
     expect([...handler.configs.values()]).toEqual([update.config]);
   });
 
+  it("still saves a missing config when a rename or pause moved the revision while it was read", async () => {
+    const handler = fakeHandler("linear");
+    const { source } = await harness.repository.createSource(SCOPE_A, { kind: "linear", externalRef: "linear:x:", label: "x" });
+    const [read, held] = [gate(), gate()];
+    const slow = { ...handler, loadConfig: (scope: BrainScopeKey, sourceId: string) =>
+      handler.loadConfig(scope, sourceId).then(async (config) => { read.open(); await held.wait; return config; }) };
+    const connect = service([slow]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } });
+    await read.wait;
+    await service([handler]).update(OWNER, "proj_a", source.sourceId, { expectedRevision: 1, label: "Renamed", status: "paused" });
+    held.open();
+    expect(await connect).toMatchObject({
+      created: false, source: { revision: 3, label: "Renamed", status: "paused", config: { items: ["x"] } },
+    });
+    expect([...handler.configs.values()]).toEqual([{ items: ["x"] }]);
+    // A revision that keeps moving is source_conflict, never a source answered without its config.
+    handler.configs.clear();
+    const updateSource = vi.spyOn(harness.repository, "updateSource").mockRejectedValue(new BrainStoreError("conflict"));
+    expect(await codeOf(service([handler]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } }))).toBe("source_conflict");
+    expect(updateSource).toHaveBeenCalledTimes(3);
+  });
+
   it("leaves no live source when the pre-check or the config save refuses, or the label is taken by a cap", async () => {
     const refusing = fakeHandler("github", { checkConfig: async () => { throw new BrainFeatureError("source_conflict"); } });
     expect(await codeOf(service([refusing]).connect(OWNER, "proj_a", { kind: "github", config: { items: ["r"] } }))).toBe("source_conflict");
