@@ -88,6 +88,10 @@ body {
   user-select: none;
 }
 
+/* Product headings share the brand display family; editable/code content
+   keeps its own purpose-specific font and the owner's theme colors. */
+h1, h2, h3 { font-family: var(--font-editorial); }
+
 /* Inputs and content areas re-enable selection. */
 input,
 textarea,

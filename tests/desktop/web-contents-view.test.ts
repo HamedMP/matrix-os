@@ -83,7 +83,7 @@ describe("createWebContentsView", () => {
     ["resource-manager", "resource-manager", true],
     ["custom/resource-manager", "resource-manager", false],
     ["resource-manager", "notes", false],
-    ["notes", "notes", false],
+    ["custom-notes", "custom-notes", false],
   ])("advertises activity only for the authorized app identity %s", (appIdentity, routeSlug, allowed) => {
     createWebContentsView({
       window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
@@ -102,6 +102,20 @@ describe("createWebContentsView", () => {
           : ["--matrix-app-bridge"],
       }),
     }));
+  });
+
+  it.each([
+    ["app-gallery", "app-gallery", ["--matrix-app-bridge", "--matrix-app-gallery-bridge", "--matrix-app-integrations-bridge"]],
+    ["folio", "folio", ["--matrix-app-bridge", "--matrix-app-integrations-bridge"]],
+    ["custom/app-gallery", "app-gallery", ["--matrix-app-bridge"]],
+    ["folio", "other", ["--matrix-app-bridge"]],
+  ])("opts only canonical gallery and starter views into their capabilities: %s", (appIdentity, routeSlug, expected) => {
+    createWebContentsView({
+      window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never,
+      partition: `persist:app-${routeSlug}`, allowedOrigins: ["https://gateway.test"], onState: vi.fn(),
+      appBridge: { appIdentity, routeSlug, preloadPath: "/app/preload/index.cjs", register: vi.fn(), unregister: vi.fn() },
+    });
+    expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({ webPreferences: expect.objectContaining({ additionalArguments: expected }) }));
   });
 
   it("captures a bounded JPEG frame for the detached renderer fallback", async () => {
@@ -331,7 +345,7 @@ describe("createWebContentsView", () => {
     expect(electronMock.viewOptions[0]).toEqual(expect.objectContaining({
       webPreferences: expect.objectContaining({
         preload: "/app/preload/app-bridge.cjs",
-        additionalArguments: ["--matrix-app-bridge"],
+        additionalArguments: ["--matrix-app-bridge", "--matrix-app-integrations-bridge"],
       }),
     }));
     expect(register).toHaveBeenCalledWith(42, "notes", "notes");
