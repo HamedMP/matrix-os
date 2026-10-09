@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { bootstrapBrainBriefDatabase } from "../../packages/gateway/src/brain/brief/database.js";
 import {
   BRIEF_START_DELAY_MS, createBrainBriefScheduler, createBrainBriefScopeLister, msUntilNextRun,
 } from "../../packages/gateway/src/brain/brief/scheduler.js";
@@ -84,6 +85,7 @@ describe("scope lister", () => {
   it("lists distinct scopes with a live source, bounded", async () => {
     const harness = await createBrainHarness();
     try {
+      await bootstrapBrainBriefDatabase(harness.db);
       const lister = createBrainBriefScopeLister(harness.db);
       const repository = harness.repository;
       for (const scopeId of ["s2", "s1", "s1"]) {
