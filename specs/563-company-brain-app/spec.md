@@ -43,14 +43,15 @@ shows the budget left, which is per owner, not per project), every other source 
 pause or resume, recent syncs, disconnect after a second click) and a connect form. The form lists every
 kind with its availability ("Ready", "Connect the account in Settings", or "Not set up on this server" for
 `not_configured`, which covers every server-side gap, not only a missing integration key), offers the first page of the kind's options, or a typed value when the kind lists none (GitHub
-`owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note), and per-kind
-settings: GitHub and Linear item types (at least one), Matrix file endings (1 to 32) and largest file (64 KiB,
+`owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note, Linear team keys,
+Drive folder ids or calendar ids), and per-kind settings: GitHub and Linear item types (at least one; GitHub reviews
+need pull requests), Matrix file endings (1 to 32) and largest file (64 KiB,
 256 KiB or 1 MiB), calendar days back and ahead (0 to 90, no event bodies). Defaults: every item type, Markdown and
 text files up to 256 KiB, 14 days each way. The gateway validates every config.
 
 ## States
 
-Every request shows loading, then its data, an empty state that says what to do next, or an error. Errors come only
+Every request shows loading, then its data, an empty state (icon, headline, next step), or an error. Errors come only
 from the HTTP status class and a known error code; the server's message is never shown: no access (401 or 403),
 offline, too slow, brain off (503 or an unknown server code), not found (the code's fixed text, or "not turned on yet"
 for a route that is not mounted), and refused (the code's fixed text). The not-connected codes add an "Open Sources"
@@ -121,8 +122,8 @@ shows the `search` image there. No environment variables and no new dependencies
   with the error and "Try again". A new job, "Check again" or leaving the screen drops every answer meant for the
   older one; a job's end reloads the receipts once, whether a poll or the cancel answer brought it.
 - Crash recovery: no durable state in the view; a job keeps running in the gateway when the window closes. When
-  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of its
-  slot (the repository's sync, rules and model runs; each source's sync), so after a reload the run shows and its
+  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of each
+  slot in turn (the repository's sync, rules and model runs; each source's sync), so after a reload each run shows and
   buttons stay off until it ends. A gateway without the jobs route resumes nothing. Inactive Electron Desktop tabs
   stay mounted, so a followed job keeps polling there, with the same cap.
 - Not connected: Electron Desktop without a gateway session shows "Connect to your Matrix computer to open the
@@ -132,7 +133,8 @@ shows the `search` image there. No environment variables and no new dependencies
 ## Resource management
 
 Lists keep at most 500 items (then Load more stops); pages are 20 (search, timeline, path history), 50 (claims,
-conflicts) and 10 (people, merge suggestions); 200 projects; 5 receipts; the first page of connect options (at most
+conflicts) and 10 (people, merge suggestions); claims are checked against up to 500 conflicts, and a cut is shown;
+200 projects; 5 receipts; the first page of connect options (at most
 100); 5 reasons per suggestion. One poll timer per followed job, cleared on unmount; no sockets or caches; every
 request ends with its timeout. The view sends nothing to a third party; a confirmed model run makes the gateway
 send project text to Anthropic (see Security architecture).
@@ -165,7 +167,8 @@ it, down to 360 px.
 
 A tab list with arrow keys (both axes, wrapping), Home and End, a roving tab stop and a labelled panel. Every control
 has a name; progress uses `role="status"`, errors `role="alert"`; the period buttons carry `aria-pressed`, the syncs
-toggle `aria-expanded`; the model confirm is a labelled group; an invalid typed value sets `aria-invalid`. A running
+toggle `aria-expanded`; the model confirm is a labelled dialog over the card that takes focus, and its button, Escape
+or a click outside closes it (Cancel and Escape refocus the button); an invalid typed value sets `aria-invalid`. A running
 job shows a labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose
 problem text describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
 

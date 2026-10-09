@@ -52,6 +52,7 @@ import { ChatApp } from "@/components/ChatApp";
 import { AppViewer } from "@/components/AppViewer";
 import { Settings } from "@/components/Settings";
 import { PreviewWindow } from "@/components/preview-window/PreviewWindow";
+import { BrainApp } from "@/components/brain";
 import { enqueueTerminalLaunch, type TerminalLaunchAction } from "@/lib/terminal-launch";
 import { enqueueExistingProviderTerminal } from "@/lib/provider-terminal-session";
 import { OPEN_PROVIDER_SETTINGS_EVENT } from "@/lib/canonical-provider-setup";
@@ -94,6 +95,7 @@ function mobileTerminalCapacityAction<T extends {
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
+  { id: "brain", name: "Company Brain", path: "__brain__", iconSlug: "search" },
   ...(HERMES_CHAT_HIDDEN
     ? []
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
@@ -621,6 +623,9 @@ function MobileAppFrame({
   }
   if (app.path === "__preview-window__") {
     return <PreviewWindow />;
+  }
+  if (app.path === "__brain__") {
+    return <BrainApp />;
   }
   if (app.path === "__chat__") {
     if (!chat) {
