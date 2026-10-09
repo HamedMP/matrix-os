@@ -74,10 +74,10 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   `BrainShellErrorState`, `BrainShellScreen`, `BrainShellScreenId`, `BrainProjectOption`, `BrainChatHost` and
   `BrainChatSlot`. Other files of this folder are internal.
 - `BrainChatHost` is what a surface lends the Chat tab: its Chat Agents client, `render(slot)` for its own chat view,
-  `openInChat`, and `rows` (rename, delete and the menu layer over its own chat client). The slot carries the project,
-  the Bot, the Chat (or null for a draft), the empty chat's heading and line, `createChat` (the first send of a draft)
-  and `onChatChanged` (called by the view after every admitted turn). Without a host the tab says chat is not
-  available here and offers Search.
+  `openInChat`, and `rows` (rename, which sends the row's title version and may answer with the renamed record, delete
+  and the menu layer over its own chat client). The slot carries the project, the Bot, the Chat (or null for a draft),
+  the empty chat's heading and line, `createChat` (the first send of a draft) and `onChatChanged` (called by the view
+  after every admitted turn). Without a host the tab says chat is not available here and offers Search.
 - `BrainHttpTransport` is four JSON calls (`get`, `post`, `patch`, `delete`) with a per-call `timeoutMs`. A failed
   call rejects with an `Error` that has `category` (`unauthorized`, `offline`, `timeout`, `notFound` or `server`) and
   may have `detail`, a lower_snake gateway code. Anything else (another category, a plain `Error`) reads as
@@ -103,8 +103,9 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - A chat list answer for a project the tab has left is dropped; a list that arrives late never moves the viewer off
   the chat they opened; a failed list opens a draft and offers "Try again". The open chat's title is kept apart from
   the list, and a rename or delete made here stays over the list only until the chat is read again (then the server's
-  title shows, a later rename elsewhere too) or is not listed, at most 500 of them. A delete that settles moves the
-  viewer only if the deleted chat is still the open one.
+  title shows, a later rename elsewhere too) or is not listed, at most 500 of them. A rename keeps the new title
+  version (the host's answer, else one more), so a chat not read again since can be renamed again. A delete that
+  settles moves the viewer only if the deleted chat is still the open one.
 - Proxies in front of the gateway end a request at 30 s, so repository runs and source syncs start a job (202) and
   poll it: 1 s, then doubling to 10 s, at most 90 polls; three failed polls in a row, or one refused poll, stop with
   "Try again", and the poll cap with "Check again". Stop asks the gateway to cancel. A gateway without the jobs route
