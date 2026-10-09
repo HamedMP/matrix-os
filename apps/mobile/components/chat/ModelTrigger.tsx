@@ -18,9 +18,9 @@ export interface ModelTriggerProps {
   disabled?: boolean;
   /** The model cannot be changed here: a plain label, no chevron. */
   fixed?: boolean;
-  /** Left out when a native menu wraps the trigger and takes the tap itself. */
+  /** Opens the model sheet. A fixed trigger has none. */
   onPress?: () => void;
-  /** A native menu sizes itself to its content, so the label needs its own limit there. */
+  /** A limit for the label where the trigger's own room does not cut it off. */
   maxLabelWidth?: number;
   testID?: string;
 }
@@ -63,25 +63,13 @@ export function ModelTrigger({
     return <View testID={testID} style={styles.trigger}>{content}</View>;
   }
 
-  const accessibility = {
-    accessibilityRole: "button",
-    accessibilityLabel: "Model",
-    accessibilityValue: { text: label },
-    accessibilityState: { disabled, busy: loading },
-  } as const;
-
-  if (!onPress) {
-    return (
-      <View testID={testID} accessible {...accessibility} style={[styles.trigger, disabled && styles.disabled]}>
-        {content}
-      </View>
-    );
-  }
-
   return (
     <Pressable
       testID={testID}
-      {...accessibility}
+      accessibilityRole="button"
+      accessibilityLabel="Model"
+      accessibilityValue={{ text: label }}
+      accessibilityState={{ disabled, busy: loading }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [styles.trigger, disabled && styles.disabled, pressed && styles.pressed]}

@@ -8,6 +8,7 @@ import { ItemRow, SectionLabel } from "@/components/ui";
 
 import { AgentsListFrame, NewAgentFrame, TemplateSetupFrame } from "./agents";
 import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
+import { ModelSheetFrame } from "./chat/ModelSheetFrame";
 import { ComponentsGallery } from "./ComponentsGallery";
 import { SidePanelOverScreen } from "./panel";
 
@@ -27,6 +28,7 @@ const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "C1", Frame: ChatHomeFrame },
   { name: "C1b", Frame: ChatInProgressFrame },
   { name: "C1c", Frame: ChatTypingFrame },
+  { name: "C3", Frame: ModelSheetFrame },
   { name: "C2", Frame: SidePanelOverChatFrame },
   { name: "A1", Frame: AgentsListFrame },
   { name: "A5", Frame: NewAgentFrame },

@@ -1,48 +1,18 @@
-import { canonicalProviderAvailabilityReasonLabel, canonicalProviderModelRouteLabel, canonicalProviderFundingState, isLegacyMatrixSdkProvider, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { MenuView, type MenuAction } from "@expo/ui/community/menu";
+import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { useState } from "react";
 import { Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
+import { chosenSelection, modelEngines, modelKey, modelNotices, modelTrigger } from "@/components/chat/model-choices";
+import { modelOptionGroups, selectionWithOption } from "@/components/chat/model-options";
+import { ModelSheet, type ModelSheetProps } from "@/components/chat/ModelSheet";
 import { MODEL_TRIGGER_ICON_SIZE, ModelTrigger } from "@/components/chat/ModelTrigger";
-import type { Provider } from "@/components/ui";
-
-type ProviderInstance = CanonicalProviderCatalog["instances"][number];
-
-const MODEL_VALUE_SEPARATOR = "::";
-
-// Matrix's own routes carry the Matrix mark; an agent engine carries its own.
-const ENGINE_LOGO: Record<ProviderInstance["driverKind"], Provider> = {
-  kernel: "matrix",
-  matrix_pi: "matrix",
-  matrix_bot: "matrix",
-  claude_code: "claude",
-  codex: "codex",
-  hermes: "hermes",
-  openclaw: "openclaw",
-  opencode: "opencode",
-  pi: "pi",
-};
-
-function modelKey(instanceId: string, modelId: string): string {
-  return `${instanceId}${MODEL_VALUE_SEPARATOR}${modelId}`;
-}
-
-function parseModelKey(key: string): { instanceId: string; modelId: string } | null {
-  const index = key.indexOf(MODEL_VALUE_SEPARATOR);
-  if (index < 0) return null;
-  return { instanceId: key.slice(0, index), modelId: key.slice(index + MODEL_VALUE_SEPARATOR.length) };
-}
-
-/** The route's name without the model's: "Matrix AI" out of "Sonnet 5 · Matrix AI". */
-function engineLabel(instance: ProviderInstance | undefined, modelLabel: string): string {
-  const prefix = `${modelLabel} · `;
-  const route = canonicalProviderModelRouteLabel(instance, modelLabel);
-  return route.startsWith(prefix) ? route.slice(prefix.length) : "";
-}
+import { Sheet } from "@/components/ui";
+import { useMatrixCreditBalance } from "@/lib/queries/use-matrix-credit-balance";
 
 /**
  * The composer's engine and model control: the trigger the design draws,
- * opening a native popup menu of the models that can be chosen.
+ * opening the sheet in which the engine, the model and its options are chosen.
  */
 export function ModelPicker({
   catalog,
@@ -58,103 +28,89 @@ export function ModelPicker({
   const { width } = useWindowDimensions();
   const { theme } = useUnistyles();
   const { space, size } = theme.v2;
-  const availableInstances = catalog?.instances.filter((instance) => instance.availability === "available" && !isLegacyMatrixSdkProvider(instance)) ?? [];
-  const reservedModels = catalog?.instances.filter((instance) => !isLegacyMatrixSdkProvider(instance) && canonicalProviderFundingState(instance) === "credit_reserved")
-    .flatMap((instance) => instance.models.map((model) => ({ instance, model }))) ?? [];
-  const unavailableModels = availableInstances.flatMap((instance) => instance.models
-    .filter((model) => model.availability !== "available").map((model) => ({ instance, model })));
+  // The sheet's content is made on the first opening and again on each later
+  // one, so every opening starts on the selection's engine. Between openings
+  // it stays, drawn as it was, while the sheet slides away.
+  const [sheet, setSheet] = useState({ open: false, openings: 0 });
+  const trigger = modelTrigger(catalog, selection, catalogLoading);
+  const notices = modelNotices(catalog, selection, catalogLoading);
+  const optionGroups = modelOptionGroups(catalog, selection);
 
-  const selectedInstance = selection
-    ? catalog?.instances.find((instance) => instance.id === selection.instanceId)
-    : undefined;
-  const selectedModel = selectedInstance?.models.find((model) => model.id === selection?.model);
-  const selectionAvailable = selectedInstance?.availability === "available" && !isLegacyMatrixSdkProvider(selectedInstance) && selectedModel?.availability === "available";
-  const selectedCreditReserved = selectedModel && selectedInstance && !isLegacyMatrixSdkProvider(selectedInstance) && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
-  const savedModelLabel = selectedModel?.displayName ?? selection?.model ?? "Models unavailable";
-  const savedLabel = canonicalProviderModelRouteLabel(selectedInstance, savedModelLabel);
-  const savedState = selectionAvailable || selectedCreditReserved ? null : catalog ? "unavailable" : "checking";
-  const modelValue = selection ? modelKey(selection.instanceId, selection.model) : "";
-  const recoveryReason = !catalog ? "Checking model availability"
-    : selectedInstance?.availability !== "available" && selectedInstance && selectedModel ? canonicalProviderAvailabilityReasonLabel(selectedInstance)
-      : "Saved model unavailable";
-
-  function handleModelChange(value: string) {
-    // A menu reports a tap on the ticked item too. Choosing the same model
-    // again must not rebuild the selection, which would drop its options.
-    if (catalogLoading || value === modelValue) return;
-    const parsed = parseModelKey(value);
-    if (!parsed) return;
-    const instance = availableInstances.find((candidate) => candidate.id === parsed.instanceId);
-    const model = instance?.models.find((candidate) => candidate.id === parsed.modelId);
-    if (!instance || model?.availability !== "available") return;
-    onSelectionChange({ instanceId: instance.id, model: model.id });
+  function closeSheet() {
+    setSheet((current) => ({ ...current, open: false }));
   }
 
-  const choices: MenuAction[] = availableInstances.flatMap((instance) => (
-    instance.models
-      .filter((model) => model.availability === "available")
-      .map((model): MenuAction => {
-        const id = modelKey(instance.id, model.id);
-        return {
-          id,
-          // The connection and runtime tell equally named models apart.
-          title: canonicalProviderModelRouteLabel(instance, model.displayName),
-          ...(id === modelValue ? { state: "on" } : {}),
-          attributes: { disabled: catalogLoading },
-        };
-      })
-  ));
-  // A saved model that can no longer run stays in the menu as the ticked item,
-  // so its identity is not lost, but cannot be chosen.
-  const actions: MenuAction[] = selection && savedState
-    ? [{ id: modelValue, title: `${savedLabel} · ${savedState}`, state: "on", attributes: { disabled: true } }, ...choices]
-    : choices;
+  function handleModel(key: string) {
+    if (catalogLoading) return;
+    // Choosing the current model again must not rebuild the selection, which
+    // would drop the options saved with it.
+    if (!selection || key !== modelKey(selection.instanceId, selection.model)) {
+      const next = chosenSelection(catalog, key);
+      if (!next) return;
+      onSelectionChange(next);
+    }
+    closeSheet();
+  }
 
-  const triggerLabel = selection
-    ? [engineLabel(selectedInstance, savedModelLabel), savedModelLabel, savedState].filter(Boolean).join(" · ")
-    : catalogLoading ? "Checking models…" : "Choose a model";
-  // A native menu takes the size of its trigger rather than the room it is
-  // given, so the label is limited here to what the composer's toolbar leaves:
-  // the window less the composer's margins and padding, the attach and send
-  // buttons with the gaps beside them, and the trigger's own padding and icons.
+  function handleOption(optionId: string, value: string) {
+    if (catalogLoading || !selection) return;
+    const offered = optionGroups.find((group) => group.id === optionId)?.values.find((candidate) => candidate.value === value);
+    if (!offered || offered.selected) return;
+    onSelectionChange(selectionWithOption(selection, optionId, value));
+  }
+
+  // The label is limited to the room the composer's toolbar leaves: the window
+  // less the composer's margins and padding, the attach and send buttons with
+  // the gaps beside them, and the trigger's own padding and icons.
   const maxLabelWidth = Math.max(0, width
     - 2 * (space[12] + space[14] + size.control + space[8])
     - 2 * (space[10] + space[6] + MODEL_TRIGGER_ICON_SIZE));
-  const trigger = (
-    <ModelTrigger
-      provider={selectedInstance ? ENGINE_LOGO[selectedInstance.driverKind] : undefined}
-      label={triggerLabel}
-      loading={catalogLoading}
-      disabled={choices.length === 0}
-      maxLabelWidth={maxLabelWidth}
-    />
-  );
 
   return (
     <View style={styles.row} accessibilityState={{ busy: catalogLoading }}>
-      {choices.length > 0 ? (
-        <MenuView
-          testID="model-menu"
-          actions={actions}
-          onPressAction={({ nativeEvent }) => handleModelChange(nativeEvent.event)}
-        >
-          {trigger}
-        </MenuView>
-      ) : trigger}
-      {reservedModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
-        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
-        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Credit reserved
-      </Text>)}
-      {reservedModels.length > 0 ? <Text style={styles.note}>Your credit is reserved while usage is confirmed.</Text> : null}
-      {unavailableModels.map(({ instance, model }) => <Text key={modelKey(instance.id, model.id)}
-        accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
-        {canonicalProviderModelRouteLabel(instance, model.displayName)} · Model unavailable
-      </Text>)}
-      {selection && !selectionAvailable && !catalogLoading ? <Text accessibilityRole="alert" style={styles.note}>
-        {recoveryReason}. Choose another model or check Agents &amp; providers.
-      </Text> : null}
+      <ModelTrigger
+        provider={trigger.provider}
+        label={trigger.label}
+        loading={catalogLoading}
+        disabled={!trigger.canChoose}
+        maxLabelWidth={maxLabelWidth}
+        onPress={() => setSheet((current) => ({ open: true, openings: current.openings + 1 }))}
+      />
+      {notices.reserved.map((note) => (
+        <Text key={note.key} accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
+          {note.text}
+        </Text>
+      ))}
+      {notices.reserved.length > 0 ? <Text style={styles.note}>Your credit is reserved while usage is confirmed.</Text> : null}
+      {notices.unavailable.map((note) => (
+        <Text key={note.key} accessibilityRole="text" accessibilityState={{ disabled: true }} style={styles.note}>
+          {note.text}
+        </Text>
+      ))}
+      {notices.recovery ? <Text accessibilityRole="alert" style={styles.note}>{notices.recovery}</Text> : null}
+      <Sheet visible={sheet.open} onClose={closeSheet} testID="model-picker-sheet">
+        {sheet.openings > 0 ? (
+          <ModelSheetWithCredit
+            key={sheet.openings}
+            engines={modelEngines(catalog, selection)}
+            options={optionGroups}
+            loading={catalogLoading}
+            onSelectModel={handleModel}
+            onSelectOption={handleOption}
+          />
+        ) : null}
+      </Sheet>
     </View>
   );
+}
+
+/**
+ * Reads the Matrix AI credit for the sheet. It is mounted with the sheet's
+ * content, so the balance is asked for when the sheet is opened and not before.
+ */
+function ModelSheetWithCredit(props: Omit<ModelSheetProps, "credit" | "creditLoading">) {
+  const { label, isPending, isError } = useMatrixCreditBalance();
+  return <ModelSheet {...props} credit={label} creditLoading={isPending && !isError} />;
 }
 
 const styles = StyleSheet.create((theme) => ({
