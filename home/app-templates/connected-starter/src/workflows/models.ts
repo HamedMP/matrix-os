@@ -73,7 +73,7 @@ export function parseIngredients(value: unknown): { ingredients: Ingredient[]; i
     const name = normalize(parts[0]), amount = Number(parts[1]), rawUnit = normalize(parts[2]);
     if (parts.length !== 3 || !name || !parts[1] || !positive(amount, 100000) || !/^[a-z ]{1,24}$/.test(rawUnit)) { issues.push(`Review ingredient: ${line.slice(0, 120)}`); continue; }
     const units: Record<string, [string, number]> = { kg: ["g", 1000], kilogram: ["g", 1000], kilograms: ["g", 1000], g: ["g", 1], gram: ["g", 1], grams: ["g", 1], l: ["ml", 1000], liter: ["ml", 1000], litre: ["ml", 1000], ml: ["ml", 1], each: ["each", 1], pcs: ["each", 1], piece: ["each", 1], pieces: ["each", 1] };
-    const [unit, multiplier] = units[rawUnit] ?? [rawUnit, 1];
+    const [unit, multiplier] = Object.hasOwn(units, rawUnit) ? units[rawUnit] : [rawUnit, 1];
     ingredients.push({ name, quantity: amount * multiplier, unit });
   }
   return { ingredients, issues };

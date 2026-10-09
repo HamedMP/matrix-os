@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { dateText, formatMoney } from "./model";
+import { RecordConflictError } from "./persistence";
 import type { OwnerRecord } from "./types";
 import { contactReview, dailyEvents, invoiceQueue, meetingActions, projectRisks, receiptReview, renewalQueue, text, tripChecks } from "./existing-workflow-model";
 import { Actions, Badge, Empty, type ViewProps } from "./views/common";
@@ -80,8 +81,8 @@ function Draft({ record, field, label, button = "Save draft", help, onSave, onLo
                 setDirty(false);
             }
             catch (failure) {
-                console.error("Workflow draft save failed", failure);
-                setError("Could not save. Your draft is still here; try again.");
+                console.error("Workflow draft save failed", failure instanceof Error ? failure.name : "UnknownError");
+                setError(failure instanceof RecordConflictError ? failure.message : "Could not save. Your draft is still here; try again.");
             }
             finally {
                 setSaving(false);

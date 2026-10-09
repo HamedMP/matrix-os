@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, type ViewProps } from "./common";
+import { RecordConflictError } from "../persistence";
 export default function Focus(props: ViewProps) {
   const sessionId = useRef<string | null>(null);
   const [minutes, setMinutes] = useState(25),
@@ -44,8 +45,8 @@ export default function Focus(props: ViewProps) {
       setError("");
       setRemaining(minutes * 60);
     } catch (cause) {
-      console.error("Focus session save failed", cause);
-      setError("Session could not be saved. Keep it here and try again.");
+      console.error("Focus session save failed", cause instanceof Error ? cause.name : "UnknownError");
+      setError(cause instanceof RecordConflictError ? cause.message : "Session could not be saved. Keep it here and try again.");
     } finally {
       setSaving(false);
     }
