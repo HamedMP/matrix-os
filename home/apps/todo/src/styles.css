@@ -128,7 +128,7 @@ body {
 }
 .nav-item--active .nav-count {
   background: color-mix(in srgb, var(--app-accent) 18%, transparent);
-  color: var(--app-accent);
+  color: var(--app-text-accent);
 }
 
 /* ---- content ---- */
@@ -337,7 +337,7 @@ body {
   background: color-mix(in srgb, var(--app-danger) 12%, transparent);
 }
 .due--today {
-  color: var(--app-accent);
+  color: var(--app-text-accent);
   background: color-mix(in srgb, var(--app-accent) 12%, transparent);
 }
 .due--soon {

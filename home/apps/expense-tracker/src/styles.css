@@ -174,7 +174,7 @@ input:focus-visible {
 .exp-text-btn {
   border: 0;
   background: transparent;
-  color: var(--app-accent);
+  color: var(--app-text-accent);
   font-weight: 650;
   font-size: 13px;
   padding: 4px 6px;
