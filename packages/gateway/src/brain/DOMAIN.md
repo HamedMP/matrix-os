@@ -203,7 +203,7 @@ folder's `DOMAIN.md` has the details.
   `packages/integrations-mcp/src/brain-tools.ts`). The dispatcher hands them and `brain_why` only to a run whose
   server-set `callerId` is an owner principal (the owner's shell, personal canonical Chat and `/api/message` runs);
   collaborators', shared or organization chats', channels' and background runs get none. The app is
-  `shell/src/components/brain/` (spec 563).
+  `packages/ui/src/brain/` (spec 563).
 - Wiring: `api/project-resolver.ts` (the one project lookup); `hooks.ts` (the change bus: per-scope queues capped at
   `BRAIN_HOOK_QUEUE_MAX_SCOPES`, coalesced, listeners after the request within `BRAIN_HOOK_LISTENER_BUDGET_MS`, drained
   with a deadline on close); `api/start.ts` (`startBrainServices`, whose header gives the start order, what a failed
