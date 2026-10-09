@@ -54,3 +54,30 @@ describe("Web bootstrap restoration bounds", () => {
     expect(useWindowManager.getState().windows[0]).toMatchObject({ x: 330, title: "Last saved window" });
   });
 });
+
+
+it("restores a moved manifest app at the same path used by Gallery and every Web launcher", async () => {
+  const bootstrap = bootstrapWithWindows(1);
+  bootstrap.layout.windows[0] = { ...bootstrap.layout.windows[0]!, path: "apps/My Finance/Owner Ledger/index.html", title: "Ledger", x: 321 };
+  bootstrap.apps = [{ name: "Ledger", path: "/files/apps/My Finance/Owner Ledger/index.html", slug: "folio" } as typeof bootstrap.apps[number]];
+  serveBootstrap(bootstrap);
+  const { result } = renderHook(() => useDesktopBootstrap({ entryKey: "moved", openWindow: vi.fn() }));
+  await waitFor(() => expect(result.current.settled).toBe(true));
+  expect(useWindowManager.getState().windows).toHaveLength(1);
+  expect(useWindowManager.getState().windows[0]).toMatchObject({ path: "apps/folio/index.html", title: "Ledger", x: 321 });
+});
+
+
+it("keeps a saved manifest identity when another app occupies the old physical folder", async () => {
+  const bootstrap = bootstrapWithWindows(1);
+  bootstrap.layout.windows[0] = { ...bootstrap.layout.windows[0]!, path: "apps/folio/index.html", title: "Folio" };
+  bootstrap.apps = [
+    { name: "Folio", path: "/files/apps/finance/ledger/index.html", slug: "folio" },
+    { name: "Other", path: "/files/apps/folio/index.html", slug: "other" },
+  ] as typeof bootstrap.apps;
+  serveBootstrap(bootstrap);
+  const { result } = renderHook(() => useDesktopBootstrap({ entryKey: "collision", openWindow: vi.fn() }));
+  await waitFor(() => expect(result.current.settled).toBe(true));
+  expect(useWindowManager.getState().windows).toHaveLength(1);
+  expect(useWindowManager.getState().windows[0]).toMatchObject({ path: "apps/folio/index.html", title: "Folio" });
+});

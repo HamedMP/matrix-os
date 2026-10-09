@@ -15,6 +15,7 @@ vi.mock("@/components/preview-window/PreviewWindow", () => ({ PreviewWindow: () 
 vi.mock("@/hooks/useTheme", () => ({ useTheme: () => ({ mode: "light", colors: {}, fonts: {} }) }));
 vi.mock("@/components/AppViewer", () => ({ AppViewer: ({ path, onOpenApp }: { path: string; onOpenApp: (name: string, path: string) => void }) => (
   <div data-testid={`viewer:${path}`}>
+    <button onClick={() => onOpenApp("Ledger", "apps/folio/index.html")}>Open moved Ledger</button>
     <button onClick={() => onOpenApp("Focus", "/files/apps/focus")}>Open installed Focus</button>
     <button onClick={() => onOpenApp("App Gallery", "apps/app-gallery")}>Return to Gallery</button>
     <button onClick={() => onOpenApp("Files", "apps/files")}>Open installed Files</button>
@@ -28,13 +29,13 @@ it("opens newly installed apps from Gallery and focuses existing mobile stack en
   render(<MobileShell />);
   fireEvent.click(await screen.findByRole("button", { name: "App Gallery" }));
   const gallery = screen.getByTestId("viewer:apps/app-gallery/index.html");
-  fireEvent.click(gallery.querySelector("button")!);
+  fireEvent.click(gallery.querySelectorAll("button")[1]);
   await waitFor(() => expect(screen.getByTestId("viewer:apps/focus/index.html")).toBeTruthy());
   expect(screen.getByText("Focus", { selector: "header span" })).toBeTruthy();
   const focus = screen.getByTestId("viewer:apps/focus/index.html");
-  fireEvent.click(focus.querySelectorAll("button")[1]);
+  fireEvent.click(focus.querySelectorAll("button")[2]);
   expect(screen.getAllByTestId("viewer:apps/app-gallery/index.html")).toHaveLength(1);
-  fireEvent.click(gallery.querySelector("button")!);
+  fireEvent.click(gallery.querySelectorAll("button")[1]);
   expect(screen.getAllByTestId("viewer:apps/focus/index.html")).toHaveLength(1);
   expect(screen.getByText("Focus", { selector: "header span" })).toBeTruthy();
 });
@@ -58,4 +59,22 @@ it("opens the installed Files app on Web Mobile without substituting the built-i
   fireEvent.click(screen.getByRole("button", { name: "Open installed Files" }));
   await waitFor(() => expect(screen.getByTestId("viewer:apps/files/index.html")).toBeTruthy());
   expect(screen.getByText("Files", { selector: "header span" })).toBeTruthy();
+});
+
+
+it.each(["gallery-first", "launcher-first"])("reuses the same Web Mobile stack entry for a moved app from Gallery and the launcher (%s)", async order => {
+  setPhoneViewport();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json([
+    { name: "App Gallery", slug: "app-gallery", path: "apps/app-gallery/index.html" },
+    { name: "Ledger", slug: "folio", path: "/files/apps/My Finance/Owner Ledger/index.html" },
+  ])));
+  render(<MobileShell />);
+  const launcher = await screen.findByRole("button", { name: "Ledger" });
+  if (order === "launcher-first") fireEvent.click(launcher);
+  fireEvent.click(await screen.findByRole("button", { name: "App Gallery" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open moved Ledger" }));
+  await waitFor(() => expect(screen.getByTestId("viewer:apps/folio/index.html")).toBeTruthy());
+  fireEvent.click(launcher);
+  expect(screen.getAllByTestId("viewer:apps/folio/index.html")).toHaveLength(1);
+  expect(screen.queryByTestId("viewer:apps/My Finance/Owner Ledger/index.html")).toBeNull();
 });

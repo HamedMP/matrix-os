@@ -36,7 +36,7 @@ import {
   tapScale,
 } from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
-import { resolveCatalogIconUrl } from "@/api/apps";
+import { mobileAppsFromBootstrap } from "./mobile-app";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
@@ -101,24 +101,6 @@ const BUILT_IN_APPS: MobileApp[] = [
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
-function mobileAppsFromBootstrap(
-  bootstrap: ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[] | null | undefined,
-): MobileApp[] {
-  const list = Array.isArray(bootstrap) ? bootstrap : bootstrap?.apps;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((a) => {
-    if (typeof a.name !== "string" || typeof a.path !== "string") return [];
-    const relative = a.path.replace(/^\/files\//, "");
-    const iconUrl = resolveCatalogIconUrl("iconUrl" in a ? a.iconUrl : undefined);
-    return [{
-      id: `app:${relative}`,
-      name: a.name,
-      path: relative,
-      ...(iconUrl ? { iconUrl } : {}),
-      iconSlug: a.icon ?? ("slug" in a && typeof a.slug === "string" ? a.slug : nameToSlug(a.name)),
-    }];
-  });
-}
 
 function mergeMobileApps(base: MobileApp[], installed: MobileApp[]): MobileApp[] {
   const seen = new Set(base.map((p) => p.path));

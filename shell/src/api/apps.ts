@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { shellApi, type RequestOptions } from "./http";
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { catalogAppLaunchPath } from "@/lib/app-catalog-launch";
 import { gatewayAssetUrl } from "@/lib/gateway";
 
 export interface ApiAppEntry {
@@ -38,7 +38,7 @@ export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]>
     if (!entry || typeof entry !== "object") return [];
     const raw = entry as Partial<ApiAppEntry> & { file?: unknown };
     if (typeof raw.name !== "string" || raw.name.length === 0 || raw.name.length > 256) return [];
-    const path = canonicalOsViewCatalogPath({ path: raw.path, file: raw.file });
+    const path = catalogAppLaunchPath(raw);
     if (!path) return [];
     const { iconUrl: rawIconUrl, ...rest } = raw;
     const iconUrl = resolveCatalogIconUrl(rawIconUrl);
@@ -66,7 +66,9 @@ export function hydrateAppIconUrls(
   resolveAssetUrl: (path: string) => string | undefined,
 ): ApiAppEntry[] | undefined {
   if (!apps) return undefined;
-  return apps.map((app) => {
+  return apps.map((entry) => {
+    const path = catalogAppLaunchPath(entry);
+    const app = path && path !== entry.path ? { ...entry, path } : entry;
     const selectedUrl = resolveCatalogIconUrl(app.iconUrl, resolveAssetUrl);
     if (selectedUrl) return { ...app, iconUrl: selectedUrl };
     if (app.iconUrl) return app;

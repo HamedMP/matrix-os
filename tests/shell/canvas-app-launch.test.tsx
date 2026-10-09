@@ -8,6 +8,7 @@ import { resetWindowManagerLayoutPersistenceForTests, useWindowManager, type App
 import { resetCanvasTransformAnimation, useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode";
 import { getCodeEditorUrl } from "../../shell/src/lib/feature-flags";
+import { listApps } from "../../shell/src/api/apps";
 import { OS_VIEW_DESTINATION_PATHS } from "@matrix-os/contracts";
 
 const socket = vi.hoisted(() => ({ send: vi.fn(), subscribe: vi.fn(() => () => undefined) }));
@@ -261,5 +262,28 @@ for (const surface of ["canvas", "desktop"] as const) {
     const frame = await mountedGalleryFrame(surface);
     await requestOpen(frame, "matrix-app:folio");
     expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+  });
+}
+
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it.each(["gallery-first", "launcher-first"])(`reuses the manifest window from Gallery and the current launcher on Web ${surface} (%s)`, async order => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+      ? Response.json([{ slug: "folio", name: "Owner Ledger", path: "/files/apps/My Finance/Owner Ledger/index.html" }])
+      : String(url).endsWith("/session") ? Response.json({ expiresAt: Date.now() + 60_000 }) : new Response('<html><head></head><body>Ledger</body></html>')));
+    const [app] = await listApps();
+    const frame = await mountedGalleryFrame(surface);
+    const launch = () => useWindowManager.getState().openWindow(app!.name, app!.path, 0);
+    if (order === "launcher-first") act(launch);
+    await requestOpen(frame, "matrix-app:folio");
+    const existing = useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")!;
+    expect(existing).toBeDefined();
+    act(() => useWindowManager.getState().minimizeWindow(existing.id));
+    act(launch);
+    expect(useWindowManager.getState().windows).toHaveLength(2);
+    expect(useWindowManager.getState().getWindow(existing.id)).toMatchObject({ minimized: false });
+    expect(useWindowManager.getState().focusedWindowId).toBe(existing.id);
+    render(<CanvasWindow win={existing} />);
+    await waitFor(() => expect(screen.getByTitle(existing.path).getAttribute("srcdoc")).toContain("window.MatrixOS"));
   });
 }

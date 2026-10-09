@@ -1,6 +1,6 @@
 import { canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
 import { readAppBridgeResponse } from "@/components/app-capability-request";
-import { extractSlug } from "@/components/app-viewer-helpers";
+import { catalogAppLaunchPath } from "./app-catalog-launch";
 import { normalizeAppBridgeLaunchPath } from "./builtin-apps";
 import { getGatewayUrl } from "./gateway";
 import { resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
@@ -33,5 +33,5 @@ export async function resolveAppBridgeLaunch(name: string, requestedPath: string
   // Preserve only catalog-backed bundled migration identities; other moved
   // folders launch through the stable manifest slug and its bridged loader.
   const ownerPath = "ownerPath" in app && typeof app.ownerPath === "string" ? app.ownerPath : app.path;
-  return { name: app.name, path: !app.slug || extractSlug(ownerPath) === app.slug ? ownerPath : `apps/${app.slug}/index.html` };
+  return { name: app.name, path: catalogAppLaunchPath({ ...app, path: ownerPath })! };
 }
