@@ -128,7 +128,7 @@ describe('customer VPS update recovery', () => {
     expect(syncAgent).not.toContain('recover_interrupted_update() {');
     expect(recoveryLibrary).toContain('recover_interrupted_update() {');
     expect(recoveryLibrary).toContain('do_rollback() {');
-    expect(recoveryLibrary).toContain('sudo mv "$APP_DIR" "$STAGING_DIR/failed-$(date +%s)"');
+    expect(recoveryLibrary).toContain('sudo mv "$APP_DIR" "$failed_dir/app" || return 1');
     expect(recoveryLibrary).toContain('sudo mv "$APP_DIR.rollback" "$APP_DIR"');
     expect(buildScript).toContain('scripts/inline-sync-agent-recovery.mjs"');
   });

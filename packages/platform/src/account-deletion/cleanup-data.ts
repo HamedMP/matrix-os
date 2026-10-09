@@ -4,6 +4,7 @@ import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
 import { ownerHandlesQuery } from './owner-handles.js';
 import type { PlatformDB } from '../db.js';
+import { readUsageWaiverAudit } from '../ai-funded-usage-waiver-audit.js';
 
 export async function hasTable(db: PlatformDB, name: string): Promise<boolean> {
   const result = await sql<{ present: boolean }>`SELECT to_regclass(${name}) IS NOT NULL AS present`.execute(db.executor);
@@ -39,8 +40,23 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     if (ownerHash) await lockAccountDeletionOwner(trx.executor,ownerHash(owner));
     await assertDeletionOwnershipSafe(trx, owner);
     const unresolved = await trx.executor.selectFrom('ai_funded_usage_reservations').select('reservation_id')
-      .where('owner_id', '=', owner).where('status', 'not in', ['settled', 'released', 'expired']).limit(1).execute();
+      .where('owner_id', '=', owner).where((eb) => eb.or([
+        eb('status', 'not in', ['settled', 'released', 'expired']),
+        eb.and([eb('charge_waiver', 'is not', null), eb('actual_microusd', 'is', null)]),
+      ])).limit(1).execute();
     if (unresolved.length) throw new Error('accounting_reconciliation_required');
+    // Known waived expense may be anonymized only after validating its durable no-owner-charge receipt.
+    let waiverCursor = '';
+    let hasWaivedExpense = false;
+    for (;;) {
+      const waived = await trx.executor.selectFrom('ai_funded_usage_reservations').selectAll()
+        .where('owner_id', '=', owner).where('charge_waiver', 'is not', null)
+        .where('reservation_id', '>', waiverCursor).orderBy('reservation_id').limit(100).execute();
+      for (const row of waived) readUsageWaiverAudit(row);
+      hasWaivedExpense ||= waived.length > 0;
+      if (waived.length < 100) break;
+      waiverCursor = waived[waived.length - 1].reservation_id;
+    }
     const liveRuntime=await trx.executor.selectFrom('user_machines').select('machine_id')
       .where('clerk_user_id','=',owner).where((eb)=>eb.or([eb('deleted_at','is',null),eb('status','!=','deleted')])).limit(1).execute();
     if(liveRuntime.length) throw new Error('runtime_cleanup_pending');
@@ -108,12 +124,16 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       (SELECT reservation_id FROM ai_funded_usage_reservations WHERE owner_id = ${owner}) OR grant_entry_id IN
       (SELECT entry_id FROM ai_funded_credit_ledger WHERE owner_id = ${owner})`.execute(trx.executor);
     const ledger = await trx.executor.selectFrom('ai_funded_credit_ledger').select('entry_id').where('owner_id','=',owner).limit(1).execute();
-    if (ledger.length) {
+    if (ledger.length || hasWaivedExpense) {
       if (!ownerHash) throw new Error('Accounting erasure configuration unavailable');
       const summary = await sql`UPDATE account_deletion_jobs SET accounting_summary =
-        (SELECT jsonb_object_agg(kind, totals) FROM
+        COALESCE((SELECT jsonb_object_agg(kind, totals) FROM
           (SELECT kind, jsonb_build_object('entryCount', count(*), 'amountMicrousd', sum(amount_microusd)) AS totals
-            FROM ai_funded_credit_ledger WHERE owner_id = ${owner} GROUP BY kind) entries)
+            FROM ai_funded_credit_ledger WHERE owner_id = ${owner} GROUP BY kind) entries),'{}'::jsonb)
+        || CASE WHEN ${hasWaivedExpense} THEN jsonb_build_object('waived_platform_expense',
+          (SELECT jsonb_build_object('entryCount',count(*),'amountMicrousd',sum(actual_microusd))
+            FROM ai_funded_usage_reservations WHERE owner_id=${owner} AND charge_waiver IS NOT NULL))
+          ELSE '{}'::jsonb END
         WHERE owner_hash = ${ownerHash(owner)} RETURNING owner_hash`.execute(trx.executor);
       if (!summary.rows.length) throw new Error('Accounting erasure tombstone unavailable');
     }
