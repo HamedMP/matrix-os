@@ -393,6 +393,28 @@ describe("Brain chat tab", () => {
     expect(screen.getByText("Renamed on the phone", { selector: "p" })).toBeTruthy();
   });
 
+  it("lists a deleted chat again when a fresh read has it, as the delete is not kept past that read", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [
+      thread("chat_a", "Bot chat sidebar"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+    ] }) });
+    const rows = { rename: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) };
+    renderChat(fakeHost(agents.client, rows).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Navigation cache" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    agents.threads.list.mockResolvedValue({ items: [thread("chat_a", "Bot chat sidebar")] });
+    const confirm = within(await screen.findByRole("group", { name: "Delete Navigation cache" }));
+    fireEvent.click(confirm.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: /^Navigation cache/ })).toBeNull();
+    // Restored on another device: the next read lists it, and it shows again.
+    agents.threads.list.mockResolvedValue({ items: [
+      thread("chat_a", "Bot chat sidebar"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+    ] });
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    expect(await screen.findByRole("button", { name: /^Navigation cache/ })).toBeTruthy();
+  });
+
   it("keeps a rename on a Show more page over it while that page is not read again", async () => {
     const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
       ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
@@ -411,6 +433,35 @@ describe("Brain chat tab", () => {
     expect(agents.threads.list).toHaveBeenLastCalledWith("agent_brain", { projectId: PROJECT, limit: 50 });
     expect(await screen.findByRole("button", { name: /^Older, renamed/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^An older question/ })).toBeNull();
+  });
+
+  it("renames a Show more chat again with the title version of its last rename", async () => {
+    const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
+      ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
+      : { items: [thread("chat_old", "An older question", "2026-09-01T00:00:00.000Z")] } });
+    const saved = { chat: { id: "chat_old", title: "Saved by the server", titleVersion: 9 } } as never;
+    const rename = vi.fn<NonNullable<BrainChatHost["rows"]>["rename"]>(async () => undefined);
+    const rows = { rename, remove: vi.fn(async () => undefined) };
+    renderChat(fakeHost(agents.client, rows).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const renameRow = async (from: string, to: string) => {
+      fireEvent.keyDown(await screen.findByRole("button", { name: `More for ${from}` }), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+      const name = await screen.findByRole("textbox", { name: "Chat name" });
+      fireEvent.change(name, { target: { value: to } });
+      fireEvent.submit(name.closest("form")!);
+      await waitFor(() => expect(rename).toHaveBeenLastCalledWith(
+        expect.objectContaining({ chat: expect.objectContaining({ title: from }) }), to));
+    };
+    await renameRow("An older question", "Older, renamed");
+    // A host that answers nothing: the title CAS moved the version on by one.
+    rename.mockResolvedValueOnce(saved);
+    await renameRow("Older, renamed", "Renamed twice");
+    expect(rename.mock.lastCall?.[0].chat.titleVersion).toBe(3);
+    // A host that answers with the renamed record: its title and version are kept.
+    await renameRow("Saved by the server", "Renamed again");
+    expect(rename.mock.lastCall?.[0].chat.titleVersion).toBe(9);
   });
 
   it("keeps the chat the viewer opened while a delete was on its way, and their focus", async () => {

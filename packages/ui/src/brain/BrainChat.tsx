@@ -257,11 +257,14 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
 }
 
 /**
- * Renames (a title) and deletes (null) made here, each kept over the record it was made on while the list still holds
- * that record: once the chat is read again (a reload, or a new Show more), the server's title shows, a later rename
- * elsewhere too, and a chat no longer listed drops its edit. At most one per item a list holds, the oldest dropped.
+ * Renames (the renamed record, whose title and title version show) and deletes (null) made here, each kept over the
+ * record it was made on while the list still holds that record: once the chat is read again (a reload, or a new Show
+ * more), the server's title shows, a later rename elsewhere too, and a chat no longer listed drops its edit. At most
+ * one per item a list holds, the oldest dropped.
  */
-type LocalEdits = ReadonlyMap<string, { readonly value: string | null; readonly over: CanonicalChatRecord }>;
+type LocalEdits = ReadonlyMap<string, {
+  readonly value: CanonicalChatRecord | null; readonly over: CanonicalChatRecord;
+}>;
 
 function pendingEdits(edits: LocalEdits, listed: readonly CanonicalChatRecord[]): LocalEdits {
   if (edits.size === 0) return edits;
@@ -269,7 +272,9 @@ function pendingEdits(edits: LocalEdits, listed: readonly CanonicalChatRecord[])
   return pending.length === edits.size ? edits : new Map(pending);
 }
 
-function withEdit(edits: LocalEdits, id: string, value: string | null, over: CanonicalChatRecord): LocalEdits {
+function withEdit(
+  edits: LocalEdits, id: string, value: CanonicalChatRecord | null, over: CanonicalChatRecord,
+): LocalEdits {
   const next = new Map(edits);
   next.delete(id);
   next.set(id, { value, over });
@@ -292,8 +297,10 @@ function BrainChatThreads({
   if (pending !== edits) setEdits(pending);
   const items = threads.items.flatMap((record) => {
     const edit = pending.get(record.chat.id);
-    if (edit?.value === null) return [];
-    return [edit === undefined ? record : { ...record, chat: { ...record.chat, title: edit.value } }];
+    if (edit === undefined) return [record];
+    if (edit.value === null) return [];
+    const { title, titleVersion } = edit.value.chat;
+    return [{ ...record, chat: { ...record.chat, title, titleVersion } }];
   });
   // The list as it is when a delete settles, to pick the chat that opens in place of the deleted one, and the records
   // an edit that settles is kept over (a reload may have landed while it was on its way).
@@ -311,7 +318,7 @@ function BrainChatThreads({
     setListOpen(false);
     toggle.current?.focus();
   };
-  const edit = (id: string, value: string | null) => {
+  const edit = (id: string, value: CanonicalChatRecord | null) => {
     const over = loaded.current.find((record) => record.chat.id === id);
     if (over) setEdits((previous) => withEdit(previous, id, value, over));
     threads.reload();
@@ -324,7 +331,7 @@ function BrainChatThreads({
           open(record);
           if (listOpen) closeList();
         }}
-        onRenamed={(id, value) => edit(id, value)}
+        onRenamed={(renamed) => edit(renamed.chat.id, renamed)}
         onDeleted={(id) => {
           edit(id, null);
           closeDeleted(id, () => listedNow.current.find((record) => record.chat.id !== id) ?? null);
