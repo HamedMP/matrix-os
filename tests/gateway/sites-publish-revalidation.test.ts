@@ -1,3 +1,4 @@
+import { siteBuildFixture } from './site-build-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { mkdtemp, mkdir, open, rename, rm, symlink, writeFile } from 'node:fs/promises';
@@ -30,7 +31,7 @@ beforeEach(async () => {
 afterEach(async () => { await rm(home, { recursive: true, force: true }); });
 async function publish(duringBuild: () => Promise<void>) {
  const platform = { request: vi.fn().mockResolvedValue({ id: 'site' }) };
- const build = { build: vi.fn(async () => { await duringBuild(); return { ok: true } as const; }) };
+ const build = siteBuildFixture({ build: vi.fn(async () => { await duringBuild(); return { ok: true } as const; }) });
  const app = new Hono();
  app.use('*', async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, 'owner'); await next(); });
  app.route('/', createSiteRoutes({ homePath: home, ownerIds: ['owner'], platform, build, submissions: {} as any }));

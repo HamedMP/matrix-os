@@ -1,3 +1,4 @@
+import { siteBuildFixture } from './site-build-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
@@ -10,7 +11,7 @@ async function publish(publishing:unknown,reviewedConfig:unknown,storage:boolean
  try{
   await mkdir(join(home,'apps/event/dist'),{recursive:true});await writeFile(join(home,'apps/event/dist/index.html'),'<html>Launch</html>');
   await writeFile(join(home,'apps/event/matrix.json'),JSON.stringify({name:'Event',slug:'event',version:'1.0.0',runtime:'vite',runtimeVersion:'1.0.0',build:{command:'pnpm build',output:'dist'},publishing}));
-  const platform={request:vi.fn().mockResolvedValue({id:'site'})},build={build:vi.fn().mockResolvedValue({ok:true})};
+  const platform={request:vi.fn().mockResolvedValue({id:'site'})},build=siteBuildFixture({build:vi.fn().mockResolvedValue({ok:true})});
   const app=new Hono();app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,'owner');await next();});app.route('/',createSiteRoutes({homePath:home,ownerIds:['owner'],platform,submissions:storage?{} as any:null,build}));
   const response=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig})});return {response,platform,build};
  }finally{await rm(home,{recursive:true,force:true});}

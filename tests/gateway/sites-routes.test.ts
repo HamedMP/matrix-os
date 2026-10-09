@@ -1,3 +1,4 @@
+import { siteBuildFixture } from './site-build-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -33,7 +34,7 @@ describe('full owner production deployment path',()=>{
   try{
    const dir=join(home,'apps/event');await mkdir(join(dir,'dist'),{recursive:true});
    await writeFile(join(dir,'matrix.json'),JSON.stringify({name:'Event',slug:'event',version:'1.0.0',runtime:'vite',runtimeVersion:'1.0.0',build:{command:'pnpm build',output:'dist'},publishing}));await writeFile(join(dir,'dist/index.html'),'<html>Launch</html>');await writeFile(join(dir,'source-secret.env'),'private');
-   const platform={request:vi.fn().mockResolvedValue({id:siteId})},build={build:vi.fn().mockResolvedValue({ok:true})};const app=new Hono();app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,'owner');await next();});app.route('/',createSiteRoutes({homePath:home,ownerIds:['owner'],platform,submissions:{} as any,build}));
+   const platform={request:vi.fn().mockResolvedValue({id:siteId})},build=siteBuildFixture({build:vi.fn().mockResolvedValue({ok:true})});const app=new Hono();app.use('*',async(c,next)=>{markAuthContextReady(c);setPlatformVerifiedPrincipal(c,'owner');await next();});app.route('/',createSiteRoutes({homePath:home,ownerIds:['owner'],platform,submissions:{} as any,build}));
    const changed=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig:{...publicConfig,data:{event:'Other'}}})});expect(changed.status).toBe(409);expect(build.build).not.toHaveBeenCalled();expect(platform.request).not.toHaveBeenCalled();
    const response=await app.request('/api/apps/event/site',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'Launch',reviewedConfig:publicConfig})});expect(response.status).toBe(200);expect(build.build).toHaveBeenCalledOnce();expect(platform.request).toHaveBeenCalledWith('event','POST',expect.objectContaining({config:publicConfig,files:[{path:'index.html',contentType:'text/html',body:Buffer.from('<html>Launch</html>').toString('base64')}]}),'');
   }finally{await rm(home,{recursive:true,force:true});}

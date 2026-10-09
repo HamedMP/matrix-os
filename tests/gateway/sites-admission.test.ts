@@ -1,3 +1,4 @@
+import { siteBuildFixture } from './site-build-fixture.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,7 +18,7 @@ it('holds all four publish slots until platform success or failure settles', asy
  const pending: Array<{ resolve(value: unknown): void; reject(error: Error): void }> = [];
  const platform = { request: vi.fn(() => new Promise((resolve, reject) => pending.push({ resolve, reject }))) };
  const app = new Hono(); app.use('*', async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, 'owner'); await next(); });
- app.route('/', createSiteRoutes({ homePath: home, ownerIds: ['owner'], platform: platform as any, submissions: {} as any, build: { build: vi.fn().mockResolvedValue({ ok: true }) } }));
+ app.route('/', createSiteRoutes({ homePath: home, ownerIds: ['owner'], platform: platform as any, submissions: {} as any, build: siteBuildFixture({ build: vi.fn().mockResolvedValue({ ok: true }) }) }));
  const publish = () => app.request('/api/apps/event/site', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewedConfig: config }) });
  const requests: Array<Promise<Response>> = [];
  for (let i = 0; i < 4; i++) { requests.push(publish()); await vi.waitFor(() => expect(pending).toHaveLength(i + 1)); }

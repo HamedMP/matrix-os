@@ -13,10 +13,15 @@ import {
 } from "./build-cache.js";
 import { parseManifest, type AppManifest } from "./manifest-schema.js";
 import { safeBuildEnv } from "./safe-env.js";
+import { withAppBuildLock } from "./build-lock.js";
 
 export type BuildResult =
   | { ok: true; stamp: BuildStamp }
   | { ok: false; error: BuildError };
+
+export type BuildSnapshotResult<T> =
+  | { ok: true; stamp: BuildStamp; snapshot: T }
+  | Extract<BuildResult, { ok: false }>;
 
 interface BuildOrchestratorOptions {
   concurrency: number;
@@ -53,13 +58,31 @@ export class BuildOrchestrator {
       return existing;
     }
 
-    const promise = this.doBuild(slug, appDir, opts);
+    const promise = withAppBuildLock(appDir, (canonicalDir) => this.doBuild(slug, canonicalDir, opts))
+      .catch((error: unknown): BuildResult => {
+        if (error instanceof BuildError) return { ok: false, error };
+        throw error;
+      });
     this.slugMutex.set(slug, promise);
     try {
       return await promise;
     } finally {
       this.slugMutex.delete(slug);
     }
+  }
+
+  /** Retain shared app ownership until immutable artifact bytes have been captured. */
+  async buildWithSnapshot<T>(
+    slug: string,
+    appDir: string,
+    opts: { timeoutMs?: number },
+    collect: (result: Extract<BuildResult, { ok: true }>) => Promise<T>,
+  ): Promise<BuildSnapshotResult<T>> {
+    return withAppBuildLock(appDir, async (canonicalDir) => {
+      const result = await this.doBuild(slug, canonicalDir, opts);
+      if (!result.ok) return result;
+      return { ...result, snapshot: await collect(result) };
+    });
   }
 
   private async doBuild(
