@@ -8,7 +8,7 @@ import {
   createPeerRegistry,
   type PeerRegistry,
 } from "../../../packages/gateway/src/sync/ws-events.js";
-import type { R2Client } from "../../../packages/gateway/src/sync/r2-client.js";
+import { SyncObjectTooLargeError, type R2Client } from "../../../packages/gateway/src/sync/r2-client.js";
 import {
   applyCommitToManifest,
   readManifest,
@@ -1485,6 +1485,113 @@ describe("createHomeMirror", () => {
       const manifest = storedManifest(r2);
       expect(Object.keys(manifest?.files ?? {}).filter((path) => path.startsWith("notes/"))).toHaveLength(60);
       await mirror.stop();
+    });
+
+    describe("uploads larger than the storage path allows", () => {
+      const LIMIT = 1024;
+
+      // Behave like the platform broker behind the edge router: bodies over the
+      // limit are rejected with a typed error; optionally advertise the limit.
+      function limitUploads(advertise: boolean) {
+        const originalPut = r2.putObject.bind(r2);
+        r2.putObject = (async (key, body, options) => {
+          const size = options?.contentLength
+            ?? (typeof body === "string" ? Buffer.byteLength(body) : body instanceof Uint8Array ? body.byteLength : undefined);
+          if (size !== undefined && size > LIMIT) throw new SyncObjectTooLargeError();
+          return originalPut(key, body, options);
+        }) as R2Client["putObject"];
+        if (advertise) (r2 as R2Client).maxPutObjectBytes = LIMIT;
+      }
+
+      async function seedLocal() {
+        await mkdir(join(tmpRoot, "notes"), { recursive: true });
+        await writeFile(join(tmpRoot, "notes", "small.md"), "small note");
+        await writeFile(join(tmpRoot, "notes", "big.bin"), Buffer.alloc(LIMIT * 2, 7));
+      }
+
+      function startMirror(logger = { info: vi.fn(), error: vi.fn() }) {
+        const mirror = createHomeMirror({
+          r2,
+          manifestDb: db,
+          homeRoot: tmpRoot,
+          userId: "alice",
+          peerId: "gateway-alice",
+          peerRegistry: registry,
+          logger,
+          watchLocalChanges: false,
+        });
+        return { mirror, logger };
+      }
+
+      const logged = (logger: { error: ReturnType<typeof vi.fn> }, text: string) =>
+        logger.error.mock.calls.some((call) => call.map(String).join(" ").includes(text));
+
+      it("skips files over the advertised upload limit at startup and publishes the rest", async () => {
+        limitUploads(true);
+        await seedLocal();
+        const { mirror, logger } = startMirror();
+
+        await mirror.start();
+
+        const manifest = storedManifest(r2);
+        expect(manifest?.files["notes/small.md"]?.objectKey).toBeDefined();
+        expect(manifest?.files["notes/big.bin"]).toBeUndefined();
+        expect(logged(logger, "skipping push for notes/big.bin")).toBe(true);
+        await mirror.stop();
+      });
+
+      it("skips a file the storage path rejects as too large without failing startup", async () => {
+        limitUploads(false);
+        await seedLocal();
+        const { mirror, logger } = startMirror();
+
+        await mirror.start();
+
+        const manifest = storedManifest(r2);
+        expect(manifest?.files["notes/small.md"]?.objectKey).toBeDefined();
+        expect(manifest?.files["notes/big.bin"]).toBeUndefined();
+        expect(logged(logger, "notes/big.bin")).toBe(true);
+        await mirror.stop();
+      });
+
+      it("skips an explicit push the storage path rejects as too large", async () => {
+        limitUploads(false);
+        const { mirror, logger } = startMirror();
+        await mirror.start();
+        await mkdir(join(tmpRoot, "notes"), { recursive: true });
+        await writeFile(join(tmpRoot, "notes", "later.bin"), Buffer.alloc(LIMIT * 2, 9));
+
+        await expect(mirror.pushLocalFile("notes/later.bin")).resolves.toBeUndefined();
+
+        expect(storedManifest(r2)?.files["notes/later.bin"]).toBeUndefined();
+        expect(logged(logger, "notes/later.bin")).toBe(true);
+        await mirror.stop();
+      });
+
+      it("still pulls remote files larger than the upload limit", async () => {
+        limitUploads(true);
+        const remote = Buffer.alloc(LIMIT * 2, 3);
+        const key = "matrixos-sync/alice/files/notes/remote.bin";
+        r2.store.set(key, remote);
+        r2.store.set(
+          "matrixos-sync/alice/manifest.json",
+          Buffer.from(JSON.stringify({
+            version: 2,
+            manifestVersion: 1,
+            files: {
+              "notes/remote.bin": {
+                hash: sha256(remote), size: remote.length, mtime: Date.now(), peerId: "laptop-1", version: 1, objectKey: key,
+              },
+            },
+          })),
+        );
+        const { mirror } = startMirror();
+
+        await mirror.start();
+
+        expect((await readFile(join(tmpRoot, "notes", "remote.bin"))).equals(remote)).toBe(true);
+        await mirror.stop();
+      });
     });
 
     it("cleans up orphaned temp files on startup", async () => {
