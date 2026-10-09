@@ -40,7 +40,8 @@ import {
   sleep,
 } from './customer-vps-support.js';
 import type { CustomerVpsContext } from './customer-vps-context.js';
-import { AccountDeletionAdmissionError, getAccountDeletionAdmission, withAccountDeletionAdmission } from './account-deletion/admission.js';
+import { AccountDeletionAdmissionError, getAccountDeletionAdmission, withAccountDeletionAdmission, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
+import { remapRecoveredSites } from './sites/recovery.js';
 
 /** Recovers a customer VPS onto a replacement server and reconciles pending recovery creates. */
 export function createCustomerVpsRecovery(context: CustomerVpsContext) {
@@ -139,7 +140,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
       if (!payload.recovery) return false;
       const expected = payload.recovery;
       const recoveryTarget = await getGoldenSnapshotRecoveryRegistrationTarget(deps.db, row.machineId);
-      return runInPlatformTransaction(deps.db, async (trx) => {
+      return withAccountDeletionOwnerLock(deps.db, row.clerkUserId, async (trx) => {
         const current = await trx.executor.selectFrom('user_machines').select([
           'status', 'deleted_at', 'hetzner_server_id', 'recovery_create_action_id',
           'recovery_encrypted_payload',
@@ -175,6 +176,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
           failureCode: expected.oldFailureCode,
           failureAt: expected.oldFailureAt,
         });
+        await remapRecoveredSites(trx, row.clerkUserId, row.machineId, expected.oldMachineId);
         if (recoveryTarget) {
           await releaseGoldenSnapshotLeaseInTransaction(trx, recoveryTarget.leaseId, now().toISOString());
         }
@@ -511,6 +513,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
       registration.expiresAt,
       postgresPassword,
       bundleRef,
+      active.runtimeTokenEpoch,
     );
     if (deps.config.goldenSnapshots.enabled) {
       recoveryImage = await chooseRecoveryImage(deps.db, deps.config.goldenSnapshots, {
@@ -560,13 +563,23 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
     const intendedServerType = billingContext?.serverType ?? active.serverType ?? deps.config.serverType;
     let existing: UserMachineRecord | undefined;
     try {
-      existing = await admitRecovery(input.clerkUserId, trx => claimUserMachineRecovery(trx, input.clerkUserId, active.runtimeSlot, {
-      machineId,
-      encryptedPayload: encryptedRecoveryPayload,
-      serverType: intendedServerType,
-      registrationTokenHash: registration.hash,
-      registrationTokenExpiresAt: registration.expiresAt,
-      }));
+      existing = await admitRecovery(input.clerkUserId, async trx => {
+        // The preflight can outlive a different recovery. Bind this claim to the
+        // exact original runtime before moving its publications to a replacement.
+        const current = await trx.executor.selectFrom('user_machines').select('machine_id')
+          .where('clerk_user_id', '=', input.clerkUserId).where('runtime_slot', '=', active.runtimeSlot)
+          .where('deleted_at', 'is', null).forUpdate().executeTakeFirst();
+        if (current?.machine_id !== active.machineId) return undefined;
+        const claimed = await claimUserMachineRecovery(trx, input.clerkUserId, active.runtimeSlot, {
+          machineId,
+          encryptedPayload: encryptedRecoveryPayload,
+          serverType: intendedServerType,
+          registrationTokenHash: registration.hash,
+          registrationTokenExpiresAt: registration.expiresAt,
+        });
+        if (claimed) await remapRecoveredSites(trx, input.clerkUserId, active.machineId, machineId);
+        return claimed;
+      });
     } catch (error: unknown) {
       if (recoveryImage.imageSource === 'snapshot') {
         await releaseGoldenSnapshotLease(deps.db, recoveryImage.snapshotLeaseId, currentTime.toISOString());
@@ -798,7 +811,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
         }
       }
       try {
-        await runInPlatformTransaction(deps.db, async (trx) => {
+        await withAccountDeletionOwnerLock(deps.db, input.clerkUserId, async (trx) => {
           if (recoverySnapshotLeaseId !== null) {
             // Idempotently account for the original snapshot lease even when
             // the clean fallback transition already released it.
@@ -810,6 +823,8 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
             .select(['machine_id', 'status'])
             .where('clerk_user_id', '=', input.clerkUserId)
             .where('runtime_slot', '=', active.runtimeSlot)
+            .where('machine_id', '=', machineId)
+            .where('recovery_encrypted_payload', '=', encryptedRecoveryPayload)
             .where('deleted_at', 'is', null)
             .forUpdate()
             .executeTakeFirst();
@@ -839,6 +854,7 @@ export function createCustomerVpsRecovery(context: CustomerVpsContext) {
             failureCode: active.failureCode,
             failureAt: active.failureAt,
           });
+          await remapRecoveredSites(trx, input.clerkUserId, recoveryRow.machine_id, oldMachineId);
         });
       } catch (statusErr: unknown) {
         logCustomerVpsError('recover failure status update failed', statusErr);
