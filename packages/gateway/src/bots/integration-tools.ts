@@ -220,11 +220,13 @@ export function createBotIntegrationTools(deps: {
   return {
     /** Dedicated workflows ask for their exact declared effects without executing a phantom integration call. */
     async ensureAccess(binding: BotRuntimeBinding, service: string, effects: readonly BotEffect[], signal?: AbortSignal): Promise<BotToolResult | null> {
+      // Dedicated access workflows use the private owner's approval channel.
+      if (binding.group) throw new BotBrokerActionError("denied");
       const declared = await declaredEffects(binding.ownerId, binding.botId, service);
       if (effects.some(effect => !declared.includes(effect))) throw new BotBrokerActionError("not_granted");
       const connected = await inventory(binding.ownerId, signal);
       const grants = await deps.transact(binding.ownerId, tx => createBotGrantsRepository(tx.db).listLive({
-        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+        ownerId: binding.ownerId, botId: binding.botId, audience: audienceFor(binding), now: now().toISOString(),
       }, tx.db));
       const usable = grants.filter(grant => grant.service === service && effects.every(effect => grant.effects.includes(effect))
         && connected.filter(account => account.service === service && account.label === grant.accountLabel).length === 1

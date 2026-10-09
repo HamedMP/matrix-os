@@ -541,6 +541,14 @@ describe("bot integration tools", () => {
 
 describe("group integration isolation", () => {
   const group = { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" };
+  it("refuses private workflow access prompts before reading the owner's connections", async () => {
+    await grant(WORK);
+    const { tools, client } = setup();
+    await expect(tools.ensureAccess({ ...binding, group }, "gmail", ["read"]))
+      .rejects.toMatchObject({ code: "denied" });
+    expect(client.inventory).not.toHaveBeenCalled();
+    await expect(pending()).resolves.toEqual([]);
+  });
   it("does not use direct grants, expose private account labels, or request private access", async () => {
     await grant(WORK);
     const { tools, call } = setup();
