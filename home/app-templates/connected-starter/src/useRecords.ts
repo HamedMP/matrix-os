@@ -3,10 +3,8 @@ import { readRecords } from "./model";
 import { archiveRecord, persistRecord } from "./persistence";
 import type { Database, OwnerRecord } from "./types";
 export function useRecords() {
-  const [records, setRecords] = useState<OwnerRecord[]>([]),
-    [error, setError] = useState(""),
-    [loading, setLoading] = useState(false),
-    [limited, setLimited] = useState(false);
+  const [snapshot, setSnapshot] = useState<{ records: OwnerRecord[]; limited: boolean }>({ records: [], limited: false });
+  const [error, setError] = useState(""), [loading, setLoading] = useState(false);
   const revision = useRef(0),
     mounted = useRef(true);
   const reload = useCallback(async () => {
@@ -20,8 +18,7 @@ export function useRecords() {
         () => mounted.current && ticket === revision.current,
       );
       if (result && mounted.current && ticket === revision.current) {
-        setRecords(result.records);
-        setLimited(result.limited);
+        setSnapshot(result);
         setError("");
       }
     } catch (cause) {
@@ -51,10 +48,13 @@ export function useRecords() {
       throw new Error("Save is unavailable. Your changes are still here.");
     const saved = await persistRecord(db, record);
     if (mounted.current) {
-      revision.current++;
-      setLoading(false);
-      setError("");
-      setRecords((old) => [saved, ...old.filter((r) => r.id !== saved.id)]);
+      setSnapshot(old => {
+        const records = [saved, ...old.records.filter(record => record.id !== saved.id)];
+        return { records: records.slice(0, 1000), limited: old.limited || records.length > 1000 };
+      });
+      // A confirmed write invalidates pre-write reads and begins fresh discovery.
+      // Do not await discovery: the write is committed even if the subsequent read fails.
+      void reload();
     }
     return saved;
   };
@@ -63,13 +63,11 @@ export function useRecords() {
     if (!db) throw new Error("Archive is unavailable. Record is still here.");
     await archiveRecord(db, record);
     if (mounted.current) {
-      revision.current++;
-      setLoading(false);
-      setError("");
-      setRecords((old) => old.filter((r) => r.id !== record.id));
+      setSnapshot(old => ({ ...old, records: old.records.filter(row => row.id !== record.id) }));
+      void reload();
     }
   };
-  return { records, error, loading, limited, reload, save, archive };
+  return { ...snapshot, error, loading, reload, save, archive };
 }
 
 async function loadActive(db: Database, current: () => boolean) {
