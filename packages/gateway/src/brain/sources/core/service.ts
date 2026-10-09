@@ -38,6 +38,8 @@ export const BRAIN_SOURCES_SERVICE_LIMITS = {
   receiptsDefault: 10,
   /** Option ids longer than a config list item are dropped; labels and details are cut. */
   optionTextMaxChars: 200,
+  /** Tries at saving a missing config while renames or pauses move the revision; then connect is source_conflict. */
+  repairAttempts: 3,
 } as const;
 
 /** The contract's deps plus the deadline of each call outside the store (clamped to callTimeoutMinMs..MaxMs). */
@@ -241,7 +243,8 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
   /**
    * createSource with saveConfig in its transaction, so no request sees the new source without its config; the new
    * source is removed again when the cap refuses it. The same identity again changes nothing, but a missing (or now
-   * refused) config gets this one, compare-and-set on the revision read here: a config saved since then stands.
+   * refused) config gets this one, compare-and-set on the revision read with it: a config saved since then stands,
+   * and a rename or pause since then is read again and the save retried (repairAttempts, then source_conflict).
    */
   async function createWithConfig(
     scope: BrainScopeKey, handler: BrainAnySourceKindHandler, config: unknown,
@@ -257,15 +260,22 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
         await rollback(scope, source);
         throw error;
       }
+      return { source: known, created };
     }
-    if (created || await storedConfig(handler, scope, source.sourceId) !== null) return { source: known, created };
-    const repaired = await repository.updateSource(scope, {
-      sourceId: source.sourceId, expectedRevision: source.revision, label: source.label,
-    }, (trx) => handler.saveConfig(scope, source.sourceId, config, trx)).catch((error: unknown) => {
-      if (!(error instanceof BrainStoreError) || error.code !== "conflict") throw error;
-      return liveSource(scope, source.sourceId);
-    });
-    return { source: { ...repaired, kind: handler.kind }, created };
+    let current = known;
+    for (let attempt = 1; ; attempt += 1) {
+      if (await storedConfig(handler, scope, current.sourceId) !== null) return { source: current, created };
+      try {
+        const repaired = await repository.updateSource(scope, {
+          sourceId: current.sourceId, expectedRevision: current.revision, label: current.label,
+        }, (trx) => handler.saveConfig(scope, current.sourceId, config, trx));
+        return { source: { ...repaired, kind: handler.kind }, created };
+      } catch (error: unknown) {
+        if (!(error instanceof BrainStoreError) || error.code !== "conflict") throw error;
+        if (attempt >= LIMITS.repairAttempts) throw new BrainFeatureError("source_conflict", { cause: error });
+      }
+      current = await liveSource(scope, source.sourceId);
+    }
   }
 
   /** The removed source's derived rows go before the answer; what the purge could not finish goes by change event. */
