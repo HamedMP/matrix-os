@@ -322,6 +322,26 @@ describe("matrix sources shared pieces", () => {
     expect(await liveTitles(harness, sourceId)).toEqual(["docs/a.md", "docs/sub/b.md"]);
   });
 
+  it("writes no file of a folder over the entry bound, even one read before the bound", async () => {
+    const max = BRAIN_MATRIX_LIMITS.dirEntriesMax;
+    mkdirSync(join(home, "docs/sub"), { recursive: true });
+    writeFileSync(join(home, "docs/a.md"), "a");
+    writeFileSync(join(home, "docs/sub/b.md"), "b");
+    const adapter = createMatrixFilesAdapter(home);
+    const config = { roots: ["docs"], extensions: ["md"], maxFileBytes: 1_000 };
+    const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:x");
+    const run = () => runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config);
+    expect(await run()).toMatchObject({ caughtUp: true, written: 2 });
+    // b.md comes first, then the bound: a scan that kept the files it read would write b.md and the sweep drop it.
+    const hidden = Array.from({ length: max }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    faults.listings.set(join(home, "docs/sub"), { entries: [{ name: "b.md", kind: "file" }, ...hidden], read: 0 });
+    writeFileSync(join(home, "docs/sub/b.md"), "b changed");
+    expect(await run()).toMatchObject({ caughtUp: true, written: 0, deleted: 1, notices: ["items_truncated"] });
+    // The next pass agrees with the sweep: nothing written again, nothing left to drop.
+    expect(await run()).toMatchObject({ caughtUp: true, written: 0, deleted: 0 });
+    expect(await liveTitles(harness, sourceId)).toEqual(["docs/a.md"]);
+  });
+
   it("reads a file to its end when a read returns fewer bytes than asked", async () => {
     writeFileSync(join(home, "a.md"), "a\u00e9 b");
     // The first read stops inside the two bytes of "\u00e9".
