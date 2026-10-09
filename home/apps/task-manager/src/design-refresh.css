@@ -1,0 +1,13 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* A delivery board with clear titles and quiet column surfaces. */
+:root { --app-bg: var(--matrix-bg, #f5f7fa); --app-fg: var(--matrix-fg, #1d2838); --app-muted: var(--matrix-muted, #e9edf3); --app-border: var(--matrix-border, #dde3eb); --app-accent: var(--matrix-accent, #4d65a3); }
+.board-shell { height: 100dvh; background: var(--app-bg); }
+.app-header { padding: 24px 24px 18px; }.app-title h1 { font-size: 30px; font-weight: 600; letter-spacing: -.045em; }.eyebrow { text-transform: none; letter-spacing: 0; font-size: 13px; }.app-icon { border-radius: 10px; box-shadow: none; }
+.search-field { border-radius: 8px; box-shadow: none; min-height: 44px; }.search-field input { font-size: 16px; }
+.board { gap: 24px; padding: 12px 24px max(24px, env(safe-area-inset-bottom)); }.column { flex-basis: 292px; background: transparent; border: 0; border-radius: 0; box-shadow: none; }.column__header { padding: 8px 0 16px; }.column__title { min-height: 44px; font-size: 15px; }.column__menu { opacity: 1; }
+.column__cards { padding: 0 0 12px; }.task-card { padding: 18px; border-radius: 10px; box-shadow: 0 2px 3px rgba(24, 35, 51, .035); }.task-card__title { font-size: 16px; font-weight: 600; line-height: 1.45; }.task-card__desc { line-height: 1.6; }.task-card__labels { margin-bottom: 4px; }.column__quick-add { padding: 0; }
+.icon-button, .button, .label-chip, .checklist-item { min-height: 44px; }.icon-button { min-width: 44px; }.field input, .field select, .field textarea, .column__quick-add input, .column-adder__form input, .detail-title { font-size: 16px; min-height: 44px; }
+.detail-sheet { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+@media (max-width: 720px) { .app-header { padding: max(16px, env(safe-area-inset-top)) 16px 12px; flex-wrap: wrap; }.header-tools, .search-field { width: 100%; }.search-field input { min-width: 0; width: 100%; }.filter-bar { padding-left: 16px; padding-right: 16px; flex-wrap: nowrap; overflow-x: auto; }.label-chip { white-space: nowrap; flex-shrink: 0; }.board { padding-left: 16px; padding-right: 16px; scroll-snap-type: x proximity; }.column { flex-basis: min(292px, calc(100vw - 48px)); scroll-snap-align: start; }.detail-sheet { width: 100%; max-width: none; }.detail-grid { grid-template-columns: 1fr; } }

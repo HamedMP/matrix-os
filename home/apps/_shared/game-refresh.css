@@ -1,0 +1,26 @@
+@import "./app-foundation.css";
+/* Game boards keep their mechanics and geometry; their surrounding controls
+   use calmer surfaces and a stable dynamic viewport. Never enlarge cells
+   globally: a nine-column board cannot fit 44px cells on a narrow phone. */
+.chess-app, .tetris-app, .snake-app, .sol-app, .bg-app, .ms-root, .app { height: 100dvh; background: var(--app-bg); }
+.chess-app .stage-title h1, .snake-app h1, .app .title { letter-spacing: -.04em; font-weight: 600; }
+.chess-app .eyebrow, .snake-app .eyebrow { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.chess-app .board-frame { box-shadow: 0 12px 28px rgba(30, 35, 42, .1); }
+.chess-app .ghost-btn, .chess-app .seg-btn, .chess-app .primary-btn,
+.tetris-app .primary-action, .tetris-app .secondary-action, .tetris-app .icon-action,
+.snake-app .primary-action, .snake-app .secondary-action, .snake-app .icon-action,
+.sol-app .sol-btn, .bg-app .bg-btn, .ms-root .ms-diff-btn, .ms-root .ms-reset,
+.app .btn { min-height: 44px; }
+.tetris-app .board-wrap { border-radius: 10px; }
+.snake-app .board-panel { border-radius: 18px; box-shadow: none; border: 1px solid var(--app-border); }
+.snake-app .scoreboard { border-radius: 10px; box-shadow: none; }
+.sol-app .sol-bar { border-bottom: 1px solid var(--app-border); }
+.bg-app .bg-board-wrap { box-shadow: 0 12px 30px rgba(39, 32, 25, .14); }
+.ms-root .ms-frame { border-radius: 14px; box-shadow: none; border: 1px solid var(--app-border); }
+.app .score-card { border-radius: 10px; box-shadow: none; }
+.app .board { border-radius: 14px; }
+@media (max-width: 680px) {
+ .chess-app, .tetris-app, .snake-app, .bg-app, .ms-root, .app { padding-top: max(12px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+ .sol-app .sol-bar { padding-top: max(12px, env(safe-area-inset-top)); }
+ .chess-app select, .bg-app select, .ms-root input, .ms-root select { font-size: 16px; min-height: 44px; }
+}
