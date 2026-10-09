@@ -15,9 +15,11 @@ product rules, the client and the screens are documented in `packages/ui/src/bra
   transcript, composer, Bot panel and event stream as the Chat tab) with `externalNavigation`, so it never opens a Chat
   tab on its own; `botId` makes a draft send as the Bot, `createChat` makes the draft's thread on its first send,
   `draftWelcome` (the slot's heading and line) replaces the starter cards and the harness setup. With `createChat` or
-  `botId` the workspace shows no project picker and no Share, as on Web. It passes on the report the workspace makes
-  after each turn, not the one for the Chat it opened (the slot picked that one). Open in Chat opens the Chat tab on the
-  same Chat; rows rename and delete over the tab's chat client.
+  `botId` the workspace shows no project picker and no Share, as on Web. It passes on every report the workspace makes
+  (after each admitted turn, the first one in a reopened chat included). The Chat it shows follows those reports, not
+  the slot, so a refused first question stays in the draft's composer with the error. Each project's brain draft has
+  its own key (`newDraftScope`), never the Chat tab's new-chat draft. Open in Chat opens the Chat tab on the same Chat;
+  rows rename and delete over the tab's chat client.
 - Registration: tab kind `brain` (`stores/tabs.ts`, one tab like Notes), the fixed app `__brain__` after Whiteboard
   (`desktop-shell/desktop-apps.ts`; in the launcher, not placed on the desktop by default), its opener in
   `NativeDesktopShell.tsx`, `TabContent.tsx`, `SurfaceIcon.tsx`, the analytics kind `brain`, the palette entry
@@ -48,6 +50,7 @@ product rules, the client and the screens are documented in `packages/ui/src/bra
 
 - `tests/desktop/brain-desktop-view.test.tsx`, `tests/desktop/brain-chat-tab.test.tsx` (the slot rendered through
   `useDesktopBrainChatHost().render`: a draft made through the host and sent as the Bot, each turn reported once, a
-  saved chat opened without its open report, no project picker or Share, no Chat tab opened on its own, Open in Chat),
+  saved chat opened without its open report and its first turn reported, a refused first question kept, a draft apart
+  from the Chat tab's, no project picker or Share, no Chat tab opened on its own, Open in Chat),
   `tests/desktop/canonical-new-chat-content.test.tsx` (the greeting), the Electron Desktop launcher, palette, tab,
   persistence and analytics suites, and `tests/e2e/desktop/company-brain.e2e.test.ts` (needs `desktop/out`).

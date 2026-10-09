@@ -7,6 +7,7 @@ import type { BrainChatHost, BrainChatSlot, ChatAgentClient } from "@matrix-os/u
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import { useDesktopBrainChatHost } from "@desktop/renderer/src/features/brain/DesktopBrainChat";
+import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import { WorkSurfaceRuntimeProvider } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
@@ -51,8 +52,8 @@ function brainClient() {
   return client;
 }
 
-async function send(text: string) {
-  const composer = screen.getByRole("textbox", { name: "Start a chat" });
+async function send(text: string, name = "Start a chat") {
+  const composer = screen.getByRole("textbox", { name });
   await setSharedComposerText(composer, text);
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -65,6 +66,31 @@ function renderSlot(slot: BrainChatSlot) {
     return host ? <>{host.render(slot)}</> : null;
   }
   return render(<WorkSurfaceRuntimeProvider active><Slot /></WorkSurfaceRuntimeProvider>);
+}
+
+/** Holds the slot like the Brain app's Chat tab: a draft's thread is shown as soon as it exists, then each report. */
+function renderLiveSlot(chatId: string | null) {
+  const createChat = vi.fn(async () => created);
+  const onChatChanged = vi.fn();
+  function Slot() {
+    const host = useDesktopBrainChatHost(true);
+    const [shown, setShown] = React.useState(chatId);
+    if (!host) return null;
+    return <>{host.render({
+      ...slotFor(shown),
+      createChat: async (input) => {
+        const record = await createChat(input);
+        setShown(record.chat.id);
+        return record;
+      },
+      onChatChanged: (id, title) => {
+        setShown(id);
+        onChatChanged(id, title);
+      },
+    })}</>;
+  }
+  render(<WorkSurfaceRuntimeProvider active><Slot /></WorkSurfaceRuntimeProvider>);
+  return { createChat, onChatChanged };
 }
 
 function slotFor(chatId: string | null): BrainChatSlot & { createChat: ReturnType<typeof vi.fn>; onChatChanged: ReturnType<typeof vi.fn> } {
@@ -142,7 +168,7 @@ describe("Company Brain chat in Electron Desktop", () => {
     expect(useTabs.getState().tabs).toEqual([]);
   });
 
-  it("opens a saved brain chat in the conversation view, with no Share, and leaves the open report to the slot", async () => {
+  it("opens a saved brain chat in the conversation view, with no Share, and reports its turns but not its opening", async () => {
     runtime.client = brainClient();
     const client = runtime.client as CanonicalChatClient;
     useConnection.setState({ api: fakeApi() });
@@ -153,9 +179,62 @@ describe("Company Brain chat in Electron Desktop", () => {
     await waitFor(() => expect(client.getDetail).toHaveBeenCalledWith(canonicalChatRecord.chat.id, expect.anything()));
     expect(screen.queryByRole("button", { name: /^Project / })).toBeNull();
     expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
-    // The workspace reports the Chat it opened; the slot picked it, so only later turns are passed on.
+    // Opening reports nothing (the slot picked this Chat); the first turn is reported, so the list sorts and dates it.
     expect(slot.onChatChanged).not.toHaveBeenCalled();
+    await send("And since then?", "Reply to chat");
+    await waitFor(() => expect(slot.onChatChanged).toHaveBeenCalledWith(canonicalChatRecord.chat.id, canonicalChatRecord.chat.title));
+    expect(slot.onChatChanged).toHaveBeenCalledTimes(1);
     expect(useTabs.getState().tabs).toEqual([]);
+  });
+
+  it("keeps a refused first question in the composer with the reason, then sends it into the thread", async () => {
+    runtime.client = brainClient();
+    const client = runtime.client as CanonicalChatClient;
+    vi.mocked(client.admitTurn).mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    useConnection.setState({ api: fakeApi() });
+    const { createChat, onChatChanged } = renderLiveSlot(null);
+
+    expect(await screen.findByRole("heading", { name: "Ask about matrix-os" })).toBeTruthy();
+    await send("What changed this week?");
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(created.chat.id, expect.anything(), expect.anything()));
+    expect(await screen.findByText(/could not be sent/)).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe("What changed this week?");
+    expect(onChatChanged).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(client.admitTurn).mock.calls[1]?.[0]).toBe(created.chat.id);
+    await waitFor(() => expect(onChatChanged).toHaveBeenCalledWith(canonicalChatRecord.chat.id, canonicalChatRecord.chat.title));
+    expect((await screen.findByRole("textbox", { name: "Reply to chat" })).textContent).toBe("");
+    expect(createChat.mock.results.every((result) => result.type === "return")).toBe(true);
+  });
+
+  it("keeps each project's brain draft apart from the Chat tab's new-chat draft", async () => {
+    useRetainedComposerDrafts.setState({ identity: null, drafts: {}, sequence: 0 });
+    useConnection.setState({ userId: "user_operator", api: fakeApi() });
+    runtime.client = brainClient();
+    const client = runtime.client as CanonicalChatClient;
+    const chatTab = () => render(<CanonicalChatWorkspace client={client} projectId={null} initialView="draft" active
+      catalog={{ ...providerCatalog, instances: [] }} />);
+    const composer = () => screen.findByRole("textbox", { name: "Start a chat" });
+
+    const tab = chatTab();
+    await setSharedComposerText(await composer(), "A Chat tab draft");
+    tab.unmount();
+    const brain = renderSlot(slotFor(null));
+    expect((await composer()).textContent).toBe("");
+    await setSharedComposerText(await composer(), "A brain question");
+    brain.unmount();
+    const other = renderSlot({ ...slotFor(null), projectId: "proj_other" });
+    expect((await composer()).textContent).toBe("");
+    other.unmount();
+
+    renderSlot(slotFor(null));
+    expect((await composer()).textContent).toBe("A brain question");
+    cleanup();
+    chatTab();
+    expect((await composer()).textContent).toBe("A Chat tab draft");
   });
 
   it("opens the same Chat in the Chat tab", async () => {
