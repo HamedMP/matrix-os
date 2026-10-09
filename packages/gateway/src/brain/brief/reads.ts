@@ -45,7 +45,7 @@ export function documentsAsOf(scope: BrainScopeKey, at: Date | null) {
 }
 
 /** Current claims as of `at` (documentsAsOf): of the live revision, or (read from a snapshot) written before it was
- * replaced; `source_updated_at` is that version's date. Callers add kind filters, order and limit. */
+ * replaced and not left on an older revision (outdated then); `source_updated_at` is that version's date. */
 export function currentClaims(db: Kysely<BrainDatabase>, scope: BrainScopeKey, at: Date | null = null) {
   return db.selectFrom("brain_claims as c")
     .innerJoin("brain_documents as d", (join) => join.onRef("d.owner_id", "=", "c.owner_id")
@@ -57,7 +57,7 @@ export function currentClaims(db: Kysely<BrainDatabase>, scope: BrainScopeKey, a
       documentRef("assignee").as("assignee_ref"),
     ])
     .where("c.owner_id", "=", scope.ownerId).where("c.scope_id", "=", scope.scopeId)
-    .whereRef("c.incarnation", "=", "d.incarnation")
+    .whereRef("c.incarnation", "=", "d.incarnation").whereRef("c.revision", ">=", "a.revision")
     .where((eb) => eb.or([eb.and([eb("a.until", "is", null), eb("c.revision", "=", eb.ref("d.revision"))]),
       eb("c.created_at", "<", eb.ref("a.until"))]));
 }

@@ -31,11 +31,11 @@ export interface StaleItem extends BrainStaleItemView {
  */
 export async function openCommitments(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey,
-  options: { readonly dueBefore?: string; readonly before?: Date | null; readonly limit: number },
+  options: { readonly dueBefore?: string; readonly before: Date | null; readonly limit: number },
 ): Promise<BriefClaimRow[]> {
   const due = commitmentDue();
   const status = documentStatus();
-  let query = currentClaims(db, scope, options.before ?? null).where("c.kind", "=", "commitment")
+  let query = currentClaims(db, scope, options.before).where("c.kind", "=", "commitment")
     .where((eb) => eb.or([eb(status, "is", null), eb(status, "not in", CLOSED_STATUSES)]));
   if (options.dueBefore !== undefined) query = query.where(due, "<", options.dueBefore);
   const ordered = query.orderBy(due, (order) => order.asc().nullsLast())
@@ -99,7 +99,7 @@ async function overdueCommitments(
 }
 
 async function staleSources(
-  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { now, before = null }: StaleOptions,
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { now, before }: StaleOptions,
 ): Promise<StaleItem[]> {
   const items: StaleItem[] = [];
   for (const source of await sourceStates(db, scope, before)) {
@@ -125,8 +125,8 @@ async function staleSources(
 
 export interface StaleOptions {
   readonly kinds: readonly BrainStaleKind[]; readonly now: Date;
-  /** commitment_overdue: due before this YYYY-MM-DD. `before` (a past brief): the brain as it was then. */
-  readonly overdueBefore: string; readonly before?: Date | null;
+  /** commitment_overdue: due before this YYYY-MM-DD. `before`: a past brief's end (the brain then), else null. */
+  readonly overdueBefore: string; readonly before: Date | null;
   /** claim_outdated: only claims that became outdated in this range. */
   readonly outdatedIn?: { readonly from: Date; readonly to: Date };
 }

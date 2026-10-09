@@ -135,11 +135,13 @@ async function draftSpecsShipped(db: Kysely<BrainDatabase>, scope: BrainScopeKey
     return line === null ? [] : [{ spec, dir: spec.spec!, line, at: new Date(spec.source_updated_at).getTime() }];
   });
   if (drafts.length === 0) return [];
-  // Only pull requests dated after a Draft spec of their dir fill the scan; drafts run newest first, so the map keeps
-  // each dir's oldest Draft date.
+  // Only pull requests dated after a Draft spec of their dir fill the scan, each dir its own share of it (a busy one
+  // never hides the rest); drafts run newest first, so the map keeps each dir's oldest Draft date.
   const dirs = [...new Map(drafts.map((draft) => [draft.dir, draft.at]))];
+  const share = Math.max(1, Math.floor(BRIEF_SCANS.shippedPullRequests / dirs.length));
   const { rows: shipped } = await sql<ShippedRow>`
-    SELECT r.value AS spec, d.document_id, a.title, a.dated AS at
+    SELECT m.spec, m.document_id, m.title, m.at FROM (SELECT r.value AS spec, d.document_id, a.title, a.dated AS at,
+      row_number() OVER (PARTITION BY r.value ORDER BY a.dated, d.document_id) AS n
     FROM (VALUES ${sql.join(dirs.map(([dir, at]) => sql`(${dir}, ${new Date(at)}::timestamptz)`))}) v (spec, draft_at)
     JOIN brain_document_refs r ON r.value = v.spec JOIN brain_documents d ON d.owner_id = r.owner_id
       AND d.scope_id = r.scope_id AND d.document_id = r.document_id
@@ -150,7 +152,7 @@ async function draftSpecsShipped(db: Kysely<BrainDatabase>, scope: BrainScopeKey
           AND s.kind = 'status' AND s.value = 'merged')))
       AND EXISTS (SELECT 1 FROM brain_document_refs p WHERE p.owner_id = d.owner_id AND p.scope_id = d.scope_id
         AND p.document_id = d.document_id AND p.kind = 'path' AND left(p.value, 6) <> 'specs/')
-    ORDER BY a.dated ASC, d.document_id ASC LIMIT ${BRIEF_SCANS.shippedPullRequests}`.execute(db);
+    ) m WHERE m.n <= ${share} ORDER BY m.at, m.document_id`.execute(db);
   return drafts.flatMap((draft) => {
     const later = shipped.filter((row) => row.spec === draft.dir && new Date(row.at).getTime() > draft.at);
     if (later.length === 0) return [];
