@@ -38,7 +38,7 @@ const { drawer, mocks, chatPages } = mockLayout;
 
 const SHOW_CHAT_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "index" } }];
 const SHOW_SHARED_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "shared" } }];
-const SHOW_PROJECTS_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "projects" } }];
+const SHOW_PROJECTS_SCREEN = ["(tabs)", { screen: "(chats)", params: { screen: "projects/index" } }];
 
 describe("side panel layout", () => {
   beforeEach(mockLayout.resetDrawerLayout);

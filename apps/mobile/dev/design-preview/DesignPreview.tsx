@@ -11,6 +11,7 @@ import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/Chat
 import { ModelSheetFrame } from "./chat/ModelSheetFrame";
 import { ComponentsGallery } from "./ComponentsGallery";
 import { SidePanelOverScreen } from "./panel";
+import { NewProjectFrame, ProjectFrame, ProjectMenuFrame, ProjectsListFrame, RenameProjectFrame } from "./projects";
 
 /** Frame C2: the side panel open over the new chat. */
 function SidePanelOverChatFrame() {
@@ -30,6 +31,11 @@ const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "C1c", Frame: ChatTypingFrame },
   { name: "C3", Frame: ModelSheetFrame },
   { name: "C2", Frame: SidePanelOverChatFrame },
+  { name: "P1", Frame: ProjectsListFrame },
+  { name: "P1b", Frame: NewProjectFrame },
+  { name: "P2", Frame: ProjectFrame },
+  { name: "P3", Frame: ProjectMenuFrame },
+  { name: "P4", Frame: RenameProjectFrame },
   { name: "A1", Frame: AgentsListFrame },
   { name: "A5", Frame: NewAgentFrame },
   { name: "A5b", Frame: TemplateSetupFrame },

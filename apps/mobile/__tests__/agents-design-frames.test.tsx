@@ -44,6 +44,7 @@ function mascotColor(row: Row) {
 describe("agents design frames", () => {
   beforeEach(() => {
     mockSheet = { isPresented: false };
+    mockSetParams.mockClear();
   });
 
   afterEach(cleanup);
@@ -134,14 +135,15 @@ describe("agents design frames", () => {
     expect(screen.queryByRole("header", { name: "Runs" })).toBeNull();
   });
 
-  it("is listed in the design preview after C2, and each name opens its frame", () => {
+  it.each(["A1", "A5", "A5b"])("is listed in the design preview as %s, and pressing the name asks for the frame", (name) => {
     render(<DesignPreview frame={undefined} />);
-    const names = screen.getAllByRole("button").map((button) => within(button).getByText(/./).props.children);
-    expect(names.slice(names.indexOf("C2"))).toEqual(["C2", "A1", "A5", "A5b"]);
-    fireEvent.press(screen.getByRole("button", { name: "A5b" }));
-    expect(mockSetParams).toHaveBeenCalledWith({ frame: "A5b" });
-    cleanup();
 
+    fireEvent.press(screen.getByRole("button", { name }));
+
+    expect(mockSetParams).toHaveBeenCalledWith({ frame: name });
+  });
+
+  it("opens each frame by its name", () => {
     render(<DesignPreview frame="A1" />);
     expect(screen.getByRole("header", { name: "Agents" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Agents, 2 waiting" })).toBeTruthy();

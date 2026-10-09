@@ -3,6 +3,7 @@ import {
   chatScreenFromAnotherTabParams,
   chatScreenParams,
   isChatScreen,
+  projectsScreenParams,
   sharedScreenParams,
 } from "../lib/shell-routes";
 
@@ -13,6 +14,8 @@ describe("isChatScreen", () => {
 
   it.each([
     ["Shared with me", ["(drawer)", "(tabs)", "(chats)", "shared"]],
+    ["Projects", ["(drawer)", "(tabs)", "(chats)", "projects"]],
+    ["a project", ["(drawer)", "(tabs)", "(chats)", "projects", "[projectId]"]],
     ["the Agents tab", ["(drawer)", "(tabs)", "agents"]],
     ["the Apps tab", ["(drawer)", "(tabs)", "(apps)", "apps"]],
     ["Files", ["(drawer)", "(tabs)", "(apps)", "files"]],
@@ -43,8 +46,12 @@ describe("navigation params", () => {
     expect(sharedScreenParams()).toEqual({ screen: "(chats)", params: { screen: "shared" } });
   });
 
+  it("opens Projects inside the Chats stack, by the name its route file gives the screen", () => {
+    expect(projectsScreenParams()).toEqual({ screen: "(chats)", params: { screen: "projects/index" } });
+  });
+
   it("builds new objects on every call, because a used params object is ignored", () => {
-    for (const build of [chatScreenParams, chatScreenFromAnotherTabParams, sharedScreenParams]) {
+    for (const build of [chatScreenParams, chatScreenFromAnotherTabParams, sharedScreenParams, projectsScreenParams]) {
       const first = build();
       const second = build();
       expect(first).not.toBe(second);

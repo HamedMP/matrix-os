@@ -16,7 +16,13 @@ import { useProjects } from "@/lib/queries/use-projects";
 import { useSettingsSystemInfo } from "@/lib/queries/use-settings-system-info";
 import { fetchCollaborationInbox } from "@/lib/requests/collaboration";
 import { subscribeCollaborationDiscoveryChanged } from "@/lib/collaboration-events";
-import { TABS_ROUTE, chatScreenParams, isChatScreen, sharedScreenParams } from "@/lib/shell-routes";
+import {
+  TABS_ROUTE,
+  chatScreenParams,
+  isChatScreen,
+  projectsScreenParams,
+  sharedScreenParams,
+} from "@/lib/shell-routes";
 import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
 
 function triggerDrawerHaptic() {
@@ -47,12 +53,6 @@ function DismissKeyboardOnClose() {
     }
   }, [status]);
   return null;
-}
-
-// Opens Projects on top of the chat screen. Built on each call, like the
-// params in lib/shell-routes.ts: React Navigation ignores an object it has used.
-function projectsScreenParams() {
-  return { screen: "(chats)", params: { screen: "projects" } };
 }
 
 export default function DrawerLayout() {

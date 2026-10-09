@@ -8,7 +8,7 @@ export type IconTileSize = 36 | 40 | 44 | 52;
 export interface IconTileProps {
   icon: IconData;
   size: IconTileSize;
-  /** `circle` rounds the tile fully whatever its size. */
+  /** `circle` rounds the tile fully whatever its size. The 40 tile is a circle unless told otherwise. */
   shape?: "rounded" | "circle";
   iconSize?: number;
   /** `subtle` draws the icon in the secondary text colour. */
@@ -22,13 +22,14 @@ const ICON_SIZE: Record<IconTileSize, number> = { 36: 18, 40: 18, 44: 22, 52: 24
 export function IconTile({
   icon,
   size,
-  shape = "rounded",
+  shape,
   iconSize,
   tone = "default",
   testID,
 }: IconTileProps) {
   const { theme } = useUnistyles();
   const iconColor = tone === "subtle" ? theme.v2.colors.textSubtle : theme.v2.colors.textDefault;
+  const circle = shape ? shape === "circle" : size === 40;
 
   return (
     <View
@@ -38,7 +39,7 @@ export function IconTile({
       style={[
         styles.tile,
         styles[`size${size}`],
-        shape === "circle" && styles.circle,
+        circle && styles.circle,
         { width: size, height: size },
       ]}
     >
@@ -57,7 +58,7 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.v2.radius.control,
   },
   size40: {
-    borderRadius: theme.v2.radius.full,
+    borderRadius: theme.v2.radius.card,
   },
   size44: {
     borderRadius: theme.v2.radius.card,

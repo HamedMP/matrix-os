@@ -19,7 +19,13 @@ const serverProject = {
   updatedAt: "2026-10-08T09:00:00.000Z",
   ownerScope: { type: "user", id: "user_a" },
 };
-const summary = { id: serverProject.id, name: "Field notes", slug: "field-notes", kind: "scratch" };
+const summary = {
+  id: serverProject.id,
+  name: "Field notes",
+  slug: "field-notes",
+  kind: "scratch",
+  updatedAt: serverProject.updatedAt,
+};
 
 function respond(body: unknown, status = 200): Response {
   return {
