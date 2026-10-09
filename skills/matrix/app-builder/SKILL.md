@@ -13,9 +13,6 @@ metadata:
     related_skills: [matrix-design-system, matrix-app-ui-patterns, matrix-integrations, matrix-debug-app, emil-design-eng, apple-design, animate, shadcn]
 ---
 
-This host layer exposes the AI client but connected route discovery requires the connected-AI gateway layer. Until that layer is installed, keep the owner's existing `system/app-ai.json` policy (`apps` + `model`) and call `MatrixOS.ai.generate({ prompt })`; `ai.routes()` and explicit route selection are unavailable. The connected-route guidance below applies after that layer is installed.
-
-
 # Matrix App Builder
 
 ## When to Use

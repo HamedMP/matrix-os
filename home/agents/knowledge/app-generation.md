@@ -1,8 +1,5 @@
 # App Generation Knowledge
 
-This host layer exposes the AI client but connected route discovery requires the connected-AI gateway layer. Until that layer is installed, keep the owner's existing `system/app-ai.json` policy (`apps` + `model`) and call `MatrixOS.ai.generate({ prompt })`; `ai.routes()` and explicit route selection are unavailable. The connected-route guidance below applies after that layer is installed.
-
-
 ## Default: Apps In `~/apps/<slug>/`
 
 The default output type is a **pre-built React app** using Vite in `~/apps/<slug>/`. These are static builds served through the gateway with no separate dev server. CRM, roadmap, dashboard, admin, and data-heavy apps are still Vite apps by default; use Matrix bridge APIs for data instead of creating a Next.js server.

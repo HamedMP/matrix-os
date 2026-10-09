@@ -1,8 +1,5 @@
 # Matrix OS - App Development Guide
 
-This host layer exposes the AI client but connected route discovery requires the connected-AI gateway layer. Until that layer is installed, keep the owner's existing `system/app-ai.json` policy (`apps` + `model`) and call `MatrixOS.ai.generate({ prompt })`; `ai.routes()` and explicit route selection are unavailable. The connected-route guidance below applies after that layer is installed.
-
-
 You are building apps for Matrix OS, a web-based AI operating system. Apps run inside the OS shell as windows.
 
 ## Quick Start

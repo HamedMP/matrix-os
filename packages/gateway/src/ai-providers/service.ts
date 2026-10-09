@@ -4,6 +4,7 @@ import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { createCanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
+import { projectChatGptPlanSnapshot } from "../app-ai/chatgpt-plan-projection.js";
 import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
@@ -14,6 +15,7 @@ import {
   type AiProviderLocalObservation,
   type AiProviderSnapshotV3,
   type MatrixAnthropicConnection,
+  type BotProviderConnection,
 } from "@matrix-os/contracts";
 import type { KernelCredentialObservationState } from "../kernel-credentials.js";
 import { KERNEL_DEFAULTS } from "../kernel-settings.js";
@@ -70,6 +72,8 @@ interface AiProviderServiceOptions {
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
   /** Saved source authority only; this read must not discover or enable a connection. */
   matrixAnthropicConnection?: () => Promise<MatrixAnthropicConnection | undefined>;
+  /** Fresh configured-owner peer authority only; no credentials or renderer owner IDs. */
+  chatGptPlanObservation?: (signal: AbortSignal) => Promise<BotProviderConnection | undefined>;
 }
 
 function matchedCodexLocalObservation(
@@ -206,6 +210,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
   readonly #matrixAnthropicConnection?: AiProviderServiceOptions["matrixAnthropicConnection"];
+  readonly #chatGptPlanObservation?: AiProviderServiceOptions["chatGptPlanObservation"];
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -230,6 +235,31 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
     this.#matrixAnthropicConnection = options.matrixAnthropicConnection;
+    this.#chatGptPlanObservation = options.chatGptPlanObservation;
+  }
+
+  async #readChatGptPlanObservation(parent?: AbortSignal): Promise<BotProviderConnection | undefined> {
+    if (!this.#chatGptPlanObservation) return undefined;
+    parent?.throwIfAborted();
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), 2000);
+    const signal = parent ? AbortSignal.any([parent, deadline.signal]) : deadline.signal;
+    let abort: (() => void) | undefined;
+    try {
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(new Error("Peer observation unavailable"));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      });
+      return await Promise.race([this.#chatGptPlanObservation(signal), cancelled]);
+    } catch (error) {
+      parent?.throwIfAborted();
+      console.warn("[ai-providers] connected plan observation unavailable", error instanceof Error ? error.name : "UnknownError");
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+      if (abort) signal.removeEventListener("abort", abort);
+    }
   }
 
   async #readCodexLocalObservation(timeoutMs = CODEX_OBSERVATION_TIMEOUT_MS, parent?: AbortSignal): Promise<AiProviderLocalObservation | undefined> {
@@ -592,7 +622,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
 
     const matrixAnthropicConnection = await this.#matrixAnthropicConnection?.();
     options.signal?.throwIfAborted();
-    return AiProviderSnapshotV3Schema.parse({
+    const snapshot = AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
       ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
@@ -605,6 +635,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
       models: catalog,
       active,
     });
+    // Observe after other bounded discovery so those waits do not age peer truth.
+    if (managedMatrixOnly) return snapshot;
+    const plan = await this.#readChatGptPlanObservation(options.signal);
+    options.signal?.throwIfAborted();
+    return projectChatGptPlanSnapshot(snapshot, plan, this.#now());
   }
 
   close(): void {
