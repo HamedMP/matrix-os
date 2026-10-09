@@ -1,6 +1,6 @@
 {
   "repository": "FinnaAI/matrix-os-site",
-  "revision": "469a7d7a7dcec86f99b33e390c6a261735a2ab1a",
+  "revision": "686b7a07e023f31e8abd3c2f25e9b5756b01dab4",
   "dirty": false,
   "adaptations": [
     "relative imports and app assets",
@@ -11,8 +11,8 @@
     {
       "path": "src/vendor/lib/agents.mjs",
       "source": "src/lib/free-tools/agents.mjs",
-      "sourceSha256": "e4da4cbb14f3da9c86e65eb3e5ac404005b51704194011b0cd0c49e8c253f706",
-      "sha256": "e4da4cbb14f3da9c86e65eb3e5ac404005b51704194011b0cd0c49e8c253f706"
+      "sourceSha256": "85d261efa2b1e66066135df6a4c44bdb49a3127a501b814cb12e9c4e1cdadad9",
+      "sha256": "85d261efa2b1e66066135df6a4c44bdb49a3127a501b814cb12e9c4e1cdadad9"
     },
     {
       "path": "src/vendor/lib/audio-session.mjs",
@@ -23,8 +23,8 @@
     {
       "path": "src/vendor/lib/audio-tools.mjs",
       "source": "src/lib/free-tools/audio-tools.mjs",
-      "sourceSha256": "b50ea9ba48e81f32d53be9f0ba8e84e8de9d72629930f082a1a06dbc2fabf480",
-      "sha256": "b50ea9ba48e81f32d53be9f0ba8e84e8de9d72629930f082a1a06dbc2fabf480"
+      "sourceSha256": "da39f1f9b954ab2147a2d43cd97d027b4c03ed64fc7d2372503d16560ced8154",
+      "sha256": "da39f1f9b954ab2147a2d43cd97d027b4c03ed64fc7d2372503d16560ced8154"
     },
     {
       "path": "src/vendor/lib/audio-worker.mjs",
@@ -41,20 +41,20 @@
     {
       "path": "src/vendor/lib/code-sandbox.mjs",
       "source": "src/lib/free-tools/code-sandbox.mjs",
-      "sourceSha256": "f7a1f516e8c63b017581565920d9f6fcb43caf88ae17e05d75c690781a765178",
-      "sha256": "f7a1f516e8c63b017581565920d9f6fcb43caf88ae17e05d75c690781a765178"
+      "sourceSha256": "d25c67b0b9e12afdcdf43349f5a6fd947db13b28d12818e911cfe150f0d7b3c4",
+      "sha256": "d25c67b0b9e12afdcdf43349f5a6fd947db13b28d12818e911cfe150f0d7b3c4"
     },
     {
       "path": "src/vendor/lib/collaboration.mjs",
       "source": "src/lib/free-tools/collaboration.mjs",
-      "sourceSha256": "75727c91a34d3db21bc80091adbe2b98d43c0e2d152679a04d7e2f3fe0a376b7",
-      "sha256": "75727c91a34d3db21bc80091adbe2b98d43c0e2d152679a04d7e2f3fe0a376b7"
+      "sourceSha256": "6f5abc0492ea25afd4b37a1a7fbc69b4cf73b4c34c4465dc253221fb2c7fc723",
+      "sha256": "6f5abc0492ea25afd4b37a1a7fbc69b4cf73b4c34c4465dc253221fb2c7fc723"
     },
     {
       "path": "src/vendor/lib/developer.mjs",
       "source": "src/lib/free-tools/developer.mjs",
-      "sourceSha256": "094bdd5ea920a25e4e9b199ef1019f16964689de36f278f56d84024ad40cd59e",
-      "sha256": "094bdd5ea920a25e4e9b199ef1019f16964689de36f278f56d84024ad40cd59e"
+      "sourceSha256": "202ffbb041e3906c7b53116ed15473c0423917989b891cf825db8612312555a2",
+      "sha256": "202ffbb041e3906c7b53116ed15473c0423917989b891cf825db8612312555a2"
     },
     {
       "path": "src/vendor/lib/diagnostics.mjs",
@@ -77,8 +77,8 @@
     {
       "path": "src/vendor/lib/extra-tools.mjs",
       "source": "src/lib/free-tools/extra-tools.mjs",
-      "sourceSha256": "fb4337b8159a71194ab403389047994d6114221392d9aed7660a9c07c63d78da",
-      "sha256": "fb4337b8159a71194ab403389047994d6114221392d9aed7660a9c07c63d78da"
+      "sourceSha256": "2b9d245caec00354237956fd0f6f106017aa63a271cc9704722e321d97610c2f",
+      "sha256": "2b9d245caec00354237956fd0f6f106017aa63a271cc9704722e321d97610c2f"
     },
     {
       "path": "src/vendor/lib/faqs.mjs",
@@ -95,8 +95,8 @@
     {
       "path": "src/vendor/lib/image-caption.mjs",
       "source": "src/lib/free-tools/image-caption.mjs",
-      "sourceSha256": "d5ae3572ddae7304b9bf0255cc5a5cbb0d82ea97259f41040fdd8b200b78baa3",
-      "sha256": "d5ae3572ddae7304b9bf0255cc5a5cbb0d82ea97259f41040fdd8b200b78baa3"
+      "sourceSha256": "6140545381a18a612a7fc39e14ac4509933e360af1406f0de001aa4d6675218d",
+      "sha256": "6140545381a18a612a7fc39e14ac4509933e360af1406f0de001aa4d6675218d"
     },
     {
       "path": "src/vendor/lib/image-caption.worker.mjs",
@@ -125,8 +125,8 @@
     {
       "path": "src/vendor/lib/image-super-resolution.mjs",
       "source": "src/lib/free-tools/image-super-resolution.mjs",
-      "sourceSha256": "f3b8507b57c1075530f4e8ebb6ca5b7bcb9368907b99a636e2be8315647b9f1a",
-      "sha256": "f3b8507b57c1075530f4e8ebb6ca5b7bcb9368907b99a636e2be8315647b9f1a"
+      "sourceSha256": "6b181efd2e08161ad594ea7c6e741362fad91980a6a37ee5df35e6c190163d8e",
+      "sha256": "6b181efd2e08161ad594ea7c6e741362fad91980a6a37ee5df35e6c190163d8e"
     },
     {
       "path": "src/vendor/lib/image-super-resolution.worker.mjs",
@@ -137,14 +137,14 @@
     {
       "path": "src/vendor/lib/image-tools.mjs",
       "source": "src/lib/free-tools/image-tools.mjs",
-      "sourceSha256": "e551dcabd6aef28fa6019f62290737e0f57b211c2bf0582452fc1a8007e33503",
-      "sha256": "cb1c47f14ffa2b424c7f36bafd03bb653bfa1e96dcc828abd2cd3b4b5c0862b7"
+      "sourceSha256": "5c3e318c11ee19deb6b2ebdf936dd4600813b7c3b85ee66d80c4b9d661436755",
+      "sha256": "436730c8b21a0a0324b07e724f8b154d36577a6d83720b7d3ec81739b988ae35"
     },
     {
       "path": "src/vendor/lib/local-ai-worker.mjs",
       "source": "src/lib/free-tools/local-ai-worker.mjs",
-      "sourceSha256": "4b04e39584c47b13d52ecffb1dcbcaab7b51494d8c988e4a9855ad8e183f107d",
-      "sha256": "4b04e39584c47b13d52ecffb1dcbcaab7b51494d8c988e4a9855ad8e183f107d"
+      "sourceSha256": "e74f8300c01cb0c965c10cdfa222d27499544025dcb9ebcbbb77ef9a7a6c3e0b",
+      "sha256": "e74f8300c01cb0c965c10cdfa222d27499544025dcb9ebcbbb77ef9a7a6c3e0b"
     },
     {
       "path": "src/vendor/lib/local-ai.mjs",
@@ -185,14 +185,14 @@
     {
       "path": "src/vendor/lib/pdf-signature.mjs",
       "source": "src/lib/free-tools/pdf-signature.mjs",
-      "sourceSha256": "2c53770bb1cc4aa2d16b29be4fc76d1f4bcccf34c6121daf1ee3fe047ec6550c",
-      "sha256": "2c53770bb1cc4aa2d16b29be4fc76d1f4bcccf34c6121daf1ee3fe047ec6550c"
+      "sourceSha256": "5eb9241125b610c1b18fa916f224a1aaafdfa64331e090852d0a948463d14322",
+      "sha256": "5eb9241125b610c1b18fa916f224a1aaafdfa64331e090852d0a948463d14322"
     },
     {
       "path": "src/vendor/lib/pdf-tools.mjs",
       "source": "src/lib/free-tools/pdf-tools.mjs",
-      "sourceSha256": "378b665017c0d9a9f128cecc1095457d764bf7d9ec0d9b74e57d6db11775cd4b",
-      "sha256": "378b665017c0d9a9f128cecc1095457d764bf7d9ec0d9b74e57d6db11775cd4b"
+      "sourceSha256": "4cdfbefec781188c5a4bb0c0376fb37c819e8ce099dbb489b9dd0726a4e4267c",
+      "sha256": "4cdfbefec781188c5a4bb0c0376fb37c819e8ce099dbb489b9dd0726a4e4267c"
     },
     {
       "path": "src/vendor/lib/seo.mjs",
@@ -203,20 +203,20 @@
     {
       "path": "src/vendor/lib/shared.mjs",
       "source": "src/lib/free-tools/shared.mjs",
-      "sourceSha256": "b3f6cd4d8e2060471bc712d04136b999ee7436ade1babe88dc195332514b0141",
-      "sha256": "b3f6cd4d8e2060471bc712d04136b999ee7436ade1babe88dc195332514b0141"
+      "sourceSha256": "af6faa2001ed218bdcf3b6d377682fbb07371bddb6be8a6ace5369391dc2dac9",
+      "sha256": "af6faa2001ed218bdcf3b6d377682fbb07371bddb6be8a6ace5369391dc2dac9"
     },
     {
       "path": "src/vendor/lib/speech-worker.mjs",
       "source": "src/lib/free-tools/speech-worker.mjs",
-      "sourceSha256": "33c78a9d1634ca3b7468a2cc5da0a7adf119356c9b7e8bb60fba29b1ae95356f",
-      "sha256": "33c78a9d1634ca3b7468a2cc5da0a7adf119356c9b7e8bb60fba29b1ae95356f"
+      "sourceSha256": "f14f3ce30939f57785a40922e085fcd2e65cf20df0e99faebb9a6dad969d998f",
+      "sha256": "f14f3ce30939f57785a40922e085fcd2e65cf20df0e99faebb9a6dad969d998f"
     },
     {
       "path": "src/vendor/lib/telemetry.mjs",
       "source": "src/lib/free-tools/telemetry.mjs",
-      "sourceSha256": "70c49d890e91770bc3a8b13e35d559eae4cb46762844d811497dee0c5a0b79a8",
-      "sha256": "70c49d890e91770bc3a8b13e35d559eae4cb46762844d811497dee0c5a0b79a8"
+      "sourceSha256": "e6fea5ecbfb7faa6a5ec108cbb3c83c32701d48efe00cf64e6ced90fe070a6f0",
+      "sha256": "e6fea5ecbfb7faa6a5ec108cbb3c83c32701d48efe00cf64e6ced90fe070a6f0"
     },
     {
       "path": "src/vendor/lib/tool-icons.mjs",
@@ -233,20 +233,20 @@
     {
       "path": "src/vendor/lib/workspace-tools.mjs",
       "source": "src/lib/free-tools/workspace-tools.mjs",
-      "sourceSha256": "dc6c21fa27ea0d2b42af95a1618f823e1519dfe67d5839eb3c13f8a1184c5b2c",
-      "sha256": "dc6c21fa27ea0d2b42af95a1618f823e1519dfe67d5839eb3c13f8a1184c5b2c"
+      "sourceSha256": "fb283501a3e7a61175dd25eb84c01acd114723b37f6e9e88ffad7faa57ad0a79",
+      "sha256": "fb283501a3e7a61175dd25eb84c01acd114723b37f6e9e88ffad7faa57ad0a79"
     },
     {
       "path": "src/vendor/lib/writing.mjs",
       "source": "src/lib/free-tools/writing.mjs",
-      "sourceSha256": "b782765b2a7addd4b7244fae82bcb38db954b2b06c007a96c763c3c46918dc34",
-      "sha256": "b782765b2a7addd4b7244fae82bcb38db954b2b06c007a96c763c3c46918dc34"
+      "sourceSha256": "713e2d3e59a38460615cc81b5b9384fa052d1a2117acb6f95f8fd27bb72a47be",
+      "sha256": "713e2d3e59a38460615cc81b5b9384fa052d1a2117acb6f95f8fd27bb72a47be"
     },
     {
       "path": "src/vendor/workspaces/AudioWorkspace.tsx",
       "source": "src/app/tools/AudioWorkspace.tsx",
-      "sourceSha256": "80df6f4c4b0199ac07b157b67f502355f2b77c1a751c7d5dcdd125742692014f",
-      "sha256": "f70ab2653f0b719cbb4df9476981cf99fdf0a89faaf9ae814d73a04ef6661d75"
+      "sourceSha256": "80867a4b9e4ff99814646cff3d2558e019198188d0df0897cb39e14a3b2ad455",
+      "sha256": "1d97a5ec9be685957e3975f47f47963e49fe138722d7ef90aa4ee86db6268365"
     },
     {
       "path": "src/vendor/workspaces/CollaborationWorkspace.tsx",
@@ -263,8 +263,8 @@
     {
       "path": "src/vendor/workspaces/ExtraWorkspace.tsx",
       "source": "src/app/tools/ExtraWorkspace.tsx",
-      "sourceSha256": "f482407c0cd944b0f1c97472b2050e96255c9f3ed99be2dc0cf6d3a8e9309238",
-      "sha256": "df88a6d70a02b1e09785e08fa9be5b604e905d5c68de937fd5a39ba574a114f9"
+      "sourceSha256": "7ed99da07ba9b4c2a88ef1581930e51e9bdbc9fe7c95657c8b3b519fa4f82adc",
+      "sha256": "4a040daebf9c433256a078d52c922c08feb5c13a4158f1467e5ed52c31b89bc0"
     },
     {
       "path": "src/vendor/workspaces/ImageWorkspace.tsx",

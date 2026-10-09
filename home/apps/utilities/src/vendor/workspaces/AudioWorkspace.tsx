@@ -133,6 +133,7 @@ function SingleAudioWorkspace({ slug }: { slug: string }) {
   const speechWorker = useRef<Worker | null>(null);
   const cancelSpeech = useRef<(() => void) | null>(null);
   const fallbackPlayback = useRef<{ context: AudioContext; source: AudioBufferSourceNode } | null>(null);
+  const loadVersion = useRef(0);
   const duration = audio ? audio.channels[0].length / audio.sampleRate : 0;
   const isNotes = slug === "transcription-player";
   const isSpeech = slug === "speech-to-text";
@@ -144,6 +145,7 @@ function SingleAudioWorkspace({ slug }: { slug: string }) {
   useEffect(() => () => { if (inputUrl) URL.revokeObjectURL(inputUrl); }, [inputUrl]);
   useEffect(() => () => { if (outputUrl) URL.revokeObjectURL(outputUrl); }, [outputUrl]);
   useEffect(() => () => { cancelSpeech.current?.(); speechWorker.current?.terminate(); }, []);
+  useEffect(() => () => { loadVersion.current++; }, []);
   useEffect(() => () => { const playback = fallbackPlayback.current; if (playback) { playback.source.onended = null; playback.source.stop(); void playback.context.close(); } }, []);
 
   function stopFallbackPlayback() {
@@ -174,8 +176,9 @@ function SingleAudioWorkspace({ slug }: { slug: string }) {
   }
 
   async function loadFile(nextFile?: File) {
+    const current = ++loadVersion.current;
     stopFallbackPlayback(); setNativePlaybackError(false);
-    setFile(null); setAudio(null); setResult(null); setError(""); setNotes([]); setTranscript(""); setStart(0); setEnd(0);
+    setFile(null); setAudio(null); setInputUrl(""); setResult(null); setError(""); setNotes([]); setTranscript(""); setStart(0); setEnd(0); setBusy(false);
     if (!nextFile) return;
     if (nextFile.size > (isSpeech ? MAX_TRANSCRIPTION_FILE_BYTES : MAX_AUDIO_FILE_BYTES)) {
       setError(isSpeech ? "Choose a recording smaller than 25 MB." : "Choose an audio file smaller than 80 MB."); return;
@@ -185,16 +188,27 @@ function SingleAudioWorkspace({ slug }: { slug: string }) {
     try {
       if (typeof AudioContext === "undefined") throw new Error("This browser does not support local audio decoding.");
       if (isSpeech) await checkSpeechDuration(nextFile);
+      if (loadVersion.current !== current) return;
       context = new AudioContext();
-      const decoded = await context.decodeAudioData(await nextFile.arrayBuffer());
+      const bytes = await nextFile.arrayBuffer();
+      if (loadVersion.current !== current) return;
+      const decoded = await context.decodeAudioData(bytes);
+      if (loadVersion.current !== current) return;
       if (decoded.numberOfChannels > 2) throw new Error("Choose mono or stereo audio. Multichannel audio is not supported.");
       const local = { sampleRate: decoded.sampleRate, channels: Array.from({ length: decoded.numberOfChannels }, (_, index) => new Float32Array(decoded.getChannelData(index))) };
       assertAudio(local);
       if (isSpeech) assertSpeechAudio(local);
       setFile(nextFile); setAudio(local); setEnd(decoded.duration); setNoiseSeconds(Math.min(.5, decoded.duration / 4));
       setInputUrl(URL.createObjectURL(nextFile));
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "This browser could not open the audio file."); }
-    finally { if (context) await context.close(); setBusy(false); }
+    } catch (cause) {
+      reportToolFailure(cause);
+      if (loadVersion.current !== current) return;
+      const safeMessages = ["This browser does not support local audio decoding.", "Choose mono or stereo audio. Multichannel audio is not supported.", "This audio file is empty.", "Audio must be three minutes or shorter.", "Speech transcription accepts audio up to two minutes.", "This recording exceeds the local transcription memory limit."];
+      setError(cause instanceof Error && safeMessages.includes(cause.message) ? cause.message : "This browser could not open the audio file. Try a WAV or MP3 recording.");
+    } finally {
+      if (context) { try { await context.close(); } catch (cause) { reportToolFailure(cause); } }
+      if (loadVersion.current === current) setBusy(false);
+    }
   }
 
   async function run() {
