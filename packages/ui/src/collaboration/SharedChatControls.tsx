@@ -5,6 +5,7 @@ import {
   type CollaborationAiRequest,
   type CollaborationScope,
 } from "@matrix-os/contracts";
+import { ArrowUp, Users } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import type { CollaborationDraft } from "./chat-state.js";
@@ -60,15 +61,21 @@ export function SharedChatControls({
   const { state, submitAi, control, decide } = controller;
   const presentation = sharedComposerPresentation(scope, state);
   const relevantRequests = state.requests.filter((request) => request.state !== "completed");
-  return <footer className="border-t p-4 sm:px-6">
-    <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
-      actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
-    <SharedAiErrors discussionError={false} error={state.error} />
-    {!presentation.canCompose ? <p role="status" className="mb-2 text-xs text-muted-foreground">
-      {presentation.status}
-    </p> : null}
-    <SharedComposerInput presentation={presentation} draft={{ ...draft, mode: "ai" }}
-      updateDraft={(text) => updateDraft(text, "ai")} submit={submitAi} />
+  return <footer className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6">
+    <div className="mx-auto max-w-3xl">
+      <OptionalSharedAiQueue visible={presentation.showQueue} requests={relevantRequests} approvals={state.approvals}
+        actorId={actorId} role={scope.role} pendingAction={state.pendingAction} control={control} decide={decide} />
+      <SharedAiErrors discussionError={false} error={state.error} />
+      {!presentation.canCompose ? <p role="status" className="mb-2 text-xs text-muted-foreground">
+        {presentation.status}
+      </p> : null}
+      <SharedComposerInput presentation={presentation} draft={{ ...draft, mode: "ai" }}
+        updateDraft={(text) => updateDraft(text, "ai")} submit={submitAi} />
+      <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
+        <Users aria-hidden className="size-3" />
+        Project members see this Chat · AI uses the project’s files
+      </p>
+    </div>
   </footer>;
 }
 
@@ -122,16 +129,18 @@ function SharedComposerInput({ presentation, draft, updateDraft, submit }: {
   updateDraft(text: string, mode: CollaborationDraft["mode"]): void;
   submit(): Promise<void>;
 }) {
-  return <div className="flex items-end gap-2">
-    <label className="min-w-0 flex-1"><span className="sr-only">{presentation.inputLabel}</span>
-      <textarea aria-label={presentation.inputLabel} rows={3} value={draft.text}
+  return <div data-slot="shared-chat-composer"
+    className="flex items-end gap-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2 pl-4 shadow-[var(--shadow-2)]">
+    <label className="min-w-0 flex-1 py-1"><span className="sr-only">{presentation.inputLabel}</span>
+      <textarea aria-label={presentation.inputLabel} rows={2} value={draft.text}
         disabled={!presentation.canCompose || presentation.sending} placeholder={presentation.placeholder}
         onChange={(event) => updateDraft(event.target.value, draft.mode)}
-        className="block w-full resize-none rounded-xl border bg-transparent px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" />
+        className="block w-full resize-none border-0 bg-transparent p-0 text-sm leading-5 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60" />
     </label>
-    <button type="button" className={buttonClass}
+    <button type="button" aria-label={presentation.submitLabel} title={presentation.submitLabel}
+      className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--text-primary)] text-[var(--bg-surface)] transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-30"
       disabled={!presentation.canCompose || presentation.sending || !draft.text.trim()}
-      onClick={() => void submit()}>{presentation.submitLabel}</button>
+      onClick={() => void submit()}><ArrowUp aria-hidden className="size-4" /></button>
   </div>;
 }
 

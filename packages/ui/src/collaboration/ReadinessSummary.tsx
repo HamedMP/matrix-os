@@ -13,20 +13,20 @@ const setupLabels = {
 } as const;
 
 /** Renders only the authority's bounded readiness projection; never infers a provider or payer. */
-export function ReadinessSummary({ readiness }: { readiness: CollaborationReadiness }) {
+export function ReadinessSummary({ readiness, compact = false }: { readiness: CollaborationReadiness; compact?: boolean }) {
   const execution = (readiness.resourceKind === "project" || readiness.resourceKind === "chat")
     && readiness.state !== "host_offline" && readiness.state !== "unsupported";
   const gitIdentity = readiness.items.find((item) => item.item === "git_identity");
   const roots = readiness.items.find((item) => item.item === "chat_root_inventory");
   const rooted = readiness.resourceKind === "project" || (roots?.item === "chat_root_inventory" && (roots.chatRootCount ?? 0) > 0);
-  return <section aria-label="Ready to work" className="rounded-xl border p-4 text-sm">
-    <h3 className="font-medium">Ready to work</h3>
-    {readiness.state === "host_offline" ? <p className="mt-2">The owner computer is offline.</p> : null}
-    {readiness.state === "unsupported" ? <p className="mt-2">This resource cannot be shared yet.</p> : null}
-    {readiness.missingOwnerSetup.length > 0 ? <ul className="mt-2 space-y-1">
+  return <section aria-label="Ready to work" className={compact ? "text-xs" : "rounded-xl border p-4 text-sm"}>
+    <h3 className={compact ? "text-[11px] font-medium text-muted-foreground" : "font-medium"}>Ready to work</h3>
+    {readiness.state === "host_offline" ? <p className={compact ? "mt-1" : "mt-2"}>The owner computer is offline.</p> : null}
+    {readiness.state === "unsupported" ? <p className={compact ? "mt-1" : "mt-2"}>This resource cannot be shared yet.</p> : null}
+    {readiness.missingOwnerSetup.length > 0 ? <ul className={`${compact ? "mt-1" : "mt-2"} space-y-1`}>
       {readiness.missingOwnerSetup.map((item) => <li key={item}>{setupLabels[item]}</li>)}
     </ul> : null}
-    {execution ? <div className="mt-2 space-y-1">
+    {execution ? <div className={`${compact ? "mt-1" : "mt-2"} space-y-1`}>
       <p>AI source: {readiness.sourceKind ? sourceLabels[readiness.sourceKind] : "Unavailable"}</p>
       <p>{readiness.effectiveSubmitMode === "members" ? "Editors may submit AI requests"
         : readiness.effectiveSubmitMode === "owner_only" ? "Owner approves AI requests" : "AI submit mode unavailable"}</p>
@@ -35,6 +35,6 @@ export function ReadinessSummary({ readiness }: { readiness: CollaborationReadin
       {rooted && roots?.item === "chat_root_inventory" ? <p>{roots.chatRootCount === undefined
         ? "Chat roots unavailable"
         : `${roots.chatRootCount} Chat roots${roots.dirtyRootCount ? ` · ${roots.dirtyRootCount} with uncommitted changes` : ""}`}</p> : null}
-    </div> : readiness.state === "ready" ? <p className="mt-2">Ready to share.</p> : null}
+    </div> : readiness.state === "ready" ? <p className={compact ? "mt-1" : "mt-2"}>Ready to share.</p> : null}
   </section>;
 }

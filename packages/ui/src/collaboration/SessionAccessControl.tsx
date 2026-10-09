@@ -114,6 +114,7 @@ export function SessionAccessControl({ api, scope, zIndex }: {
         onClick={() => { setOpen(false); setManageOpen(true); }}>Manage access</button> : null}
     </section> : null}
     {manageOpen ? <ChatCollaboratorsDialog api={api} scope={effectiveScope} members={members}
+      allowNewGrants={effectiveScope.kind === "project"}
       onRefresh={refresh} onClose={() => { setManageOpen(false); triggerRef.current?.focus(); }} /> : null}
   </div>;
 }

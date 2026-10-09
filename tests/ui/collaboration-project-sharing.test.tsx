@@ -58,7 +58,7 @@ describe("whole-project sharing confirmation", () => {
     render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team" projectId="proj_launch" projectName="Launch" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Share project" }));
-    expect(await screen.findByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Share “Launch”" })).toBeVisible();
     expect(api.post).toHaveBeenNthCalledWith(1, "/api/collaboration/runtimes/vps%3Aruntime/scopes/preflight", {
       kind: "project",
       resourceId: "proj_launch",
@@ -74,7 +74,7 @@ describe("whole-project sharing confirmation", () => {
 
   it("shows one complete no-exclusions inventory and separates external references", () => {
     renderDialog({ inventory: completeInventory() });
-    expect(screen.getByRole("heading", { name: "Share the whole Launch project?" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Share “Launch”" })).toBeVisible();
     expect(screen.getByText(/All current and future project contents share together/i)).toBeVisible();
     expect(screen.getByText(/every project Chat and its history/i)).toBeVisible();
     expect(screen.getByText("README.md")).toBeVisible();
@@ -279,8 +279,9 @@ describe("whole-project sharing confirmation", () => {
     render(<ProjectSharingDialog api={api} scope={privateScope} projectName="Launch" organizationName="Matrix Team" inventory={first}
       refreshInventory={async () => refreshed} onAccessChanged={onAccessChanged} onClose={vi.fn()} />);
 
-    const general = await screen.findByRole("combobox", { name: "General access" });
-    fireEvent.change(general, { target: { value: "viewer" } });
+    const general = await screen.findByRole("button", { name: "General access: Editor" });
+    fireEvent.pointerDown(general, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Viewer View project activity only/ }));
     await waitFor(() => expect(onAccessChanged).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: "Share whole project" }));
 
@@ -365,7 +366,7 @@ describe("whole-project sharing confirmation", () => {
       expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
       await vi.advanceTimersByTimeAsync(1_200);
       expect(scopeReads).toBe(2);
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close share dialog" }));
       await act(async () => { finishRead(shared); });
       await vi.advanceTimersByTimeAsync(2_000);
       await act(async () => { await Promise.resolve(); });
@@ -504,7 +505,7 @@ describe("whole-project sharing confirmation", () => {
       fireEvent.click(screen.getByRole("button", { name: "Share project" }));
       fireEvent.click(await screen.findByRole("button", { name: "Share whole project" }));
       expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
-      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close share dialog" }));
 
       await vi.advanceTimersByTimeAsync(3_000);
       expect(screen.queryByRole("dialog", { name: "Share Launch" })).toBeNull();

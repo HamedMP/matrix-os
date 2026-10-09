@@ -48,7 +48,7 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
       .catch((failure: unknown) => {
         console.warn("[collaboration-access] contributor AI options unavailable",
           failure instanceof Error ? failure.name : "UnknownError");
-        if (active) setError("Contributor AI settings are unavailable. Try again.");
+        if (active) setError("Editor AI settings are unavailable. Try again.");
       });
     return () => { active = false; };
   }, [api, executionScopeId, scope.kind, scope.role]);
@@ -83,27 +83,27 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
       setState({ ...state, policy: updated });
       setAcknowledged(false);
       setFeedback(updated.effectiveSubmitMode === "members"
-        ? "Contributors can now send prompts using this owner-selected AI source."
-        : "Contributor AI requests are disabled.");
+        ? "Editors can now send prompts using this owner-selected AI source."
+        : "Editor AI requests are disabled.");
       await onPolicyUpdated?.();
     } catch (failure: unknown) {
       console.warn("[collaboration-access] contributor AI update failed",
         failure instanceof Error ? failure.name : "UnknownError");
-      setError("Contributor AI settings could not be updated. Refresh and try again.");
+      setError("Editor AI settings could not be updated. Refresh and try again.");
     } finally {
       setPending(false);
     }
   };
 
-  return <section aria-label="Contributor AI" className="rounded-xl border p-4 text-sm">
-    <h3 className="font-medium">Contributor AI</h3>
+  return <section aria-label="Editor AI" className="rounded-xl border p-4 text-sm">
+    <h3 className="font-medium">Editor AI</h3>
     {state === null ? error ? <p role="alert" className="mt-2">{error}</p>
       : <p className="mt-2">Loading owner AI sources…</p> : state.options.length === 0 ? <p className="mt-2">
-      Set up a supported owner AI account in Agents &amp; providers before enabling contributor prompts.
+      Set up a supported owner AI account in Agents &amp; providers before enabling Editor prompts.
     </p> : <>
       <p className="mt-2">{enabled
-        ? "Contributors can send prompts using this owner-selected source and model. Change their access to Viewer to make them read-only."
-        : "Choose the owner-funded source and model that contributor prompts may use."}</p>
+        ? "Editors can send prompts using this owner-selected source and model. Change their access to Viewer to make them read-only."
+        : "Choose the owner-funded source and model that Editor prompts may use."}</p>
       {scope.kind === "project" ? <p className="mt-2 text-xs text-muted-foreground">
         This source applies to compatible project Chats. Chats already bound to another agent remain unavailable.
       </p> : null}
@@ -130,12 +130,12 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
       <label className="mt-3 flex items-start gap-2">
         <input type="checkbox" checked={acknowledged}
           onChange={(event) => setAcknowledged(event.target.checked)} />
-        <span>I understand contributor prompts use my selected provider account and may incur charges under that provider's terms.</span>
+        <span>I understand Editor prompts use my selected provider account and may incur charges under that provider's terms.</span>
       </label>
       <button type="button" className={`${controlClass} mt-3`}
         disabled={pending || !api.put || !acknowledged || !selected?.available || !modelId}
         onClick={() => void save()}>
-        {pending ? "Saving…" : enabled ? "Update AI source for contributors" : "Use this AI source for contributors"}
+        {pending ? "Saving…" : enabled ? "Update AI source for Editors" : "Use this AI source for Editors"}
       </button>
     </>}
     {feedback ? <p role="status" className="mt-2">{feedback}</p> : null}

@@ -100,6 +100,23 @@ describe("shared Chat AI controls", () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
+  it("uses the Figma shared-project composer treatment and explains its audience", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const { container } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn()} refreshVersion={0} />);
+
+    expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
+    expect(screen.getByText("Project members see this Chat · AI uses the project’s files")).toBeVisible();
+    expect(container.querySelector('[data-slot="shared-chat-composer"]')).toHaveClass("rounded-2xl");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("title", "Send");
+  });
+
   it("disables the ordinary AI composer when the Chat's bound Provider is unsupported", async () => {
     const unavailableResponse = {
       requests: [],

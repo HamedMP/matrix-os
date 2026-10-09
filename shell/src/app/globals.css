@@ -4,11 +4,13 @@
 @source "../../../packages/ui/src/organization-drive";
 @source "../../../packages/ui/src/chat";
 @source "../../../packages/ui/src/chat-agents";
+@source "../../../packages/ui/src/collaboration";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";
 @import "@matrix-os/ui/agents-providers.css";
 @import "@matrix-os/ui/chat-agents.css";
+@import "@matrix-os/ui/styles.css";
 
 /* Opt-in command-list motion: immediate entry, delayed fade on exit. */
 [data-instant-list-hover] {
@@ -181,6 +183,24 @@
   --border: #D8D6C7;
   --input: #D8D6C7;
   --ring: #D06F25;
+
+  /* Shared shell/UI aliases. Keep collaboration and other cross-shell
+     surfaces visually identical in Web Canvas, Web Desktop, and Electron. */
+  --bg-app: var(--background);
+  --bg-surface: var(--card);
+  --bg-raised: var(--card);
+  --bg-overlay: var(--popover);
+  --bg-sunken: var(--secondary);
+  --bg-hover: color-mix(in srgb, var(--foreground) 5.5%, transparent);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-tertiary: color-mix(in srgb, var(--muted-foreground) 82%, var(--foreground));
+  --border-subtle: color-mix(in srgb, var(--border) 64%, transparent);
+  --border-default: var(--border);
+  --danger: var(--destructive);
+  --shadow-1: var(--elevation-1);
+  --shadow-2: var(--elevation-2);
+  --shadow-3: var(--elevation-3);
 
   /* Brand palette (shared source of truth with the matrix-os.com landing).
      App iframes expose --ember as --matrix-accent for primary actions. */

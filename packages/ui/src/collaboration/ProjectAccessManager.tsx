@@ -9,16 +9,76 @@ import {
   type CollaborationProjectAccessPresentation,
   type CollaborationScope,
 } from "@matrix-os/contracts";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Check, ChevronDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod/v4";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const MAX_LOADED_ORGANIZATION_MEMBERS = 2_000;
-const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
+const buttonClass = "inline-flex h-7 items-center justify-center rounded-lg border px-2.5 text-xs font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
+const roleTriggerClass = "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50";
+const roleMenuClass = "z-[100] min-w-[188px] rounded-[10px] border p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)]";
+const roleItemClass = "relative flex cursor-default select-none items-start gap-2 rounded-md px-2 py-1.5 text-xs outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[var(--bg-hover)]";
 
 function editorLabel(preset: CollaborationPreset): "Editor" | "Viewer" {
   return preset === "contributor" ? "Editor" : "Viewer";
+}
+
+function AccessRoleMenu({ ariaLabel, value, disabled, allowRestricted = false, onSelect, onRemove }: {
+  ariaLabel: string;
+  value: CollaborationPreset | "restricted";
+  disabled: boolean;
+  allowRestricted?: boolean;
+  onSelect: (value: CollaborationPreset | "restricted") => void;
+  onRemove?: () => void;
+}) {
+  const label = value === "restricted" ? "Restricted" : editorLabel(value);
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <button type="button" className={roleTriggerClass} disabled={disabled} aria-label={`${ariaLabel}: ${label}`}>
+        {label}<ChevronDown aria-hidden size={13} />
+      </button>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end" sideOffset={4} className={roleMenuClass}
+      style={{ background: "var(--bg-overlay, var(--popover, #fffefc))", color: "var(--text-primary)", borderColor: "var(--border-default)" }}>
+      <RoleMenuItem label="Editor" description="Change files and request AI" selected={value === "contributor"}
+        onSelect={() => onSelect("contributor")} />
+      <RoleMenuItem label="Viewer" description="View project activity only" selected={value === "viewer"}
+        onSelect={() => onSelect("viewer")} />
+      {allowRestricted ? <RoleMenuItem label="Restricted" description="Only people added directly can open it"
+        selected={value === "restricted"} onSelect={() => onSelect("restricted")} /> : null}
+      {onRemove ? <>
+        <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle, var(--border-default))" }} />
+        <DropdownMenu.Item className={roleItemClass} style={{ color: "var(--danger, #dc2626)" }} onSelect={onRemove}>
+          Remove access
+        </DropdownMenu.Item>
+      </> : null}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>;
+}
+
+function RoleMenuItem({ label, description, selected, onSelect }: {
+  label: string;
+  description: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return <DropdownMenu.Item className={roleItemClass} aria-label={`${label} ${description}`} onSelect={onSelect}>
+    <span className="min-w-0 flex-1">
+      <span className="block font-medium">{label}</span>
+      <span className="block text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>{description}</span>
+    </span>
+    {selected ? <Check aria-hidden size={13} className="mt-0.5 shrink-0" /> : null}
+  </DropdownMenu.Item>;
+}
+
+function MemberAvatar({ name }: { name: string }) {
+  return <span aria-hidden className="grid size-7 shrink-0 place-items-center rounded-full text-[11px] font-medium"
+    style={{ background: "var(--bg-hover, #f5f5f5)", color: "var(--text-secondary)" }}>
+    {name.slice(0, 1).toUpperCase()}
+  </span>;
 }
 
 function privatePresentation(scope: CollaborationScope, grants: CollaborationGrant[], members: Array<{ actorId: string; displayName: string }>): CollaborationProjectAccessPresentation {
@@ -56,7 +116,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
   const [membersCursor, setMembersCursor] = useState<string | null>(null);
   const [membersPending, setMembersPending] = useState(false);
   const [selectedActor, setSelectedActor] = useState("");
-  const [selectedPreset, setSelectedPreset] = useState<CollaborationPreset>("viewer");
+  const [selectedPreset, setSelectedPreset] = useState<CollaborationPreset>("contributor");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
@@ -212,13 +272,10 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
       && !directlyGranted.has(member.actorId));
   }, [access?.people, organizationMembers, scope.ownerId]);
 
-  return <section aria-labelledby="project-access-heading" className="grid gap-4">
-    <div>
-      <h3 id="project-access-heading" className="font-medium">People with access</h3>
-      <p className="mt-1 text-xs" style={{ color: "var(--text-secondary)" }}>
-        Members activate organization access when they open this project.
-      </p>
-    </div>
+  return <section aria-labelledby="project-access-heading" className="grid gap-1 px-4 py-3" data-slot="project-access-manager">
+    <h3 id="project-access-heading" className="mb-1 text-[11px] font-medium" style={{ color: "var(--text-secondary)" }}>
+      People with access
+    </h3>
     {loading ? <p role="status" className="text-sm">Loading access…</p> : null}
     {error ? <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm">
       <span>Access is unavailable. Refresh and try again.</span>
@@ -227,84 +284,85 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
       </button>
     </div> : null}
     {access ? <>
-      <div className="flex items-center gap-3 rounded-xl border px-3 py-2">
-        <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">
-          {access.owner.displayName.slice(0, 1).toUpperCase()}
+      <div className="flex min-h-10 items-center gap-3 py-1">
+        <MemberAvatar name={access.owner.displayName} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium">{access.owner.displayName} (you)</span>
+          <span className="block truncate text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>
+            Created this · lives on {access.owner.displayName}’s computer
+          </span>
         </span>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{access.owner.displayName}</span>
-        <span className="text-sm">Owner</span>
+        <span className="text-xs" style={{ color: "var(--text-secondary)" }}>Owner</span>
       </div>
       {access.people.map((person) => {
         const organizationEditor = access.generalAccess?.preset === "contributor" && person.inherited;
         const directGrant = person.directGrant;
-        return <div key={person.actor.actorId} className="flex items-center gap-3 rounded-xl border px-3 py-2">
-          <span aria-hidden className="grid size-8 place-items-center rounded-full bg-[var(--bg-hover)] text-xs font-semibold">
-            {person.actor.displayName.slice(0, 1).toUpperCase()}
-          </span>
+        return <div key={person.actor.actorId} className="flex min-h-10 items-center gap-3 py-1">
+          <MemberAvatar name={person.actor.displayName} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">{person.actor.displayName}</span>
-            <span className="block text-xs" style={{ color: "var(--text-secondary)" }}>
+            <span className="block truncate text-xs font-medium">{person.actor.displayName}</span>
+            <span className="block text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>
               {person.status === "pending" ? "Pending until opened" : person.inherited ? "Inherited from general access" : "Direct access"}
             </span>
           </span>
-          {directGrant && !organizationEditor ? <select
-            aria-label={`Access for ${person.actor.displayName}`}
+          {directGrant && !organizationEditor ? <AccessRoleMenu
+            ariaLabel={`Access for ${person.actor.displayName}`}
             value={directGrant.preset}
             disabled={pending || membersPending}
-            onChange={(event) => {
-              const preset = event.target.value as CollaborationPreset;
-              void mutate(async (current) => {
-                if (!api.patch) throw new Error("Access editing unavailable");
-                await api.patch(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {
-                  clientRequestId: crypto.randomUUID(), expectedRevision: current.revision,
-                  expectedGrantRevision: directGrant.revision,
-                  preset,
-                });
+            onSelect={(preset) => void mutate(async (current) => {
+              if (preset === "restricted") return;
+              if (!api.patch) throw new Error("Access editing unavailable");
+              await api.patch(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {
+                clientRequestId: crypto.randomUUID(), expectedRevision: current.revision,
+                expectedGrantRevision: directGrant.revision,
+                preset,
               });
-            }}
-            className="rounded-lg border bg-transparent px-3 py-2 text-sm">
-            <option value="contributor">Editor</option><option value="viewer">Viewer</option>
-          </select> : <span className="text-sm">
-            {editorLabel(person.effectivePreset)}{organizationEditor ? " · inherited" : ""}
-          </span>}
-          {directGrant ? <button type="button" className={buttonClass} disabled={pending || membersPending}
-            onClick={() => void mutate((current) => api.delete(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {
+            })}
+            onRemove={() => void mutate((current) => api.delete(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {
               clientRequestId: crypto.randomUUID(), expectedRevision: current.revision,
               expectedMemberRevision: directGrant.revision,
-            }))}>Revoke</button> : null}
+            }))}
+          /> : <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+            {editorLabel(person.effectivePreset)}{organizationEditor ? " · inherited" : ""}
+          </span>}
         </div>;
       })}
-      {availableMembers.length > 0 && access.generalAccess?.preset !== "contributor" ? <div className="grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
-        <label className="grid gap-1 text-sm">Add person
-          <select value={selectedActor} onChange={(event) => setSelectedActor(event.target.value)} disabled={pending || membersPending}
-            className="rounded-lg border bg-transparent px-3 py-2">
+      {availableMembers.length > 0 && access.generalAccess?.preset !== "contributor" ? <div className="my-1 flex items-center gap-2">
+        <label className="min-w-0 flex-1">
+          <span className="sr-only">Add person</span>
+          <select aria-label="Add person" value={selectedActor} onChange={(event) => setSelectedActor(event.target.value)} disabled={pending || membersPending}
+            className="h-8 w-full rounded-lg border bg-transparent px-2.5 text-xs outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            style={{ borderColor: "var(--border-default)" }}>
             {availableMembers.map((member) => <option key={member.actorId} value={member.actorId}>{member.displayName}</option>)}
           </select>
         </label>
-        <label className="grid gap-1 text-sm">Role
-          <select value={selectedPreset} onChange={(event) => setSelectedPreset(event.target.value as CollaborationPreset)} disabled={pending || membersPending}
-            className="rounded-lg border bg-transparent px-3 py-2">
+        <label>
+          <span className="sr-only">Role</span>
+          <select aria-label="Role" value={selectedPreset} onChange={(event) => setSelectedPreset(event.target.value as CollaborationPreset)} disabled={pending || membersPending}
+            className="h-8 rounded-lg border bg-transparent px-2 text-xs outline-none" style={{ borderColor: "var(--border-default)" }}>
             <option value="contributor">Editor</option><option value="viewer">Viewer</option>
           </select>
         </label>
-        <button type="button" className={`${buttonClass} self-end`} disabled={pending || membersPending || !selectedActor} onClick={addMember}>Add</button>
+        <button type="button" aria-label="Add" className="h-8 rounded-lg bg-[var(--text-primary)] px-3 text-xs font-medium text-[var(--bg-surface)] disabled:opacity-50"
+          disabled={pending || membersPending || !selectedActor} onClick={addMember}>Invite</button>
       </div> : null}
       {membersCursor && access.generalAccess?.preset !== "contributor" ? <button type="button" className={buttonClass}
         disabled={pending || membersPending} onClick={() => { void loadMoreMembers(); }}>
         {membersPending ? "Loading members…" : "Load more members"}
       </button> : null}
-      <div className="flex items-center gap-3 rounded-xl border px-3 py-3">
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium">Everyone in {organizationDisplayName ?? "your organization"}</span>
-          <span className="block text-xs" style={{ color: "var(--text-secondary)" }}>General access</span>
+      <h3 className="mb-1 mt-2 text-[11px] font-medium" style={{ color: "var(--text-secondary)" }}>General access</h3>
+      <div className="flex min-h-10 items-center gap-3 py-1">
+        <span aria-label={`${organizationDisplayName ?? "Organization"} organization`}
+          className="grid size-7 shrink-0 place-items-center rounded-md text-[11px] font-semibold text-white"
+          style={{ background: "var(--success, #6f9947)" }}>
+          {(organizationDisplayName ?? "O").slice(0, 1).toUpperCase()}
         </span>
-        <label className="sr-only" htmlFor={`general-access-${scope.id}`}>General access</label>
-        <select id={`general-access-${scope.id}`} aria-label="General access"
-          value={access.generalAccess?.preset ?? "restricted"} disabled={pending || membersPending}
-          onChange={(event) => setGeneralAccess(event.target.value as CollaborationPreset | "restricted")}
-          className="rounded-lg border bg-transparent px-3 py-2 text-sm">
-          <option value="contributor">Editor</option><option value="viewer">Viewer</option><option value="restricted">Restricted</option>
-        </select>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-medium">Everyone in {organizationDisplayName ?? "your organization"}</span>
+          <span className="block text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>Members can find and open it</span>
+        </span>
+        <AccessRoleMenu ariaLabel="General access" value={access.generalAccess?.preset ?? "restricted"}
+          disabled={pending || membersPending} allowRestricted onSelect={setGeneralAccess} />
       </div>
     </> : null}
   </section>;
