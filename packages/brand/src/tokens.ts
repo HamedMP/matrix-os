@@ -90,3 +90,14 @@ export const statusTones = {
 export const lightFg = "#FAFAF5";
 // Translucent card surface for the outline CTA.
 export const cardTranslucent = "rgba(252, 252, 248, 0.7)";
+
+/** Product scale from matrix-os-design-library, October 2026. */
+export const productColors = {
+  paper: "#fafafa", card: "#f3f2f2", line: "#c8c6c6", muted: "#635f5f",
+  ink: "#242323", night: "#0d0c0c", darkLine: "#413e3e", darkMuted: "#a8a4a4",
+  green: "#748e59", greenLight: "#bed77b", greenDark: "#475926",
+  gold: "#e0aa52", goldLight: "#f1c379", goldDark: "#775622",
+  coral: "#ba5236", coralLight: "#da9481", coralDark: "#8f432d",
+  teal: "#288a5b", tealLight: "#5ec996", tealDark: "#1b6541",
+  blue: "#3b85ba", blueLight: "#9dbfd7", blueDark: "#306991",
+} as const;

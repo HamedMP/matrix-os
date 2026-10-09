@@ -23,9 +23,27 @@
       "types": "./src/marks.ts",
       "import": "./dist/marks.js",
       "default": "./dist/marks.js"
+    },
+    "./themes": {
+      "types": "./src/themes/index.ts",
+      "import": "./dist/themes/index.js",
+      "default": "./dist/themes/index.js"
+    },
+    "./themes/*": {
+      "types": "./src/themes/*.ts",
+      "import": "./dist/themes/*.js",
+      "default": "./dist/themes/*.js"
     }
   },
-  "scripts": { "build": "tsc" },
-  "peerDependencies": { "react": "^19.0.0" },
-  "devDependencies": { "@types/node": "^25.2.3", "@types/react": "^19.0.0", "typescript": "^5.9.3" }
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.9.3"
+  }
 }
