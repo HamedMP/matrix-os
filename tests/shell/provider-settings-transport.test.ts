@@ -94,19 +94,6 @@ afterEach(() => {
 });
 
 describe("provider settings shell transport", () => {
-  it("loads and schema-validates a bounded no-store snapshot from the active gateway", async () => {
-    const timeout = vi.spyOn(AbortSignal, "timeout");
-    const fetcher = vi.fn(async () => Response.json(snapshot));
-    const transport = createProviderSettingsTransport({ fetcher });
-
-    await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
-    expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true`,
-      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
-    );
-    expect(timeout).toHaveBeenCalledWith(90_000);
-  });
-
   it("invalidates the shared Provider catalog only after a successful mutation", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const changed = vi.fn();

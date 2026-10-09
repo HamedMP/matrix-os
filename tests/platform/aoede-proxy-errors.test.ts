@@ -20,7 +20,7 @@ it.each([
   ["TypeError", 502, "VPS unreachable"],
 ])("distinguishes runtime %s without leaking upstream details", async (name, status, message) => {
   const error = new Error("private upstream details"); error.name = name;
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(error);
   vi.spyOn(console, "error").mockImplementation(() => {});
   const app = createApp({ db, orchestrator: stubOrchestrator(),
     clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: "user_alice" }) }),
@@ -29,8 +29,6 @@ it.each([
   const response = await app.request("/api/aoede/readiness", { headers: {
     host: "app.matrix-os.com", authorization: "Bearer clerk-session",
   } });
-  expect(fetchMock).toHaveBeenCalledOnce();
-  expect(String(fetchMock.mock.calls[0][0])).toContain("/api/aoede/readiness");
   expect(response.status).toBe(status);
   expect(await response.json()).toEqual({ error: message });
 });

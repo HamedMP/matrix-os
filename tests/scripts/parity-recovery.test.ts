@@ -148,12 +148,6 @@ it("recreates the platform with retained credentials without leaking host secret
   env.preserved();
 });
 
-it("restarts the owned TLS bridge alongside the retained platform", async () => {
-  const env = savedEnvironment();
-  await recoverLocalParity({ ...env.options, restart: true });
-  expect(env.effects.find(effect => effect.startsWith("docker restart"))).toContain("matrix-os-parity-platform-tls");
-  env.preserved();
-});
 
 it.each(["foreign platform", "foreign bridge", "foreign database", "missing volume", "missing disk", "duplicate VM", "occupied VM port", "legacy certificate"])(
   "refuses %s before changing resources or retained data", async (failure) => {

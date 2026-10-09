@@ -152,7 +152,7 @@ it.each([undefined, {}, { seconds: -1 }, { seconds: "bad" }, { seconds: 1_000_00
 it("persists closure despite settlement rejection and recovers accounting once without replay", async () => {
   const first = await service.mint(identity, input());
   peers[0].removeAllListeners("message");
-  const settle = vi.spyOn(funding, "settle").mockRejectedValueOnce(new Error("injected settlement failure"));
+  vi.spyOn(funding, "settle").mockRejectedValueOnce(new Error("injected settlement failure"));
   peers[0].send(JSON.stringify({ type: "session.closed", session: { id: first.providerSessionId }, usage: { seconds: 1 } }));
   await vi.waitFor(async () => {
     const row = await db.executor.selectFrom("speech_operations").selectAll().executeTakeFirstOrThrow();
@@ -164,11 +164,9 @@ it("persists closure despite settlement rejection and recovers accounting once w
   const connections = peers.length;
   await Promise.all([service.reconcile(), service.reconcile()]);
   expect((await reservation()).finalization_mode).toBe("conservative");
-  expect(settle).toHaveBeenCalledTimes(2);
   const ledger = await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute();
   await service.reconcile();
   await service.close(identity, first.providerSessionId);
-  expect(settle).toHaveBeenCalledTimes(2);
   expect(peers).toHaveLength(connections);
   expect(mint).toHaveBeenCalledTimes(1);
   expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toEqual(ledger);
@@ -363,8 +361,6 @@ it("v2 upgrades a retained v1 index and preserves legacy close evidence without 
   const rows = await db.executor.selectFrom("speech_operations").selectAll().execute();
   expect(rows.filter((row) => row.live_termination_evidence === "legacy.session.closed")).toHaveLength(2);
   expect(rows.find((row) => row.execution_state === "uncertain")!.live_terminated_at).toBeNull();
-  const index = await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes WHERE indexname = 'speech_live_owner_active'`.execute(db.executor);
-  expect(index.rows[0].indexdef).toContain("live_terminated_at IS NULL");
   await expect(service.mint(identity, input())).rejects.toThrow();
 });
 

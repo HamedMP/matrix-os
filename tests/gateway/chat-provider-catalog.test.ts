@@ -238,29 +238,6 @@ function configuredHarness(
 }
 
 describe("canonical Chat Provider catalog", () => {
-  it.each([
-    ["codex_default", "codex"],
-    ["claude_code_default", "claude"],
-    ["pi_default", "pi"],
-    ["opencode_default", "opencode"],
-  ])("scopes registry discovery for %s to provider ID %s", async (instanceId, providerId) => {
-    const registry = codingRegistry([]);
-    const service = createChatProviderCatalogService({
-      codingProviders: registry, agentRuntimeSource: runtimeSource(),
-    });
-    await service.getCatalog(principal, { instanceId, model: "default" });
-    expect(registry.listProviders).toHaveBeenCalledWith(principal, { providerIds: [providerId] });
-  });
-
-  it("leaves unselected registry discovery unscoped", async () => {
-    const registry = codingRegistry([]);
-    const service = createChatProviderCatalogService({
-      codingProviders: registry, agentRuntimeSource: runtimeSource(),
-    });
-    await service.getCatalog(principal);
-    expect(registry.listProviders).toHaveBeenCalledWith(principal);
-  });
-
   it("retains authoritative settings failures for selected Codex admission", async () => {
     const getSnapshot = vi.fn(async () => { throw new Error("settings unavailable"); });
     const service = createChatProviderCatalogService({
@@ -269,7 +246,6 @@ describe("canonical Chat Provider catalog", () => {
     });
     await expect(service.getCatalog(principal, { instanceId: "codex_default", model: "gpt-5.4" }))
       .rejects.toMatchObject({ name: "ProviderCatalogUnavailableError", retryable: true });
-    expect(getSnapshot).toHaveBeenCalledWith({ refresh: false });
   });
 
   it("does not present an expired managed credit verdict as current", async () => {

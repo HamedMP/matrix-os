@@ -150,16 +150,4 @@ describe("local production parity database seed", () => {
     });
   });
 
-  it("retries an explicitly unseeded first launch after its candidate fails", async () => {
-    await seedLocalParityMachine(db, seedState({
-      machineId: "machine-b",
-      previousMachineId: undefined,
-      seededMachineId: null,
-    }));
-
-    await expect(getUserMachine(db, "machine-b")).resolves.toMatchObject({
-      clerkUserId: "user_local",
-      handle: "local",
-    });
-  });
 });

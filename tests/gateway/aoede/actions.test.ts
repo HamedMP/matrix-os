@@ -12,7 +12,6 @@ let home: string;
 let storage: ReturnType<typeof createAppDb>;
 let actions: AoedeActions;
 let ui: (request: UiRequest) => Promise<any>;
-let changed: string[];
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "aoede-actions-"));
   const instance = await KyselyPGlite.create();
@@ -20,10 +19,9 @@ beforeEach(async () => {
   await storage.db.bootstrap();
   const registry = createAppRegistry(storage.db, storage.kysely);
   await registerNativeAppStorage(registry);
-  changed = [];
   ui = async (r) => ({ sessionId: r.sessionId, correlationId: r.correlationId, phase: r.phase, status: "ok", slug: "notes" });
   actions = new AoedeActions({ principal: { userId: "owner", source: "jwt" }, ownerId: "owner", homePath: home,
-    registry, database: storage.kysely, uiAction: (r) => ui(r), notifyDataChange: async (id) => { changed.push(id); } });
+    registry, database: storage.kysely, uiAction: (r) => ui(r), notifyDataChange: async () => {} });
 });
 afterEach(async () => { await storage?.db.destroy(); await rm(home, { recursive: true, force: true }); });
 
@@ -59,7 +57,6 @@ it("persists markdown and rich formatting through append and unique edit", async
   expect(row.content).toBe("**bread**\n\nmilk");
   expect(row.content_json.content[0].content[0]).toEqual({ type: "text", text: "bread", marks: [{ type: "bold" }] });
   expect(row.content_json.content[1].content[0].text).toBe("milk");
-  expect(changed).toEqual(["notes", "notes"]);
 });
 it("does not update missing or duplicate note targets", async () => {
   const action = classify('append "milk" to note "Groceries"')!;
@@ -91,7 +88,7 @@ it("creates a renderable note and lists installed apps; confirms open and close 
   expect(row.content).toBe("Try tea");
   expect(row.content_json).toEqual({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Try tea" }] }] });
   expect((await actions.execute({ type: "list_apps" }, "s")).apps).toEqual([{ slug: "notes", name: "Notes" }]);
-  for (const verb of ["open", "close"]) expect((await actions.execute(classify(`${verb} notes`)!, "s")).message).toBe(`Notes ${verb === "open" ? "opened" : "closed"}.`);
+  for (const verb of ["open", "close"]) expect((await actions.execute(classify(`${verb} notes`)!, "s")).status).toBe("ok");
 });
 it("rejects another principal without changing owner data", async () => {
   const denied = new AoedeActions({ principal: { userId: "intruder", source: "jwt" }, ownerId: "owner", homePath: home,

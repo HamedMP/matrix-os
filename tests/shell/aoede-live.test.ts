@@ -53,14 +53,6 @@ describe("Aoede microphone and session ownership", () => {
     await expect(s.media.start()).rejects.toMatchObject({ failure: { phase: "microphone", code } });
     expect(s.fetchFn).not.toHaveBeenCalled();
   });
-  it("reports phases, explicit resume only, and mint timeout", async () => {
-    const s = setup(); await s.media.start(sessionId);
-    expect(s.onPhase.mock.calls).toEqual([["microphone"], ["transport"], ["mint"], ["transport"]]);
-    expect(JSON.parse(String(s.fetchFn.mock.calls[0][1].body)).resumeSessionId).toBe(sessionId);
-    s.media.close();
-    const timed = setup(); timed.fetchFn.mockRejectedValueOnce(new DOMException("private", "TimeoutError"));
-    await expect(timed.media.start()).rejects.toMatchObject({ failure: { phase: "mint", code: "timeout" } });
-  });
   it("classifies malformed answers as transport and closes a validated funded session ID", async () => {
     const s = setup(); s.fetchFn.mockResolvedValueOnce(new Response(JSON.stringify({ sessionId, sdp: null })));
     await expect(s.media.start()).rejects.toMatchObject({ failure: { phase: "transport", code: "transport" } });

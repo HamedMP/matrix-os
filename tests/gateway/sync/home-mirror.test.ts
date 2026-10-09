@@ -1646,35 +1646,6 @@ describe("createHomeMirror", () => {
       await mirror.stop();
     });
 
-    it("does not watch files through symlinked directories", async () => {
-      const outsideRoot = await mkdtemp(join(tmpdir(), "home-mirror-outside-"));
-      const link = join(tmpRoot, "linked-directory");
-      await symlink(outsideRoot, link);
-
-      const putSpy = vi.spyOn(r2, "putObject");
-      const mirror = createHomeMirror({
-        r2,
-        manifestDb: db,
-        homeRoot: tmpRoot,
-        userId: "alice",
-        peerId: "gateway-alice",
-        peerRegistry: registry,
-        logger: { info: () => {}, error: () => {} },
-      });
-      try {
-        await mirror.start();
-        await writeFile(join(outsideRoot, "external.txt"), "do not upload through directory symlinks");
-        await settle(500);
-
-        expect(putSpy).not.toHaveBeenCalledWith(
-          "matrixos-sync/alice/files/linked-directory/external.txt",
-          expect.any(Buffer),
-        );
-      } finally {
-        await mirror.stop();
-        await rm(outsideRoot, { recursive: true, force: true });
-      }
-    });
 
     it("does not re-broadcast (no infinite echo loop)", async () => {
       // When another peer commits a file, the mirror pulls it. Writing

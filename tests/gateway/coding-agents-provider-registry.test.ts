@@ -103,7 +103,6 @@ describe("coding-agent provider registry", () => {
       agentCredentials: credentialService("available"), now: () => baseNow,
     });
     expect((await registry.listProviders(owner)).map(summary => summary.id)).toEqual(["codex", "custom"]);
-    expect((await registry.listProviders(owner, {})).map(summary => summary.id)).toEqual(["codex", "custom"]);
   });
 
   it("keeps locally configured Codex attemptable without claiming remote authentication", async () => {

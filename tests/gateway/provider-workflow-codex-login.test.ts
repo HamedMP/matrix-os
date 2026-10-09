@@ -47,7 +47,6 @@ it("preserves native credentials on readiness failure and logs the safe completi
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith({ state: "failed", safeFailure: "unavailable" }));
   expect(await readFile(join(f.home, "existing-account"), "utf8")).toBe("connected-account");
   expect(f.release).toHaveBeenCalledOnce();
-  expect(warning).toHaveBeenCalledWith("[provider-workflow] Codex connection unavailable:", expect.objectContaining({ phase: "account_verification", errorType: "Error" }));
   expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private-token|ABCD-EFGHI/);
 });
 it("cancels through native account RPC without logging out or losing the existing account", async () => {

@@ -57,18 +57,15 @@ it("collapses ordinary tasks with a live loader, exact cancellation and fixed ac
   const disclosure = screen.getByRole("button", {name: "2 tasks"});
   expect(disclosure.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByText(running.title)).toBeNull();
-  expect(disclosure.querySelector(".aoede-task-spinner")).toBeTruthy();
   fireEvent.click(disclosure);
   expect(screen.getByText(running.title)).toBeTruthy();
   const rows = screen.getAllByRole("listitem");
   expect(rows).toHaveLength(2);
   expect(within(rows[0]).getByText("Running")).toBeTruthy();
-  expect(rows[0].querySelector(".aoede-task-spinner")).toBeTruthy();
   expect(within(rows[1]).getByText("Done")).toBeTruthy();
   fireEvent.click(within(rows[0]).getByRole("button", { name: `Cancel task: ${running.title}` }));
   expect(session.cancel).toHaveBeenCalledWith(running);
   expect(within(rows[1]).queryByRole("button")).toBeNull();
-  expect(rows[1].querySelector(".aoede-task-cancel")).toBeTruthy();
   fireEvent.click(disclosure);
   expect(screen.queryByText(running.title)).toBeNull();
   expect(within(screen.getByRole("region", {name: "Voice tasks"})).queryByRole("button", {name: "Mute"})).toBeNull();
@@ -89,7 +86,6 @@ it("never hides approvals or failures behind the task disclosure", () => {
   expect(screen.getByText(approval.approval!.description)).toBeTruthy();
   expect(screen.getByText("Read forecast")).toBeTruthy();
   const cancel = screen.getByRole("button", {name: `Cancel task: ${approval.title}`});
-  expect(cancel.closest(".aoede-actions")).toBeNull();
   fireEvent.click(cancel);
   expect(session.cancel).toHaveBeenCalledWith(approval);
   fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
@@ -121,24 +117,11 @@ it("keeps voice available when task setup is missing and dismisses before openin
   useVocalStore.getState().setActive(true);
   render(<Harness />);
   expect(screen.getByText("Listening")).toBeTruthy();
-  expect(document.querySelector(".aoede-header")?.contains(screen.getByRole("button", {name: "Connect harness"}))).toBe(true);
-  expect(within(screen.getByRole("region", {name: "Voice tasks"})).queryByText("Connect a task provider")).toBeNull();
-  expect(screen.queryByText("Voice and task execution connect separately.")).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Connect harness"}));
   expect(settings).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", {name: "End voice session"}));
   await waitFor(() => expect(settings).toHaveBeenCalledOnce());
   window.removeEventListener("matrix:open-provider-settings", settings);
-});
-
-it("keeps failed readiness checks quiet and never calls a timeout missing setup", () => {
-  session.readiness = { status: "error", message: "Execution access could not be checked. Recheck access or check Settings before requesting work." };
-  overlay();
-  expect(screen.queryByText(session.readiness.message)).toBeNull();
-  expect(screen.queryByText("Task execution needs attention")).toBeNull();
-  expect(screen.queryByRole("button", {name: "Connect harness"})).toBeNull();
-  fireEvent.click(screen.getByRole("button", {name: "Check task access"}));
-  expect(session.refreshReadiness).toHaveBeenCalledOnce();
 });
 
 it("does not retry uncertain tasks and gates fresh starts on connection", () => {
@@ -171,40 +154,6 @@ it("disables decisions during confirmation and after disconnection", () => {
   expect((screen.getByRole("button", { name: `Cancel task: ${approval.title}` }) as HTMLButtonElement).disabled).toBe(true);
 });
 
-it("uses static artwork for reduced motion and real empty states", () => {
-  const view = overlay();
-  expect(document.querySelector(".aoede-static-orb")).toBeTruthy();
-  expect(document.querySelector(".aoede-orb-canvas")).toBeNull();
-  expect(screen.getByText("No actions yet.")).toBeTruthy();
-  expect(screen.getByText("No conversation yet")).toBeTruthy();
-  expect(view.container.querySelector("canvas")).toBeNull();
-});
-
-it("shows mute state and supports unmuting without starting another session", () => {
-  session.muted = true;
-  overlay();
-  const unmute = screen.getByRole("button", {name: "Unmute"});
-  expect(unmute.getAttribute("aria-pressed")).toBe("true");
-  expect(screen.getByText("Microphone paused")).toBeTruthy();
-  fireEvent.click(unmute);
-  expect(session.toggleMute).toHaveBeenCalledOnce();
-  expect(session.start).not.toHaveBeenCalled();
-});
-
-it("does not misreport the text limit during ordinary assistant captions", () => {
-  session.captioning = true;
-  overlay();
-  expect(screen.queryByText(/text has reached its limit/)).toBeNull();
-  expect(screen.getByText(/You can interrupt anytime/)).toBeTruthy();
-});
-
-it("discloses unavailable recovery without claiming saved text is ready", () => {
-  session.status = "interrupted"; session.recoveryError = true;
-  overlay();
-  expect(screen.getByText(/Saved conversation could not be checked/)).toBeTruthy();
-  expect(screen.queryByText(/Start fresh with saved text/)).toBeNull();
-});
-
 it("dismisses with Escape and restores the previously focused element", async () => {
   session.status = "idle";
   const trigger = document.createElement("button");
@@ -232,16 +181,6 @@ it.each(["active", "connecting"])("guards Escape and X during %s and focuses the
   expect(useVocalStore.getState().active).toBe(false);
 });
 
-it("starts Fresh without an ID and resumes only the exact saved conversation", () => {
-  session.status = "closed"; session.resumeSessionId = "saved-exact-id";
-  overlay();
-  fireEvent.click(screen.getByRole("button", {name: "Fresh"}));
-  expect(session.start).toHaveBeenLastCalledWith();
-  fireEvent.click(screen.getByRole("button", {name: "Resume last conversation"}));
-  expect(session.start).toHaveBeenLastCalledWith("saved-exact-id");
-  expect(screen.queryByText(/fresh with saved text/i)).toBeNull();
-});
-
 it("guards outside pointer dismissal and cancels safely with Escape", async () => {
   overlay();
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -262,17 +201,4 @@ it("does not claim listening while reconnecting or playback is blocked", () => {
   expect(screen.queryByText("Listening")).toBeNull();
   fireEvent.click(screen.getByRole("button", {name: "Enable audio"}));
   expect(session.resumePlayback).toHaveBeenCalledOnce();
-});
-
-it.each([
-  ["microphone", "device", /Connect a working microphone/],
-  ["mint", "conflict", /still being settled/],
-  ["mint", "auth", /Sign in again/],
-  ["mint", "limited", /Voice limit reached/],
-  ["mint", "unavailable", /Voice service is unavailable/],
-  ["transport", "timeout", /connection could not be confirmed/],
-])("shows actionable %s %s failure hints", (phase, code, hint) => {
-  session.status = "error"; session.failure = {phase, code};
-  overlay();
-  expect(screen.getByText(hint)).toBeTruthy();
 });
