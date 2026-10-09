@@ -247,6 +247,8 @@ only; no new dependency.
 
 - [ ] Server PR under 3,000 additions and 50 files, checks green, Invariants and the OS-view matrix (N/A) in the body.
 - [ ] App PR with the App side above and the real run.
+- [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): the Brain app Chat tab, threads per project, what
+      the Bot can read, and the two thread routes.
 
 ## Deferred
 
