@@ -136,7 +136,8 @@ describe("Settings panel", () => {
     expect(screen.getByRole("button", { name: "Connect Apps" }).getAttribute("aria-current")).toBe("page");
   });
 
-  it("keeps account controls available while billing is locked for provisioning", async () => {
+  it.each([false, true])("keeps account controls available while billing is locked for provisioning (mobile=%s)", async (mobile) => {
+    billingState.mobile = mobile;
     billingState.active = false;
     const { Settings } = await import("../../shell/src/components/Settings.js");
 
