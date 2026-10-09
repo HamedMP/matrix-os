@@ -23,6 +23,7 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
       <SignIn
         forceRedirectUrl={returnTarget}
         fallbackRedirectUrl={returnTarget}
+        signUpUrl={returnTarget === "/" ? "/sign-up" : `/sign-up?redirect_url=${encodeURIComponent(returnTarget)}`}
         appearance={shellAuthAppearance}
       />
     </ShellAuthLayout>
