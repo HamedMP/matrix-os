@@ -1,4 +1,5 @@
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { useLocalSearchParams } from "expo-router";
+import { CanonicalChatIdSchema, MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { ChatToolActivity } from "@/components/ChatToolActivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -55,6 +56,8 @@ const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
+  const { chat: requestedChat } = useLocalSearchParams();
+  const consumedHandoff = useRef<string | null>(null);
   const { user } = useUser();
   const { theme } = useUnistyles();
   const warmSessionToken = useSessionTokenWarmup();
@@ -71,6 +74,13 @@ export default function ChatScreen() {
     ?? user?.username
     ?? "there";
 
+  useEffect(() => {
+    const target = CanonicalChatIdSchema.safeParse(requestedChat);
+    const key = JSON.stringify([userId, target.success ? target.data : null]);
+    if (!isSignedIn || !userId || !target.success || consumedHandoff.current === key) return;
+    consumedHandoff.current = key;
+    selectChat(target.data);
+  }, [isSignedIn, userId, requestedChat, selectChat]);
   const { detail, computer, refresh } = useCanonicalChatDetail(activeChatId);
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);

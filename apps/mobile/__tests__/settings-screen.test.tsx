@@ -34,6 +34,7 @@ describe("drawer settings hub", () => {
     ["Account", "/settings-detail/account"],
     ["App settings", "/settings-detail/app-settings"],
     ["Billing", "/settings-detail/billing"],
+    ["Messaging", "/settings-detail/messaging"],
     ["Help", "/settings-detail/help"],
   ])("opens %s in the settings modal stack", (label, route) => {
     render(<SettingsScreen />);
