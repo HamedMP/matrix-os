@@ -194,10 +194,13 @@ it("uses a fresh operation for a separately confirmed Daily Brief creation inten
   client.calls.instantiate.mockRejectedValue(new Error("unavailable"));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await screen.findByText("Bot could not be created. Try again.");
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "Personal Daily Brief" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledTimes(2));
   expect(client.calls.instantiate.mock.calls[0]![0].clientRequestId).not.toBe(client.calls.instantiate.mock.calls[1]![0].clientRequestId);
@@ -209,6 +212,8 @@ it("clears an old-owner Daily Brief setup and suppresses its pending completion 
   client.calls.instantiate.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const { rerender } = render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledOnce());
   rerender(<ChatAgentsPanel client={next} onClose={vi.fn()} onOpenBotChat={open} />);
