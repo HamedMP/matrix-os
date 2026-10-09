@@ -208,6 +208,8 @@ export interface GitRunOptions {
   readonly cwd: string; readonly timeoutMs: number; readonly maxBuffer: number;
   /** "fail": overflow rejects with output_too_large. "truncate": resolve the first maxBuffer bytes. */
   readonly overflow: "fail" | "truncate";
+  /** The caller's stop: it kills the child like the timeout does, and rejects the same way. */
+  readonly signal?: AbortSignal;
 }
 
 export interface GitRunResult {
@@ -311,6 +313,8 @@ export interface OpenGitRepositoryInput {
   readonly homePath: string;
   readonly runner: GitRunner;
   readonly limits: GitSyncLimits;
+  /** The caller's stop, given to every git command. */
+  readonly signal?: AbortSignal;
 }
 
 // Pure mapping (parse.ts, permalinks.ts, documents.ts, specs.ts).
@@ -419,7 +423,7 @@ export interface GitSyncOptions {
   readonly limits?: Partial<GitSyncLimits>;
   /** Milliseconds clock for the run budget. Default Date.now. */
   readonly now?: () => number;
-  /** The caller's stop; like the run budget it is checked between windows, so a started window finishes. */
+  /** The caller's stop: checked before each window, and it kills a running git command. */
   readonly signal?: AbortSignal;
 }
 

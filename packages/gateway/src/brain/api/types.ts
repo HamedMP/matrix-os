@@ -268,7 +268,7 @@ export interface BrainProjectService {
   ): Promise<BrainRegisterGitSourceResult>;
   /**
    * Exactly one bounded syncGitSource run. run.sourceId: the source the caller means; another one is
-   * git_source_conflict. run.signal: the caller's stop, checked between windows.
+   * git_source_conflict. run.signal: the caller's stop, checked before each window; it kills a running git command.
    */
   sync(ownerId: string, projectRef: string, run?: BrainGitSyncRun): Promise<BrainSyncView>;
   listReceipts(ownerId: string, projectRef: string, limit: number): Promise<BrainReceiptsView>;
