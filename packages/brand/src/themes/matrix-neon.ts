@@ -1,96 +1,37 @@
-import { matrix } from "./matrix.js";
-import type { UnifiedThemeDefinition } from "./theme-types.js";
+import { productScales as s } from '../tokens.js';
+import { matrix } from './matrix.js';
+import type { UnifiedThemeDefinition, UnifiedThemeVariant } from './theme-types.js';
 
-const base = matrix.dark!;
-
-export const matrixNeon: UnifiedThemeDefinition = {
-  id: "matrix-neon",
-  name: "Matrix Neon",
-  dark: {
-    chrome: {
-      ...base.chrome,
-      background: "#020A02",
-      foreground: "#D8FFD9",
-      card: "#04140A",
-      cardForeground: "#D8FFD9",
-      popover: "#04140A",
-      popoverForeground: "#D8FFD9",
-      primary: "#39FF6A",
-      primaryForeground: "#020A02",
-      secondary: "#0A1F10",
-      secondaryForeground: "#5BF08A",
-      muted: "#0A1F10",
-      mutedForeground: "#2FBF55",
-      accent: "#0A1F10",
-      accentForeground: "#D8FFD9",
-      destructive: "#FF5D5D",
-      border: "#0E5A26",
-      input: "#0E5A26",
-      ring: "#39FF6A",
-      chart1: "#1FB04E",
-      chart2: "#39FF6A",
-      chart3: "#A5FF5C",
-      chart4: "#8DFFAA",
-      chart5: "#FF5D5D",
-      sidebar: "#030E05",
-      sidebarForeground: "#D8FFD9",
-      sidebarPrimary: "#39FF6A",
-      sidebarPrimaryForeground: "#020A02",
-      sidebarAccent: "#0A1F10",
-      sidebarAccentForeground: "#D8FFD9",
-      sidebarBorder: "#0E5A26",
-      sidebarRing: "#39FF6A",
-      surface0: "#020A02",
-      surface1: "#030E05",
-      surface2: "#04140A",
-      surface3: "#0A1F10",
-      modal: "#020A02",
-      modalBorder: "#176B30",
-    },
-    terminal: {
-      background: "#020A02",
-      foreground: "#2FBF55",
-      cursor: "#39FF6A",
-      cursorAccent: "#020A02",
-      selectionBackground: "#0E5A26",
-      selectionForeground: "#D8FFD9",
-      black: "#020A02",
-      red: "#2FBF55",
-      green: "#2FBF55",
-      yellow: "#5BF08A",
-      blue: "#1FB04E",
-      magenta: "#39FF6A",
-      cyan: "#39FF6A",
-      white: "#2FBF55",
-      brightBlack: "#176B30",
-      brightRed: "#5BF08A",
-      brightGreen: "#39FF6A",
-      brightYellow: "#9BFF8F",
-      brightBlue: "#5BF08A",
-      brightMagenta: "#8DFFAA",
-      brightCyan: "#B3FFC6",
-      brightWhite: "#D8FFD9",
-    },
-    editor: {
-      ...base.editor,
-      background: "#020A02",
-      foreground: "#D8FFD9",
-      selection: "#0E5A26",
-      cursor: "#39FF6A",
-      gutterBackground: "#030E05",
-      gutterForeground: "#176B30",
-      lineHighlight: "#04140A",
-      keyword: "#8DFFAA",
-      string: "#39FF6A",
-      comment: "#2FBF55",
-      number: "#9BFF8F",
-      function: "#5BF08A",
-      type: "#B3FFC6",
-      operator: "#39FF6A",
-      variable: "#D8FFD9",
-      property: "#5BF08A",
-      link: "#8DFFAA",
-      heading: "#D8FFD9",
-    },
-  },
-};
+function variant(dark: boolean): UnifiedThemeVariant {
+  const base = matrix[dark ? 'dark' : 'light']!;
+  const background = dark ? s.neutral[900] : s.green[25];
+  const card = dark ? s.neutral[800] : s.green[50];
+  const selected = dark ? s.neutral[700] : s.green[100];
+  const foreground = dark ? s.neutral[25] : s.neutral[800];
+  const mutedForeground = dark ? s.neutral[300] : s.neutral[600];
+  const accent = dark ? s.green[300] : s.green[700];
+  const border = dark ? s.neutral[700] : s.green[200];
+  const red = dark ? s.coral[300] : s.coral[600];
+  const green = dark ? s.teal[300] : s.teal[600];
+  const yellow = dark ? s.gold[300] : s.gold[700];
+  const blue = dark ? s.blue[200] : s.blue[600];
+  return {
+    chrome: { ...base.chrome, background, foreground, card, cardForeground: foreground,
+      popover: dark ? s.neutral[900] : s.green[25], popoverForeground: foreground,
+      secondary: selected, secondaryForeground: foreground, muted: selected, mutedForeground,
+      accent: card, accentForeground: foreground, border, input: border,
+      chart1: blue, chart2: green, chart3: yellow, chart4: accent, chart5: red, destructive: dark ? s.coral[300] : s.coral[500],
+      sidebar: background, sidebarForeground: foreground, sidebarAccent: selected, sidebarAccentForeground: foreground, sidebarBorder: border,
+      surface0: background, surface1: background, surface2: card, surface3: selected, modal: card, modalBorder: border },
+    terminal: { ...base.terminal, background, foreground, cursor: accent, cursorAccent: background,
+      selectionBackground: selected, selectionForeground: foreground,
+      red, green, yellow, blue, magenta: red, cyan: accent,
+      brightRed: red, brightGreen: green, brightYellow: yellow, brightBlue: blue, brightMagenta: red, brightCyan: accent,
+      black: dark ? s.neutral[900] : s.neutral[800], white: foreground, brightBlack: mutedForeground, brightWhite: foreground },
+    editor: { ...base.editor, background, foreground, selection: selected, cursor: accent,
+      gutterBackground: background, gutterForeground: mutedForeground, lineHighlight: card,
+      keyword: accent, string: green, comment: mutedForeground, number: yellow, function: blue,
+      type: yellow, operator: foreground, variable: foreground, property: blue, link: accent, heading: foreground },
+  };
+}
+export const matrixNeon: UnifiedThemeDefinition = { id: 'matrix-neon', name: 'Matrix Neon', light: variant(false), dark: variant(true) };

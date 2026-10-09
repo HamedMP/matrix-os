@@ -1,3 +1,4 @@
+import { themeSemantics } from "@matrix-os/brand/themes";
 import type { ChromeColors } from "./theme-types";
 import type { CustomTheme } from "./index";
 import { getThemeChrome, getUnifiedTheme } from "./index";
@@ -14,6 +15,7 @@ export function resolveThemeMode(mode: ThemeMode): "dark" | "light" {
 
 /** Semantic variables driven by a theme's chrome layer. */
 export function chromeToSemanticVars(chrome: ChromeColors): Record<string, string> {
+  const semantic = themeSemantics(chrome);
   return {
     "--bg-app": chrome.background,
     "--bg-surface": chrome.card,
@@ -34,7 +36,7 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--forest-foreground": chrome.sidebarForeground,
     "--forest-muted": chrome.mutedForeground,
 
-    "--border-subtle": chrome.sidebarBorder,
+    "--border-subtle": chrome.border,
     "--border-default": chrome.border,
     "--border-strong": chrome.input,
 
@@ -42,35 +44,46 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--text-secondary": chrome.mutedForeground,
     "--text-tertiary": chrome.mutedForeground,
     "--text-disabled": chrome.mutedForeground,
+    "--bg-disabled": chrome.muted,
+    "--muted": chrome.muted,
     "--text-on-accent": chrome.primaryForeground,
 
     "--accent": chrome.primary,
-    "--accent-hover": chrome.sidebarPrimary,
+    "--accent-hover": semantic.primaryHover,
+    "--text-on-accent-hover": semantic.primaryHoverForeground,
     "--accent-muted": chrome.accent,
     "--highlight": chrome.chart4,
     "--highlight-muted": chrome.accent,
-    "--success": chrome.chart2,
-    "--success-muted": chrome.accent,
-    "--warning": chrome.chart3,
-    "--warning-muted": chrome.accent,
-    "--danger": chrome.destructive,
-    "--danger-muted": chrome.accent,
-    "--info": chrome.chart1,
-    "--info-muted": chrome.accent,
+    "--success": semantic.success,
+    "--success-muted": semantic.successMuted,
+    "--success-text": semantic.successText,
+    "--text-on-success": semantic.successForeground,
+    "--warning": semantic.warning,
+    "--warning-muted": semantic.warningMuted,
+    "--warning-text": semantic.warningText,
+    "--text-on-warning": semantic.warningForeground,
+    "--danger": semantic.danger,
+    "--danger-muted": semantic.dangerMuted,
+    "--danger-text": semantic.dangerText,
+    "--text-on-danger": semantic.dangerForeground,
+    "--info": semantic.info,
+    "--info-muted": semantic.infoMuted,
+    "--info-text": semantic.infoText,
+    "--text-on-info": semantic.infoForeground,
     "--surface-base-background": chrome.background,
     "--surface-primary": chrome.card,
     "--surface-card-foreground-subtle": chrome.card,
     "--surface-tertiary": chrome.secondary,
     "--text-subtle": chrome.mutedForeground,
-    "--text-danger": chrome.destructive,
+    "--text-danger": semantic.dangerText,
 
     "--status-todo": chrome.mutedForeground,
-    "--status-running": chrome.chart1,
-    "--status-waiting": chrome.chart3,
-    "--status-blocked": chrome.destructive,
-    "--status-complete": chrome.chart2,
-    "--status-attention": chrome.chart3,
-    "--status-failed": chrome.destructive,
+    "--status-running": semantic.infoText,
+    "--status-waiting": semantic.warningText,
+    "--status-blocked": semantic.dangerText,
+    "--status-complete": semantic.successText,
+    "--status-attention": semantic.warningText,
+    "--status-failed": semantic.dangerText,
 
     // color-mix keeps the ring translucent for any CSS color form (hex,
     // rgba, oklch); appending a hex alpha only works for 6-digit hex.
