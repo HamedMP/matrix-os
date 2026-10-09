@@ -155,6 +155,38 @@ describe("useCanonicalChatThread", () => {
     expect(client.detail).toHaveBeenCalledTimes(2);
   });
 
+  it("queues a question with a Chat reference behind a running answer, like the Chat app, and keeps a retry queued", async () => {
+    const client = fakeClient();
+    const queued = { id: "qturn_next", chatId: "chat_a", clientRequestId: "req_next", position: 1,
+      parts: [{ type: "text" as const, text: "And the tests?" }], selection: BOT_SELECTION, interactionMode: "default",
+      permissionMode: "default", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+    client.detail.mockResolvedValue({ ...detail("chat_a", 2, "Thinking"), record: { ...record("chat_a", 2), activeRun: { runId: "run_1" } } });
+    const queueTurn = vi.fn().mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({ queuedTurn: queued, queueDepth: 1, alreadyClaimed: false });
+    Object.assign(client, { queueTurn });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const events = fakeEvents();
+    const { result } = renderHook(() => useCanonicalChatThread({ client, eventSource: events, chatId: "chat_a", createChat: vi.fn() }));
+    await waitFor(() => expect(result.current.activeRunId).toBe("run_1"));
+    const resource = { kind: "chat" as const, id: "chat_notes", label: "Notes" };
+    const ask = () => result.current.onSubmit("And the tests?", undefined, { ...SEND, clientRequestId: "req_next", resources: [resource] });
+    let sent: unknown;
+    await act(async () => { sent = await ask(); });
+    expect(sent).toBe(false);
+    // The answer ends before the retry; the question may already be queued, so the retry goes to the same queue.
+    client.detail.mockResolvedValue({ ...detail("chat_a", 3, "Done"), queuedTurns: [queued] });
+    act(() => events.emit({ type: "chat.changed", chatId: "chat_a", cursor: 3, revision: 3, eventType: "run.completed" } as CanonicalChatInvalidation));
+    await waitFor(() => expect(result.current.activeRunId).toBeUndefined());
+    await act(async () => { sent = await ask(); });
+    expect(sent).toBe(true);
+    expect(client.admitTurn).not.toHaveBeenCalled();
+    expect(queueTurn).toHaveBeenCalledTimes(2);
+    expect(queueTurn).toHaveBeenLastCalledWith("chat_a", expect.objectContaining({ clientRequestId: "req_next",
+      parts: [{ type: "text", text: "And the tests?" }, { type: "resource_reference", resource }] }));
+    expect(queueTurn.mock.calls[0]?.[1]).toMatchObject({ clientRequestId: "req_next", baseRevision: 2 });
+    expect(result.current.queuedTurns).toEqual([queued]);
+  });
+
   it("without a stream, polls a running answer one snapshot at a time", async () => {
     vi.useFakeTimers();
     try {

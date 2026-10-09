@@ -3,6 +3,7 @@
 import {
   applyCanonicalChatContent,
   createCanonicalChatRefresh,
+  createChatMentionRequestTracker,
   generatedChatTitle,
   mergeCanonicalChatRecord,
   mergeChatReadState,
@@ -29,10 +30,16 @@ function requestId(): string {
 
 type SendOptions = ChatSubmitOptions & Required<Pick<ChatSubmitOptions, "instanceId" | "model" | "interactionMode" | "permissionMode">>;
 
-/** Makes the Chat for a draft (shown through `onCreated`), then admits the turn. */
-async function admitThreadTurn({ client, createChat, record: known, text, options, onCreated }: {
+type MentionRequests = ReturnType<typeof createChatMentionRequestTracker>;
+
+/**
+ * Makes the Chat for a draft (shown through `onCreated`), then admits the turn. A question with references behind a
+ * running answer is queued instead, as in the Chat app, and a retry of it keeps its request id and operation.
+ */
+async function admitThreadTurn({ client, createChat, record: known, text, options, onCreated, requests }: {
   client: CanonicalShellChatClient; createChat: CanonicalChatThreadOptions["createChat"];
   record: CanonicalChatRecord | null; text: string; options: SendOptions; onCreated: (record: CanonicalChatRecord) => void;
+  requests: MentionRequests;
 }) {
   let record = known;
   if (!record) {
@@ -46,11 +53,26 @@ async function admitThreadTurn({ client, createChat, record: known, text, option
     { type: "text", text: options.promptText?.trim() || text.trim() },
     ...(options.resources ?? []).map((resource) => ({ type: "resource_reference" as const, resource })),
   ];
-  const admitted = await client.admitTurn(record.chat.id, {
+  const input = {
     clientRequestId: options.clientRequestId ?? requestId(), baseRevision: record.chat.revision, parts,
     selection: { instanceId: options.instanceId, model: options.model, ...(options.modelOptions?.length ? { options: options.modelOptions } : {}) },
     interactionMode: options.interactionMode, permissionMode: options.permissionMode,
-  });
+  };
+  const chatId = record.chat.id;
+  let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
+  if (options.resources?.length) {
+    const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
+    const attempt = requests.resolve(client, chatId, semanticInput, operation, seed);
+    input.clientRequestId = attempt.clientRequestId;
+    operation = attempt.operation;
+  }
+  if (operation === "queue") {
+    const queued = await client.queueTurn(chatId, input);
+    requests.accepted(chatId, input.clientRequestId);
+    return { record, queued };
+  }
+  const admitted = await client.admitTurn(chatId, input);
+  requests.accepted(chatId, input.clientRequestId);
   return { record, admitted };
 }
 
@@ -82,6 +104,7 @@ export function useCanonicalChatThread({
   // The question of a first send whose new Chat refused the turn: the view's composer for that Chat gets it back.
   const [returnedDraft, setReturnedDraft] = useState<ChatAgentDraftRequest | null>(null);
   const returnedDrafts = useRef(0);
+  const [mentionRequests] = useState(createChatMentionRequestTracker);
   const detailRef = useRef(detail);
   const chatIdRef = useRef(chatId);
   const submittingRef = useRef(false);
@@ -187,9 +210,22 @@ export function useCanonicalChatThread({
       setChatId(created.chat.id);
       show({ record: created, messages: [], turns: [], runs: [], activities: [] });
     };
-    return admitThreadTurn({ client, createChat, record, text, options: options as SendOptions, onCreated }).then(
-      async ({ record: sent, admitted }) => {
+    return admitThreadTurn({
+      client, createChat, record, text, options: options as SendOptions, onCreated, requests: mentionRequests,
+    }).then(
+      async (result) => {
+        const { record: sent } = result;
         const current = detailRef.current;
+        if (result.queued) {
+          if (current?.record.chat.id === sent.chat.id) {
+            const { queuedTurn, alreadyClaimed } = result.queued;
+            const others = (current.queuedTurns ?? []).filter((row) => row.id !== queuedTurn.id);
+            show({ ...current, queuedTurns: alreadyClaimed ? others : [...others, queuedTurn] });
+          }
+          await loadDetail(sent.chat.id);
+          return true;
+        }
+        const { admitted } = result;
         if (current?.record.chat.id === sent.chat.id && current.record.chat.revision < admitted.record.chat.revision) {
           show({
             ...current, record: admitted.record, messages: [...current.messages, admitted.message],
@@ -213,7 +249,7 @@ export function useCanonicalChatThread({
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [client, createChat, loadDetail, onChatChanged, setSafeError, show]);
+  }, [client, createChat, loadDetail, mentionRequests, onChatChanged, setSafeError, show]);
 
   const onAbortCurrent = useCallback(() => {
     const current = detailRef.current;
