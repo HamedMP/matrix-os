@@ -75,6 +75,7 @@ import {
   createUnavailableStripeBillingClient,
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
+import { registerSiteRoutes } from './sites/registration.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -286,6 +287,7 @@ export function createApp(deps: {
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
+  sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
@@ -683,6 +685,9 @@ export function createApp(deps: {
   if (deps.internalFundedAiOperatorRoutes) {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
+
+  registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
+    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
