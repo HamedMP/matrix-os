@@ -27,17 +27,19 @@ const SCOPE_TYPES: Readonly<Record<AskScope, readonly ("document" | "claim")[]>>
 export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
   const [draft, setDraft] = useState("");
   const [scope, setScope] = useState<AskScope>("all");
-  // `path` is the repo path the question names (its history is shown), or null to search the words.
-  const [asked, setAsked] = useState<{ q: string; scope: AskScope; path: string | null }>({ q: "", scope: "all", path: null });
+  // `path` is the repo path the question names (its history is shown), or null to search the words. `n` counts the
+  // questions sent, so asking the same one again reads it again.
+  const [asked, setAsked] = useState<{ q: string; scope: AskScope; path: string | null; n: number }>(
+    { q: "", scope: "all", path: null, n: 0 });
   const pages = useBrainPages(
     (cursor) => api.search(projectId, { q: asked.q, types: SCOPE_TYPES[asked.scope], limit: PAGE_SIZE, cursor }),
-    asked.q === "" || asked.path !== null ? null : `${asked.scope}:${asked.q}`,
+    asked.q === "" || asked.path !== null ? null : `${asked.n}:${asked.scope}:${asked.q}`,
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const q = draft.trim().slice(0, BRAIN_ASK_MAX_CHARS);
-    if (q !== "") setAsked({ q, scope, path: brainAskPath(q) });
+    if (q !== "") setAsked({ q, scope, path: brainAskPath(q), n: asked.n + 1 });
   };
 
   // One shrinkable column (as on Today): results wrap at 390 px instead of widening the screen.
@@ -67,7 +69,7 @@ export function BrainAsk({ api, projectId, onOpenSources }: BrainScreenProps) {
         </BrainEmpty>
       )}
       {asked.path !== null && (
-        <BrainPathHistory api={api} projectId={projectId} onOpenSources={onOpenSources} path={asked.path}
+        <BrainPathHistory key={asked.n} api={api} projectId={projectId} onOpenSources={onOpenSources} path={asked.path}
           onSearchWords={() => setAsked({ ...asked, path: null })} />
       )}
       <BrainView state={pages.first.state} label="Searching..." onRetry={pages.first.reload} onOpenSources={onOpenSources}>

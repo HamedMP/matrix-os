@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BRAIN_LIST_MAX_ITEMS, useBrainLoad, useBrainPages,
 } from "../../packages/ui/src/brain/use-brain-load.js";
+import { BRAIN_JOB_POLL_FIRST_MS, brainJobView, useBrainJob } from "../../packages/ui/src/brain/use-brain-job.js";
 import { apiError } from "./brain-fixtures.js";
 
 function deferred<T>() {
@@ -131,5 +132,40 @@ describe("useBrainPages", () => {
     expect(result.current.items).toEqual(["a1"]);
     expect(result.current.moreError).toBeNull();
     expect(result.current.loadingMore).toBe(true);
+  });
+});
+
+describe("useBrainJob", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const running = brainJobView({ jobId: "job_1", status: "running" })!;
+  const cancelled = { jobId: "job_1", status: "cancelled" };
+  const follow = (poll: () => Promise<unknown>, cancel: () => Promise<unknown>) => {
+    const onFinished = vi.fn();
+    const hook = renderHook(() => useBrainJob({ poll, cancel, onFinished }));
+    act(() => hook.result.current.start("sync:git", running));
+    return { ...hook, onFinished };
+  };
+
+  it("keeps a stopped job finished when an older poll answer lands after the cancel", async () => {
+    vi.useFakeTimers();
+    const poll = deferred<unknown>();
+    const cancel = deferred<unknown>();
+    const { result, onFinished } = follow(() => poll.promise, () => cancel.promise);
+    act(() => { vi.advanceTimersByTime(BRAIN_JOB_POLL_FIRST_MS); });
+    act(() => result.current.stop());
+    await act(async () => { cancel.resolve(cancelled); poll.resolve(running); });
+    expect(result.current.watch?.phase).toBe("finished");
+    expect(result.current.running).toBe(false);
+    expect(onFinished).toHaveBeenCalledTimes(1);
+    expect(onFinished).toHaveBeenCalledWith("sync:git", expect.objectContaining({ status: "cancelled" }));
+  });
+
+  it("does not report a cancel that lands after the screen closed", async () => {
+    const cancel = deferred<unknown>();
+    const { result, unmount, onFinished } = follow(() => new Promise(() => undefined), () => cancel.promise);
+    act(() => result.current.stop());
+    unmount();
+    await act(async () => { cancel.resolve(cancelled); });
+    expect(onFinished).not.toHaveBeenCalled();
   });
 });

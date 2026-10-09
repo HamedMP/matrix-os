@@ -116,6 +116,25 @@ describe("Ask with a path", () => {
     expect(screen.queryByRole("list", { name: "Path history" })).toBeNull();
   });
 
+  it("reads the same question and the same path again when asked again", async () => {
+    const api = fakeBrainApi({
+      why: vi.fn(async () => why([])),
+      search: vi.fn(async () => ({
+        q: "postgres", mode: "text", items: [], nextCursor: null, freshness: FRESH, notices: [],
+        capability: { fullText: true, vector: "extension_missing", providerId: null },
+      })),
+    });
+    render(<BrainAsk api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
+    ask("postgres");
+    expect(await screen.findByText('No results for "postgres".')).toBeTruthy();
+    ask("postgres");
+    await waitFor(() => expect(api.search).toHaveBeenCalledTimes(2));
+    ask("a.ts");
+    expect(await screen.findByText(/Nothing in the history touches/)).toBeTruthy();
+    ask("a.ts");
+    await waitFor(() => expect(api.why).toHaveBeenCalledTimes(2));
+  });
+
   it("says when nothing touches a folder, when the repository is missing, and when the read fails", async () => {
     const onOpenSources = vi.fn();
     const api = fakeBrainApi({
