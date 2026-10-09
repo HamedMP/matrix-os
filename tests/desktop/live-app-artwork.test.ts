@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { desktopTabsWithLiveAppArtwork } from "@desktop/renderer/src/features/desktop-shell/bundled-app-icons";
+import { parseApps } from "@desktop/renderer/src/features/apps/apps.api";
 import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
 const tab: Tab = { id: "2048-tab", kind: "app", slug: "2048", title: "2048", appIdentity: "games/2048", closable: true };
@@ -23,4 +24,21 @@ describe("live installed-app artwork", () => {
     expect(desktopTabsWithLiveAppArtwork([tab], [other], "https://runtime.example.com", "primary")[0]).toBe(tab);
     expect(desktopTabsWithLiveAppArtwork([tab], [], "https://runtime.example.com", "primary")[0]).toBe(tab);
   });
+});
+
+
+it.each(["renamed-ledger", "finance/ledger", "My Finance/Owner Ledger"])("refreshes the moved manifest app %s artwork through the parsed catalog", folder => {
+  const moved: Tab = { id: "folio-tab", kind: "app", slug: "folio", title: "Folio", appIdentity: "folio", closable: true };
+  const catalog = (version: string) => parseApps([{ slug: "folio", name: "Folio", file: `${folder}/index.html`, path: `/files/apps/${folder}/index.html`, iconUrl: `/icons/folio.png?v=${version}` }]);
+  const first = desktopTabsWithLiveAppArtwork([moved], catalog("first"), "https://runtime.example.com", "secondary");
+  expect(first[0]?.icon).toContain("/icons/folio.png?v=first&runtime=secondary");
+  expect(desktopTabsWithLiveAppArtwork(first, catalog("second"), "https://runtime.example.com", "secondary")[0]?.icon).toContain("?v=second&runtime=secondary");
+  expect(moved.icon).toBeUndefined();
+});
+
+
+it.each(["games/2048/index.html", "games/2048/dist/index.html"])("retains the bundled game grant identity for %s", file => {
+  const parsed = parseApps([{ slug: "2048", name: "2048", file, iconUrl: "/icons/2048.png?v=owner" }]);
+  expect(parsed[0]?.appIdentity).toBe("games/2048");
+  expect(desktopTabsWithLiveAppArtwork([tab], parsed, "https://runtime.example.com", "primary")[0]?.icon).toContain("?v=owner");
 });
