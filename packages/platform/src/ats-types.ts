@@ -107,7 +107,7 @@ export interface AtsTask {
 }
 
 export interface AtsApplicationDetail extends AtsApplicationSummary {
-  emails: Array<import('./ats-intake-schema.js').AtsInboxTable & { attachments: Array<{ id: string; message_id: string; filename: string; content_type: string }> }>;
+  emails: Array<import('kysely').Selectable<import('./ats-intake-schema.js').AtsInboxTable> & { attachments: Array<{ id: string; message_id: string; filename: string; content_type: string }> }>;
   events: AtsEvent[];
   notes: AtsNote[];
   scorecards: AtsScorecard[];
