@@ -1,4 +1,5 @@
 import { closeShellCollaborationSessions } from "@/lib/collaboration";
+import { clearBrowserChatNavigationCache, clearChatNavigationScopes } from "@matrix-os/ui";
 
 const SIGN_OUT_TIMEOUT_MS = 10_000;
 
@@ -8,6 +9,8 @@ export function getSignInRedirectUrl(): string {
 }
 
 export async function clearMatrixAppSession(): Promise<void> {
+  clearChatNavigationScopes();
+  clearBrowserChatNavigationCache();
   // S06 / T034: direct collaboration sessions end with the actor's app session.
   closeShellCollaborationSessions();
   const controller = new AbortController();

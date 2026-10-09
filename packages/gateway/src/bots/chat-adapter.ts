@@ -43,6 +43,7 @@ const TOOL_LABELS: Record<string, string> = {
   "interaction.create": "Asking you",
   "integration.inventory": "Checking connected services",
   "integration.call": "Using a connected service",
+  "jev.inbox": "Classifying the connected Inbox",
   "integration.describe": "Describing a connected service",
   "mcp.inventory": "Listing MCP servers",
   "mcp.describe": "Describing an MCP tool",

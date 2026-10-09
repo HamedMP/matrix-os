@@ -110,14 +110,29 @@ describe("mobile terminal client", () => {
     expect(isSafeSessionId("../bad")).toBe(false);
   });
 
-  it("sends resize, input, and detach frames with the canonical TerminalRef", () => {
+  function attachedFrame(overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      type: "attached",
+      terminalRef: TERMINAL_REF,
+      canonicalSize: { cols: 120, rows: 36 },
+      revision: 1,
+      nextSeq: 0,
+      ownership: "writer",
+      leaseEpoch: 1,
+      ...overrides,
+    });
+  }
+
+  function sentFrames(ws: WebSocket) {
+    return (ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame));
+  }
+
+  it("sends input and detach frames with the canonical TerminalRef", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;
     const messages: unknown[] = [];
     const statuses: string[] = [];
     const connection = new MobileTerminalConnection(ws, {
       sessionId: SESSION_ID,
-      cols: 220,
-      rows: 70,
       onMessage: (frame) => messages.push(frame),
       onStatus: (status) => statuses.push(status),
     });
@@ -125,19 +140,235 @@ describe("mobile terminal client", () => {
     connection.attach();
     (ws as unknown as MockWebSocket).onopen?.();
     connection.sendInput("pwd\r");
-    connection.resize(999, 999);
     (ws as unknown as MockWebSocket).onmessage?.({ data: JSON.stringify({ type: "output", data: "ok" }) });
     connection.detach();
 
     expect(statuses).toEqual(["connecting", "open"]);
-    expect((ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame))).toEqual([
-      { type: "resize", terminalRef: TERMINAL_REF, mode: "soft", size: { cols: 220, rows: 70 } },
+    expect(sentFrames(ws)).toEqual([
       { type: "input", terminalRef: TERMINAL_REF, data: "pwd\r" },
-      { type: "resize", terminalRef: TERMINAL_REF, mode: "soft", size: { cols: 500, rows: 200 } },
       { type: "detach", terminalRef: TERMINAL_REF },
     ]);
     expect(messages).toEqual([{ type: "output", data: "ok" }]);
     expect((ws as unknown as MockWebSocket).closed).toBe(true);
+  });
+
+  it("sizes the shared grid to the phone once it holds the write lease", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      cols: 49,
+      rows: 36,
+      onMessage: jest.fn(),
+    });
+
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    // Nothing is declared before the computer has said who owns the terminal.
+    expect(sentFrames(ws)).toEqual([]);
+
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+
+    expect(sentFrames(ws)).toEqual([
+      { type: "resize", terminalRef: TERMINAL_REF, mode: "hard", size: { cols: 49, rows: 36 } },
+    ]);
+    connection.close();
+  });
+
+  it("declares a changed viewport once and keeps it inside the grid limits", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      cols: 49,
+      rows: 36,
+      onMessage: jest.fn(),
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+
+    expect(connection.resize(49, 36)).toBe(false);
+    expect(connection.resize(49, 18)).toBe(true);
+    expect(connection.resize(49, 18)).toBe(false);
+    expect(connection.resize(999, 1)).toBe(true);
+
+    expect(sentFrames(ws).map((frame) => frame.size)).toEqual([
+      { cols: 49, rows: 36 },
+      { cols: 49, rows: 18 },
+      { cols: 500, rows: 5 },
+    ]);
+    connection.close();
+  });
+
+  it("declares the viewport measured while the socket was still attaching", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage: jest.fn(),
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+
+    expect(connection.resize(49, 36)).toBe(false);
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+
+    expect(sentFrames(ws)).toEqual([
+      { type: "resize", terminalRef: TERMINAL_REF, mode: "hard", size: { cols: 49, rows: 36 } },
+    ]);
+    connection.close();
+  });
+
+  it("never resizes a grid it is only following", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      cols: 49,
+      rows: 36,
+      onMessage: jest.fn(),
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame({ ownership: "observer", leaseEpoch: undefined }) });
+
+    expect(connection.resize(49, 18)).toBe(false);
+    expect(sentFrames(ws)).toEqual([]);
+    connection.close();
+  });
+
+  it("stops resizing the grid after another device takes the lease", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      cols: 49,
+      rows: 36,
+      onMessage: jest.fn(),
+    });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "lease-revoked", terminalRef: TERMINAL_REF, epoch: 1 }),
+    });
+
+    expect(connection.resize(49, 18)).toBe(false);
+    expect(sentFrames(ws)).toHaveLength(1);
+    connection.close();
+  });
+
+  it("passes the shared grid size on to the screen", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const onMessage = jest.fn();
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, onMessage });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "canonical-size",
+        terminalRef: TERMINAL_REF,
+        revision: 9,
+        canonicalSize: { cols: 49, rows: 36 },
+      }),
+    });
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({
+        type: "snapshot",
+        terminalRef: TERMINAL_REF,
+        revision: 9,
+        seq: 4,
+        ansi: "ready",
+        canonicalSize: { cols: 49, rows: 36 },
+      }),
+    });
+
+    expect(onMessage).toHaveBeenNthCalledWith(1, {
+      type: "canonical-size",
+      canonicalSize: { cols: 49, rows: 36 },
+    });
+    expect(onMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      type: "snapshot",
+      ansi: "ready",
+      canonicalSize: { cols: 49, rows: 36 },
+    }));
+    connection.close();
+  });
+
+  it("drops frames whose grid size the emulator could not apply", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const onMessage = jest.fn();
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, cols: 49, rows: 36, onMessage });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    for (const canonicalSize of [undefined, { cols: 0, rows: 36 }, { cols: 49.5, rows: 36 }, { cols: 49, rows: 9_000 }, "49x36"]) {
+      (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame({ canonicalSize }) });
+      (ws as unknown as MockWebSocket).onmessage?.({
+        data: JSON.stringify({ type: "canonical-size", terminalRef: TERMINAL_REF, revision: 9, canonicalSize }),
+      });
+    }
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(sentFrames(ws)).toEqual([]);
+    connection.close();
+  });
+
+  it("keeps a snapshot whose grid size is unusable but leaves the size out", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const onMessage = jest.fn();
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, onMessage });
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "snapshot", seq: 1, ansi: "ready", canonicalSize: { cols: -1, rows: 36 } }),
+    });
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0]?.[0]).not.toHaveProperty("canonicalSize");
+    expect(onMessage.mock.calls[0]?.[0]).toMatchObject({ type: "snapshot", ansi: "ready" });
+    connection.close();
+  });
+
+  it("reattaches after the socket drops unexpectedly", async () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const next = new MockWebSocket() as unknown as WebSocket;
+    const reconnect = jest.fn().mockResolvedValue(next);
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, onMessage: jest.fn() }, reconnect);
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+
+    (ws as unknown as MockWebSocket).onclose?.();
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    connection.close();
+    jest.useRealTimers();
+  });
+
+  it("does not reattach to a terminal that has exited", async () => {
+    jest.useFakeTimers();
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const reconnect = jest.fn();
+    const statuses: string[] = [];
+    const onMessage = jest.fn();
+    const connection = new MobileTerminalConnection(ws, {
+      sessionId: SESSION_ID,
+      onMessage,
+      onStatus: (status) => statuses.push(status),
+    }, reconnect);
+    connection.attach();
+    (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+
+    (ws as unknown as MockWebSocket).onmessage?.({
+      data: JSON.stringify({ type: "exit", terminalRef: TERMINAL_REF, revision: 2, exitCode: 0 }),
+    });
+    (ws as unknown as MockWebSocket).onclose?.();
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(onMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: "exit" }));
+    expect(reconnect).not.toHaveBeenCalled();
+    expect((ws as unknown as MockWebSocket).closed).toBe(true);
+    // The screen keeps the ended state it was just told about.
+    expect(statuses).toEqual(["connecting", "open"]);
+    jest.useRealTimers();
   });
 
   it("preserves binary emulator replies when the runtime advertises byte input", () => {

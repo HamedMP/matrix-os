@@ -1552,6 +1552,7 @@ export async function createGateway(config: GatewayConfig) {
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
+      ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
         ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
       ...(internalIntegrationBaseUrl && internalPlatformToken

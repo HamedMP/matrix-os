@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,7 +36,7 @@ describe("persisted Chat run failures across desktop surfaces", () => {
     const activity = detail.activities[0]!;
     if (activity.type !== "run.error") throw new Error("Missing fixture error");
     activity.error = { code, safeMessage: oldCopy, retryable: true, recoveryActions: ["retry"] };
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+    stubLegacyChatFetch( vi.fn(async (url: string) => Response.json(
       url.includes("/api/chats?") ? { items: [detail.record] } : detail,
     )));
     const { result } = renderHook(() => useCanonicalChatState());
@@ -47,7 +48,7 @@ describe("persisted Chat run failures across desktop surfaces", () => {
   it("Web shows the saved failure after load/refresh without restoring the already-sent draft", async () => {
     const detail = failedDetail();
     CanonicalChatDetailResponseSchema.parse(detail);
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(
+    stubLegacyChatFetch( vi.fn(async (url: string) => Response.json(
       url.includes("/api/chats?") ? { items: [detail.record] } : detail,
     )));
     const { result } = renderHook(() => useCanonicalChatState());

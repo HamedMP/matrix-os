@@ -8,8 +8,8 @@ import { sql, type Selectable } from "kysely";
 import type { BotGrantsTable } from "../database.js";
 import { BotStateError, isoTimestamp, newBotStateId, optionalIsoTimestamp, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 
-export type BotEffect = "read" | "write" | "send";
-const EFFECTS: readonly BotEffect[] = ["read", "write", "send"];
+export type BotEffect = "read" | "write" | "send" | "label";
+const EFFECTS: readonly BotEffect[] = ["read", "write", "send", "label"];
 const MAX_GRANTS_LISTED = 100;
 
 export interface BotGrantRecord {

@@ -2,7 +2,7 @@ import { RailCollapse } from "./RailCollapse";
 import { WorkRailOrderItem } from "./WorkRailOrderItem";
 import { useRef } from "react";
 import { OverflowingChatTitle } from "@matrix-os/ui";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
 import { ProjectEditDialog } from "./ProjectActionDialogs";
@@ -15,6 +15,7 @@ import { projectShareMenuItems } from "./project-share-action";
 
 export function WorkRailProjectGroup({
   group,
+  fresh = true,
   shared = false,
   expanded,
   activeProjectSlug,
@@ -40,6 +41,7 @@ export function WorkRailProjectGroup({
   movingChatId,
 }: {
   group: WorkRailProjectGroupModel;
+  fresh?:boolean;
   shared?: boolean;
   expanded: boolean;
   activeProjectSlug?: string;
@@ -49,19 +51,19 @@ export function WorkRailProjectGroup({
   onSelect?: (project: Project) => void;
   onNewChat: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
-  onSelectChat: (record: CanonicalChatRecord, project: Project) => void;
+  onSelectChat: (record: ChatNavigationRecord, project: Project) => void;
   renamingChatId: string | null;
   renamePending: boolean;
-  onToggleRead?: (record: CanonicalChatRecord) => void;
+  onToggleRead?: (record: ChatNavigationRecord) => void;
   readPending?: boolean;
-  onRenameChat: (record: CanonicalChatRecord) => void;
-  onRenameCommit: (record: CanonicalChatRecord, title: string) => void;
+  onRenameChat: (record: ChatNavigationRecord) => void;
+  onRenameCommit: (record: ChatNavigationRecord, title: string) => void;
   onRenameCancel: () => void;
-  onPinChat: (record: CanonicalChatRecord) => void;
-  onDeleteChat: (record: CanonicalChatRecord) => void;
+  onPinChat: (record: ChatNavigationRecord) => void;
+  onDeleteChat: (record: ChatNavigationRecord) => void;
   sharing?: DesktopProjectSharingContext | null;
   onShareProject?: (project: Project) => void;
-  moveItems?: (record: CanonicalChatRecord) => {label: string; disabled?: boolean; onSelect: () => void}[];
+  moveItems?: (record: ChatNavigationRecord) => {label: string; disabled?: boolean; onSelect: () => void}[];
   movingChatId?: string | null;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
@@ -120,7 +122,7 @@ export function WorkRailProjectGroup({
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
       <RailCollapse expanded={expanded} className="flex flex-col gap-0.5">
           {group.chats.map((record) => (
-            <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={`project:${group.id}`}><WorkRailChatRow
+            <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={`project:${group.id}`}><WorkRailChatRow fresh={fresh}
               record={record}
               moveItems={moveItems?.(record)}
               moving={movingChatId === record.chat.id}
