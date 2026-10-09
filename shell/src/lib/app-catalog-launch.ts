@@ -1,7 +1,7 @@
 import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 import { extractSlug } from "@/components/app-viewer-helpers";
 
-type CatalogApp = { path?: unknown; file?: unknown; slug?: unknown };
+type CatalogApp = { path?: unknown; file?: unknown; slug?: unknown; ownerPath?: unknown };
 const SAFE_MANIFEST_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Physical owner folders are catalog references, not runtime/grant identities. */
@@ -23,7 +23,7 @@ export function createCatalogAppPathResolver(apps: readonly CatalogApp[] | undef
   const physical = new Map<string, string | null>();
   const canonical = new Map<string, string | null>();
   for (const app of apps) {
-    const owner = canonicalOsViewCatalogPath(app);
+    const owner = canonicalOsViewCatalogPath({ path: app.ownerPath }) ?? canonicalOsViewCatalogPath(app);
     const launch = catalogAppLaunchPath(app);
     if (!owner || !launch) continue;
     physical.set(owner, physical.has(owner) ? null : launch);

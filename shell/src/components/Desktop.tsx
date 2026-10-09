@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
+import { useCatalogAppShortcuts } from "@/hooks/useCatalogAppShortcuts";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -86,11 +87,6 @@ import { openShellSupport } from "@/lib/posthog-client";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
-// Stable fallback so `pinnedApps` keeps a constant reference when the store
-// value is absent — an inline `?? []` would allocate a fresh array each render
-// and destabilize every memo/callback that depends on `pinnedApps`. Treated as
-// read-only by convention; consumers always build new arrays rather than mutate.
-const EMPTY_PINNED_APPS: string[] = [];
 
 interface DesktopProps {
   launchAppPath?: string | null;
@@ -129,6 +125,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const installedApps = useMemo(
     () => apiApps.map((app) => ({
       name: app.name,
+      ownerPath: app.ownerPath,
       path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
       iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
     })),
@@ -147,9 +144,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   // account → journey → Desktop handoff cannot visually swap designs.
 
   const dock = useDesktopConfigStore((s) => s.dock);
-  const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
-  const togglePin = useDesktopConfigStore((s) => s.togglePin);
-  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
+  const { pinnedApps, togglePin, dockOrder } = useCatalogAppShortcuts(apiApps);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
   const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
   const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);

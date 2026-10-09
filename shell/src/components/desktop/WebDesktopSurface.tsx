@@ -1,5 +1,7 @@
 "use client";
 
+import { createCatalogAppPathResolver } from "@/lib/app-catalog-launch";
+
 import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
@@ -167,7 +169,7 @@ function DesktopDestination({
             target.removeEventListener("pointerup", up);
             const dx = upEvent.clientX - startX;
             const dy = upEvent.clientY - startY;
-            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(app.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
+            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(placement.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
           };
           target.addEventListener("pointermove", move);
           target.addEventListener("pointerup", up);
@@ -196,7 +198,7 @@ function DesktopDestination({
             role="menuitem"
             className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
             onClick={() => {
-              onRemove(app.path);
+              onRemove(placement.path);
               setMenu(null);
             }}
           >
@@ -290,12 +292,16 @@ export function WebDesktopSurface({
     () => fitOsViewDesktopIconsToViewport(canonicalPlacements, viewport),
     [canonicalPlacements, viewport],
   );
-  const placedApps = useMemo(() => placements.flatMap((placement) => {
-    const app = desktopApps.find((candidate) => (
-      normalizeOsViewDesktopAppPath(candidate.path) === placement.path
-    )) ?? apps.find((candidate) => normalizeOsViewDesktopAppPath(candidate.path) === placement.path);
-    return app ? [{ app: { ...app, path: placement.path }, placement }] : [];
-  }), [apps, desktopApps, placements]);
+  const placedApps = useMemo(() => {
+    const resolvePath = createCatalogAppPathResolver(apps);
+    return placements.flatMap((placement) => {
+      const path = normalizeOsViewDesktopAppPath(resolvePath(placement.path));
+      const app = desktopApps.find((candidate) => (
+        normalizeOsViewDesktopAppPath(candidate.path) === path
+      )) ?? apps.find((candidate) => normalizeOsViewDesktopAppPath(candidate.path) === path);
+      return app ? [{ app: { ...app, path }, placement }] : [];
+    });
+  }, [apps, desktopApps, placements]);
   const filesApp = apps.find((app) => app.path === "__file-browser__");
   const filesWindow = windows.find((windowRecord) => windowRecord.path === "__file-browser__");
   const otherRunningWindows = windows.filter((windowRecord) => windowRecord.path !== "__file-browser__");

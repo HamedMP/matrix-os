@@ -369,3 +369,31 @@ describe("WebDesktopSurface", () => {
     expect(onCloseWindow).toHaveBeenCalledWith("terminal-window");
   });
 });
+
+it("keeps a saved moved-app placement visible and launches its manifest identity without changing its owner coordinates", () => {
+  const onOpenApp = vi.fn(); const onRemoveDesktopIcon = vi.fn();
+  render(<WebDesktopSurface apps={[{ name: "Folio", path: "apps/folio/index.html", ownerPath: "apps/finance/ledger/index.html" } as typeof apps[number]]}
+    windows={[]} fullscreenWindowId={null} launcherOpen={false}
+    desktopIcons={[{ path: "apps/finance/ledger/index.html", x: 28, y: 58 }]}
+    onOpenApp={onOpenApp} onRemoveDesktopIcon={onRemoveDesktopIcon}
+    onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+    onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+  const icon = screen.getByRole("button", { name: "Folio" });
+  fireEvent.doubleClick(icon);
+  expect(onOpenApp).toHaveBeenCalledWith("apps/folio/index.html", "Folio");
+  fireEvent.contextMenu(icon);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Remove Folio from Desktop" }));
+  expect(onRemoveDesktopIcon).toHaveBeenCalledWith("apps/finance/ledger/index.html");
+});
+
+it("preserves a placed manifest identity when a different app reuses its old folder", () => {
+  render(<WebDesktopSurface apps={[
+    { name: "Folio", path: "apps/folio/index.html", ownerPath: "apps/moved-ledger/index.html" },
+    { name: "Other", path: "apps/other/index.html", ownerPath: "apps/folio/index.html" },
+  ] as typeof apps} windows={[]} fullscreenWindowId={null} launcherOpen={false}
+    desktopIcons={[{ path: "apps/folio/index.html", x: 28, y: 58 }]}
+    onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+    onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Folio" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Other" })).toBeNull();
+});

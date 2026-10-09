@@ -173,3 +173,16 @@ it("preserves supported game migrations and legacy file apps without inventing i
   const unknown = createCatalogAppPathResolver([{ slug: "folio", path: "apps/renamed/index.html" }]);
   expect(unknown("apps/unknown/index.html")).toBe("apps/unknown/index.html");
 });
+
+it("retains the physical alias needed to reconcile saved shortcuts after current and cached catalog normalization", async () => {
+  const raw = [{ name: "Folio", slug: "folio", path: "/files/apps/finance/ledger/index.html" }];
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(raw));
+  try {
+    const current = await listApps();
+    const cached = hydrateAppIconUrls(raw, undefined, path => path)!;
+    for (const catalog of [current, cached]) {
+      expect(createCatalogAppPathResolver(catalog)("apps/finance/ledger/index.html")).toBe("apps/folio/index.html");
+      expect(catalog[0]?.path).toBe("apps/folio/index.html");
+    }
+  } finally { fetch.mockRestore(); }
+});

@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { useCatalogAppShortcuts } from "../../shell/src/hooks/useCatalogAppShortcuts";
+import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config";
 import { useDesktopBootstrap } from "../../shell/src/components/desktop/useDesktopBootstrap";
 import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from "../../shell/src/hooks/useWindowManager";
 import { resetWebOsViewStateClientForTests } from "../../shell/src/lib/os-view-state-client";
@@ -80,4 +82,38 @@ it("keeps a saved manifest identity when another app occupies the old physical f
   await waitFor(() => expect(result.current.settled).toBe(true));
   expect(useWindowManager.getState().windows).toHaveLength(1);
   expect(useWindowManager.getState().windows[0]).toMatchObject({ path: "apps/folio/index.html", title: "Folio" });
+});
+
+
+it("projects saved pins and ordering for both Web presentations, including subsequent durable hydration and unpinning", () => {
+  const old = "apps/finance/ledger/index.html"; const path = "apps/folio/index.html";
+  const catalog = [{ name: "Folio", slug: "folio", path, ownerPath: old }];
+  const togglePin = vi.fn(); const previous = useDesktopConfigStore.getState();
+  useDesktopConfigStore.setState({ pinnedApps: [old], dockOrder: { userApps: [old] }, togglePin });
+  try {
+    const { result } = renderHook(() => useCatalogAppShortcuts(catalog));
+    expect(result.current.pinnedApps).toEqual([path]);
+    expect(result.current.dockOrder?.userApps).toEqual([path]);
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual([old]);
+    act(() => useDesktopConfigStore.getState().setPinnedApps(["__terminal__", old]));
+    expect(result.current.pinnedApps).toEqual(["__terminal__", path]);
+    act(() => result.current.togglePin(path));
+    expect(togglePin).toHaveBeenCalledWith(old);
+  } finally { useDesktopConfigStore.setState(previous); }
+});
+
+it("keeps saved manifest pins when another app reuses the old folder and follows refreshed physical aliases", () => {
+  const canonical = "apps/folio/index.html"; const old = "apps/finance/ledger/index.html";
+  const previous = useDesktopConfigStore.getState();
+  useDesktopConfigStore.setState({ pinnedApps: [canonical], dockOrder: { userApps: [canonical] } });
+  try {
+    const { result, rerender } = renderHook(({ catalog }) => useCatalogAppShortcuts(catalog), { initialProps: { catalog: [
+      { name: "Folio", slug: "folio", path: canonical, ownerPath: old },
+      { name: "Other", slug: "other", path: "apps/other/index.html", ownerPath: canonical },
+    ] } });
+    expect(result.current.pinnedApps).toEqual([canonical]);
+    act(() => useDesktopConfigStore.getState().setPinnedApps(["apps/new-ledger/index.html"]));
+    rerender({ catalog: [{ name: "Folio", slug: "folio", path: canonical, ownerPath: "apps/new-ledger/index.html" }] });
+    expect(result.current.pinnedApps).toEqual([canonical]);
+  } finally { useDesktopConfigStore.setState(previous); }
 });
