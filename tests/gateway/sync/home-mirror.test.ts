@@ -1500,7 +1500,8 @@ describe("createHomeMirror", () => {
           if (size !== undefined && size > LIMIT) throw new SyncObjectTooLargeError();
           return originalPut(key, body, options);
         }) as R2Client["putObject"];
-        if (advertise) (r2 as R2Client).maxPutObjectBytes = LIMIT;
+        // R2Client exposes the limit read-only; the fake sets it through a writable view.
+        if (advertise) (r2 as { maxPutObjectBytes?: number }).maxPutObjectBytes = LIMIT;
       }
 
       async function seedLocal() {
