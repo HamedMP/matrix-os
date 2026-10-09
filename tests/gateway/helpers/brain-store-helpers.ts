@@ -47,8 +47,14 @@ export interface BrainHarness {
   destroy(): Promise<void>;
 }
 
-export async function createBrainHarness(options: BrainHarnessOptions = {}): Promise<BrainHarness> {
+/** A PGlite brain; with `trace`, every statement's SQL is pushed to it (BEGIN and COMMIT included). */
+export async function createBrainHarness(options: BrainHarnessOptions = {}, trace?: string[]): Promise<BrainHarness> {
   const pglite = await KyselyPGlite.create();
+  if (trace !== undefined) {
+    const client = pglite.client as unknown as { query: (text: string, ...rest: unknown[]) => Promise<unknown> };
+    const query = client.query.bind(client);
+    client.query = (text, ...rest) => { trace.push(text); return query(text, ...rest); };
+  }
   let clock = new Date(BRAIN_CLOCK_START);
   const repository = new BrainRepository(pglite.dialect, { ...options, now: () => clock });
   await repository.bootstrap();
