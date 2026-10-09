@@ -231,12 +231,16 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
     const progress: Progress = { steps: job.steps, result: null };
     const limitTimer = setTimeout(() => controller.abort("time_limit"), limits.jobWallClockMs);
     limitTimer.unref();
+    // At most one timed heartbeat in flight: a tick while the last one still waits on a slow database is skipped.
+    let beating = false;
     const beatTimer = setInterval(() => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || beating) return;
+      beating = true;
       deps.store.heartbeat(job, limits.leaseMs).then((beat) => {
         if (!beat.owned) controller.abort("lease_lost");
         else if (beat.cancelRequested) controller.abort("cancelled");
-      }, (error: unknown) => console.error("[brain-jobs] Heartbeat failed:", errorName(error)));
+      }, (error: unknown) => console.error("[brain-jobs] Heartbeat failed:", errorName(error)))
+        .finally(() => { beating = false; });
     }, limits.heartbeatMs);
     beatTimer.unref();
     let end: RunEnd;
