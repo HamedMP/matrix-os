@@ -38,6 +38,7 @@ import {
 import { useChatContext } from "@/stores/chat-context";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
+import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -291,7 +292,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
             : { terminalLayoutId: createTerminalLayoutId(), terminalPersistence: "durable" as const }),
         }];
       }
-      const existing = prev.findIndex((o) => o.app.path === app.path);
+      const existing = prev.findIndex((o) => normalizeAppBridgeLaunchPath(o.app.path) === normalizeAppBridgeLaunchPath(app.path));
       if (existing >= 0) {
         const next = prev.slice();
         const [taken] = next.splice(existing, 1);
@@ -304,6 +305,15 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     setView("app");
     return true;
   }, []);
+
+  const openAppFromBridge = useCallback((name: string, requestedPath: string) => {
+    routeAppBridgeLaunch(name, requestedPath, (title, path) => {
+      const registered = apps.find((candidate) => normalizeAppBridgeLaunchPath(candidate.path) === path);
+      openApp(registered ? { ...registered, path } : {
+        id: `app:${path}`, name: title, path, iconSlug: nameToSlug(title),
+      });
+    });
+  }, [apps, openApp]);
 
   const openAgentSetupTerminal = useCallback((action: TerminalLaunchAction) => {
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
@@ -490,7 +500,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge} />
             </motion.div>
           );
         })}
@@ -598,10 +608,12 @@ function MobileAppFrame({
   openApp,
   chat,
   visible,
+  onOpenApp,
 }: {
   openApp: OpenApp;
   visible: boolean;
   chat: ReturnType<typeof useChatContext>;
+  onOpenApp: (name: string, path: string) => void;
 }) {
   const { app, id: openId } = openApp;
   if (app.path.startsWith("__terminal__")) {
@@ -676,7 +688,7 @@ function MobileAppFrame({
       </div>
     );
   }
-  return <AppViewer path={app.path} onOpenApp={() => {}} />;
+  return <AppViewer path={app.path} onOpenApp={onOpenApp} />;
 }
 
 function AppSwitcher({

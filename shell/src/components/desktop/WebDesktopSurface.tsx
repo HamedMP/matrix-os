@@ -371,7 +371,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <img src="/system-app-icons/v2/launcher.png" alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
+          <img src={`${getGatewayUrl()}/system-app-icons/v2/launcher.png`} alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
         </TaskbarButton>
 
         <TaskbarButton

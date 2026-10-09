@@ -39,6 +39,17 @@ const windows = [
 ];
 
 describe("WebDesktopSurface", () => {
+  it("loads launcher artwork from the explicitly selected computer and runtime", () => {
+    const previous = window.location.href;
+    window.history.replaceState({}, "", "/vm/pr-2406?runtime=pr-2406");
+    try {
+      render(<WebDesktopSurface apps={apps} windows={[]} fullscreenWindowId={null} launcherOpen={false}
+        onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Open App Launcher" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/launcher.png`);
+    } finally { window.history.replaceState({}, "", previous); }
+  });
   it("renders the native Desktop header without restoring the deprecated app menu", () => {
     render(
       <WebDesktopSurface
@@ -263,7 +274,7 @@ describe("WebDesktopSurface", () => {
 
     const launcher = screen.getByRole("button", { name: "Open App Launcher" });
     expect(launcher.querySelector("span svg")).toBeNull();
-    expect(launcher.querySelector("img")?.getAttribute("src")).toBe("/system-app-icons/v2/launcher.png");
+    expect(launcher.querySelector("img")?.getAttribute("src")).toBe(`${window.location.origin}/system-app-icons/v2/launcher.png`);
     expect(launcher.querySelector("img")?.width).toBe(44);
     fireEvent.error(terminalTile!.querySelector("img")!);
     expect(terminalTile?.style.background).toBe("transparent");
