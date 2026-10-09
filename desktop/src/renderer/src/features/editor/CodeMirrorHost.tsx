@@ -6,11 +6,10 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { useEffect, useRef, useState } from "react";
 import { getThemeEditorColors } from "../../design/themes";
-import { resolveThemeMode } from "../../design/themes/apply";
 import { toUserMessage } from "../../lib/errors";
 import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
@@ -79,11 +78,12 @@ function languageExtension(filename: string) {
 export default function CodeMirrorHost({ taskId, path }: { taskId: string; path: string }) {
   const api = useConnection((s) => s.api);
   const setDirty = useEditorTabs((s) => s.setDirty);
-  // Recreate the editor when the unified theme changes; the document cache
-  // preserves unsaved content across the remount.
+  // Reconfigure appearance without replacing the edited document or history.
   const themeId = useAppearance((s) => s.themeId);
   const themeMode = useAppearance((s) => s.resolvedMode);
   const customTheme = useAppearance((s) => s.customTheme);
+  const [themeCompartment] = useState(() => new Compartment());
+  const themeRef = useRef({ colors: getThemeEditorColors(themeId, themeMode, customTheme), dark: themeMode === "dark" });
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const fileRef = useRef<OpenedFile | null>(null);
@@ -95,17 +95,16 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
   const doSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
+    themeRef.current = { colors: getThemeEditorColors(themeId, themeMode, customTheme), dark: themeMode === 'dark' };
+    viewRef.current?.dispatch({ effects: themeCompartment.reconfigure(buildEditorTheme(themeRef.current.colors, themeRef.current.dark)) });
+  }, [themeId, themeMode, customTheme, themeCompartment]);
+
+  useEffect(() => {
     if (!api || !hostRef.current) return;
     const files = createFilesApi(api);
     const host = hostRef.current;
     const key = cacheKey(taskId, path);
     let disposed = false;
-    const resolvedThemeMode = resolveThemeMode(themeMode);
-    const editorThemeExtensions = buildEditorTheme(
-      getThemeEditorColors(themeId, resolvedThemeMode, customTheme),
-      resolvedThemeMode === "dark",
-    );
-
     void openFile(files, path)
       .then((file) => {
         if (disposed) return;
@@ -124,7 +123,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
             history(),
             keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
             languageExtension(path),
-            ...editorThemeExtensions,
+            themeCompartment.of(buildEditorTheme(themeRef.current.colors, themeRef.current.dark)),
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 const content = update.state.doc.toString();
@@ -154,7 +153,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [api, path, setDirty, taskId, themeId, themeMode, customTheme]);
+  }, [api, path, setDirty, taskId, themeCompartment]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
