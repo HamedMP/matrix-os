@@ -57,3 +57,11 @@ h1 { font-size: 28px; letter-spacing: -.045em; font-weight: 650; }
 .empty-state__icon img { object-fit: contain; }
 .empty-state h2 { font-family: var(--matrix-font-heading, "Bricolage Grotesque", sans-serif); font-size: 28px; font-weight: 500; letter-spacing: -.035em; }
 .button--primary { background: var(--matrix-brand-teal); color: var(--matrix-brand-paper); }
+
+/* Short windows scroll the document as one pane instead of shrinking its body away. */
+@media (max-height: 500px) {
+ .app-shell .editor-pane { overflow-y: auto; }
+ .app-shell .editor-pane > * { flex-shrink: 0; }
+ .app-shell :is(.rich-editor-wrap, .content-input) { flex: 0 0 auto; min-height: 180px; }
+ .app-shell .rich-editor { flex: none; overflow: visible; }
+}
