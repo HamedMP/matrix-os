@@ -273,14 +273,14 @@ describe("CanonicalChatRoute", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(routeApi.post).toHaveBeenCalledWith(
-      `/api/chats/${chat.id}/runs/${activeRun!.runId}/cancel?readStateVersion=1`,
+      `/api/chats/${chat.id}/runs/${activeRun!.runId}/cancel?readStateVersion=1&importSourceVersion=1`,
       { clientRequestId: expect.any(String) },
     ));
     fireEvent.click(cancel);
 
     await waitFor(() => {
       expect(routeApi.delete).toHaveBeenCalledWith(
-        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}?readStateVersion=1`,
+        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}?readStateVersion=1&importSourceVersion=1`,
         expect.objectContaining({
           clientRequestId: expect.any(String),
           baseRevision: chat.revision,
