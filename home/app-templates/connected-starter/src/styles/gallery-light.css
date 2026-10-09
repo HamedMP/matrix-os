@@ -162,3 +162,11 @@
 @media (max-width: 700px), (pointer: coarse) {
   .workbench[data-app] .segmented button, .workbench[data-app] .balance select { min-height: 44px; }
 }
+/* Subscription rows adapt to their card width, including split desktop windows. */
+.workbench[data-app="subscriptions"] .commitments { container-type: inline-size; }
+@container (max-width: 520px) {
+  .workbench[data-app="subscriptions"] .commitment-list > li { grid-template-columns: 32px minmax(0, 1fr); gap: 10px; }
+  .workbench[data-app="subscriptions"] .commitment-cost,
+  .workbench[data-app="subscriptions"] .commitment-date { grid-column: 2; text-align: left; }
+}
+.workbench[data-app] .habit-history { margin-top: 24px; }
