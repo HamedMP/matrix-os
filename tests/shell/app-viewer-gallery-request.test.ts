@@ -66,3 +66,7 @@ it("runs canonical starter inventory through the same parent broker without app 
   expect(await runInContext("window.MatrixOS.integrations()", context)).toEqual([{ service: "gmail", account_label: "personal", status: "active" }]);
   expect(requests).toEqual(["/api/integrations"]);
 });
+
+it.each(['foo/app-gallery','apps/foo/app-gallery'])('rejects Gallery privileges for nested identity %s',(identity)=>{
+ for(const url of ['/api/integrations','/api/app-gallery','/api/app-gallery/folio/install'])expect(()=>prepareBridgeFetchRequest(identity,{url,init:{method:url.endsWith('/install')?'POST':'GET'}})).toThrow();
+});

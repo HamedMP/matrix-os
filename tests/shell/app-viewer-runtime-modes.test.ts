@@ -202,3 +202,8 @@ describe("AppViewer bridged runtime loading", () => {
   });
 
 });
+
+it('permits owner-initiated CSV downloads without granting same-origin access',()=>{
+ expect(APP_IFRAME_SANDBOX.split(' ')).toContain('allow-downloads');
+ expect(APP_IFRAME_SANDBOX.split(' ')).not.toContain('allow-same-origin');
+});
