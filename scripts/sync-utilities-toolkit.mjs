@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, readdir, writeFile, lstat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { adaptToolkitSource, sha256, verifySnapshot } from './utility-toolkit-snapshot.mjs';
+import { adaptToolkitSource, sha256, verifySnapshot, inspectGeneratedFiles, reconcileGeneratedFiles } from './utility-toolkit-snapshot.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const appRoot = join(root, 'home/apps/utilities');
@@ -24,6 +24,7 @@ if (process.argv[2] === '--verify') {
   const revision = git('rev-parse', 'HEAD');
   const dirty = Boolean(git('status', '--porcelain', '--', 'src/lib/free-tools', 'src/app/tools', 'public/tools'));
   if (dirty && !process.argv.includes('--allow-dirty')) throw new Error('Commit the canonical website toolkit before snapshotting it.');
+  await inspectGeneratedFiles(appRoot);
   const files = [];
   async function copy(source, target, text) {
     const absolute = join(siteRoot, source);
@@ -47,6 +48,7 @@ if (process.argv[2] === '--verify') {
   await mkdir(dirname(join(appRoot, telemetryPath)), { recursive: true });
   await writeFile(join(appRoot, telemetryPath), telemetry);
   files.push({ path: telemetryPath, sha256: sha256(telemetry) });
+  await reconcileGeneratedFiles(appRoot, files.map((file) => file.path));
   await mkdir(dirname(launcherIconPath), { recursive: true });
   await writeFile(launcherIconPath, await launcherArtwork());
   await writeFile(manifestPath, JSON.stringify({ repository: 'FinnaAI/matrix-os-site', revision, dirty, adaptations: ['relative imports and app assets', 'no website analytics', 'ephemeral audio session'], files }, null, 2) + '\n');
