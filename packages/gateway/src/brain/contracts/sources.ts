@@ -252,10 +252,9 @@ export const BRAIN_SOURCE_OPTIONS_MAX = 100;
 /**
  * Config rows live in the handler's own prefixed table keyed by (owner_id, scope_id, source_id), referencing
  * brain_sources ON DELETE CASCADE. parseConfig throws BrainFeatureError("source_config_invalid"). identify never
- * touches the network. createAdapter reads credentials per run and never keeps them. The sources service connects in
- * this order: parseConfig, checkConfig, createSource, saveConfig, and deleteSource when saveConfig still throws, so a
- * refused config never leaves a live brain_sources row. A config update saves inside the transaction that moves the
- * source revision (saveConfig's `db`), so the config and the revision commit together or not at all.
+ * touches the network. createAdapter reads credentials per run and never keeps them. The sources service runs
+ * parseConfig and checkConfig, then saves inside the transaction that creates the source or moves its revision
+ * (saveConfig's `db`), so a source and its config commit together or not at all.
  */
 export interface BrainSourceKindHandler<TConfig> {
   readonly kind: BrainConnectableSourceKind;
