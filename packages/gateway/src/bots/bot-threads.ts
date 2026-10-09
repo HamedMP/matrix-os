@@ -29,9 +29,14 @@ import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.j
 import { createBotBindingsRepository, type BotThreadCursor } from "./repositories/bindings.js";
 import { BotStateError } from "./repositories/shared.js";
 
-/** Live threads per Bot; deleting a thread Chat frees its place. */
+/**
+ * Live threads per Bot. Archived thread Chats still count, as archived Bots count toward the Bot cap; deleting a
+ * thread Chat frees its place.
+ */
 export const MAX_BOT_THREADS = 1_000;
 const DEFAULT_THREAD_TITLE = "New chat";
+/** Chats one list page reads at a time, so a 100-thread page does not queue hundreds of queries on the pool. */
+const LIST_READ_CONCURRENCY = 10;
 
 export type BotThreadErrorCode = "invalid_request" | "not_found" | "conflict" | "rate_limited" | "unavailable";
 
@@ -147,7 +152,11 @@ export function createBotThreads(deps: {
         ...(query.cursor ? { cursor: decodeCursor(query.cursor) } : {}),
       });
       const owner = { type: "personal" as const, ownerId };
-      const records = await Promise.all(page.chatIds.map((chatId) => deps.chats.get(owner, chatId)));
+      const records: Awaited<ReturnType<typeof deps.chats.get>>[] = [];
+      for (let start = 0; start < page.chatIds.length; start += LIST_READ_CONCURRENCY) {
+        const batch = page.chatIds.slice(start, start + LIST_READ_CONCURRENCY);
+        records.push(...await Promise.all(batch.map((chatId) => deps.chats.get(owner, chatId))));
+      }
       return CanonicalChatListResponseSchema.parse({
         items: records.filter((record) => record !== null),
         ...(page.next ? { nextCursor: encodeCursor(page.next) } : {}),
