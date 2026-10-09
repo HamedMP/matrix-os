@@ -220,6 +220,7 @@ type CreatePlatformApp = (deps: {
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
+  sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
@@ -688,6 +689,7 @@ async function startPlatformServerWithCleanup(
   let internalSyncRoutes: Hono | undefined;
   let customerVpsObjectStore: CustomerVpsObjectStore | undefined;
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
+  let sitesObjectStore: GatewayR2Client | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
   const s3Endpoint = process.env.S3_ENDPOINT ?? process.env.R2_ENDPOINT;
   const s3AccessKey = process.env.S3_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID;
@@ -737,6 +739,19 @@ async function startPlatformServerWithCleanup(
       accountId: process.env.S3_BUNDLES_ACCOUNT_ID ?? process.env.R2_BUNDLES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID,
       forcePathStyle: process.env.S3_BUNDLES_FORCE_PATH_STYLE === 'true',
     });
+  }
+
+  // Dedicated public asset credentials never fall back to the owner sync store.
+  const sitesBucket = process.env.R2_SITES_BUCKET;
+  const sitesAccessKey = process.env.R2_SITES_ACCESS_KEY_ID;
+  const sitesSecretKey = process.env.R2_SITES_SECRET_ACCESS_KEY;
+  if (sitesBucket && sitesAccessKey && sitesSecretKey) {
+    if (sitesBucket === s3Bucket || sitesBucket === bundleS3Bucket) throw new Error('Dedicated sites storage is required');
+    createR2Client ??= (await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')).createR2Client;
+    sitesObjectStore = await createR2Client({ bucket: sitesBucket, accessKeyId: sitesAccessKey,
+      secretAccessKey: sitesSecretKey, endpoint: process.env.R2_SITES_ENDPOINT,
+      accountId: process.env.R2_SITES_ACCOUNT_ID ?? process.env.R2_ACCOUNT_ID });
+    registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
 
   let customerVpsService: CustomerVpsService | undefined;
@@ -1007,6 +1022,7 @@ async function startPlatformServerWithCleanup(
     goldenSnapshotConfig,
     customerVpsObjectStore,
     hostBundleObjectStore,
+    sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     env: appEnv,
   });
@@ -1065,6 +1081,7 @@ async function startPlatformServerWithCleanup(
         posthogProcessErrors.dispose();
         await app.shutdownPostHog();
         await processPosthogErrorTracker.shutdown();
+        sitesObjectStore?.destroy();
         await Promise.all([db.destroy(), atsDb?.destroy()]);
       })()
         .catch((destroyErr: unknown) => {

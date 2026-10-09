@@ -58,7 +58,8 @@ describe('WhatsApp schema startup', () => {
       await runPlatformStartupMigrations(db);
       expect(channelCreates).toBe(1);
       const revisions = await sql<{ scope: string; generation: number; fingerprint: string }>`
-        SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope
+        SELECT scope, generation, fingerprint FROM platform_schema_revisions
+        WHERE scope IN ('core', 'whatsapp') ORDER BY scope
       `.execute(db);
       expect(revisions.rows).toEqual([
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },

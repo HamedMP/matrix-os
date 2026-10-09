@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { eraseOwnerSiteRegistry } from '../sites/account-lifecycle.js';
 import { sql } from 'kysely';
 import { AccountDeletionOwnershipError } from './types.js';
 import { lockAccountDeletionOwner } from './repository.js';
@@ -153,6 +154,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     // Handle subqueries must run before deleting their source runtime records.
     await trx.executor.deleteFrom('matrix_users').where('handle','in',handles).execute();
     await trx.executor.updateTable('port_assignments').set({ handle: null }).where('handle','in',handles).execute();
+    await eraseOwnerSiteRegistry(trx, owner);
     await trx.executor.deleteFrom('user_machines').where('clerk_user_id','=',owner).execute();
     await trx.executor.deleteFrom('containers').where('clerk_user_id','=',owner).execute();
     // Gateway integration tables reference users with ON DELETE CASCADE, erasing encrypted credentials too.

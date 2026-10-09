@@ -1,0 +1,11 @@
+name = "matrix-public-sites"
+main = "src/sites.ts"
+compatibility_date = "2026-10-09"
+workers_dev = false
+preview_urls = false
+routes = [ { pattern = "matrix.page", custom_domain = true } ]
+
+[vars]
+SITES_PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"
+# Provision SITES_EDGE_SECRET in the Worker and platform before deploying.
+# Assets require a private dedicated R2_SITES_BUCKET (never the owner sync bucket).
