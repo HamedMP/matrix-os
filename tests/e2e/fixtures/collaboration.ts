@@ -1,115 +1,127 @@
-import { isAbsolute } from "node:path";
-import { test as base, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { test as base, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { z } from "zod/v4";
+import {
+  assertCollaborationPreconditions,
+  assertMultiComputerMemberPreconditions,
+  loadCollaborationIdentities,
+  type CollaborationActorPreconditions,
+  type CollaborationIdentityEnvironment,
+  type CollaborationRole,
+} from "./collaboration-identities.js";
+import { signInCollaborationIdentity } from "./clerk-sign-in.js";
+import { createCollaborationDirectHarness } from "../helpers/collaboration-direct-harness.js";
 
-const RuntimeHandleSchema = z.string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid runtime handle");
-
-const StorageStatePathSchema = z.string()
-  .min(1)
-  .max(4_096)
-  .refine(isAbsolute, "Storage state path must be absolute");
-
-const CollaborationJourneyEnvironmentSchema = z.object({
-  MATRIX_COLLABORATION_E2E_BASE_URL: z.url(),
-  MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: RuntimeHandleSchema,
-  MATRIX_COLLABORATION_E2E_OWNER_STATE: StorageStatePathSchema,
-  MATRIX_COLLABORATION_E2E_EDITOR_STATE: StorageStatePathSchema,
-  MATRIX_COLLABORATION_E2E_PROJECT_ID: z.string().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/),
-  MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
-  MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: z.email().max(254),
-  MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: z.string().min(2).max(63).regex(/^[a-z0-9][a-z0-9-]*$/),
-});
-
-export interface CollaborationJourneyEnvironment {
-  baseUrl: string;
-  runtimePath: string;
-  ownerStorageState: string;
-  editorStorageState: string;
-  projectId: string;
-  editorActorId: string;
-  editorEmail: string;
-  editorUsername: string;
-}
+const ROLES = ["owner", "member", "outsider", "guest"] as const;
+const ComputersSchema = z.object({ items: z.array(z.object({ handle: z.string() }).passthrough()).max(20), hasMore: z.boolean() }).passthrough();
+const JourneySchema = z.object({ phase: z.string().min(1) }).passthrough();
+const OrganizationsSchema = z.object({ organizations: z.array(z.object({ organizationId: z.string(), role: z.string() }).passthrough()).max(1_000) }).passthrough();
+const DiscoverySchema = z.object({ items: z.array(z.unknown()).max(1_000) }).passthrough();
 
 export interface CollaborationJourneyActor {
+  userId: string;
   context: BrowserContext;
   page: Page;
+  direct: ReturnType<typeof createCollaborationDirectHarness>;
+  preconditions: CollaborationActorPreconditions;
 }
 
-export interface TwoAccountCollaborationJourney {
-  owner: CollaborationJourneyActor;
-  editor: CollaborationJourneyActor;
-  platformUrl: string;
-  runtimeUrl: string;
+export interface FourAccountCollaborationJourney {
+  config: CollaborationIdentityEnvironment;
+  actors: Record<CollaborationRole, CollaborationJourneyActor>;
+  multiComputerMember?: CollaborationJourneyActor;
+  previewUrl: string;
   close(): Promise<void>;
 }
 
-export function parseCollaborationJourneyEnvironment(
-  environment: Record<string, string | undefined> = process.env,
-): CollaborationJourneyEnvironment {
-  const parsed = CollaborationJourneyEnvironmentSchema.parse(environment);
-  const baseUrl = new URL(parsed.MATRIX_COLLABORATION_E2E_BASE_URL);
-  const localHttp = baseUrl.protocol === "http:"
-    && ["localhost", "127.0.0.1", "::1"].includes(baseUrl.hostname);
-  if (baseUrl.username || baseUrl.password || baseUrl.pathname !== "/" || baseUrl.search || baseUrl.hash
-    || (baseUrl.protocol !== "https:" && !localHttp)) {
-    throw new Error("Collaboration E2E base URL must be a clean HTTPS origin or local HTTP origin");
-  }
-  if (baseUrl.hostname.endsWith(".matrix-os.com") && baseUrl.hostname !== "app.matrix-os.com") {
-    throw new Error("Matrix runtimes use app.matrix-os.com session or /vm routes, not per-handle subdomains");
-  }
+async function getJson(request: APIRequestContext, origin: string, path: string): Promise<unknown> {
+  const response = await request.get(new URL(path, origin).toString(), { timeout: 10_000, failOnStatusCode: false });
+  if (!response.ok()) throw new Error("Collaboration fixture platform precondition is unavailable");
+  return await response.json() as unknown;
+}
+
+async function loadPreconditions(
+  context: BrowserContext,
+  config: CollaborationIdentityEnvironment,
+): Promise<CollaborationActorPreconditions> {
+  const request = context.request;
+  const [computers, journey, organizations, inbox, shared] = await Promise.all([
+    getJson(request, config.baseUrl, "/api/auth/computers"),
+    getJson(request, config.baseUrl, "/api/journey"),
+    getJson(request, config.baseUrl, "/api/organizations"),
+    getJson(request, config.baseUrl, "/api/collaboration/inbox"),
+    getJson(request, config.baseUrl, "/api/collaboration/shared"),
+  ]);
+  const inventory = ComputersSchema.parse(computers);
+  if (inventory.hasMore) throw new Error("Collaboration fixture computer inventory is incomplete");
   return {
-    baseUrl: baseUrl.origin,
-    runtimePath: `/vm/${encodeURIComponent(parsed.MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE)}`,
-    ownerStorageState: parsed.MATRIX_COLLABORATION_E2E_OWNER_STATE,
-    editorStorageState: parsed.MATRIX_COLLABORATION_E2E_EDITOR_STATE,
-    projectId: parsed.MATRIX_COLLABORATION_E2E_PROJECT_ID,
-    editorActorId: parsed.MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID,
-    editorEmail: parsed.MATRIX_COLLABORATION_E2E_EDITOR_EMAIL,
-    editorUsername: parsed.MATRIX_COLLABORATION_E2E_EDITOR_USERNAME,
+    computers: inventory.items.map((item) => ({ handle: item.handle })),
+    phase: JourneySchema.parse(journey).phase,
+    organizations: OrganizationsSchema.parse(organizations).organizations,
+    inboxCount: DiscoverySchema.parse(inbox).items.length,
+    sharedCount: DiscoverySchema.parse(shared).items.length,
   };
 }
 
-export async function createTwoAccountCollaborationJourney(
+export async function createFourAccountCollaborationJourney(
   browser: Browser,
   environment: Record<string, string | undefined> = process.env,
-): Promise<TwoAccountCollaborationJourney> {
-  const config = parseCollaborationJourneyEnvironment(environment);
-  const [ownerContext, editorContext] = await Promise.all([
-    browser.newContext({ baseURL: config.baseUrl, storageState: config.ownerStorageState }),
-    browser.newContext({ baseURL: config.baseUrl, storageState: config.editorStorageState }),
-  ]);
+  viewport?: { width: number; height: number },
+): Promise<FourAccountCollaborationJourney> {
+  const { config, users, multiComputerMember } = await loadCollaborationIdentities(environment);
+  const opened: BrowserContext[] = [];
   try {
-    const [ownerPage, editorPage] = await Promise.all([
-      ownerContext.newPage(),
-      editorContext.newPage(),
-    ]);
+    const actors = {} as Record<CollaborationRole, CollaborationJourneyActor>;
+    for (const role of ROLES) {
+      const context = await browser.newContext({ baseURL: config.baseUrl, viewport });
+      opened.push(context);
+      const page = await context.newPage();
+      await signInCollaborationIdentity(page, config, users[role]);
+      actors[role] = {
+        userId: users[role].id,
+        context,
+        page,
+        direct: createCollaborationDirectHarness({ page, userId: users[role].id, platformBaseUrl: config.baseUrl }),
+        preconditions: await loadPreconditions(context, config),
+      };
+    }
+    assertCollaborationPreconditions(config, {
+      owner: actors.owner.preconditions,
+      member: actors.member.preconditions,
+      outsider: actors.outsider.preconditions,
+      guest: actors.guest.preconditions,
+    });
+    let extra: CollaborationJourneyActor | undefined;
+    if (multiComputerMember) {
+      const context = await browser.newContext({ baseURL: config.baseUrl, viewport });
+      opened.push(context);
+      const page = await context.newPage();
+      await signInCollaborationIdentity(page, config, multiComputerMember);
+      const preconditions = await loadPreconditions(context, config);
+      assertMultiComputerMemberPreconditions(config, preconditions);
+      extra = { userId: multiComputerMember.id, context, page, preconditions, direct: createCollaborationDirectHarness({ page, userId: multiComputerMember.id, platformBaseUrl: config.baseUrl }) };
+    }
     return {
-      owner: { context: ownerContext, page: ownerPage },
-      editor: { context: editorContext, page: editorPage },
-      platformUrl: config.baseUrl,
-      runtimeUrl: new URL(config.runtimePath, config.baseUrl).toString(),
+      config,
+      actors,
+      ...(extra ? { multiComputerMember: extra } : {}),
+      previewUrl: new URL(`/vm/${config.previewHandle}`, config.baseUrl).toString(),
       async close() {
-        await Promise.allSettled([ownerContext.close(), editorContext.close()]);
+        for (const actor of Object.values(actors)) actor.direct.direct.close();
+        extra?.direct.direct.close();
+        await Promise.allSettled(opened.map((context) => context.close()));
       },
     };
   } catch (error: unknown) {
-    await Promise.allSettled([ownerContext.close(), editorContext.close()]);
+    await Promise.allSettled(opened.map((context) => context.close()));
     throw error;
   }
 }
 
-export const collaborationTest = base.extend<{ collaborationJourney: TwoAccountCollaborationJourney }>({
-  collaborationJourney: async ({ browser }, use) => {
-    const journey = await createTwoAccountCollaborationJourney(browser);
-    try {
-      await use(journey);
-    } finally {
-      await journey.close();
-    }
+export const collaborationTest = base.extend<{ collaborationJourney: FourAccountCollaborationJourney }>({
+  collaborationJourney: async ({ browser, viewport }, use) => {
+    const journey = await createFourAccountCollaborationJourney(browser, process.env, viewport ?? undefined);
+    try { await use(journey); }
+    finally { await journey.close(); }
   },
 });
 

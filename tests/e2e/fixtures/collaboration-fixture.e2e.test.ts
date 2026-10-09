@@ -1,50 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { parseCollaborationJourneyEnvironment } from "./collaboration.js";
+import { parseCollaborationIdentityEnvironment } from "./collaboration-identities.js";
 
-describe("two-account collaboration journey fixture", () => {
-  it("builds supported session-routed URLs without exposing storage-state paths", () => {
-    expect(parseCollaborationJourneyEnvironment({
-      PATH: "/usr/bin",
-      MATRIX_COLLABORATION_E2E_BASE_URL: "https://app.matrix-os.com",
-      MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "review-vm",
-      MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
-      MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
-      MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
-      MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
-      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
-      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
-    })).toEqual({
-      baseUrl: "https://app.matrix-os.com",
-      runtimePath: "/vm/review-vm",
-      ownerStorageState: "/tmp/owner.json",
-      editorStorageState: "/tmp/editor.json",
-      projectId: "proj_review",
-      editorActorId: "user_editor",
-      editorEmail: "editor@example.com",
-      editorUsername: "nimanaderi",
+describe("collaboration journey environment", () => {
+  const environment = {
+    CLERK_SECRET_KEY: "sk_test_fixture",
+    COLLABORATION_E2E_ALLOWED_USER_IDS: "user_owner,user_member,user_outsider,user_guest",
+    COLLABORATION_E2E_ORGANIZATION_ID: "org_fixture",
+    COLLABORATION_E2E_OWNER_USER_ID: "user_owner",
+    COLLABORATION_E2E_MEMBER_USER_ID: "user_member",
+    COLLABORATION_E2E_OUTSIDER_USER_ID: "user_outsider",
+    COLLABORATION_E2E_GUEST_USER_ID: "user_guest",
+    PREVIEW_COLLABORATION_OWNER_USER_ID: "user_owner",
+    MATRIX_COLLABORATION_E2E_BASE_URL: "https://preview.matrix-os.com",
+    COLLABORATION_E2E_PREVIEW_PR_NUMBER: "1991",
+  };
+
+  it("derives only the reviewed platform origin and exact preview route", () => {
+    expect(parseCollaborationIdentityEnvironment(environment)).toMatchObject({
+      baseUrl: "https://preview.matrix-os.com",
+      previewHandle: "pr-1991",
+      organizationId: "org_fixture",
     });
-  });
-
-  it("rejects per-handle subdomains and unsafe runtime handles", () => {
-    expect(() => parseCollaborationJourneyEnvironment({
-      MATRIX_COLLABORATION_E2E_BASE_URL: "https://review-vm.matrix-os.com",
-      MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "review-vm",
-      MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
-      MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
-      MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
-      MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
-      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
-      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
-    })).toThrow();
-    expect(() => parseCollaborationJourneyEnvironment({
-      MATRIX_COLLABORATION_E2E_BASE_URL: "https://app.matrix-os.com",
-      MATRIX_COLLABORATION_E2E_RUNTIME_HANDLE: "../owner",
-      MATRIX_COLLABORATION_E2E_OWNER_STATE: "/tmp/owner.json",
-      MATRIX_COLLABORATION_E2E_EDITOR_STATE: "/tmp/editor.json",
-      MATRIX_COLLABORATION_E2E_PROJECT_ID: "proj_review",
-      MATRIX_COLLABORATION_E2E_EDITOR_ACTOR_ID: "user_editor",
-      MATRIX_COLLABORATION_E2E_EDITOR_EMAIL: "editor@example.com",
-      MATRIX_COLLABORATION_E2E_EDITOR_USERNAME: "nimanaderi",
-    })).toThrow();
+    expect(() => parseCollaborationIdentityEnvironment({ ...environment, MATRIX_COLLABORATION_E2E_BASE_URL: "https://review-vm.matrix-os.com" })).toThrow();
+    expect(() => parseCollaborationIdentityEnvironment({ ...environment, COLLABORATION_E2E_PREVIEW_PR_NUMBER: "../owner" })).toThrow();
   });
 });
