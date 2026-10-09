@@ -115,7 +115,7 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
       const scope = await scopeOf(ownerId, projectRef);
       const kinds = BRAIN_STALE_KINDS.filter((kind) => input.kinds?.includes(kind) ?? true);
       const now = clock();
-      const stale = { kinds, now, overdueBefore: utcDate(now) };
+      const stale = { kinds, now, overdueBefore: utcDate(now), before: null };
       const items = await withBrainRead(db, (trx) => computeStale(trx, scope, stale));
       const page = pageOf(items, input.limit, input.cursor, queryFingerprint(["stale", kinds]));
       return { items: page.items.map(staleView), nextCursor: page.nextCursor };
@@ -124,9 +124,11 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
 
   /**
    * Per scope: drops stored briefs citing deleted documents, skips a project scope whose project is gone, then builds
-   * today's day brief (skipped when a fresh copy is stored) and a final rebuild of each stored day copy of the last
-   * BRIEF_FINISH_DAYS built before its day ended, so a failed one is retried next pass.
+   * today's day brief (skipped when fresh) and a final rebuild of each stored day copy of the last BRIEF_FINISH_DAYS
+   * built before its day ended, so a failed one is retried. A pass starts at the scope the last one stopped on
+   * (`resume`), so a pass cut short by its budget never starves later scopes.
    */
+  let resume = 0;
   const runner: BrainBriefRunner = async ({ ownerId, now, scopes, signal }) => {
     const deadline = performance.now() + BRAIN_BRIEF_SCHEDULE.passBudgetMs;
     const stopped = () => signal.aborted || performance.now() > deadline;
@@ -136,11 +138,14 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
     let built = 0;
     let failed = 0;
     let skipped = 0;
-    for (const scope of list.slice(0, BRAIN_SCHEDULED_SCOPES_MAX)) {
+    const queue = list.slice(0, BRAIN_SCHEDULED_SCOPES_MAX);
+    const first = resume % Math.max(1, queue.length);
+    for (const [step, scope] of [...queue.slice(first), ...queue.slice(0, first)].entries()) {
       if (stopped()) {
         skipped += 1;
         continue;
       }
+      resume = first + step + 1;
       try {
         await purgeDeletedBriefs(db, scope);
         if (await projectGone(ownerId, scope)) {
@@ -159,6 +164,7 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
           await capped(() => build(scope, date, "day", now, null));
           done += 1;
         }
+        if (done < todo.length) resume = first + step;
         if (done > 0) built += 1;
         else skipped += 1;
       } catch (error: unknown) {

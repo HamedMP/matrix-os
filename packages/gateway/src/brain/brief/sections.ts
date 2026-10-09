@@ -36,16 +36,16 @@ export function briefLine(
 
 interface ChangeRow {
   readonly document_id: string; readonly source_id: string | null; readonly created: number; readonly revised: number;
-  readonly kind: string | null; readonly label: string | null;
+  readonly kind: string | null; readonly label: string | null; readonly title: string;
 }
 
 async function changes(db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange) {
-  // New: first revision, or first published inside the window (created, then edited the same day).
+  // Items name the version read (a past brief: as it was). New: first revision, or first published in the window.
   const firstSeen = sql`(a.revision = 1 OR (d.published_at >= ${range.from} AND d.published_at < ${range.to}))`;
   const { rows } = await sql<ChangeRow>`
-    SELECT w.document_id, w.source_id, w.created::int AS created, w.revised::int AS revised, s.kind, s.label
+    SELECT w.document_id, w.source_id, w.created::int AS created, w.revised::int AS revised, s.kind, s.label, w.title
     FROM (
-      SELECT d.document_id, d.source_id,
+      SELECT d.document_id, d.source_id, a.title,
         row_number() OVER (PARTITION BY d.source_id ORDER BY a.dated DESC, d.document_id DESC) AS rn,
         count(*) FILTER (WHERE ${firstSeen}) OVER (PARTITION BY d.source_id) AS created,
         count(*) FILTER (WHERE NOT ${firstSeen}) OVER (PARTITION BY d.source_id) AS revised
@@ -66,7 +66,7 @@ async function changes(db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: B
       revised: row.revised,
     }, items: [] };
     const cite = cites.get(row.document_id);
-    if (cite !== undefined) entry.items.push(briefLine("changes", row.document_id, cite.title, [cite]));
+    if (cite !== undefined) entry.items.push(briefLine("changes", row.document_id, row.title, [cite]));
     groups.set(key, entry);
   }
   const sorted = [...groups.values()].sort((x, y) => (y.group.created + y.group.revised)

@@ -86,9 +86,15 @@ describe("brief", () => {
 
   it("sees the brain as it was at a past window's end and counts a note edited the day it was made as new", async () => {
     const { linear } = await seedDay();
-    await fx.sync(linear, [{ seed: "eng9", body: "Rotate keys.", refs: [{ kind: "due", value: "2026-09-20" }] }]);
+    await fx.sync(linear, [{ seed: "eng9", body: "Rotate keys.", refs: [{ kind: "due", value: "2026-09-20" }] },
+      { seed: "eng8", body: "Next steps: ship A.", at: "2026-09-29T08:00:00.000Z" }]);
     await fx.extract("eng9", [{ kind: "commitment", statement: "Rotate keys." }]);
-    const past = await brief({ date: "2026-09-29" });
+    await fx.extract("eng8", [{ kind: "commitment", statement: "ship A." }]);
+    fx.harness.tick(60_000);
+    // eng8's revision 2 drops the task and is never extracted, so its claim stays on revision 1 (outdated then).
+    await fx.sync(linear, [{ seed: "eng8", body: "Done.", at: "2026-09-30T08:00:00.000Z" }]);
+    await fx.sync(linear, [{ seed: "eng8", body: "Still done." }]);
+    const past = await brief({ date: "2026-09-30" });
     expect([past.sections.commitments, past.sections.attention]).toEqual([[], []]);
     expect((await brief()).sections.commitments).toHaveLength(2);
     const notes = await fx.source("matrix_notes", "Notes");
@@ -129,15 +135,15 @@ describe("brief", () => {
     await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A.\nShip A.", at: "2026-09-30T08:00:00.000Z" }]);
     await fx.extract("spec", [{ kind: "decision", statement: "use A." }, { kind: "commitment", statement: "Ship A." }]);
     fx.harness.tick(60_000);
-    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", body: "Decision: use A.\nShip A.\nDecision: use B." }]);
+    await fx.sync(git, [{ seed: "spec", provenance: "git_spec", title: "Spec v2", body: "Decision: use A.\nShip A.\nDecision: use B." }]);
     fx.harness.tick(60_000);
     await fx.extract("spec", [{ kind: "decision", statement: "use A." }, { kind: "commitment", statement: "Ship A." }, { kind: "decision", statement: "use B." }]);
     const read = async (date: string) => {
       const { changes, decisions, commitments } = (await brief({ date })).sections;
-      return [changes.map((group) => group.created), decisions.map((line) => line.text), commitments.map((line) => line.text)];
+      return [changes.map((group) => [group.created, ...group.items.map((line) => line.text)]), decisions.map((line) => line.text), commitments.map((line) => line.text)];
     };
-    expect(await read("2026-09-30")).toEqual([[1], ["use A."], ["Ship A."]]);
-    expect(await read("2026-10-01")).toEqual([[1], ["use B."], ["Ship A."]]);
+    expect(await read("2026-09-30")).toEqual([[[1, "Title spec"]], ["use A."], ["Ship A."]]);
+    expect(await read("2026-10-01")).toEqual([[[1, "Spec v2"]], ["use B."], ["Ship A."]]);
   });
 
   it("refuses dates in the future, too far back or not on the calendar", async () => {
@@ -399,13 +405,17 @@ describe("runner", () => {
       .toEqual({ scopes: 5, built: 0, failed: 0, skipped: 5 });
   });
 
-  it("starts no build once the pass is stopped inside a scope", async () => {
-    const stop = new AbortController();
-    const resolve: typeof fx.resolver.resolve = async (...args) => { stop.abort(); return fx.resolver.resolve(...args); };
+  it("starts no build once the pass is stopped inside a scope, and starts the next pass at that scope", async () => {
+    let stop = new AbortController();
+    const seen: string[] = [];
+    const resolve: typeof fx.resolver.resolve = async (owner, ref) => { if (seen.push(ref) === 2) stop.abort(); return fx.resolver.resolve(owner, ref); };
     const feature = createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
-    const scopes = { listActiveScopes: async () => [BRIEF_SCOPE] };
-    expect(await feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: stop.signal }))
-      .toEqual({ scopes: 1, built: 0, failed: 0, skipped: 1 });
+    const scopes = { listActiveScopes: async () => [BRIEF_SCOPE, { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_b" }] };
+    const pass = () => feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: stop.signal });
+    expect(await pass()).toEqual({ scopes: 2, built: 1, failed: 0, skipped: 1 });
+    stop = new AbortController();
+    expect(await pass()).toEqual({ scopes: 2, built: 1, failed: 0, skipped: 1 });
+    expect(seen).toEqual(["proj_a", "proj_b", "proj_b", "proj_a"]);
   });
 
   it("counts a scope as failed and builds nothing when its project lookup is down", async () => {

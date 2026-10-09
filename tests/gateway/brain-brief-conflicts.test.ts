@@ -102,8 +102,8 @@ describe("conflicts", () => {
       sides: [{ claimId: null, statement: null, quote: "feat: ship X", cite: { label: "#3" } },
         { quote: "**Status:** Draft (v2)", cite: { label: "specs/100-x", kind: "spec" } }],
     });
-    // Pull requests dated before their Draft spec never fill the scan: here #1 (day 4) predates specs/100-x.
-    (BRIEF_SCANS as { shippedPullRequests: number }).shippedPullRequests = 2;
+    // Each Draft gets its share of the scan, and pull requests dated before it never fill it: #1 predates specs/100-x.
+    (BRIEF_SCANS as { shippedPullRequests: number }).shippedPullRequests = 1;
     expect((await conflicts({ rules: ["draft_spec_shipped"] })).items.map((item) => item.summary)).toEqual([
       "specs/100-x still reads Draft, but #3 shipped work for it", "specs/300-w still reads Draft, but #4 shipped work for it",
     ]);
@@ -215,7 +215,7 @@ describe("conflicts", () => {
     const { sections } = await buildSections(db, BRIEF_SCOPE, briefWindow(undefined, "day", now), now);
     expect([sections.changes[0]!.items, sections.decisions]).toEqual([[], []]);
     await fx.sync(git, [{ seed: "a", body: "S: x is ready, v2." }]);
-    const options = { kinds: ["claim_outdated"] as const, now: fx.harness.now(), overdueBefore: "2026-10-01" };
+    const options = { kinds: ["claim_outdated"] as const, now: fx.harness.now(), overdueBefore: "2026-10-01", before: null };
     expect(await computeStale(fx.harness.db, BRIEF_SCOPE, options)).toHaveLength(1);
     expect(await computeStale(db, BRIEF_SCOPE, options)).toEqual([]);
   });
@@ -281,11 +281,11 @@ describe("stale", () => {
     await fx.sync(linear, tasks);
     for (const { seed, statement } of tasks) await fx.extract(seed, [{ kind: "commitment", statement }]);
     const read = async (limit: number) =>
-      (await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit })).map((row) => row.statement);
+      (await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit, before: null })).map((row) => row.statement);
     expect(await read(2)).toEqual(["Ensure the migration is completed by Friday.", "write the guide."]);
     expect(await read(1)).toEqual(["Ensure the migration is completed by Friday."]);
     const overdue = await computeStale(fx.harness.db, BRIEF_SCOPE, {
-      kinds: ["commitment_overdue"], now: fx.harness.now(), overdueBefore: "2026-10-01",
+      kinds: ["commitment_overdue"], now: fx.harness.now(), overdueBefore: "2026-10-01", before: null,
     });
     expect(overdue.map((item) => item.text)).toEqual([
       "Overdue (due 2026-09-04): write the guide.", "Overdue (due 2026-09-03): Ensure the migration is completed by Friday.",
@@ -299,8 +299,8 @@ describe("stale", () => {
       { seed: "late", body: "Next steps: write the guide.", at: day(1) }]);
     await fx.extract("many", statements.map((statement) => ({ kind: "commitment" as const, statement })));
     await fx.extract("late", [{ kind: "commitment", statement: "write the guide." }]);
-    expect(await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 1 })).toEqual([]);
-    expect((await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 2 })).map((row) => row.statement))
+    expect(await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 1, before: null })).toEqual([]);
+    expect((await openCommitments(fx.harness.db, BRIEF_SCOPE, { limit: 2, before: null })).map((row) => row.statement))
       .toEqual(["write the guide."]);
   });
 });
