@@ -1,6 +1,6 @@
 {
   "repository": "FinnaAI/matrix-os-site",
-  "revision": "6404f803f1b766cf01d843b21aa9db79e7ceadbb",
+  "revision": "b1ddb318a0fcc6bd2587d619c3ce20d234efd369",
   "dirty": false,
   "adaptations": [
     "relative imports and app assets",
@@ -257,8 +257,8 @@
     {
       "path": "src/vendor/workspaces/EditorWorkspace.tsx",
       "source": "src/app/tools/EditorWorkspace.tsx",
-      "sourceSha256": "e2185144f3436156f1534410d089851024f7399ccd54aac405ba236798d59c08",
-      "sha256": "bf1e3c497b3e4aea2853f9fdd33706561baf3d39e03987ee96db42a500010aae"
+      "sourceSha256": "de13559bcabea8d47d979e0001754d818419785f03abd39f8c675fb143d4bc30",
+      "sha256": "807f0a244c38efdebc3e7352add6586254b5d5a9e5b43bbc5e4f5fdf6b2c4040"
     },
     {
       "path": "src/vendor/workspaces/ExtraWorkspace.tsx",

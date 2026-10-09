@@ -28,6 +28,15 @@ function mockExports() {
   return copied;
 }
 
+
+function delayedCsvFile() {
+  let resolve!: (value: string) => void, reject!: (cause: Error) => void;
+  const read = new Promise<string>((yes, no) => { resolve = yes; reject = no; });
+  const file = new File(["fixture"], "fixture.csv", { type: "text/csv" });
+  Object.defineProperty(file, "text", { value: () => read });
+  return { file, resolve, reject };
+}
+
 describe("Utilities editor and workflow result lifecycle", () => {
   it("removes text exports immediately when the source changes", () => {
     mockExports();
@@ -84,4 +93,46 @@ describe("Utilities editor and workflow result lifecycle", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled();
   });
+  it("disables table and PDF actions until a CSV file finishes reading", async () => {
+    mockExports();
+    const { container } = render(<EditorWorkspace slug="csv-editor" />);
+    const csv = delayedCsvFile();
+    const open = screen.getByRole("button", { name: "Open table" }) as HTMLButtonElement;
+    const pdf = screen.getByRole("button", { name: "Download PDF" }) as HTMLButtonElement;
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [csv.file] } });
+    expect(open.disabled).toBe(true); expect(pdf.disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Loading CSV…" })).toBeTruthy();
+    fireEvent.click(open); fireEvent.click(pdf);
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+    await act(async () => { csv.resolve("Header,Value\nCurrent,Table"); await Promise.resolve(); });
+    expect(open.disabled).toBe(false); expect(pdf.disabled).toBe(false);
+    expect((screen.getByRole("textbox", { name: "Row 2 column 1" }) as HTMLInputElement).value).toBe("Current");
+  });
+
+  it("releases CSV loading after read failure and preserves the edited table", async () => {
+    mockExports();
+    const { container } = render(<EditorWorkspace slug="csv-editor" />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Row 2 column 1" }), { target: { value: "kept edit" } });
+    const csv = delayedCsvFile();
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [csv.file] } });
+    expect((screen.getByRole("button", { name: "Open table" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { csv.reject(new Error("private /home/person/input.csv")); await Promise.resolve(); });
+    expect(screen.getByRole("alert").textContent).toBe("Could not open this CSV file.");
+    expect((screen.getByRole("textbox", { name: "Row 2 column 1" }) as HTMLInputElement).value).toBe("kept edit");
+    expect((screen.getByRole("button", { name: "Download PDF" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("ignores a late CSV file read after editing the source", async () => {
+    mockExports();
+    const { container } = render(<EditorWorkspace slug="csv-editor" />);
+    const csv = delayedCsvFile();
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [csv.file] } });
+    const input = screen.getByRole("textbox", { name: "CSV source" }) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "Latest,Source" } });
+    await act(async () => { csv.resolve("Old,Table\nStale,Value"); await Promise.resolve(); });
+    expect(input.value).toBe("Latest,Source");
+    expect(screen.queryByRole("textbox", { name: "Row 2 column 1" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Open table" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
 });
