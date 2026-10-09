@@ -1,3 +1,4 @@
+import { ChatImportSourceFilter, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { useWorkNavigation } from "./use-work-navigation";
 import {
@@ -176,6 +177,7 @@ export function WorkRail({
   const [renamePending, setRenamePending] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchOpen, setSearchOpen] = useState(false);
   const openSearch = useCallback(() => { if (authorityCurrent()) setSearchOpen(true); }, [authorityCurrent]);
   useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
@@ -227,7 +229,8 @@ export function WorkRail({
   const botSummaries = useBotConversationSummaries(agentAuthority.client, recordIds, active, botRefreshKey,classifications);
   const ordinaryRecords = useMemo(() => records.filter(record => record.classification.kind==="ordinary"), [records]);
   const order = useWorkRailOrder(ordinaryRecords, projects);
-  const model = useMemo(() => buildWorkRailModel(order.chats, order.projects), [order.chats, order.projects]);
+  const sourceRecords = useMemo(() => filterChatsByImportSource(order.chats, sourceFilter, record => record.importSource), [order.chats, sourceFilter]);
+  const model = useMemo(() => buildWorkRailModel(sourceRecords, order.projects), [sourceRecords, order.projects]);
   const projectGroups = useMemo(
     () => [...model.pinnedProjects, ...model.projects],
     [model],
@@ -486,6 +489,8 @@ export function WorkRail({
         showCollapseControl={showCollapseControl}
       />
       <div className="ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen} /></div>
+      <div className="mx-3 my-1.5 shrink-0"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
+      {sourceFilter !== "all" && sourceRecords.length === 0 && status === "ready" ? <p className="px-3 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats match this source.</p> : null}
       <WorkRailScrollArea>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
@@ -494,7 +499,7 @@ export function WorkRail({
         sharedProjects={sharedProjects.receivedProjects}
         onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; invalidateSelection(); agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
-        organizationDrives={<OrganizationDrivesRail active={active} chats={ordinaryRecords} client={client?.agents} onNewChat={onStartAgentChat ? (text, resources) => { invalidateSelection(); if (resources) onStartAgentChat(text, resources); else onStartAgentChat(text); } : undefined} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
+        organizationDrives={<OrganizationDrivesRail active={active} chats={sourceRecords} client={client?.agents} onNewChat={onStartAgentChat ? (text, resources) => { invalidateSelection(); if (resources) onStartAgentChat(text, resources); else onStartAgentChat(text); } : undefined} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
         ) : null}
@@ -538,7 +543,7 @@ export function WorkRail({
       ) : null}
       <WorkRailSearchDialog
         open={authorityReady && searchOpen}
-        records={ordinaryRecords}
+        records={sourceRecords}
         projects={projects}
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}

@@ -1,4 +1,5 @@
 import {
+  CanonicalChatNavigationItemSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunAdmissionResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
@@ -13,6 +14,7 @@ import {
   type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
+import { z } from "zod/v4";
 import { KyselyPGlite } from "kysely-pglite";
 import { describe, expect, it, vi } from "vitest";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -1091,5 +1093,46 @@ describe("canonical Chat routes", () => {
       "appr_command",
       { clientRequestId: "req_route_approval", decision: "approve_for_session" },
     );
+  });
+});
+
+
+describe("Chat import source wire compatibility", () => {
+  const imported = { ...record, importSource: { harness: "claude" as const } };
+  const { ownerScope: _owner, ...navigationChat } = record.chat;
+  const navigationItem = CanonicalChatNavigationItemSchema.parse({ chat: navigationChat,
+    importSource: imported.importSource, readState: { version: 0, unread: false, markedUnread: false, latestIncomingSeq: 0, readThroughSeq: 0 },
+    classification: { kind: "ordinary" }, persistence: "personal" });
+  const app = appFor(routeService({ list: async () => ({ items: [imported] }), search: async () => ({ items: [imported] }),
+    getDetail: async () => ({ record: imported, messages: [], turns: [], runs: [], activities: [] }),
+    updateTitle: async () => imported, updateLegacyTitle: async () => imported,
+    navigation: async () => ({ version: 1, items: [navigationItem], truncated: false }) }));
+  it.each(["/api/chats", "/api/chats/search?query=test", "/api/chats/chat_route_test", "/api/chat-navigation?version=1"])("keeps %s compatible and requires explicit source opt-in", async path => {
+    for (const version of [undefined, "1"]) {
+      const url = path + (version ? `${path.includes("?") ? "&" : "?"}importSourceVersion=${version}` : "");
+      const response = await app.request(url);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      const item = body.items?.[0] ?? body.record;
+      if (version) expect(item.importSource).toEqual(imported.importSource);
+      else {
+        expect(item).not.toHaveProperty("importSource");
+        const schema = body.items && path.includes("navigation") ? CanonicalChatNavigationItemSchema : CanonicalChatRecordSchema;
+        const { importSource: _source, ...legacyShape } = schema.shape;
+        expect(z.strictObject(legacyShape).safeParse(item).success).toBe(true);
+      }
+    }
+  });
+  it("accepts navigation header opt-in without extending old strict queries", async () => {
+    const response = await app.request("/api/chat-navigation?version=1", { headers: { "X-Matrix-Chat-Import-Source": "1" } });
+    expect(response.status).toBe(200);
+    expect((await response.json()).items[0].importSource).toEqual(imported.importSource);
+  });
+  it("projects mutation records and rejects unknown source versions", async () => {
+    const response = await app.request("/api/chats/chat_route_test/title", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "renamed", baseRevision: 0 }) });
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty("importSource");
+    expect((await app.request("/api/chats?importSourceVersion=2")).status).toBe(400);
+    expect((await app.request("/api/chat-navigation?version=1&importSourceVersion=2")).status).toBe(400);
   });
 });

@@ -3,7 +3,7 @@ import {
   PinIcon,
   PinOffIcon,
 } from "lucide-react";
-import { isChatUnread, ChatContextMenu } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu, ChatImportSourceIcon } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
@@ -131,6 +131,7 @@ export function WorkRailChatRow({
             if (!renameDisabled) scheduleRename(0);
           }}
         >
+          {record.importSource ? <ChatImportSourceIcon harness={record.importSource.harness}/> : null}
           <span className="work-rail-chat-label min-w-0 flex-1">
             <span className={isChatUnread(record) ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={record.chat.title} /></span>
             {agentState !== "idle" ? <span className="block text-[11px] leading-[14.3px] font-normal" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>{railStateLabel[agentState]}</span> : null}

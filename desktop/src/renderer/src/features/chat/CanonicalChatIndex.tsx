@@ -1,5 +1,5 @@
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
-import { isChatUnread, ChatContextMenu } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu, ChatImportSourceFilter, ChatImportSourceIcon, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { MessageSquare, Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
 import { useState } from "react";
 
@@ -43,6 +43,8 @@ export function CanonicalChatIndex({
   onNewChat: () => void;
   layout?: "wide" | "narrow";
 }) {
+  const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
+  const visibleItems = filterChatsByImportSource(items, sourceFilter, record => record.importSource);
   const [searchOpen, setSearchOpen] = useState(query.length > 0);
 
   return (
@@ -114,18 +116,20 @@ export function CanonicalChatIndex({
           </form>
         ) : null}
 
+        <div className="mx-3 my-2 shrink-0"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
+
         {error ? <div role="alert" className="mx-3 mt-2 rounded-lg px-2 py-2 text-xs" style={{ color: "var(--text-secondary)", background: "var(--bg-sunken)" }}>{error}</div> : null}
         {status === "loading" && items.length === 0 ? (
           <div role="status" aria-label="Loading chats" className="px-4 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>
             Loading chats…
           </div>
         ) : null}
-        {status !== "loading" && items.length === 0 ? (
-          <p className="px-4 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats yet.</p>
+        {status !== "loading" && visibleItems.length === 0 ? (
+          <p className="px-4 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>{sourceFilter === "all" ? "No chats yet." : "No chats match this source."}</p>
         ) : null}
-        {items.length > 0 ? (
+        {visibleItems.length > 0 ? (
           <ul aria-label="Chat history" className="min-h-0 flex-1 overflow-y-auto pb-4">
-            {items.map((record) => (
+            {visibleItems.map((record) => (
               <ChatContextMenu key={record.chat.id} chatId={record.chat.id} primaryAction={onToggleRead ? { label: isChatUnread(record) ? "Mark as read" : "Mark as unread", onSelect: () => onToggleRead(record) } : undefined}>
               <li className="group/chat relative shrink-0 border-b" style={{ borderColor: "var(--border-default, #F3F2F2)" }}>
                 <button
@@ -137,6 +141,7 @@ export function CanonicalChatIndex({
                   onClick={() => onSelect(record.chat.id)}
                 >
                   {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="mr-2 size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
+                  {record.importSource ? <span className="mr-2 flex"><ChatImportSourceIcon harness={record.importSource.harness}/></span> : null}
                   <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px]" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
                 </button>
                 <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[12px] leading-[16px] tracking-[0.12px] transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>

@@ -1,7 +1,7 @@
 "use client";
 import { useWebChatRailOrder } from "./chat/useWebChatRailOrder";
 import { WebChatRailControls } from "./chat/WebChatRailControls";
-import { ChatRailOrderContext, ChatRailOrderItem } from "@matrix-os/ui";
+import { ChatRailOrderContext, ChatRailOrderItem, ChatImportSourceFilter, filterChatsByImportSource, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { WebChatLifecycleGroups, webChatLifecycleGroup } from "./chat/WebChatLifecycleGroups";
 import { WebBotAttention, useWebBotDraftNavigation } from "./chat/WebBotNavigation";
 import { ChatProviderOnboarding } from "./chat-provider-onboarding";
@@ -263,6 +263,7 @@ function ChatAppContent({
     setPreviewFile({ chatId: sessionId, path: target.path });
     return true;
   };
+  const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
@@ -354,7 +355,8 @@ function ChatAppContent({
         `${c.title ?? ""}\n${c.preview ?? ""}`.toLowerCase().includes(searchQuery.toLowerCase()),
       );
 
-  const listedConversations = unreadOnly ? filteredConversations.filter((item) => item.readState?.unread) : filteredConversations;
+  const sourceConversations = filterChatsByImportSource(filteredConversations, sourceFilter, item => item.canonicalRecord?.importSource);
+  const listedConversations = unreadOnly ? sourceConversations.filter((item) => item.readState?.unread) : sourceConversations;
 
   const suggestions = getMessageSuggestions(messages);
 
@@ -445,6 +447,8 @@ function ChatAppContent({
         </div>
 
         }
+        <div className="px-3 pb-2"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
+        {sourceFilter !== "all" && listedConversations.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
@@ -461,7 +465,7 @@ function ChatAppContent({
 
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
-              projects={<OrganizationDrivesNav chats={ordinaryConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
+              projects={<OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => (
                 <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}><RenameableConversationRow

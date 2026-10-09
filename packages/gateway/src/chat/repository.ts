@@ -1,3 +1,4 @@
+import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
@@ -317,7 +318,9 @@ async function toPrincipalRecord(
   owner: ChatOwner,
   row: Selectable<ChatsTable>,
   collaborationProjection?: CanonicalChatCollaboration,
+  knownImportSource?: ChatRecord["importSource"] | null,
 ): Promise<ChatRecord> {
+  const importSource = knownImportSource === undefined ? await readChatImportSource(executor, owner, row.id) : knownImportSource;
   const internalScopeId = collaborationProjection ? undefined : sharedBindingScopeId(row.collaboration);
   const [activeRun, userState, latestSuccessfulCompletion, internalProjection] = await Promise.all([
     activeRunQuery(executor, row.id),
@@ -337,6 +340,7 @@ async function toPrincipalRecord(
     userState?.attention_acknowledged_at,
   );
   return { ...record,
+    ...(importSource ? { importSource } : {}),
     ...(record.chat.lastMessagePreview
       ? { chat: { ...record.chat, lastMessagePreview: effectiveProjection?.mode === "shared"
         ? redactSharedAssistantText(record.chat.lastMessagePreview)

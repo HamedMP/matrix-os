@@ -1,3 +1,4 @@
+import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { mergeCanonicalChatRecord } from "@matrix-os/ui";
 import type { StartAgentChat } from "@matrix-os/ui";
@@ -283,7 +284,7 @@ function WorkTabContent({
     if (hostedRuntime || !api || !visible) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))), {
+        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

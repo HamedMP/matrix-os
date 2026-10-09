@@ -89,6 +89,10 @@ export async function bootstrapChatImports<Database extends ChatImportDatabase>(
     WHERE status NOT IN ('failed','cancelled','expired')`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_local_chat_import_expiry ON local_chat_import_jobs(expires_at)
     WHERE status NOT IN ('published','failed','cancelled','expired')`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_local_chat_import_published_chat
+    ON local_chat_import_jobs(owner_id,chat_id) WHERE status='published'`.execute(db);
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_legacy_import_verified_chat
+    ON chat_legacy_imports(owner_type,owner_id,chat_id) WHERE verification_status='verified'`.execute(db);
   await sql`CREATE TABLE IF NOT EXISTS local_chat_import_parts (
     job_id UUID NOT NULL REFERENCES local_chat_import_jobs(id) ON DELETE CASCADE,
     part_number INTEGER NOT NULL CHECK (part_number > 0 AND part_number <= 320), etag TEXT NOT NULL,

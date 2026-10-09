@@ -179,7 +179,7 @@ export { copyFileImage, savePreviewBlob } from "./files/file-image-actions.js";
 export { resolveRecipeHandoff } from "./chat-agents/recipe-handoff.js";
 export { generatedChatTitle } from "./generated-chat-title";
 
-export { mergeCanonicalChatRecord, compareCanonicalChatActivity } from "./canonical-chat-record";
+export { mergeCanonicalChatRecord, compareCanonicalChatActivity, chatImportSourceVersionUrl } from "./canonical-chat-record";
 export { useChatReadState } from "./chat/use-chat-read-state.js";
 export { isChatUnread, chatReadAction, mergeChatReadState } from "./chat/read-state.js";
 
@@ -246,3 +246,6 @@ export * from "./chat-navigation/browser-cache.js";
 export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
+
+export { ChatImportSourceIcon, ChatImportSourceFilter } from "./chat/ChatImportSource.js";
+export { filterChatsByImportSource, type ChatImportSourceFilterValue } from "./chat/import-source.js";
