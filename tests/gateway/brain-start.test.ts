@@ -12,10 +12,10 @@ import {
   withBrainChangeEvents, type BrainServicesHandle,
 } from "../../packages/gateway/src/brain/api/index.js";
 import {
-  BrainApiError, brainProjectScope, type BrainProjectLookup, type BrainProjectService,
+  brainProjectScope, type BrainProjectLookup,
 } from "../../packages/gateway/src/brain/api/types.js";
 import type {
-  BrainBackgroundJob, BrainChangeEvent, BrainProjectResolver, BrainServices,
+  BrainBackgroundJob, BrainChangeEvent, BrainServices,
 } from "../../packages/gateway/src/brain/contracts.js";
 import { BrainRepository } from "../../packages/gateway/src/brain/index.js";
 import { saveMatrixConfig } from "../../packages/gateway/src/brain/sources/matrix/database.js";
@@ -354,6 +354,29 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
     error.mockRestore();
   });
 
+  it("announces what a failed sync or extract saved, even when its receipt (or run row) could not close", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const counts = { read: 2, written: 2, unchanged: 0, deleted: 0, failed: 0 };
+    started = await startBrainServices(harness.db, {
+      projects: lookup(), homePath: "/home", claimModels: noModel, scheduleOwnerId: null,
+      sync: async () => ({ status: "failed", errorCode: "internal_error", receipt: null, counts }) as never,
+      extract: async () => ({
+        status: "failed", errorCode: "store_unavailable", run: null, extractor: "rules/v2",
+        counts: { claimsWritten: 1, claimsRemoved: 0 },
+      }) as never,
+    });
+    const emit = vi.spyOn(started!.hooks, "emit");
+    await started!.project.registerGitSource(OWNER, "widgets", {});
+    for (const run of [() => started!.project.sync(OWNER, "widgets"),
+      () => started!.project.extract(OWNER, "widgets", { extractor: "rules" })]) {
+      await expect(run()).rejects.toMatchObject({ code: "brain_unavailable" });
+    }
+    const scope = brainProjectScope(OWNER, PROJECT.id);
+    expect(emit.mock.calls.map(([event]) => [event.type, event.scope]))
+      .toEqual([["documents_changed", scope], ["claims_changed", scope]]);
+    error.mockRestore();
+  });
+
   it("defers the whole brain on a core bootstrap deadline and leaves it off on any other core error", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bootstrap = vi.spyOn(BrainRepository.prototype, "bootstrap");
@@ -414,63 +437,31 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
 
 describe("withBrainChangeEvents", () => {
   const scope = brainProjectScope(OWNER, PROJECT.id);
-  const syncCounts = (written: number, deleted: number) => ({ read: 1, written, unchanged: 0, deleted, failed: 0 });
-  const extractCounts = (claimsWritten: number, claimsRemoved: number) => ({ claimsWritten, claimsRemoved });
+  const synced = (written: number, deleted: number, receipt: object | null = {}) => ({
+    receipt, counts: { read: 1, written, unchanged: 0, deleted, failed: 0 },
+  });
+  const extracted = (claimsWritten: number, claimsRemoved: number, run: object | null = {}) => ({
+    run, extractor: "rules/v1", counts: { claimsWritten, claimsRemoved },
+  });
 
-  function wrap(resolver?: Partial<BrainProjectResolver>) {
+  it("announces each run that wrote, deleted or changed claims, by its own scope, even one that could not close", async () => {
     const events: BrainChangeEvent[] = [];
-    const project = {
-      sync: vi.fn(async () => ({ counts: syncCounts(0, 0) })),
-      extract: vi.fn(async () => ({ extractor: "rules/v1", counts: extractCounts(0, 0) })),
-      why: vi.fn(async () => ({ items: [] })),
-    } as unknown as BrainProjectService & { sync: ReturnType<typeof vi.fn>; extract: ReturnType<typeof vi.fn> };
-    const resolve = vi.fn(async () => ({ projectId: PROJECT.id, slug: PROJECT.slug, name: PROJECT.name, scope }));
-    const wrapped = withBrainChangeEvents(project, {
-      homePath: "/home", resolve, checkoutPath: vi.fn(), ...resolver,
-    } as BrainProjectResolver, { emit: (event) => { events.push(event); }, close: vi.fn() });
-    return { events, project, wrapped, resolve };
-  }
-
-  it("announces a sync that wrote or deleted documents and an extract that changed claims, nothing else", async () => {
-    const { events, project, wrapped, resolve } = wrap();
-    await wrapped.sync(OWNER, "widgets");
-    await wrapped.extract(OWNER, "widgets", { extractor: "rules" });
+    const runners = { sync: vi.fn(async () => synced(0, 0)), extract: vi.fn(async () => extracted(0, 0)) };
+    const wrapped = withBrainChangeEvents(runners as never, (event) => { events.push(event); });
+    const options = { scope, sourceId: `src_${"a".repeat(32)}` } as never;
+    await wrapped.sync(options);
+    await wrapped.extract(options);
     expect(events).toEqual([]);
-    expect(resolve).not.toHaveBeenCalled();
-    project.sync.mockResolvedValueOnce({ counts: syncCounts(0, 2) });
-    project.extract.mockResolvedValueOnce({ extractor: "rules/v1", counts: extractCounts(0, 3) });
-    expect(await wrapped.sync(OWNER, "widgets")).toEqual({ counts: syncCounts(0, 2) });
-    await wrapped.extract(OWNER, "widgets", { extractor: "rules" });
+    // Batches committed, then the run failed and its receipt (or run row) could not close: still announced.
+    runners.sync.mockResolvedValueOnce(synced(0, 2, null));
+    runners.extract.mockResolvedValueOnce(extracted(0, 3, null));
+    expect(await wrapped.sync(options)).toEqual(synced(0, 2, null));
+    await wrapped.extract(options);
     expect(events).toEqual([
       { type: "documents_changed", scope, sourceId: null, documentIds: null, at: expect.any(String) },
       { type: "claims_changed", scope, extractor: "rules/v1", documentIds: null, at: expect.any(String) },
     ]);
-    expect(await wrapped.why(OWNER, "widgets", { path: "src/" })).toEqual({ items: [] });
-  });
-
-  it("hands the caller's git run (its source and its stop) to the project service", async () => {
-    const { project, wrapped } = wrap();
-    const run = { sourceId: `src_${"a".repeat(32)}`, signal: new AbortController().signal };
-    await wrapped.sync(OWNER, "widgets", run);
-    expect(project.sync).toHaveBeenCalledWith(OWNER, "widgets", run);
-  });
-
-  it("returns the answer when the scope lookup fails, and announces nothing for a failed call", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { events, project, wrapped } = wrap({ resolve: vi.fn(async () => { throw new BrainApiError("brain_unavailable"); }) });
-    project.sync.mockResolvedValueOnce({ counts: syncCounts(4, 0) });
-    expect(await wrapped.sync(OWNER, "widgets")).toEqual({ counts: syncCounts(4, 0) });
-    expect(warn).toHaveBeenCalledWith("[brain] change event skipped; the next refresh repairs it:", "BrainApiError");
-    const odd = wrap({ resolve: vi.fn(() => Promise.reject("plain text")) });
-    odd.project.sync.mockResolvedValueOnce({ counts: syncCounts(1, 0) });
-    await odd.wrapped.sync(OWNER, "widgets");
-    expect(warn).toHaveBeenLastCalledWith("[brain] change event skipped; the next refresh repairs it:", "string");
-    project.extract.mockRejectedValueOnce(new BrainApiError("extraction_in_progress"));
-    await expect(wrapped.extract(OWNER, "widgets", { extractor: "rules" })).rejects.toMatchObject({
-      code: "extraction_in_progress",
-    });
-    expect(events).toEqual([]);
-    warn.mockRestore();
+    expect(runners.sync).toHaveBeenCalledWith(options);
   });
 });
 
