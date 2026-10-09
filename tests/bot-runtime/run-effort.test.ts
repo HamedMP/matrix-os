@@ -29,6 +29,25 @@ const THINKING_TOOL_STREAM = [
   ["message_delta", { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 3 } }],
   ["message_stop", { type: "message_stop" }],
 ].map(([event, data]) => `event: ${event as string}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+/** A reply that thinks `thinking`, signs it `sig_<n>`, then calls a brain tool or answers. */
+function signedReply(n: number, thinking: string, then: "tool" | "text"): string {
+  const last = then === "tool"
+    ? [["content_block_start", { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: `toolu_${n}`, name: "brain_search", input: {} } }],
+      ["content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: "{\"query\":\"bot chats\"}" } }]]
+    : [["content_block_start", { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }],
+      ["content_block_delta", { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Done." } }]];
+  return [
+    ["message_start", { type: "message_start", message: { id: `msg_${n}`, type: "message", role: "assistant", model: "claude-sonnet-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } } }],
+    ["content_block_start", { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }],
+    ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } }],
+    ["content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: `sig_${n}` } }],
+    ["content_block_stop", { type: "content_block_stop", index: 0 }],
+    ...last,
+    ["content_block_stop", { type: "content_block_stop", index: 1 }],
+    ["message_delta", { type: "message_delta", delta: { stop_reason: then === "tool" ? "tool_use" : "end_turn", stop_sequence: null }, usage: { output_tokens: 3 } }],
+    ["message_stop", { type: "message_stop" }],
+  ].map(([event, data]) => `event: ${event as string}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+}
 const OPENAI_STREAM = [
   { id: "c1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: { role: "assistant", content: "Done." }, finish_reason: null }] },
   { id: "c1", object: "chat.completion.chunk", created: 1, model: "m", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
@@ -161,6 +180,33 @@ describe("bot run effort", () => {
     expect(bodies).toHaveLength(1);
     expect(assistantTurns(bodies[0])).toEqual([[thinking, toolUse], [{ type: "text", text: "Done." }]]);
     expect(FundedRequestSchema.safeParse(bodies[0]).success).toBe(true);
+  });
+
+  it("saves a turn whose signed thinking outgrows the session cap, dropping only whole earlier thinking", async () => {
+    const thought = (n: number) => `${n}`.repeat(96 * 1024);
+    for (let n = 1; n <= 6; n += 1) replies.push(signedReply(n, thought(n), "tool"));
+    replies.push(signedReply(7, thought(7), "text"));
+    let saved: Array<Record<string, unknown>> = [];
+    const client = broker();
+    vi.mocked(client.tool).mockResolvedValue({ ok: true, content: [{ type: "text", text: "1. PR #12 - Bot chats" }] });
+    vi.mocked(client.saveSession).mockImplementation(async (session) => { saved = session.messages; return { revision: 2 }; });
+
+    await expect(turn(ANTHROPIC, "high", client)).resolves.toMatchObject({ status: "completed", toolActions: 6 });
+    const parts = saved.flatMap((message) => (message.role === "assistant" ? message.content as Array<Record<string, unknown>> : []));
+    expect(parts.filter((part) => part.type === "toolCall")).toHaveLength(6);
+    const kept = parts.filter((part) => part.type === "thinking");
+    // Oldest first, never cut: each kept block is whole and still carries its own signature.
+    const signatures = kept.map((part) => part.thinkingSignature);
+    expect(signatures.length).toBeLessThan(7);
+    expect(signatures.at(-1)).toBe("sig_7");
+    expect(signatures).toEqual(["sig_1", "sig_2", "sig_3", "sig_4", "sig_5", "sig_6", "sig_7"].slice(7 - signatures.length));
+    for (const part of kept) expect(part.thinking).toBe(thought(Number(String(part.thinkingSignature).slice(4))));
+
+    bodies.length = 0;
+    const resumed = broker();
+    vi.mocked(resumed.loadSession).mockResolvedValue({ revision: 2, needsRecompaction: false, messages: saved });
+    await expect(turn(ANTHROPIC, "high", resumed, "And since then?")).resolves.toMatchObject({ status: "completed" });
+    expect(assistantTurns(bodies[0]).at(-1)).toEqual([{ type: "thinking", thinking: thought(7), signature: "sig_7" }, { type: "text", text: "Done." }]);
   });
 
   it("sends no thinking field for a call without a level, such as the summary", async () => {
