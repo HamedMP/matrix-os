@@ -35,4 +35,4 @@ MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_STATUS_QUOTA_REVIEW=1 flox activate -- pnpm
 2. Close Settings, open Chat and select `UI status review (synthetic)`. Confirm clear space below the divider and the compact model row. Resize Chat to check truncation.
 3. Quit the test Electron app when finished; the gateway and disposable profile are cleaned up. This environment contains synthetic data only.
 
-Human Review is user-owned and remains pending. Do not merge or request Greptile before that approval.
+Yuhan approved Human Review on October 9, 2026 at `b3fafdfcb451b4f89c88a0f30f219df3b0155699` and authorized merge after current-head Greptile 5/5 and green CI. The screenshots above use a local synthetic runtime; deployed-preview screenshots and recording remain a separate live-evidence gate.
