@@ -205,7 +205,7 @@ export async function getGraphEntity(
   const [aliasRows, stored, changed, seen] = await Promise.all([
     db.selectFrom("brain_graph_aliases").select(["alias_key", "reason", "state", "created_at"])
       .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
-      .where("entity_id", "=", row.entity_id)
+      .where("entity_id", "=", row.entity_id).orderBy("state") // 'merged' < 'split': no split row hides a merge
       .orderBy("created_at").orderBy("alias_key").limit(BRAIN_GRAPH_LIMITS.aliasesPerEntity).execute(),
     countLinks(db, scope, members), countChanged(db, scope, row.kind, row.key), seenRange(db, scope, members),
   ]);

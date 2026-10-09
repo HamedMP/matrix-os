@@ -83,4 +83,15 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
     expect(await harness.refresh()).toMatchObject({ caughtUp: true });
     expect(await partOf()).toEqual([]);
   });
+
+  it("lists a merged alias of an entity whose fifty older split rows fill the alias limit", async () => {
+    await seedProject(harness);
+    const alice = brainEntityId("person", "email:alice@acme.dev");
+    await sql`INSERT INTO brain_graph_aliases (owner_id, scope_id, alias_entity_id, alias_key, entity_id, reason, state,
+      created_at, updated_at) SELECT ${OWNER}, ${SCOPE.scopeId}, 'ent_' || md5(n::text), 'person:name:p' || n, ${alice},
+      'manual', 'split', '2026-01-01', '2026-01-01' FROM generate_series(1, 50) AS n`.execute(harness.db);
+    const view = await harness.graph.service.getEntity(OWNER, PROJECT, alice);
+    expect(view.aliases.filter((row) => row.state === "merged").map((row) => row.aliasKey))
+      .toEqual(["person:name:alice smith"]);
+  });
 });
