@@ -1,3 +1,4 @@
+import {isRecruitingTeam} from './ats-mail-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { AtsDB } from './ats-db.js';
@@ -17,18 +18,22 @@ export async function importAtsMail(db: AtsDB, input: AtsMailInput, at: string, 
       .where('candidate_email', '=', mail.senderEmail).where('deleted_at', 'is', null).where('disposition', '=', 'active')
       .orderBy('created_at', 'desc').limit(2).execute();
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    const parent = mail.threadId ? await trx.executor.selectFrom('ats_inbox_messages').select(['applicant_email','sender_email','application_id'])
+      .where('message_id','=',mail.threadId).executeTakeFirst() : undefined;
+    const linkedId = candidate?.id ?? (isRecruitingTeam(mail.senderEmail) ? parent?.application_id : null);
+    const applicantEmail = isRecruitingTeam(mail.senderEmail) && parent ? (parent.applicant_email || parent.sender_email) : mail.senderEmail;
     const inserted = await trx.executor.insertInto('ats_inbox_messages').values({
       id: randomUUID(), message_id: mail.messageId, thread_id: mail.threadId, sender_name: mail.senderName,
-      sender_email: mail.senderEmail, subject: mail.subject, body: mail.body, received_at: mail.receivedAt,
-      source_url: mail.sourceUrl, application_id: candidate?.id ?? null,
-      category: candidate ? 'candidate' : mail.category,
+      sender_email: mail.senderEmail, applicant_email: applicantEmail, subject: mail.subject, body: mail.body, received_at: mail.receivedAt,
+      source_url: mail.sourceUrl, application_id: linkedId ?? null,
+      category: linkedId ? 'candidate' : mail.category,
     }).onConflict((oc) => oc.column('message_id').doNothing()).returningAll().executeTakeFirst();
     if (!inserted) return trx.executor.selectFrom('ats_inbox_messages').selectAll().where('message_id', '=', mail.messageId).executeTakeFirstOrThrow();
     for (const file of mail.attachments) await trx.executor.insertInto('ats_mail_attachments').values({ id: randomUUID(), message_id: inserted.id,
       filename: file.filename, content_type: file.contentType, bytes: Buffer.from(file.base64, 'base64') }).execute();
-    if (options.notify && !['moderation', 'vendor'].includes(inserted.category)) await enqueueAtsNotification(trx, `mail:${mail.messageId}`, {
+    if (options.notify) await enqueueAtsNotification(trx, `mail:${mail.messageId}`, {
       name: mail.senderName || mail.senderEmail, email: mail.senderEmail, role: mail.subject.slice(0, 100),
-      path: candidate ? `/admin/ats/${candidate.id}` : '/admin/ats/inbox', source: 'group_email',
+      path: linkedId ? `/admin/ats/${linkedId}` : '/admin/ats/inbox', source: 'group_email', messageId: inserted.id,
     }, at);
     return inserted;
   });
