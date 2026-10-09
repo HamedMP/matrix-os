@@ -85,9 +85,9 @@
   --surface-error-emphasis: #ba5236;
   --surface-info-emphasis: #3b85ba;
   --surface-inverse: #0d0c0c;
-  --surface-neutral-emphasis: #6b7280;
+  --surface-neutral-emphasis: #827d7d;
   --surface-success-emphasis: #288a5b;
-  --surface-warning-emphasis: #e0aa52;
+  --surface-warning-emphasis: #d2932d;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.12);
@@ -173,7 +173,7 @@
   --surface-primary: #242323;
   --surface-overlay: #242323;
   --surface-tertiary: #413e3e;
-  --surface-success: #173827;
+  --surface-success: #061810;
   --surface-card-foreground-subtle: #242323;
 
   --sidebar: #061810;
@@ -214,12 +214,12 @@
   --highlight: #bed77b;
   --highlight-muted: #413e3e;
   --surface-brand-emphasis: #748e59;
-  --surface-error-emphasis: #ba5236;
-  --surface-info-emphasis: #3b85ba;
+  --surface-error-emphasis: #da9481;
+  --surface-info-emphasis: #9dbfd7;
   --surface-inverse: #0d0c0c;
-  --surface-neutral-emphasis: #6b7280;
-  --surface-success-emphasis: #288a5b;
-  --surface-warning-emphasis: #e0aa52;
+  --surface-neutral-emphasis: #827d7d;
+  --surface-success-emphasis: #5ec996;
+  --surface-warning-emphasis: #f1c379;
   --update-action: #2f9bff;
   --update-action-foreground: #ffffff;
   --update-action-muted: rgba(47, 155, 255, 0.18);
@@ -230,7 +230,7 @@
 
   --scrollbar-thumb: rgba(168, 164, 164, 0.22);
   --scrollbar-thumb-hover: rgba(168, 164, 164, 0.36);
-  --overlay-dim: rgba(0, 0, 0, 0.55);
+  --overlay-dim: rgba(13, 12, 12, 0.55);
 
   --focus-ring: 0 0 0 3px color-mix(in srgb, #e0aa52 33%, transparent);
 
