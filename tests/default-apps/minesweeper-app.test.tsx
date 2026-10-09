@@ -50,7 +50,7 @@ describe("Minesweeper app", () => {
     const manifestPath = resolve(process.cwd(), "home/apps/games/minesweeper/matrix.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { icon?: string };
 
-    expect(manifest.icon).toBe("minesweeper");
+    expect(manifest.icon).toBe("v3-minesweeper");
     expect(existsSync(resolve(process.cwd(), `home/system/icons/${manifest.icon}.png`))).toBe(true);
   });
 

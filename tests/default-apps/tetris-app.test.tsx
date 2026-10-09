@@ -80,7 +80,7 @@ describe("Tetris app", () => {
       readFileSync(join(repoRoot, "home/apps/games/tetris/matrix.json"), "utf-8"),
     ) as { icon?: string };
 
-    expect(manifest.icon).toBe("tetris");
+    expect(manifest.icon).toBe("v3-tetris");
     expect(existsSync(join(repoRoot, `home/system/icons/${manifest.icon}.png`))).toBe(true);
   });
 
