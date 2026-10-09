@@ -85,8 +85,11 @@ describe("sources routes", () => {
     expect(service.receipts).toHaveBeenCalledWith(OWNER, "proj_a", SOURCE, 10);
     await call(root, `${BASE}/${SOURCE}/receipts?limit=50`);
     expect(service.receipts).toHaveBeenLastCalledWith(OWNER, "proj_a", SOURCE, 50);
-    await call(root, `${BASE}/${"x".repeat(80)}/sync`, { method: "POST" });
-    expect(service.sync).toHaveBeenLastCalledWith(OWNER, "proj_a", "");
+    // Path ids that are not source ids reach the service as "", after its project check.
+    for (const bad of ["x".repeat(80), "src_bad", `src_${"A".repeat(32)}`]) {
+      await call(root, `${BASE}/${bad}/sync`, { method: "POST" });
+      expect(service.sync).toHaveBeenLastCalledWith(OWNER, "proj_a", "");
+    }
   });
 
   it("answers the principal, availability and project ref errors on every route before any service call", async () => {
