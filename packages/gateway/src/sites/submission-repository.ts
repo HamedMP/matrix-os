@@ -6,7 +6,10 @@ export interface SiteSubmission {id:string;siteId:string;formId:string;fields:Re
 /** Wrapper never destroys the dependency-injected owner database. */
 export class SiteSubmissionRepository {
  constructor(private readonly db:Kysely<any>){}
- async bootstrap():Promise<void>{await this.db.transaction().execute(async trx=>{await sql`CREATE TABLE IF NOT EXISTS public._site_submissions (
+ async bootstrap():Promise<void>{await this.db.transaction().execute(async trx=>{
+  await sql`SET LOCAL lock_timeout = '2s'`.execute(trx);
+  await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
+  await sql`CREATE TABLE IF NOT EXISTS public._site_submissions (
  id uuid PRIMARY KEY,site_id uuid NOT NULL,app_slug text NOT NULL,version_id uuid NOT NULL,form_id text NOT NULL,idempotency_key text NOT NULL,fields jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),deleted_at timestamptz,
  UNIQUE(site_id,form_id,idempotency_key))`.execute(trx);await sql`CREATE INDEX IF NOT EXISTS site_submissions_owner_read ON public._site_submissions(site_id,app_slug,created_at,id) WHERE deleted_at IS NULL`.execute(trx);});}
  async submit(input:SubmissionInput):Promise<void>{await this.db.transaction().execute(async trx=>{

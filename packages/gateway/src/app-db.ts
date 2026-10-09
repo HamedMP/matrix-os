@@ -54,7 +54,7 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
   let destroyPromise: Promise<void> | undefined;
 
   if (typeof opts === "string") {
-    pool = new pg.Pool({ connectionString: opts, max: 10 });
+    pool = new pg.Pool({ connectionString: opts, max: 10, connectionTimeoutMillis: 5000 });
     observePostgresPoolErrors(pool, (err) => {
       console.error("[app-db] Postgres connection error:", err.message);
     });
