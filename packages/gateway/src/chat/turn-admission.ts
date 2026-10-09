@@ -38,7 +38,7 @@ export interface TurnAdmissionOptions {
     clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
-    promptOverride?: string, admissionKey?: string): void;
+    promptOverride?: string, admissionKey?: string): Promise<void>;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -227,6 +227,13 @@ export async function admitCanonicalTurn(
     }
 
     let previewCleanup: void | (() => void) = undefined;
+    const disposePendingPreview = () => {
+      try {
+        if (previewCleanup) previewCleanup();
+      } catch (error: unknown) {
+        console.warn("[chat] Preview Drive admission cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    };
     let dispatched = false;
     try {
       if (!admitted.alreadyAccepted) {
@@ -274,7 +281,7 @@ export async function admitCanonicalTurn(
           });
           throw error;
         }
-        deps.startDispatch(
+        const completion = deps.startDispatch(
           owner,
           admitted.message,
           admitted.run,
@@ -284,6 +291,9 @@ export async function admitCanonicalTurn(
           undefined,
           admissionKey,
         );
+        // Startup may fail before a provider issues the capability. Disposal
+        // only removes this exact pending entry; issued capabilities own cleanup.
+        if (previewCleanup) void completion.then(disposePendingPreview, disposePendingPreview);
         dispatched = true;
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
@@ -295,9 +305,7 @@ export async function admitCanonicalTurn(
       });
     } finally {
       try {
-        if (!dispatched && previewCleanup) previewCleanup();
-      } catch (error: unknown) {
-        console.warn("[chat] Preview Drive admission cleanup failed", error instanceof Error ? error.name : "UnknownError");
+        if (!dispatched) disposePendingPreview();
       } finally {
         deps.releasePendingDispatch(run.id);
       }

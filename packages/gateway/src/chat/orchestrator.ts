@@ -366,7 +366,7 @@ export class CanonicalChatOrchestrator {
     admissionKey?: string,
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
-  ): void {
+  ): Promise<void> {
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
@@ -398,6 +398,7 @@ export class CanonicalChatOrchestrator {
       ...(sharedScopeId ? { sharedScopeId } : {}),
       completion,
     });
+    return completion;
   }
 
   async dispatchNextSharedQueued(

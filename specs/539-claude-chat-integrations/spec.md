@@ -106,12 +106,49 @@ canonical generic busy/stopping/shutdown response, and pending admission ownersh
 is released even if failure persistence throws. Existing limits, provider
 credentials and Preview grant permissions are unchanged. A redeemed pending lease
 returns an idempotent disposer bound to its exact actor, Chat, Run and grant.
-Rejection or synchronous failure to start disposes the pending entry before
-invoking best-effort Platform revocation, including when failure persistence
-throws. Cleanup errors are logged and pending admission ownership is always
-released. A successful dispatch transfers revocation ownership to the issued
-capability; stale disposers cannot remove replacement leases. The existing
+Rejection, synchronous failure to start, or asynchronous dispatch completion
+disposes the pending entry before invoking best-effort Platform revocation,
+including when failure persistence throws. Cleanup errors are logged and pending
+admission ownership is always released. Issuing the capability transfers
+revocation ownership to that capability; stale disposers cannot remove issued
+capabilities or replacement leases. The existing
 bounded revocation client and lease expiry remain the fallback on network failure.
+
+### Pending Preview grant disposal contract
+
+1. **Scope / trigger:** Dispatch can fail or be canceled after active Run
+   registration and before a provider claims the redeemed Preview grant. The
+   internal dispatch return type exposes completion without delaying admission.
+2. **Signatures:** `TurnAdmissionOptions.startDispatch(owner, message, run,
+   adapter, root?, resumeState?, promptOverride?, admissionKey?): Promise<void>`
+   and `CanonicalChatOrchestrator.startDispatch` return the existing dispatch
+   completion.
+   Redemption continues to return `void | (() => void)` for exact-entry disposal.
+3. **Contracts:** Register the active Run synchronously, return its completion,
+   and attach both fulfillment and rejection disposal handlers immediately.
+   Do not await completion between the final capacity guard and registration.
+   Issuing a capability removes its pending registry entry; that capability then
+   owns revocation. No endpoint, credential, grant scope, or environment changes.
+4. **Validation / error matrix:** A synchronous start throw uses admission's
+   `finally` disposal. Resolved or rejected asynchronous completion disposes any
+   unclaimed entry, including account, root, storage, activity, or cancellation
+   failures. An already issued entry is a no-op. A throwing disposer logs only
+   the error type and cannot reject the cleanup continuation or prevent pending
+   admission release. Replacement entries survive old disposers.
+5. **Good / base / bad cases:** Good: a provider claims the grant and retains
+   capability ownership until its own cleanup. Base: a turn with no Preview grant
+   has no disposal continuation. Bad: startup fails before the claim; revoke the
+   exact unused grant once rather than leaving it until expiry.
+6. **Tests required:** Exercise public admission with real registry wiring and
+   asynchronous account/root/mark-running/activity failures; cancel a registered
+   Run during held startup. Assert provider non-start and one exact revocation.
+   Assert issued capability and replacement lease preservation, resolved and
+   rejected completions, throwing-disposer isolation, and synchronous admission
+   release. Retain capacity/reentrant registration regressions.
+7. **Wrong vs correct:** Wrong: mark dispatch successful and release cleanup
+   ownership merely because synchronous registration returned. Correct: return
+   the existing completion and attach `completion.then(dispose, dispose)` while
+   retaining the synchronous failure `finally` path.
 
 ## Published provider compatibility
 
