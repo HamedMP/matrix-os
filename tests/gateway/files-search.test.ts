@@ -30,6 +30,13 @@ describe("fileSearch", () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
+  it('does not expose private Gallery staging through an ancestor content search',async()=>{
+    mkdirSync(join(testDir,'data/app-gallery-staging/Matrix'),{recursive:true});
+    writeFileSync(join(testDir,'data/app-gallery-staging/Matrix/secret.txt'),'Matrix private staged content');
+    writeFileSync(join(testDir,'data/public.txt'),'Matrix visible content');
+    const result=await fileSearch(testDir,{q:'Matrix',path:'data',content:true});
+    expect(result.results.map(r=>r.path)).toEqual(['data/public.txt']);
+  });
   it("searches file names", async () => {
     const result = await fileSearch(testDir, { q: "builder" });
     expect(result.results.length).toBeGreaterThan(0);

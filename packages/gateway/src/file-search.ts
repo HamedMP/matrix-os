@@ -65,6 +65,7 @@ export async function fileSearch(
 
       const fullPath = join(dirPath, entry.name);
       const relPath = relative(homePath, fullPath);
+      if (isDeniedFileApiPath(homePath, relPath)) continue;
 
       const matches: SearchMatch[] = [];
 

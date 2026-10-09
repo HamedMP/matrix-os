@@ -5,6 +5,7 @@ import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
 import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
 import { resolveSystemIconMetadata, type SystemIconMetadata } from "./icon-metadata.js";
+import { isUnmodifiedBundledIcon } from "./bundled-icon-ownership.js";
 import { AppGalleryCatalogSchema } from "@matrix-os/contracts/app-gallery";
 
 export interface AppEntry extends AppMeta {
@@ -105,16 +106,22 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
       if (!iconStem) return app;
       const galleryStem = app.slug && app.author === "Matrix OS" && legacyIcons.get(app.slug) === iconStem
         ? `gallery-${app.slug}` : null;
-      if (galleryStem) {
+      const selectedIcon = await resolveOnce(iconStem);
+      const bundledSelection = selectedIcon && await isUnmodifiedBundledIcon(homePath, selectedIcon);
+      if (galleryStem && bundledSelection) {
         const galleryIcon = await resolveOnce(galleryStem);
         if (galleryIcon) {
           icons[galleryStem] = galleryIcon;
           return { ...app, iconUrl: galleryIcon.versionedUrl };
         }
       }
-      const icon = await resolveOnce(iconStem);
+      const icon = selectedIcon;
       if (!icon) return app;
       icons[iconStem] = icon;
+      if (bundledSelection && (app.slug === "notes" || app.slug === "whiteboard") &&
+        [ `/files/apps/${app.slug}/index.html`, `apps/${app.slug}/index.html`, `/files/apps/${app.slug}/dist/index.html` ].includes(app.path)) {
+        return { ...app, iconUrl: `/system-app-icons/v2/${app.slug}.png` };
+      }
       return { ...app, iconUrl: icon.versionedUrl };
     }));
     hydrated.push(...entries);

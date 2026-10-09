@@ -68,7 +68,7 @@ describe("T711: GET /api/apps", () => {
   it("uses the gallery artwork for an existing first-party install without changing an owner-selected icon", async () => {
     mkdirSync(join(homePath, "system/icons"), { recursive: true });
     mkdirSync(join(homePath, "apps/subscriptions"), { recursive: true });
-    writeFileSync(join(homePath, "system/icons/subscriptions.png"), "old-owner-icon");
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), readFileSync(join(process.cwd(), "home/system/icons/subscriptions.svg")));
     writeFileSync(join(homePath, "system/icons/gallery-subscriptions.png"), "gallery-icon");
     writeFileSync(join(homePath, "system/icons/my-subscriptions.png"), "owner-selected-icon");
     writeFileSync(join(homePath, "apps/subscriptions/index.html"), "<html></html>");
@@ -80,6 +80,9 @@ describe("T711: GET /api/apps", () => {
     writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify(manifest));
 
     expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/gallery-subscriptions\.png\?v=/);
+
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), "owner customized the same selected file");
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/subscriptions\.svg\?v=/);
 
     writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify({ ...manifest, icon: "my-subscriptions" }));
     invalidateAppIndexCache();
