@@ -65,9 +65,12 @@ export default function App() {
     setLoadError("");
     try {
       if (!window.MatrixOS) throw new Error("Gallery unavailable");
-      const result = await loadGallery(window.MatrixOS);
+      setConnections(null);
+      const result = await loadGallery(window.MatrixOS, catalog => {
+        if (version !== request.current) return;
+        setApps(catalog); setLoading(false);
+      });
       if (version === request.current) {
-        setApps(result.apps);
         setConnections(result.connections);
       }
     } catch (error) {

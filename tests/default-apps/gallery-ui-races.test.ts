@@ -110,3 +110,15 @@ describe("Focus session lifecycle", () => {
     }
   });
 });
+
+it("shows and installs the catalog while optional connections are still loading",async()=>{
+ const inventory=deferred<unknown[]>();
+ bridge({gatewayFetch:vi.fn(async(url:string)=>url.endsWith('/install')?{status:'installed',slug:'folio',name:'Folio',path:'apps/folio'}:{version:1,apps:[{...folio,installed:false}]}),integrations:()=>inventory.promise});
+ render(createElement(Gallery));
+ await screen.findByRole('button',{name:'Get'});
+ expect(screen.getByRole('button',{name:'Refresh gallery and connections'})).toHaveProperty('disabled',false);
+ fireEvent.click(screen.getByRole('button',{name:'Get'}));
+ await screen.findByRole('button',{name:'Open'});
+ await act(async()=>inventory.resolve([]));
+ expect(screen.getByRole('button',{name:'Open'})).toBeTruthy();
+});

@@ -74,7 +74,11 @@ export function visibleApps(
   filter: GalleryFilters,
   connections: GalleryConnection[] | null,
 ) {
-  return filterGalleryApps(apps, filter).filter(
+  const catalogMatches = new Set(filterGalleryApps(apps, filter).map(app => app.id));
+  const query = filter.query.trim().toLocaleLowerCase();
+  return filterGalleryApps(apps, { ...filter, query: "" }).filter(app =>
+    catalogMatches.has(app.id) || (!!query && app.installedName?.toLocaleLowerCase().includes(query)),
+  ).filter(
     (app) =>
       filter.readiness === "all" ||
       (filter.readiness === "installed"
@@ -82,21 +86,15 @@ export function visibleApps(
         : deriveGalleryReadiness(app, connections).status === filter.readiness),
   );
 }
-export async function loadGallery(bridge: GalleryBridge) {
-  const [catalog, inventory] = await Promise.allSettled([
-    bridge.gatewayFetch("/api/app-gallery"),
-    bridge.integrations
-      ? bridge.integrations()
-      : Promise.reject(new Error("Inventory unavailable")),
-  ]);
-  if (catalog.status === "rejected") throw new Error("Gallery unavailable");
-  if (inventory.status === "rejected")
-    console.warn("Gallery connection inventory unavailable");
-  return {
-    apps: parseListing(catalog.value),
-    connections:
-      inventory.status === "fulfilled" ? knownInventory(inventory.value) : null,
-  };
+export async function loadGallery(bridge: GalleryBridge, onCatalog?: (apps: GalleryAppListing[]) => void) {
+  // Inventory settles independently; a slow optional service cannot hide the catalog.
+  const inventory = Promise.resolve().then(() => {
+    if (!bridge.integrations) throw new Error("Inventory unavailable");
+    return bridge.integrations();
+  }).then(knownInventory, () => { console.warn("Gallery connection inventory unavailable"); return null; });
+  const apps = parseListing(await bridge.gatewayFetch("/api/app-gallery"));
+  onCatalog?.(apps);
+  return { apps, connections: await inventory };
 }
 export async function installGalleryApp(
   bridge: GalleryBridge,
