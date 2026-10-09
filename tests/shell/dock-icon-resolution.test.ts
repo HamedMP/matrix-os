@@ -49,7 +49,7 @@ describe("dock icon resolution", () => {
       readFile("shell/src/components/mobile/MobileDock.tsx", "utf8"),
     ]);
 
-    expect(dockSource).toContain('<MobileAppIcon slug={app.iconSlug} size={28} />');
+    expect(dockSource).toContain('<MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={28} />');
 
     expect(source).toContain("import { iconUrlForSlug } from \"@/lib/app-launch\"");
     expect(source).not.toContain("function iconUrl");

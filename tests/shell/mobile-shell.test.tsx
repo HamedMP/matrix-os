@@ -12,6 +12,7 @@ import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
+const fileChangeHandlers: Array<(path: string, event: "add" | "change" | "unlink") => void> = [];
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
 const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
@@ -20,6 +21,7 @@ const settingsMock = vi.hoisted(() => ({
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (handler: typeof fileChangeHandler) => {
     fileChangeHandler = handler;
+    if (handler) fileChangeHandlers.push(handler);
   },
 }));
 
@@ -141,6 +143,7 @@ async function loadMobileShell() {
 describe("mobile shell", () => {
   beforeEach(() => {
     fileChangeHandler = null;
+    fileChangeHandlers.length = 0;
     const storage = createMemoryStorage();
     Object.defineProperty(window, "localStorage", {
       value: storage,
@@ -438,6 +441,50 @@ describe("mobile shell", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("mobile-launcher-app-apps/winxp-minesweeper/index.html")).toBeNull();
     });
+  });
+
+  it("keeps pending app requests alive through a theme-driven catalog refresh", async () => {
+    let finish: ((response: Response) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    let bootstrapCount = 0;
+    const fetcher = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/shell/bootstrap")) {
+        bootstrapCount++;
+        return Promise.resolve({ ok: true, json: async () => ({
+          layout: { windows: [] }, modules: [], icons: {},
+          apps: [{ name: "Subscriptions", path: "/files/apps/subscriptions/index.html", icon: "subscriptions" }],
+        }) });
+      }
+      if (String(url).includes("/api/bridge/capabilities")) {
+        requestSignal = init?.signal as AbortSignal;
+        return new Promise<Response>(resolve => { finish = resolve; });
+      }
+      return Promise.resolve(Response.json({}));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const MobileShell = await loadMobileShell();
+    const view = render(<MobileShell launchAppPath="apps/subscriptions/index.html" />);
+    await waitFor(() => expect(view.container.querySelector("iframe")).toBeTruthy());
+    const iframe = view.container.querySelector("iframe")!;
+    await waitFor(() => expect(iframe.getAttribute("srcdoc")).toContain("os:bridge"));
+    const port = { postMessage: vi.fn(), close: vi.fn() };
+    act(() => window.dispatchEvent(new MessageEvent("message", {
+      source: iframe.contentWindow, origin: window.location.origin, ports: [port as unknown as MessagePort],
+      data: { type: "os:bridge-fetch", app: "subscriptions", payload: {
+        url: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) },
+      } },
+    })));
+    await waitFor(() => expect(finish).toBeDefined());
+    await act(async () => {
+      for (const handler of [...fileChangeHandlers]) handler("system/theme.json", "change");
+      await Promise.resolve();
+    });
+    expect(bootstrapCount).toBeGreaterThan(1);
+    expect(requestSignal?.aborted).toBe(false);
+    expect(port.close).not.toHaveBeenCalled();
+    await act(async () => { finish?.(Response.json({ services: [] })); });
+    await waitFor(() => expect(port.postMessage).toHaveBeenCalledWith({ ok: true, status: 200, body: { services: [] } }));
+    expect(port.close).toHaveBeenCalledOnce();
   });
 
   it("ignores an older bootstrap response after a newer theme refresh wins", async () => {

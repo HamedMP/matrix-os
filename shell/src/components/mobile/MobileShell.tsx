@@ -183,6 +183,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
+  const appsRef = useRef(apps);
+  useEffect(() => { appsRef.current = apps; }, [apps]);
   const launchPathConsumedRef = useRef<string | null>(null);
   const appsRefreshGenerationRef = useRef(0);
   useEffect(() => {
@@ -311,12 +313,12 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 
   const openAppFromBridge = useCallback((name: string, requestedPath: string) => {
     routeAppBridgeLaunch(name, requestedPath, (title, path) => {
-      const registered = apps.find((candidate) => normalizeAppBridgeLaunchPath(candidate.path) === path);
+      const registered = appsRef.current.find((candidate) => normalizeAppBridgeLaunchPath(candidate.path) === path);
       openApp(registered ? { ...registered, path } : {
         id: `app:${path}`, name: title, path, iconSlug: nameToSlug(title),
       });
     });
-  }, [apps, openApp]);
+  }, [openApp]);
 
   const openAgentSetupTerminal = useCallback((action: TerminalLaunchAction) => {
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
