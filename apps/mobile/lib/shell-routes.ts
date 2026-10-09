@@ -43,3 +43,12 @@ export function chatScreenFromAnotherTabParams() {
 export function sharedScreenParams() {
   return { screen: CHATS_TAB_ROUTE, params: { screen: "shared" } };
 }
+
+/**
+ * Opens Projects on top of the chat screen. The folder `projects/` has no
+ * layout of its own, so its screens belong to the Chats stack under the names
+ * `projects/index` and `projects/[projectId]`.
+ */
+export function projectsScreenParams() {
+  return { screen: CHATS_TAB_ROUTE, params: { screen: "projects/index" } };
+}

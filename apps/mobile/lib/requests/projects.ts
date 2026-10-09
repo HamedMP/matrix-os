@@ -19,6 +19,7 @@ const ProjectSummarySchema = z.object({
   slug: z.string().min(1).max(160),
   name: z.string().min(1).max(240),
   kind: z.enum(["scratch", "github", "folder"]),
+  updatedAt: z.string().optional(),
   archivedAt: z.string().optional(),
   github: z.object({
     owner: z.string(),

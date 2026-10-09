@@ -28,6 +28,12 @@ describe("IconTile", () => {
     expect(screen.UNSAFE_getByType(Icon).props).toMatchObject({ icon: FolderIcon, size: iconSize });
   });
 
+  it("draws the 40 tile with the card radius when asked for a rounded shape", () => {
+    render(<IconTile testID="tile" icon={FolderIcon} size={40} shape="rounded" />);
+
+    expect(flat(screen.getByTestId("tile"))).toMatchObject({ borderRadius: 12, width: 40, height: 40 });
+  });
+
   it("can be forced into a circle with its own icon size", () => {
     render(<IconTile testID="tile" icon={AddIcon} size={44} shape="circle" iconSize={20} />);
 
@@ -38,7 +44,6 @@ describe("IconTile", () => {
   it("draws the icon in the text colour, or the secondary text colour when subtle", () => {
     render(<IconTile icon={FolderIcon} size={44} />);
     expect(screen.UNSAFE_getByType(Icon).props.color).toBe("#242323");
-    cleanup();
 
     render(<IconTile icon={FolderIcon} size={40} tone="subtle" />);
     expect(screen.UNSAFE_getByType(Icon).props.color).toBe("#635F5F");

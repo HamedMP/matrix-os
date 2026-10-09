@@ -21,7 +21,7 @@ interface SendChatMessageInput {
   /** Must be modes the selected instance's `supports` actually declares -- see defaultTurnModes. */
   interactionMode: string;
   permissionMode: string;
-  /** Only applied when creating a new chat (chatId is null) -- see ProjectPicker. */
+  /** Only applied when creating a new chat (chatId is null); the project screen sets it. */
   projectId: string | null;
   /**
    * Idempotency keys for this exact send attempt. The caller must generate
