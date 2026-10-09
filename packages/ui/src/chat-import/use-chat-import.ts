@@ -3,6 +3,7 @@ import { LOCAL_CHAT_DISCOVERY_LIMIT, localChatImportErrorText, LocalChatImportDi
 import { createBrowserChatSource } from "./local-source.js";
 import { MAX_IMPORT_SELECTIONS, sourceKey, validImportTitle, type ImportItem, type ImportTransport, type NativeChatImportAdapter, type LocalChatCandidate, type LocalChatLibraryState, type LocalImportOutcome, type LocalImportUpdate } from "./import-state.js";
 import { runLocalImportQueue } from "./local-import-queue.js";
+import { createLocalImportResults } from "./local-import-results.js";
 const STOPPED = "Stopped waiting. Retry the same file to check its import status.";
 export function useChatImport({ native, transport }: { native?: NativeChatImportAdapter; transport?: ImportTransport }) {
     const [harness, setHarness] = useState<ImportHarness>("codex");
@@ -12,10 +13,16 @@ export function useChatImport({ native, transport }: { native?: NativeChatImport
     const [error, setError] = useState<string | null>(null);
     const [localResults, setLocalResults] = useState<Record<string, LocalImportOutcome>>({});
     const [localActive, setLocalActive] = useState<LocalImportUpdate | null>(null);
+    const [localImportedCount, setLocalImportedCount] = useState(0);
+    const outcomes = useRef<ReturnType<typeof createLocalImportResults> | null>(null);
+    if (!outcomes.current) outcomes.current = createLocalImportResults();
+    const active = useRef<LocalImportUpdate | null>(null);
     const library=useLocalSources(native,batchRevision);
     const generation = useRef(0);
     const operation = useRef<AbortController | null>(null);
-    useEffect(() => () => { generation.current++; operation.current?.abort(); native?.pause(true); }, [native, transport]);
+    useEffect(() => () => { generation.current++; operation.current?.abort(); outcomes.current?.clear(); native?.pause(true); }, [native, transport]);
+    function flushResults() { setLocalResults(outcomes.current!.snapshot()); setLocalImportedCount(outcomes.current!.importedCount); }
+    function clearResults() { outcomes.current!.clear(); active.current = null; setLocalResults({}); setLocalImportedCount(0); setLocalActive(null); }
     function release(ids: string[]) {
         if(ids.length && native?.release)void native.release(ids).catch((cause:unknown)=>{
             console.warn("[chat-import] preview release unavailable",cause instanceof Error ? cause.name : "UnknownError");
@@ -79,7 +86,7 @@ export function useChatImport({ native, transport }: { native?: NativeChatImport
     async function importLocal(keys: string[]) {
         if (!native?.prepare || library.loading || library.error) return;
         const keySet = new Set(keys.slice(0, LOCAL_CHAT_DISCOVERY_LIMIT)); // workflow-scoped bounded selection, discarded after use.
-        const queued = library.sources.filter(source => keySet.has(source.sourceKey) && localResults[source.sourceKey]?.status !== "imported");
+        const queued = library.sources.filter(source => keySet.has(source.sourceKey) && outcomes.current!.get(source.sourceKey)?.status !== "imported");
         if (!queued.length) return;
         const task = begin("importing"); if (!task) return;
         if (items.some(item=>item.catalogKey && keySet.has(item.catalogKey) && !validImportTitle(item.title))) { finish(task.current); setError("Enter a title of 1–160 characters before importing."); return; }
@@ -87,16 +94,18 @@ export function useChatImport({ native, transport }: { native?: NativeChatImport
         try {
             await runLocalImportQueue(queued, native, task.controller.signal, value => {
                 if (!task.live()) return;
+                active.current = value;
                 setLocalActive(value);
                 if (value.status === "imported" || value.status === "failed") {
                     const outcome: LocalImportOutcome = { status: value.status, result: value.result, error: value.error };
-                    setLocalResults(previous => ({ ...previous, [value.sourceKey]: outcome }));
-                    setItems(previous => previous.map(item => item.catalogKey === value.sourceKey
-                        ? { ...item, status: value.status as "imported" | "failed", result: value.result, error: value.error, progress: undefined } : item));
+                    if (outcomes.current!.record(value.sourceKey, outcome)) flushResults();
+                    setLocalImportedCount(outcomes.current!.importedCount);
                 }
+                setItems(previous => previous.map(item => item.catalogKey === value.sourceKey
+                    ? { ...item, status: value.status, result: value.result, error: value.error, progress: value.progress } : item));
             }, titles);
         } catch (cause: unknown) { if (task.live()) setError(localChatImportErrorText(cause)); }
-        finally { if (task.live()) setLocalActive(null); finish(task.current); }
+        finally { if (task.live()) { flushResults(); active.current = null; setLocalActive(null); } finish(task.current); }
     }
     async function importChats(status: "ready" | "failed" = "ready") {
         const queued = items.filter(item => item.status === status);
@@ -126,14 +135,17 @@ export function useChatImport({ native, transport }: { native?: NativeChatImport
     }
     function pause() {
         generation.current++; operation.current?.abort(); operation.current = null; native?.pause();
+        const waiting = active.current;
+        if (waiting && (waiting.status === "reading" || waiting.status === "importing")) outcomes.current!.record(waiting.sourceKey, { status: "failed", error: STOPPED });
+        flushResults(); active.current = null;
         setLocalActive(null); setBusy(null); setError(busy === "reading" ? STOPPED : null);
-        setItems(previous => previous.map(item => item.status === "importing" ? { ...item, status: "failed", error: STOPPED, progress: undefined } : item));
+        setItems(previous => previous.map(item => item.status === "importing" || item.status === "reading" ? { ...item, status: "failed", error: STOPPED, progress: undefined } : item));
     }
     function changeTitle(key: string, title: string) { if (!operation.current) setItems(previous => previous.map(item => item.key === key && item.status !== "imported" ? { ...item, title } : item)); }
     function remove(key: string) { if (!operation.current) { release(items.filter(item=>item.key===key).flatMap(item=>item.selectionId?[item.selectionId]:[])); setItems(previous => previous.filter(item => item.key !== key)); setError(null); } }
-    function reset() { if (!operation.current) { native?.pause(true); setItems([]); setLocalResults({}); setLocalActive(null); setError(null); setBatchRevision(value => value + 1); } }
-    const refreshLibrary = () => { if (!operation.current) { setLocalResults({}); setItems(previous=>previous.filter(item=>!item.catalogKey)); library.refresh(); } };
-    return { library: { ...library, refresh: refreshLibrary }, localResults, localActive, importLocal, batchRevision, harness, setHarness, items, busy, error, selectFiles, importChats, pause, changeTitle, remove, reset };
+    function reset() { if (!operation.current) { native?.pause(true); setItems([]); clearResults(); setError(null); setBatchRevision(value => value + 1); } }
+    const refreshLibrary = () => { if (!operation.current) { clearResults(); setItems(previous=>previous.filter(item=>!item.catalogKey)); library.refresh(); } };
+    return { library: { ...library, refresh: refreshLibrary }, localResults, localImportedCount, localActive, importLocal, batchRevision, harness, setHarness, items, busy, error, selectFiles, importChats, pause, changeTitle, remove, reset };
 }
 
 function useLocalSources(native: NativeChatImportAdapter | undefined, batchRevision: number): LocalChatLibraryState {

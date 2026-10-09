@@ -1,8 +1,8 @@
 import { realpath } from "node:fs/promises";
 import type { DiscoveredLocalChat } from "./local-chat-discovery";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { openLocalChatSource } from "@finnaai/matrix/local-chat-import";
-import { createLocalChatHttpTransport, uploadLocalChatArchive, localChatImportErrorText, LOCAL_CHAT_IMPORT_BATCH_LIMIT, LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness, type LocalChatImportProgress, type LocalChatSourcePreview } from "@matrix-os/contracts/local-chat-import";
+import { createLocalChatHttpTransport, uploadLocalChatArchive, LocalChatTransferError, localChatImportErrorText, LOCAL_CHAT_IMPORT_BATCH_LIMIT, LOCAL_CHAT_DISCOVERY_LIMIT, type ImportHarness, type LocalChatImportProgress, type LocalChatSourcePreview } from "@matrix-os/contracts/local-chat-import";
 import { LOCAL_CHAT_IMPORT_INVOKE, ChatImportSessionSchema } from "../../shared/local-chat-import-ipc";
 import type { z } from "zod/v4";
 import { validateDriveTransferUrl } from "./organization-drive-transfer-url";
@@ -21,7 +21,9 @@ type Selection = {
     preview: LocalChatSourcePreview;
     bound: Bound;
     expiresAt: number;
+    catalogKey?: string;
 };
+type RetryIdentity = Pick<Selection, "capture" | "preview">;
 interface Deps {
     auth: {
         getToken(): string | null;
@@ -44,7 +46,7 @@ interface Deps {
 export function createNativeChatImportService(deps: Deps) {
     const selections = new Map<string, Selection>(); // 128 selections, one hour TTL, recurring eviction, no open descriptors.
     const maxSelections = 128;
-    const catalog = new Map<string, { source: DiscoveredLocalChat; bound: Bound; expiresAt: number }>(); // 20,000 entries; 15-minute discovery TTL or 24-hour selected queue TTL; recurring eviction.
+    const catalog = new Map<string, { source: DiscoveredLocalChat; bound: Bound; expiresAt: number; retry?: RetryIdentity }>(); // 20,000 entries; 15-minute discovery TTL or 24-hour selected queue TTL; recurring eviction, metadata only.
     let controller: AbortController | null = null;
     let pending: Promise<unknown> | null = null;
     let disposed = false;
@@ -158,13 +160,25 @@ export function createNativeChatImportService(deps: Deps) {
             const prepared: Array<{selectionId:string;preview:LocalChatSourcePreview}>=[]; const errors:string[]=[];
             let returned=false;
             try {
-                for(const entry of entries) {
+                for(const [index,entry] of entries.entries()) {
                     if(operation.signal.aborted) return {status:"cancelled" as const};
                     if (!entry || !current(owner)) return {status:"cancelled" as const};
                     try {
-                        if (await realpath(entry.source.path) !== entry.source.path) { errors.push("The selected transcript changed. Preview it again before importing."); continue; }
+                        const catalogKey=parsed.data.sourceKeys[index]!;
+                        if(entry.retry){
+                            if(selections.size>=maxSelections){errors.push("Too many transcript previews are open. Reopen Settings and select your files again.");continue;}
+                            // Preserve the attempted upload identity even when its local file was removed or grew.
+                            const selectionId=randomUUID();
+                            selections.set(selectionId,{path:entry.source.path,...entry.retry,bound:owner,expiresAt:Date.now()+60*60000,catalogKey});
+                            prepared.push({selectionId,preview:entry.retry.preview});
+                            continue;
+                        }
+                        if (await realpath(entry.source.path) !== entry.source.path) { errors.push(localChatImportErrorText(new LocalChatTransferError("source_changed"))); continue; }
                         const result = await previewPaths([entry.source.path],entry.source.harness,owner,operation,true,entry.source.title);
-                        if(result.status==="selected-many") { prepared.push(...result.selections); errors.push(...result.errors); }
+                        if(result.status==="selected-many") {
+                            for(const selected of result.selections){const value=selections.get(selected.selectionId);if(value)value.catalogKey=catalogKey;}
+                            prepared.push(...result.selections); errors.push(...result.errors);
+                        }
                         else if(result.status==="error") errors.push(result.message);
                         else return result;
                     } catch(error:unknown) {
@@ -231,11 +245,37 @@ export function createNativeChatImportService(deps: Deps) {
                 throw new DOMException("Cancelled", "AbortError"); };
             try {
                 assertCurrent();
-                source = await openLocalChatSource(value.path, value.capture);
-                assertCurrent();
-                const transport = createLocalChatHttpTransport({ baseUrl: value.bound.origin, runtimeSlot: value.bound.runtimeSlot, headers: () => ({ Authorization: `Bearer ${value.bound.token}` }), fetchImpl: deps.fetchImpl, assertCurrent, validateUploadUrl: validateDriveTransferUrl });
+                const entry=value.catalogKey ? catalog.get(value.catalogKey) : undefined;
+                if(entry && current(entry.bound)){
+                    // Freeze before the first request; release may follow a lost or cancelled server result.
+                    entry.retry ??= {capture:value.capture,preview:value.preview};
+                    value.capture=entry.retry.capture;value.preview=entry.retry.preview;
+                }
                 const preview = value.preview;
-                const result = await (deps.transfer ?? uploadLocalChatArchive)({ harness: preview.harness, sourceId: preview.sourceId, ...(preview.sourceAgentId ? { sourceAgentId: preview.sourceAgentId } : {}), sourceHash: preview.sourceHash, rawSize: preview.rawBytes, title: parsed.data.title }, source, transport, { signal: operation.signal, onProgress: progress => { assertCurrent(); deps.progress?.({ ...progress, selectionId: parsed.data.selectionId, runtimeSlot: value.bound.runtimeSlot, authGeneration: value.bound.authGeneration }); } });
+                const uploadSource={
+                    rawSize:preview.rawBytes,
+                    createHash(){const hash=createHash("sha256");return {update(bytes:Uint8Array){hash.update(bytes);},digest(){return hash.digest("hex");}};},
+                    async read(offset:number,length:number,signal:AbortSignal){
+                        assertCurrent();
+                        if(!source){
+                            // Published jobs recover without a local file. Only unfinished uploads need bytes.
+                            try{source=await openLocalChatSource(value.path,value.capture);}
+                            catch(error:unknown){assertCurrent();console.warn("[chat-import] original capture unavailable",error instanceof Error ? error.name : "UnknownError");throw new LocalChatTransferError("source_changed");}
+                            const verificationSignal=AbortSignal.any([signal,operation.signal,AbortSignal.timeout(5*60_000)]);
+                            const hash=source.createHash();
+                            for(let position=0;position<preview.rawBytes;position+=64*1024){
+                                assertCurrent();
+                                // Verify sequential chunks to bound transcript memory before uploading.
+                                // eslint-disable-next-line react-doctor/async-await-in-loop
+                                hash.update(await source.read(position,Math.min(64*1024,preview.rawBytes-position),verificationSignal));
+                            }
+                            if(hash.digest()!==preview.sourceHash)throw new LocalChatTransferError("source_changed");
+                        }
+                        assertCurrent();return source.read(offset,length,signal);
+                    },
+                };
+                const transport = createLocalChatHttpTransport({ baseUrl: value.bound.origin, runtimeSlot: value.bound.runtimeSlot, headers: () => ({ Authorization: `Bearer ${value.bound.token}` }), fetchImpl: deps.fetchImpl, assertCurrent, validateUploadUrl: validateDriveTransferUrl });
+                const result = await (deps.transfer ?? uploadLocalChatArchive)({ harness: preview.harness, sourceId: preview.sourceId, ...(preview.sourceAgentId ? { sourceAgentId: preview.sourceAgentId } : {}), sourceHash: preview.sourceHash, rawSize: preview.rawBytes, title: parsed.data.title }, uploadSource, transport, { signal: operation.signal, onProgress: progress => { assertCurrent(); deps.progress?.({ ...progress, selectionId: parsed.data.selectionId, runtimeSlot: value.bound.runtimeSlot, authGeneration: value.bound.authGeneration }); } });
                 assertCurrent();
                 selections.delete(parsed.data.selectionId);
                 return { status: "imported" as const, ...result };
