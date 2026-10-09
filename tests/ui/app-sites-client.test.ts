@@ -5,6 +5,15 @@ function transport(): SiteTransport {
   return { get: vi.fn(async () => null) as SiteTransport["get"], post: vi.fn(async () => null) as SiteTransport["post"], patch: vi.fn(async () => null) as SiteTransport["patch"], delete: vi.fn(async () => null) as SiteTransport["delete"], getBlob: vi.fn(async () => new Blob()), getText: vi.fn(async () => "") };
 }
 describe("app site client", () => {
+  it("logs only a fixed category for handled and unhandled publication loads", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const api = transport();
+    vi.mocked(api.get).mockRejectedValueOnce(new SiteClientError(404)).mockRejectedValueOnce({ private: "private visitor fields" });
+    await expect(createSiteClient(api).get("launch", new AbortController().signal)).resolves.toBeNull();
+    await expect(createSiteClient(api).get("launch", new AbortController().signal)).rejects.toEqual({ private: "private visitor fields" });
+    expect(warning.mock.calls).toEqual([["[site-client] publication load failed", "Error"], ["[site-client] publication load failed", "UnknownError"]]);
+    warning.mockRestore();
+  });
   it("loads only validated public capabilities from the owner app manifest", async () => {
     const api = transport();
     api.get = vi.fn(async () => ({ manifest: { publishing: { data: { event: "Launch" }, forms: [] } } })) as SiteTransport["get"];
