@@ -56,6 +56,7 @@ type KnownSource = BrainSource & { readonly kind: BrainSourceKind };
 const ADAPTER_ERRORS = {
   not_connected: "source_not_connected", auth_failed: "source_auth_failed", config_invalid: "source_config_invalid",
 } as const;
+type SyncRefusal = (typeof ADAPTER_ERRORS)[keyof typeof ADAPTER_ERRORS];
 const LIMITS = BRAIN_SOURCES_SERVICE_LIMITS;
 /** What the runner answers for a source that is not active; sync answers it for a paused source of any kind. */
 const INACTIVE: BrainSourceSyncResult = {
@@ -299,6 +300,14 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     return toSourceSyncView(sourceId, result);
   }
 
+  /** A refusal met after the status check: a source paused (or removed) meanwhile answers as such, not with `code`. */
+  async function refuse(scope: BrainScopeKey, sourceId: string, code: SyncRefusal): Promise<BrainSourceSyncView> {
+    const current = await repository.getSource(scope, sourceId);
+    if (current === null) throw new BrainFeatureError("source_not_found");
+    if (current.status !== "active") return syncView(sourceId, INACTIVE);
+    throw new BrainFeatureError(code);
+  }
+
   /**
    * gitSync runs the project's git source: the oldest live one, as the project service picks it. Another git source (a
    * registration race left two) is source_conflict, never synced under the wrong id (the project service checks the id
@@ -436,10 +445,10 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
       if (source.status !== "active") return syncView(sourceId, INACTIVE);
       const handler = handlerOf(source.kind);
       const config: unknown = await handler.loadConfig(scope, sourceId);
-      if (config === null) throw new BrainFeatureError("source_config_invalid");
+      if (config === null) return refuse(scope, sourceId, "source_config_invalid");
       const resolution = await withSourcesDeadline(timeoutMs, () => handler.createAdapter(ownerId, project, config))
         .catch((error: unknown) => { throw outage(`${source.kind} adapter`, error); });
-      if (!resolution.ok) throw new BrainFeatureError(ADAPTER_ERRORS[resolution.code]);
+      if (!resolution.ok) return refuse(scope, sourceId, ADAPTER_ERRORS[resolution.code]);
       const result = await deps.runner({
         repository, scope, sourceId, adapter: resolution.adapter, config,
         ...(deps.limits === undefined ? {} : { limits: deps.limits }),

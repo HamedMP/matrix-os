@@ -88,6 +88,21 @@ describe("sync", () => {
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_config_invalid");
   });
 
+  it("answers a source paused or removed while its account was read as paused or not found, not as an account error", async () => {
+    let meanwhile: () => Promise<unknown> = async () => undefined;
+    const sources = service([fakeHandler("linear", {
+      adapter: async () => { await meanwhile(); return { ok: false, code: "not_connected" }; },
+    })]);
+    const { source } = await sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["a"] } });
+    const sourceId = source.sourceId;
+    meanwhile = () => harness.repository.updateSource(SCOPE_A, { sourceId, expectedRevision: 1, status: "paused" });
+    expect(await sources.sync(OWNER, "proj_a", sourceId))
+      .toMatchObject({ sourceId, status: "failed", errorCode: "source_inactive", nextAction: "fix_source", receipt: null });
+    await sources.update(OWNER, "proj_a", sourceId, { expectedRevision: 2, status: "active" });
+    meanwhile = () => harness.repository.deleteSource(SCOPE_A, { sourceId, expectedRevision: 3 });
+    expect(await codeOf(sources.sync(OWNER, "proj_a", sourceId))).toBe("source_not_found");
+  });
+
   it("maps adapter refusals to feature codes and bounds adapter creation", async () => {
     for (const [code, expected] of [["not_connected", "source_not_connected"], ["auth_failed", "source_auth_failed"],
       ["config_invalid", "source_config_invalid"]] as const) {
