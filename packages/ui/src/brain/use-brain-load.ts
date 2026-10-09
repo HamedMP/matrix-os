@@ -17,15 +17,15 @@ const LOADING: BrainLoad<never> = { status: "loading" };
 
 /**
  * Runs `load` whenever `key` changes or `reload` is called; a null key loads nothing. A result that arrives after a
- * newer request started is dropped, so a slow answer never overwrites a newer one. While a reload of the same key
- * runs, the previous ready data stays on screen. `replace` sets the data of the request it was created for (and drops
- * that request's load if it is still running, as the replaced data is newer), and does nothing once a newer request
- * started.
+ * newer request started is dropped, so a slow answer never overwrites a newer one. A new `ask` reloads the same key.
+ * While a reload of the same key runs, the previous ready data stays on screen. `replace` sets the data of the request
+ * it was created for (and drops that request's load if it is still running, as the replaced data is newer), and does
+ * nothing once a newer request started.
  */
-export function useBrainLoad<T>(load: () => Promise<T>, key: string | null) {
-  // Every key change and every reload gets a new request number, so a token is never reused.
-  const [request, setRequest] = useState({ key, number: 0 });
-  if (request.key !== key) setRequest({ key, number: request.number + 1 });
+export function useBrainLoad<T>(load: () => Promise<T>, key: string | null, ask = 0) {
+  // Every key change, ask and reload gets a new request number, so a token is never reused.
+  const [request, setRequest] = useState({ key, ask, number: 0 });
+  if (request.key !== key || request.ask !== ask) setRequest({ key, ask, number: request.number + 1 });
   const [settled, setSettled] = useState<{
     readonly token: string; readonly key: string; readonly value: BrainLoad<T>;
   } | null>(null);
@@ -47,7 +47,7 @@ export function useBrainLoad<T>(load: () => Promise<T>, key: string | null) {
   }, [token]);
   const kept = settled !== null && (settled.token === token || (settled.key === key && settled.value.status === "ready"));
   const state: BrainLoad<T> = token === null ? IDLE : kept ? settled.value : LOADING;
-  const reload = useCallback(() => setRequest((value) => ({ key: value.key, number: value.number + 1 })), []);
+  const reload = useCallback(() => setRequest((value) => ({ ...value, number: value.number + 1 })), []);
   // `replace` is often called after an awaited action; data meant for an older token must not overwrite a newer key.
   const liveToken = useRef(token);
   useLayoutEffect(() => { liveToken.current = token; }, [token]);
@@ -67,10 +67,10 @@ interface BrainMore<T> {
 
 /** A cursor-paged list: the first page through useBrainLoad, then "Load more" pages appended, capped in memory. */
 export function useBrainPages<P extends BrainPageView<unknown>>(
-  fetchPage: (cursor: string | undefined) => Promise<P>, key: string | null,
+  fetchPage: (cursor: string | undefined) => Promise<P>, key: string | null, ask = 0,
 ) {
   type T = P["items"][number];
-  const first = useBrainLoad(() => fetchPage(undefined), key);
+  const first = useBrainLoad(() => fetchPage(undefined), key, ask);
   const [more, setMore] = useState<BrainMore<T> | null>(null);
   const extra = more !== null && more.token === first.token ? more : null;
   const firstPage = first.state.status === "ready" ? first.state.data : null;
