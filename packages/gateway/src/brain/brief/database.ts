@@ -185,14 +185,15 @@ export async function writeStoredBrief(
   });
 }
 
-/** Removes every stored brief of the scope, or only the one of `only`; none is a no-op. */
+/** Removes every stored brief of the scope, or only `only` while the row still holds that copy (not a newer one). */
 export async function deleteStoredBriefs(
-  db: Kysely<BrainDatabase>, scope: BrainScopeKey, only?: { readonly date: string; readonly window: BrainBriefWindow },
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, only?: BrainStoredBrief,
 ): Promise<void> {
   await withScopeLock(db, scope, async (trx) => {
     let query = trx.deleteFrom("brain_brief_briefs").where("owner_id", "=", scope.ownerId)
       .where("scope_id", "=", scope.scopeId);
-    if (only !== undefined) query = query.where("brief_date", "=", only.date).where("brief_window", "=", only.window);
+    if (only !== undefined) query = query.where("brief_date", "=", only.date).where("brief_window", "=", only.window)
+      .where("body", "=", sql`${JSON.stringify(only)}::jsonb`);
     await query.execute();
   });
 }

@@ -9,6 +9,17 @@ import { briefWindow } from "../../packages/gateway/src/brain/brief/time.js";
 import { brainDocumentId } from "./helpers/brain-store-helpers.js";
 import { BRIEF_OWNER, BRIEF_SCOPE, createBriefFixture, prBody, type BriefFixture } from "./helpers/brain-brief-fixture.js";
 
+// Runs once right after a GET's deleted-cite check, so a test can race a write against what the GET does next.
+const race = vi.hoisted(() => ({ afterCheck: null as (() => Promise<unknown>) | null }));
+vi.mock("../../packages/gateway/src/brain/brief/database.js", async (load) => {
+  const real = await load<typeof import("../../packages/gateway/src/brain/brief/database.js")>();
+  return { ...real, citesDeleted: async (...args: Parameters<typeof real.citesDeleted>) => {
+    const [deleted, hook] = [await real.citesDeleted(...args), race.afterCheck];
+    race.afterCheck = null;
+    return hook === null ? deleted : hook().then(() => deleted);
+  } };
+});
+
 let fx: BriefFixture;
 beforeEach(async () => {
   fx = await createBriefFixture();
@@ -285,7 +296,7 @@ describe("stored briefs", () => {
     await bootstrapBrainBriefDatabase(fx.harness.db);
   });
 
-  it("never serves a stored brief that cites a document deleted since, and drops that copy", async () => {
+  it("never serves a stored brief that cites a document deleted since, and drops only that copy", async () => {
     const chat = await fx.source("matrix", "Chats");
     await fx.sync(chat, [{ seed: "pay", title: "Private chat: salary talk", body: "Decision: raise pay in May." }]);
     await fx.extract("pay", [{ kind: "decision", statement: "raise pay in May." }]);
@@ -297,9 +308,12 @@ describe("stored briefs", () => {
     expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, groupOnly)).toBe(true);
     const { revision } = (await fx.harness.repository.getSource(BRIEF_SCOPE, chat))!;
     await fx.harness.repository.deleteSource(BRIEF_SCOPE, { sourceId: chat, expectedRevision: revision });
+    const newer = { ...final, generatedAt: "2026-10-02T00:00:01.000Z", sections: { ...final.sections, changes: [], decisions: [] } };
+    race.afterCheck = () => writeStoredBrief(fx.harness.db, BRIEF_SCOPE, newer);
     const after = await brief({ date: "2026-10-01" });
     const row = await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-10-01", "day");
-    expect(JSON.stringify([after, row, await brief({ date: "2026-09-30" })])).not.toMatch(/salary|raise pay|Chats/);
+    expect([after.stored, row!.generatedAt]).toEqual([false, newer.generatedAt]);
+    expect(JSON.stringify([after, row, await brief({ date: "2026-09-30" }), await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-09-30", "day")])).not.toMatch(/salary|raise pay|Chats/);
     expect(after.sections.decisions).toEqual([]);
   });
 
