@@ -1,7 +1,7 @@
 import { AppManifestSchema, type AppManifest } from "../app-runtime/manifest-schema.js";
 import { APP_INDEX_SKIP_DIRS } from "../app-runtime/app-index.js";
 import type { GalleryInstallResult } from "@matrix-os/contracts/app-gallery";
-import { GalleryError, GalleryFileError, isFsError, type PinnedDirectory } from "./pinned-directory.js";
+import { GalleryFileError, isFsError, isSupportedGalleryComponent, type PinnedDirectory } from "./pinned-directory.js";
 
 /** Owner permission/symlink restrictions leave identity unverifiable; unexpected I/O still fails. */
 export function isOwnerFileUnavailable(error: unknown): boolean {
@@ -23,7 +23,7 @@ export async function readOwnerManifest(directory: PinnedDirectory): Promise<{ m
 export async function indexOwnerApps(apps: PinnedDirectory) {
   // Request scoped, at most 512 directories/results. No cache can survive a File API move.
   const entries = new Map<string, GalleryInstallResult | null>();
-  let directories = 0, visited = 0, unavailable = false;
+  let directories = 0, visited = 0, unavailable = false, exhausted = false;
   async function* readableEntries(parent: PinnedDirectory) {
     try { for await (const entry of await parent.entries()) yield entry; }
     catch (error) {
@@ -34,9 +34,10 @@ export async function indexOwnerApps(apps: PinnedDirectory) {
   }
   async function visit(parent: PinnedDirectory, prefix: string, depth: number): Promise<void> {
     for await (const entry of readableEntries(parent)) {
-      if (++visited > 16_384) throw new GalleryError(503, "Owner app index entry limit");
+      if (exhausted || ++visited > 16_384) { unavailable = true; exhausted = true; return; }
       if (!entry.isDirectory() || APP_INDEX_SKIP_DIRS.has(entry.name)) continue;
-      if (depth >= 16 || ++directories > 512) throw new GalleryError(503, "Owner app index nesting limit");
+      if (!isSupportedGalleryComponent(entry.name) || depth >= 16) { unavailable = true; continue; }
+      if (++directories > 512) { unavailable = true; exhausted = true; return; }
       let child: PinnedDirectory;
       try { child = await parent.child(entry.name); }
       catch (error) {
@@ -53,6 +54,7 @@ export async function indexOwnerApps(apps: PinnedDirectory) {
         }
         await visit(child, path, depth + 1);
       } finally { await child.close(); }
+      if (exhausted) return;
     }
   }
   await visit(apps, "", 0);

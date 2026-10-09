@@ -12,8 +12,11 @@ export class GalleryFileError extends GalleryError {
 export function isFsError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+export function isSupportedGalleryComponent(name: string): boolean {
+  return name.length > 0 && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\\") && !name.includes("\0") && Buffer.byteLength(name) <= 255;
+}
 function leaf(name: string): string {
-  if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\\") || name.includes("\0") || Buffer.byteLength(name) > 255) throw new GalleryError(503, "Invalid filesystem component");
+  if (!isSupportedGalleryComponent(name)) throw new GalleryError(503, "Invalid filesystem component");
   return name;
 }
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;

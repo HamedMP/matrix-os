@@ -40,7 +40,7 @@ it("unexpected filesystem failures remain errors", async () => {
 it("bounds index enumeration and closes the directory iterator when the budget is exceeded", async () => {
   let closed = false;
   const apps = { async *entries() { try { for(let i=0;i<16_385;i++) yield { name: String(i), isDirectory: () => false }; } finally { closed = true; } } };
-  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).rejects.toMatchObject({ status: 503 });
+  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).resolves.toMatchObject({ unavailable: true });
   expect(closed).toBe(true);
 });
 it("bounds owner directories while closing already admitted handles", async () => {
@@ -49,7 +49,7 @@ it("bounds owner directories while closing already admitted handles", async () =
     async *entries() { for(let i=0;i<513;i++) yield { name: String(i), isDirectory: () => true }; },
     async child() { return { readFile: async () => { throw error("ENOENT"); }, async *entries() {}, close }; },
   };
-  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).rejects.toMatchObject({ status: 503 });
+  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).resolves.toMatchObject({ unavailable: true });
   expect(close).toHaveBeenCalledTimes(512);
 });
 it("shares runtime discovery exclusions without reading dependency folders", async () => {
@@ -93,4 +93,27 @@ it("unexpected manifest and child-folder I/O failures remain errors", async () =
   await expect(readOwnerManifest({ readFile: async () => { throw error("EIO"); } } as unknown as PinnedDirectory)).rejects.toMatchObject({ code: "EIO" });
   const apps = { async *entries() { yield { name: "custom", isDirectory: () => true }; }, async child() { throw error("EIO"); } };
   await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).rejects.toMatchObject({ code: "EIO" });
+});
+
+
+it.each(["entries", "directories", "depth"])("keeps Gallery visible and new installs closed when owner %s exhaust its budget", async budget => {
+  const { apps, service, stage } = setup();
+  if (budget === "entries") apps.entries = async function* () { for (let i = 0; i < 16_385; i++) yield { name: String(i), isDirectory: () => false } as never; };
+  else if (budget === "directories") apps.entries = async function* () { for (let i = 0; i < 513; i++) yield { name: String(i), isDirectory: () => true } as never; };
+  else {
+    const nested = (depth: number): unknown => ({ readFile: async () => { throw error("ENOENT"); }, async *entries() { if (depth < 18) yield { name: "source", isDirectory: () => true }; }, child: async () => nested(depth + 1), close: vi.fn() });
+    apps.entries = async function* () { yield { name: "custom", isDirectory: () => true } as never; };
+    apps.child.mockImplementation(async name => { if (name !== "custom") throw error("ENOENT"); return nested(1); });
+  }
+  await expect(service.list()).resolves.toMatchObject([{ id: "folio", installed: false }, { id: "focus", installed: false }]);
+  await expect(service.install("focus")).rejects.toMatchObject({ status: 409 });
+  expect(stage.publish).not.toHaveBeenCalled();
+});
+
+it("closes all admitted nested owner handles when maximum depth is reached", async () => {
+  const close = vi.fn();
+  const nested = (depth: number): unknown => ({ readFile: async () => { throw error("ENOENT"); }, async *entries() { if (depth < 18) yield { name: "source", isDirectory: () => true }; }, child: async () => nested(depth + 1), close });
+  const result = await indexOwnerApps(nested(0) as PinnedDirectory);
+  expect(result.unavailable).toBe(true);
+  expect(close).toHaveBeenCalledTimes(16);
 });

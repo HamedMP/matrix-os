@@ -31,7 +31,7 @@ async function fixture(window: "mkdir-open" | "manifest" | "cleanup", fail = fal
     constructor(readonly path: string) {}
     async close() {}
     async identity() { const info = await stat(this.path); return { dev: info.dev, ino: info.ino }; }
-    async child(name: string): Promise<Directory> { const path = join(this.path, name); const info = await stat(path); if (!info.isDirectory()) throw Object.assign(new Error("Not directory"), { code: "ENOTDIR" }); return new Directory(path); }
+    async child(name: string): Promise<Directory> { if (name.includes("\\")) await PinnedDirectory.prototype.child.call(this as unknown as PinnedDirectory, name); const path = join(this.path, name); const info = await stat(path); if (!info.isDirectory()) throw Object.assign(new Error("Not directory"), { code: "ENOTDIR" }); return new Directory(path); }
     async createChild(name: string): Promise<Directory> {
       await mkdir(join(this.path, name));
       if (name === "folio" && window === "mkdir-open") { entered.resolve(); await released.promise; }
@@ -254,4 +254,17 @@ it("an unrelated symlink manifest leaves the authenticated Gallery usable and ne
   await expect(f.service.install("focus")).rejects.toMatchObject({ status: 409 });
   expect(existsSync(join(f.homePath, "apps/focus"))).toBe(false);
   expect(await readFile(outside, "utf8")).toBe("keep private owner content");
+});
+
+
+it("keeps Gallery usable after the actual File API creates an unsupported owner folder name", async () => {
+  const f = await fixture("cleanup"); f.released.resolve();
+  await mkdir(join(f.homePath, "apps/custom"));
+  const unsupported = "apps/custom\\backup";
+  expect((await f.app.request("/api/files/rename", json({ from: "apps/custom", to: unsupported }))).status).toBe(200);
+  const bridge = galleryBridge(f.homePath);
+  await expect(loadGallery(bridge)).resolves.toMatchObject({ apps: [{ id: "folio", installed: false }] });
+  await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
+  expect(existsSync(join(f.homePath, unsupported))).toBe(true);
+  expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
 });
