@@ -3,8 +3,8 @@
  * in the bot's own workspace. Before any effect the workspace is resolved
  * again and must match the fingerprint bound at admission; every path
  * segment is checked without following links, and files are opened with
- * O_NOFOLLOW. Questions, memory, and integrations go to their services.
- * Capabilities without a tool yet are refused as `not_granted`.
+ * O_NOFOLLOW. Questions, memory, integrations and Company Brain reads go to
+ * their services. Capabilities without a tool yet are refused as `not_granted`.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
@@ -12,6 +12,7 @@ import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promi
 import { join } from "node:path";
 import { type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import { readBotArtifact } from "./artifact-read.js";
+import type { BotBrainRead } from "./brain-read.js";
 import { BotAdmissionError } from "./admission.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
@@ -67,6 +68,15 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "interaction.create": "write",
   "brain.read": "read",
 };
+
+/**
+ * A run that reads the brain must never hand work to a full-access task executor. The catalog and the run setup
+ * already keep the two apart; a binding that still holds both is refused for both.
+ */
+function brainWithTask(binding: PiRuntimeBinding, request: BotToolRequest): boolean {
+  if (request.capability !== "brain.read" && request.capability !== "agent.task") return false;
+  return binding.capabilities.includes("brain.read") && binding.capabilities.includes("agent.task");
+}
 
 function isCode(error: unknown, ...codes: string[]): boolean {
   return error instanceof Error && "code" in error && codes.includes((error as NodeJS.ErrnoException).code ?? "");
@@ -199,6 +209,8 @@ export function createBotToolDispatcher(deps: {
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
   nativeTask?: { prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
+  /** Absent while the Company Brain is not running: brain reads are `unavailable`. */
+  brainRead?: BotBrainRead;
 }): BotToolDispatcher {
   async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
@@ -312,6 +324,12 @@ export function createBotToolDispatcher(deps: {
   return {
     effectClass: (request) => request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      if (brainWithTask(binding, request)) throw new BotBrokerActionError("denied");
+      // Brain reads have no approval step; ordinary Matrix AI Chats are not granted them.
+      if (request.capability === "brain.read") {
+        if (isManagedPiBinding(binding)) throw new BotBrokerActionError("not_granted");
+        return;
+      }
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
         await deps.nativeTask.prepare(binding); return;
@@ -322,6 +340,7 @@ export function createBotToolDispatcher(deps: {
       }
     },
     async dispatch(binding, request, signal) {
+      if (brainWithTask(binding, request)) throw new BotBrokerActionError("denied");
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
         return { result: await deps.nativeTask.execute(binding, request.args.prompt, await workspace(binding), signal) };
@@ -332,6 +351,11 @@ export function createBotToolDispatcher(deps: {
         return { result: await write(binding, request, signal), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
+      if (request.capability === "brain.read") {
+        if (isManagedPiBinding(binding)) throw new BotBrokerActionError("not_granted");
+        if (!deps.brainRead) throw new BotBrokerActionError("unavailable");
+        return { result: await deps.brainRead(binding, request.args) };
+      }
       if (isManagedPiBinding(binding)) {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedTools.dispatch(binding, request, signal) };

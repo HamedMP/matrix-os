@@ -47,6 +47,7 @@ const TOOL_LABELS: Record<string, string> = {
   "mcp.inventory": "Listing MCP servers",
   "mcp.describe": "Describing an MCP tool",
   "mcp.call": "Using an MCP tool",
+  "brain.read": "Reading the Company Brain",
 };
 
 /** Canonical refs are narrower than model tool IDs; hash anything outside them. */
