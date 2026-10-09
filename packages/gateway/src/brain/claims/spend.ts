@@ -1,13 +1,14 @@
 /**
  * Company Brain model spend cap: a rolling limit per owner, across all of the owner's projects, on what model
  * extraction may cost over the last 30 days. The spend is summed from the cost of the owner's extraction runs
- * (brain_extraction_runs, every scope, including the billed runs a project erase keeps under
- * BRAIN_RETIRED_RUNS_SCOPE_ID); a model run reads it once after its run opens, adds its own cost as it goes and saves
- * that total on its row with each document's write, so a run that never closes still counts. One model run per owner
- * runs at a time in a process (job.ts), so the read is not stale within one gateway; two gateways of one owner could
- * each spend at most one run's budget past the cap. Before each model call the remaining budget must cover the worst
- * case of that call. A call that timed out, was aborted after it was sent or lost its answer is charged at that worst
- * case, since no usage comes back; only the call in flight when a run is lost (a crash) goes uncounted.
+ * (brain_extraction_runs, every scope, including the billed and running runs a project erase keeps under
+ * BRAIN_RETIRED_RUNS_SCOPE_ID, where a call in flight still saves its cost); a model run reads it once after its run
+ * opens, adds its own cost as it goes and saves that total on its row with each document's write, so a run that never
+ * closes still counts. One model run per owner runs at a time in a process (job.ts), so the read is not stale within
+ * one gateway; two gateways of one owner could each spend at most one run's budget past the cap. Before each model call
+ * the remaining budget must cover the worst case of that call. A call that timed out, was aborted after it was sent or
+ * lost its answer is charged at that worst case, since no usage comes back; only the call in flight when a run is lost
+ * (a crash) goes uncounted.
  */
 import type { BrainExecutor } from "../documents.js";
 import type { BrainScopeKey } from "../types.js";

@@ -112,17 +112,30 @@ export async function openRun(
 }
 
 /**
- * Part of a scope erase (under its lock): the scope's billed runs inside the spend window move to
- * BRAIN_RETIRED_RUNS_SCOPE_ID (a running one closed as interrupted) instead of being deleted, so the owner's 30-day
- * model spend survives a project erase. Run rows hold counts, usage and codes only, never document text.
+ * Part of a scope erase (under its lock): the scope's billed runs inside the spend window and its running model run
+ * move to BRAIN_RETIRED_RUNS_SCOPE_ID (a running one closed as interrupted) instead of being deleted, so the owner's
+ * 30-day model spend survives a project erase and a call in flight still saves its cost there (chargeRetiredRun). Run
+ * rows hold counts, usage and codes only, never document text.
  */
 export async function retireBilledRuns(db: BrainExecutor, scope: BrainScopeKey, now: Date): Promise<void> {
   await db.updateTable("brain_extraction_runs").set({
     scope_id: BRAIN_RETIRED_RUNS_SCOPE_ID,
     status: sql`CASE WHEN status = 'running' THEN 'interrupted' ELSE status END`,
     finished_at: sql`COALESCE(finished_at, ${now}::timestamptz)`,
-  }).where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("cost_microusd", ">", 0)
+  }).where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where((eb) => eb.or([eb("cost_microusd", ">", 0),
+      eb.and([eb("status", "=", "running"), eb("extractor", "not like", BRAIN_RULES_EXTRACTOR_LIKE)])]))
     .where("started_at", ">", new Date(now.getTime() - BRAIN_MODEL_SPEND_WINDOW_MS)).execute();
+}
+
+/** The cost of a run an erase retired while it ran, saved on its retired row and never lowered. */
+export async function chargeRetiredRun(
+  db: BrainExecutor, ownerId: string, runId: string, costMicroUsd: number,
+): Promise<void> {
+  await db.updateTable("brain_extraction_runs")
+    .set({ cost_microusd: sql<number>`GREATEST(cost_microusd, ${costMicroUsd})` })
+    .where("owner_id", "=", ownerId).where("scope_id", "=", BRAIN_RETIRED_RUNS_SCOPE_ID).where("run_id", "=", runId)
+    .execute();
 }
 
 /** Claims in the scope, counted up to cap + 1. */
