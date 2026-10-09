@@ -217,9 +217,10 @@ fs.openSync = function(path, flags, ...args) {
     expectSelection(f, f.newManifest);
     expect(readFileSync(join(f.home, 'system/icons/game-center.png'), 'utf8')).toBe('owner custom art');
   });
-  it.each(['app-gallery', 'resource-manager'])('retains the stable %s manifest stem and template artwork filename', (slug) => {
+  it.each(['app-gallery', 'resource-manager'])('ships versioned %s artwork while retaining its legacy filename', (slug) => {
     const manifest = JSON.parse(readFileSync(join(root, 'home/apps', slug, 'matrix.json'), 'utf8'));
-    expect(manifest.icon).toBe(slug);
+    expect(manifest.icon).toBe(`v3-${slug}`);
+    expect(existsSync(join(root, 'home/system/icons', `${manifest.icon}.png`))).toBe(true);
     expect(existsSync(join(root, 'home/system/icons', `${slug}.png`))).toBe(true);
     expect(existsSync(join(root, 'home/system/icons', `${slug}-v2.png`))).toBe(false);
   });

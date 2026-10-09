@@ -90,7 +90,10 @@ describe.skipIf(process.platform !== "linux")("Linux descriptor-anchored gallery
   for (const key of ["maxFileBytes", "maxTotalBytes", "maxCatalogBytes", "maxFiles", "maxEntries"]) it(`enforces ${key}`, async () => {
     await assert.rejects(service({ limits: { [key]: 1 } }).install("folio")); assert.deepEqual(await readdir(homePath), []);
   });
-  it("rechecks size after definition injection", async () => { await assert.rejects(service({ limits: { maxFileBytes: 150 } }).install("folio"), /Injected template size limit/); });
+  it("rechecks size after definition injection", async () => {
+    const iconBytes = (await readFile("home/apps/app-gallery/src/assets/icons/folio.png")).byteLength;
+    await assert.rejects(service({ limits: { maxFileBytes: iconBytes + 1024 } }).install("folio"), /Injected template size limit/);
+  });
   it("rejects excessive directory nesting", async () => { await mkdir(join(templatePath, ...Array.from({ length: 18 }, () => "deep")), { recursive: true }); await assert.rejects(service().install("folio"), /nesting/); });
   for (const location of ["catalog", "template", "home", "apps", "destination", "asset"]) it(`rejects static ${location} symlink`, async () => {
     const outside = join(root, "outside"); await mkdir(outside);
