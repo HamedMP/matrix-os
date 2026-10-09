@@ -1461,7 +1461,7 @@ apply_update() {
     && ! funded_host_bootstrap recovery-preflight >/dev/null; then
     log "ERROR: funded runtime recovery proof failed; deferring before service stop"
     write_update_error "update_transaction_prepare_failed" "The installed runtime could not be backed up safely." "$version"
-    cleanup_update_transaction
+    finish_unmutated_update_transaction || log "ERROR: pre-stop transaction finalization deferred"
     cleanup_staged_release_metadata
     cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
@@ -1471,12 +1471,7 @@ apply_update() {
     log "ERROR: runtime services did not stop; aborting before app replacement"
     write_update_error "pre_install_service_stop_failed" "The running services could not be stopped safely, so the update was not installed." "$version"
     cleanup_staged_release_metadata
-    sudo systemctl start matrix-terminal-runtime matrix-gateway matrix-shell || true
-    if resume_symphony_after_update; then
-      cleanup_update_transaction || true
-    else
-      log "ERROR: legacy Symphony could not resume; retaining the update transaction for recovery"
-    fi
+    resume_unmutated_update_transaction || log "ERROR: pre-stop runtime restoration deferred; retaining recovery evidence"
     cleanup_staged_update_artifacts "$extract_dir" "$bundle_file"
     return 1
   fi

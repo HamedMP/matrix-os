@@ -276,13 +276,181 @@ do_rollback() {
     sleep 5
   done
   if [ "$healthy" = true ]; then
-    cleanup_update_transaction
     clear_retired_symphony_rollback_after_rollback || return 1
+    finish_confirmed_update_transaction || return 1
     log "Rollback complete (now at $(current_version))"
   else
     log "ERROR: rollback health check failed — services may be down"
     return 1
   fi
+}
+
+# These finalizers are reached only by unchanged pre-stop artifact checks or a
+# completely restored, verified and healthy rollback. Preserve funded snapshots
+# until the next reviewed update prepares its own transaction.
+finish_confirmed_update_transaction() {
+  if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json; then
+    retire_completed_same_version_repair "$(current_version)" || return 1
+    preserve_host_rollback_transaction || return 1
+  else
+    cleanup_update_transaction || return 1
+    rm -f -- "$UPDATE_PHASE_MARKER" || return 1
+    return 0
+  fi
+  retire_confirmed_update_phase
+}
+
+finish_unmutated_update_transaction() {
+  [ -f "$UPDATE_TRANSACTION_STATE" ] && [ ! -L "$UPDATE_TRANSACTION_STATE" ] || return 1
+  [ "$(cat "$UPDATE_TRANSACTION_STATE")" = mutating ] || return 1
+  release_metadata_matches_app "$APP_DIR" "$RELEASE_FILE" || return 1
+  release_metadata_matches_app "$APP_DIR" "$UPDATE_TRANSACTION_DIR/release-metadata" || return 1
+  cmp -s -- "$RELEASE_FILE" "$UPDATE_TRANSACTION_DIR/release-metadata" || return 1
+  finish_confirmed_update_transaction
+}
+
+resume_unmutated_update_transaction() {
+  resume_update_transaction_services || return 1
+  resume_symphony_after_update || return 1
+  terminal_runtime_is_healthy || return 1
+  [ "$(running_gateway_version)" = "$(current_version)" ] || return 1
+  finish_unmutated_update_transaction
+}
+
+retire_confirmed_update_phase() {
+  [ -e "$UPDATE_PHASE_MARKER" ] || [ -L "$UPDATE_PHASE_MARKER" ] || return 0
+  sudo /usr/bin/timeout --signal=KILL 10 /usr/bin/python3 -I - <<'PY_CONFIRMED_PHASE'
+import grp
+import json
+import os
+import pwd
+import re
+import shutil
+import stat
+import sys
+
+fds = []
+try:
+    parent = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    fds.append(parent)
+    anchors = []
+    gid, uid = grp.getgrnam('matrix').gr_gid, pwd.getpwnam('matrix').pw_uid
+    for name in ('opt', 'matrix', 'staging'):
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        fds.append(fd)
+        value = os.fstat(fd)
+        allowed_uid = (0, uid) if name == 'staging' else (0,)
+        allowed_gid = (0, gid) if name != 'opt' else (0,)
+        if value.st_uid not in allowed_uid or value.st_gid not in allowed_gid or value.st_mode & (0o002 if name != 'opt' else 0o022):
+            raise ValueError('unsafe')
+        anchors.append((parent, name, fd))
+        parent = fd
+    fd = os.open('update-phase', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    fds.append(fd)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid not in (0, uid) or info.st_gid not in (0, gid) or info.st_mode & 0o022 or info.st_size > 64:
+        raise ValueError('unsafe')
+    data = os.read(fd, 65)
+    if len(data) != info.st_size or data not in tuple((phase + '\n').encode() for phase in ('prepare', 'download', 'verify', 'extract', 'terminal-runtime', 'app-install', 'host-bin', 'health')):
+        raise ValueError('unknown')
+    def read(root, name, limit, groups=(0,)):
+        held = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+        fds.append(held)
+        meta = os.fstat(held)
+        if not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1 or meta.st_uid != 0 or meta.st_gid not in groups or meta.st_mode & 0o022 or meta.st_size > limit:
+            raise ValueError('unsafe')
+        value = os.read(held, limit + 1)
+        after = os.fstat(held)
+        live = os.stat(name, dir_fd=root, follow_symlinks=False)
+        if len(value) != meta.st_size or len(value) > limit or (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns) or (after.st_dev, after.st_ino) != (live.st_dev, live.st_ino):
+            raise ValueError('changed')
+        return value
+    def sealed_snapshot(name):
+        root = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        fds.append(root)
+        meta = os.fstat(root)
+        if meta.st_uid != 0 or meta.st_gid != 0 or meta.st_mode & 0o022 or read(root, 'state', 64) != b'mutating\n':
+            raise ValueError('unsafe')
+        candidate = read(root, 'candidate-version', 129).decode().rstrip('\n')
+        saved = json.loads(read(root, 'release-metadata', 65536))
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', candidate) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', saved['version']) or not re.fullmatch(r'[a-f0-9]{40}', saved['gitCommit']):
+            raise ValueError('unsafe')
+        return root, candidate, saved
+    transaction, candidate, saved = sealed_snapshot('update-transaction')
+    current = json.loads(read(anchors[1][2], 'release.json', 65536, (0, gid)))
+    if current != saved:
+        raise ValueError('changed')
+    move_completed = candidate != current['version']
+    if move_completed:
+        try:
+            prior, _, _ = sealed_snapshot('update-transaction.completed')
+        except FileNotFoundError:
+            if os.path.lexists('/opt/matrix/staging/update-transaction.completed'):
+                raise ValueError('unsafe')
+        else:
+            # One fixed sealed prior completed snapshot; never owner/economic
+            # records or an arbitrary supplied directory. rmtree uses fd-safe
+            # unlink traversal and does not follow backup symlinks.
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise ValueError('unsafe')
+            entries = os.listdir(prior)
+            if len(entries) > 32768:
+                raise ValueError('bounded')
+            for name in entries:
+                value = os.stat(name, dir_fd=prior, follow_symlinks=False)
+                if stat.S_ISDIR(value.st_mode):
+                    shutil.rmtree(name, dir_fd=prior)
+                else:
+                    os.unlink(name, dir_fd=prior)
+            held, live = os.fstat(prior), os.stat('update-transaction.completed', dir_fd=parent, follow_symlinks=False)
+            if (held.st_dev, held.st_ino) != (live.st_dev, live.st_ino):
+                raise ValueError('changed')
+            os.rmdir('update-transaction.completed', dir_fd=parent)
+            os.fsync(parent)
+    anchors.append((parent, 'update-transaction', transaction))
+    for root, name, held in anchors + [(parent, 'update-phase', fd)]:
+        a, b = os.fstat(held), os.stat(name, dir_fd=root, follow_symlinks=False)
+        if (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+            raise ValueError('changed')
+    os.fsync(parent)
+    os.unlink('update-phase', dir_fd=parent)
+    try:
+        os.fsync(parent)
+        if move_completed:
+            os.rename('update-transaction', 'update-transaction.completed', src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+    except OSError:
+        # Restore only this bounded marker after uncertain durable retirement.
+        # No application/configuration image or rollback evidence is fabricated.
+        temporary = '.update-phase-retirement-restore'
+        copy = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        fds.append(copy)
+        try:
+            os.fchown(copy, 0, 0)
+            os.fchmod(copy, 0o600)
+            offset = 0
+            while offset < len(data):
+                written = os.write(copy, data[offset:])
+                if written <= 0:
+                    raise ValueError('short')
+                offset += written
+            os.fsync(copy)
+            held, live = os.fstat(copy), os.stat(temporary, dir_fd=parent, follow_symlinks=False)
+            if (held.st_dev, held.st_ino) != (live.st_dev, live.st_ino):
+                raise ValueError('changed')
+            # Publish only complete bytes, without replacing a concurrent phase.
+            os.link(temporary, 'update-phase', src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+        finally:
+            os.unlink(temporary, dir_fd=parent)
+        os.fsync(parent)
+        raise
+except (OSError, ValueError, KeyError, TypeError):
+    print('ERROR: confirmed update phase retirement deferred', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for fd in reversed(fds):
+        os.close(fd)
+PY_CONFIRMED_PHASE
 }
 
 # Fixed transaction sealing and commit classification shared by updater recovery.
@@ -306,7 +474,10 @@ import sys
 
 fds = []
 try:
-    path = '/opt/matrix/staging/update-transaction'
+    leaf = 'update-transaction'
+    if not sys.argv[2] and not os.path.lexists('/opt/matrix/staging/' + leaf):
+        leaf = 'update-transaction.completed'
+    path = '/opt/matrix/staging/' + leaf
     anchors = []
     def directory(parts, writable=False):
         parent = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -322,7 +493,7 @@ try:
             anchors.append((parent, part, fd))
             parent = fd
         return parent
-    transaction = directory(('opt', 'matrix', 'staging', 'update-transaction'), True)
+    transaction = directory(('opt', 'matrix', 'staging', leaf), True)
     info = os.fstat(transaction)
     if info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022:
         raise ValueError('unsealed')
@@ -365,8 +536,19 @@ try:
         phase = os.open('update-phase', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=anchors[2][2])
         fds.append(phase)
         pinfo = os.fstat(phase)
-        if not stat.S_ISREG(pinfo.st_mode) or pinfo.st_nlink != 1 or pinfo.st_uid not in (0, pwd.getpwnam('matrix').pw_uid) or pinfo.st_mode & 0o022 or pinfo.st_size > 64 or os.read(phase, 65) != b'health\n':
+        if not stat.S_ISREG(pinfo.st_mode) or pinfo.st_uid not in (0, pwd.getpwnam('matrix').pw_uid) or pinfo.st_mode & 0o022 or pinfo.st_size > 64 or os.read(phase, 65) not in tuple((p + '\n').encode() for p in ('prepare', 'download', 'verify', 'extract', 'terminal-runtime', 'app-install', 'host-bin', 'health')):
             raise ValueError('invalid')
+        if pinfo.st_nlink != 1:
+            # Death between exclusive publication and temporary-name removal
+            # grants retention only for this exact complete fixed root inode.
+            temporary = os.open('.update-phase-retirement-restore', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=anchors[2][2])
+            fds.append(temporary)
+            held = os.fstat(temporary)
+            live = os.stat('.update-phase-retirement-restore', dir_fd=anchors[2][2], follow_symlinks=False)
+            after = os.fstat(phase)
+            phase_live = os.stat('update-phase', dir_fd=anchors[2][2], follow_symlinks=False)
+            if pinfo.st_nlink != 2 or pinfo.st_uid != 0 or pinfo.st_gid != 0 or stat.S_IMODE(pinfo.st_mode) != 0o600 or (pinfo.st_dev, pinfo.st_ino) != (held.st_dev, held.st_ino) or (held.st_dev, held.st_ino) != (live.st_dev, live.st_ino) or (after.st_dev, after.st_ino) != (phase_live.st_dev, phase_live.st_ino) or (pinfo.st_nlink, pinfo.st_size, pinfo.st_mtime_ns, pinfo.st_ctime_ns) != (after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError('invalid')
         archive = os.stat('bundle-' + candidate + '.tar.gz', dir_fd=anchors[2][2], follow_symlinks=False)
         if not stat.S_ISREG(archive.st_mode) or archive.st_nlink != 1 or not 0 < archive.st_size <= 2 * 1024 ** 3:
             raise ValueError('invalid')
@@ -410,10 +592,13 @@ try:
         version_fd = os.open('BUNDLE_VERSION', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=app)
         fds.append(version_fd)
         version_info = os.fstat(version_fd)
-        old = os.stat('app.rollback', dir_fd=matrix, follow_symlinks=False)
         installed = os.fstat(app)
-        if not stat.S_ISREG(version_info.st_mode) or version_info.st_nlink != 1 or version_info.st_size > 129 or os.read(version_fd, 130) != (receipt['version'] + '\n').encode() or not stat.S_ISDIR(old.st_mode) or (old.st_dev, old.st_ino) != (pin['appDevice'], pin['appInode']) or (installed.st_dev, installed.st_ino) == (old.st_dev, old.st_ino):
+        if not stat.S_ISREG(version_info.st_mode) or version_info.st_nlink != 1 or version_info.st_size > 129 or os.read(version_fd, 130) != (receipt['version'] + '\n').encode():
             raise ValueError('mismatch')
+        if (installed.st_dev, installed.st_ino) != (pin['appDevice'], pin['appInode']):
+            old = os.stat('app.rollback', dir_fd=matrix, follow_symlinks=False)
+            if not stat.S_ISDIR(old.st_mode) or (old.st_dev, old.st_ino) != (pin['appDevice'], pin['appInode']):
+                raise ValueError('mismatch')
         anchors.append((matrix, 'app', app))
         verify_anchors()
         if read('same-version-repair.json', 4096) != pin_bytes:

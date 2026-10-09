@@ -42,6 +42,15 @@ class GeneratedProgramTests(unittest.TestCase):
         self.assertTrue(Path('/.dockerenv').exists())
         self.assertFalse(Path('/opt/matrix').exists())
         self.assertFalse(Path('/var/lib/matrix-funded-host-config').exists())
+        self.assertFalse(Path('/usr/local/libexec/matrix-funded-host-config.py').exists())
+        self.assertFalse(Path('/etc/systemd/system/matrix-funded-host-config.service').exists())
+        def cleanup_fixture():
+            for root in ('/opt/matrix', '/var/lib/matrix-funded-host-config'):
+                if Path(root).exists():
+                    shutil.rmtree(root)
+            for file in ('/usr/local/libexec/matrix-funded-host-config.py', '/etc/systemd/system/matrix-funded-host-config.service'):
+                Path(file).unlink(missing_ok=True)
+        self.addCleanup(cleanup_fixture)
         try:
             gid = grp.getgrnam('matrix').gr_gid
         except KeyError:
@@ -227,7 +236,8 @@ prepare_triggered_update || exit 1
             Path('/opt/matrix/app/BUNDLE_VERSION').write_text(selected + '\n')
         def recovery_shell():
             function = re.search(r'funded_host_bootstrap\(\) \{[\s\S]*?\n\}', built).group(0)
-            shell = function + '\n' + built.split('# BEGIN inlined update recovery library\n', 1)[1].split('# END inlined update recovery library', 1)[0]
+            preserve = re.search(r'preserve_host_rollback_transaction\(\) \{[\s\S]*?\n\}', built).group(0)
+            shell = function + '\n' + preserve + '\n' + built.split('# BEGIN inlined update recovery library\n', 1)[1].split('# END inlined update recovery library', 1)[0]
             return shell + r'''
 APP_DIR=/opt/matrix/app
 STAGING_DIR=/opt/matrix/staging
@@ -304,7 +314,8 @@ write_update_error() { echo "error:$1"; }
                             'url': 'https://unused', 'size': len(data)}
                 Path('/opt/matrix/app/.update-available.json').write_text(json.dumps(manifest))
                 apply = built[built.index('apply_update() {'):built.index('\nrun_apply_update()')]
-                shell = recovery_shell() + '\n' + apply + r'''
+                cleanup = re.search(r'cleanup_update_transaction\(\) \{[\s\S]*?\n\}', built).group(0)
+                shell = recovery_shell() + '\n' + cleanup + '\n' + apply + r'''
 UPDATE_MARKER=$APP_DIR/.update-available.json
 UPDATE_ERROR_MARKER=$APP_DIR/.update-error.json
 VERSION_FILE=$APP_DIR/BUNDLE_VERSION
@@ -342,10 +353,12 @@ running_gateway_version() { return 1; }
 sleep() { :; }
 if apply_update explicit; then exit 2; fi
 '''
-                if same_version:
-                    functions = '\n'.join(re.search(name + r'\(\) \{[\s\S]*?\n\}', built).group(0)
-                                          for name in ('write_update_transaction_state', 'seal_update_transaction'))
-                    shell = shell.replace('seal_update_transaction() { :; }', functions)
+                functions = '\n'.join(re.search(name + r'\(\) \{[\s\S]*?\n\}', built).group(0)
+                                      for name in ('write_update_transaction_state', 'seal_update_transaction'))
+                shell = shell.replace('seal_update_transaction() { :; }', functions)
+                if failure == 'preflight':
+                    shell = shell.replace('if apply_update explicit; then exit 2; fi',
+                        'funded_host_bootstrap() { return 1; }\nif apply_update explicit; then exit 2; fi')
                 if success:
                     preserve = re.search(r'preserve_host_rollback_transaction\(\) \{[\s\S]*?\n\}', built).group(0)
                     shell = shell.replace('if apply_update explicit; then exit 2; fi', preserve + r'''
@@ -471,7 +484,7 @@ funded_host_bootstrap recovery-preflight || exit 3
                         (transaction / 'candidate-version').write_text(B + '\n')
                         os.chmod(transaction / 'candidate-version', 0o644)
                     self.assertEqual(cleaned.returncode, 0, cleaned.stderr.decode())
-                    self.assertFalse(staged_archive.exists(), invalid + ' retained untrusted proof archive')
+                    self.assertEqual(staged_archive.exists(), invalid in ('malformed', 'duplicate', 'unknown-version'))
                     self.assertEqual(owner_file.read_bytes(), b'owner data outside staging')
             pin_file.write_bytes(pin_bytes)
             os.chmod(transaction, 0o755)
@@ -726,7 +739,9 @@ recover_interrupted_update
                     recovered = real_run(['bash', '-c', recovery_shell() + '\nrecover_interrupted_update\n'], capture_output=True, timeout=20)
                     self.assertEqual(recovered.returncode, 0, recovered.stderr.decode())
                     self.assertIn(b'error:apply_interrupted', recovered.stdout)
-                    self.assertFalse(transaction.exists())
+                    self.assertTrue(transaction.exists())
+                    self.assertFalse((transaction / 'same-version-repair.json').exists())
+                    self.assertFalse(Path('/opt/matrix/staging/update-phase').exists())
                     self.assertEqual(env.read_bytes(), applied)
                     self.assertEqual(Path('/var/lib/matrix-funded-host-config/applied.json').read_bytes(), active_marker)
                     self.assertEqual({p.name: p.read_bytes() for p in env.parent.glob('host.env.funded-*.json')}, evidence)
@@ -759,11 +774,19 @@ recover_interrupted_update
             current(B)
             shutil.rmtree(transaction)
             Path('/opt/matrix/staging/update-phase').unlink()
+            result = failed_update('preflight', same_version=True)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertNotIn(b'Stopping services', result.stderr)
+            self.assertTrue(transaction.exists())
+            self.assertFalse(Path('/opt/matrix/staging/update-phase').exists(), 'confirmed pre-stop cleanup must retire phase')
+            result = failed_update('terminal-helper', same_version=True)
+            self.assertIn(b'error:terminal_runtime_helper_install_failed', result.stdout)
+            self.assertFalse(Path('/opt/matrix/staging/update-phase').exists(), 'healthy completed rollback must retire phase')
             for failure, error in [('terminal-helper', 'terminal_runtime_helper_install_failed'),
                                    ('gateway-health', 'post_install_health_failed')]:
                 result = failed_update(failure, same_version=True)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
-                self.assertIn(('error:' + error).encode(), result.stdout)
+                self.assertIn(('error:' + error).encode(), result.stdout, result.stderr.decode())
                 self.assertNotIn(b'update_transaction_prepare_failed', result.stdout)
                 self.assertIn(b'resumed', result.stdout)
                 self.assertEqual(Path('/opt/matrix/app/BUNDLE_VERSION').read_text(), B + '\n')
@@ -794,7 +817,8 @@ recover_interrupted_update
                                          capture_output=True, timeout=20)
                         self.assertEqual(retry.returncode, 0, retry.stderr.decode())
                         self.assertIn(b'error:apply_interrupted', retry.stdout)
-                        self.assertFalse(Path('/opt/matrix/staging/update-transaction').exists())
+                        self.assertTrue(Path('/opt/matrix/staging/update-transaction').exists())
+                        self.assertFalse(Path('/opt/matrix/staging/update-phase').exists())
                         cleaner = re.search(r'clean_staging_now\(\) \{[\s\S]*?\n\}', built).group(0)
                         cleaned = real_run(['bash', '-c', recovery_shell() + '\n' + cleaner + '\nclean_staging_now\n'],
                                            capture_output=True, timeout=20)

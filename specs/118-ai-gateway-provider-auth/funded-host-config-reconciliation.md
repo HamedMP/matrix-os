@@ -203,7 +203,37 @@ active phase with funded applied evidence still blocks another apply before
 download; pin absence alone never proves a same-version commit.
 An absent, corrupt or symlinked pin permits only conservative retention of the
 exact root-sealed candidate archive with complete applied evidence and an active
-health phase; it grants no commit, recovery or subsequent apply authority.
+known update phase (`prepare`, `download`, `verify`, `extract`, `terminal-runtime`,
+`app-install`, `host-bin`, or `health`); unknown phases grant no retention proof.
+Retention grants no commit, recovery or subsequent apply authority.
+Confirmed pre-stop cancellation first verifies unchanged installed app and saved
+release metadata; a failed stop also requires successful recorded-service resume,
+terminal health and the original running Gateway version. Fully restored rollback
+must pass protected artifact verification, service restoration, health and Symphony
+cleanup. Only these fixed paths retire a restored original-inode pin and clear the
+bounded phase marker. Funded completion retains the complete sealed transaction;
+it does not recursively delete the only recovery snapshot. Failures of proof,
+preservation or phase retirement retain the blocker, exact archive and financial
+evidence. A safely completed cancellation or rollback admits an explicit retry.
+If the failed candidate differs from the restored current version, phase retirement
+precedes atomic relocation of the unchanged sealed snapshot to the one fixed
+`update-transaction.completed` slot. This preserves failed-candidate provenance
+without presenting completed rollback evidence as an active transaction to the
+protected current-version admission check. Only a validated sealed prior snapshot
+in that fixed slot may be replaced; owner, applied, resume and financial evidence
+remain untouched. Failed relocation conservatively restores only the original
+bounded phase marker where possible, fully writing and syncing a fixed exclusive
+temporary file before publishing complete bytes without replacing another phase.
+Death before removal of the fixed temporary name permits retention only when both
+fixed names identify the same complete root-owned inode with exactly two links;
+this grants no retirement, recovery or subsequent apply authority.
+Retention may then inspect that fixed completed
+slot if the active slot is absent; this remains retention authority only.
+Death after phase retirement but before relocation is a completed-rollback orphan:
+the original candidate snapshot remains and may withhold current-version maintenance.
+It grants no automatic recovery, configuration or financial authority. Once rollback
+was independently confirmed complete, the failed-candidate archive need not persist
+forever. A remaining phase or pin still requires its exact recovery archive.
 Executable regressions must fail restoration and service resumption independently,
 then exercise a later protected retry against the same retained archive and verify
 unchanged configuration, applied evidence and journals. The pinned app identity
