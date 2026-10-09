@@ -79,7 +79,7 @@ syncs and claim reading as runs and polls them (spec 563).
 - Retention: at most 100 queued or running runs per owner (`jobs_full`); at most 50 finished runs per scope, older
   ones pruned on enqueue. The stored request is at most 1 KiB, the result summary at most 16 keys and 8 KiB as
   stored: `clipBrainJobSummary` counts the bytes of the stored jsonb text (numbers in exponent form spelled out),
-  leaves out an entry that would pass 8 KiB, never splits a character and replaces lone surrogates.
+  leaves out an entry that would pass 8 KiB, never splits a character and replaces NUL and lone surrogates.
 
 ## API
 

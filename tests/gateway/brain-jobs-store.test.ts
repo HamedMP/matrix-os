@@ -260,7 +260,7 @@ describe("brain job store", () => {
       // jsonb prints every digit of a number JSON writes in exponent form (about 310 bytes each here).
       { ...entries(4, (i) => (i % 2 === 0 ? -1.7976931348623157e308 : -5e-324)),
         ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`t${i}`, "\u754c".repeat(200)])) },
-      { cut: `${"x".repeat(199)}\u{1F600}`, lone: "a\udc00" },
+      { cut: `${"x".repeat(199)}\u{1F600}`, lone: "a\udc00", nul: "a\u0000b" },
     ];
     for (const summary of summaries) {
       await sql`DELETE FROM brain_jobs`.execute(harness.db);
