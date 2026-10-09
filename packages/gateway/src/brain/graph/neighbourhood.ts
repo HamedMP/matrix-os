@@ -16,7 +16,7 @@ import type { BrainScopeKey } from "../types.js";
 import {
   brainEntityId, brainLinkId, decodeGraphCursor, encodeGraphCursor, entityDraft, queryFingerprint,
 } from "./ids.js";
-import { entityRefViews, membersOf, resolveRoot, toEntityRef } from "./reads.js";
+import { entityRefViews, LIVE_DOCUMENT, membersOf, resolveRoot, toEntityRef } from "./reads.js";
 import type { BrainGraphExecutor } from "./types.js";
 
 export interface BrainLinksParsedQuery {
@@ -36,9 +36,10 @@ const COLUMNS = sql`u.sort_key, u.type, u.mode, u.from_entity_id, u.to_entity_id
 /** A raw SQL fragment. */
 type Fragment = ReturnType<typeof sql.raw>;
 
+/** Stored links of live documents only, so links a refresh has yet to remove never fill a page or a cap. */
 function storedLinks(scope: BrainScopeKey, types: readonly string[], endpoints: Fragment) {
   return sql`SELECT l.link_id AS sort_key, l.type, l.mode, l.from_entity_id, l.to_entity_id, l.document_id, l.ref_kind,
-    l.quote, l.at, NULL AS path FROM brain_graph_links l WHERE l.owner_id = ${scope.ownerId}
+    l.quote, l.at, NULL AS path FROM brain_graph_links l ${LIVE_DOCUMENT} WHERE l.owner_id = ${scope.ownerId}
     AND l.scope_id = ${scope.scopeId} AND l.type IN (${sql.join(types)}) AND ${endpoints}`;
 }
 

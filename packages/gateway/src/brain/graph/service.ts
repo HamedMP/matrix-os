@@ -2,14 +2,15 @@
  * Graph service: owner-scoped reads (timeline, entities, person merge suggestions, one entity, neighbourhood), person
  * alias changes and one bounded refresh. Every input is parsed by a strict zod schema (a bad one is invalid_request); the project is resolved
  * through BrainProjectResolver. Reads never refresh and run read-only with a statement deadline; at most two refreshes
- * run at once. Holds no timers, caches or connections.
+ * run at once (service, index and hook passes together; erases never wait). Holds no timers, caches or connections.
  */
 import { z } from "zod/v4";
 import { BRAIN_PROJECT_SCOPE_PREFIX, BrainApiError } from "../api/types.js";
 import { brainCallCap, withBrainRead } from "../bounded.js";
 import {
   BRAIN_DERIVED_REFRESH_DEFAULTS, BRAIN_ENTITY_KINDS, BRAIN_ENTITY_REF_MAX_CHARS, BRAIN_FEATURE_CURSOR_MAX_CHARS,
-  BRAIN_GRAPH_LIMITS, BRAIN_LINK_TYPES, type BrainGraphFeature, type BrainGraphService, type BrainGraphServiceDeps,
+  BRAIN_GRAPH_LIMITS, BRAIN_LINK_TYPES, type BrainDerivedIndex, type BrainGraphFeature, type BrainGraphService,
+  type BrainGraphServiceDeps,
 } from "../contracts.js";
 import type { BrainScopeKey } from "../types.js";
 import { updateGraphAlias } from "./aliases.js";
@@ -59,11 +60,17 @@ function parse<T extends z.ZodType>(schema: T, value: unknown): z.output<T> {
 export function createBrainGraph(deps: BrainGraphServiceDeps): BrainGraphFeature {
   const db = deps.repository.kysely.withTables<BrainGraphTables>();
   const now = deps.now ?? (() => new Date());
-  const index = createBrainGraphIndex({ db, now, projectName: async (scope) => {
+  const derived = createBrainGraphIndex({ db, now, projectName: async (scope) => {
     if (!scope.scopeId.startsWith(BRAIN_PROJECT_SCOPE_PREFIX)) return null;
     return (await deps.resolver.resolve(scope.ownerId, scope.scopeId.slice(BRAIN_PROJECT_SCOPE_PREFIX.length))).name;
   } });
   const refreshCap = brainCallCap("graph refresh");
+  const index: BrainDerivedIndex = {
+    name: derived.name, freshness: derived.freshness,
+    refresh: (scope, limits, signal) => refreshCap(() => derived.refresh(scope, limits, signal)),
+    handle: (event, signal) => (event.type === "scope_erased" ? derived.handle(event, signal)
+      : refreshCap(() => derived.handle(event, signal))),
+  };
 
   async function scopeOf(ownerId: string, projectRef: string): Promise<BrainScopeKey> {
     return (await deps.resolver.resolve(ownerId, projectRef)).scope;
@@ -115,7 +122,7 @@ export function createBrainGraph(deps: BrainGraphServiceDeps): BrainGraphFeature
       const scope = await scopeOf(ownerId, projectRef);
       return refreshCap(async () => {
         const signal = AbortSignal.timeout(BRAIN_DERIVED_REFRESH_DEFAULTS.budgetMs + 10_000);
-        const result = await index.refresh(scope, BRAIN_DERIVED_REFRESH_DEFAULTS, signal);
+        const result = await derived.refresh(scope, BRAIN_DERIVED_REFRESH_DEFAULTS, signal);
         return { index: "graph" as const, ...result, freshness: await index.freshness(scope) };
       });
     },
