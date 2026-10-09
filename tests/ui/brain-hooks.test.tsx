@@ -145,6 +145,28 @@ describe("useBrainPages", () => {
     expect(result.current.moreError).toBeNull();
     expect(result.current.loadingMore).toBe(true);
   });
+
+  it("keeps loaded pages on a repeat, and never mixes an old cursor's page into the new first page", async () => {
+    const pending: { cursor: string | undefined; done: ReturnType<typeof deferred<{ items: string[]; nextCursor: string | null }>> }[] = [];
+    const fetchPage = (cursor: string | undefined) => {
+      const done = deferred<{ items: string[]; nextCursor: string | null }>();
+      pending.push({ cursor, done });
+      return done.promise;
+    };
+    const { result, rerender } = renderHook(({ ask }) => useBrainPages(fetchPage, "k", ask), { initialProps: { ask: 1 } });
+    await act(async () => { pending[0]!.done.resolve({ items: ["a1"], nextCursor: "c2" }); });
+    act(() => result.current.loadMore());
+    await act(async () => { pending[1]!.done.resolve({ items: ["a2"], nextCursor: "c3" }); });
+    rerender({ ask: 2 });
+    expect(result.current.items).toEqual(["a1", "a2"]);
+    act(() => result.current.loadMore());
+    expect(pending[3]!.cursor).toBe("c3");
+    await act(async () => { pending[2]!.done.resolve({ items: ["n1"], nextCursor: "n2" }); });
+    await act(async () => { pending[3]!.done.resolve({ items: ["a3"], nextCursor: null }); });
+    expect(result.current.items).toEqual(["n1"]);
+    expect(result.current.nextCursor).toBe("n2");
+    expect(result.current.loadingMore).toBe(false);
+  });
 });
 
 describe("useBrainJob", () => {
