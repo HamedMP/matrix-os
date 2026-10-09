@@ -1,3 +1,6 @@
+import { SlackInstallPanel } from "@matrix-os/ui";
+import { invoke } from "../../lib/operator";
+import { SLACK_INSTALL_URL } from "@matrix-os/contracts/slack-bridge";
 import {
   Blocks,
   Bot,
@@ -37,6 +40,7 @@ export type SettingsSectionId =
   | "runtime"
   | "agents-providers"
   | "identity-personality"
+  | "messaging"
   | "services"
   | "mcps"
   | "skills"
@@ -50,6 +54,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; icon: React.ReactNode; g
   { id: "billing", label: "Billing", icon: <CreditCard size={15} />, group: "You" },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} />, group: "You" },
   { id: "organization", label: "Organization", icon: <UsersIcon size={15} />, group: "Organization" },
+  { id: "messaging", label: "Messaging", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "services", label: "Connect Apps", icon: <Blocks size={15} />, group: "Integrations" },
   { id: "mcps", label: "MCPs", icon: <Server size={15} />, group: "Integrations" },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} />, group: "Integrations" },
@@ -152,6 +157,7 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
+          {section === "messaging" ? <SlackInstallPanel onInstall={async () => { await invoke("shell:open-external", {url: SLACK_INSTALL_URL}); }} /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}

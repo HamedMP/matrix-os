@@ -1,6 +1,6 @@
 "use client";
 
-import { useGettingStartedBlocker } from "@matrix-os/ui";
+import { SlackInstallPanel, useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
@@ -56,6 +56,7 @@ const sections = [
   { id: "agents-providers", label: "Agents & providers", icon: SparklesIcon },
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "channels", label: "Channels", icon: MessageSquareIcon },
+  { id: "messaging", label: "Messaging", icon: MessageSquareIcon },
   { id: "integrations", label: "Connect Apps", icon: CableIcon },
   { id: "skills", label: "Skills", icon: SparklesIcon },
   { id: "chat-import", label: "Import chats", icon: UploadIcon },
@@ -417,6 +418,7 @@ function SettingsFrame({
                 <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
+              {activeSection === "messaging" && <SlackInstallPanel />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}

@@ -90,8 +90,18 @@ describe("Slack app ingress", () => {
   it('keeps invalid and non-browser callbacks unauthorized without forwarding credentials', async () => {
     const callback = await startOAuth(); actor = null;
     expect((await app.request(callback, { headers: { accept: 'application/json' } })).status).toBe(401);
-    expect((await app.request('/api/slack/oauth/callback?state=invalid&code=invalid', { headers: { accept: 'text/html' } })).status).toBe(401);
+    const invalid = await app.request('/api/slack/oauth/callback?state=&code=private-code', { headers: { accept: 'text/html' } });
+    expect(invalid.status).toBe(303);
+    expect(invalid.headers.get('location')).toBe('/slack/install?restart=1');
+    expect(invalid.headers.get('referrer-policy')).toBe('no-referrer');
     expect((await app.request(callback, { headers: { accept: 'text/html', authorization: 'Bearer invalid' } })).status).toBe(401);
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+  });
+  it.each([null, 'user_admin'])('restarts a stateless browser installation for actor %s without exchanging its code', async (identity) => {
+    actor=identity;
+    const response=await app.request('/api/slack/oauth/callback?code=opaque-code&state=', {headers:{accept:'text/html'}});
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/slack/install?restart=1');
     expect(api.exchangeCode).not.toHaveBeenCalled();
   });
   it("rejects unsafe callback origins and authenticates events using the live default clock",async()=>{

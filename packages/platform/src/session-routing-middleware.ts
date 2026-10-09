@@ -109,25 +109,8 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
-
-export function isPlatformRuntimeShellPath(path: string): boolean {
-  return path === '/runtime' || path === '/onboarding/computer';
-}
-
-export function shouldServePlatformRuntimeShell(input: {
-  isAppDomain: boolean;
-  path: string;
-  userId: string;
-  identitySource?: AppDomainIdentity['source'];
-}): boolean {
-  return Boolean(
-    input.isAppDomain &&
-    input.userId &&
-    isPlatformRuntimeShellPath(input.path) &&
-    input.identitySource !== 'mobile-session' &&
-    input.identitySource !== 'static-route'
-  );
-}
+import { isPlatformRuntimeShellPath, shouldServePlatformRuntimeShell } from './platform-runtime-shell-paths.js';
+export { isPlatformRuntimeShellPath, shouldServePlatformRuntimeShell } from './platform-runtime-shell-paths.js';
 
 export async function authenticatedApprovalProxyProof(input: {
   request: Request; method: string; path: string; handle: string;

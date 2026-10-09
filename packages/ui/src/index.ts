@@ -246,3 +246,6 @@ export * from "./chat-navigation/browser-cache.js";
 export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
+
+export { AddToSlack, SlackMark } from './messaging/AddToSlack.js';
+export { SlackInstallPanel } from './messaging/SlackInstallPanel.js';
