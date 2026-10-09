@@ -128,6 +128,9 @@ export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
   for (const [sourceVar, aliasVar] of Object.entries(THEME_VAR_ALIASES)) {
     vars[aliasVar] = vars[sourceVar] ?? "";
   }
+  if (style.colorScheme === "light" || style.colorScheme === "dark") {
+    vars["--matrix-color-scheme"] = style.colorScheme;
+  }
   return vars;
 }
 
