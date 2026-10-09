@@ -173,3 +173,11 @@ it("refreshes both generated parsers and gallery branding in a repository and re
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+it("normalizes a failed catalog promptly even while optional inventory remains pending", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  await expect(loadGallery({
+    gatewayFetch: async () => { throw new Error("private database path"); },
+    integrations: () => new Promise(() => {}),
+  })).rejects.toThrow("Gallery unavailable");
+});

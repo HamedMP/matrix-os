@@ -92,7 +92,12 @@ export async function loadGallery(bridge: GalleryBridge, onCatalog?: (apps: Gall
     if (!bridge.integrations) throw new Error("Inventory unavailable");
     return bridge.integrations();
   }).then(knownInventory, () => { console.warn("Gallery connection inventory unavailable"); return null; });
-  const apps = parseListing(await bridge.gatewayFetch("/api/app-gallery"));
+  let apps: GalleryAppListing[];
+  try { apps = parseListing(await bridge.gatewayFetch("/api/app-gallery")); }
+  catch (error) {
+    console.warn("Gallery catalog unavailable", error instanceof Error ? error.name : "Unknown error");
+    throw new Error("Gallery unavailable");
+  }
   onCatalog?.(apps);
   return { apps, connections: await inventory };
 }
