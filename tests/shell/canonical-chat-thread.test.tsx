@@ -250,6 +250,8 @@ describe("Company Brain chat on Web", () => {
     const read = { ...unread, unread: false, version: 4, readThroughSeq: 1 };
     vi.mocked(client.updateReadState).mockImplementation(async (chatId: string) => ({ ...record(chatId, 1), readState: read }));
     expect(await screen.findByText("Answer")).toBeTruthy();
+    // Let the shown answer's effects run before checking that nothing was read.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
     expect(client.updateReadState).not.toHaveBeenCalled();
     rerender({ active: true, visible: true });
     await waitFor(() => expect(client.updateReadState).toHaveBeenCalledWith("chat_old", { type: "mark_read", throughSeq: 1, baseVersion: 3 }));
