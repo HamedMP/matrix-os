@@ -36,7 +36,7 @@ describe("native installed-app opening", () => {
     expect(openApp).toHaveBeenCalledWith(app);
   });
   it.each(["https://evil.test", "//evil.test", "__settings__", "/etc/passwd", "apps/planner/../../system/config.json",
-    "apps/planner/%2e%2e/index.html", "apps/planner/src/main.tsx", "apps/planner/index.html?token=forged", "apps/planner\\index.html"])("rejects unsafe destinations before lookup: %s", async (path) => {
+    "apps/planner/%2e%2e/index.html", "apps/planner/index.html?token=forged", "apps/planner\\index.html"])("rejects unsafe destinations before lookup: %s", async (path) => {
     const { bridge, openApp, resolveApp } = fixture();
     await expect(bridge.openApp(sender, { name: "Planner", path })).rejects.toThrow();
     expect(resolveApp).not.toHaveBeenCalled(); expect(openApp).not.toHaveBeenCalled();
@@ -140,7 +140,9 @@ describe("installed app catalog resolution", () => {
     }
     expect(fetchFn).toHaveBeenCalledWith("https://gateway.test/api/apps", expect.objectContaining({ redirect: "error",
       headers: { authorization: "Bearer desktop-token" }, signal: expect.any(AbortSignal) }));
-    await expect(resolveApp({ name: "Planner", path: "apps/missing" })).rejects.toThrow();
+    for (const path of ["apps/missing", "apps/planner/src/main.tsx"]) {
+      await expect(resolveApp({ name: "Planner", path })).rejects.toThrow();
+    }
   });
   it("rejects built-in destinations, unavailable auth, failed and oversized catalog responses", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "settings", name: "Settings", path: "__settings__" }])));
@@ -152,5 +154,23 @@ describe("installed app catalog resolution", () => {
     await expect(resolveApp(request)).rejects.toThrow();
     const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
     await expect(signedOut(request)).rejects.toThrow(); expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+});
+
+
+describe("manifest-backed moved owner app launch", () => {
+  it.each(["apps/renamed-ledger", "apps/finance/renamed-ledger", "apps/My Finance/Owner Ledger"])("opens %s through the registered bridge and catalog resolver", async (path) => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "folio", name: "Owner Ledger", path: `/files/${path}/index.html`, launchUrl: "/apps/folio/" }])));
+    const resolver = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn });
+    const openApp = vi.fn();
+    const bridge = new NativeAppBridge({ authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", resolveApp: resolver, openApp });
+    bridge.register(1, "gallery");
+    for (const entry of [path, `${path}/index.html`, `${path}/dist/index.html`]) {
+      await bridge.openApp(sender, { name: "Forged", path: entry });
+    }
+    expect(openApp).toHaveBeenCalledTimes(3);
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "folio", name: "Owner Ledger", appIdentity: "folio" });
+    await expect(bridge.openApp(sender, { name: "Other", path: "apps/not-installed" })).rejects.toThrow();
+    expect(openApp).toHaveBeenCalledTimes(3);
   });
 });

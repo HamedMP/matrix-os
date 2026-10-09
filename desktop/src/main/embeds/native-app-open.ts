@@ -1,4 +1,4 @@
-import { canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
+import { AppIdentitySchema, appRuntimeSlugFromIdentity, canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
 import { NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import { readBoundedJson } from "./native-app-bridge";
 
@@ -29,7 +29,10 @@ export function createNativeAppOpenResolver(options: NativeAppOpenResolverOption
       if (!row || typeof row !== "object") continue;
       const path = canonicalOsViewCatalogPath(row);
       if (!path?.startsWith("apps/") || !path.endsWith("/index.html")) continue;
-      const appIdentity = path.slice(5).replace(/\/(?:dist\/)?index\.html$/, "");
+      const folderIdentity = path.slice(5).replace(/\/(?:dist\/)?index\.html$/, "");
+      const parsedFolder = AppIdentitySchema.safeParse(folderIdentity);
+      const appIdentity = parsedFolder.success && appRuntimeSlugFromIdentity(parsedFolder.data) === row.slug
+        ? parsedFolder.data : row.slug;
       const target = NativeAppOpenTargetSchema.safeParse({ slug: row.slug, name: row.name, appIdentity });
       if (target.success) apps.push({ ...target.data, path });
     }
