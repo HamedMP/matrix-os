@@ -5,24 +5,31 @@ const words = (input) => input.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)
 const sentences = (input) => input.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean);
 
 function markdown(input) {
-  const emphasis = (value) => escapeHtml(value)
+  const emphasis = (value) => value
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // Parse protected spans first; generated HTML and URL destinations never pass through emphasis.
+  // Protected spans become inert tokens while emphasis sees the entire surrounding text.
+  // Escaping user-supplied token delimiters preserves their characters without allowing spoofing.
+  const literal = (value) => escapeHtml(value).replaceAll("\uE000", "&#57344;").replaceAll("\uE001", "&#57345;");
   const inline = (value, links = true) => {
     let output = "", offset = 0;
+    const protectedSpans = [];
     const spans = links ? /`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g : /`([^`]+)`/g;
     for (const match of value.matchAll(spans)) {
-      output += emphasis(value.slice(offset, match.index));
-      if (match[1] !== undefined) output += `<code>${escapeHtml(match[1])}</code>`;
+      output += literal(value.slice(offset, match.index));
+      let rendered;
+      if (match[1] !== undefined) rendered = `<code>${escapeHtml(match[1])}</code>`;
       else {
         const label = inline(match[2], false);
-        try { output += `<a href="${escapeHtml(validUrl(decodeEntities(match[3])).href)}" rel="noopener noreferrer">${label}</a>`; }
-        catch { output += label; }
+        try { rendered = `<a href="${escapeHtml(validUrl(decodeEntities(match[3])).href)}" rel="noopener noreferrer">${label}</a>`; }
+        catch { rendered = label; }
       }
+      output += `\uE000${protectedSpans.length}\uE001`;
+      protectedSpans.push(rendered);
       offset = match.index + match[0].length;
     }
-    return output + emphasis(value.slice(offset));
+    output += literal(value.slice(offset));
+    return emphasis(output).replace(/\uE000(\d+)\uE001/g, (_token, index) => protectedSpans[Number(index)]);
   };
   return input.split(/\n\s*\n/).map((paragraph) => {
     const lines = paragraph.split("\n");
