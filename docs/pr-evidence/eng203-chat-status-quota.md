@@ -2,7 +2,7 @@
 
 ## Behavior
 
-Subscription labels now show rounded remaining capacity (`71% used` becomes `29% left`), matching the existing remaining meter. Reset dates and stale/unavailable states retain their current behavior. This shared Settings change applies to Web Desktop, Web Canvas and Electron Desktop.
+Subscription labels now show rounded remaining capacity (`71% used` becomes `29% left`), matching the existing remaining meter. Reset dates and stale/unavailable states retain their current behavior. This shared Settings change applies to Web Desktop, Web Canvas, Web Mobile and Electron Desktop.
 
 Electron Desktop leaves 12 CSS pixels below the Working/Worked divider and uses a compact themed phase row. Long model names truncate inside the available column while preserving the complete title and accessible name, spinner, detail controls and tool actions. Web Chat currently uses its own busy indicator without this receipt/model row; this cosmetic fix does not introduce a new Web Chat presentation.
 
@@ -12,7 +12,7 @@ Electron Desktop leaves 12 CSS pixels below the Working/Worked divider and uses 
 - UI and Electron Desktop type checks pass; production Electron build passes.
 - Changed files pass scoped lint except `transcript.tsx`, which has the same five errors and two warnings at the base commit and after this change. These pre-existing hook/compiler diagnostics occur in unchanged code.
 - Built Electron tests use a loopback synthetic gateway and disposable profile. They assert normal/narrow divider geometry, complete long-model identity, no row/container overflow, spinner, completed receipt collapse/expand, 0/71/100-percent usage and fractional rounding, reset date and matching meter accessibility text.
-- Runtime screenshots, geometry and client Git provenance are written to `output/eng203/`. This proves frontend behavior in actual Electron; it does not assert live provider authentication or usage collection.
+- Runtime screenshots, geometry and client Git provenance are written to the external directory selected by `MATRIX_STATUS_QUOTA_EVIDENCE_DIR` (default: `output/eng203/`). This proves frontend behavior in actual Electron; it does not assert live provider authentication or usage collection.
 
 No new public capability or workflow is introduced, so a public-site documentation PR is not needed for this copy/layout correction. The existing Settings spec is updated.
 
@@ -36,3 +36,18 @@ MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_STATUS_QUOTA_REVIEW=1 flox activate -- pnpm
 3. Quit the test Electron app when finished; the gateway and disposable profile are cleaned up. This environment contains synthetic data only.
 
 Yuhan approved Human Review on October 9, 2026 at `b3fafdfcb451b4f89c88a0f30f219df3b0155699` and authorized merge after current-head Greptile 5/5 and green CI. The screenshots above use a local synthetic runtime; deployed-preview screenshots and recording remain a separate live-evidence gate.
+
+## Electron Desktop live evidence
+
+On October 9, 2026, the production Electron renderer built at `1bd51706fdbc5e80806b8590f5be4c572cf21876` (Electron 41.7.1) was connected through the normal device sign-in flow to the reviewed live platform runtime `v2026.10.09-1707`. The backend was not deployed or modified for this validation.
+
+Actual Settings showed `83% left`, agreeing with the meter's 8300 basis points and accessible remaining text. The detail capture excludes account identity. Actual Codex Chat showed `Current model: gpt-5.6-luna` below the receipt divider while a bounded, file-free `sleep 15` tool ran; it completed with `ENG203_TIMING_OK`. The recordings contain sampled UI frames with the original capture timing; they are not synthetic renders.
+
+![Electron Desktop remaining allowance](eng203/electron-remaining.png)
+
+![Electron Desktop Working model row](eng203/electron-working.png)
+
+- [Electron Desktop remaining allowance recording](eng203/electron-remaining.mp4)
+- [Electron Desktop Working model recording](eng203/electron-working.mp4)
+
+The same captures are attached to ENG-203 in Linear. Web Desktop, Web Canvas and Web Mobile still require deployed-preview captures. Native Mobile uses a separate native provider view and does not consume the affected Settings component; it is outside the changed surface scope. Slack sharing remains pending authorization.
