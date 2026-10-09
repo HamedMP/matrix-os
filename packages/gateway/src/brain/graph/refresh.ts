@@ -168,9 +168,10 @@ export function createBrainGraphIndex(deps: BrainGraphIndexDeps): BrainDerivedIn
       BRAIN_DERIVED_REFRESH_CEILINGS.budgetMs);
     const deadline = clock() + budgetMs;
     let [processed, removed, attempted] = [0, 0, 0];
+    const pending = (limit: number) => withBrainRead(db, (trx) => pendingIds(trx, scope, limit));
     // Derivation marks dependents outdated, so pending is re-read until empty or the limit is spent.
-    for (let ids = await pendingIds(db, scope, documents); ids.length > 0;
-      ids = attempted < documents ? await pendingIds(db, scope, documents - attempted) : []) {
+    for (let ids = await pending(documents); ids.length > 0;
+      ids = attempted < documents ? await pending(documents - attempted) : []) {
       const pass = await run(scope, ids, deadline, signal);
       [processed, removed] = [processed + pass.processed, removed + pass.removed];
       attempted += pass.attempted;
