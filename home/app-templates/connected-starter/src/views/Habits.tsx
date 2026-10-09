@@ -1,4 +1,4 @@
-import { Empty, type ViewProps } from "./common";
+import { Card, Empty, type ViewProps } from "./common";
 const weekday = new Intl.DateTimeFormat(undefined, { weekday: "short" });
 export default function Habits(props: ViewProps) {
   const days = Array.from({ length: 7 }, (_, i) => {
@@ -70,6 +70,10 @@ export default function Habits(props: ViewProps) {
       ) : (
         <Empty app={props.app} onAdd={props.onAdd} />
       )}
+      {props.records.length > 0 && <section aria-label="All saved check-ins" className="habit-history">
+        <div className="section-heading"><h3>All saved check-ins</h3><span>{props.records.length} entries</span></div>
+        <div className="card-grid">{props.records.map(record => <Card key={record.id} record={record} {...props} />)}</div>
+      </section>}
     </>
   );
 }

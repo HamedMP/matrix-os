@@ -106,16 +106,23 @@ export function interviewPacket(record: OwnerRecord) {
   let zoneValid = false;
   try { if (text(f.timezone, 100)) { new Intl.DateTimeFormat("en", { timeZone: String(f.timezone) }).format(); zoneValid = true; } } catch (error) { if (!(error instanceof RangeError)) throw error; }
   const calendarReady = confirmed && f.stage === "Interview" && validDate(f["interview-date"]) && /^([01]\d|2[0-3]):[0-5]\d$/.test(text(f["interview-time"], 10)) && zoneValid;
-  return { confirmed, calendarReady, text: [`${text(f.title, 200) || "Role"} at ${text(f.company, 200) || "Company to confirm"}`, `${confirmed ? "Confirmed" : "Estimated"} stage: ${text(f.stage, 100) || "Unknown"}`, calendarReady ? `Interview: ${f["interview-date"]} ${f["interview-time"]} (${f.timezone})` : "Interview date, time or timezone still needs confirmation.", `Next step: ${text(f["next-step"], 2000) || "Add your next step"}`, `Résumé provided by you:\n${text(f.resume, 6000) || "No résumé provided"}`, `Notes:\n${text(f.notes, 2000) || "No notes yet"}`].join("\n\n") };
+  const packet = f["interview-packet"];
+  if (typeof packet === "string" && packet.length <= 12000) return { confirmed, calendarReady, text: packet };
+  // Older versions saved complete generated packets into notes. Reopen them verbatim.
+  if (typeof f.notes === "string" && f.notes.length <= 12000 && /\n\n(?:Confirmed|Estimated) stage:/.test(f.notes) && f.notes.includes("\n\nRésumé provided by you:\n"))
+    return { confirmed, calendarReady, text: f.notes };
+  return { confirmed, calendarReady, text: [`${text(f.title, 200) || "Role"} at ${text(f.company, 200) || "Company to confirm"}`, `${confirmed ? "Confirmed" : "Estimated"} stage: ${text(f.stage, 100) || "Unknown"}`, calendarReady ? `Interview: ${f["interview-date"]} ${f["interview-time"]} (${f.timezone})` : "Interview date, time or timezone still needs confirmation.", `Next step: ${text(f["next-step"], 2000) || "Add your next step"}`, `Résumé provided by you:\n${text(f.resume, 6000) || "No résumé provided"}`, `Notes:\n${text(f.notes, 12000) || "No notes yet"}`].join("\n\n") };
 }
 
 export interface PracticeCard { question: string; answer: string; quote: string; sourceId: string; supported: boolean }
 export function sourceQuestions(record: OwnerRecord): PracticeCard[] {
   const passage = text(record.fields["source-text"]);
-  const question = text(record.fields.question, 2000), answer = text(record.fields.answer, 2000), quote = text(record.fields.quote, 2000);
+  const question = text(record.fields.question), answer = text(record.fields.answer), quote = text(record.fields.quote);
   if (question || answer) return [{ question: question || "Question to review", answer, quote, sourceId: record.id, supported: Boolean(answer && quote && passage.includes(quote)) }];
   const sentences = passage.match(/[^.!?\n]+(?:[.!?]|$)/g)?.map(sentence => sentence.trim()).filter(sentence => sentence.length > 12) ?? [];
-  return sentences.slice(0, 5).map(sentence => {
+  return sentences.slice(0, 5).map(fullSentence => {
+    // Keep the cloze and exact supporting quote together within the card budget.
+    const sentence = fullSentence.length > 1800 ? fullSentence.slice(-1800).replace(/^\S*\s/u, "") : fullSentence;
     const word = sentence.match(/([\p{L}\p{N}][\p{L}\p{N}'’-]*)[.!?]?$/u)?.[1];
     return { question: word ? `Complete from your notes: ${sentence.slice(0, sentence.lastIndexOf(word))}___${/[.!?]$/.test(sentence) ? sentence.slice(-1) : ""}` : "What does this passage say?", answer: word ?? sentence, quote: sentence, sourceId: record.id, supported: true };
   });

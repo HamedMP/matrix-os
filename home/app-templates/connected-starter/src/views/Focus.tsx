@@ -32,7 +32,7 @@ export default function Focus(props: ViewProps) {
       await props.onSave({
         id: sessionId.current ?? (sessionId.current = crypto.randomUUID()),
         fields: { title: task.trim(), date, minutes, notes: null },
-        scope: props.app.collection === "business" ? "work" : "personal",
+        scope: props.creationScope ?? (props.app.collection === "business" ? "work" : "personal"),
         accounts: [],
         sources: [],
         manualFields: ["title", "date", "minutes"],

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { dateText, formatMoney } from "./model";
 import type { OwnerRecord } from "./types";
 import { contactReview, dailyEvents, invoiceQueue, meetingActions, projectRisks, receiptReview, renewalQueue, text, tripChecks } from "./existing-workflow-model";
@@ -205,17 +205,25 @@ function TodayBrief(props: ViewProps) {
       <Agenda {...props}/>
     </>;
 }
+/** Keep the exact draft owner visible when outer search/account/group filters change. */
+function useDraftSelection(records: OwnerRecord[]) {
+    const [selectedId, setSelectedId] = useState(records[0]?.id || "");
+    const [pinned, setPinned] = useState<OwnerRecord | null>(null);
+    const record = pinned ?? records.find(item => item.id === selectedId) ?? records[0];
+    const onLockChange = useCallback((locked: boolean) => setPinned(locked && record ? record : null), [record]);
+    return { record, setSelectedId, draftLocked: Boolean(pinned), onLockChange,
+      outsideSelection: Boolean(pinned && !records.some(item => item.id === pinned.id)) };
+}
 function TripCompanion(props: ViewProps) {
     const active = props.records.filter(record => text(record, "status") !== "Cancelled");
-    const [selectedId, setSelectedId] = useState(active[0]?.id || "");
-    const [draftLocked, setDraftLocked] = useState(false);
-    const record = active.find(item => item.id === selectedId) || active[0];
+    const { record, setSelectedId, draftLocked, onLockChange, outsideSelection } = useDraftSelection(active);
     return <>
       <section className="workflow-panel trip-preparation" aria-label="Trip preparation">
         <Introduction symbol="✈" title="Travel checklist" detail="Review the details your selected bookings actually contain, then keep a personal preparation note. No live flight status is implied."/>{record ?
         <>
+          {outsideSelection && <p className="notice" role="status">Your preparation draft is outside the current filters. Save or discard it before choosing another journey.</p>}
           <label>Preparation for
-            <select disabled={draftLocked} aria-label="Preparation journey" value={record.id} onChange={event => setSelectedId(event.target.value)}>{active.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled journey"}
+            <select disabled={draftLocked} aria-label="Preparation journey" value={record.id} onChange={event => setSelectedId(event.target.value)}>{outsideSelection && <option value={record.id}>{text(record, "title") || "Journey"} (draft)</option>}{active.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled journey"}
               </option>)}
             </select>
           </label>
@@ -230,7 +238,7 @@ function TripCompanion(props: ViewProps) {
           </ul>
           <p className="muted">Travel mode: {text(record, "travel-mode") || "Not recorded"}. Verify dates and references against the original booking.
           </p>
-          <Draft onLockChange={setDraftLocked} key={`${record.id}:preparation`} record={record} field="preparation" label={`Preparation note for ${text(record, "title") || "journey"}`} button="Save preparation" help="A note for your own trip. Saving does not book, cancel or change travel." onSave={props.onSave}/>
+          <Draft onLockChange={onLockChange} key={`${record.id}:preparation`} record={record} field="preparation" label={`Preparation note for ${text(record, "title") || "journey"}`} button="Save preparation" help="A note for your own trip. Saving does not book, cancel or change travel." onSave={props.onSave}/>
           <Actions record={record} {...props}/>
         </> :
         <p className="workflow-clear">Add a journey or choose a different record group to start preparing.
@@ -240,16 +248,15 @@ function TripCompanion(props: ViewProps) {
     </>;
 }
 function MeetingFollowThrough(props: ViewProps) {
-    const [selectedId, setSelectedId] = useState(props.records[0]?.id || "");
-    const [draftLocked, setDraftLocked] = useState(false);
-    const record = props.records.find(item => item.id === selectedId) || props.records[0];
+    const { record, setSelectedId, draftLocked, onLockChange, outsideSelection } = useDraftSelection(props.records);
     const actions = record ? meetingActions(record.fields.actions) : [];
     return <>
       <section className="workflow-panel" aria-label="Meeting follow-through">
         <Introduction symbol="☷" title="Decisions & next steps" detail="Keep decisions and action ownership together. Missing owners and dates are questions to resolve, not guesses."/>{record ?
         <>
+          {outsideSelection && <p className="notice" role="status">Your action draft is outside the current filters. Save or discard it before choosing another meeting.</p>}
           <label>Action list for
-            <select disabled={draftLocked} aria-label="Action meeting" value={record.id} onChange={event => setSelectedId(event.target.value)}>{props.records.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled meeting"}
+            <select disabled={draftLocked} aria-label="Action meeting" value={record.id} onChange={event => setSelectedId(event.target.value)}>{outsideSelection && <option value={record.id}>{text(record, "title") || "Meeting"} (draft)</option>}{props.records.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled meeting"}
               </option>)}
             </select>
           </label>{text(record, "decisions") &&
@@ -271,7 +278,7 @@ function MeetingFollowThrough(props: ViewProps) {
           </ul>{!actions.length &&
           <p className="workflow-clear">No action items recorded for this meeting yet.
           </p>}
-          <Draft onLockChange={setDraftLocked} key={`${record.id}:actions`} record={record} field="actions" label={`Actions for ${text(record, "title") || "meeting"}`} button="Save actions" help="One action per line: Task | Owner | YYYY-MM-DD | Open or Done. You decide ownership and completion; plain notes stay readable." onSave={props.onSave}/>
+          <Draft onLockChange={onLockChange} key={`${record.id}:actions`} record={record} field="actions" label={`Actions for ${text(record, "title") || "meeting"}`} button="Save actions" help="One action per line: Task | Owner | YYYY-MM-DD | Open or Done. You decide ownership and completion; plain notes stay readable." onSave={props.onSave}/>
         </> :
         <p className="workflow-clear">Add a meeting to keep its decisions and next steps together.
         </p>}
