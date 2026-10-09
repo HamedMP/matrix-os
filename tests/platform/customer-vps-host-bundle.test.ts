@@ -93,6 +93,8 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('sha256sum');
     expect(script).toContain('pnpm rebuild node-pty');
     expect(script).toContain('scripts/build-default-apps.mjs');
+    expect(script).toContain('scripts/build-utilities-app.mjs\" \"$STAGE_DIR/app/scripts/build-utilities-app.mjs');
+    expect(script).toContain('scripts/utilities-build-inputs.mjs\" \"$STAGE_DIR/app/scripts/utilities-build-inputs.mjs');
     expect(script).toContain('generateTemplateManifest');
     expect(script).toContain('home/.template-manifest.json');
     expect(script).toContain('scripts/reset-shipped-icons.mjs');

@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import { glob, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
+import { refreshUtilitiesBuildInputs } from "./utilities-build-inputs.mjs";
+
 const root = resolve(new URL("..", import.meta.url).pathname);
 const appsRoot = resolve(process.argv[2] ?? join(root, "home/apps"));
 const rootBin = join(root, "node_modules/.bin");
@@ -108,6 +110,7 @@ async function buildApp(manifestPath) {
   const output = manifest.build.output ?? "dist";
   if (!command) throw new Error(`${manifestPath} is missing build.command`);
   const sourceGlobs = manifest.build.sourceGlobs ?? ["src/**", "public/**", "*.config.*", "index.html", "matrix.json"];
+  if (slug === "utilities") await refreshUtilitiesBuildInputs(root, appDir);
   const sourceHash = await hashSources(appDir, sourceGlobs);
   const lockfileHash = await hashLockfile(appDir);
 

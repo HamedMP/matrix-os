@@ -2,6 +2,7 @@ import { readdir, readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { ManifestError } from "./errors.js";
 import { parseManifest, SAFE_SLUG, type AppManifest } from "./manifest-schema.js";
+import { isReservedAppSlug } from "./reserved-apps.js";
 
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -76,6 +77,9 @@ async function readManifestCandidate(
   // Older homes retain the bundled app files. Keep owner files intact while
   // retiring the current runtime and its API from the app catalog and router.
   if (result.manifest.slug === "symphony") return null;
+  // Runtime identity normally follows the manifest, including nested apps. A
+  // privileged bundled identity must instead remain at its exact OS path.
+  if (isReservedAppSlug(result.manifest.slug) && relativePath !== result.manifest.slug) return null;
 
   return {
     slug: result.manifest.slug,

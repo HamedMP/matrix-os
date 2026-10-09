@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import * as fs from "node:fs";
 import { join } from "node:path";
+import { isReservedAppSlug, RESERVED_APP_INSTALL_ERROR } from "./app-runtime/reserved-apps.js";
 
 interface OpResult {
   success: boolean;
@@ -65,6 +66,10 @@ export function renameApp(homePath: string, slug: string, newName: string): OpRe
   const newSlug = nameToSlug(newName.trim());
   if (!newSlug) {
     return { success: false, error: "New name produces an empty slug" };
+  }
+
+  if (slug !== newSlug && isReservedAppSlug(newSlug)) {
+    return { success: false, error: RESERVED_APP_INSTALL_ERROR };
   }
 
   const app = findAppPath(homePath, slug);

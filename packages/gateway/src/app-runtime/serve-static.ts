@@ -1,3 +1,4 @@
+import { utilitiesAppCsp } from "@matrix-os/contracts";
 import { createReadStream } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import type { Context } from "hono";
@@ -94,6 +95,7 @@ function serveFile(
   requestPath: string,
   fileStat: Awaited<ReturnType<typeof lstat>>,
   c: Context,
+  profile?: "utilities",
 ): Response {
   if (fileStat.size > MAX_STATIC_ASSET_BYTES) {
     return c.text("Payload too large", 413);
@@ -116,7 +118,7 @@ function serveFile(
   const headers: Record<string, string> = {
     "Content-Type": contentType,
     ETag: etag,
-    "Content-Security-Policy": APP_STATIC_CSP,
+    "Content-Security-Policy": profile === "utilities" ? utilitiesAppCsp({ frameAncestors: true }) : APP_STATIC_CSP,
     ...appStaticCorsHeaders(c),
   };
   if (BINARY_MIME_TYPES[ext]) {
@@ -131,6 +133,7 @@ export async function serveStaticFileWithin(
   baseDir: string,
   requestPath: string,
   c: Context,
+  profile?: "utilities",
 ): Promise<Response> {
   let baseReal: string;
   try {
@@ -165,7 +168,7 @@ export async function serveStaticFileWithin(
       return c.text("Forbidden", 403);
     }
     if (indexEntry.status === "found" && indexEntry.fileStat.isFile()) {
-      return serveFile(indexEntry.fullPath, "index.html", indexEntry.fileStat, c);
+      return serveFile(indexEntry.fullPath, "index.html", indexEntry.fileStat, c, profile);
     }
     return c.text("Not found", 404);
   }
@@ -177,7 +180,7 @@ export async function serveStaticFileWithin(
       return c.text("Forbidden", 403);
     }
     if (indexEntry.status === "found" && indexEntry.fileStat.isFile()) {
-      return serveFile(indexEntry.fullPath, join(filePath, "index.html"), indexEntry.fileStat, c);
+      return serveFile(indexEntry.fullPath, join(filePath, "index.html"), indexEntry.fileStat, c, profile);
     }
     return c.text("Not found", 404);
   }
@@ -186,5 +189,5 @@ export async function serveStaticFileWithin(
     return c.text("Not found", 404);
   }
 
-  return serveFile(fullPath, filePath, fileStat, c);
+  return serveFile(fullPath, filePath, fileStat, c, profile);
 }
