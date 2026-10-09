@@ -1,6 +1,6 @@
 {
   "repository": "FinnaAI/matrix-os-site",
-  "revision": "686b7a07e023f31e8abd3c2f25e9b5756b01dab4",
+  "revision": "6404f803f1b766cf01d843b21aa9db79e7ceadbb",
   "dirty": false,
   "adaptations": [
     "relative imports and app assets",
@@ -29,8 +29,8 @@
     {
       "path": "src/vendor/lib/audio-worker.mjs",
       "source": "src/lib/free-tools/audio-worker.mjs",
-      "sourceSha256": "3f0c2408ca3f64d4c2ce98d6e6cc92add8d779d2bc665c83e205d16026bd0b9f",
-      "sha256": "3f0c2408ca3f64d4c2ce98d6e6cc92add8d779d2bc665c83e205d16026bd0b9f"
+      "sourceSha256": "a83a4202807eff0371e433b87fcb51381d2aac7b67f5a59511ae918300057015",
+      "sha256": "a83a4202807eff0371e433b87fcb51381d2aac7b67f5a59511ae918300057015"
     },
     {
       "path": "src/vendor/lib/catalog.mjs",
@@ -41,26 +41,26 @@
     {
       "path": "src/vendor/lib/code-sandbox.mjs",
       "source": "src/lib/free-tools/code-sandbox.mjs",
-      "sourceSha256": "d25c67b0b9e12afdcdf43349f5a6fd947db13b28d12818e911cfe150f0d7b3c4",
-      "sha256": "d25c67b0b9e12afdcdf43349f5a6fd947db13b28d12818e911cfe150f0d7b3c4"
+      "sourceSha256": "7d7661e4094519b3ff82a913503dc82539f2ac5c0418a0b42d31009a8c29e2a0",
+      "sha256": "7d7661e4094519b3ff82a913503dc82539f2ac5c0418a0b42d31009a8c29e2a0"
     },
     {
       "path": "src/vendor/lib/collaboration.mjs",
       "source": "src/lib/free-tools/collaboration.mjs",
-      "sourceSha256": "6f5abc0492ea25afd4b37a1a7fbc69b4cf73b4c34c4465dc253221fb2c7fc723",
-      "sha256": "6f5abc0492ea25afd4b37a1a7fbc69b4cf73b4c34c4465dc253221fb2c7fc723"
+      "sourceSha256": "d2653dcff97e86a77635503cc7d83bcf7eb616fa1c98359c85ba8fd7ac0ac2a5",
+      "sha256": "d2653dcff97e86a77635503cc7d83bcf7eb616fa1c98359c85ba8fd7ac0ac2a5"
     },
     {
       "path": "src/vendor/lib/developer.mjs",
       "source": "src/lib/free-tools/developer.mjs",
-      "sourceSha256": "202ffbb041e3906c7b53116ed15473c0423917989b891cf825db8612312555a2",
-      "sha256": "202ffbb041e3906c7b53116ed15473c0423917989b891cf825db8612312555a2"
+      "sourceSha256": "232bffd33d7067cb0128f3d4c83d6320af7c7073f04611dfa9a99d08fd9a3e51",
+      "sha256": "232bffd33d7067cb0128f3d4c83d6320af7c7073f04611dfa9a99d08fd9a3e51"
     },
     {
       "path": "src/vendor/lib/diagnostics.mjs",
       "source": "src/lib/free-tools/diagnostics.mjs",
-      "sourceSha256": "307b6ee3b1903f78aff7c95f5ff7e94f37f4db5f8416dadef1c33de7d02f5f40",
-      "sha256": "307b6ee3b1903f78aff7c95f5ff7e94f37f4db5f8416dadef1c33de7d02f5f40"
+      "sourceSha256": "685185d3538e0d95e7a0a9f97c77917aeb1ebb5a564c9dfe18061e47400caffe",
+      "sha256": "685185d3538e0d95e7a0a9f97c77917aeb1ebb5a564c9dfe18061e47400caffe"
     },
     {
       "path": "src/vendor/lib/editor-tools.mjs",
@@ -101,8 +101,8 @@
     {
       "path": "src/vendor/lib/image-caption.worker.mjs",
       "source": "src/lib/free-tools/image-caption.worker.mjs",
-      "sourceSha256": "2d2b077e86dc4cb2855c1442d266c26d643295c1f4ac06fed13b29ac26249fa1",
-      "sha256": "2d2b077e86dc4cb2855c1442d266c26d643295c1f4ac06fed13b29ac26249fa1"
+      "sourceSha256": "b55fb0e11ad5b31a6483205c8c3f05cd8b63d117cd1068487f423f1182a03754",
+      "sha256": "b55fb0e11ad5b31a6483205c8c3f05cd8b63d117cd1068487f423f1182a03754"
     },
     {
       "path": "src/vendor/lib/image-model-config.mjs",
@@ -113,8 +113,8 @@
     {
       "path": "src/vendor/lib/image-model.worker.mjs",
       "source": "src/lib/free-tools/image-model.worker.mjs",
-      "sourceSha256": "28afcfe305ff7adcf69d55a60c18300ed279c2aadb809bd249decfefd5acba13",
-      "sha256": "28afcfe305ff7adcf69d55a60c18300ed279c2aadb809bd249decfefd5acba13"
+      "sourceSha256": "fd05395fec6fe56742dd572999662c9c728ecd7c4659df551c756cf0f5545ce8",
+      "sha256": "fd05395fec6fe56742dd572999662c9c728ecd7c4659df551c756cf0f5545ce8"
     },
     {
       "path": "src/vendor/lib/image-super-resolution-config.mjs",
@@ -131,14 +131,14 @@
     {
       "path": "src/vendor/lib/image-super-resolution.worker.mjs",
       "source": "src/lib/free-tools/image-super-resolution.worker.mjs",
-      "sourceSha256": "6396b90f389558220df3f014ad6f27a12fa589ba5a1fa7920630c2a069ea62f3",
-      "sha256": "6396b90f389558220df3f014ad6f27a12fa589ba5a1fa7920630c2a069ea62f3"
+      "sourceSha256": "7fbe55dbe909a8114d2d0661dcf6d39301ea02abbc6c01b916ca567b0f0341bb",
+      "sha256": "7fbe55dbe909a8114d2d0661dcf6d39301ea02abbc6c01b916ca567b0f0341bb"
     },
     {
       "path": "src/vendor/lib/image-tools.mjs",
       "source": "src/lib/free-tools/image-tools.mjs",
-      "sourceSha256": "5c3e318c11ee19deb6b2ebdf936dd4600813b7c3b85ee66d80c4b9d661436755",
-      "sha256": "436730c8b21a0a0324b07e724f8b154d36577a6d83720b7d3ec81739b988ae35"
+      "sourceSha256": "d8e94717947715c0ba1d76b4e65c66bd1ed1536de2066d535378fda314b977a9",
+      "sha256": "b635f6676e730b301bddc1f9a545f7991ef944a9f28ea9c8e9c1663dff3c3907"
     },
     {
       "path": "src/vendor/lib/local-ai-worker.mjs",
@@ -161,8 +161,8 @@
     {
       "path": "src/vendor/lib/pdf-podcast-fetch.mjs",
       "source": "src/lib/free-tools/pdf-podcast-fetch.mjs",
-      "sourceSha256": "b4099df454ffe948f743c6c5870f1a75a51f0647d2a9b62d73c062d07aea4c30",
-      "sha256": "b4099df454ffe948f743c6c5870f1a75a51f0647d2a9b62d73c062d07aea4c30"
+      "sourceSha256": "1bcefa52f3dcaaeeb41e7b166a44a8dc753b956ba414149bd54d0e9611e09a25",
+      "sha256": "1bcefa52f3dcaaeeb41e7b166a44a8dc753b956ba414149bd54d0e9611e09a25"
     },
     {
       "path": "src/vendor/lib/pdf-podcast.mjs",
@@ -173,8 +173,8 @@
     {
       "path": "src/vendor/lib/pdf-podcast.worker.mjs",
       "source": "src/lib/free-tools/pdf-podcast.worker.mjs",
-      "sourceSha256": "e1961a40b0a290e7b7db71982547397f60820d816781fa9045dc6e803123657e",
-      "sha256": "e1961a40b0a290e7b7db71982547397f60820d816781fa9045dc6e803123657e"
+      "sourceSha256": "7b4b6bb7421b116d555615b0bb0b34f2d6fd60ad4a716d1b631653e5dbdc509a",
+      "sha256": "7b4b6bb7421b116d555615b0bb0b34f2d6fd60ad4a716d1b631653e5dbdc509a"
     },
     {
       "path": "src/vendor/lib/pdf-render.mjs",
@@ -185,14 +185,14 @@
     {
       "path": "src/vendor/lib/pdf-signature.mjs",
       "source": "src/lib/free-tools/pdf-signature.mjs",
-      "sourceSha256": "5eb9241125b610c1b18fa916f224a1aaafdfa64331e090852d0a948463d14322",
-      "sha256": "5eb9241125b610c1b18fa916f224a1aaafdfa64331e090852d0a948463d14322"
+      "sourceSha256": "a1439d73b433e1cefe0456207dbb795eaa22596b908ead22d0ad08cd134b9cc4",
+      "sha256": "a1439d73b433e1cefe0456207dbb795eaa22596b908ead22d0ad08cd134b9cc4"
     },
     {
       "path": "src/vendor/lib/pdf-tools.mjs",
       "source": "src/lib/free-tools/pdf-tools.mjs",
-      "sourceSha256": "4cdfbefec781188c5a4bb0c0376fb37c819e8ce099dbb489b9dd0726a4e4267c",
-      "sha256": "4cdfbefec781188c5a4bb0c0376fb37c819e8ce099dbb489b9dd0726a4e4267c"
+      "sourceSha256": "68a16e0402c8c09c4cf9b0087cd9e1a5e93cb39579841b46ad9e08f0623978ab",
+      "sha256": "68a16e0402c8c09c4cf9b0087cd9e1a5e93cb39579841b46ad9e08f0623978ab"
     },
     {
       "path": "src/vendor/lib/seo.mjs",
@@ -209,8 +209,8 @@
     {
       "path": "src/vendor/lib/speech-worker.mjs",
       "source": "src/lib/free-tools/speech-worker.mjs",
-      "sourceSha256": "f14f3ce30939f57785a40922e085fcd2e65cf20df0e99faebb9a6dad969d998f",
-      "sha256": "f14f3ce30939f57785a40922e085fcd2e65cf20df0e99faebb9a6dad969d998f"
+      "sourceSha256": "6168872d078c4cc6438e370ec94cb92b4e3d933381572421b0d509aec6ac6bc4",
+      "sha256": "6168872d078c4cc6438e370ec94cb92b4e3d933381572421b0d509aec6ac6bc4"
     },
     {
       "path": "src/vendor/lib/telemetry.mjs",
