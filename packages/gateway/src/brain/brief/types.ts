@@ -30,6 +30,8 @@ export const BRIEF_SCANS = {
 
 /** A stored brief built before its window ended is rebuilt on read once the window ended or it is this old. */
 export const BRIEF_REBUILD_AFTER_MS = 3_600_000;
+/** A scheduled pass rebuilds stored day briefs built before their day ended, up to this many days back. */
+export const BRIEF_FINISH_DAYS = 7;
 /** One summary call; the request also aborts it. */
 export const BRIEF_SUMMARY_TIMEOUT_MS = 60_000;
 /** Commitment and conflict quotes are cut to this many UTF-16 units (contract: at most 300). */

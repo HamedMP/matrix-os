@@ -7,17 +7,15 @@
 ## Outcome and scope
 
 Each morning the owner can open one deterministic brief of a project: what changed, new decisions and risks, open
-commitments, and what needs attention. Every line cites at least one document. Conflicts and stale data are also
-listed on their own. A model-written summary is possible later, behind a flag that is off. In scope: `brain/brief/`
-(table, service, rules, runner, scheduler, routes), four routes, the summary seam and flag, tests. Out of scope (no
-stubs): Deferred scope below. OS-view surface matrix: N/A (a JSON API; spec 563 shows it).
+commitments and what needs attention, every line citing a document. Conflicts and stale data are also listed alone.
+A model summary may come later behind a flag that is off. In scope: `brain/brief/`, four routes, the summary seam,
+tests. Out of scope (no stubs): Deferred scope below. OS-view surface matrix: N/A (a JSON API; spec 563 shows it).
 
 ## Brief model
 
-- Table `brain_brief_briefs`, primary key `(owner_id, scope_id, brief_date, brief_window)`: `brief_date`
-  (`YYYY-MM-DD`), `brief_window` (`day` or `week`), `generated_at`, `body` (JSONB view without `stored`), `byte_count`.
-  CHECKs mirror the zod bounds. Created by `bootstrapBrainBriefDatabase` under the `brain_brief_schema` lock.
-  Scope-level rows: no document foreign key; `scope_erased` deletes them.
+- Table `brain_brief_briefs`, key `(owner_id, scope_id, brief_date, brief_window)`, plus `generated_at`, `body` (JSONB
+  view without `stored`) and `byte_count`; CHECKs mirror the zod bounds. `bootstrapBrainBriefDatabase` creates it under
+  the `brain_brief_schema` lock. Scope-level rows: no document foreign key; `scope_erased` deletes them.
 - Windows are UTC on source time (`source_updated_at`; a first sync of old history does not fill today): `day` is
   `[date, +1 day)`, `week` the 7 days ending with it; a future date or one over 365 days back is `invalid_request`.
 - Sections (caps from `BRAIN_BRIEF_LIMITS`; `truncated` when one is hit):
@@ -39,13 +37,13 @@ stubs): Deferred scope below. OS-view surface matrix: N/A (a JSON API; spec 563 
   `contracts/common.ts`), claim id and kind when it comes from a claim, due and assignee for commitments, severity
   for risks. A source line cites the source's newest live document; a source with none is left out.
 - Storage: GET returns the stored copy, rebuilt if built before its window ended and the window has since ended or
-  the copy is an hour old. POST always rebuilds. 60 copies per scope are kept, newest date first. `stored: true` means
-  the row holds this brief after the write commits; not when it is over 256 KiB, a copy generated later is stored, 60
-  newer copies are stored (such old dates rebuild on every GET), or a document or source it names is gone. GET
-  deletes and rebuilds a copy naming a document or source deleted since; each scheduled pass and `documents_changed`
-  event (routed to `brief`) deletes the copies citing a tombstoned or erased document.
+  it is an hour old; POST always rebuilds; 60 copies per scope are kept, newest date first. `stored: true` means the
+  row holds this brief after the commit; not when it is over 256 KiB, a later copy is stored, 60 newer ones are (such
+  dates rebuild on every GET) or a named document or source is gone. GET deletes and rebuilds a copy naming one
+  deleted since; each pass and `documents_changed` event (routed to `brief`) deletes copies citing a tombstoned one.
 - Builds and reads are read-only (10 s statement deadline). At most two builds run at once (more: 503), scheduled
-  ones included; a refused or failed scope is retried next pass. Passes skip a scope whose project no longer resolves.
+  ones included. A pass builds today's brief unless fresh and rebuilds each day copy of the last 7 days built before
+  its day ended, so a failed build is retried next pass; it skips a scope whose project is gone and stops on abort.
 
 ## Conflicts
 
@@ -53,10 +51,9 @@ Computed on demand, newest side first, each with both sides (cite, claim id, sta
 a stable id (`cfl_` + 32 hex of sha256 of the rule and sorted side keys) and `detectedAt`, the newer side's date.
 
 - `label_disagreement`: two current decision or invariant claims of different documents with the same normalized
-  label (not `Deferred scope`) whose statements contradict: one clause of each has the same content words with
-  opposite negation (`stored` and `never stored`, `enabled` and `disabled`), or the same words with other numbers
-  (`at most 8 runs` and `at most 16 runs`), at 0.8 word overlap; same label alone gives about 22,000 noise pairs on
-  this repository. Cross-source pairs go first.
+  label (not `Deferred scope`) whose statements contradict: a clause of each with the same content words (0.8 overlap)
+  and opposite negation (`stored`, `never stored`) or other numbers (`at most 8 runs`, `at most 16 runs`). Same label
+  alone gives about 22,000 noise pairs on this repository. Cross-source pairs go first.
 - `draft_spec_shipped`: a spec part 1 whose first status line in its first 40 lines reads Draft, and a merged pull
   request (`git_pr`, or `github_pr` with status `merged`) dated after the spec that references it and changes a path
   outside `specs/`. One conflict per spec, with the first such pull request; 13 specs on this repository.
@@ -67,8 +64,7 @@ a stable id (`cfl_` + 32 hex of sha256 of the rule and sorted side keys) and `de
 
 ## Stale data
 
-- `claim_outdated`: a claim of a live document read from an older revision; `since` is when that revision was
-  replaced, else the document's update time.
+- `claim_outdated`: a claim of a live document read from an older revision; `since`: when it was replaced.
 - `source_sync_old`: an active source with no succeeded or partial receipt for 7 days (counted from its creation if
   it never synced); `since` is when it crossed the 7 days.
 - `source_failing`: an active source whose newest receipt failed; the text names the stable error code.
@@ -88,8 +84,7 @@ Rules of spec 553: principal first, `service === null` is 503, a project id or s
 | GET `/projects/:projectId/stale` | `kinds` (comma list), `limit` 1..50 (20), `cursor` | 200 `BrainStaleView` | 400 401 404 503 |
 
 Paging: an offset cursor (base64url JSON `{v, k, o}`, at most 512 chars); `k` fingerprints the endpoint and filters,
-so another query's cursor is `invalid_request`. `summary: true` with the flag off or no model is 409
-`summary_not_configured`.
+so another query's cursor is `invalid_request`. `summary: true` with no flag or model is 409 `summary_not_configured`.
 
 ## Security architecture
 
@@ -101,17 +96,15 @@ so another query's cursor is `invalid_request`. `summary: true` with the flag of
 
 - Input validation: project ref pattern, bodyLimit, strict zod queries and bodies (also in the service for direct
   callers), real calendar dates, bounded lists, strict cursor regex, bound SQL parameters only.
-- Error policy: `{ error: { code, message } }` with fixed messages from `BRAIN_API_ERRORS` and
-  `BRAIN_FEATURE_ERRORS`; store errors map through `BRAIN_FEATURE_STORE_ERROR_CODES`; anything else is a logged
-  error name and 503. No document text, SQL, paths or provider text in logs or answers.
+- Error policy: `{ error: { code, message } }` with fixed messages (`BRAIN_API_ERRORS`, `BRAIN_FEATURE_ERRORS`, store
+  errors via `BRAIN_FEATURE_STORE_ERROR_CODES`), else a logged error name and 503. No document text, SQL or paths.
 - Credentials: none; a later summary model gets one through the provider the wiring passes, never read here.
 
 ## Integration wiring
 
-- Startup: `api/start.ts` runs `bootstrapBrainBriefDatabase(kysely)` on its own (a failure leaves only the brief
-  off), then `createBrainBrief({ repository, resolver })`, registers `feature.listener` and adds the scheduler to
-  `jobs`. `api/feature-routes.ts` mounts the routes; `server.ts` starts jobs after owner services and stops them
-  before the owner Kysely is destroyed.
+- Startup: `api/start.ts` runs `bootstrapBrainBriefDatabase(kysely)` alone (a failure turns only the brief off), then
+  `createBrainBrief({ repository, resolver })`, registers `feature.listener` and adds the scheduler to `jobs`;
+  `api/feature-routes.ts` mounts the routes; `server.ts` starts jobs after owner services, stops them before shutdown.
 - Cross-package: the kernel and MCP tools reach the brief through the service (spec 562); no globals.
 - Config: `MATRIX_BRAIN_BRIEF_SUMMARY` (`1`, `true`, `on`; default off), read per request by the summary provider.
 
@@ -122,8 +115,7 @@ so another query's cursor is `invalid_request`. `summary: true` with the flag of
 - Concurrent access: two builds of one brief both write; the upsert keeps the copy generated last and only that
   request answers `stored: true`. Writes take the brief's own scope lock, so they never block syncs or extraction.
 - Erase during a build: before its upsert, a write checks that every cited document is live and every named source
-  has a row, else stores nothing. The `scope_erased` listener runs after the erase commits under the same lock, so
-  a build either writes first (and the listener deletes it) or stores nothing.
+  has a row; the `scope_erased` listener runs after the erase under the same lock, so a build writes first or not.
 - Crash recovery: each write is one transaction (upsert plus prune); a crashed pass reruns next day or at start.
 - Error propagation: route errors reach the mapper; runner failures are counted per scope and logged by name; a
   stored body that no longer reads as a brief is logged and rebuilt. No catch-and-ignore.
@@ -140,8 +132,7 @@ so another query's cursor is `invalid_request`. `summary: true` with the flag of
 | stale items per kind / open commitments (pages of rows read) / sources per scope | 500 / 500 (10) / 100 | `stale.ts`, `reads.ts` |
 | scopes per pass / pass time / summary input | 200 / 120 s / 200 lines and 40,000 chars | `service.ts`, `summary.ts` |
 
-- Buffers: every list is capped by a scan limit before it is held in memory; maps and sets live for one call.
-- Files: none written. Stored briefs are rows, pruned by count.
+- Buffers: every list is capped by a scan before it is held; maps and sets live for one call. Files: none written.
 - Memory: the scheduler holds one timer, one controller and one pass; `stop()` clears and aborts them.
 - Third-party data: none by default. With the flag on and a model wired, only the date and texts of lines citing
   only git documents go to it (`BRAIN_MODEL_PROVENANCES`, as in claim extraction; source lines of git sources only).
@@ -159,13 +150,12 @@ so another query's cursor is `invalid_request`. `summary: true` with the flag of
 
 ## Integration test checkpoint
 
-- `pnpm exec vitest run tests/gateway/brain-brief-*.test.ts`: 48 tests over PGlite, fake timers and fakes, 100%
+- `pnpm exec vitest run tests/gateway/brain-brief-*.test.ts`: 49 tests over PGlite, fake timers and fakes, 100%
   statement and branch coverage of `brain/brief/`. A real service behind the routes builds, stores and serves a
   brief; conflicts and stale data come from real claims written through extraction runs.
-- Manual (dev Docker, synced matrix-os project): `GET .../brief?date=2026-10-01` lists 13 new git documents, 30
-  decisions, 7 risks, 50 open commitments (truncated) and the Draft-spec conflicts; `GET .../conflicts` lists 13
-  `draft_spec_shipped` (e.g. `specs/094-electron-macos-shell` with `#1608`); `GET .../stale` is empty after a sync;
-  `POST .../brief` with `{"summary":true}` is 409 `summary_not_configured`.
+- Manual (dev Docker, synced matrix-os): `GET .../brief?date=2026-10-01` lists 13 new git documents, 30 decisions,
+  7 risks and 50 open commitments (truncated); `GET .../conflicts` lists 13 `draft_spec_shipped`; `GET .../stale` is
+  empty after a sync; `POST .../brief` with `{"summary":true}` is 409 `summary_not_configured`.
 
 ## Code review checklist
 

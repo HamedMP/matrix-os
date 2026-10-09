@@ -6,31 +6,24 @@ contract: `../contracts/brief.ts`.
 ## Scope
 
 - Owns `brain_brief_briefs` (stored briefs) and everything under `brief/`.
-- Reads the core tables (`brain_sources`, `brain_documents`, `brain_document_revisions`, `brain_document_refs`,
-  `brain_sync_receipts`, `brain_claims`) with plain SELECTs through `repository.kysely`. It never writes, alters or
-  indexes a core table.
-- Out of scope: a summary model (only the seam and the flag ship), recording summary spend, organization scopes,
-  pushing briefs anywhere (chat, mail).
+- Reads the core tables (sources, documents, revisions, refs, sync receipts, claims) with plain SELECTs through
+  `repository.kysely`. It never writes, alters or indexes a core table.
+- Out of scope: a summary model (only the seam and flag ship), its spend, organization scopes, delivery to chat or mail.
 
 ## Source Of Truth
 
 - Briefs, conflicts and stale items are derived from current claims and documents at read time.
 - A stored brief is a snapshot for `(scope, date, window)`: at most 60 per scope, newest date first, each at most
   256 KiB of JSON. `stored: true` only when the row holds the brief after the write.
-- Commitment due dates and assignees: claim fields, else the document's `due` (a real calendar day only,
-  `CALENDAR_DATE` in SQL) and `assignee` refs.
+- Commitment due dates and assignees: claim fields, else the document's `due` (`CALENDAR_DATE`) and `assignee` refs.
 - No in-memory state besides the scheduler's one timer, one abort controller and one running pass.
 
 ## Public API
 
-- `index.ts`: `bootstrapBrainBriefDatabase`, `createBrainBrief` (service, runner, `brief` listener),
-  `createBrainBriefRoutes`, `createBrainBriefScheduler`, `createBrainBriefScopeLister`,
-  `createBrainBriefSummaryProvider`, `briefSummaryEnabled`.
+- `index.ts`: `bootstrapBrainBriefDatabase`, `createBrainBrief` (service, runner, `brief` listener), the routes,
+  scheduler, scope lister and summary provider factories, `briefSummaryEnabled`. Cites come from `brain/cite.ts`.
 - Routes under `/api/brain/projects/:projectId/`: `GET brief?date=&window=`, `POST brief`,
   `GET conflicts?rules=&limit=&cursor=`, `GET stale?kinds=&limit=&cursor=`.
-- Files: `sections.ts`, `conflicts.ts` (three rules), `stale.ts` (four kinds, open commitments), `text.ts` (pure text
-  rules), `reads.ts` (shared core reads), `database.ts` (stored briefs), `service.ts`, `scheduler.ts`, `summary.ts`,
-  `paging.ts`, `time.ts`, `routes.ts`, `types.ts`; cites come from the shared `brain/cite.ts`.
 
 ## Auth And Trust Boundaries
 
@@ -51,8 +44,9 @@ contract: `../contracts/brief.ts`.
 - A write first checks under the lock that every cited document is live and every named source still has a row, so
   a build that outlives a tombstone, an erase or the listener stores nothing. `scope_erased` deletes every stored
   brief of the scope; each scheduled pass and `documents_changed` event deletes those citing a tombstoned document.
-- A scheduler pass is bounded by `BRAIN_BRIEF_SCHEDULE.passBudgetMs` and an abort signal and shares the two-build
-  cap; it skips a scope whose project no longer resolves and counts, logs by name and retries a failed scope.
+- A scheduler pass is bounded by `BRAIN_BRIEF_SCHEDULE.passBudgetMs` and an abort signal (checked before each build)
+  and shares the two-build cap; it skips a scope whose project is gone, counts and logs failures by name, and rebuilds
+  day copies of the last `BRIEF_FINISH_DAYS` built before their day ended, so a failed rebuild is retried.
 
 ## Tests
 

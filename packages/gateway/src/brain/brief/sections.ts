@@ -41,7 +41,7 @@ interface ChangeRow {
 
 async function changes(db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange) {
   // New: first revision, or first published inside the window (created, then edited the same day).
-  const firstSeen = sql`(d.revision = 1 OR d.published_at >= ${range.from})`;
+  const firstSeen = sql`(d.revision = 1 OR (d.published_at >= ${range.from} AND d.published_at < ${range.to}))`;
   const { rows } = await sql<ChangeRow>`
     SELECT w.document_id, w.source_id, w.created::int AS created, w.revised::int AS revised, s.kind, s.label
     FROM (
