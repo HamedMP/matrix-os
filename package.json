@@ -53,6 +53,7 @@
     "typecheck": "bun run typecheck:build-kernel && pnpm --filter '@matrix-os/observability' exec tsc --noEmit && pnpm --filter '@matrix-os/integrations-mcp' exec tsc --noEmit && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit && pnpm --filter '@matrix-os/edge-router' exec tsc --noEmit && pnpm --filter desktop run typecheck",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
+    "check:budgets": "node scripts/review/check-budgets.mjs",
     "lint": "bun run --filter './shell' lint"
   },
   "pnpm": {
