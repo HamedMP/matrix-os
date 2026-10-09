@@ -3,7 +3,7 @@ import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import {
   BrainFeatureError, type BrainAnySourceKindHandler, type BrainIntegrationService,
 } from "../../packages/gateway/src/brain/contracts.js";
-import { BrainStoreError } from "../../packages/gateway/src/brain/types.js";
+import { BrainStoreError, type BrainScopeKey } from "../../packages/gateway/src/brain/types.js";
 import {
   createBrainSourceKindRegistry, createBrainSourcesService, runBrainSourceSync, type BrainSourcesCoreDeps,
 } from "../../packages/gateway/src/brain/sources/core/index.js";
@@ -90,6 +90,41 @@ describe("connect", () => {
     expect(result).toMatchObject({ created: false, source: { sourceId: source.sourceId, config: { items: ["a"] } } });
   });
 
+  it("never saves over a config that another gateway's connect or a later update saved first", async () => {
+    // Gateway A is held right after its create; gateway B connects the same identity and its owner updates it.
+    const handler = fakeHandler("linear");
+    const [created, held] = [gate(), gate()];
+    const createSource = harness.repository.createSource.bind(harness.repository);
+    vi.spyOn(harness.repository, "createSource").mockImplementationOnce(async (scope, input, alongside) => {
+      const result = await createSource(scope, input, alongside);
+      created.open();
+      return held.wait.then(() => result);
+    });
+    const first = service([handler]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } });
+    await created.wait;
+    const { source } = await service([handler]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } });
+    const update = { expectedRevision: source.revision, config: { items: ["x"], includeEventBodies: true } };
+    await service([handler]).update(OWNER, "proj_a", source.sourceId, update);
+    held.open();
+    await first;
+    expect([...handler.configs.values()]).toEqual([update.config]);
+  });
+
+  it("repairs a missing config with the revision it read, so an update saved meanwhile stands", async () => {
+    const handler = fakeHandler("linear");
+    const { source } = await harness.repository.createSource(SCOPE_A, { kind: "linear", externalRef: "linear:x:", label: "x" });
+    const [read, held] = [gate(), gate()];
+    const slow = { ...handler, loadConfig: (scope: BrainScopeKey, sourceId: string) =>
+      handler.loadConfig(scope, sourceId).then(async (config) => { read.open(); await held.wait; return config; }) };
+    const connect = service([slow]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } });
+    await read.wait;
+    const update = { expectedRevision: 1, config: { items: ["x"], includeEventBodies: true } };
+    await service([handler]).update(OWNER, "proj_a", source.sourceId, update);
+    held.open();
+    expect(await connect).toMatchObject({ created: false, source: { revision: 2 } });
+    expect([...handler.configs.values()]).toEqual([update.config]);
+  });
+
   it("leaves no live source when the pre-check or the config save refuses, or the label is taken by a cap", async () => {
     const refusing = fakeHandler("github", { checkConfig: async () => { throw new BrainFeatureError("source_conflict"); } });
     expect(await codeOf(service([refusing]).connect(OWNER, "proj_a", { kind: "github", config: { items: ["r"] } }))).toBe("source_conflict");
@@ -97,10 +132,11 @@ describe("connect", () => {
     const saving = fakeHandler("github", { saveConfig: async () => { throw new BrainFeatureError("source_conflict"); } });
     expect(await codeOf(service([saving]).connect(OWNER, "proj_a", { kind: "github", config: { items: ["r"] } }))).toBe("source_conflict");
     expect(await harness.liveSources()).toEqual([]);
-    const failing = fakeHandler("linear", { saveConfig: async () => { throw new Error("disk"); } });
     const deleteSource = vi.spyOn(harness.repository, "deleteSource").mockRejectedValueOnce(new Error("down"));
+    const listSources = harness.repository.listSources.bind(harness.repository);
+    vi.spyOn(harness.repository, "listSources").mockImplementationOnce(listSources).mockRejectedValueOnce(new Error("disk"));
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await expect(service([failing]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } })).rejects.toThrow("disk");
+    await expect(service([fakeHandler("linear")]).connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } })).rejects.toThrow("disk");
     expect(deleteSource).toHaveBeenCalledOnce();
     expect(error).toHaveBeenCalledWith("[brain-sources] connect rollback failed:", "Error");
   });

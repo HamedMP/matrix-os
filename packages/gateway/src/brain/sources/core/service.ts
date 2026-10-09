@@ -2,10 +2,10 @@
  * createBrainSourcesService: the owner-scoped /sources service. Every call resolves the caller's project first (a
  * missing, foreign or malformed project is project_not_found), then the source inside that project's scope (a
  * missing, foreign, tombstoned or malformed source is source_not_found). Connect runs parseConfig, account pinning,
- * identify, checkConfig, createSource, saveConfig, and removes the new source again when anything after createSource
- * fails, so a refused config never leaves a live source. An update saves the config in the transaction that moves the
- * revision, or that replaces the source when the config needs a reconnect. Sync is exactly one bounded run of the
- * shared runner (the project's git source delegates to gitSync).
+ * identify, checkConfig, then createSource with saveConfig in its transaction, so a refused config never leaves a live
+ * source. An update saves the config in the transaction that moves the revision, or that replaces the source when the
+ * config needs a reconnect. Sync is exactly one bounded run of the shared runner (the project's git source delegates
+ * to gitSync).
  * Holds no state between calls; every call outside the store has a deadline.
  */
 import { BrainApiError } from "../../api/types.js";
@@ -18,7 +18,8 @@ import {
   type BrainSourceView,
 } from "../../contracts.js";
 import {
-  BRAIN_LIST_MAX_LIMIT, BRAIN_RECEIPTS_PER_SOURCE, BRAIN_SOURCE_ID_PATTERN, type BrainScopeKey, type BrainSource,
+  BRAIN_LIST_MAX_LIMIT, BRAIN_RECEIPTS_PER_SOURCE, BRAIN_SOURCE_ID_PATTERN, BrainStoreError, type BrainScopeKey,
+  type BrainSource,
 } from "../../types.js";
 import {
   BRAIN_CONNECTABLE_SOURCE_KINDS, BrainSourcesDeadlineError, createBrainSourceKindRegistry, createBrainSourcesConnectQueue,
@@ -237,28 +238,34 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     }
   }
 
-  /** createSource then saveConfig; the new source is removed again when the cap or the config save refuses it. */
+  /**
+   * createSource with saveConfig in its transaction, so no request sees the new source without its config; the new
+   * source is removed again when the cap refuses it. The same identity again changes nothing, but a missing (or now
+   * refused) config gets this one, compare-and-set on the revision read here: a config saved since then stands.
+   */
   async function createWithConfig(
     scope: BrainScopeKey, handler: BrainAnySourceKindHandler, config: unknown,
     row: { readonly externalRef: string; readonly label: string },
   ): Promise<{ readonly source: KnownSource; readonly created: boolean }> {
-    const { source, created } = await repository.createSource(scope, { kind: handler.kind, ...row });
+    const { source, created } = await repository.createSource(scope, { kind: handler.kind, ...row },
+      (trx, next) => handler.saveConfig(scope, next.sourceId, config, trx));
     const known: KnownSource = { ...source, kind: handler.kind };
-    if (!created) {
-      // The same identity again changes nothing; a source whose config never landed (or is refused now) gets this one.
-      if (await storedConfig(handler, scope, source.sourceId) === null) {
-        await handler.saveConfig(scope, source.sourceId, config);
+    if (created) {
+      try {
+        if (!await withinKindCap(scope, known)) throw new BrainFeatureError("source_conflict");
+      } catch (error: unknown) {
+        await rollback(scope, source);
+        throw error;
       }
-      return { source: known, created };
     }
-    try {
-      if (!await withinKindCap(scope, known)) throw new BrainFeatureError("source_conflict");
-      await handler.saveConfig(scope, source.sourceId, config);
-    } catch (error: unknown) {
-      await rollback(scope, source);
-      throw error;
-    }
-    return { source: known, created };
+    if (created || await storedConfig(handler, scope, source.sourceId) !== null) return { source: known, created };
+    const repaired = await repository.updateSource(scope, {
+      sourceId: source.sourceId, expectedRevision: source.revision, label: source.label,
+    }, (trx) => handler.saveConfig(scope, source.sourceId, config, trx)).catch((error: unknown) => {
+      if (!(error instanceof BrainStoreError) || error.code !== "conflict") throw error;
+      return liveSource(scope, source.sourceId);
+    });
+    return { source: { ...repaired, kind: handler.kind }, created };
   }
 
   /** The removed source's derived rows go before the answer; what the purge could not finish goes by change event. */
