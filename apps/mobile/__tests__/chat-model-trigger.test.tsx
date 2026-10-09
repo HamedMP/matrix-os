@@ -79,21 +79,24 @@ describe("ModelTrigger", () => {
 
     expect(onPress).not.toHaveBeenCalled();
     expect(trigger.props.accessibilityState).toMatchObject({ disabled: true });
+    expect(flat(trigger).opacity).toBe(0.5);
   });
 
-  it("is still a button, with no press handler of its own, when a native menu wraps it and takes the tap", () => {
-    render(<ModelTrigger provider="matrix" label="Matrix AI · Sonnet 5" />);
+  it("reports that the models are being checked, and can still be pressed meanwhile", () => {
+    const onPress = jest.fn();
+    render(<ModelTrigger provider="matrix" label="Matrix AI · Sonnet 5" loading onPress={onPress} />);
 
     const trigger = screen.getByRole("button", { name: "Model" });
-    expect(trigger.props.accessibilityValue).toEqual({ text: "Matrix AI · Sonnet 5" });
-    expect(screen.UNSAFE_queryByType(Pressable)).toBeNull();
-    expect(flat(trigger)).toMatchObject({ height: 44, paddingHorizontal: 10, gap: 6 });
+    expect(trigger.props.accessibilityState).toMatchObject({ busy: true, disabled: false });
+    fireEvent.press(trigger);
+    expect(onPress).toHaveBeenCalledTimes(1);
   });
 
   it("is a plain label with no chevron when the model is fixed", () => {
     render(<ModelTrigger label="Bot model" fixed />);
 
     expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.UNSAFE_queryByType(Pressable)).toBeNull();
     expect(screen.getByText("Bot model")).toBeTruthy();
     expect(icons()).toEqual([]);
   });

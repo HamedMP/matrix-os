@@ -21,9 +21,9 @@ import {
 
 const noop = () => {};
 
-/** Frame C1: a new chat. */
-export function ChatHomeFrame() {
-  return <ChatFrame title="New chat" showHome messages={[]} placeholder="Ask anything" />;
+/** Frame C1: a new chat. Frame C3 draws its sheet over it and opens the sheet from its model trigger. */
+export function ChatHomeFrame({ onModelPress }: { onModelPress?: () => void }) {
+  return <ChatFrame title="New chat" showHome messages={[]} placeholder="Ask anything" onModelPress={onModelPress} />;
 }
 
 /** Frame C1b: a chat with one finished turn and one running. */
@@ -66,12 +66,14 @@ function ChatFrame({
   initialDraft = "",
   autoFocus = false,
   running = false,
+  onModelPress = noop,
 }: Pick<ChatScreenViewProps, "title" | "onNewChat" | "messages"> & {
   showHome?: boolean;
   placeholder: string;
   initialDraft?: string;
   autoFocus?: boolean;
   running?: boolean;
+  onModelPress?: () => void;
 }) {
   const [draft, setDraft] = useState(initialDraft);
   const keyboardVisible = useKeyboardVisible();
@@ -97,7 +99,7 @@ function ChatFrame({
           onSend: noop,
           running,
           onStop: running ? noop : undefined,
-          modelControl: <ModelTrigger {...SAMPLE_MODEL} onPress={noop} />,
+          modelControl: <ModelTrigger {...SAMPLE_MODEL} onPress={onModelPress} />,
         }}
       />
       {/* As in the tabs layout: Android lifts the bar onto the keyboard, so it is hidden there. */}
