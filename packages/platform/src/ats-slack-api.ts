@@ -6,8 +6,13 @@ import type {AtsSlackTransport} from './ats-slack-threads.js';
 const uuid=(key:string)=>{const hex=createHash('sha256').update(key).digest('hex');return `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;};
 export function createAtsSlackTransport(token:string,channel:string,db:AtsDB):AtsSlackTransport{
  if(!token||!/^C[A-Z0-9]{8,}$/.test(channel))throw Error('Incomplete recruiting Slack configuration');
- async function api(method:string,body:unknown){
-  const response=await fetch(`https://slack.com/api/${method}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10_000),redirect:'error'});
+ async function api(method:string,body:Record<string,unknown>){
+  // Slack's external file endpoints reject JSON metadata with missing-field errors.
+  const form=method==='files.getUploadURLExternal'||method==='files.completeUploadExternal';
+  const encoded=form?new URLSearchParams(Object.entries(body).map(([key,value])=>
+   [key,typeof value==='object'?JSON.stringify(value):String(value)])).toString():JSON.stringify(body);
+  const contentType=form?'application/x-www-form-urlencoded;charset=UTF-8':'application/json;charset=UTF-8';
+  const response=await fetch(`https://slack.com/api/${method}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':contentType},body:encoded,signal:AbortSignal.timeout(10_000),redirect:'error'});
   if(response.status===429){const retry=Number(response.headers.get('retry-after'));throw new AtsSlackRetryError(Math.min(3600,Math.max(60,Number.isFinite(retry)?retry:60))*1000);}
   const result=z.object({ok:z.boolean()}).passthrough().parse(await response.json());
   if(!response.ok||!result.ok)throw Error('Recruiting Slack delivery unavailable');return result;
