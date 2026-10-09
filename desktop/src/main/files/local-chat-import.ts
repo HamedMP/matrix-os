@@ -167,7 +167,7 @@ export function createNativeChatImportService(deps: Deps) {
                         const catalogKey=parsed.data.sourceKeys[index]!;
                         if(entry.retry){
                             if(selections.size>=maxSelections){errors.push("Too many transcript previews are open. Reopen Settings and select your files again.");continue;}
-                            // Preserve the attempted upload identity even when its local file was removed or grew.
+                            // Preserve the reviewed capture even when its local file was removed or grew.
                             const selectionId=randomUUID();
                             selections.set(selectionId,{path:entry.source.path,...entry.retry,bound:owner,expiresAt:Date.now()+60*60000,catalogKey});
                             prepared.push({selectionId,preview:entry.retry.preview});
@@ -188,6 +188,12 @@ export function createNativeChatImportService(deps: Deps) {
                     }
                 }
                 if(operation.signal.aborted || !current(owner))return {status:"cancelled" as const};
+                // Returned previews freeze the reviewed bytes before the renderer releases their handles.
+                for(const selected of prepared){
+                    const value=selections.get(selected.selectionId);
+                    const entry=value?.catalogKey ? catalog.get(value.catalogKey) : undefined;
+                    if(value && entry)entry.retry ??= {capture:value.capture,preview:value.preview};
+                }
                 returned=true;
                 return {status:"selected-many" as const,selections:prepared,errors};
             }finally{
