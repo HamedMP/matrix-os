@@ -1,4 +1,5 @@
 import { imageOutputName, checkedImageBytes, renderImage } from "./image-tools.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 import {
   validateSuperResolutionDimensions,
   validateSuperResolutionPixels,
@@ -31,7 +32,7 @@ function runSuperResolutionWorker(blob, width, height, onProgress, signal) {
       if (data?.type === "error") return finish(new Error("This browser could not enhance the image. Check your connection, available memory, and browser support."));
       if (data?.type === "result") {
         try { validateSuperResolutionPixels(data, width, height); return finish(null, data); }
-        catch { return finish(new Error("The AI model returned invalid image pixels.")); }
+        catch (error) { reportToolFailure(error); return finish(new Error("The AI model returned invalid image pixels.")); }
       }
     };
     if (signal?.aborted) return abort();

@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_PAGES = 200;
@@ -88,7 +89,7 @@ export async function runPdfTool(slug, files, options = {}) {
       try {
         const info = await toolkit.getInfo(files[0], options.password ? { password: options.password } : undefined);
         return { output: `Structural PDF inspection succeeded. ${info.pageCount} pages. PDF ${info.pdfVersion}. Encryption: ${info.encrypted ? "yes" : "no"}. This does not verify identity or cryptographic signatures.` };
-      } catch { throw new Error("Could not inspect this PDF. It may be damaged or password protected."); }
+      } catch (error) { reportToolFailure(error); throw new Error("Could not inspect this PDF. It may be damaged or password protected."); }
     }
     if (slug === "protect-pdf") {
       await load(files[0]);
@@ -111,7 +112,7 @@ export async function runPdfTool(slug, files, options = {}) {
     try {
       const bytes = await toolkit.compress(files[0]);
       return { bytes: new Uint8Array(bytes), mime: "application/pdf", filename: "compressed.pdf", notice: "Lossless stream compression may not reduce every PDF. Images are not recompressed." };
-    } catch { throw new Error("Could not compress this PDF."); }
+    } catch (error) { reportToolFailure(error); throw new Error("Could not compress this PDF."); }
   }
   if (slug === "pdf-workspace") {
     const sources = [];

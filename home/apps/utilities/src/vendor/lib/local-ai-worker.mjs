@@ -1,5 +1,6 @@
 import { env, pipeline } from "@huggingface/transformers";
 import { LOCAL_AI_MODELS, LOCAL_CHAT_MODEL, normalizeModelProgress, prepareLocalAiInput, prepareLocalAiOutput, prepareLocalChatMessages, prepareLocalChatOutput } from "./local-ai.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 env.backends.onnx.wasm.numThreads = 1;
 
@@ -37,7 +38,8 @@ self.addEventListener("message", async ({ data }) => {
       ? await activePipeline(prepared.text, { truncation: true, max_length: 512 })
       : await activePipeline(prepared.text, { max_new_tokens: 80, num_beams: 2, do_sample: false });
     self.postMessage({ type: "result", id, result: isChat ? { text: prepareLocalChatOutput(raw) } : prepareLocalAiOutput(slug, raw) });
-  } catch {
+  } catch (error) {
+    reportToolFailure(error);
     self.postMessage({ type: "error", id, message: "This browser could not load or run the local model. Check your connection, storage, and browser support." });
   } finally { busy = false; }
 });

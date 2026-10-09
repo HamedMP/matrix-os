@@ -52,7 +52,7 @@ async function verifyCms(payload) {
   if (payload.pkcs7.length > MAX_CMS_BYTES) return "unsupported";
   let pkijs;
   try { pkijs = await import("pkijs"); }
-  catch { return "unsupported"; }
+  catch (error) { reportToolFailure(error); return "unsupported"; }
   try {
     const cmsBytes = payload.pkcs7.buffer.slice(payload.pkcs7.byteOffset, payload.pkcs7.byteOffset + payload.pkcs7.byteLength);
     const cms = pkijs.ContentInfo.fromBER(cmsBytes);
@@ -118,3 +118,4 @@ export async function inspectPdfSignatures(bytes, { signal } = {}) {
     await task.destroy();
   }
 }
+import { reportToolFailure } from "./diagnostics.mjs";

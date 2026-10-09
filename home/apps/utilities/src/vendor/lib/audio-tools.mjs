@@ -1,4 +1,6 @@
 /** Local PCM operations shared by the audio tools. No audio bytes leave the browser. */
+import { reportToolFailure } from "./diagnostics.mjs";
+
 export const MAX_AUDIO_SECONDS = 180;
 export const MAX_AUDIO_FILE_BYTES = 80 * 1024 * 1024;
 export const MAX_TRANSCRIPTION_SECONDS = 120;
@@ -63,7 +65,10 @@ export function normalizeAudioSessionManifest(value) {
     }
     if (total > MAX_AUDIO_SESSION_BYTES || (value.activeId !== null && value.activeId !== undefined && !ids.has(value.activeId))) throw new Error();
     return { activeId: value.activeId ?? null, entries };
-  } catch { throw new Error("Saved audio session is invalid."); }
+  } catch (error) {
+    reportToolFailure(error);
+    throw new Error("Saved audio session is invalid.");
+  }
 }
 
 export function assertAudio(audio) {

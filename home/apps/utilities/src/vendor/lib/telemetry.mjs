@@ -1,4 +1,5 @@
 import { getTool, tools } from "./catalog.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 const actions = new Set(["open", "card_click", "start", "success", "error", "copy", "download", "related_click", "matrix_click"]);
 const categories = new Set(["All", ...tools.map((tool) => tool.category)]);
@@ -66,7 +67,7 @@ export function filterToolCapture(capture, pathname, origin = "https://matrix-os
   const source = capture.properties ?? {};
   let pagePath = null;
   if (typeof source.$current_url === "string") {
-    try { pagePath = new URL(source.$current_url).pathname; } catch { /* invalid URL: fail closed below */ }
+    try { pagePath = new URL(source.$current_url).pathname; } catch (error) { reportToolFailure(error); /* invalid URL: fail closed below */ }
   }
   if (capture.event === "$pageview" && isToolRoute(pagePath)) {
     if (pagePath !== "/tools" && !getTool(pagePath.slice("/tools/".length))) return null;

@@ -372,7 +372,7 @@ export async function runImageToPdf(images, types) {
     if (mime !== "image/png" && mime !== "image/jpeg") throw new Error("Convert WebP images to PNG or JPEG before adding them to a PDF.");
     let embedded;
     try { embedded = mime === "image/png" ? await pdf.embedPng(images[i]) : await pdf.embedJpg(images[i]); }
-    catch { throw new Error("Could not read one of these images."); }
+    catch (error) { reportToolFailure(error); throw new Error("Could not read one of these images."); }
     validateImageDimensions(embedded.width, embedded.height);
     totalPixels += embedded.width * embedded.height;
     if (totalPixels > 60_000_000) throw new Error("Combined images must have no more than 60 million pixels.");
@@ -411,3 +411,4 @@ export async function recognizeImageText(file, onProgress) {
     return String(data.text || "").slice(0, 100_000);
   } finally { if (worker) await worker.terminate(); }
 }
+import { reportToolFailure } from "./diagnostics.mjs";

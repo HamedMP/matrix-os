@@ -1,4 +1,5 @@
 import { prepareSpeechAudio } from "./audio-tools.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 const MAX_MODEL_DOWNLOAD_BYTES = 150 * 1024 * 1024;
 const MAX_SINGLE_MODEL_FILE_BYTES = 100 * 1024 * 1024;
@@ -58,7 +59,8 @@ if (typeof self !== "undefined") self.onmessage = async (event) => {
       text: String(chunk.text ?? "").trim(),
     })).filter((chunk) => chunk.text) : [];
     self.postMessage({ type: "done", text: String(result?.text ?? "").trim(), chunks });
-  } catch {
+  } catch (error) {
+    reportToolFailure(error);
     self.postMessage({ type: "error", message: "Local transcription could not run. Check browser storage, memory, and network access for the first model download." });
   } finally { self.fetch = nativeFetch; }
 };

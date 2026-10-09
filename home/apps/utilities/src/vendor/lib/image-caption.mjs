@@ -1,4 +1,5 @@
 import { normalizeCaptionOutput, validateCaptionRequest } from "./image-caption-config.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 export function runCaptionWorker(blob, onProgress, signal) {
   return new Promise((resolve, reject) => {
@@ -25,7 +26,7 @@ export function runCaptionWorker(blob, onProgress, signal) {
       if (data?.type === "error") return finish(new Error("This browser could not run the caption model. Check your connection, available memory, and browser support."));
       if (data?.type === "result") {
         try { return finish(null, normalizeCaptionOutput([{ generated_text: data.caption }])); }
-        catch { return finish(new Error("The local model returned an invalid caption.")); }
+        catch (error) { reportToolFailure(error); return finish(new Error("The local model returned an invalid caption.")); }
       }
     };
     if (signal?.aborted) return abort();
