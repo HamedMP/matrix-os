@@ -13,7 +13,7 @@
 .revenue-overview { grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.7fr); background: #263741; color: #f3f7f9; border-radius: 14px; gap: 0; margin-bottom: 28px; }
 .revenue-overview .balance, .revenue-overview .chart-card { background: transparent; border: 0; padding: 32px; }
 .revenue-overview .balance h2 { font-size: clamp(32px, 4vw, 52px); }
-.revenue-overview .balance p, .revenue-overview .eyebrow, .revenue-overview .bar-column { color: #bccbd3; }
+.revenue-overview .balance p, .revenue-overview .eyebrow, .revenue-overview .bar-column { color: var(--muted); }
 .revenue-overview .balance select { color: #172c3b; background: #f3f7f9; }
 .revenue-overview .segmented { border-color: #536571; }
 .revenue-overview .segmented button[aria-pressed="true"] { color: #fff; background: #435966; }

@@ -170,3 +170,12 @@
   .workbench[data-app="subscriptions"] .commitment-date { grid-column: 2; text-align: left; }
 }
 .workbench[data-app] .habit-history { margin-top: 24px; }
+
+/* A very short phone window uses one scroll surface so expanded controls
+   cannot consume the records pane's remaining height. */
+@media (max-width: 700px) and (max-height: 420px) {
+  .workbench[data-app] { grid-template-rows: max-content max-content; overflow-y: auto; }
+  .workbench[data-app] .sidebar { max-height: none; overflow: visible; }
+  .workbench[data-app] .main-column { overflow: visible; }
+  .workbench[data-app] main { flex: none; overflow: visible; }
+}
