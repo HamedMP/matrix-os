@@ -71,9 +71,9 @@ and everything under Deferred. OS-view surface matrix: N/A (no UI, copy or route
   written; if it changes while open, its children start over. One that cannot get further (not even one more child
   fits) is cut to fit (`items_truncated`).
 - Ties: a full page whose items are all applied moves to the next tie page; more than 100 ties at one second (or a
-  third full tie page) moves the watermark one second on with `items_truncated`. Ties past page 1 are walked again
-  from page 1 before the watermark moves past them (an item changing between reads shifts the pages); it moves only
-  after a walk that applies nothing new (cursor flag `r`).
+  third full tie page) moves the watermark one second on with `items_truncated`. An item changing between reads
+  shifts the pages, so a later page never moves the watermark: ties past page 1 are walked again from page 1, and a
+  walk that applies nothing new (cursor flag `r`) moves it one second on, listed from page 1.
 - Deletions: when a pull request's review and comment lists are complete, its live children of this source that
   GitHub no longer lists are tombstoned (a bounded read of core refs, at most 500).
 - A pull request that vanished between the listing and its reads is passed over.

@@ -256,13 +256,33 @@ describe("github adapter", () => {
     });
     expect(await run(adapter, { maxPages: 20 })).toMatchObject({ status: "succeeded", caughtUp: true });
     expect(await harness.repository.getDocument(scopeA, githubDocumentId(externalRef, "issue", 51))).not.toBeNull();
-    expect(client.calls.map((call) => "page" in call ? call.page : 0)).toEqual([1, 1, 1, 2, 1, 1, 2, 1, 2]);
+    expect(client.calls.map((call) => "page" in call ? call.page : 0)).toEqual([1, 1, 1, 2, 1, 1, 2, 1, 2, 1]);
     const cursor = decodeGithubCursor((await harness.repository.getSyncCursor(scopeA, sourceId))!.cursor);
     expect(cursor).toEqual({ since: "2026-02-02T00:00:00Z", page: 1, done: [5] });
     const recheck = { since: "2026-02-01T00:00:00Z", page: 2, done: [1], recheck: true as const };
     expect(decodeGithubCursor(encodeGithubCursor(recheck))).toEqual(recheck);
     const raw = `gh1:${Buffer.from(JSON.stringify({ v: 1, s: recheck.since, p: 1, d: [], r: 2 })).toString("base64url")}`;
     expect(decodeGithubCursor(raw)).toBeNull();
+  });
+
+  it("never moves the watermark from a later page, where newer items can slide back onto page 1", async () => {
+    const items = [
+      ...Array.from({ length: 60 }, (_, i) => issue(i + 1, "2026-02-01T00:00:00Z")),
+      ...Array.from({ length: 20 }, (_, i) => issue(i + 61, "2026-02-02T00:00:00Z")), issue(81, "2026-02-03T00:00:00Z"),
+    ];
+    let pageTwoReads = 0;
+    const { adapter } = adapterFor((resource) => {
+      if (resource.kind !== "issues") return ok([]);
+      // Twenty applied ties change just before the second walk reads page 2: issues 61 to 70 slide onto page 1.
+      if (resource.page === 2 && ++pageTwoReads === 2) for (let i = 0; i < 20; i += 1) items[i] = issue(i + 1, "2026-02-04T00:00:00Z");
+      return ok(listing(() => items)(resource));
+    });
+    expect(await run(adapter, { maxPages: 20 })).toMatchObject({ status: "succeeded", caughtUp: true, notices: [] });
+    const missing = [];
+    for (let number = 1; number <= 81; number += 1) {
+      if (await harness.repository.getDocument(scopeA, githubDocumentId(externalRef, "issue", number)) === null) missing.push(number);
+    }
+    expect(missing).toEqual([]);
   });
 
   it("stops a page at its document, time and abort limits", async () => {
