@@ -23,5 +23,6 @@ export function ThemeSettings() {
     catch (error) { console.warn('[appearance] save failed:', error); setError('Could not save appearance. Please try again.'); }
     setPending(false);
   }
+  if (!loaded) return <p role={loadError ? 'alert' : 'status'}>{loadError ? 'Could not load appearance. Reload before making changes.' : 'Loading appearance…'}</p>;
   return <AppearanceControls value={value} resolvedMode={value.mode === 'system' ? systemDark ? 'dark' : 'light' : value.mode} pending={pending || !loaded} error={error ?? (loadError ? 'Could not load appearance. Reload before making changes.' : null)} onChange={change} />;
 }

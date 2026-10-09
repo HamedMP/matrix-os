@@ -57,6 +57,7 @@ export const useAppearance = create<AppearanceState>()((set, get) => {
     unsubscribeZoom?.();
     unsubscribeZoom = onEvent('app:zoom-changed', ({ factor }) => {
       set({ zoom: clampZoom(factor) });
+      if (!get().hydrated) return;
       zoomDirty = true;
       if (!get().pending) persistZoom();
     });
@@ -79,12 +80,12 @@ export const useAppearance = create<AppearanceState>()((set, get) => {
         set({ ...preferences, resolvedMode: resolveThemeMode(preferences.mode), zoom, hydrated: true }); apply(preferences); applyZoomFactor(zoom);
       } catch (error) {
         console.warn('[appearance] load failed:', error);
-        set({ hydrated: true }); apply(get()); applyZoomFactor(get().zoom);
+        set({ hydrated: false, error: 'Could not load appearance. Reload before making changes.' }); apply(get()); applyZoomFactor(get().zoom);
       }
       wireEvents();
     },
     update: async patch => {
-      if (get().pending) return;
+      if (get().pending || !get().hydrated) return;
       const next = normalizeAppearance({ ...get(), ...patch });
       revision++;
       set({ pending: true, error: null });
@@ -103,7 +104,7 @@ export const useAppearance = create<AppearanceState>()((set, get) => {
     },
     setMode: mode => get().update({ mode }),
     setThemeId: async themeId => { if (isThemeId(themeId)) await get().update({ themeId }); },
-    setZoom: factor => { if (get().pending) return; const zoom = clampZoom(factor); set({ zoom }); applyZoomFactor(zoom); persistZoom(); },
+    setZoom: factor => { if (get().pending || !get().hydrated) return; const zoom = clampZoom(factor); set({ zoom }); applyZoomFactor(zoom); persistZoom(); },
   };
 });
 export function resolvedAppearanceMode(): 'dark' | 'light' { return resolveThemeMode(useAppearance.getState().mode); }
