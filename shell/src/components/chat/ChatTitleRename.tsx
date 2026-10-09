@@ -6,7 +6,7 @@ import { ChatContextMenu, OverflowingChatTitle } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
-  canonicalRecord?: import("@matrix-os/contracts").CanonicalChatRecord;
+  canonicalRecord?: import("@matrix-os/ui").ChatNavigationRecord;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   id: string;
   title?: string;

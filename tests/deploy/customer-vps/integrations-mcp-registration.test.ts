@@ -10,7 +10,7 @@ const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 const terminalPath = "distro/customer-vps/host-bin/matrix-integrations";
 
 describe("customer VPS integrations MCP wiring", () => {
-  it.each(["full", "custom-mcp-call", "custom-mcp-discovery", "jev-inbox-preview"])("forwards the %s selector through the installed credential-isolating wrapper", async surface => {
+  it.each(["full", "custom-mcp-call", "custom-mcp-discovery", "jev-inbox-preview", "custom-mcp-call-integrations", "custom-mcp-discovery-integrations", "custom-mcp-call-integrations-drive", "custom-mcp-discovery-integrations-drive"])("forwards the %s selector through the installed credential-isolating wrapper", async surface => {
     const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-mcp-surface-wrapper-"));
     try {
       const serverPath = join(fixtureDir, "server.cjs");

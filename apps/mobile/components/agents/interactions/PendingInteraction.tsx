@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
+  botIntegrationAccessCopy,
   botInteractionCard,
   type BotInteraction,
   type BotInteractionPayload,
@@ -14,7 +15,7 @@ import { approvalTitle, serviceLabel } from "../agent-copy";
 import { AccountChoiceCard } from "./AccountChoiceCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { ConnectContinueCard, ConnectRequestCard } from "./ConnectRequestCard";
-import { InteractionCard, InteractionNote } from "./InteractionCard";
+import { InteractionCard, InteractionNote, RequestedAccessNotes, type RequestedAccess } from "./InteractionCard";
 import { QuestionCard } from "./QuestionCard";
 
 const SAVE_FAILED = "Could not save your response. Try again.";
@@ -45,6 +46,14 @@ function titleOf(payload: BotInteractionPayload): string | undefined {
   return payload.kind === "question" ? undefined : serviceLabel(payload.service);
 }
 
+function accessOf(payload: BotInteractionPayload): RequestedAccess | null {
+  if (payload.kind === "connect_request") return botIntegrationAccessCopy(payload.service, payload.access);
+  // An account choice stored before the server disclosed the access carries none.
+  return payload.kind === "account_choice" && payload.access
+    ? botIntegrationAccessCopy(payload.service, payload.access)
+    : null;
+}
+
 /**
  * One thing an agent is waiting on the person for, drawn in the chat. The card
  * stays until the server has the answer; a failed request leaves it in place.
@@ -64,6 +73,7 @@ export function PendingInteraction({
   const card = botInteractionCard(interaction, new Date().toISOString());
   const { payload, revision: baseRevision } = interaction;
   const label = interaction.kind === "approval" ? "Needs your approval" : card.title;
+  const access = payload ? accessOf(payload) : null;
   const testID = `interaction-${interaction.interactionId}`;
 
   const resolve = async (action: string, input: ResolveBotInteractionRequest) => {
@@ -109,6 +119,7 @@ export function PendingInteraction({
         testID={testID}
         label={label}
         title={payload ? titleOf(payload) ?? "" : ""}
+        access={access}
         error={error}
         onContinue={() => void openConnectPage(connectUrl)}
       />
@@ -119,6 +130,7 @@ export function PendingInteraction({
     return (
       <InteractionCard testID={testID} label={label}>
         <InteractionNote>{CLOSED_NOTES[card.state === "actionable" ? "unavailable" : card.state]}</InteractionNote>
+        {access ? <RequestedAccessNotes access={access} /> : null}
       </InteractionCard>
     );
   }
@@ -127,6 +139,7 @@ export function PendingInteraction({
     return (
       <InteractionCard testID={testID} label={label} title={titleOf(payload)}>
         <InteractionNote>{STATUS_OUT_OF_DATE}</InteractionNote>
+        {access ? <RequestedAccessNotes access={access} /> : null}
         {payload.kind === "question" ? payload.questions.map((question) => (
           <Text key={question.questionId} style={styles.question}>{question.question}</Text>
         )) : null}
@@ -168,6 +181,7 @@ export function PendingInteraction({
           testID={testID}
           label={label}
           title={serviceLabel(payload.service)}
+          access={access}
           options={payload.options}
           sending={sending}
           error={error}
@@ -181,7 +195,7 @@ export function PendingInteraction({
           label={label}
           title={serviceLabel(payload.service)}
           benefit={payload.benefit}
-          access={payload.access}
+          access={botIntegrationAccessCopy(payload.service, payload.access)}
           sending={sendingOneOf("start", "decline")}
           error={error}
           onConnect={() => void resolve("start", { kind: "connect_request", baseRevision, action: "start" })}

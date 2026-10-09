@@ -3,7 +3,6 @@ import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
-import { StatusBar } from "expo-status-bar";
 import { Text, ActivityIndicator } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
@@ -41,6 +40,7 @@ import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
+import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
@@ -139,6 +139,17 @@ export default function RootLayout() {
     };
   }, [fontsLoaded]);
 
+  return (
+    <>
+      {/* Above every screen, launch screens included, and mounted before them:
+          a screen that mounts its own status bar later takes precedence. */}
+      <AppStatusBar />
+      <RootContent fontsLoaded={fontsLoaded} />
+    </>
+  );
+}
+
+function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
   if (!fontsLoaded) {
     // Still behind the native splash, and drawn to match it -- see StartupScreen
     // for why the title waits for its font.
@@ -397,7 +408,6 @@ function GatewayShell() {
           <NotificationRouter />
           <OtaUpdatePrompt />
           <AnalyticsScreenTracker />
-          <StatusBar style="dark" />
         </CanonicalChatSessionProvider>
       </GatewayContext.Provider>
     </GestureHandlerRootView>

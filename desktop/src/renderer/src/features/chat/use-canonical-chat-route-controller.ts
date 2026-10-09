@@ -63,6 +63,7 @@ export function useCanonicalChatRouteController({
   active,
   initialChatId = null,
   autoSelectFirst = true,
+  externalNavigation = false,
   eventSource,
   onInvalidation,
 }: {
@@ -71,6 +72,7 @@ export function useCanonicalChatRouteController({
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
+  externalNavigation?: boolean;
   eventSource?: CanonicalChatEventConsumer;
   onInvalidation?: (event: CanonicalChatInvalidation) => void;
 }) {
@@ -148,6 +150,12 @@ export function useCanonicalChatRouteController({
 
   const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
+    // WorkRail owns the complete navigation cohort. Detail reads and replay
+    // still run here; a selection must not restart its legacy list loader.
+    if (externalNavigation && !query.trim()) {
+      setStatus("ready");
+      return;
+    }
     if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
@@ -177,7 +185,7 @@ export function useCanonicalChatRouteController({
       if (!options.background) setStatus("error");
       if (!options.background) setError("Chats could not be loaded. Try again.");
     }
-  }, [autoSelectFirst, client, projectId]);
+  }, [autoSelectFirst, client, externalNavigation, projectId]);
 
   useLayoutEffect(() => {
     const previousScope = routeScopeRef.current;

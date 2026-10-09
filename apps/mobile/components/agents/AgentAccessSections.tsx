@@ -3,6 +3,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
   MATRIX_BOT_SELECTION,
+  botIntegrationAccessCopy,
   botModelRoutingLabel,
   botTaskStatusCopy,
   managedPiBotModelChoices,
@@ -45,9 +46,8 @@ export interface AgentAccessSectionsProps {
   onRefresh: () => Promise<unknown> | void;
 }
 
-function sentence(words: readonly string[]): string {
-  const joined = words.join(", ");
-  return joined ? `${joined[0].toUpperCase()}${joined.slice(1)}` : joined;
+function sentence(text: string): string {
+  return text ? `${text[0].toUpperCase()}${text.slice(1)}` : text;
 }
 
 /** What the details sheet keeps beyond the design's own sections: tasks, permissions, memory and model. */
@@ -109,21 +109,25 @@ export function AgentAccessSections({
       ) : null}
       {grants.length > 0 ? (
         <DetailsSection testID="agent-details-permissions" label="Permissions" error={errorIn("permissions")}>
-          {grants.map((grant) => (
-            <View key={grant.grantId} style={[styles.row, styles.split]}>
-              <View style={styles.text}>
-                <Text style={styles.primary}>{`${serviceLabel(grant.service)} · ${grant.accountLabel}`}</Text>
-                <Text style={styles.secondary}>{sentence(grant.effects)}</Text>
+          {grants.map((grant) => {
+            const access = botIntegrationAccessCopy(grant.service, grant.effects);
+            return (
+              <View key={grant.grantId} style={[styles.row, styles.split]}>
+                <View style={styles.text}>
+                  <Text style={styles.primary}>{`${serviceLabel(grant.service)} · ${grant.accountLabel}`}</Text>
+                  <Text style={styles.secondary}>{sentence(access.summary)}</Text>
+                  {access.boundary ? <Text style={styles.secondary}>{access.boundary}</Text> : null}
+                </View>
+                <Button
+                  variant="outline"
+                  label="Revoke"
+                  accessibilityLabel={`Revoke ${grant.accountLabel}`}
+                  {...control("permissions", grant.grantId)}
+                  onPress={() => void change("permissions", grant.grantId, () => onRevoke(grant.grantId))}
+                />
               </View>
-              <Button
-                variant="outline"
-                label="Revoke"
-                accessibilityLabel={`Revoke ${grant.accountLabel}`}
-                {...control("permissions", grant.grantId)}
-                onPress={() => void change("permissions", grant.grantId, () => onRevoke(grant.grantId))}
-              />
-            </View>
-          ))}
+            );
+          })}
         </DetailsSection>
       ) : null}
       {memories.length > 0 ? (

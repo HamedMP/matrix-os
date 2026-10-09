@@ -1,7 +1,8 @@
 import { z } from "zod/v4";
+import { MAX_APP_DATABASE_REQUEST_BYTES } from "@matrix-os/contracts";
 
 export const NATIVE_APP_QUERY_CHANNEL = "native-app:query";
-export const MAX_NATIVE_APP_QUERY_BYTES = 256 * 1024;
+export const MAX_NATIVE_APP_QUERY_BYTES = MAX_APP_DATABASE_REQUEST_BYTES;
 const MAX_NATIVE_APP_SUBSCRIPTIONS = 64;
 
 const SafeNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/);

@@ -169,12 +169,12 @@ Each tool: the one rule that matters most, where the secret lives, and rotation.
   there.
 - **Rotate:** Vercel project → Settings → Environment Variables; redeploy to apply.
 
-### Graphite (`gt`, stacked PRs)
-- **Rule:** low risk — it's a GitHub client. The `gt auth` token inherits your GitHub
-  permissions, so protect it like a PAT. If `gt` is unauthenticated, treat it as an
-  environment blocker for stack work (don't silently fall back to raw git in a way that
-  flattens a stack).
-- **Rotate:** re-run `gt auth` after rotating the underlying GitHub token.
+### GitHub native stacks (`gh stack`)
+- **Rule:** use the official `github/gh-stack` extension and existing `gh`
+  authentication. Protect that GitHub credential like a PAT and grant only the
+  required repository permissions. Missing authentication or the extension is a
+  setup blocker; do not flatten a stack or switch stack tools.
+- **Rotate:** rotate the GitHub credential and reauthenticate with `gh auth login`.
 
 ---
 

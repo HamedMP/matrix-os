@@ -7,10 +7,10 @@ import { canonicalChatRecord } from "./canonical-chat-workspace-test-utils";
 
 afterEach(cleanup);
 
-function setup() {
+function setup(placement: "pinned" | "project" | "recent" = "recent") {
   const onSelect = vi.fn();
   const onPin = vi.fn();
-  render(<WorkRailChatRow record={canonicalChatRecord} active={false} pinning={false} placement="recent"
+  render(<WorkRailChatRow record={canonicalChatRecord} active={false} pinning={false} placement={placement}
     renaming={false} renamePending={false} renameDisabled={false} onSelect={onSelect}
     onRenameStart={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()}
     onPin={onPin} onDelete={vi.fn()} />);
@@ -48,4 +48,22 @@ it.each(["Escape", "selection"])("reserves action space for the right-click menu
   fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   expect(row.hasAttribute("data-menu-open")).toBe(false);
+});
+
+it.each(["pinned", "project", "recent"] as const)("uses the title as the first content in %s Chat rows without an icon slot", (placement) => {
+  const { title, row } = setup(placement);
+  expect(title.firstElementChild?.classList.contains("work-rail-chat-label")).toBe(true);
+  expect(title.querySelector("svg")).toBeNull();
+  expect(row.querySelector(".work-rail-chat-actions svg")).not.toBeNull();
+});
+
+it("keeps inline rename icon-free and full width", () => {
+  render(<WorkRailChatRow record={canonicalChatRecord} active={false} pinning={false} placement="recent"
+    renaming renamePending={false} renameDisabled={false} onSelect={vi.fn()}
+    onRenameStart={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()}
+    onPin={vi.fn()} onDelete={vi.fn()} />);
+  const editor = screen.getByRole("textbox");
+  const row = editor.closest("[data-chat-title-row]")!;
+  expect(row.querySelector("svg")).toBeNull();
+  expect(editor.parentElement?.firstElementChild).toBe(editor);
 });

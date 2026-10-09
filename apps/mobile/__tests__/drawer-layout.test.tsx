@@ -74,10 +74,38 @@ describe("side panel layout", () => {
     it("plays a medium haptic when the panel opens and closes", () => {
       render(<DrawerLayout />);
 
-      drawer.listeners?.drawerOpen?.();
+      expect(Haptics.impactAsync).not.toHaveBeenCalled();
+      drawer.listeners?.state?.({ data: { state: { history: [{ type: "drawer", status: "open" }] } } });
       expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
-      drawer.listeners?.drawerClose?.();
+      drawer.listeners?.state?.({ data: { state: { history: [] } } });
       expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it("ignores repeated panel status and route changes, including screen listener recreation", () => {
+      const app = render(<DrawerLayout />);
+      const open: mockLayout.DrawerState = { history: [{ type: "drawer", status: "open" }] };
+      drawer.listeners?.state?.({ data: { state: { history: [] } } });
+      drawer.listeners?.state?.({ data: { state: open } });
+      drawer.state = open;
+      app.rerender(<DrawerLayout />);
+      drawer.listeners?.state?.({
+        data: { state: { history: [{ type: "route", key: "files" }, { type: "drawer", status: "open" }] } },
+      });
+      drawer.listeners?.state?.({ data: { state: open } });
+      expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+      drawer.listeners?.state?.({ data: { state: { history: [{ type: "route", key: "files" }] } } });
+      expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not buzz for a restored open panel, then buzzes once when it closes", () => {
+      drawer.state = { history: [], default: "open" };
+      render(<DrawerLayout />);
+      drawer.listeners?.state?.({ data: { state: drawer.state } });
+      expect(Haptics.impactAsync).not.toHaveBeenCalled();
+      drawer.listeners?.state?.({
+        data: { state: { default: "open", history: [{ type: "drawer", status: "closed" }] } },
+      });
+      expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
     });
 
     it("puts the keyboard away when the panel closes, so the search field does not leave it up", () => {

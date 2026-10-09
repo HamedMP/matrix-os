@@ -113,7 +113,10 @@ describe("Electron Work rail shared projects", () => {
   it("expands to its Chats and opens a Chat as a shared Chat tab", async () => {
     render(<SharedWorkRailProjects />);
     fireEvent.click(await screen.findByRole("button", { name: "collab testing 12PMOct3" }));
-    fireEvent.click(screen.getByRole("button", { name: "Release plan" }));
+    const chat = screen.getByRole("button", { name: "Release plan" });
+    expect(chat.querySelector("svg")).toBeNull();
+    expect(screen.getByRole("button", { name: "collab testing 12PMOct3" }).querySelector("svg")).not.toBeNull();
+    fireEvent.click(chat);
     const tab = useTabs.getState().tabs.find((candidate) => candidate.sharedScopeId === chatScope);
     // Shared Chats open in the Work tab, as they do from Shared with me.
     expect(tab).toMatchObject({ kind: "work", workRoute: "chat", chatId: "chat_release", chatTitle: "Release plan", sharedScopeId: chatScope });

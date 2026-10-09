@@ -207,7 +207,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     const stop = updater.indexOf("if ! stop_runtime_services; then", seal);
     const bootstrap = updater.indexOf('install_terminal_runtime_bootstrap_helpers "$extract_dir/bin"', stop);
     const candidateRollback = updater.indexOf("matrix-terminal-runtime --rollback");
-    const removeCandidate = updater.indexOf('sudo mv "$APP_DIR" "$STAGING_DIR/failed-', candidateRollback);
+    const createFailedDirectory = updater.indexOf('failed_dir="$(mktemp -d "$STAGING_DIR/failed-XXXXXXXX")"', candidateRollback);
+    const removeCandidate = updater.indexOf('sudo mv "$APP_DIR" "$failed_dir/app"', candidateRollback);
 
     expect(prepare).toBeGreaterThan(-1);
     expect(seal).toBeGreaterThan(prepare);
@@ -244,7 +245,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(cleanupCommittedTransaction).toBeGreaterThan(clearConsumedMarkers);
     expect(updater).toContain('sudo rm -f -- "$APP_DIR.rollback/.update-available.json"');
     expect(candidateRollback).toBeGreaterThan(-1);
-    expect(removeCandidate).toBeGreaterThan(candidateRollback);
+    expect(createFailedDirectory).toBeGreaterThan(candidateRollback);
+    expect(removeCandidate).toBeGreaterThan(createFailedDirectory);
     expect(updater).toContain("terminal_runtime_is_healthy");
     expect(updater).toContain("sudo systemctl is-active --quiet matrix-terminal-runtime.service");
     expect(updater).toContain("matrix-terminal-runtime --health-check");

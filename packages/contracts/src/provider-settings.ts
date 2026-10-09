@@ -4,6 +4,7 @@ import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-prim
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
+import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -729,6 +730,8 @@ export function isSupportedGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | null | undefined,
 ): boolean {
+  // Paired-device authority is executable only through its managed route adapter.
+  if (source?.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) return false;
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
     return source?.kind === "provider_account"
       || isNativeGenericHarnessCredentialRoute(harness, source);

@@ -145,15 +145,25 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
-  const [botRecipes, setBotRecipes] = useState<BotRecipeSummary[]>([]);
+  const [botRecipeAttempt, setBotRecipeAttempt] = useState(0);
+  const [botRecipeResult, setBotRecipeResult] = useState<{
+    client: ChatAgentClient; attempt: number; status: "ready" | "unavailable"; recipes: BotRecipeSummary[];
+  } | null>(null);
+  const currentBotRecipes = botRecipeResult?.client === client && botRecipeResult.attempt === botRecipeAttempt
+    ? botRecipeResult : null;
+  const botRecipeStatus = client.bots ? currentBotRecipes?.status ?? "loading" : undefined;
+  const botRecipes = currentBotRecipes?.status === "ready" ? currentBotRecipes.recipes : [];
   useEffect(() => {
     if (!client.bots) return;
     let current = true;
-    void client.bots.recipes().then((recipes) => { if (current) setBotRecipes(recipes); }).catch((failure: unknown) => {
+    void client.bots.recipes().then((recipes) => {
+      if (current) setBotRecipeResult({ client, attempt: botRecipeAttempt, status: "ready", recipes });
+    }).catch((failure: unknown) => {
       console.warn("[chat-agents] Bot recipes unavailable:", failure instanceof Error ? failure.name : "UnknownError");
+      if (current) setBotRecipeResult({ client, attempt: botRecipeAttempt, status: "unavailable", recipes: [] });
     });
     return () => { current = false; };
-  }, [client]);
+  }, [client, botRecipeAttempt]);
   useEffect(() => { heading.current?.focus(); }, [state.editing]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
@@ -326,6 +336,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
     <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <AgentRecipesPanel onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+      botRecipeStatus={botRecipeStatus} onRetryBotRecipes={() => setBotRecipeAttempt(attempt => attempt + 1)}
       matrixModels={botModels} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}

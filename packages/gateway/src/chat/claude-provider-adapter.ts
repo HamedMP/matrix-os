@@ -1,3 +1,4 @@
+import { integrationReadRecipeGuidance } from "./integration-read-guidance.js";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
@@ -192,17 +193,12 @@ export function createClaudeChatProviderAdapter(options: {
       // Review is read-only even if its saved permission choice says full access.
       // Unknown future interaction modes receive discovery only.
       scope: mcpScope,
+      integrationRead: true,
       ...(input.context?.drives?.length ? {driveContext:true} : {}),
     }) ?? null;
     if (input.context?.drives?.length && !capability) throw new Error("Company drive tools unavailable");
     const recipeGuidance = input.context?.agent?.recipe
-      ? "Selected integration dependencies are unavailable through this route. "
-        + (capability
-          ? "Discover Custom MCP servers with list_custom_mcp_servers, then inspect enabled tools with describe_custom_mcp_server. "
-            + (mcpScope === "call"
-              ? "Use call_custom_mcp_tool only when the user needs an enabled tool; the broker owns tool policy and approval."
-              : "This run supports discovery only; remote tool calls are unavailable.")
-          : "No Matrix tools are available for this run.")
+      ? integrationReadRecipeGuidance(capability !== null, mcpScope)
       : undefined;
     const nativePrompt = recipeGuidance ? `${input.prompt}\n\n${recipeGuidance}` : input.prompt;
     let approvalClient = approvalReady && capability && selectedPermission === "default" && input.interactionMode === "default"
@@ -227,6 +223,7 @@ export function createClaudeChatProviderAdapter(options: {
         claudeOutputFormat: "stream-json",
         claudeIncludePartialMessages: true,
         matrixCustomMcp: capability !== null,
+        matrixIntegrationRead: capability !== null,
         matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: mcpScope,
       });

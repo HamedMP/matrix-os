@@ -125,7 +125,8 @@ describe("provider-neutral conversation transcript", () => {
     expect(receiptMarker.className).not.toContain("pb-2");
     expect(receiptMarker.className).toContain("border-[var(--border-xsoft)]");
     expect(receiptMarker.className).not.toContain("border-[var(--border-subtle)]");
-    expect(receiptRow.className).toContain("-mb-1");
+    expect(receiptRow.className).toContain("mb-3");
+    expect(receiptRow.className).not.toContain("-mb-1");
     expect(screen.getByText("Inspect the workspace")).toBeTruthy();
     const assistantText = screen.getByText("The workspace is clean.");
     expect(assistantText).toBeTruthy();

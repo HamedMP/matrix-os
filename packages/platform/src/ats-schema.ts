@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { migrateAtsIntake, type AtsLegacyImportsTable, type AtsInboxTable, type AtsNotificationOutboxTable, type AtsMailAttachmentsTable } from './ats-intake-schema.js';
 
 export interface AtsApplicationsTable {
   id: string;
@@ -19,7 +20,7 @@ export interface AtsApplicationsTable {
   tags: string;
   next_action_at: string | null;
   disposition_reason: string | null;
-  consent_at: string;
+  consent_at: string | null;
   retention_until: string;
   resume_filename: string;
   resume_content_type: string;
@@ -91,6 +92,10 @@ export interface AtsTasksTable {
 }
 
 export interface AtsDatabaseTables {
+  ats_legacy_imports: AtsLegacyImportsTable;
+  ats_inbox_messages: AtsInboxTable;
+  ats_notification_outbox: AtsNotificationOutboxTable;
+  ats_mail_attachments: AtsMailAttachmentsTable;
   ats_applications: AtsApplicationsTable;
   ats_application_events: AtsApplicationEventsTable;
   ats_notes: AtsNotesTable;
@@ -211,4 +216,5 @@ export async function migrateAts<T extends AtsDatabaseTables>(db: Kysely<T>): Pr
     )
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ats_tasks_application ON ats_tasks(application_id, status, due_at)`.execute(db);
+  await migrateAtsIntake(db);
 }

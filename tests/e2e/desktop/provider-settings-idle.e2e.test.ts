@@ -17,8 +17,9 @@ const executablePath = createRequire(join(root, "desktop/package.json"))("electr
 /** A real five-second evidence TTL; never claims real authentication or readiness. */
 function snapshot(): ProviderSettingsSnapshot {
   const base = providerAuthSettingsSnapshot(true, true);
-  const checkedAt = new Date().toISOString();
-  const observation = { state: "present_unverified", checkedAt, staleAfter: new Date(Date.now() + 5000).toISOString() };
+  const observedAt = Date.now();
+  const checkedAt = new Date(observedAt).toISOString();
+  const observation = { state: "present_unverified", checkedAt, staleAfter: new Date(observedAt + 5000).toISOString() };
   return ProviderSettingsSnapshotSchema.parse({ ...base, refreshedAt: checkedAt,
     modelProviders: [...base.modelProviders, { id: "openai-codex", displayName: "OpenAI Codex", models: [{ id: "openai-codex:gpt-5.6-sol", displayName: "GPT-5.6", enabled: true }] }],
     accessSources: [...base.accessSources, { id: "hermes_native", kind: "harness_profile", harness: "hermes", providerId: "openai-codex", fundingKind: "owner_account", accountId: null,

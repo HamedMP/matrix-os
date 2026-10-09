@@ -30,7 +30,11 @@ import { TerminalAgentLogo, type MobileTerminalAgent } from "@/components/termin
 import { Divider, FloatingActionButton, Icon, Sheet, Spacer } from "@/components/ui";
 import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
-import { isValidEditableTerminalSessionName, type TerminalSession } from "@/lib/requests";
+import {
+  isValidTerminalSessionName,
+  TERMINAL_SESSION_NAME_MAX_LENGTH,
+  type TerminalSession,
+} from "@/lib/requests";
 
 type TerminalAction = {
   type: "rename" | "delete";
@@ -38,6 +42,7 @@ type TerminalAction = {
 } | null;
 
 const SHEET_DISMISS_NAVIGATION_DELAY_MS = 500;
+const TERMINAL_NAME_RULE = `Use a name between 1 and ${TERMINAL_SESSION_NAME_MAX_LENGTH} characters.`;
 
 export default function TerminalTab() {
   return (
@@ -100,17 +105,21 @@ function TerminalScreen() {
   const submitRename = async () => {
     if (terminalAction?.type !== "rename") return;
     const trimmedName = nextName.trim();
-    if (!isValidEditableTerminalSessionName(trimmedName)) {
-      setActionError("Use lowercase letters, numbers, and hyphens (31 characters max).");
+    if (!isValidTerminalSessionName(trimmedName)) {
+      setActionError(TERMINAL_NAME_RULE);
       return;
     }
-    if (trimmedName === terminalAction.session.name) {
+    // The list may have reloaded since the popup opened, most likely because
+    // a rename was just refused; the retry has to carry the revision it shows now.
+    const session = sessions.find((candidate) => candidate.id === terminalAction.session.id)
+      ?? terminalAction.session;
+    if (trimmedName === session.name) {
       closeAction();
       return;
     }
     setActionError(null);
     try {
-      await renameSession(terminalAction.session.name, trimmedName);
+      await renameSession(session, trimmedName);
       setTerminalAction(null);
     } catch {
       setActionError("Could not rename terminal. Try again.");
@@ -121,7 +130,7 @@ function TerminalScreen() {
     if (terminalAction?.type !== "delete") return;
     setActionError(null);
     try {
-      await deleteSession(terminalAction.session.name);
+      await deleteSession(terminalAction.session);
       setTerminalAction(null);
     } catch {
       setActionError("Could not delete terminal. Try again.");
@@ -130,13 +139,13 @@ function TerminalScreen() {
 
   const renderSession = (session: TerminalSession) => (
     <SwipeableTerminalRow
-      key={session.name}
+      key={session.id}
       session={session}
       onRename={() => openRename(session)}
       onDelete={() => openDelete(session)}
       onPress={() => router.push({
         pathname: "/terminal-session/[session]",
-        params: { session: session.name },
+        params: { session: session.id },
       } as never)}
     />
   );
@@ -146,14 +155,14 @@ function TerminalScreen() {
     setCreateSessionError(null);
     setCreatingSession(true);
     try {
-      const sessionName = await createSession();
+      const sessionId = await createSession();
       setManageSheetVisible(false);
       if (sessionNavigationTimer.current) clearTimeout(sessionNavigationTimer.current);
       sessionNavigationTimer.current = setTimeout(() => {
         sessionNavigationTimer.current = null;
         router.push({
           pathname: "/terminal-session/[session]",
-          params: { session: sessionName },
+          params: { session: sessionId },
         } as never);
       }, SHEET_DISMISS_NAVIGATION_DELAY_MS);
     } catch {
@@ -381,7 +390,7 @@ function TerminalActionPopup({
           <Spacer size="sm" />
           <Text style={styles.popupBody}>
             {renaming
-              ? "Use lowercase letters, numbers, and hyphens."
+              ? TERMINAL_NAME_RULE
               : `This permanently deletes “${action?.session.name ?? ""}”, its processes, and its transcript. This can’t be undone.`}
           </Text>
           {renaming ? (
@@ -393,7 +402,7 @@ function TerminalActionPopup({
                 autoCorrect={false}
                 autoFocus
                 editable={!isSubmitting}
-                maxLength={31}
+                maxLength={TERMINAL_SESSION_NAME_MAX_LENGTH}
                 onChangeText={onChangeName}
                 onSubmitEditing={onRename}
                 returnKeyType="done"
@@ -473,13 +482,8 @@ function sessionAccent(session: TerminalSession, theme: ReturnType<typeof useUni
 }
 
 function sessionDetail(session: TerminalSession): string {
-  if (session.subtitle?.trim()) return session.subtitle.trim();
-  const rawLocation = session.cwd?.trim() || session.project?.trim();
-  const location = rawLocation
-    ? rawLocation === "~" || rawLocation.startsWith("~/")
-      ? rawLocation
-      : `~/${rawLocation}`
-    : "~";
+  const cwd = session.cwd.trim();
+  const location = cwd === "" || cwd === "~" || cwd.startsWith("~/") ? cwd || "~" : `~/${cwd}`;
   return session.branch?.trim() ? `${location} · ${session.branch.trim()}` : location;
 }
 

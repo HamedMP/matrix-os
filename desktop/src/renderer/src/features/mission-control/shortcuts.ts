@@ -167,7 +167,7 @@ export function handleNewContextShortcut(
     title: "Chat",
     chatView: "draft",
     closable: true,
-  });
+  }, "source");
 }
 
 export function handleCycleTabShortcut(

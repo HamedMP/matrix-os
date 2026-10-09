@@ -3,7 +3,7 @@ import { MATRIX_MCP_RUN_CONTEXT_KEY, type MatrixMcpRunContext } from "../chat/ma
 import { integrationProxyHeaders } from "./custom-mcp/proxy-headers.js";
 import { delegatedIntegrationHeaders } from "./delegated-identity.js";
 import { createIntegrationProxyResponse } from "./proxy-response.js";
-import { INTEGRATION_READ_SCOPE_HEADER } from "./scope-provenance.js";
+import { INTEGRATION_READ_SCOPE_HEADER, hasIntegrationReadScope } from "./scope-provenance.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 
 function buildIntegrationProxyUrl(c: Context, targetBase: string, routePrefix: string): string {
@@ -50,7 +50,7 @@ export async function proxyIntegrationRequest(
         headers.set(key, value);
       }
       const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
-      if (runContext?.scope === "integration_read") {
+      if (hasIntegrationReadScope(runContext)) {
         headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
       }
     }

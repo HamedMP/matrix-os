@@ -83,10 +83,9 @@ Suggested split boundaries for Matrix OS:
 - **shell** frontend changes (one PR)
 - **docs + deploy** configuration (one PR)
 
-For features that need multiple dependent PRs, use Graphite stacked PRs instead
-of one oversized branch. See `docs/dev/stacked-prs.md` for the command flow.
-Each stack layer still follows the same size limits, gates, PR title rules, and
-backend Invariants requirement.
+For features that need multiple dependent PRs, always use GitHub native stacks instead of one oversized branch. Use the official `gh stack` extension through publication and atomic stack merge. Follow `docs/dev/stacked-prs.md` for setup, commands and review gates; shared merge safeguards live in `AGENTS.md`. A stack can share one requester-assigned Linear ticket, linked with its native GitHub stack in every PR.
+
+Each stack layer follows the same size limits, gates, PR title rules, and backend Invariants requirement. Layers may share one verified Linear ticket; each PR description links that ticket and names/links its stack and chosen tool. Do not create a separate ticket solely for another layer.
 
 ## PR Body: Mandatory Invariants Section
 

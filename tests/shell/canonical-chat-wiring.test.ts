@@ -15,7 +15,8 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const providerChoices = readFileSync(join(process.cwd(), "packages/ui/src/compact-chat-provider-choices.tsx"), "utf8");
 
     expect(shellHome).toContain("const chatCollaborationView = terminalCollaborationView ? undefined : initialCollaborationView");
-    expect(shellHome).toContain("useCanonicalChatState({ initialDraft: recipePrompt, initialCollaborationView: chatCollaborationView })");
+    expect(shellHome).toMatch(/useCanonicalChatState\(\{\s*initialDraft: recipePrompt,\s*initialCollaborationView: chatCollaborationView,\s*navigationScope:/);
+    expect(shellHome).toContain("navigationGeneration: sessionId");
     expect(shellHome).not.toContain("useChatState()");
     expect(mobile).toContain("collaborationView={chat.collaborationView}");
     expect(mobile).toContain("onOpenSharedChat={chat.openSharedChat}");

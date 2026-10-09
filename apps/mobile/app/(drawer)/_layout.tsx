@@ -4,7 +4,12 @@ import { Keyboard } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import * as Haptics from "expo-haptics";
 import { useSegments } from "expo-router";
-import { Drawer, useDrawerStatus, type DrawerContentComponentProps } from "expo-router/drawer";
+import {
+  Drawer,
+  getDrawerStatusFromState,
+  useDrawerStatus,
+  type DrawerContentComponentProps,
+} from "expo-router/drawer";
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
@@ -58,6 +63,7 @@ function DismissKeyboardOnClose() {
 export default function DrawerLayout() {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
+  const drawerStatusRef = useRef<ReturnType<typeof getDrawerStatusFromState> | null>(null);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
   const chatPages = useCanonicalChatPages();
   const projects = useProjects();
@@ -101,9 +107,19 @@ export default function DrawerLayout() {
 
   return (
     <Drawer
-      screenListeners={{
-        drawerOpen: triggerDrawerHaptic,
-        drawerClose: triggerDrawerHaptic,
+      screenListeners={({ navigation }) => {
+        // Seed restored state without buzzing; shared state events can reach
+        // multiple screens, so only an actual status change triggers feedback.
+        drawerStatusRef.current ??= getDrawerStatusFromState(navigation.getState());
+        return {
+          state: ({ data }) => {
+            const status = getDrawerStatusFromState(data.state);
+            if (status !== drawerStatusRef.current) {
+              drawerStatusRef.current = status;
+              triggerDrawerHaptic();
+            }
+          },
+        };
       }}
       drawerContent={({ navigation }: DrawerContentComponentProps) => {
         const showChatScreen = () => {

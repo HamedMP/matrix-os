@@ -1,4 +1,5 @@
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
+import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -23,15 +24,31 @@ const APP_IFRAME_CSP = [
   "connect-src 'self'",
 ].join("; ");
 
+export function appIdentityFromPath(path: string): string {
+  if (path.startsWith("modules/")) return path.split("/")[1];
+  return path.replace(/^apps\//, "").replace(/\/(?:dist\/)?index\.html$/, "").replace(/\.html$/, "").replace(/\/$/, "");
+}
+
+/** The gateway's legacy database namespace strips separators; leaf identities do not match. */
+export function isAppDataChangeForIdentity(identity: string, changedApp: string): boolean {
+  return changedApp === identity || changedApp === identity.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+export function appDataChangeMessageForIdentity(identity: string, changedApp: string, key: string) {
+  return isAppDataChangeForIdentity(identity, changedApp)
+    ? { type: "os:data-change", payload: { app: identity, key } }
+    : null;
+}
+
 export function extractSlug(path: string): string | null {
   const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   if (topLevel) return topLevel[1];
 
   // Older saved layouts used filesystem paths for migrated bundled games. Only
   // rewrite known migrated slugs; other nested paths still load as files.
-  const nestedIndex = path.match(/^apps\/(?:[a-z0-9][a-z0-9-]{0,63}\/)+([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
+  const nestedIndex = path.match(/^apps\/games\/([a-z0-9][a-z0-9-]{0,63})\/index\.html$/);
   if (nestedIndex && LEGACY_NESTED_RUNTIME_APP_SLUGS.has(nestedIndex[1])) {
-    return nestedIndex[1];
+    return appRuntimeSlugFromIdentity(appIdentityFromPath(path));
   }
   return null;
 }

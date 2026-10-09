@@ -66,11 +66,12 @@ it("marks Search Current only while open", () => {
 });
 
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
+import { renderRailFixture } from "./work-rail-client-fixture";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 it("keeps Search fixed and Pinned above Projects while Done starts expanded and supports explicit collapse", async () => {
-  const pinned = { ...menuChat, chat: { ...menuChat.chat, id: "pinned", title: "Pinned item", userState: { pinned: true } } } as CanonicalChatRecord;
+  const pinned = { ...menuChat, chat: { ...menuChat.chat, id: "chat_pinned", title: "Pinned item", userState: { pinned: true, muted: false, readThroughSeq: 0 } } } as CanonicalChatRecord;
   const client = { list: vi.fn(async () => ({ items: [pinned, menuChat] })) } as unknown as CanonicalChatClient;
-  render(<WorkRail client={client} projects={[{ id: "project", slug: "alpha", name: "Alpha", kind: "folder" }]} active activeProjectSlug="alpha" onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
+  renderRailFixture(<WorkRail client={client} projects={[{ id: "project", slug: "alpha", name: "Alpha", kind: "folder" }]} active activeProjectSlug="alpha" onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()} />);
   await screen.findByRole("button", { name: "Pinned item" });
   const scroll = screen.getByTestId("work-rail-scroll");
   expect(scroll.contains(screen.getByRole("button", { name: "Search chats" }))).toBe(false);

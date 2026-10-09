@@ -941,6 +941,9 @@ importers:
       pg:
         specifier: ^8.21.0
         version: 8.21.0
+      postal-mime:
+        specifier: 2.6.0
+        version: 2.6.0
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
@@ -12606,6 +12609,9 @@ packages:
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
+
+  postal-mime@2.6.0:
+    resolution: {integrity: sha512-YKOYWVidIWv+DNH92XDW8Qff64QNyrzSUJ2l3umEA4XvconPE+Jll22W0VDZaRLqypo+5V8DZvEtu51pqmUOUQ==}
 
   postcss-selector-parser@7.1.1:
     resolution: {integrity: sha512-orRsuYpJVw8LdAwqqLykBj9ecS5/cRHlI5+nvTo8LcCKmzDmqVORXtOIYEEQuL9D4BxtA1lm5isAqzQZCoQ6Eg==}
@@ -30100,6 +30106,8 @@ snapshots:
       points-on-curve: 0.2.0
 
   possible-typed-array-names@1.1.0: {}
+
+  postal-mime@2.6.0: {}
 
   postcss-selector-parser@7.1.1:
     dependencies:
