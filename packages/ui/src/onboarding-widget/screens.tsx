@@ -20,6 +20,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { useMemo, useState } from "react";
+import { connectedServices } from "./helpers.js";
 import { AppLogo, ButtonRow, Chips, Icon, ResultCard, WorkLog } from "./parts.js";
 import type { OnboardingAppCategory, OnboardingWidgetProps } from "./types.js";
 
@@ -29,12 +30,6 @@ const TASK_ICONS: Record<OnboardingTaskDefinition["tone"], IconSvgElement> = {
   website: Globe02Icon,
   code: GithubIcon,
 };
-
-export function connectedServices(apps: OnboardingWidgetProps["apps"]): OnboardingRequiredService[] {
-  return apps
-    .filter((app) => app.status === "connected" && (app.id === "google_calendar" || app.id === "github"))
-    .map((app) => app.id as OnboardingRequiredService);
-}
 
 export function TasksScreen({ state, apps, userName, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "userName" | "actions">) {
   const connected = connectedServices(apps);
@@ -213,7 +208,7 @@ export function RunScreen({ run, state, runView, creditsExhausted, actions }: { 
   if (run.phase === "failed") {
     return (
       <>
-        <WorkLog steps={steps.length > 0 ? steps : [{ label: task?.failedStep ?? "Couldn't finish this", state: "failed" }]} />
+        <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-failed", label: task?.failedStep ?? "Couldn't finish this", state: "failed" }]} />
         <p className="mxo-text">I couldn't finish this one.</p>
         <ButtonRow>
           <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => actions.dispatch({ type: "run.retried", simpler: false })}>Try again</button>

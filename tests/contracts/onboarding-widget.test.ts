@@ -235,8 +235,8 @@ describe("deriveOnboardingRunView", () => {
     ]), "run_1");
     expect(view.status).toBe("running");
     expect(view.steps).toEqual([
-      { label: "Searched 24 sources", state: "done" },
-      { label: "Read 9 pages", state: "running" },
+      { id: "t1", label: "Searched 24 sources", state: "done" },
+      { id: "t2", label: "Read 9 pages", state: "running" },
     ]);
   });
 
@@ -255,10 +255,10 @@ describe("deriveOnboardingRunView", () => {
       { runId: "run_1", role: "tool", parts: [{ type: "tool_result", toolCallId: "t1", outcome: "failed", truncated: false }] },
     ]), "run_1", { failedStepLabel: "Couldn't write the brief" });
     expect(failedTool.status).toBe("failed");
-    expect(failedTool.steps.at(-1)).toEqual({ label: "Wrote the brief", state: "failed" });
+    expect(failedTool.steps.at(-1)).toEqual({ id: "t1", label: "Wrote the brief", state: "failed" });
 
     const noSteps = deriveOnboardingRunView(source({ status: "failed" }), "run_1", { failedStepLabel: "Couldn't write the brief" });
-    expect(noSteps.steps).toEqual([{ label: "Couldn't write the brief", state: "failed" }]);
+    expect(noSteps.steps).toEqual([{ id: "run-failed", label: "Couldn't write the brief", state: "failed" }]);
   });
 
   it("caps the work log at the most recent six steps", () => {

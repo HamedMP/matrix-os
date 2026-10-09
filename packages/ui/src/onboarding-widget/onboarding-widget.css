@@ -740,3 +740,10 @@
   .mxo-spin,
   .mxo-progress span { animation: none; }
 }
+
+.mxo-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: var(--mxo-ink, #0d0c0c);
+  letter-spacing: 0.04em;
+}

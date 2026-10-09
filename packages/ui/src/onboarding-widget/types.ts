@@ -50,6 +50,8 @@ export interface OnboardingWidgetProps {
   runView: OnboardingRunView | null;
   connectedProviders: readonly OnboardingAiProvider[];
   creditsExhausted: boolean;
+  /** Device code to type on the provider's sign-in page, when the provider uses one. */
+  aiSignInCode?: string | null;
   prefs: OnboardingWidgetPrefs;
   zIndex?: number;
 }

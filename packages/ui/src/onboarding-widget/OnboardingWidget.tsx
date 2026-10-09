@@ -16,7 +16,8 @@ import {
   PinIcon,
 } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { AiFlow, AiMenu, providerWaitingLabel } from "./ai-panel.js";
+import { AiFlow, AiMenu } from "./ai-panel.js";
+import { providerWaitingLabel } from "./helpers.js";
 import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
 import { AppsScreen, ConnectScreen, QuestionScreen, RepoScreen, RunScreen, TasksScreen } from "./screens.js";
 import type { OnboardingWidgetProps } from "./types.js";
@@ -133,7 +134,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
 
   return (
     <div ref={rootRef} className={`mxo-root${sideClass}`} style={{ zIndex }} onKeyDown={onKeyDown}>
-      <section className="mxo-card mxo-widget" aria-label="Matrix" role="dialog">
+      <section className="mxo-card mxo-widget" aria-label="Matrix">
         <header className="mxo-header">
           <RabbitAvatar size={30} />
           <span className="mxo-header__text">
@@ -180,7 +181,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
         <div className="mxo-body" aria-live="polite">
           {state.echo ? <UserEcho text={state.echo} /> : null}
           {state.notice ? <DoneLine text={state.notice} /> : null}
-          {aiFlow ? <AiFlow panel={aiFlow} actions={actions} /> : (
+          {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} /> : (
             <>
               {screen.kind === "tasks" ? <TasksScreen state={state} apps={props.apps} userName={props.userName} actions={actions} /> : null}
               {screen.kind === "apps" ? <AppsScreen apps={props.apps} actions={actions} query={appQuery} onQuery={setAppQuery} /> : null}
@@ -205,7 +206,6 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
               placeholder={placeholderFor(state)}
               aria-label="Message Matrix"
               maxLength={ONBOARDING_FREEFORM_MAX_CHARS}
-              autoFocus
             />
             <button type="submit" className="mxo-send" aria-label="Send" disabled={screen.kind === "apps" || !draft.trim()}>
               <Icon icon={ArrowUp02Icon} size={14} />

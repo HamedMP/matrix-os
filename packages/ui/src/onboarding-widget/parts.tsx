@@ -63,8 +63,8 @@ export function WorkLog({ steps }: { steps: readonly OnboardingWorkStep[] }) {
   if (steps.length === 0) return null;
   return (
     <ul className="mxo-log" aria-label="Work log">
-      {steps.map((step, index) => (
-        <li key={`${index}-${step.label}`} className={`mxo-log__step mxo-log__step--${step.state}`}>
+      {steps.map((step) => (
+        <li key={step.id} className={`mxo-log__step mxo-log__step--${step.state}`}>
           <Icon
             icon={step.state === "done" ? CheckmarkCircle02Icon : step.state === "failed" ? Alert02Icon : Loading03Icon}
             size={14}

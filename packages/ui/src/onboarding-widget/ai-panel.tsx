@@ -1,37 +1,10 @@
 import type { OnboardingAiChoice, OnboardingAiPanel, OnboardingAiProvider } from "@matrix-os/contracts";
 import { Alert02Icon, CheckmarkCircle02Icon, Key01Icon, UserIcon } from "@hugeicons/core-free-icons";
-import { useRef, type FormEvent } from "react";
+import { useEffect, useRef, type FormEvent } from "react";
 import { CODING_AGENT_ARTWORK, codingAgentArtworkSrc } from "../coding-agent-artwork.js";
 import { ButtonRow, Icon, RabbitAvatar } from "./parts.js";
+import { AI_KEY_MAX_CHARS, PROVIDER_COPY } from "./helpers.js";
 import type { OnboardingWidgetActions } from "./types.js";
-
-const PROVIDER_COPY: Record<OnboardingAiProvider, {
-  name: string;
-  menuName: string;
-  menuLine: string;
-  account: string;
-  vendor: string;
-  keyPlaceholder: string;
-}> = {
-  claude: {
-    name: "Claude",
-    menuName: "Claude",
-    menuLine: "Use your Claude plan",
-    account: "Claude account",
-    vendor: "Anthropic",
-    keyPlaceholder: "sk-ant-…",
-  },
-  codex: {
-    name: "ChatGPT",
-    menuName: "ChatGPT / Codex",
-    menuLine: "Use your ChatGPT plan",
-    account: "ChatGPT account",
-    vendor: "OpenAI",
-    keyPlaceholder: "sk-…",
-  },
-};
-
-export const AI_KEY_MAX_CHARS = 512;
 
 function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
   if (provider === "matrix") return <RabbitAvatar size={28} />;
@@ -41,10 +14,6 @@ function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
       <img src={codingAgentArtworkSrc(art.src)} alt="" width={28} height={28} />
     </span>
   );
-}
-
-export function providerWaitingLabel(panel: OnboardingAiPanel | null): string | null {
-  return panel?.step === "waiting" && panel.status === "waiting" ? `Connecting ${PROVIDER_COPY[panel.provider].name}…` : null;
 }
 
 export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiChoice; connected: readonly OnboardingAiProvider[]; actions: OnboardingWidgetActions }) {
@@ -79,9 +48,16 @@ export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiCho
   );
 }
 
-export function AiFlow({ panel, actions }: { panel: Exclude<OnboardingAiPanel, { step: "menu" }>; actions: OnboardingWidgetActions }) {
+export function AiFlow({ panel, actions, signInCode }: {
+  panel: Exclude<OnboardingAiPanel, { step: "menu" }>;
+  actions: OnboardingWidgetActions;
+  signInCode?: string | null;
+}) {
   const copy = PROVIDER_COPY[panel.provider];
   const keyRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (panel.step === "key") keyRef.current?.focus();
+  }, [panel.step]);
 
   if (panel.step === "method") {
     return (
@@ -124,7 +100,7 @@ export function AiFlow({ panel, actions }: { panel: Exclude<OnboardingAiPanel, {
               <span className="mxo-result__title">{copy.name}</span>
               {failed
                 ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />Sign-in didn't finish</span>
-                : <span className="mxo-muted">Waiting for sign-in…</span>}
+                : <span className="mxo-muted">{signInCode ? <>Code: <strong className="mxo-code">{signInCode}</strong></> : "Waiting for sign-in…"}</span>}
             </span>
           </div>
           <ButtonRow>
@@ -171,7 +147,6 @@ export function AiFlow({ panel, actions }: { panel: Exclude<OnboardingAiPanel, {
           spellCheck={false}
           maxLength={AI_KEY_MAX_CHARS}
           disabled={panel.status === "saving"}
-          autoFocus
         />
         {panel.status === "failed"
           ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />That key didn't work</span>

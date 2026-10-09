@@ -114,7 +114,7 @@ describe("OnboardingWidget", () => {
     expect(within(bubble).getByText("Working…")).toBeInTheDocument();
     expect(within(bubble).getByText("Summarize today")).toBeInTheDocument();
     fireEvent.click(bubble);
-    expect(screen.getByRole("dialog", { name: "Matrix" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
   });
 
   it("walks Change AI to API key entry and clears the key after submit", () => {
@@ -145,7 +145,7 @@ describe("OnboardingWidget", () => {
       { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" },
       { type: "run.settled", runId: "run_1", outcome: "completed" },
     ];
-    render(<Harness actions={actions} events={events} runView={{ status: "completed", steps: [{ label: "Searched 24 sources", state: "done" }], resultSummary: "9 sources" }} />);
+    render(<Harness actions={actions} events={events} runView={{ status: "completed", steps: [{ id: "t1", label: "Searched 24 sources", state: "done" }], resultSummary: "9 sources" }} />);
     expect(screen.getByText("Your brief is ready.")).toBeInTheDocument();
     expect(screen.getByText("Searched 24 sources")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open" }));

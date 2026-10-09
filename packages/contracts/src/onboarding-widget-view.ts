@@ -18,6 +18,7 @@ export interface OnboardingRunSource {
 export type OnboardingRunStatus = "pending" | "running" | "waiting" | "completed" | "failed";
 
 export interface OnboardingWorkStep {
+  id: string;
   label: string;
   state: "running" | "done" | "failed";
 }
@@ -48,7 +49,7 @@ export function deriveOnboardingRunView(
   const run = source.runs.find((candidate) => candidate.id === runId);
   if (!run) return { status: "pending", steps: [] };
   const status = runStatus(run.status);
-  const steps: (OnboardingWorkStep & { id: string })[] = [];
+  const steps: OnboardingWorkStep[] = [];
   let resultText: string | undefined;
   for (const message of source.messages) {
     if (message.runId !== runId) continue;
@@ -64,12 +65,13 @@ export function deriveOnboardingRunView(
     }
   }
   const settled = status === "completed" || status === "failed";
-  let view: OnboardingWorkStep[] = steps.map(({ label, state }) => ({
+  let view: OnboardingWorkStep[] = steps.map(({ id, label, state }) => ({
+    id,
     label,
     state: settled && state === "running" ? (status === "failed" ? "failed" : "done") : state,
   }));
   if (status === "failed" && !view.some((step) => step.state === "failed")) {
-    view.push({ label: options.failedStepLabel ?? "Couldn't finish this", state: "failed" });
+    view.push({ id: "run-failed", label: options.failedStepLabel ?? "Couldn't finish this", state: "failed" });
   }
   view = view.slice(-ONBOARDING_WORK_LOG_MAX_STEPS);
   if (status !== "completed" || !resultText) return { status, steps: view };
