@@ -1,4 +1,5 @@
 import {
+  Brain,
   FileCode2,
   FilePenLine,
   Code2,
@@ -30,6 +31,7 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   editor: FilePenLine,
   vscode: Code2,
   notes: Notebook,
+  brain: Brain,
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,

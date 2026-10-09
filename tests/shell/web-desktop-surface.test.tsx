@@ -3,10 +3,12 @@
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { OS_VIEW_FIXED_APP_APPEARANCES } from "@matrix-os/contracts";
 import {
   desktopAppearanceForApp,
   WebDesktopSurface,
 } from "@/components/desktop/WebDesktopSurface";
+import { Brain } from "@/lib/hugeicons";
 import {
   OS_VIEW_CORE_APP_FIXTURE,
   OS_VIEW_FIXED_APP_NAMES,
@@ -266,6 +268,47 @@ describe("WebDesktopSurface", () => {
       color: "var(--surface-brand-emphasis, #748E59)",
       iconColor: "white",
     });
+  });
+
+  it("draws Company Brain with the shared tile on the desktop, the dock and the window previews", () => {
+    const tile = OS_VIEW_FIXED_APP_APPEARANCES.brain;
+    const brainWindow = { ...windows[0], id: "brain-window", title: "Company Brain", path: "__brain__", zIndex: 4 };
+    render(
+      <WebDesktopSurface
+        apps={[...apps, { name: "Company Brain", path: "__brain__" }]}
+        windows={[...windows, brainWindow]}
+        desktopIcons={[{ path: "__brain__", x: 20, y: 58 }]}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Open app previews" }));
+
+    expect(desktopAppearanceForApp({ name: "Company Brain", path: "__brain__" }))
+      .toEqual({ color: tile.background, iconColor: tile.foreground, icon: Brain });
+    const probe = document.createElement("span");
+    probe.style.background = tile.background;
+    probe.style.color = tile.foreground;
+    const glyph = render(<Brain />).container.querySelector("svg")?.innerHTML;
+    const tiles = [
+      screen.getByRole("button", { name: "Company Brain" }),
+      screen.getByRole("button", { name: "Focus Company Brain" }),
+      screen.getByRole("button", { name: "Preview Company Brain" }),
+    ].flatMap((owner) => [...owner.querySelectorAll<HTMLElement>("[data-desktop-app-icon]")]);
+
+    expect(tiles).toHaveLength(4);
+    for (const icon of tiles) {
+      expect(icon.style.background).toBe(probe.style.background);
+      expect(icon.style.color).toBe(probe.style.color);
+      expect(icon.querySelector("svg")?.innerHTML).toBe(glyph);
+    }
   });
 
   it("shows an app in the top bar only while that window is fullscreen", () => {

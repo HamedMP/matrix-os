@@ -55,6 +55,8 @@ export interface StubGatewayOptions {
     invitations: Record<string, Array<Record<string, unknown>>>;
   };
   terminalSnapshotAnsi?: string;
+  /** The project's gateway id (`proj_...`); left out by default, as the other suites route by slug. */
+  projectId?: string;
   speechCapabilities?: SpeechCapabilitiesResponse;
   speechTranscript?: string;
   speechTranscriptionDelayMs?: number;
@@ -1029,6 +1031,7 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
       );
       json(res, 200, {
         projects: visible ? [{
+          ...(options.projectId ? { id: options.projectId } : {}),
           slug: "matrix-os",
           name: "Matrix OS",
           kind: "github",

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { desktopPalette } from "@matrix-os/brand";
 import {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
   LegacyDesktopImportSchema,
@@ -169,6 +170,14 @@ describe("shared OS-view contract", () => {
       background: "var(--surface-purple-emphasis, #8B6BB1)",
     });
     expect(osViewFixedAppAppearanceForPath("apps/custom/index.html")).toBeUndefined();
+  });
+
+  it("gives Company Brain the brand green tile on every launcher", () => {
+    expect(osViewFixedAppAppearanceForPath("__brain__")).toBe(OS_VIEW_FIXED_APP_APPEARANCES.brain);
+    expect(OS_VIEW_FIXED_APP_APPEARANCES.brain).toEqual({
+      icon: "brain", iconSource: "fixed", background: desktopPalette.green, foreground: desktopPalette.forest,
+    });
+    expect(DEFAULT_OS_VIEW_DESKTOP_APP_PATHS).not.toContain("__brain__");
   });
 
   it("keeps Desktop and Canvas presentation geometry in separate namespaces", () => {

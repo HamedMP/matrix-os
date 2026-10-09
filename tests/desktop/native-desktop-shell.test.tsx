@@ -377,6 +377,50 @@ describe("native desktop shell", () => {
     ]));
   });
 
+  it("opens one Company Brain window from the launcher and focuses it on a second open", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
+    // Not placed on the desktop by default, as on Web Desktop.
+    expect(screen.queryByRole("button", { name: "Company Brain" })).toBeNull();
+
+    const openFromLauncher = () => {
+      fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" }).at(-1)!);
+      fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
+        .getByRole("button", { name: "Company Brain" }));
+    };
+    openFromLauncher();
+    const brain = useTabs.getState().tabs.filter((tab) => tab.kind === "brain");
+    expect(brain).toEqual([expect.objectContaining({ kind: "brain", title: "Company Brain" })]);
+    expect(screen.getByRole("dialog", { name: "Company Brain window" })).toBeTruthy();
+    expect(events).toContainEqual({ name: "desktop_app_opened", appKind: "brain" });
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Chat" }));
+    expect(useTabs.getState().activeTabId).not.toBe(brain[0]!.id);
+    openFromLauncher();
+    expect(useTabs.getState().tabs.filter((tab) => tab.kind === "brain")).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(brain[0]!.id);
+    window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+  });
+
+  it("restores a Company Brain window saved by any surface", async () => {
+    const document = createDefaultOsViewDocument();
+    document.apps = [{ path: "__brain__", title: "Company Brain", state: "open" }];
+    const state = { revision: 1, document, updatedAt: "2026-10-01T00:00:00.000Z" };
+    const api = {
+      get: vi.fn(async (path: string) => path === "/api/os-view-state" ? state
+        : path === "/api/apps" ? { apps: [] } : { legacyDesktopImport: null }),
+      post: vi.fn(async () => state),
+      patch: vi.fn(async () => state),
+    };
+    useConnection.setState({ status: "signed-in", api: api as never });
+    render(<NativeDesktopShell overlayOpen={false} />);
+    await waitFor(() => expect(useTabs.getState().tabs.filter((tab) => tab.kind === "brain")).toEqual([
+      expect.objectContaining({ title: "Company Brain" }),
+    ]));
+  });
+
   it("launches the Monaco Editor and hosted VS Code as first-class windows", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
 

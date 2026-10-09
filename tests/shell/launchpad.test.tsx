@@ -223,6 +223,7 @@ describe("Launchpad (macos-glass launcher)", () => {
       { name: "Plugins", path: "__plugins__" },
       { name: "Browser", path: "apps/browser/dist/index.html", iconUrl: "/icons/browser.png" },
       { name: "Notes", path: "apps/notes/index.html", iconUrl: "/icons/notes.png" },
+      { name: "Company Brain", path: "__brain__" },
     ];
 
     await renderLauncher({ apps });
@@ -235,6 +236,7 @@ describe("Launchpad (macos-glass launcher)", () => {
       ["Settings", "var(--surface-neutral-emphasis, #6B7280)"],
       ["Plugins", "rgb(124, 109, 180)"],
       ["Browser", "var(--surface-info-emphasis, #3B85BA)"],
+      ["Company Brain", "rgb(190, 215, 123)"],
     ]);
 
     for (const [name, background] of expectedBackgrounds) {
@@ -245,6 +247,9 @@ describe("Launchpad (macos-glass launcher)", () => {
       expect(icon?.querySelector("svg")).toBeTruthy();
       expect(icon?.textContent).toBe("");
     }
+
+    expect(screen.getByRole("button", { name: "Company Brain" })
+      .querySelector<HTMLElement>("[data-launchpad-built-in-icon]")?.style.color).toBe("rgb(14, 52, 34)");
 
     const createIcon = screen.getByRole("button", { name: "Create app" })
       .querySelector<HTMLElement>("[data-launchpad-create-icon]");

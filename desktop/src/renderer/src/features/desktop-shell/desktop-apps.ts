@@ -1,5 +1,7 @@
+import { BRAIN_SHELL_VIEW } from "@matrix-os/ui";
 import {
   Blocks,
+  Brain,
   BrushIcon,
   Code2,
   FilePenLine,
@@ -27,7 +29,8 @@ export type DesktopAppId =
   | "plugins"
   | "browser"
   | "notes"
-  | "whiteboard";
+  | "whiteboard"
+  | "brain";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -135,6 +138,16 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     color: APPEARANCE.whiteboard.background,
     iconColor: APPEARANCE.whiteboard.foreground,
     slug: "whiteboard",
+  },
+  // After the ten default desktop icons, as on Web Desktop: in the launcher, not placed on the desktop by default.
+  {
+    id: "brain",
+    path: BRAIN_SHELL_VIEW.path,
+    kind: "brain",
+    icon: Brain,
+    name: BRAIN_SHELL_VIEW.title,
+    color: APPEARANCE.brain.background,
+    iconColor: APPEARANCE.brain.foreground,
   },
 ];
 
