@@ -1,18 +1,18 @@
-import test from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const css=await readFile(new URL('../../home/apps/_shared/gallery-family.css',import.meta.url),'utf8');
 const games=await readFile(new URL('../../home/apps/_shared/game-refresh.css',import.meta.url),'utf8');
 const mines=await readFile(new URL('../../home/apps/games/minesweeper/src/App.tsx',import.meta.url),'utf8');
-function declaration(selector, property) {
+function declaration(selector: string, property: string) {
  const block=[...games.replace(/\/\*[\s\S]*?\*\//g,'').matchAll(/([^{}]+)\{([^}]+)\}/g)]
   .find(match=>match[1].trim().split(',').map(value=>value.trim()).includes(selector))?.[2]??'';
  const value=block.match(new RegExp(`${property}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
  assert.ok(value, `${selector} needs a stable ${property} for fixed game ink`);
  return value;
 }
-function contrast(a,b) {
- const luminance=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255)
+function contrast(a: string,b: string) {
+ const luminance=(hex: string)=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255)
   .map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4)
   .reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
  const x=luminance(a),y=luminance(b);
