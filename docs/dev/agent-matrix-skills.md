@@ -213,6 +213,10 @@ structured response confirms metadata reachability, not command execution. Use `
 a separate bounded one-shot `matrix run --project main -- true` command when a workflow requires an
 execution health check; do not infer execution readiness from `matrix instance info`.
 
+`matrix instance logs` prints recent, redacted journal lines from the core Matrix services
+(`--service gateway|shell|sync|code`, `--lines 1-1000`, `--since 30m|2h|1d` up to `7d`). Use it to
+diagnose gateway, shell, sync, or code-server failures; it never includes chat content.
+
 Use the reserved `main` workspace for setup workflows so the user, Matrix web terminal, Claude, Codex, or Hermes can all view the same tab:
 
 Create separate tabs for unrelated workflows and use the stable tab ID for reconnects; display names are not identities and may be duplicated.

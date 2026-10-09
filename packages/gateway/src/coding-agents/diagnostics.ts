@@ -54,10 +54,9 @@ function isSecretAssignmentKey(key: string): boolean {
   );
 }
 
-export function redactCodingAgentDiagnosticText(value: unknown): string {
-  const input = (typeof value === "string" ? value : String(value)).slice(0, MAX_DIAGNOSTIC_INPUT_LENGTH);
-  if (!normalizeDiagnosticText(input)) return "unavailable";
-  const redacted = input
+/** Strip credentials, owner paths, private hosts, and database names without capping or reflowing text. */
+export function redactDiagnosticSecrets(input: string): string {
+  return input
     .replace(URL_PATTERN, "[url]")
     .replace(BEARER_PATTERN, "Bearer [token]")
     .replace(AUTHORIZATION_ASSIGNMENT_PATTERN, (_match, key: string, separator: string) => {
@@ -78,7 +77,12 @@ export function redactCodingAgentDiagnosticText(value: unknown): string {
       return `${key}${separator}[host]`;
     })
     .replace(DATABASE_PATTERN, "[database]");
-  return capDiagnosticText(normalizeDiagnosticText(redacted) || "unavailable");
+}
+
+export function redactCodingAgentDiagnosticText(value: unknown): string {
+  const input = (typeof value === "string" ? value : String(value)).slice(0, MAX_DIAGNOSTIC_INPUT_LENGTH);
+  if (!normalizeDiagnosticText(input)) return "unavailable";
+  return capDiagnosticText(normalizeDiagnosticText(redactDiagnosticSecrets(input)) || "unavailable");
 }
 
 function safeDiagnosticName(name: string): string {

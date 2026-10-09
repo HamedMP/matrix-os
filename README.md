@@ -97,6 +97,7 @@ matrix login
 matrix whoami
 matrix status
 matrix instance info
+matrix instance logs --service gateway --since 1h
 ```
 
 `matrix login` opens a browser/device flow against the hosted Matrix cloud. If it says no Matrix instance exists yet, sign up at [matrix-os.com](https://matrix-os.com), finish provisioning, then run `matrix login` again.
