@@ -448,6 +448,13 @@ describe("withBrainChangeEvents", () => {
     expect(await wrapped.why(OWNER, "widgets", { path: "src/" })).toEqual({ items: [] });
   });
 
+  it("hands the caller's git run (its source and its stop) to the project service", async () => {
+    const { project, wrapped } = wrap();
+    const run = { sourceId: `src_${"a".repeat(32)}`, signal: new AbortController().signal };
+    await wrapped.sync(OWNER, "widgets", run);
+    expect(project.sync).toHaveBeenCalledWith(OWNER, "widgets", run);
+  });
+
   it("returns the answer when the scope lookup fails, and announces nothing for a failed call", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { events, project, wrapped } = wrap({ resolve: vi.fn(async () => { throw new BrainApiError("brain_unavailable"); }) });
