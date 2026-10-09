@@ -1,0 +1,51 @@
+/**
+ * The Company Brain's gateway seams, kept out of server.ts (near its 2,000-line limit), which only mounts /api/brain,
+ * starts the jobs and stops the brain in close(). server.ts extraction plan: GATEWAY_ROUTE_GROUPS (route-inventory.ts).
+ */
+import { createBrainAgentReadTools } from "../brain/agent/index.js";
+import { createBrainAgentTools, createBrainProjectCleanup, resolveBrainAgentOwnerId } from "../brain/api/index.js";
+import {
+  createBrainLateBoundIntegrations, type BrainIntegrationCallerDeps,
+} from "../brain/sources/integration/index.js";
+import type { ProjectBrainCleanup } from "../project-deletion-cleanup.js";
+import type { OwnerDatabaseServices } from "../startup/owner-database.js";
+
+type BrainOwnerDatabase = Pick<OwnerDatabaseServices, "brainServices" | "brainService" | "kyselyInstance"> | null;
+
+/**
+ * The owner database (and the brain) starts before platform integrations: bindIntegrations binds them once they exist.
+ * Only the gateway's configured owner may spend its credentials in the brain: MATRIX_BRAIN_GITHUB_TOKEN, the
+ * Anthropic key of model claims and the OpenAI key of meaning search (dev: the "default" principal).
+ */
+export function createBrainGatewayStart(configuredOwnerIds: readonly string[], env: NodeJS.ProcessEnv = process.env) {
+  const integrations = createBrainLateBoundIntegrations();
+  const ownerIds = configuredOwnerIds.length > 0
+    ? [...configuredOwnerIds] : env.NODE_ENV === "production" ? [] : ["default"];
+  const bindIntegrations = (deps: Omit<BrainIntegrationCallerDeps, "env">) => integrations.bind({ ...deps, env });
+  return { integrations, ownerIds, bindIntegrations };
+}
+
+/** brain_why and the read tools for the owner's agent; each is undefined while its service or the owner is missing. */
+export function createBrainGatewayAgentTools(services: BrainOwnerDatabase) {
+  const brain = services?.brainServices ?? null;
+  return {
+    brainTools: createBrainAgentTools(services?.brainService ?? null),
+    brainReadTools: createBrainAgentReadTools({
+      ownerId: resolveBrainAgentOwnerId(), project: brain?.project ?? null, search: brain?.search ?? null,
+      graph: brain?.graph ?? null, brief: brain?.brief ?? null, impact: brain?.impact ?? null,
+    }),
+  };
+}
+
+/**
+ * A deferred or off brain still holds the project's rows: the erase runs on the owner database whatever the brain's
+ * state, and a failed erase (or an owner database that is down) fails the deletion so it is retried.
+ */
+export function createBrainGatewayProjectErase(
+  databaseConfigured: boolean, services: BrainOwnerDatabase,
+): ProjectBrainCleanup {
+  const erase = createBrainProjectCleanup({
+    databaseConfigured, db: services?.kyselyInstance ?? null, services: services?.brainServices ?? null,
+  });
+  return (project, principal) => erase(principal.userId, project.id);
+}

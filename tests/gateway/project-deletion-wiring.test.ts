@@ -22,16 +22,12 @@ it("registers project deletion and starts recovery only after canonical Chat is 
 it("erases a deleted project's brain on both deletion paths, whether or not the brain started", () => {
   const read = (file: string) => readFileSync(join(process.cwd(), "packages/gateway/src", file), "utf8");
   const source = read("server.ts");
-  const cleanup = source.indexOf("const eraseBrainForCleanup = createBrainProjectCleanup({\n"
-    + "    databaseConfigured: Boolean(databaseUrl), db: ownerDatabaseServices?.kyselyInstance ?? null,\n"
-    + "    services: ownerDatabaseServices?.brainServices ?? null,\n  });");
-  const binding = source.indexOf("const eraseProjectBrain: ProjectBrainCleanup = async (project, principal) => {");
-  const erase = source.indexOf("await eraseBrainForCleanup(principal.userId, project.id);", binding);
-  expect(cleanup).toBeGreaterThan(0);
-  expect(binding).toBeGreaterThan(cleanup);
+  const binding = source.indexOf(
+    "const eraseProjectBrain = createBrainGatewayProjectErase(Boolean(databaseUrl), ownerDatabaseServices);",
+  );
   const routes = source.indexOf('app.route("/", createWorkspaceRoutes(');
   const recovery = source.indexOf("createWorkspaceStartupRecovery({");
-  for (const position of [binding, erase, routes, recovery]) expect(position).toBeGreaterThan(0);
+  for (const position of [binding, routes, recovery]) expect(position).toBeGreaterThan(0);
   expect(routes).toBeGreaterThan(binding);
   for (const [start, end] of [[routes, "\n  }));"], [recovery, "\n  });"]] as const) {
     expect(source.slice(start, source.indexOf(end, start))).toContain("\n    eraseProjectBrain,\n");
