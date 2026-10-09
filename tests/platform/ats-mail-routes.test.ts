@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAtsRoutes } from '../../packages/platform/src/ats-routes.js';
-import { createAtsSlackSender } from '../../packages/platform/src/ats-notifications.js';
+import { createAtsSlackTransport } from '../../packages/platform/src/ats-slack-api.js';
 import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
 import type { AtsDB } from '../../packages/platform/src/ats-db.js';
 let db: AtsDB;
@@ -28,7 +28,7 @@ it('keeps group intake write-only and CVs/inbox private under the production rou
 it('rejects malformed and oversized email and forbids applicant-controlled promotion actors', async () => {
   const routes = app();
   expect((await routes.request('/api/ats/mail',{method:'POST',headers:{authorization:'Bearer mail'},body:'{'})).status).toBe(422);
-  expect((await routes.request('/api/ats/mail',{method:'POST',headers:{authorization:'Bearer mail'},body:'x'.repeat(8*1024*1024+1)})).status).toBe(413);
+  expect((await routes.request('/api/ats/mail',{method:'POST',headers:{authorization:'Bearer mail'},body:'x'.repeat(32*1024*1024+1)})).status).toBe(413);
   const response = await routes.request('/api/ats/mail',{method:'POST',headers:{authorization:'Bearer mail'},body:JSON.stringify(input)});
   const { receiptId } = await response.json();
   expect((await routes.request(`/api/ats/admin/inbox/${receiptId}/promote`,{method:'POST',headers:{authorization:'Bearer admin'},body:JSON.stringify({roleSlug:'founding-engineer'})})).status).toBe(422);
@@ -40,9 +40,16 @@ it('rejects malformed and oversized email and forbids applicant-controlled promo
 it('renders applicant text as plain Slack text instead of workspace mentions and formatting', async () => {
   const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,ts:'123.456'})));
   vi.stubGlobal('fetch',request);
-  await createAtsSlackSender('test','C0123456789','https://matrix-os.com')({name:'<!here>',email:'ada@example.com',role:'<https://evil.example|click>',path:'/admin/ats/inbox',source:'group_email'});
+  await createAtsSlackTransport('test','C0123456789',db).post({key:'test',text:'<!here> <https://evil.example|click>',reviewUrl:'https://matrix-os.com/admin/ats/inbox'});
   const init = request.mock.calls[0][1];const body = JSON.parse(init.body);
   expect(body.mrkdwn).toBe(false);expect(body.parse).toBe('none');
   expect(body.blocks[0].text.type).toBe('plain_text');
   expect(init.redirect).toBe('error');expect(init.signal).toBeDefined();
+});
+
+it('limits Slack backfill to the authenticated admin bridge and bounded payloads',async()=>{
+ const routes=app();const body=JSON.stringify({kind:'emails'});
+ for(const token of ['', 'mail','site'])expect((await routes.request('/api/ats/admin/slack-backfill',{method:'POST',headers:{authorization:`Bearer ${token}`},body})).status).toBe(401);
+ expect((await routes.request('/api/ats/admin/slack-backfill',{method:'POST',headers:{authorization:'Bearer admin'},body:JSON.stringify({kind:'emails',limit:201})})).status).toBe(422);
+ expect((await routes.request('/api/ats/admin/slack-backfill',{method:'POST',headers:{authorization:'Bearer admin'},body})).status).toBe(200);
 });

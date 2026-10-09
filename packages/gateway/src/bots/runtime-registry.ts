@@ -41,6 +41,7 @@ export interface BotRuntimeBinding {
   rootFingerprint: string;
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  managedDefinitionRevision?: number;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
@@ -77,6 +78,7 @@ const BindingSchema = z.object({
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   route: BotModelRouteSchema,
   accessSourceId: BotCredentialAccessSourceIdSchema,
+  managedDefinitionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),

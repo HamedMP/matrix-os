@@ -1,5 +1,6 @@
 export const UPSTREAM_TIMEOUT_MS = 30_000;
 const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
+const ATS_MAIL_BODY_LIMIT = 32 * 1024 * 1024;
 const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
@@ -52,7 +53,9 @@ export async function handleEdgeRouterRequest(
   }
 
   const upstreamUrl = `${platformOrigin}${url.pathname}${url.search}`;
-  const body = await readRequestBody(request);
+  const bodyLimit = routeClass === "platform" && url.pathname === "/api/ats/mail"
+    ? ATS_MAIL_BODY_LIMIT : WORKER_BODY_LIMIT;
+  const body = await readRequestBody(request, bodyLimit);
   if (body instanceof Response) return body;
   const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
 
@@ -111,19 +114,40 @@ function buildPlatformRequest(
   });
 }
 
-async function readRequestBody(request: Request): Promise<ArrayBuffer | null | Response> {
+async function readRequestBody(request: Request, limit: number): Promise<ArrayBuffer | null | Response> {
   if (request.method === "GET" || request.method === "HEAD") return null;
 
   const contentLength = Number(request.headers.get("content-length") ?? NaN);
-  if (!Number.isNaN(contentLength) && contentLength > WORKER_BODY_LIMIT) {
+  if (!Number.isNaN(contentLength) && contentLength > limit) {
     return payloadTooLargeResponse();
   }
 
-  const body = await request.arrayBuffer();
-  if (body.byteLength > WORKER_BODY_LIMIT) {
-    return payloadTooLargeResponse();
-  }
-  return body;
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  let bytes = new Uint8Array(0);
+  let size = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) return size === bytes.length ? bytes.buffer : bytes.slice(0, size).buffer;
+      if (chunk.value.byteLength > limit - size) {
+        try { await reader.cancel(); }
+        catch (error) { console.error("[edge-router] body_cancel_failed", error instanceof Error ? error.name : typeof error); }
+        return payloadTooLargeResponse();
+      }
+      const nextSize = size + chunk.value.byteLength;
+      if (nextSize > bytes.length) {
+        const grown = new Uint8Array(Math.min(limit, Math.max(64 * 1024, bytes.length * 2, nextSize)));
+        grown.set(bytes.subarray(0, size));
+        bytes = grown;
+      }
+      bytes.set(chunk.value, size);
+      size = nextSize;
+    }
+  } catch (error) {
+    console.error("[edge-router] body_read_failed", error instanceof Error ? error.name : typeof error);
+    return new Response("invalid request body", { status: 400, headers: noStoreTextHeaders() });
+  } finally { reader.releaseLock(); }
 }
 
 function withEdgeHeaders(response: Response, routeClass: EdgeRouteClass, pathname: string): Response {

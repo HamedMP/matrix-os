@@ -196,7 +196,9 @@ describe("shared Agents entry", () => {
     const useJev = await screen.findByRole("button", { name: "Use Jev Inbox Triage" });
     expect(useJev.textContent).toBe("Set up bot");
     fireEvent.click(useJev);
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Bot model" }) as HTMLSelectElement).disabled).toBe(false));
     fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith("chat_jev_direct"));
     expect(instantiate).toHaveBeenCalledWith(expect.objectContaining({
@@ -321,6 +323,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: name } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Help" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     const notice = await screen.findByRole("status");
     expect(notice.title).toContain(name);
@@ -404,6 +407,7 @@ describe("shared Agents entry", () => {
     expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getAllByRole("button", { name: "Remove Gmail" })[0]!);
     expect((screen.getByRole("combobox", { name: "Gmail account" }) as HTMLSelectElement).value).toBe("Work");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(client.create.mock.calls[0]![0].recipe?.integrations).toEqual([
@@ -419,6 +423,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Meeting helper" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Summarize decisions." } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(client.create.mock.calls[0]![0]).toMatchObject({ name: saved.name, instructions: saved.instructions, selection: { instanceId: "matrix_pi_default", model: "sonnet" } });
@@ -444,6 +449,7 @@ describe("shared Agents entry", () => {
     expect((screen.getByRole("combobox", { name: "Google Calendar account" }) as HTMLSelectElement).value).toBe("Calendar");
 
     fireEvent.change(screen.getByRole("combobox", { name: "Gmail account" }), { target: { value: "Work" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(1));
     expect(client.create.mock.calls[0]![0]).toMatchObject({
@@ -566,9 +572,11 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "My helper" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Keep my instructions" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     expect((await screen.findByRole("alert")).textContent).not.toContain("postgres");
     expect((screen.getByRole("textbox", { name: "Instructions" }) as HTMLTextAreaElement).value).toBe("Keep my instructions");
+    await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
     await waitFor(() => expect(client.create).toHaveBeenCalledTimes(2));
     expect(client.create.mock.calls[0]![0].clientRequestId).toBe(client.create.mock.calls[1]![0].clientRequestId);

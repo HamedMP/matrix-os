@@ -27,6 +27,8 @@ it("creates a new agent with a concrete Matrix AI choice, without coding or Auto
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
   const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   expect(within(picker).getAllByRole("option").map(option => option.textContent)).toEqual(["Sonnet · Matrix AI"]);
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
@@ -41,7 +43,8 @@ it("does not fall back to an available coding agent when Matrix AI is disabled",
   const picker = dialog.getByRole("combobox", { name: "Model" });
   expect(picker).toHaveProperty("disabled", true);
   expect(within(picker).queryByRole("option", { name: /undefined/ })).toBeNull();
-  expect(dialog.getByText(/Disabled in Settings/)).toBeTruthy();
+  expect(await dialog.findByText(/Disabled in Settings/)).toBeTruthy();
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
   expect(dialog.getByRole("button", { name: "Create Agent" })).toHaveProperty("disabled", true);

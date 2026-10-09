@@ -2,8 +2,9 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import type { Kysely } from "kysely";
-import type { BotToolRequest } from "@matrix-os/contracts";
+import { chatGptPlanPeerProof, type BotToolRequest } from "@matrix-os/contracts";
 import { afterEach, expect, it, vi } from "vitest";
 import { createBotStateDatabase, OWNER, insertChat } from "./bot-state-support.js";
 import { startBots } from "../../../packages/gateway/src/startup/bots.js";
@@ -32,7 +33,7 @@ vi.mock("node:fs/promises", async original => {
 
 const cleanup: Array<() => Promise<unknown>> = []; // bounded by fixture count, drained after each test
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
-async function fixture(realIntegrations = false) {
+async function fixture(realIntegrations = false, subscriptionAuthority = false) {
   const actual = await vi.importActual<typeof fs>("node:fs/promises");
   vi.mocked(fs.open).mockReset().mockImplementation(actual.open);
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
@@ -58,6 +59,7 @@ async function fixture(realIntegrations = false) {
   const captured = vi.spyOn(broker, "createBotBrokerActions");
   const dispatcherFactory = vi.spyOn(dispatcher, "createBotToolDispatcher");
   const services = await startBots({ homePath: home, repository, agents, matrixAnthropic: service,
+    ...(subscriptionAuthority ? { runtimeOwnerId: OWNER, computerId: "fixture-computer" } : {}),
     executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() },
     integrations: transport,
     host: { available: true, client: { runBot: vi.fn(), stopRuntime: vi.fn(), createRuntime: vi.fn() }, registerAuthorizer: vi.fn(() => () => {}) } as never,
@@ -179,6 +181,23 @@ function ordinaryBinding(binding: BotRuntimeBinding): ManagedPiRuntimeBinding {
   void taskId;
   return { ...source, kind: "managed_chat", workspace: { kind: "chat_workspace" } };
 }
+async function connectSubscription(f: Awaited<ReturnType<typeof fixture>>) {
+  const peer = f.services!.chatgptPlanPeers!;
+  const keys = generateKeyPairSync("ed25519");
+  const publicKey = keys.publicKey.export({ type: "spki", format: "der" });
+  const snapshot = { deviceId: createHash("sha256").update(publicKey).digest("hex"), accountId: "fixture-account",
+    grantRevision: 1, enabled: true, background: false, models: [{ id: "gpt-account-model", displayName: "Fixture model",
+      input: ["text" as const], contextWindow: 128000, maxOutputTokens: 8192 }] };
+  const challenge = peer.challenge(OWNER);
+  const session = await peer.connect(OWNER, { version: 1, challenge: challenge.challenge,
+    publicKey: publicKey.toString("base64url"), snapshot,
+    signature: sign(null, Buffer.from(chatGptPlanPeerProof({ ...challenge, snapshot })), keys.privateKey).toString("base64url") });
+  const resolved = await peer.resolve({ instanceId: "matrix_chatgpt_plan", model: "gpt-account-model",
+    options: [{ id: "accountId", value: snapshot.accountId }, { id: "grantRevision", value: String(snapshot.grantRevision) }] }, OWNER, "interactive");
+  const binding = ordinaryBinding(f.binding);
+  delete binding.anthropicApi;
+  return { binding: { ...binding, ...resolved }, disconnect: () => peer.disconnect(OWNER, session) };
+}
 it.each(["removal", "replacement"])("blocks ordinary Anthropic Chat publication after key %s during the final workspace read", async mutation => {
   const f = await fixture(), signal = new AbortController().signal, binding = ordinaryBinding(f.binding);
   let release!: () => void, entered!: () => void, reads = 0;
@@ -202,18 +221,50 @@ it.each(["removal", "replacement"])("blocks ordinary Anthropic Chat publication 
   expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
 });
 it.each(["anthropic", "funded", "chatgpt"])("preserves ordinary %s Chat artifact publication with the actual registered source callback", async source => {
-  const f = await fixture(), binding = ordinaryBinding(f.binding);
+  const f = await fixture(false, source === "chatgpt");
+  const binding = source === "chatgpt" ? (await connectSubscription(f)).binding : ordinaryBinding(f.binding);
   if (source !== "anthropic") {
     delete binding.anthropicApi;
     binding.accessSourceId = source === "funded" ? "matrix_included" : "matrix_chatgpt_plan";
-    if (source === "chatgpt") {
-      binding.route = { ...binding.route, api: "openai-responses", modelId: "gpt-account-model" };
-      binding.subscription = { accountId: "fixture-account", peerId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d2", computerId: "fixture-computer", grantRevision: 1 };
-    }
     await revokeOwnerAnthropicKey(f.home);
   }
   const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace: async () => f.root });
   await expect(tools.dispatch(binding, artifact, new AbortController().signal)).resolves.toMatchObject({ result: { ok: true } });
   expect(await readFile(join(f.root, "result.txt"), "utf8")).toBe("source fenced");
+  expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
+});
+
+it.each(["account", "grant", "owner", "computer"])("rejects an ordinary subscription artifact with mismatched %s authority", async mismatch => {
+  const f = await fixture(false, true);
+  const { binding } = await connectSubscription(f);
+  if (mismatch === "account") binding.subscription.accountId = "foreign-account";
+  if (mismatch === "grant") binding.subscription.grantRevision += 1;
+  if (mismatch === "owner") binding.ownerId = "foreign-owner";
+  if (mismatch === "computer") binding.subscription.computerId = "foreign-computer";
+  const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace: async () => f.root });
+  await expect(tools.dispatch(binding, artifact, new AbortController().signal)).rejects.toMatchObject({ code: "stale_generation" });
+  await expect(readFile(join(f.root, "result.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("rejects ordinary subscription publication without the registered peer authority", async () => {
+  const f = await fixture(), binding = ordinaryBinding(f.binding);
+  delete binding.anthropicApi;
+  binding.accessSourceId = "matrix_chatgpt_plan";
+  binding.subscription = { accountId: "fixture-account", peerId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d2", computerId: "fixture-computer", grantRevision: 1 };
+  const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace: async () => f.root });
+  await expect(tools.dispatch(binding, artifact, new AbortController().signal)).rejects.toMatchObject({ code: "stale_generation" });
+  await expect(readFile(join(f.root, "result.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("rejects ordinary subscription publication revoked during the final workspace read", async () => {
+  const f = await fixture(false, true), { binding, disconnect } = await connectSubscription(f);
+  let reads = 0;
+  const tools = dispatcher.createBotToolDispatcher({ ...f.dispatcherOptions, managedWorkspace: async () => {
+    if (++reads === 2) disconnect();
+    return f.root;
+  } });
+  await expect(tools.dispatch(binding, artifact, new AbortController().signal)).rejects.toMatchObject({ code: "stale_generation" });
+  expect(reads).toBe(2);
+  await expect(readFile(join(f.root, "result.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
 });
