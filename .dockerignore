@@ -1,11 +1,13 @@
 node_modules
 .git
 .gitignore
+.amp
+.local/production-parity
 Dockerfile*
 !Dockerfile.platform
 .dockerignore
 *.log*
-.env*
+**/.env*
 coverage
 dist
 dist/

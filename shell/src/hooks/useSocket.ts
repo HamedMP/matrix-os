@@ -8,8 +8,10 @@ import { capturePostHogEvent } from "@/lib/posthog-client";
 import { setConnectionHealthState, useConnectionHealth } from "./useConnectionHealth";
 import type { ConnectionState } from "./useConnectionHealth";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
+import type { AoedeClientMessage, AoedeServerMessage } from "@matrix-os/contracts";
 
 export type ServerMessage =
+  | AoedeServerMessage
   | { type: "kernel:init"; sessionId: string; requestId?: string; eventId?: string }
   | { type: "kernel:text"; text: string; requestId?: string; eventId?: string }
   | { type: "kernel:tool_start"; tool: string; requestId?: string; eventId?: string }
@@ -329,11 +331,14 @@ type ClientMessage = {
   model?: string;
   effort?: string;
   accessSourceId?: string;
-};
+} | AoedeClientMessage;
 
 export function sendMessage(msg: ClientMessage) {
   const data = JSON.stringify(msg);
   const metadata = actionMetadataFromRaw(data);
+  // Voice acknowledgements belong to this live connection, never a later
+  // reconnected shell. Canonical Chat requests have their own durable retries.
+  if (msg.type.startsWith("aoede:") && globalSocket?.readyState !== WebSocket.OPEN) return;
   if (globalSocket?.readyState === WebSocket.OPEN) {
     globalSocket.send(data);
     setDeliveryState(metadata, "sent", false);

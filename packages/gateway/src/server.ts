@@ -172,6 +172,7 @@ import {
   createSessionRuntimeBridge,
 } from "./session-runtime-bridge.js";
 import { createGatewaySpeechRuntime } from "./speech/gateway-runtime.js";
+import { createAoedeRuntime } from "./aoede/runtime.js";
 import { initializeOwnerDatabaseServices } from "./startup/owner-database.js";
 import { enableOwnerSharedAi } from "./startup/collaboration.js";
 import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
@@ -396,6 +397,8 @@ export async function createGateway(config: GatewayConfig) {
   const reconnectableAbortControllers = new Map<string, ReconnectableAbortEntry>();
   const clients = new Set<WSContext>();
   const clientOwnerIds = new WeakMap<WSContext, string>();
+  const clientConnectionIds = new WeakMap<WSContext, string>();
+  let aoedeRuntime: Awaited<ReturnType<typeof createAoedeRuntime>> | undefined;
   const readinessRepository = new InMemoryReadinessRepository();
   const toolPackRepository = new InMemoryToolPackRepository();
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
@@ -1315,6 +1318,8 @@ export async function createGateway(config: GatewayConfig) {
     markSyncReportSent: () => { syncReportSent = true; },
     syncPeerRegistry, conversationRuns, conversationLifecycle, conversationContextResolver,
     reconnectableAbortControllers, clients, clientOwnerIds, conversations, dispatcher,
+    clientConnectionIds,
+    onAoedeClientMessage: (principal, connectionId, message) => aoedeRuntime?.onClientMessage(principal, connectionId, message) ?? Promise.resolve(),
     approvalPolicy, captureGatewayProductEvent, evictOldestMainWsClientIfNeeded,
     finalizeWithSummary, logUnexpectedJsonParseFailure,
   });
@@ -1681,6 +1686,16 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
+  aoedeRuntime = await createAoedeRuntime({
+    env: process.env, homePath, database: kyselyInstance, registry: appRegistry,
+    chat: chatRepository && canonicalChatOrchestrator && canonicalChatEventStream ? {
+      repository: chatRepository, orchestrator: canonicalChatOrchestrator,
+      eventStream: canonicalChatEventStream, catalog: canonicalChatProviderCatalog,
+    } : null,
+    getPrincipal: requireRequestPrincipal, clients, clientOwnerIds, clientConnectionIds, broadcastToOwner,
+    notifyDataChange: (ownerId, app) => broadcastToOwner(ownerId, { type: "data:change", app, key: "notes" }),
+  });
+  app.route("/api/aoede", aoedeRuntime.routes);
   // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
   const deleteProjectChats = chatRepository && canonicalChatOrchestrator
     ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
@@ -1853,7 +1868,7 @@ export async function createGateway(config: GatewayConfig) {
     console.error("[plugins] Plugin init error:", err);
   });
 
-  const server = serve({ fetch: app.fetch, port });
+  const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
   injectWebSocket(server);
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,
@@ -1880,6 +1895,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await aoedeRuntime?.shutdown();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();

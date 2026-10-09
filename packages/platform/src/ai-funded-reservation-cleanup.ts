@@ -168,7 +168,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
               status: "settled", actual_microusd: reserved, settled_at: checkedAt,
               finalization_mode: "conservative",
               settlement_response: JSON.stringify({
-                capability: "speech:transcribe",
+                capability: JSON.parse(reservation.authorization_response).capability,
                 actualCostMicrousd: reserved,
               }),
             }).where("reservation_id", "=", reservation.reservation_id).where("status", "=", "settling")

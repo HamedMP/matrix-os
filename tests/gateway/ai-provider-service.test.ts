@@ -79,6 +79,39 @@ describe("AiProviderService", () => {
     });
   }
 
+  it("keeps a slow successful driver inventory instead of reporting installed Codex missing", async () => {
+    vi.useFakeTimers();
+    const held = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
+    const inventory = vi.fn(() => held.promise);
+    const service = createService({ driverInventory: inventory });
+    try {
+      const pending = service.getSnapshot();
+      await vi.waitFor(() => expect(inventory).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(7_500);
+      held.resolve([{ id: "codex", displayName: "Codex", kind: "cli", installState: "installed",
+        health: "unknown", capabilities: ["tools"], setupActions: [] }]);
+      expect((await pending).drivers).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "codex", installState: "installed" }),
+      ]));
+    } finally { service.close(); vi.useRealTimers(); }
+  });
+
+  it("still aborts an unresponsive driver inventory", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    const inventory = vi.fn((input: AbortSignal) => { signal = input; return new Promise<AiProviderSnapshotV3["drivers"]>(() => {}); });
+    const service = new AiProviderService({ homePath, env: {}, now: () => NOW, driverInventory: inventory });
+    try {
+      const pending = service.getSnapshot();
+      await vi.waitFor(() => expect(inventory).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect((await pending).drivers.map(driver => driver.id)).toEqual(["kernel"]);
+      expect(signal?.aborted).toBe(true);
+    } finally { service.close(); vi.useRealTimers(); }
+  });
+
   it.each([
     { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "present_unverified" },
     { sourceId: "other_source", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "unknown" },

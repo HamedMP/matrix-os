@@ -1,0 +1,363 @@
+import { createHash, randomUUID } from "node:crypto";
+import { AoedeClientMessageSchema, canonicalChatApprovals, type AoedeClientMessage,
+  type CanonicalChatApprovalView, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import { AoedeActions, classify, type ActionOptions } from "./actions.js";
+import { AoedeTaskNotStartedError, type AoedeDispatchContext, type AoedeSessionContext } from "./session.js";
+import type { AoedeRepository } from "./repository.js";
+import type { RequestPrincipal } from "../request-principal.js";
+import type { ChatRepository } from "../chat/repository.js";
+import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
+import { CanonicalChatOrchestrationError } from "../chat/orchestration-errors.js";
+import type { createCanonicalChatEventStream, CanonicalChatEventStreamSession } from "../chat/event-stream.js";
+import { validateChatProviderSelection, type ChatProviderCatalogService } from "../chat/provider-catalog.js";
+import type { AoedeReadiness } from "@matrix-os/contracts";
+
+const log = (error: unknown) => console.warn("[aoede/delegate] delivery failed", error instanceof Error ? error.name : "UnknownError");
+const bound = (text: string) => {
+  let result = "", bytes = 0;
+  for (const character of text) { bytes += Buffer.byteLength(character); if (bytes > 500) break; result += character; }
+  return result;
+};
+const chatRequestId = (id: string) => `req_aoede_${id}`;
+type DeliveryContext = AoedeSessionContext & Pick<AoedeDispatchContext, "delegationId" | "requestId" | "record">;
+type Watch = { ctx: DeliveryContext; chatId: string; runId?: string; queuedTurnId?: string; title?: string;
+  admitted: boolean; terminal: boolean; approvalCount?: number; approval?: CanonicalChatApprovalView;
+  asked?: string; presented?: string;
+  decision?: { requestId: string; approvalId: string; decision: "approve" | "decline"; accepted?: boolean } };
+
+/** Only adapts voice delivery. Chat owns execution, queues, permissions and terminal truth. */
+export function createAoedeDelegation(options: {
+  ownerId: string; repository: ChatRepository; orchestrator: CanonicalChatOrchestrator;
+  eventStream: ReturnType<typeof createCanonicalChatEventStream>;
+  catalog: Pick<ChatProviderCatalogService, "getCatalog">; sessionRepository: AoedeRepository;
+  actions: Omit<ActionOptions, "principal" | "ownerId" | "uiAction">;
+}) {
+  if (options.ownerId !== options.sessionRepository.ownerId) throw new Error("Owner authorization required");
+  const owner = { type: "personal" as const, ownerId: options.ownerId };
+  const watches = new Map<string, Watch>(); // <=128, terminal/closed entries evicted before admission.
+  let stopped = false, cursor: number | undefined, subscription: CanonicalChatEventStreamSession | undefined;
+  let opening: Promise<void> | undefined, refreshTail = Promise.resolve(), dirty = false;
+  const key = (ctx: Pick<AoedeDispatchContext, "sessionId" | "delegationId">) => `${ctx.sessionId}\0${ctx.delegationId}`;
+  const auth = (principal: RequestPrincipal) => { if (principal.userId !== owner.ownerId) throw new Error("Owner authorization required"); };
+  const active = (w: Watch) => !stopped && !w.ctx.signal.aborted;
+  const digest = createHash("sha256").update(`aoede:${owner.ownerId}`).digest("hex").slice(0, 32);
+  let readinessFlight: Promise<AoedeReadiness> | undefined;
+  async function previousChoice(sessionId?: string) {
+    const chatId = await options.sessionRepository.latestChatAssociation(sessionId);
+    const existing = chatId && await options.repository.get(owner, chatId);
+    if (existing) return existing;
+    // Pre-isolation sessions used this owner-scoped canonical Chat, including null-chat sessions without work.
+    return options.repository.get(owner, `chat_aoede_${digest}`);
+  }
+  async function selectionReadiness(principal: RequestPrincipal) {
+    auth(principal);
+    const existing = await previousChoice();
+    const catalog = await options.catalog.getCatalog(principal, existing?.chat.currentSelection);
+    const selection = existing?.chat.currentSelection ?? catalog.instances.find(i =>
+      i.availability === "available" && i.supports.rootChat && i.defaultSelection)?.defaultSelection;
+    const candidates = selection ? catalog.instances.filter(i => i.id === selection.instanceId)
+      : catalog.instances.filter(i => i.supports.rootChat);
+    if (candidates.length && candidates.every(i => ["setup_required", "auth_required"].includes(i.availability)))
+      throw new AoedeTaskNotStartedError();
+    const validation = selection && validateChatProviderSelection({ catalog, selection,
+      ...(existing?.providerBinding ? { boundInstanceId: existing.providerBinding.instanceId } : {}) });
+    if (!validation || !validation.ok || !validation.instance.supports.rootChat)
+      throw new Error("Task readiness unverified");
+    return { existing, selection: validation.selection, instance: validation.instance };
+  }
+  async function speak(ctx: DeliveryContext, text: string, kind: "thinking" | "commentary" = "commentary") {
+    if (stopped || ctx.signal.aborted || !text) return;
+    if ((await options.sessionRepository.get(ctx.sessionId))?.state === "active" && !stopped && !ctx.signal.aborted)
+      await ctx.append(kind, bound(text), ctx.delegationId);
+  }
+  async function refresh(w: Watch) {
+    if (!active(w) || !w.admitted) return;
+    w.approval = undefined; w.approvalCount = 0; // A failed/missing read cannot retain approval authority.
+    if ((await options.sessionRepository.get(w.ctx.sessionId))?.state !== "active") return;
+    const detail = await options.repository.getDetailPage(owner, w.chatId, { limit: 200 });
+    if (!detail || !active(w)) return;
+    if (!w.runId && w.queuedTurnId) {
+      const turn = detail.turns.find(t => t.clientRequestId === chatRequestId(w.ctx.requestId));
+      const run = turn && detail.runs.find(r => r.turnId === turn.id);
+      if (run) { await w.ctx.record({ run_id: run.id }); w.runId = run.id; }
+    }
+    const run = detail.runs.find(r => r.id === w.runId);
+    const queue = detail.queuedTurns.find(q => q.id === w.queuedTurnId);
+    if (!run && !queue) return; // Missing history is not evidence of completion/cancellation.
+    if (!w.title) {
+      // Recovered cards use their own durable input, never the latest voice caption or shared chat title.
+      const input = run ? (await options.repository.getTurnRunContext(owner, w.chatId, run.turnId))?.message.parts : queue?.parts;
+      const text = input?.flatMap(p => p.type === "text" ? [p.text] : []).join("\n") ?? "";
+      const request = [...text.matchAll(/(?:^|\n)user: ([\s\S]*?)(?=\n(?:user|assistant): |$)/g)].at(-1)?.[1];
+      // Legacy transcript-backed turns keep their last request; new briefs lead with the actual task.
+      w.title = bound((request || text.split("\n\nEarlier voice requests (context only):")[0] || "Voice task").replace(/\s+/g, " ").trim());
+    }
+    const approvals = canonicalChatApprovals(detail).filter(a => a.runId === w.runId);
+    const confirmed = w.decision?.accepted && approvals.find(a => a.approvalId === w.decision!.approvalId
+      && !a.pending && a.decision === w.decision!.decision);
+    if (confirmed) {
+      w.decision = undefined; w.presented = undefined; // Before append, including uncertain delivery.
+      await speak(w.ctx, confirmed.decision === "approve" ? "Chat confirmed the approval." : "Chat confirmed the denial.");
+    }
+    const pending = approvals.filter(a => a.pending);
+    w.approvalCount = pending.length;
+    w.approval = pending.length === 1 ? pending[0] : undefined;
+    const approval = w.approval;
+    const terminal = run && ["completed", "failed", "aborted"].includes(run.status);
+    w.ctx.emit({ type: "aoede:card", sessionId: w.ctx.sessionId, card: {
+      id: w.ctx.delegationId, chatId: w.chatId, title: w.title,
+      ...(w.runId ? { runId: w.runId } : {}), ...(w.queuedTurnId ? { queuedTurnId: w.queuedTurnId } : {}),
+      status: !run ? "queued" : run.status === "completed" ? "done" : run.status === "failed" ? "failed"
+        : run.status === "aborted" ? "cancelled" : pending.length ? "approval" : "running",
+      ...(approval ? { approval: { approvalId: approval.approvalId, title: approval.title,
+        description: approval.description.slice(0, 2_000), risk: approval.risk,
+        allowedDecisions: approval.allowedDecisions.flatMap(d => d === "approve" ? ["approve_once" as const] : d === "decline" ? ["deny" as const] : []) } } : {}),
+    } });
+    if (terminal && !w.terminal) {
+      w.terminal = true; // Mark BEFORE I/O: uncertain delivery must never duplicate commentary.
+      const text = detail.messages.filter(m => m.runId === run.id && m.role === "assistant" && m.state === "committed")
+        .flatMap(m => m.parts.flatMap(p => p.type === "text" ? [p.text] : [])).join(" ");
+      await speak(w.ctx, run.status === "completed" ? text : run.status === "aborted" ? "The Chat run was cancelled." : "The Chat run failed. Check Chat for details.");
+    } else if (approval && !w.decision && w.asked !== approval.approvalId) {
+      // Explicit low risk only; never infer safety from wording. Reserve before uncertain delivery.
+      w.asked = approval.approvalId; w.presented = undefined;
+      const question = `${approval.title}. ${approval.description} Say exactly yes or no, or use Chat.`;
+      const voiceEligible = approval.risk === "low" && Buffer.byteLength(question) <= 500;
+      await speak(w.ctx, voiceEligible ? question
+        : "A permission needs your decision in Chat. Please click to review it.");
+      if (voiceEligible) w.presented = approval.approvalId;
+    }
+  }
+  function scheduleRefresh() {
+    if (dirty || stopped) return;
+    dirty = true;
+    refreshTail = refreshTail.then(async () => {
+      dirty = false;
+      for (const w of watches.values()) { try { await refresh(w); } catch (error) { log(error); } }
+    }).catch(log);
+  }
+  async function subscribe(principal: RequestPrincipal) {
+    if (subscription || opening || stopped) return opening;
+    opening = (async () => {
+      let closed = false;
+      const opened = await options.eventStream.open({ principal, cursor, sink: {
+        send(frame) {
+          if ("event" in frame) cursor = frame.event.cursor;
+          if (frame.type === "chat.replay.end" && frame.nextCursor !== undefined) cursor = frame.nextCursor;
+          // Includes replay gaps: reload owner-scoped current truth, never rerun a turn.
+          scheduleRefresh(); return !stopped;
+        },
+        close() { closed = true; subscription = undefined; },
+      } });
+      if (stopped || closed) opened.onClose(); else subscription = opened;
+    })().finally(() => { opening = undefined; });
+    return opening;
+  }
+  const touch = setInterval(() => {
+    subscription?.touch();
+    if (!stopped && watches.size) {
+      void subscribe(watches.values().next().value!.ctx.principal).catch(log); scheduleRefresh();
+    }
+  }, 30_000);
+  touch.unref();
+
+  async function cancel(w: Watch) {
+    if (!active(w)) return;
+    await refresh(w);
+    if (w.runId) await options.orchestrator.cancelRun(owner, w.chatId, w.runId);
+    else if (w.queuedTurnId) {
+      const current = await options.repository.get(owner, w.chatId);
+      if (!current) return;
+      await options.repository.cancelQueuedTurn(owner, { chatId: w.chatId, queuedTurnId: w.queuedTurnId,
+        clientRequestId: chatRequestId(randomUUID()), baseRevision: current.chat.revision, cancelledAt: new Date().toISOString() });
+      w.ctx.emit({ type: "aoede:card", sessionId: w.ctx.sessionId, card: { id: w.ctx.delegationId,
+        chatId: w.chatId, queuedTurnId: w.queuedTurnId, title: w.title ?? "Voice task", status: "cancelled" } });
+      w.terminal = true; await speak(w.ctx, "The queued Chat turn was cancelled.");
+    }
+    await refresh(w);
+  }
+  async function decision(ctx: AoedeDispatchContext, text: string) {
+    if (!/^(yes|no)$/i.test(text)) return false;
+    const current = [...watches.values()].filter(w => w.ctx.sessionId === ctx.sessionId && active(w));
+    const presented = current.map(w => w.presented);
+    for (const w of current) await refresh(w);
+    const approvals = current.filter(w => w.approval);
+    if (current.reduce((count, w) => count + (w.approvalCount ?? 0), 0) !== 1 || approvals.length !== 1) return false;
+    const w = approvals[0], a = w.approval!;
+    const choice = text.toLowerCase() === "yes" ? "approve" : "decline";
+    if (a.risk !== "low" || a.approvalId !== w.presented || a.approvalId !== presented[current.indexOf(w)]
+      || !a.allowedDecisions.includes(choice) || w.decision) return false;
+    w.decision = { requestId: ctx.requestId, approvalId: a.approvalId, decision: choice };
+    ctx.emit({ type: "aoede:approval_decide", sessionId: ctx.sessionId, chatId: w.chatId, runId: a.runId,
+      approvalId: a.approvalId, clientRequestId: ctx.requestId, decision: choice === "approve" ? "approve_once" : "deny" });
+    return true; // Only the authenticated shell HTTP path submits; this is not an approval grant.
+  }
+  const service = {
+    async readiness(principal: RequestPrincipal): Promise<AoedeReadiness> {
+      auth(principal);
+      if (readinessFlight) return readinessFlight;
+      readinessFlight = (async (): Promise<AoedeReadiness> => {
+        try {
+          await selectionReadiness(principal);
+          return { status: "ready", message: "Voice and delegated Chat tasks are ready." };
+        } catch (error) {
+          if (error instanceof AoedeTaskNotStartedError) return { status: "setup_required",
+            message: "Voice is usable, but delegated tasks are blocked. Check your Chat provider setup." };
+          log(error);
+          return { status: "error", message: "Voice is usable, but delegated task readiness could not be checked. Please try again later." };
+        }
+      })().finally(() => { readinessFlight = undefined; });
+      return readinessFlight;
+    },
+    async dispatch(ctx: AoedeDispatchContext) {
+      auth(ctx.principal);
+      if (stopped || ctx.signal.aborted) return;
+      const session = await options.sessionRepository.get(ctx.sessionId);
+      if (!session || session.state !== "active") throw new Error("Voice session unavailable");
+      const binding = (await options.sessionRepository.delegations(ctx.sessionId)).find(b =>
+        b.session_id === ctx.sessionId && b.delegation_id === ctx.delegationId && b.request_id === ctx.requestId);
+      if (!binding) throw new Error("Delegation unavailable");
+      if (watches.has(key(ctx)) || binding.chat_id || binding.state !== "pending") return;
+      for (const [id, w] of watches) if (!active(w) || w.terminal) watches.delete(id);
+      if (watches.size >= 128) throw new Error("Voice capacity exceeded");
+      const requestIndex = ctx.transcripts.findLastIndex(t => t.role === "user");
+      const text = ctx.transcripts[requestIndex]?.text.trim();
+      if (!text) return;
+      if (await decision(ctx, text)) return;
+      if (/^(?:stop|cancel)(?: that)?$/i.test(text)) {
+        const candidates = [...watches.values()].filter(w => w.ctx.sessionId === ctx.sessionId && active(w) && !w.terminal);
+        if (candidates.length === 1) await cancel(candidates[0]);
+        else await speak(ctx, "Choose the Chat task to cancel.");
+        return;
+      }
+      const action = classify(text);
+      if (action) {
+        const actions = new AoedeActions({ ...options.actions, ownerId: owner.ownerId, principal: ctx.principal,
+          uiAction: async request => {
+            const result = await ctx.ui(request.phase, request.action, request.target);
+            // ctx.ui validates its own generated UUID against the bound socket before resolving.
+            if (result.sessionId !== ctx.sessionId || result.phase !== request.phase) throw new Error("Uncorrelated UI result");
+            return { ...result, correlationId: request.correlationId };
+          } });
+        const result = await actions.execute(action, ctx.sessionId); await speak(ctx, result.message); return;
+      }
+      const chatId = session.chat_id ?? `chat_aoede_${session.id}`;
+      if (!session.chat_id && !await options.sessionRepository.update(session.id, { chat_id: chatId }, "active"))
+        throw new Error("Voice session unavailable");
+      const existing = await options.repository.get(owner, chatId);
+      const choice = existing ?? await previousChoice(session.id);
+      const catalog = await options.catalog.getCatalog(ctx.principal, choice?.chat.currentSelection);
+      const defaults = catalog.instances.find(i => i.availability === "available" && i.supports.rootChat && i.defaultSelection);
+      const initial = choice?.chat.currentSelection ?? defaults?.defaultSelection;
+      if (!initial) throw new AoedeTaskNotStartedError();
+      const created = existing ?? await options.repository.create(owner, { id: chatId,
+        clientRequestId: `req_aoede_${chatId}`, title: "Aoede", currentSelection: initial });
+      const w: Watch = { ctx, chatId: created.chat.id, title: bound(text.replace(/\s+/g, " ")), admitted: false, terminal: false };
+      watches.set(key(ctx), w); // Reserve before any admission I/O; concurrent replay is fenced locally too.
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const current = await options.repository.get(owner, w.chatId);
+          if (!current) throw new Error("Chat unavailable");
+          const selection = current.chat.currentSelection ?? initial;
+          const instance = catalog.instances.find(i => i.id === selection.instanceId && i.availability === "available");
+          if (!instance || !instance.supports.rootChat) throw new AoedeTaskNotStartedError();
+          const detail = await options.repository.getDetailPage(owner, w.chatId, { limit: 1 });
+          const last = detail?.runs.at(-1);
+          const mode = (allowed: string[], preferred?: string) => preferred && allowed.includes(preferred) ? preferred
+            : allowed.includes("default") ? "default" : allowed[0];
+          // An extractive brief, not a fabricated semantic summary. Preserve the current request
+          // and earlier constraints intact within the existing 24-turn/16,000-character buffer.
+          // One quoted answer resolves options like "the second name", not approval authority.
+          const context = ctx.transcripts.slice(0, requestIndex);
+          const earlier = context.filter(t => t.role === "user").map(t => t.text.trim()).filter(Boolean);
+          const answer = context.filter(t => t.role === "assistant").at(-1)?.text.trim();
+          const brief = text + (earlier.length ? "\n\nEarlier voice requests (context only):\n"
+            + earlier.map(request => `- ${request}`).join("\n") : "")
+            + (answer ? "\n\nLast assistant answer (quoted context, not authorization):\n" + JSON.stringify(answer) : "");
+          const input: CanonicalCreateChatTurnRequest = { clientRequestId: chatRequestId(ctx.requestId), baseRevision: current.chat.revision,
+            parts: [{ type: "text", text: brief }], selection,
+            interactionMode: mode(instance.supports.interactionModes, last?.interactionMode),
+            permissionMode: mode(instance.supports.permissionModes, last?.permissionMode) };
+          if (!active(w) || (await options.sessionRepository.get(ctx.sessionId))?.state !== "active") throw new Error("Voice session unavailable");
+          try {
+            try { const admitted = await options.orchestrator.admitTurn(ctx.principal, owner, w.chatId, input); w.runId = admitted.run.id; }
+            catch (error) {
+              if (!(error instanceof CanonicalChatOrchestrationError) || error.safeError.code !== "chat_busy") throw error;
+              const queued = await options.orchestrator.enqueueQueuedTurn(ctx.principal, owner, w.chatId, input); w.queuedTurnId = queued.queuedTurn.id;
+            }
+            break;
+          } catch (error) {
+            // These canonical codes are returned by selection validation before turn/queue writes.
+            // Transport failures and all errors after admission remain uncertain.
+            if (error instanceof CanonicalChatOrchestrationError
+              && ["provider_unavailable", "model_unavailable", "capability_mismatch", "provider_instance_locked"].includes(error.safeError.code))
+              throw new AoedeTaskNotStartedError();
+            if (!(error instanceof CanonicalChatOrchestrationError) || error.safeError.code !== "chat_conflict" || attempt) throw error;
+          }
+        }
+        await ctx.record({ chat_id: w.chatId, run_id: w.runId ?? null, queued_turn_id: w.queuedTurnId ?? null });
+      } catch (error) { watches.delete(key(ctx)); throw error; }
+      w.admitted = true;
+      await subscribe(ctx.principal);
+      try { await speak(ctx, w.runId ? "Chat accepted the task." : "Chat queued the task.", "thinking"); }
+      catch (error) { log(error); } // The admitted Chat task still owns its result delivery.
+      try { await refresh(w); } catch (error) { log(error); }
+    },
+    /** Called ONLY after session service validates the invoking connection and active session. */
+    async onClientMessage(principal: RequestPrincipal, connectionId: string, raw: AoedeClientMessage) {
+      auth(principal); const frame = AoedeClientMessageSchema.parse(raw);
+      if (!connectionId || stopped) return;
+      const session = await options.sessionRepository.get(frame.sessionId);
+      if (session?.state !== "active") return;
+      const current = [...watches.values()].filter(w => w.ctx.sessionId === frame.sessionId && active(w));
+      if (frame.type === "aoede:cancel") {
+        const w = current.find(w => w.ctx.delegationId === frame.cardId); if (w) await cancel(w);
+      } else if (frame.type === "aoede:approval_result") {
+        const w = current.find(w => w.decision?.requestId === frame.clientRequestId && w.decision.approvalId === frame.approvalId);
+        if (!w || !frame.accepted) return;
+        w.decision!.accepted = true;
+        await refresh(w);
+      }
+    },
+    async seedRecentOutcomes(ctx: AoedeSessionContext, previousSessionId?: string) {
+      auth(ctx.principal);
+      const session = await options.sessionRepository.get(ctx.sessionId);
+      if (!previousSessionId || stopped || ctx.signal.aborted || session?.state !== "active") return;
+      const source = await options.sessionRepository.get(previousSessionId);
+      if (!source || source.runtime_id !== options.sessionRepository.runtimeId || !session.chat_id || source.chat_id !== session.chat_id) return;
+      for (const [id, w] of watches) if (!active(w) || w.terminal || w.ctx.sessionId !== ctx.sessionId) watches.delete(id);
+      // Only saved owner bindings; no dispatch or direct-mutation replay during recovery.
+      const detail = await options.repository.getDetailPage(owner, session.chat_id, { limit: 200 });
+      const bindings = (await options.sessionRepository.delegations(previousSessionId))
+        .filter(binding => binding.chat_id === session.chat_id);
+      const canonicalRun = (binding: typeof bindings[number]) => detail?.runs.find(r => r.id === binding.run_id)
+        ?? detail?.runs.find(r => detail.turns.some(t => t.id === r.turnId && t.clientRequestId === chatRequestId(binding.request_id)));
+      const liveBinding = (binding: typeof bindings[number]) => {
+        const run = canonicalRun(binding);
+        return run ? !["completed", "failed", "aborted"].includes(run.status)
+          : !!detail?.queuedTurns.some(q => q.id === binding.queued_turn_id);
+      };
+      // Stable sorting preserves repository recency within live and historical groups.
+      bindings.sort((a, b) => Number(liveBinding(b)) - Number(liveBinding(a)));
+      for (const binding of bindings.slice(0, 16)) {
+        if (!binding.chat_id || binding.chat_id !== session.chat_id) continue;
+        if (watches.size >= 128) break;
+        const run = canonicalRun(binding);
+        const recovered = { ...ctx, delegationId: binding.delegation_id, requestId: binding.request_id,
+          record: (result: Parameters<AoedeDispatchContext["record"]>[0]) => options.sessionRepository.delegationResult(binding.session_id, binding.delegation_id, result) };
+        const w: Watch = { ctx: recovered, chatId: binding.chat_id, admitted: true,
+          runId: run?.id ?? binding.run_id ?? undefined, queuedTurnId: binding.queued_turn_id ?? undefined,
+          terminal: !!run && ["completed", "failed", "aborted"].includes(run.status) };
+        const existing = watches.get(key(recovered));
+        if (!existing) watches.set(key(recovered), w);
+        await refresh(existing ?? w); // Terminal card only, no repeated completion announcement.
+      }
+      await subscribe(ctx.principal);
+    },
+    async shutdown() {
+      stopped = true; clearInterval(touch); subscription?.onClose(); subscription = undefined;
+      await opening; await refreshTail; watches.clear(); // Deliberately do not close/cancel the orchestrator.
+    },
+  };
+  return service;
+}

@@ -267,6 +267,7 @@ export function createApp(deps: {
   internalFundedAiRelayRoutes?: Hono<any>;
   internalFundedAiOperatorRoutes?: Hono<any>;
   internalSpeechRuntimeRoutes?: Hono<any>;
+  internalAoedeLiveRuntimeRoutes?: Hono<any>;
   whatsappRoutes?: Hono<any>;
   fundedAiRepository?: import('./ai-funded-policy-repository.js').AiFundedPolicyRepository;
   fundedModelProbes?: import('./ai-funded-model-probes.js').FundedModelProbeService;
@@ -663,6 +664,9 @@ export function createApp(deps: {
   if (deps.internalSpeechRuntimeRoutes) {
     app.route('/internal/containers/:handle/speech', deps.internalSpeechRuntimeRoutes);
   }
+  if (deps.internalAoedeLiveRuntimeRoutes) {
+    app.route('/internal/containers/:handle/aoede', deps.internalAoedeLiveRuntimeRoutes);
+  }
 
   // Funded AI control routes authenticate with dedicated runtime, relay, or
   // operator credentials. Mount them before Clerk session routing so those
@@ -675,6 +679,13 @@ export function createApp(deps: {
   }
   if (deps.internalFundedAiOperatorRoutes) {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
+  }
+
+  // Sync object uploads authenticate with their own machine credential and
+  // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
+  // guard so the route-specific limits remain authoritative.
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }
 
   // Session-based routing:
@@ -720,9 +731,6 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
-  if (deps.internalSyncRoutes) {
-    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
-  }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'VPS tracking not configured' }, 503);

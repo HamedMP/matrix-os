@@ -275,7 +275,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
         timer = setTimeout(() => {
           controller.abort();
           reject(new Error("Driver inventory timed out"));
-        }, 6_000);
+        // Includes runtime health/discovery as well as five-second CLI probes.
+        }, 12_000);
       });
       const discovered = AiProviderDriverViewSchema.array().max(19).parse(
         await Promise.race([this.#driverInventory(controller.signal), deadline]),

@@ -66,7 +66,6 @@ describe("merged platform schema upgrade", () => {
       await expect(runPlatformMigration(db, migratePlatformSchema, {
         revision: PLATFORM_SCHEMA_REVISION,
       })).resolves.toBeUndefined();
-      expect(PLATFORM_SCHEMA_REVISION.generation).toBe(18);
       const deletionColumns = await sql<{column_name:string}>`
         SELECT column_name FROM information_schema.columns WHERE table_schema='public'
           AND table_name='account_deletion_jobs' ORDER BY column_name

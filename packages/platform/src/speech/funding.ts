@@ -31,7 +31,6 @@ const ReserveSchema = z.object({
 const ReservationIdSchema = ReferenceSchema;
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const ACTIVE_SPEECH_AUDIENCE = "matrix-platform-speech";
-const ACTIVE_SPEECH_SCOPE = "speech:transcribe";
 
 export class SpeechFundingError extends Error {
   constructor(readonly code: "unavailable" | "allowance_exhausted") {
@@ -80,6 +79,7 @@ function mapFundingError(error: unknown): never {
 }
 
 export function createAiFundedSpeechFundingPort(options: {
+  capability?: "speech:transcribe" | "speech:live";
   allowedSources: readonly ("promotional" | "addon")[];
   credentialHashSecret: string;
   reservationIdFactory: () => string;
@@ -92,6 +92,13 @@ export function createAiFundedSpeechFundingPort(options: {
     monthlyPromotionalCreditMicrousd: number;
   };
 }): SpeechFundingPort {
+  const ACTIVE_SPEECH_SCOPE = options.capability ?? "speech:transcribe";
+  if (!["speech:transcribe", "speech:live"].includes(ACTIVE_SPEECH_SCOPE)) {
+    throw new Error("Speech funding capability is invalid");
+  }
+  const credentialSecret = ACTIVE_SPEECH_SCOPE === "speech:live"
+    ? createHmac("sha256", options.credentialHashSecret).update("speech:live").digest("hex")
+    : options.credentialHashSecret;
   if (options.credentialHashSecret.length < 32) {
     throw new Error("Speech funding credential secret must be at least 32 characters");
   }
@@ -131,7 +138,7 @@ export function createAiFundedSpeechFundingPort(options: {
     identity: z.output<typeof IdentitySchema>,
     checkedAt: string,
   ): Promise<string> {
-    const tokenId = platformCredentialId(identity, options.credentialHashSecret);
+    const tokenId = platformCredentialId(identity, credentialSecret);
     const tokenHash = createHmac("sha256", options.credentialHashSecret)
       .update(`${tokenId}\0${identity.ownerId}\0${identity.machineId}\0${identity.runtimeSlot}`)
       .digest("hex");

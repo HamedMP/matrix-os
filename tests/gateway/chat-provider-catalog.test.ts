@@ -238,6 +238,16 @@ function configuredHarness(
 }
 
 describe("canonical Chat Provider catalog", () => {
+  it("retains authoritative settings failures for selected Codex admission", async () => {
+    const getSnapshot = vi.fn(async () => { throw new Error("settings unavailable"); });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(), agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: { getSnapshot },
+    });
+    await expect(service.getCatalog(principal, { instanceId: "codex_default", model: "gpt-5.4" }))
+      .rejects.toMatchObject({ name: "ProviderCatalogUnavailableError", retryable: true });
+  });
+
   it("does not present an expired managed credit verdict as current", async () => {
     const now = new Date("2026-08-30T10:00:00.000Z");
     const settings = await harnessSettings([configuredHarness("pi", true)]).getSnapshot();

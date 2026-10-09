@@ -374,6 +374,45 @@ describe("KernelSocket: reconnect backoff and state", () => {
   });
 });
 
+describe("KernelSocket: Aoede live transport", () => {
+  const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+  const ready = { type: "aoede:ready", sessionId } as const;
+
+  it("never queues connected-only or ordinary Aoede sends while unavailable", () => {
+    const h = createHarness();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.socket.connect();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.last().open();
+    expect(h.last().sent).toEqual([]);
+    for (const state of [2, 3]) {
+      h.last().readyState = state;
+      expect(h.socket.sendConnected(ready)).toBe(false);
+      h.socket.send(ready);
+    }
+    h.last().fail();
+    h.socket.dispose();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+  });
+
+  it("returns false on send failure without replaying it on reconnect", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.last().open();
+    vi.spyOn(h.last(), "send").mockImplementation(() => { throw new Error("send failed"); });
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.socket.send({ type: "ping" });
+    h.last().fail();
+    h.timers.runNext();
+    h.last().open();
+    expect(h.last().sent.map((data) => JSON.parse(data))).toEqual([{ type: "ping" }]);
+  });
+
+});
+
 describe("KernelSocket: dispose", () => {
   it("clears pending reconnect timers and closes the socket", () => {
     const h = createHarness();

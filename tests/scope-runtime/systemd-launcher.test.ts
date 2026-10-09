@@ -121,6 +121,7 @@ describe("scope runtime systemd launcher", () => {
     ]);
   });
 
+
   it("builds only the source-controlled profile and fixed worker command", () => {
     const args = buildFixedSystemdRunArgs(launch, {
       scopeRoot: "/var/lib/matrix-scope-runtime/runtimes/222/root",

@@ -1065,6 +1065,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError(isCodeDomain ? 'code-domain vps proxy' : 'app-domain vps proxy', err);
+        if (err instanceof Error && err.name === 'TimeoutError') {
+          return c.json({ error: 'Runtime request timed out' }, 504);
+        }
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }

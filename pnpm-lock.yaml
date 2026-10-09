@@ -1117,6 +1117,12 @@ importers:
 
   packages/ui:
     dependencies:
+      '@hugeicons/core-free-icons':
+        specifier: ^4.3.0
+        version: 4.3.0
+      '@hugeicons/react':
+        specifier: ^1.1.9
+        version: 1.1.9(react@19.2.6)
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -1138,12 +1144,21 @@ importers:
       lucide-react:
         specifier: ^0.563.0
         version: 0.563.0(react@19.2.6)
+      radix-ui:
+        specifier: ^1.4.3
+        version: 1.4.3(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react-markdown:
         specifier: ^10.1.0
         version: 10.1.0(@types/react@19.2.14)(react@19.2.6)
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      shaders:
+        specifier: 3.2.475
+        version: 3.2.475(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      use-stick-to-bottom:
+        specifier: ^1.1.4
+        version: 1.1.4(react@19.2.6)
       zod:
         specifier: ^4.3.6
         version: 4.4.3
@@ -1328,6 +1343,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      shaders:
+        specifier: 3.2.475
+        version: 3.2.475(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       shiki:
         specifier: ^3.22.0
         version: 3.23.0
@@ -13623,6 +13641,27 @@ packages:
     resolution: {integrity: sha512-jPRx44e+eyeV7xwY3BLJXcfrks00+M0h5BGB9l6DdcBW4BpAj4x3lVmVy0TXPEs2iHEisxejr62sZAAw6B1EVA==}
     hasBin: true
 
+  shaders@3.2.475:
+    resolution: {integrity: sha512-oq/HaYrt7HwOWq/k6nYOy+jsY4Cu/1K0QJeBB3h9872mVhient/qMtPxg4LgWPnc4QlIEDj3XBAB5SEV2OxT6g==}
+    hasBin: true
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+      solid-js: ^1.8.0
+      svelte: ^5
+      vue: ^3.5.0
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+      solid-js:
+        optional: true
+      svelte:
+        optional: true
+      vue:
+        optional: true
+
   shallowequal@1.1.0:
     resolution: {integrity: sha512-y0m1JoUZSlPAjXVtPPW70aZWfIL/dSP7AFkRnniLCrK/8MDKog3TySTBmckD+RObVxH0v4Tox67+F14PdED2oQ==}
 
@@ -14198,6 +14237,10 @@ packages:
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
+  tinyest@0.3.4:
+    resolution: {integrity: sha512-81EcMHTCQ2IPweOGk9SpMgjbenR9ZJRsAE84btEv0DhvVKwhe7qBy28hWgatoXa9ppWzmtpHiJ+e86SiaAtY6w==}
+    engines: {node: '>=12.20.0'}
+
   tinyexec@1.1.2:
     resolution: {integrity: sha512-dAqSqE/RabpBKI8+h26GfLq6Vb3JVXs30XYQjdMjaj/c2tS8IYYMbIzP599KtRj7c57/wYApb3QjgRgXmrCukA==}
     engines: {node: '>=18'}
@@ -14327,6 +14370,9 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
+  tsover-runtime@0.0.7:
+    resolution: {integrity: sha512-FHHwMJzZbnP23+fU1PxXljy7j0RRRosL2r1/CRUNTqfW+l7m35JsUkM615x/cAzw4GqRdXPIl3axKMj9qzpZtQ==}
+
   tsx@4.21.0:
     resolution: {integrity: sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==}
     engines: {node: '>=18.0.0'}
@@ -14394,6 +14440,14 @@ packages:
   typed-array-length@1.0.7:
     resolution: {integrity: sha512-3KS2b+kL7fsuk/eJZ7EQdnEmQoaho/r6KUef7hxvltNA5DR8NAUM+8wJMbJyZ4G9/7i3v5zPBIMN5aybAh2/Jg==}
     engines: {node: '>= 0.4'}
+
+  typed-binary@4.3.3:
+    resolution: {integrity: sha512-W2hLsSzt3k/tg38gDE4Fn/QiwcoqGuUHBc2cb3mXuH7KcYxe/GM57vzW14s2/bawB4R5knGgGq8Xb57vsaJ4Sg==}
+
+  typegpu@0.12.3:
+    resolution: {integrity: sha512-zYwQEhnPPwhq5vQKmollXRK1LCVjStOnL+2B0PiebqvAzYPr25rPNR4r3olLoow5sKKjyj3kzHKEcpD5SyDzGQ==}
+    engines: {node: '>=12.20.0'}
+    hasBin: true
 
   typescript-eslint@8.57.1:
     resolution: {integrity: sha512-fLvZWf+cAGw3tqMCYzGIU6yR8K+Y9NT2z23RwOjlNFF2HwSB3KhdEFI5lSBv8tNmFkkBShSjsCjzx1vahZfISA==}
@@ -31597,6 +31651,13 @@ snapshots:
       - supports-color
       - typescript
 
+  shaders@3.2.475(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
+    dependencies:
+      typegpu: 0.12.3
+    optionalDependencies:
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+
   shallowequal@1.1.0: {}
 
   sharp@0.34.5:
@@ -32203,6 +32264,8 @@ snapshots:
 
   tinybench@2.9.0: {}
 
+  tinyest@0.3.4: {}
+
   tinyexec@1.1.2: {}
 
   tinyglobby@0.2.15:
@@ -32331,6 +32394,8 @@ snapshots:
 
   tslib@2.8.1: {}
 
+  tsover-runtime@0.0.7: {}
+
   tsx@4.21.0:
     dependencies:
       esbuild: 0.27.7
@@ -32415,6 +32480,14 @@ snapshots:
       is-typed-array: 1.1.15
       possible-typed-array-names: 1.1.0
       reflect.getprototypeof: 1.0.10
+
+  typed-binary@4.3.3: {}
+
+  typegpu@0.12.3:
+    dependencies:
+      tinyest: 0.3.4
+      tsover-runtime: 0.0.7
+      typed-binary: 4.3.3
 
   typescript-eslint@8.57.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3):
     dependencies:

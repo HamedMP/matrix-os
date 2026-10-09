@@ -79,6 +79,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
     runtimeSlot?: string,
     provisioningClass?: string,
   ): Promise<EntitlementAccessDecision>;
+  aoedeLiveUpgrade?: (req: IncomingMessage, socket: Socket, head: Buffer) => Promise<boolean>;
   /** S05: runtime control-stream upgrade (`/internal/collaboration/control`); handled before session routing. */
   collaborationDirect?: {
     handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): Promise<boolean>;
@@ -125,6 +126,7 @@ export function registerPlatformWebSocketUpgradeHandler(
       }
     }
     try {
+      if (opts.aoedeLiveUpgrade && await opts.aoedeLiveUpgrade(req, socket as Socket, head)) return;
       const handledInternalGeminiLive = await handleInternalGeminiLiveProxyUpgrade({
         req,
         socket: socket as Socket,

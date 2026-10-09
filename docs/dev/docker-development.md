@@ -1,6 +1,11 @@
 # Docker Development Guide
 
-Matrix OS uses Docker as the primary local development environment via OrbStack on macOS. This ensures dev/prod parity.
+Matrix OS uses Docker for fast source development and local infrastructure. It
+does **not** provide production runtime parity: production customer runtimes are
+VPS-native systemd/user-systemd services, not application containers.
+
+For production parity on macOS, use `bun run dev:full`; see
+[Developer Onboarding](onboarding.md#production-parity-development).
 
 ## Prerequisites
 
@@ -22,11 +27,30 @@ bun run docker
 
 First start takes ~30s (installs dependencies). Subsequent starts are instant (deps cached in volume).
 
+For faster host-side HMR while keeping only stateful dependencies in Docker,
+use:
+
+```bash
+bun run dev:source
+```
+
+This waits for PostgreSQL and object storage, initializes the sync bucket, then
+starts shell, gateway, proxy, and platform from source. `bun run dev:infra`
+starts only the two stateful dependencies. Neither command requires
+`.env.docker`; optional AI/provider keys can live in the root `.env` file.
+
+The host-source path does not run the production Linux/user-systemd terminal
+runtime. It must not be used to accept Terminal or other host-lifecycle changes.
+
 ## Convenience Scripts
 
 All Docker commands have `bun run` shortcuts in `package.json`:
 
 ```bash
+bun run dev:infra       # Ready PostgreSQL + object storage only
+bun run dev:infra:stop  # Stop local infrastructure without deleting data
+bun run dev:full        # Production-parity amd64 Ubuntu machine (not Compose)
+bun run dev:source      # Infra + all HTTP services from source (non-parity)
 bun run docker          # Dev only (gateway + shell with HMR)
 bun run docker:full     # + proxy and platform
 bun run docker:full:smoke # full stack, bounded health checks, cleanup

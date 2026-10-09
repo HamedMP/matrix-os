@@ -68,6 +68,43 @@ function adapter(overrides: Partial<CodingAgentProviderAdapter> = {}): CodingAge
 }
 
 describe("coding-agent provider registry", () => {
+  it("scopes adapter probes and credential-derived summaries by provider ID", async () => {
+    const getSummary = vi.fn();
+    const buildSetupAction = vi.fn();
+    const healthCheck = vi.fn();
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter(), ...["claude", "pi", "opencode"].map(providerId =>
+        adapter({ providerId, getSummary, buildSetupAction, healthCheck }))],
+      agentCredentials: credentialService("available"), now: () => baseNow,
+    });
+    expect((await registry.listProviders(owner, { providerIds: ["codex"] })).map(summary => summary.id))
+      .toEqual(["codex"]);
+    expect(getSummary).not.toHaveBeenCalled();
+    expect(buildSetupAction).not.toHaveBeenCalled();
+    expect(healthCheck).not.toHaveBeenCalled();
+    expect(await registry.listProviders(owner, { providerIds: [] })).toEqual([]);
+    expect(getSummary).not.toHaveBeenCalled();
+
+    const credentialOnly = createCodingAgentProviderRegistry({
+      providers: [], agentCredentials: credentialService("available"), now: () => baseNow,
+    });
+    expect(await credentialOnly.listProviders(owner, { providerIds: ["pi"] })).toEqual([]);
+    expect(await credentialOnly.listProviders(owner, { providerIds: [] })).toEqual([]);
+    expect((await credentialOnly.listProviders(owner, { providerIds: ["codex"] })).map(summary => summary.id))
+      .toEqual(["codex"]);
+  });
+
+  it("preserves unscoped custom providers and credential-derived summaries", async () => {
+    const registry = createCodingAgentProviderRegistry({
+      providers: [adapter({ providerId: "custom", getSummary: () => ({
+        id: "custom", displayName: "Custom", kind: "codex", availability: "available",
+        installStatus: "installed", authStatus: "unknown", supportedModes: ["default"], defaultMode: "default", setupActions: [],
+      }) })],
+      agentCredentials: credentialService("available"), now: () => baseNow,
+    });
+    expect((await registry.listProviders(owner)).map(summary => summary.id)).toEqual(["codex", "custom"]);
+  });
+
   it("keeps locally configured Codex attemptable without claiming remote authentication", async () => {
     const registry = createCodingAgentProviderRegistry({
       providers: [adapter()], agentCredentials: credentialService("available"), now: () => baseNow,
