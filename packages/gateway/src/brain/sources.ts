@@ -49,11 +49,17 @@ async function sourceWriteFailure(db: BrainExecutor, scope: BrainScopeKey, sourc
   return new BrainStoreError(row ? "conflict" : "not_found");
 }
 
-/** Idempotent on the live (kind, external_ref) key; a duplicate returns the existing row unchanged. */
+/**
+ * Idempotent on the live (kind, external_ref) key; a duplicate returns the existing row unchanged. `createdAt` (a
+ * replacement keeping the place of the source it replaces) defaults to `now`.
+ */
 export async function insertSource(
   db: BrainExecutor,
   scope: BrainScopeKey,
-  input: { readonly kind: string; readonly externalRef: string; readonly label: string; readonly status?: BrainSourceStatus },
+  input: {
+    readonly kind: string; readonly externalRef: string; readonly label: string; readonly status?: BrainSourceStatus;
+    readonly createdAt?: Date;
+  },
   now: Date,
 ): Promise<BrainCreateSourceResult> {
   const inserted = await db.insertInto("brain_sources").values({
@@ -65,7 +71,7 @@ export async function insertSource(
     label: input.label,
     status: input.status ?? "active",
     revision: 1,
-    created_at: now,
+    created_at: input.createdAt ?? now,
     updated_at: now,
     deleted_at: null,
   })

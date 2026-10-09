@@ -67,6 +67,21 @@ describe("syncGitSource guards", { timeout: 60_000 }, () => {
     expect(result.receipt).toMatchObject({ status: "succeeded", nextAction: "run_again" });
   });
 
+  it("does no git work once the caller's signal aborts, and kills a git command it interrupts", async () => {
+    await buildBaseHistory(t.f);
+    const sourceId = await createGitSource(t.harness.repository, scopeA);
+    const stopped = { status: "succeeded", nextAction: "run_again", notices: ["run_budget_exhausted"], caughtUp: false, batches: 0 };
+    expect(await sync(sourceId, { signal: AbortSignal.abort() })).toMatchObject({ ...stopped, commitsProcessed: 0 });
+    const stop = new AbortController();
+    // The window's log becomes a command that waits on stdin until it is killed.
+    const runner: GitRunner = async (args, options) => {
+      if (!isWindowMetadataLog(args.slice(GIT_GLOBAL_ARGS.length))) return defaultGitRunner(args, options);
+      setTimeout(() => stop.abort(), 50);
+      return defaultGitRunner([...GIT_GLOBAL_ARGS, "hash-object", "--stdin"], { ...options, timeoutMs: 20_000 });
+    };
+    expect(await sync(sourceId, { signal: stop.signal, runner })).toMatchObject({ ...stopped, commitsRemaining: 9 });
+  });
+
   it("refuses git output that contradicts itself", async () => {
     const h = await buildBaseHistory(t.f);
     const sourceId = await createGitSource(t.harness.repository, scopeA);

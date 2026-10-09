@@ -177,10 +177,18 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
 
   // Sources
 
-  async createSource(scope: BrainScopeKey, input: BrainCreateSourceInput): Promise<BrainCreateSourceResult> {
+  /** `alongside` runs in the same transaction when the source is new (the sources service writes its config row). */
+  async createSource(
+    scope: BrainScopeKey, input: BrainCreateSourceInput,
+    alongside?: (trx: Transaction<BrainDatabase>, source: BrainSource) => Promise<void>,
+  ): Promise<BrainCreateSourceResult> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const source = parseBrainInput(BrainCreateSourceSchema, input);
-    return this.withScopeWrite(key, (trx, now) => insertSource(trx, key, source, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      const result = await insertSource(trx, key, source, now);
+      if (result.created) await alongside?.(trx, result.source);
+      return result;
+    });
   }
 
   async getSource(scope: BrainScopeKey, sourceId: string): Promise<BrainSource | null> {
@@ -194,10 +202,21 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     return listSourcePage(this.kysely, key, parseBrainInput(BrainListOptionsSchema, options));
   }
 
-  async updateSource(scope: BrainScopeKey, input: BrainUpdateSourceInput): Promise<BrainSource> {
+  /**
+   * Compare-and-set on the source revision. `alongside` runs in the same transaction once the row has moved (the
+   * sources service writes a kind's config row there), so its failure leaves the source as it was.
+   */
+  async updateSource(
+    scope: BrainScopeKey, input: BrainUpdateSourceInput,
+    alongside?: (trx: Transaction<BrainDatabase>) => Promise<void>,
+  ): Promise<BrainSource> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const patch = parseBrainInput(BrainUpdateSourceSchema, input);
-    return this.withScopeWrite(key, (trx, now) => updateSourceRow(trx, key, patch, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      const updated = await updateSourceRow(trx, key, patch, now);
+      await alongside?.(trx);
+      return updated;
+    });
   }
 
   /**
@@ -208,6 +227,29 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const target = parseBrainInput(BrainDeleteSourceSchema, input);
     return this.withScopeWrite(key, (trx, now) => tombstoneSource(trx, key, target, now));
+  }
+
+  /**
+   * deleteSource and the creation of its successor (same kind and identity, the given label and status, else the old
+   * ones, and the old createdAt, so it keeps the removed source's place among its kind) in one transaction.
+   * `alongside` runs there with the successor (the sources service writes its config row), so a failure anywhere
+   * leaves the old source as it was.
+   */
+  async replaceSource(
+    scope: BrainScopeKey, input: BrainUpdateSourceInput,
+    alongside?: (trx: Transaction<BrainDatabase>, source: BrainSource) => Promise<void>,
+  ): Promise<{ readonly removed: BrainSource; readonly source: BrainSource }> {
+    const key = parseBrainInput(BrainScopeKeySchema, scope);
+    const patch = parseBrainInput(BrainUpdateSourceSchema, input);
+    return this.withScopeWrite(key, async (trx, now) => {
+      const removed = await tombstoneSource(trx, key, patch, now);
+      const { source } = await insertSource(trx, key, {
+        kind: removed.kind, externalRef: removed.externalRef, label: patch.label ?? removed.label,
+        status: patch.status ?? removed.status, createdAt: new Date(removed.createdAt),
+      }, now);
+      await alongside?.(trx, source);
+      return { removed, source };
+    });
   }
 
   // Documents

@@ -22,7 +22,7 @@ import { defaultGitRunner, openGitRepository } from "./reader.js";
 import {
   GIT_BRANCH_NAME_MAX_CHARS, GIT_DEFAULT_SPEC_GLOBS, GIT_MAX_CONCURRENT_SYNCS, GIT_MAX_REJECTED_IDS_IN_RESULT,
   GIT_MAX_SPEC_GLOBS, GIT_SOURCE_KIND, GIT_SPEC_GLOB_MAX_CHARS, GIT_SYNC_DEFAULT_LIMITS, GIT_SYNC_LIMIT_CEILINGS,
-  GitSourceError,
+  GitRunnerError, GitSourceError,
   type GitBatchPlan, type GitCommitRecord, type GitDocumentContext, type GitRepository, type GitRunner,
   type GitSpecMatcher, type GitSyncErrorCode, type GitSyncInfoCode, type GitSyncLimits, type GitSyncNextAction,
   type GitSyncNotice, type GitSyncOptions, type GitSyncResult, type GitUpsertDraft,
@@ -80,6 +80,7 @@ interface SyncRun {
   readonly runner: GitRunner;
   readonly limits: GitSyncLimits;
   readonly now: () => number;
+  readonly signal: AbortSignal | undefined;
 }
 
 class RunProgress {
@@ -89,6 +90,8 @@ class RunProgress {
   processed = 0;
   remaining = 0;
   rewritten = false;
+  /** The caller's stop ended the run, maybe before it counted what is left. */
+  stopped = false;
   batches = 0;
   rejectedCount = 0;
   readonly rejectedIds: string[] = [];
@@ -196,7 +199,7 @@ function parseOptions(options: GitSyncOptions): SyncRun | null {
     repository: options.repository, scope: parsed.data.scope, sourceId: parsed.data.sourceId,
     repoPath: parsed.data.repoPath, homePath: parsed.data.homePath, branch: parsed.data.config?.branch ?? null,
     matcher, runner: options.runner ?? defaultGitRunner, limits: resolveLimits(parsed.data.limits),
-    now: options.now ?? Date.now,
+    now: options.now ?? Date.now, signal: options.signal,
   };
 }
 
@@ -293,7 +296,7 @@ async function runWindows(run: SyncRun, opened: OpenedRun, progress: RunProgress
   progress.cursorBefore = stored?.cursor ?? null;
   progress.cursor = progress.cursorBefore;
   const repo = await openGitRepository({
-    repoPath: run.repoPath, homePath: run.homePath, runner: run.runner, limits: run.limits,
+    repoPath: run.repoPath, homePath: run.homePath, runner: run.runner, limits: run.limits, signal: run.signal,
   });
   const web = resolveGitWebBase({ externalRef: opened.source.externalRef, remoteUrl: await repo.readOriginUrl() });
   if (!web.ok) throw new GitSourceError(web.code);
@@ -306,7 +309,7 @@ async function runWindows(run: SyncRun, opened: OpenedRun, progress: RunProgress
   let rechecked = false;
   progress.remaining = await repo.countFirstParent({ from, to: tip.sha });
   while (progress.remaining > 0 && progress.processed < run.limits.commitsPerRun) {
-    if (progress.processed > 0 && run.now() - start >= run.limits.runBudgetMs) {
+    if (run.signal?.aborted === true || (progress.processed > 0 && run.now() - start >= run.limits.runBudgetMs)) {
       progress.notice("run_budget_exhausted");
       break;
     }
@@ -373,14 +376,15 @@ async function finishRun(
   const status: BrainSyncReceiptOutcome = failure !== null ? "failed" : progress.rejectedCount > 0 ? "partial" : "succeeded";
   const errorCode = failure
     ?? (progress.rejectedCount > 0 ? "documents_rejected" : progress.rewritten ? "history_rewritten" : null);
-  const nextAction: GitSyncNextAction = failure !== null ? NEXT_ACTIONS[failure] : progress.remaining > 0 ? "run_again" : "";
+  const more = progress.remaining > 0 || progress.stopped;
+  const nextAction: GitSyncNextAction = failure !== null ? NEXT_ACTIONS[failure] : more ? "run_again" : "";
   const closed = await closeReceipt(run, receipt, { status, counts, nextAction, errorCode });
   const remaining = failure === null ? progress.remaining : 0;
   return {
     status, errorCode, nextAction, receipt: closed, counts,
     cursorBefore: progress.cursorBefore, cursorAfter: progress.cursor,
     commitsProcessed: progress.processed, commitsRemaining: remaining,
-    caughtUp: failure === null && remaining === 0, historyRewritten: progress.rewritten,
+    caughtUp: failure === null && !more, historyRewritten: progress.rewritten,
     batches: progress.batches, rejectedDocumentIds: [...progress.rejectedIds], notices: [...progress.notices],
   };
 }
@@ -393,6 +397,12 @@ async function syncWithReceipt(run: SyncRun): Promise<GitSyncResult> {
   try {
     await runWindows(run, opened, progress);
   } catch (error) {
+    if (run.signal?.aborted === true && error instanceof GitSourceError && error.cause instanceof GitRunnerError) {
+      // The caller's stop killed a git command: the run ends like a spent budget, keeping what it applied.
+      progress.stopped = true;
+      progress.notice("run_budget_exhausted");
+      return finishRun(run, opened.receipt, progress, null);
+    }
     failure = error instanceof BrainStoreError && error.code === "conflict" ? await conflictCode(run) : errorCodeOf(error);
     console.warn("[brain-git] sync failed", { code: failure });
   }
@@ -401,9 +411,9 @@ async function syncWithReceipt(run: SyncRun): Promise<GitSyncResult> {
 
 /**
  * Syncs one git source (brain_sources.kind "git") from the checkout at
- * repoPath into the store. Bounded per run by limits.commitsPerRun and
- * limits.runBudgetMs; a result with nextAction "run_again" has more history
- * to apply. Never rejects.
+ * repoPath into the store. Bounded per run by limits.commitsPerRun,
+ * limits.runBudgetMs and the signal, which also kills a running git command;
+ * a result with nextAction "run_again" has more history to apply. Never rejects.
  */
 export async function syncGitSource(options: GitSyncOptions): Promise<GitSyncResult> {
   try {
