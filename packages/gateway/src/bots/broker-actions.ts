@@ -253,7 +253,7 @@ export function createBotBrokerActions(deps: {
           executionGeneration: request.data.executionGeneration,
           action: request.data.action,
           modelId,
-        }), { ...deps.inference, runSignal });
+        }), { ...deps.inference, runSignal, consumeValidationSend: candidate => deps.registry.consumeValidationSend(candidate) });
       }
       const parsed = BotBrokerRequestSchema.safeParse(raw);
       if (!parsed.success) return undefined;

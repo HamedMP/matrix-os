@@ -138,7 +138,7 @@ it("logs a bounded dispatch exception name without its message, cause, or arbitr
   expect(warn).toHaveBeenCalledExactlyOnceWith("[managed-pi] run failed", { stage: "worker_dispatch", error: "UnknownError" });
 });
 
-it("passes the already prepared canonical Agent prompt to Pi exactly once", async () => {
+it.each([false, true])("passes canonical Agent prompt and trusted funded output cap (enabled=%s)", async enabled => {
   const snapshot = makeAiProviderSnapshot();
   const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
   const context: ChatRunContext = { version: 1, requestHash: "a".repeat(64), chats: [],
@@ -149,10 +149,12 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
   const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: OWNER, chatId: "chat_prompt",
     runId: "run_prompt", runtimeHandle: `runtime_${"f".repeat(32)}`, executionGeneration: "1",
     workspace: { kind: "chat_workspace" }, rootFingerprint: "f".repeat(64), ...resolved,
-    capabilities: ["artifact.read"], requestClass: "interactive" };
+    capabilities: ["artifact.read"], requestClass: "interactive", ...(enabled ? { validationLimits: { version: 1 as const, maxOutputTokens: 256 as const, maxInferenceRequests: 1 as const, maxRequestBytes: 131072 as const, validThrough: new Date(Date.now() + 600000).toISOString() } } : {}) };
   const release = vi.fn(async () => undefined);
   const host = { client: { runBot: async () => {
     const spec = await runtime.runs.loadRunSpec(binding);
+    expect(spec.route.maxOutputTokens).toBe(enabled ? 256 : resolved.route.maxOutputTokens);
+    expect(spec).not.toHaveProperty("validationLimits");
     expect(spec.turn).toEqual({ kind: "prompt", text: prompt });
     return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 0, sessionRevision: 1 } };
   } } } as unknown as ScopeRuntimeHost;

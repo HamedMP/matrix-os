@@ -16,6 +16,7 @@ import {
   type BotToolCapability,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { ManagedPiValidationLimitsSchema, parseManagedPiValidationLimits, type ManagedPiValidationLimits } from "../chat/managed-pi-validation-limits.js";
 import {
   BotCredentialAccessSourceIdSchema,
   type BotCredentialAccessSourceId,
@@ -50,6 +51,8 @@ export interface BotRuntimeBinding {
 
 export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
   kind: "managed_chat";
+  /** Gateway-admitted owner file snapshot; never supplied by the worker. */
+  validationLimits?: ManagedPiValidationLimits;
   workspace: { kind: "chat_workspace" } | import("../chat/execution-root.js").ChatExecutionRootProvenance;
 }
 export type PiRuntimeBinding = BotRuntimeBinding | ManagedPiRuntimeBinding;
@@ -57,7 +60,7 @@ export function isManagedPiBinding(binding: PiRuntimeBinding): binding is Manage
   return "kind" in binding && binding.kind === "managed_chat";
 }
 export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
-type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController };
+type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController; validationSends: number };
 
 export class BotRuntimeRegistryError extends Error {
   constructor(readonly code: "capacity_exceeded" | "invalid_binding") {
@@ -85,6 +88,7 @@ const BindingSchema = z.object({
 
 const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
   kind: z.literal("managed_chat"),
+  validationLimits: ManagedPiValidationLimitsSchema.optional(),
   workspace: z.union([
     z.object({ kind: z.literal("chat_workspace") }).strict(),
     z.object({ ref: z.union([
@@ -124,12 +128,16 @@ export class BotRuntimeRegistry {
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
+    if ("validationLimits" in parsed.data && parsed.data.validationLimits) {
+      if (parsed.data.accessSourceId !== "matrix_included") throw new BotRuntimeRegistryError("invalid_binding");
+      parsed.data.validationLimits = parseManagedPiValidationLimits(parsed.data.validationLimits, this.now());
+    }
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");
     }
     this.entries.get(parsed.data.runtimeHandle)?.inference.abort();
-    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController() });
+    this.entries.set(parsed.data.runtimeHandle, { ...parsed.data, expiresAt: this.now() + this.ttlMs, inference: new AbortController(), validationSends: 0 });
   }
 
   /** The binding for a frame's runtime and generation; a stale generation never matches. */
@@ -140,7 +148,8 @@ export class BotRuntimeRegistry {
     this.sweep();
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
-    const { expiresAt: _expiresAt, inference: _inference, ...binding } = entry;
+    const { expiresAt: _expiresAt, inference: _inference, validationSends: _validationSends, ...binding } = entry;
+    void _validationSends;
     return binding;
   }
 
@@ -155,6 +164,19 @@ export class BotRuntimeRegistry {
     const binding = this.lookupRun(input);
     if (!binding || binding.ownerId !== input.ownerId || binding.chatId !== input.chatId) return null;
     return this.entries.get(binding.runtimeHandle)!.inference.signal;
+  }
+
+  /** Synchronous spend immediately before actual HTTP transport. Unknown outcomes
+   * and capacity refusals retain their slot; continuation and summary share it. */
+  consumeValidationSend(input: PiInferenceIdentity): boolean {
+    const binding = this.lookupRun(input);
+    if (!binding || binding.ownerId !== input.ownerId || binding.chatId !== input.chatId) return false;
+    const entry = this.entries.get(binding.runtimeHandle)!;
+    if (entry.inference.signal.aborted) return false;
+    if (!isManagedPiBinding(entry) || !entry.validationLimits) return true;
+    if (Date.parse(entry.validationLimits.validThrough) <= this.now() || entry.validationSends >= entry.validationLimits.maxInferenceRequests) return false;
+    entry.validationSends += 1;
+    return true;
   }
 
   /** Stop inference immediately, retaining terminal event/session authority until release. */

@@ -28,7 +28,8 @@ import {
   readBoundedBody,
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
-import type { PiRuntimeBinding } from "./runtime-registry.js";
+import { constrainManagedPiValidationBody } from "../chat/managed-pi-validation-limits.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -44,6 +45,8 @@ const BotInferenceBodySchema = z.object({
 
 export interface BotInferenceDependencies {
   homePath: string;
+  /** Registry-owned one-send guard; evaluated synchronously immediately before fetch. */
+  consumeValidationSend?: (binding: PiRuntimeBinding) => boolean;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   lifetime: AbortSignal;
@@ -102,8 +105,11 @@ export async function forwardBotInference(
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
+  let requestBody = request.body;
+  const validationLimits = isManagedPiBinding(binding) && binding.accessSourceId === "matrix_included" ? binding.validationLimits : undefined;
   try {
-    modelId = BotInferenceBodySchema.parse(JSON.parse(request.body)).model;
+    if (validationLimits) requestBody = constrainManagedPiValidationBody(request.action, request.body, validationLimits);
+    modelId = BotInferenceBodySchema.parse(JSON.parse(requestBody)).model;
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
       console.warn("[bots] inference validation failed:", error instanceof Error ? error.name : "UnknownError");
@@ -176,10 +182,11 @@ export async function forwardBotInference(
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!stillAuthorized()) return "denied";
+      if (validationLimits && !deps.consumeValidationSend?.(binding)) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
-        body: request.body,
+        body: requestBody,
         redirect: "error",
         signal: AbortSignal.any([lifecycle, AbortSignal.timeout(
           accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,

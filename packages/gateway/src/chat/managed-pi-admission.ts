@@ -9,6 +9,7 @@ import type { BotExecutor } from "../bots/repositories/shared.js";
 import type { ResolvedBotRoute } from "../bots/route-resolver.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
 import { resolveManagedPiPlan, resolveManagedPiAnthropic, sameManagedPiRoute } from "./managed-pi-route.js";
+import { readManagedPiValidationLimits } from "./managed-pi-validation-limits.js";
 import { managedPiWorkspace } from "./managed-pi-workspace.js";
 
 export function createManagedPiAdmission(deps: {
@@ -87,6 +88,8 @@ export function createManagedPiAdmission(deps: {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
       const row = await authority(input);
       await assertSource(row, input.ownerId, input.resolved);
+      const validationLimits = input.resolved.accessSourceId === "matrix_included"
+        ? await readManagedPiValidationLimits(deps.homePath) : undefined;
       let root: { path: string; fingerprint: string }; let workspaceRef: ManagedPiRuntimeBinding["workspace"];
       if (row.execution_root) {
         const ref = CanonicalChatExecutionRootRefSchema.parse(typeof row.execution_root === "string" ? JSON.parse(row.execution_root) : row.execution_root);
@@ -110,6 +113,7 @@ export function createManagedPiAdmission(deps: {
       const binding: ManagedPiRuntimeBinding = { runtimeHandle: runtime.runtimeHandle, executionGeneration: runtime.executionGeneration,
         kind: "managed_chat", ownerId: input.ownerId, chatId: input.chatId,
         runId: input.runId, workspace: workspaceRef, rootFingerprint: root.fingerprint, route: input.resolved.route,
+        ...(validationLimits ? { validationLimits } : {}),
         accessSourceId: input.resolved.accessSourceId, ...(input.resolved.subscription ? { subscription: input.resolved.subscription } : {}), ...(input.resolved.anthropicApi ? { anthropicApi: input.resolved.anthropicApi } : {}), capabilities, requestClass: "interactive" };
       try { deps.registry.bind(binding); }
       catch (error: unknown) { await deps.host.client.stopRuntime({ runtimeHandle: runtime.runtimeHandle }); throw error; }

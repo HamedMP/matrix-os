@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rename, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
@@ -107,5 +107,26 @@ it('fences edited persisted source/options before a previously bound owner run c
     options: [{ id: 'accountId', value: 'forged' }] } }).where('id', '=', input.runId).execute();
   await expect(admission.toolAuthority(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
   await expect(admission.workspace(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
+  await admission.release(binding.runtimeHandle);
+});
+
+// An unsafe owner profile never creates a funded worker or changes its authority.
+it("refuses a malformed fixed validation profile before creating a funded runtime", async () => {
+  const { admission, input, home, createRuntime } = await setup();
+  await mkdir(join(home, "system"));
+  await writeFile(join(home, "system/managed-pi-validation.json"), "{", { mode: 0o600 });
+  await expect(admission.admit(input)).rejects.toThrow("Managed Chat validation unavailable");
+  expect(createRuntime).not.toHaveBeenCalled();
+});
+it.skipIf(process.platform !== "linux")("snapshots validated limits once and deletion cannot widen the bound run", async () => {
+  const { admission, input, home, registry } = await setup();
+  await mkdir(join(home, "system"));
+  const profile = { version: 1, maxOutputTokens: 256, maxInferenceRequests: 1, maxRequestBytes: 131072, validThrough: new Date(Date.now() + 600000).toISOString() };
+  await writeFile(join(home, "system/managed-pi-validation.json"), JSON.stringify(profile), { mode: 0o600 });
+  const binding = await admission.admit(input);
+  await rm(join(home, "system/managed-pi-validation.json"));
+  expect(registry.lookupRun(binding)).toMatchObject({ validationLimits: profile });
+  expect(registry.consumeValidationSend(binding)).toBe(true);
+  expect(registry.consumeValidationSend(binding)).toBe(false);
   await admission.release(binding.runtimeHandle);
 });
