@@ -26,6 +26,7 @@ describe("AppearanceSection", () => {
   const invoke = vi.fn();
 
   beforeEach(() => {
+    invoke.mockClear();
     useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: true, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
     vi.stubGlobal("operator", {
       invoke,
@@ -94,6 +95,32 @@ describe("AppearanceSection", () => {
     expect(useAppearance.getState().themeId).toBe("matrix");
     await act(async () => { fireEvent.keyDown(screen.getByRole("radio", { name: "Use Matrix theme" }), { key: "ArrowUp" }); });
     expect(useAppearance.getState().themeId).toBe(unifiedThemes.at(-1)?.id);
+  });
+
+  it("keeps keyboard focus through a pending save and blocks extra selections", async () => {
+    let finishSave!: (value: { ok: boolean }) => void;
+    invoke.mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+    renderSection();
+    const matrix = screen.getByRole("radio", { name: "Use Matrix theme" });
+    matrix.focus();
+    await act(async () => { fireEvent.keyDown(matrix, { key: "ArrowRight" }); });
+
+    const operator = screen.getByRole("radio", { name: "Use Operator theme" });
+    expect(useAppearance.getState().pending).toBe(true);
+    expect(operator).toHaveProperty("disabled", false);
+    expect(operator.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(operator);
+    fireEvent.keyDown(operator, { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("radio", { name: "Use Dracula theme" }));
+    expect(document.activeElement).toBe(operator);
+    expect(invoke).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finishSave({ ok: true }); });
+    expect(document.activeElement).toBe(operator);
+    expect(operator.getAttribute("aria-disabled")).toBe("false");
+    await act(async () => { fireEvent.keyDown(operator, { key: "ArrowRight" }); });
+    await act(async () => { finishSave({ ok: true }); });
+    expect(useAppearance.getState().themeId).toBe("matrix-neon");
   });
 
   it("switches the mode through the store", async () => {
