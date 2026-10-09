@@ -1,0 +1,12 @@
+{
+  "packages/brand/src/MatrixBootScreen.tsx": "228418d25750b98ccd7e3270917ec85aef6bb6bd107f35922ace77ba1c7e237a",
+  "packages/brand/src/boot-mark.ts": "cdd0a8f85698525e4b839aef3e41e18ed3e57af3bc0f6a35dfab4b59638eb807",
+  "packages/brand/src/boot-screen.ts": "deec60957cd436d762d50cce2607ce824cc332a0fa9aab10aff0bbc8bddaa515",
+  "packages/brand/src/index.ts": "098cc9cd07c76094b7754b72da435c9c8fd72395d4dae0b3d66367b5e9420485",
+  "packages/brand/src/marks.ts": "9429bf13161e1430472ca891dcfcd871a679d583ec4ebf5276695c57e9fdf00f",
+  "packages/brand/src/primitives.tsx": "2960f86f4fb7a425679e7c0e73a2ac9c5a15f076290341ad1f281426171a1947",
+  "packages/brand/src/tokens.ts": "85f76174262ab8d6bc293c1b8689e313bd9915dc354be1b51c2fee9ef620dc21",
+  "packages/utilities-runtime/package.json": "025dfb7df4ced55dfeb48a552a9e1ebbf87aa473e1dee0268772dea6c5297124",
+  "pnpm-lock.yaml": "93e3afe690b97a7e4d91cdf753a2968ace52feed05236b5739081aa6a14677ef",
+  "scripts/build-utilities-app.mjs": "3857150b0b37dd27e184527910024f44f06e190618c481738c555af6971bd5c9"
+}

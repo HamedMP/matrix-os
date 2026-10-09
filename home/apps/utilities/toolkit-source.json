@@ -1,0 +1,322 @@
+{
+  "repository": "FinnaAI/matrix-os-site",
+  "revision": "e6b41375a6817731495ca9238c5ef576889b8cbd",
+  "dirty": false,
+  "adaptations": [
+    "relative imports and app assets",
+    "no website analytics",
+    "ephemeral audio session"
+  ],
+  "files": [
+    {
+      "path": "src/vendor/lib/agents.mjs",
+      "source": "src/lib/free-tools/agents.mjs",
+      "sourceSha256": "e4da4cbb14f3da9c86e65eb3e5ac404005b51704194011b0cd0c49e8c253f706",
+      "sha256": "e4da4cbb14f3da9c86e65eb3e5ac404005b51704194011b0cd0c49e8c253f706"
+    },
+    {
+      "path": "src/vendor/lib/audio-session.mjs",
+      "source": "src/lib/free-tools/audio-session.mjs",
+      "sourceSha256": "8e05f9f295732ff9cf32c4a36c59b3e8aded846526d5dd9520a48d7393082686",
+      "sha256": "fd6d14649f116440e30fcbe64a0a4702d5cc095fbbd1b5be755b34395fdf08c7"
+    },
+    {
+      "path": "src/vendor/lib/audio-tools.mjs",
+      "source": "src/lib/free-tools/audio-tools.mjs",
+      "sourceSha256": "b50ea9ba48e81f32d53be9f0ba8e84e8de9d72629930f082a1a06dbc2fabf480",
+      "sha256": "b50ea9ba48e81f32d53be9f0ba8e84e8de9d72629930f082a1a06dbc2fabf480"
+    },
+    {
+      "path": "src/vendor/lib/audio-worker.mjs",
+      "source": "src/lib/free-tools/audio-worker.mjs",
+      "sourceSha256": "3f0c2408ca3f64d4c2ce98d6e6cc92add8d779d2bc665c83e205d16026bd0b9f",
+      "sha256": "3f0c2408ca3f64d4c2ce98d6e6cc92add8d779d2bc665c83e205d16026bd0b9f"
+    },
+    {
+      "path": "src/vendor/lib/catalog.mjs",
+      "source": "src/lib/free-tools/catalog.mjs",
+      "sourceSha256": "39fc7651e19090901f8b68b131f01578607da07497b5d3424906d57eeed2705f",
+      "sha256": "39fc7651e19090901f8b68b131f01578607da07497b5d3424906d57eeed2705f"
+    },
+    {
+      "path": "src/vendor/lib/code-sandbox.mjs",
+      "source": "src/lib/free-tools/code-sandbox.mjs",
+      "sourceSha256": "3d251611a08638f530ce703aace9076dcdd58f74a53dc892c8e215275536d808",
+      "sha256": "3d251611a08638f530ce703aace9076dcdd58f74a53dc892c8e215275536d808"
+    },
+    {
+      "path": "src/vendor/lib/collaboration.mjs",
+      "source": "src/lib/free-tools/collaboration.mjs",
+      "sourceSha256": "85456c8fa14d28651bd188c86ac6517e35293b15189798ddda35425a9d94f447",
+      "sha256": "85456c8fa14d28651bd188c86ac6517e35293b15189798ddda35425a9d94f447"
+    },
+    {
+      "path": "src/vendor/lib/developer.mjs",
+      "source": "src/lib/free-tools/developer.mjs",
+      "sourceSha256": "32845b2878cdc84f4a23aa1f05f8071f21a815135708f57aa938371e38c03e04",
+      "sha256": "32845b2878cdc84f4a23aa1f05f8071f21a815135708f57aa938371e38c03e04"
+    },
+    {
+      "path": "src/vendor/lib/diagnostics.mjs",
+      "source": "src/lib/free-tools/diagnostics.mjs",
+      "sourceSha256": "307b6ee3b1903f78aff7c95f5ff7e94f37f4db5f8416dadef1c33de7d02f5f40",
+      "sha256": "307b6ee3b1903f78aff7c95f5ff7e94f37f4db5f8416dadef1c33de7d02f5f40"
+    },
+    {
+      "path": "src/vendor/lib/editor-tools.mjs",
+      "source": "src/lib/free-tools/editor-tools.mjs",
+      "sourceSha256": "42e5742323c4edf54b5aeeac90e7f068f07f874eccdf2dfc74f0a2dadcbfd93c",
+      "sha256": "42e5742323c4edf54b5aeeac90e7f068f07f874eccdf2dfc74f0a2dadcbfd93c"
+    },
+    {
+      "path": "src/vendor/lib/engine.mjs",
+      "source": "src/lib/free-tools/engine.mjs",
+      "sourceSha256": "c1d579dd3158466a71b63246030bdf0cb10f9a064f8850d64cf5599af3c5bccb",
+      "sha256": "c1d579dd3158466a71b63246030bdf0cb10f9a064f8850d64cf5599af3c5bccb"
+    },
+    {
+      "path": "src/vendor/lib/extra-tools.mjs",
+      "source": "src/lib/free-tools/extra-tools.mjs",
+      "sourceSha256": "fb4337b8159a71194ab403389047994d6114221392d9aed7660a9c07c63d78da",
+      "sha256": "fb4337b8159a71194ab403389047994d6114221392d9aed7660a9c07c63d78da"
+    },
+    {
+      "path": "src/vendor/lib/faqs.mjs",
+      "source": "src/lib/free-tools/faqs.mjs",
+      "sourceSha256": "276d285655385fe343b61eea59cf6974e906b7b5961b29e1f98542d5ac6fcf72",
+      "sha256": "276d285655385fe343b61eea59cf6974e906b7b5961b29e1f98542d5ac6fcf72"
+    },
+    {
+      "path": "src/vendor/lib/image-caption-config.mjs",
+      "source": "src/lib/free-tools/image-caption-config.mjs",
+      "sourceSha256": "d331d4da04a28ac5101a8d4fa960b0be177845f8c9114c71db352431d2ed91e2",
+      "sha256": "d331d4da04a28ac5101a8d4fa960b0be177845f8c9114c71db352431d2ed91e2"
+    },
+    {
+      "path": "src/vendor/lib/image-caption.mjs",
+      "source": "src/lib/free-tools/image-caption.mjs",
+      "sourceSha256": "d5ae3572ddae7304b9bf0255cc5a5cbb0d82ea97259f41040fdd8b200b78baa3",
+      "sha256": "d5ae3572ddae7304b9bf0255cc5a5cbb0d82ea97259f41040fdd8b200b78baa3"
+    },
+    {
+      "path": "src/vendor/lib/image-caption.worker.mjs",
+      "source": "src/lib/free-tools/image-caption.worker.mjs",
+      "sourceSha256": "2d2b077e86dc4cb2855c1442d266c26d643295c1f4ac06fed13b29ac26249fa1",
+      "sha256": "2d2b077e86dc4cb2855c1442d266c26d643295c1f4ac06fed13b29ac26249fa1"
+    },
+    {
+      "path": "src/vendor/lib/image-model-config.mjs",
+      "source": "src/lib/free-tools/image-model-config.mjs",
+      "sourceSha256": "7126b35a74e23b7aec31b16d725caeaf52895705c6347ee15ee67561024a50a4",
+      "sha256": "7126b35a74e23b7aec31b16d725caeaf52895705c6347ee15ee67561024a50a4"
+    },
+    {
+      "path": "src/vendor/lib/image-model.worker.mjs",
+      "source": "src/lib/free-tools/image-model.worker.mjs",
+      "sourceSha256": "28afcfe305ff7adcf69d55a60c18300ed279c2aadb809bd249decfefd5acba13",
+      "sha256": "28afcfe305ff7adcf69d55a60c18300ed279c2aadb809bd249decfefd5acba13"
+    },
+    {
+      "path": "src/vendor/lib/image-super-resolution-config.mjs",
+      "source": "src/lib/free-tools/image-super-resolution-config.mjs",
+      "sourceSha256": "4026e0ec11834dbcd16be66bec1d7921bc7c908029ed89a0d4d625c395b5c312",
+      "sha256": "4026e0ec11834dbcd16be66bec1d7921bc7c908029ed89a0d4d625c395b5c312"
+    },
+    {
+      "path": "src/vendor/lib/image-super-resolution.mjs",
+      "source": "src/lib/free-tools/image-super-resolution.mjs",
+      "sourceSha256": "f3b8507b57c1075530f4e8ebb6ca5b7bcb9368907b99a636e2be8315647b9f1a",
+      "sha256": "f3b8507b57c1075530f4e8ebb6ca5b7bcb9368907b99a636e2be8315647b9f1a"
+    },
+    {
+      "path": "src/vendor/lib/image-super-resolution.worker.mjs",
+      "source": "src/lib/free-tools/image-super-resolution.worker.mjs",
+      "sourceSha256": "6396b90f389558220df3f014ad6f27a12fa589ba5a1fa7920630c2a069ea62f3",
+      "sha256": "6396b90f389558220df3f014ad6f27a12fa589ba5a1fa7920630c2a069ea62f3"
+    },
+    {
+      "path": "src/vendor/lib/image-tools.mjs",
+      "source": "src/lib/free-tools/image-tools.mjs",
+      "sourceSha256": "e551dcabd6aef28fa6019f62290737e0f57b211c2bf0582452fc1a8007e33503",
+      "sha256": "cb1c47f14ffa2b424c7f36bafd03bb653bfa1e96dcc828abd2cd3b4b5c0862b7"
+    },
+    {
+      "path": "src/vendor/lib/local-ai-worker.mjs",
+      "source": "src/lib/free-tools/local-ai-worker.mjs",
+      "sourceSha256": "4b04e39584c47b13d52ecffb1dcbcaab7b51494d8c988e4a9855ad8e183f107d",
+      "sha256": "4b04e39584c47b13d52ecffb1dcbcaab7b51494d8c988e4a9855ad8e183f107d"
+    },
+    {
+      "path": "src/vendor/lib/local-ai.mjs",
+      "source": "src/lib/free-tools/local-ai.mjs",
+      "sourceSha256": "8804cc00469cf928221de124c03e930e0effbfcf893820d7ef20599af420f4b4",
+      "sha256": "8804cc00469cf928221de124c03e930e0effbfcf893820d7ef20599af420f4b4"
+    },
+    {
+      "path": "src/vendor/lib/pdf-extract.mjs",
+      "source": "src/lib/free-tools/pdf-extract.mjs",
+      "sourceSha256": "746769404c39a1d7df1f5bbc92339cc427e2b734541820e7ea34d12023404078",
+      "sha256": "746769404c39a1d7df1f5bbc92339cc427e2b734541820e7ea34d12023404078"
+    },
+    {
+      "path": "src/vendor/lib/pdf-podcast-fetch.mjs",
+      "source": "src/lib/free-tools/pdf-podcast-fetch.mjs",
+      "sourceSha256": "b4099df454ffe948f743c6c5870f1a75a51f0647d2a9b62d73c062d07aea4c30",
+      "sha256": "b4099df454ffe948f743c6c5870f1a75a51f0647d2a9b62d73c062d07aea4c30"
+    },
+    {
+      "path": "src/vendor/lib/pdf-podcast.mjs",
+      "source": "src/lib/free-tools/pdf-podcast.mjs",
+      "sourceSha256": "93eea1ba431c334ed93a916def9783e4c79434f28198c741c2e17095ad430754",
+      "sha256": "93eea1ba431c334ed93a916def9783e4c79434f28198c741c2e17095ad430754"
+    },
+    {
+      "path": "src/vendor/lib/pdf-podcast.worker.mjs",
+      "source": "src/lib/free-tools/pdf-podcast.worker.mjs",
+      "sourceSha256": "e1961a40b0a290e7b7db71982547397f60820d816781fa9045dc6e803123657e",
+      "sha256": "e1961a40b0a290e7b7db71982547397f60820d816781fa9045dc6e803123657e"
+    },
+    {
+      "path": "src/vendor/lib/pdf-render.mjs",
+      "source": "src/lib/free-tools/pdf-render.mjs",
+      "sourceSha256": "87a780736b0b15a06c3d5895edf70c67ef88c33d5d88d792cf8ef9a534aec2dd",
+      "sha256": "87a780736b0b15a06c3d5895edf70c67ef88c33d5d88d792cf8ef9a534aec2dd"
+    },
+    {
+      "path": "src/vendor/lib/pdf-signature.mjs",
+      "source": "src/lib/free-tools/pdf-signature.mjs",
+      "sourceSha256": "2c53770bb1cc4aa2d16b29be4fc76d1f4bcccf34c6121daf1ee3fe047ec6550c",
+      "sha256": "2c53770bb1cc4aa2d16b29be4fc76d1f4bcccf34c6121daf1ee3fe047ec6550c"
+    },
+    {
+      "path": "src/vendor/lib/pdf-tools.mjs",
+      "source": "src/lib/free-tools/pdf-tools.mjs",
+      "sourceSha256": "378b665017c0d9a9f128cecc1095457d764bf7d9ec0d9b74e57d6db11775cd4b",
+      "sha256": "378b665017c0d9a9f128cecc1095457d764bf7d9ec0d9b74e57d6db11775cd4b"
+    },
+    {
+      "path": "src/vendor/lib/seo.mjs",
+      "source": "src/lib/free-tools/seo.mjs",
+      "sourceSha256": "bfdb2fd9ce61ae12d1a138aae8a2075efae7e078aef7c6c141896392a3fcd466",
+      "sha256": "bfdb2fd9ce61ae12d1a138aae8a2075efae7e078aef7c6c141896392a3fcd466"
+    },
+    {
+      "path": "src/vendor/lib/shared.mjs",
+      "source": "src/lib/free-tools/shared.mjs",
+      "sourceSha256": "b3f6cd4d8e2060471bc712d04136b999ee7436ade1babe88dc195332514b0141",
+      "sha256": "b3f6cd4d8e2060471bc712d04136b999ee7436ade1babe88dc195332514b0141"
+    },
+    {
+      "path": "src/vendor/lib/speech-worker.mjs",
+      "source": "src/lib/free-tools/speech-worker.mjs",
+      "sourceSha256": "33c78a9d1634ca3b7468a2cc5da0a7adf119356c9b7e8bb60fba29b1ae95356f",
+      "sha256": "33c78a9d1634ca3b7468a2cc5da0a7adf119356c9b7e8bb60fba29b1ae95356f"
+    },
+    {
+      "path": "src/vendor/lib/telemetry.mjs",
+      "source": "src/lib/free-tools/telemetry.mjs",
+      "sourceSha256": "70c49d890e91770bc3a8b13e35d559eae4cb46762844d811497dee0c5a0b79a8",
+      "sha256": "70c49d890e91770bc3a8b13e35d559eae4cb46762844d811497dee0c5a0b79a8"
+    },
+    {
+      "path": "src/vendor/lib/tool-icons.mjs",
+      "source": "src/lib/free-tools/tool-icons.mjs",
+      "sourceSha256": "1f006170ee852b43671c84122cf87ec6de207e8d1ce5afcc07c0e2736ee3434e",
+      "sha256": "1f006170ee852b43671c84122cf87ec6de207e8d1ce5afcc07c0e2736ee3434e"
+    },
+    {
+      "path": "src/vendor/lib/workflow-tools.mjs",
+      "source": "src/lib/free-tools/workflow-tools.mjs",
+      "sourceSha256": "06b7bd39fa88cce6f318cde9e1b726d5d53a47cf06b9cb4b0fe24bd2a1934ef5",
+      "sha256": "06b7bd39fa88cce6f318cde9e1b726d5d53a47cf06b9cb4b0fe24bd2a1934ef5"
+    },
+    {
+      "path": "src/vendor/lib/workspace-tools.mjs",
+      "source": "src/lib/free-tools/workspace-tools.mjs",
+      "sourceSha256": "dc6c21fa27ea0d2b42af95a1618f823e1519dfe67d5839eb3c13f8a1184c5b2c",
+      "sha256": "dc6c21fa27ea0d2b42af95a1618f823e1519dfe67d5839eb3c13f8a1184c5b2c"
+    },
+    {
+      "path": "src/vendor/lib/writing.mjs",
+      "source": "src/lib/free-tools/writing.mjs",
+      "sourceSha256": "6b8d88ca63f820cd07b2559f91723c63f3a246e91be489ea18783c3be45f6428",
+      "sha256": "6b8d88ca63f820cd07b2559f91723c63f3a246e91be489ea18783c3be45f6428"
+    },
+    {
+      "path": "src/vendor/workspaces/AudioWorkspace.tsx",
+      "source": "src/app/tools/AudioWorkspace.tsx",
+      "sourceSha256": "75919a3b5b2c9012c5e7bb3095a0b40b91f95c4771a73c332ed5e399f29a78bc",
+      "sha256": "6293f91a9c31ada9e25f47fc9797a201a27fdb9430c407c6c294784f4062989c"
+    },
+    {
+      "path": "src/vendor/workspaces/CollaborationWorkspace.tsx",
+      "source": "src/app/tools/CollaborationWorkspace.tsx",
+      "sourceSha256": "79718521c7772f8185f98a1d8e12f08bddb22ad66d82dbc581c35560bba449e8",
+      "sha256": "2affbaaadb3543022ef60c5155e8b02fa162e465df1caacd10d59707e193bf2a"
+    },
+    {
+      "path": "src/vendor/workspaces/EditorWorkspace.tsx",
+      "source": "src/app/tools/EditorWorkspace.tsx",
+      "sourceSha256": "00e5d58fd1db92f17a728f34445c8e4636fb5ff93aadcd4e8e15ebc63be82174",
+      "sha256": "fb0782c6f086500b544af4d80600e103ed1655237db67e6a144a8563545c41ca"
+    },
+    {
+      "path": "src/vendor/workspaces/ExtraWorkspace.tsx",
+      "source": "src/app/tools/ExtraWorkspace.tsx",
+      "sourceSha256": "2b87546e27d8e74ca0903dd109cac35089514b81069232d1d07369b806b091f9",
+      "sha256": "8402fc819ef5d350f3ce2e5732e8902eb1118fe4f0b63bc32f88d701de52b691"
+    },
+    {
+      "path": "src/vendor/workspaces/ImageWorkspace.tsx",
+      "source": "src/app/tools/ImageWorkspace.tsx",
+      "sourceSha256": "f9bacb4bbe77bf2dd897859c0f46a0348c4eae637e18e5607028d3e57bff5635",
+      "sha256": "f1721500d3f0d4a4011c3aefcc8d343aa34179ecff82b4b48c27fb0ce580dd45"
+    },
+    {
+      "path": "src/vendor/workspaces/LocalAiWorkspace.tsx",
+      "source": "src/app/tools/LocalAiWorkspace.tsx",
+      "sourceSha256": "9e8d621f4ac412d48855e8228eb44343b25680f6f2e99282ec14c446324c95a2",
+      "sha256": "22ad7b6fcb82fb0f6be26bff665a892c804d6ba603cf0ddefdc5a37b164b0e02"
+    },
+    {
+      "path": "src/vendor/workspaces/PdfPodcastWorkspace.tsx",
+      "source": "src/app/tools/PdfPodcastWorkspace.tsx",
+      "sourceSha256": "0adcdbc0e717b4d2825cc575c68346bf352885e227a4902e45e9c9c4662123ec",
+      "sha256": "452c3b354ebc097ddca92173828cd9d95c9ea73b34c15d4ee57562e6cfcd896a"
+    },
+    {
+      "path": "src/vendor/workspaces/PdfRedactionPreview.tsx",
+      "source": "src/app/tools/PdfRedactionPreview.tsx",
+      "sourceSha256": "31b0153004be738e4971c8a812e470f6d45aef6c6dabda0ab38592eb998f5609",
+      "sha256": "07098376345d8a70188d338e2c932027f057b90806288ddf9b037431ef560d40"
+    },
+    {
+      "path": "src/vendor/workspaces/PdfSignatureWorkspace.tsx",
+      "source": "src/app/tools/PdfSignatureWorkspace.tsx",
+      "sourceSha256": "5fd1a9577cd254f70236ccb09f1b1ba3eae3fb49d26de90e5ba572bb9d963cfd",
+      "sha256": "8d593d38dce664b65ba22e319fefe7522b1859f38bccb0db4838e8f8c4ef1ec4"
+    },
+    {
+      "path": "src/vendor/workspaces/PdfWorkspace.tsx",
+      "source": "src/app/tools/PdfWorkspace.tsx",
+      "sourceSha256": "b7a1236b43ce97ebcd6837973d852113319661d02b13fd50f886f34ed6a2a16a",
+      "sha256": "8ed162b0d455e12be7a96a8589c78ca5037441429013f2dd58f2dae5e1000198"
+    },
+    {
+      "path": "src/vendor/workspaces/ToolWorkspace.tsx",
+      "source": "src/app/tools/ToolWorkspace.tsx",
+      "sourceSha256": "315e9bbfb24c81a2ecc73c0bb2eb73c2eef83cfaee85ab2abeba7c65b6ea2415",
+      "sha256": "dfca36451a0d962b4a17ea8fa66d09f684fcb7858608f692c03d6d33fab3c311"
+    },
+    {
+      "path": "src/vendor/workspaces/WorkflowWorkspace.tsx",
+      "source": "src/app/tools/WorkflowWorkspace.tsx",
+      "sourceSha256": "cf0c77dbd0e57e24198349f1656963ef53b297b0e55081ab9a07d71f285d131a",
+      "sha256": "2ff6871cf825a0bf4f55961fa14dc4e097bca15d624636abde8ac14e1fe6bdc4"
+    },
+    {
+      "path": "src/vendor/runtime/telemetry.ts",
+      "sha256": "5d2fd6e1e18d58d01eb4421d183acaf250850e9a6aaa4963bb6d1a3369c9f55d"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "Utilities",
+  "description": "A searchable folder of private tools for text, files, images, audio, and development",
+  "runtime": "vite",
+  "category": "utilities",
+  "icon": "utilities",
+  "author": "system",
+  "version": "1.0.0",
+  "slug": "utilities",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "build": {
+    "install": "true",
+    "command": "node build.mjs",
+    "output": "dist",
+    "timeout": 300,
+    "sourceGlobs": [
+      "src/**",
+      "public/**",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "build.mjs",
+      "build-inputs.json",
+      "toolkit-source.json"
+    ]
+  }
+}
