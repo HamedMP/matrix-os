@@ -101,3 +101,17 @@ describe('appearance review regressions', () => {
     expect(styles['&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection'].backgroundColor).toBe(e.selection);
   });
 });
+
+describe('custom editor and legacy mode review', () => {
+  it('keeps syntax visible on custom active lines and selections with opposing panel colors', () => {
+    const e = customizeVariant(getThemeVariant('matrix', 'dark'), { background: '#ffffff', surface: '#000000', text: '#000000' }).editor;
+    for (const key of ['foreground', 'keyword', 'string', 'comment', 'number', 'function', 'type', 'operator', 'variable', 'property'] as const) {
+      for (const background of [e.background, e.lineHighlight, e.selection]) expect(contrastRatio(e[key], background), `${key} on ${background}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+  it('uses all channels to infer a colored legacy background and retains its light colors', () => {
+    const legacy = { name: 'mint', colors: { background: '#70ffb0', card: '#ffffff', foreground: '#111111' }, fonts: { sans: 'Inter' } };
+    expect(appearanceFromWebTheme(legacy).mode).toBe('light');
+    expect(updateWebTheme(legacy, { mode: 'light' }).colors.background).toBe('#70ffb0');
+  });
+});

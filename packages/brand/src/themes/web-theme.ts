@@ -1,4 +1,5 @@
 import { getThemeVariant, FONT_OPTIONS, MONO_FONT_OPTIONS, RETIRED_THEME_IDS } from './index.js';
+import { legacyThemeMode } from './customization.js';
 import { themeSemantics } from './semantics.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance, type AppearancePreferences } from './preferences.js';
 
@@ -37,7 +38,7 @@ export function buildWebTheme(input: AppearancePreferences = DEFAULT_APPEARANCE,
 /** Preserve older file themes when opening the new controls or changing a font. */
 export function appearanceFromWebTheme(theme: { name: string; mode?: 'light' | 'dark'; colors: Record<string, string>; fonts: Record<string, string>; appearance?: AppearancePreferences }): AppearancePreferences {
   if (theme.appearance) return normalizeAppearance(theme.appearance);
-  const mode = theme.mode ?? (theme.colors.background && parseInt(theme.colors.background.slice(1, 3), 16) < 128 ? 'dark' : 'light');
+  const mode = theme.mode ?? legacyThemeMode(theme.colors.background ?? '#ffffff');
   if ((RETIRED_THEME_IDS as readonly string[]).includes(theme.name)) return normalizeAppearance({ mode });
   const baseThemeId = theme.name === 'matrix' ? 'matrix-neon' : ['nord', 'dracula'].includes(theme.name) ? theme.name : 'matrix';
   const colors = Object.fromEntries(Object.entries({ background: theme.colors.background, surface: theme.colors.card, text: theme.colors.foreground, accent: theme.colors.primary, border: theme.colors.border }).filter(([, value]) => typeof value === 'string' && /^#[\da-f]{6}$/i.test(value)));
