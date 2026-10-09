@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, type ReactNode,
+} from "react";
 import { ExternalLink, PanelLeft } from "lucide-react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../chat-agents/client.js";
@@ -54,13 +56,15 @@ const PROMPT_DETAIL = "Answers come only from this project's brain, with a link 
 /** A project with no sources reads like the routes' own git_source_missing answer. */
 const NO_SOURCES: BrainShellErrorState = { kind: "rejected", code: "git_source_missing" };
 
-function ChatNotice({ text, onOpenSearch, onOpenSources }: {
+function ChatNotice({ text, onOpenSearch, onOpenSources, onCheckAgain }: {
   readonly text: string; readonly onOpenSearch?: () => void; readonly onOpenSources?: () => void;
+  readonly onCheckAgain?: () => void;
 }) {
   return (
     <div className="p-4">
       <BrainEmpty title={text}>
         {onOpenSources && <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>}
+        {onCheckAgain && <BrainButton size="sm" variant="outline" onClick={onCheckAgain}>Check again</BrainButton>}
         {onOpenSearch && <BrainButton size="sm" variant="outline" onClick={onOpenSearch}>Open Search</BrainButton>}
       </BrainEmpty>
     </div>
@@ -85,17 +89,25 @@ type BotProps = Omit<BrainChatProps, "host"> & { readonly host: BrainChatHost };
 
 /**
  * What stands in for a new chat while the brain is off, or the project has no sources yet: a question could then only
- * get "I could not find that". Null when a new chat can be asked. Saved chats open either way.
+ * get "I could not find that". Null when a new chat can be asked. Saved chats open either way. While no source is
+ * connected, the sources load again when the window gets focus or on Check again, so one connected elsewhere unblocks.
  */
 function useDraftNotice(api: BrainShellClient, projectId: string, onOpenSources: () => void): ReactNode {
   const sources = useBrainLoad(() => api.sources(projectId), "sources");
   const state = sources.state;
+  const missing = state.status === "ready" && (!Array.isArray(state.data.items) || state.data.items.length === 0);
+  const onFocus = useEffectEvent(() => { if (missing) sources.reload(); });
+  useEffect(() => {
+    const listener = () => onFocus();
+    window.addEventListener("focus", listener);
+    return () => window.removeEventListener("focus", listener);
+  }, []);
   if (state.status === "loading" || state.status === "idle") return <BrainLoading label="Checking the project's sources..." />;
   if (state.status === "error") {
     return <div className="p-4"><BrainError error={state.error} onRetry={sources.reload} onOpenSources={onOpenSources} /></div>;
   }
-  if (!Array.isArray(state.data.items) || state.data.items.length === 0) {
-    return <ChatNotice text={brainErrorText(NO_SOURCES)} onOpenSources={onOpenSources} />;
+  if (missing) {
+    return <ChatNotice text={brainErrorText(NO_SOURCES)} onOpenSources={onOpenSources} onCheckAgain={sources.reload} />;
   }
   return null;
 }
@@ -163,23 +175,45 @@ function BrainChatSetup({ starting, onStart }: { readonly starting: "idle" | "bu
 interface Opened { readonly key: string; readonly chatId: string | null; readonly title: string | null; readonly slot: number }
 type BrainThreads = ReturnType<typeof useBrainThreads>;
 
+function opening(key: string, record: CanonicalChatRecord | null, slot: number): Opened {
+  return { key, chatId: record?.chat.id ?? null, title: record?.chat.title ?? null, slot };
+}
+
+/**
+ * The chat to open first once the list loads: the remembered one if a loaded page has it, else the newest, else null
+ * (a draft). A remembered chat opened through Show more is on a later page, so while `choosing` the later pages load
+ * ("searching") until it is found, the list ends or reaches its cap, or a page fails.
+ */
+function useFirstPick(threads: BrainThreads, projectId: string, choosing: boolean): CanonicalChatRecord | null | "searching" {
+  const remembered = choosing ? readRemembered(brainChatStorageKey(projectId), "chat") : "";
+  const found = remembered === "" ? undefined : threads.items.find((record) => record.chat.id === remembered);
+  const searching = remembered !== "" && found === undefined && threads.nextCursor !== null && threads.moreError === null;
+  const { loadingMore } = threads;
+  const loadMore = useEffectEvent(() => threads.loadMore());
+  useEffect(() => {
+    if (searching && !loadingMore) loadMore();
+  }, [searching, loadingMore]);
+  return searching ? "searching" : found ?? threads.items[0] ?? null;
+}
+
 /**
  * Which chat the slot shows, decided here for every surface. Opening order, once per Bot and project: the chat this
- * viewer had open last if it is still listed, else the one with the newest activity (the same on every surface), else
- * a draft. A list that fails to load opens a draft. The open chat is remembered, the first pick included. A new slot
- * number remounts the surface's chat view; a draft that becomes a thread keeps it.
+ * viewer had open last if it is still listed (on any page up to the list cap), else the one with the newest activity
+ * (the same on every surface), else a draft. A list that fails to load opens a draft. The open chat is remembered, the
+ * first pick included. A new slot number remounts the surface's chat view; a draft that becomes a thread keeps it.
  */
 function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string, threads: BrainThreads) {
   const key = `${botId}:${projectId}`;
   const [opened, setOpened] = useState<Opened | null>(null);
-  // One thread per draft: a second call for the same draft gets the same answer.
-  const creating = useRef<{ slot: number; promise: Promise<CanonicalChatRecord> } | null>(null);
+  // One thread per draft: a second call for the same draft gets the same answer, and a send after a failure keeps the
+  // draft's first request id, so a thread saved before its answer was lost is replayed, not made twice.
+  const creating = useRef<{
+    slot: number; clientRequestId: string; promise: Promise<CanonicalChatRecord> | null;
+  } | null>(null);
   const firstStatus = threads.first.state.status;
-  if (opened?.key !== key && (firstStatus === "ready" || firstStatus === "error")) {
-    const remembered = readRemembered(brainChatStorageKey(projectId), "chat");
-    const pick = threads.items.find((record) => record.chat.id === remembered) ?? threads.items[0];
-    setOpened({ key, chatId: pick?.chat.id ?? null, title: pick?.chat.title ?? null, slot: (opened?.slot ?? 0) + 1 });
-  }
+  const choosing = opened?.key !== key && (firstStatus === "ready" || firstStatus === "error");
+  const pick = useFirstPick(threads, projectId, choosing);
+  if (choosing && pick !== "searching") setOpened(opening(key, pick, (opened?.slot ?? 0) + 1));
   const current = opened?.key === key ? opened : null;
   const openChatId = current?.chatId ?? null;
   useEffect(() => {
@@ -187,9 +221,10 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
   }, [openChatId, projectId]);
   const slotNumber = current?.slot ?? 0;
   const { reload } = threads;
-  const open = (record: CanonicalChatRecord | null) => setOpened((value) => ({
-    key, chatId: record?.chat.id ?? null, title: record?.chat.title ?? null, slot: (value?.slot ?? 0) + 1,
-  }));
+  const open = (record: CanonicalChatRecord | null) => setOpened((value) => opening(key, record, (value?.slot ?? 0) + 1));
+  // A delete settles later: it moves the viewer only if the deleted chat is still the one open by then.
+  const closeDeleted = (chatId: string, next: () => CanonicalChatRecord | null) => setOpened((value) => (
+    value?.key === key && value.chatId === chatId ? opening(key, next(), value.slot + 1) : value));
   // The view of this slot now shows `chatId`; the list reloads so it sorts and dates the chat like the server does.
   const shown = useCallback((chatId: string | null, title: string | undefined) => {
     setOpened((value) => (value?.key === key && value.slot === slotNumber ? {
@@ -198,16 +233,19 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
     reload();
   }, [key, reload, slotNumber]);
   const createChat = useCallback((input: { readonly clientRequestId: string; readonly title: string }) => {
-    if (creating.current?.slot === slotNumber) return creating.current.promise;
+    const draft = creating.current?.slot === slotNumber ? creating.current : null;
+    if (draft?.promise) return draft.promise;
+    const clientRequestId = draft?.clientRequestId ?? input.clientRequestId;
     const bots = host.agents.bots;
     const promise = bots
-      ? bots.threads.create(botId, { clientRequestId: input.clientRequestId, projectId, title: input.title })
+      ? bots.threads.create(botId, { clientRequestId, projectId, title: input.title })
       : Promise.reject(new Error("BotsUnavailable"));
-    creating.current = { slot: slotNumber, promise };
+    const entry = { slot: slotNumber, clientRequestId, promise };
+    creating.current = entry;
     promise.then(
-      (record) => { if (creating.current?.promise === promise) shown(record.chat.id, record.chat.title); },
-      // A failed create may be sent again (the server replays the same request id).
-      () => { if (creating.current?.promise === promise) creating.current = null; },
+      (record) => { if (creating.current === entry) shown(record.chat.id, record.chat.title); },
+      // A failed create may be sent again; the same request id lets the server replay a thread it already saved.
+      () => { if (creating.current === entry) creating.current = { slot: slotNumber, clientRequestId, promise: null }; },
     );
     return promise;
   }, [botId, host.agents, projectId, shown, slotNumber]);
@@ -215,7 +253,7 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
     if (chatId === null) creating.current = null;
     shown(chatId, title);
   }, [shown]);
-  return { key, current, open, createChat, onChatChanged };
+  return { key, current, open, closeDeleted, createChat, onChatChanged };
 }
 
 /**
@@ -247,21 +285,24 @@ function BrainChatThreads({
 }: BotProps & { readonly botId: string }) {
   const threads = useBrainThreads(host.agents, botId, projectId);
   const draftNotice = useDraftNotice(api, projectId, onOpenSources);
-  const { key, current, open, createChat, onChatChanged } = useBrainChatSlot(host, botId, projectId, threads);
+  const { key, current, open, closeDeleted, createChat, onChatChanged } = useBrainChatSlot(host, botId, projectId, threads);
   const [listOpen, setListOpen] = useState(false);
   const [edits, setEdits] = useState<LocalEdits>(() => new Map());
   const pending = pendingEdits(edits, threads.items);
   if (pending !== edits) setEdits(pending);
-  const toggle = useRef<HTMLButtonElement>(null);
-  const listId = useId();
-  if (threads.notRunning) return <ChatNotice text={NOT_RUNNING} onOpenSearch={onOpenSearch} />;
-  if (current === null) return <BrainLoading label="Loading chats..." />;
-  const { chatId } = current;
   const items = threads.items.flatMap((record) => {
     const edit = pending.get(record.chat.id);
     if (edit === null) return [];
     return [edit === undefined ? record : { ...record, chat: { ...record.chat, title: edit } }];
   });
+  // The list as it is when a delete settles, to pick the chat that opens in place of the deleted one.
+  const listedNow = useRef(items);
+  useLayoutEffect(() => { listedNow.current = items; }, [items]);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const listId = useId();
+  if (threads.notRunning) return <ChatNotice text={NOT_RUNNING} onOpenSearch={onOpenSearch} />;
+  if (current === null) return <BrainLoading label="Loading chats..." />;
+  const { chatId } = current;
   const listed = items.find((record) => record.chat.id === chatId)?.chat.title;
   const title = chatId === null ? "New chat" : listed ?? current.title ?? "Chat";
   const closeList = () => {
@@ -283,7 +324,7 @@ function BrainChatThreads({
         onRenamed={(id, value) => edit(id, value)}
         onDeleted={(id) => {
           edit(id, null);
-          if (id === chatId) open(items.find((record) => record.chat.id !== id) ?? null);
+          closeDeleted(id, () => listedNow.current.find((record) => record.chat.id !== id) ?? null);
         }} />
       <div className="flex min-h-0 min-w-0 flex-col">
         <div className={`flex min-h-11 items-center gap-2 border-b px-2 ${BRAIN_TONE.border}`}>

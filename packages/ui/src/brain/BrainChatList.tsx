@@ -174,7 +174,14 @@ export function BrainChatList({
             <BrainChatRow key={record.chat.id} record={record} current={record.chat.id === chatId} now={now}
               actions={actions} onOpen={() => onOpen(record)}
               onRenamed={(title) => onRenamed(record.chat.id, title)}
-              onDeleted={() => { onDeleted(record.chat.id); newChat.current?.focus(); }} />
+              onDeleted={() => {
+                onDeleted(record.chat.id);
+                // The row goes away; focus moves to New chat unless the viewer moved it out of the list meanwhile.
+                const focused = document.activeElement;
+                if (focused === null || focused === document.body || container.current?.contains(focused)) {
+                  newChat.current?.focus();
+                }
+              }} />
           ))}
         </ul>
       )}
