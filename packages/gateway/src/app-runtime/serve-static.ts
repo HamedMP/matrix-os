@@ -11,6 +11,7 @@ const APP_STATIC_CSP = [
   "base-uri 'none'",
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline'",
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",

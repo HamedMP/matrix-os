@@ -11,6 +11,7 @@ import { basename, dirname, extname, join, relative } from "node:path";
 import { existsSync } from "node:fs";
 import {
   isDeniedFileApiPath,
+  isDeniedFileApiMutationPath,
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
@@ -100,14 +101,14 @@ export async function fileRename(
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
   const lexicalFrom = resolveWithinHome(homePath, from);
   const resolvedTo = resolveWritableFileApiPath(homePath, to);
-  if (!lexicalFrom || !resolvedTo || isDeniedFileApiPath(homePath, from)) return { ok: false, error: "Invalid path" };
+  if (!lexicalFrom || !resolvedTo || isDeniedFileApiMutationPath(homePath, from) || isDeniedFileApiMutationPath(homePath, to)) return { ok: false, error: "Invalid path" };
 
   if (!existsSync(lexicalFrom)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
 
   const resolvedFrom = resolveExistingFileApiPath(homePath, from);
-  if (!resolvedFrom || !resolvedTo || isDeniedFileApiPath(homePath, from) || isDeniedFileApiPath(homePath, to)) return { ok: false, error: "Invalid path" };
+  if (!resolvedFrom) return { ok: false, error: "Invalid path" };
 
   if (existsSync(resolvedTo)) {
     return { ok: false, error: "Destination already exists", status: 409 };
@@ -131,14 +132,14 @@ export async function fileCopy(
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
   const lexicalFrom = resolveWithinHome(homePath, from);
   const resolvedTo = resolveWritableFileApiPath(homePath, to);
-  if (!lexicalFrom || !resolvedTo || isDeniedFileApiPath(homePath, from)) return { ok: false, error: "Invalid path" };
+  if (!lexicalFrom || !resolvedTo || isDeniedFileApiMutationPath(homePath, from) || isDeniedFileApiMutationPath(homePath, to)) return { ok: false, error: "Invalid path" };
 
   if (!existsSync(lexicalFrom)) {
     return { ok: false, error: "Source not found", status: 404 };
   }
 
   const resolvedFrom = resolveExistingFileApiPath(homePath, from);
-  if (!resolvedFrom || !resolvedTo || isDeniedFileApiPath(homePath, from) || isDeniedFileApiPath(homePath, to)) return { ok: false, error: "Invalid path" };
+  if (!resolvedFrom) return { ok: false, error: "Invalid path" };
 
   if (existsSync(resolvedTo)) {
     return { ok: false, error: "Destination already exists", status: 409 };
@@ -160,7 +161,7 @@ export async function fileDuplicate(
   requestedPath: string,
 ): Promise<{ ok: boolean; newPath?: string; error?: string; status?: number }> {
   const lexicalSource = resolveWithinHome(homePath, requestedPath);
-  if (!lexicalSource || isDeniedFileApiPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
+  if (!lexicalSource || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   if (!existsSync(lexicalSource)) {
     return { ok: false, error: "Source not found", status: 404 };
