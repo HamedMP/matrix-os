@@ -17,8 +17,8 @@ import {
 } from "./config.js";
 import { loadMatrixConfig, saveMatrixConfig } from "./database.js";
 import {
-  fileStillPresent, isGoneError, readTextFile, realHomeDirectory, rootDirectory, walkFiles, type WalkBudget,
-  type WalkEntry,
+  fileStillPresent, isGoneError, readTextFile, realHomeDirectory, rootDirectory, walkFiles, type SweepReads,
+  type WalkBudget, type WalkEntry,
 } from "./files-walk.js";
 import {
   MatrixPageDraft, cleanText, decodeMatrixCursor, encodeMatrixCursor, firstRef, fitBody, guardRead,
@@ -53,15 +53,16 @@ function pathTitle(relativePath: string): string {
   return `...${/^[\uDC00-\uDFFF]/.test(tail) ? tail.slice(1) : tail}`;
 }
 
-/** Whether a stored path is still inside a root, of a selected extension, within the depth bound and not secret-like. */
-function selectedPath(config: BrainMatrixFilesSourceConfig, relativePath: string): boolean {
+/** The root of a stored path still inside one, of a selected extension, within the depth bound and not secret-like. */
+function selectedRoot(config: BrainMatrixFilesSourceConfig, relativePath: string): string | null {
   const root = config.roots.find((candidate) => relativePath.startsWith(`${candidate}/`));
-  if (root === undefined) return false;
+  if (root === undefined) return null;
   const below = relativePath.slice(root.length + 1).split("/");
   const extension = extensionOf(below[below.length - 1]!);
   const refused = (name: string) => isSkippedName(name) || isSecretLikeName(name);
-  return below.length <= BRAIN_MATRIX_LIMITS.fileDepthMax && !below.some(refused)
+  const selected = below.length <= BRAIN_MATRIX_LIMITS.fileDepthMax && !below.some(refused)
     && extension !== null && config.extensions.includes(extension);
+  return selected ? root : null;
 }
 
 interface ScanState { bytes: number }
@@ -120,6 +121,7 @@ async function scan(context: Context, homePath: string, cursor: Extract<FilesCur
     const budget: WalkBudget = {
       entries, reads, position: after, pathBytes: BRAIN_REF_VALUE_MAX_BYTES - Buffer.byteLength(root, "utf8") - 1,
       truncated: () => draft.notices.add("items_truncated"),
+      secretSkipped: () => draft.notices.add("secret_skipped"),
     };
     const directory = await rootDirectory(realHome, root);
     if (directory !== null) {
@@ -150,12 +152,14 @@ export function createMatrixFilesAdapter(homePath: string): BrainSourceAdapter<B
       if (cursor.phase === "scan") return scan(context, homePath, cursor);
       const draft = new MatrixPageDraft(context);
       const realHome = await realHomeDirectory(homePath);
+      // Folder size checks share the scan's per-page read budget; the step ends early once it is spent.
+      const reads: SweepReads = { left: BRAIN_MATRIX_LIMITS.dirReadsPerPage, fits: new Map() };
       const after = await sweepStep(context, draft, cursor.after, async ({ documentId, refs }) => {
         const path = firstRef(refs, "file");
         if (path === null || matrixDocumentId(KIND, context.externalRef, [path]) !== documentId) return false;
-        if (!selectedPath(context.config, path)) return false;
-        return fileStillPresent(realHome, path, context.config.maxFileBytes);
-      });
+        const root = selectedRoot(context.config, path);
+        return root !== null && fileStillPresent(realHome, root, path, context.config.maxFileBytes, reads);
+      }, () => reads.left <= 0);
       const next: FilesCursor = after === null ? START : { v: 1, phase: "sweep", after };
       return draft.page(encodeMatrixCursor(CURSOR_PREFIX, next), after === null);
     }),

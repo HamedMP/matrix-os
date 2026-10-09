@@ -12,7 +12,7 @@ import {
   bootstrapBrainMatrixDatabase, createBrainMatrixFilesHandler,
 } from "../../packages/gateway/src/brain/sources/matrix/index.js";
 import {
-  cutUtf8, decodeMatrixCursor, documentTitle, guardRead, isoInstant, resumeIndex,
+  cutUtf8, decodeMatrixCursor, documentTitle, encodeMatrixCursor, guardRead, isoInstant, resumeIndex,
 } from "../../packages/gateway/src/brain/sources/matrix/shared.js";
 import { parseChatConfig } from "../../packages/gateway/src/brain/sources/matrix/config.js";
 import { BRAIN_MATRIX_LIMITS } from "../../packages/gateway/src/brain/sources/matrix/types.js";
@@ -160,7 +160,7 @@ describe("matrix sources shared pieces", () => {
     faults.lstat.set(join(home, "docs/a.md"), io());
     await expect(readTextFile(join(home, "docs/a.md"), 10)).rejects.toThrow("io");
     faults.realpath.set(join(home, "docs"), io());
-    await expect(fileStillPresent(home, "docs/a.md", 10)).rejects.toThrow("io");
+    await expect(fileStillPresent(home, "docs", "docs/a.md", 10, { left: 10, fits: new Map() })).rejects.toThrow("io");
     await expect(run()).rejects.toThrow("io");
     faults.realpath.clear();
     faults.lstat.clear();
@@ -183,7 +183,7 @@ describe("matrix sources shared pieces", () => {
     const listing: FakeListing = { entries: [...hidden, { name: "z.md", kind: "file" }], read: 0 };
     faults.listings.set(join(home, "docs"), listing);
     const truncated = vi.fn();
-    const budget: WalkBudget = { entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated };
+    const budget: WalkBudget = { entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated, secretSkipped: vi.fn() };
     const found: string[] = [];
     for await (const entry of walkFiles(join(home, "docs"), [], null, budget)) found.push(entry.path);
     expect(found).toEqual([]);
@@ -218,6 +218,38 @@ describe("matrix sources shared pieces", () => {
     const rest = await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config);
     expect(rest).toMatchObject({ caughtUp: true, written: folders.length - first.written });
     expect(await liveTitles(harness, sourceId)).toEqual(folders.map((folder) => `docs/${folder}/x.md`));
+
+    // The sweep reads the same folders to check their size, within the same budget per page.
+    const cursor = (await harness.repository.getSyncCursor(matrixScope, sourceId))!.cursor;
+    const sweep = encodeMatrixCursor("mf1:", { v: 1, phase: "sweep", after: null });
+    await harness.repository.applySyncBatch(matrixScope, { sourceId, expectedCursor: cursor, nextCursor: sweep, upserts: [], deletions: [] });
+    for (const listing of listings) listing.read = 0;
+    const sweepPage = await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config, { maxPages: 1 });
+    expect(sweepPage).toMatchObject({ caughtUp: false, deleted: 0 });
+    expect(read()).toBeLessThanOrEqual(dirReadsPerPage + max);
+    expect(await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config)).toMatchObject({ caughtUp: true, deleted: 0 });
+  });
+
+  it("leaves out a folder over the entry bound whole and sweeps the documents of its files", async () => {
+    const max = BRAIN_MATRIX_LIMITS.dirEntriesMax;
+    mkdirSync(join(home, "docs/sub"), { recursive: true });
+    writeFileSync(join(home, "docs/a.md"), "a");
+    writeFileSync(join(home, "docs/sub/b.md"), "b");
+    const adapter = createMatrixFilesAdapter(home);
+    const config = { roots: ["docs"], extensions: ["md"], maxFileBytes: 1_000 };
+    const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:x");
+    const run = () => runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config);
+    expect(await run()).toMatchObject({ caughtUp: true, written: 2 });
+    // sub grows past the bound with b.md read last: a capped read would never see b.md again and keep its old text.
+    const hidden = (count: number) => Array.from({ length: count }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    faults.listings.set(join(home, "docs/sub"), { entries: [...hidden(max), { name: "b.md", kind: "file" }], read: 0 });
+    writeFileSync(join(home, "docs/sub/b.md"), "b changed");
+    expect(await run()).toMatchObject({ caughtUp: true, written: 0, deleted: 1, notices: ["items_truncated"] });
+    expect(await liveTitles(harness, sourceId)).toEqual(["docs/a.md"]);
+    // Back at the bound, the folder is walked and kept again.
+    faults.listings.set(join(home, "docs/sub"), { entries: [...hidden(max - 1), { name: "b.md", kind: "file" }], read: 0 });
+    expect(await run()).toMatchObject({ caughtUp: true, written: 1, deleted: 0, notices: [] });
+    expect(await liveTitles(harness, sourceId)).toEqual(["docs/a.md", "docs/sub/b.md"]);
   });
 
   it("reads a file to its end when a read returns fewer bytes than asked", async () => {
@@ -235,7 +267,9 @@ describe("matrix sources shared pieces", () => {
     for (const name of ["a.md", "b.md"]) writeFileSync(join(home, "docs/sub", name), name);
     const outside = realpathSync(mkdtempSync(join(tmpdir(), "brain-matrix-outside-")));
     writeFileSync(join(outside, "b.md"), "OUTSIDE SECRET");
-    const budget: WalkBudget = { entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated: () => undefined };
+    const budget: WalkBudget = {
+      entries: 10, reads: 100_000, pathBytes: 1_000, position: null, truncated: () => undefined, secretSkipped: () => undefined,
+    };
     const texts: string[] = [];
     try {
       // The walk lists docs/sub, then the folder becomes a symlink to a folder outside home before b.md is read.

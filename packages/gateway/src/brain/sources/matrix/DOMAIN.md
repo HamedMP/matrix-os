@@ -47,7 +47,8 @@ Ids are `sha256(JSON.stringify([version, externalRef, ...tail]))`, never of cont
 - Secret-like names (`isSecretLikeName` in `config.ts`: words such as `secrets`, `credentials`, `token`, `api-key`,
   `service-account` between `.`, `_`, `-` or the ends, and `.pem`, `.key`, `.p12`, `.pfx`, `.keystore`, `.jks`) are
   never read: such folders are not walked, such files count as skipped, a root may not hold one, and the sweep
-  tombstones earlier documents under them. Files whose text holds a private key, a cloud or chat token or a service
+  tombstones earlier documents under them. A folder over 5,000 entries is left out whole (`items_truncated`), and the
+  sweep tombstones documents under it too. Files whose text holds a private key, a cloud or chat token or a service
   account key (`isSecretLikeText`) are skipped the same way. Both add the run notice `secret_skipped`. This keeps
   credentials out of brain search and the agent read tools.
 - Bounds: a files page reads at most 16 MiB of file content (binary files count; a file that does not fit waits for

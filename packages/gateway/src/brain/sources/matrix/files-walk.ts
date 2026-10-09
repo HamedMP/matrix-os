@@ -1,8 +1,9 @@
 /**
  * Matrix files source: where files may be read and how. A root is accepted only when its real path is exactly
  * `<real home>/<root>` (no symlink anywhere on the way) and is a directory. The walk never follows a symlink, skips
- * hidden names, node_modules and folders with a secret-like name, visits names in code-unit order and can resume
- * after any root-relative path. A file is opened with O_NOFOLLOW and must be the same regular file at the moment it is
+ * hidden names, node_modules, folders with a secret-like name and folders over dirEntriesMax entries (left out whole,
+ * never a subset that depends on read order), visits names in code-unit order and can resume after any root-relative
+ * path. A file is opened with O_NOFOLLOW and must be the same regular file at the moment it is
  * read, with its parent still inside the root, within the size bound and the page's remaining read budget, valid utf8
  * and free of NUL bytes.
  */
@@ -68,24 +69,28 @@ export interface WalkBudget {
   /** The last entry whose visit is complete (a file handled by the caller, or a directory entered). */
   position: readonly string[] | null;
   readonly truncated: () => void;
+  /** A folder with a secret-like name was passed without being read. */
+  readonly secretSkipped: () => void;
 }
 
 export interface WalkEntry { readonly segments: readonly string[]; readonly path: string }
 
 async function sortedEntries(directory: string, budget: WalkBudget) {
-  const entries: { name: string; kind: "file" | "directory" }[] = [];
+  const entries: { name: string; kind: "file" | "directory" | "secret" }[] = [];
   // Every entry read counts, skipped ones too, so no folder is read past dirEntriesMax.
   let examined = 0;
   // The async iterator closes the directory when the loop ends, breaks or throws.
   for await (const entry of await opendir(directory, { bufferSize: 64 })) {
     if (examined >= BRAIN_MATRIX_LIMITS.dirEntriesMax) {
+      // Left out whole, as the sweep's folderFits check expects: no file of it stays stale past the sweep.
       budget.truncated();
+      entries.length = 0;
       break;
     }
     examined += 1;
     if (isSkippedName(entry.name)) continue;
     if (entry.isFile()) entries.push({ name: entry.name, kind: "file" });
-    else if (entry.isDirectory() && !isSecretLikeName(entry.name)) entries.push({ name: entry.name, kind: "directory" });
+    else if (entry.isDirectory()) entries.push({ name: entry.name, kind: isSecretLikeName(entry.name) ? "secret" : "directory" });
   }
   // The page pays for the whole folder, so many folders full of skipped names cannot outrun its read budget.
   budget.reads -= examined;
@@ -114,13 +119,16 @@ export async function* walkFiles(
     const order = after === null ? 1 : compareSegments(segments, after);
     const onPath = after !== null && after.length > segments.length
       && compareSegments(after.slice(0, segments.length), segments) === 0;
-    if (!onPath && (order < 0 || (order === 0 && entry.kind === "file"))) continue;
+    if (!onPath && (order < 0 || (order === 0 && entry.kind !== "directory"))) continue;
     // Entries before the resume point cost a comparison only, so every page makes progress. A folder is read only
     // after this check, so a page reads at most one folder past dirReadsPerPage.
     if (budget.entries <= 0 || budget.reads <= 0) return;
     budget.entries -= 1;
     const path = join(directory, entry.name);
-    if (Buffer.byteLength(segments.join("/"), "utf8") > budget.pathBytes) {
+    if (entry.kind === "secret") {
+      budget.secretSkipped();
+      budget.position = segments;
+    } else if (Buffer.byteLength(segments.join("/"), "utf8") > budget.pathBytes) {
       budget.truncated();
       budget.position = segments;
     } else if (entry.kind === "file") {
@@ -182,14 +190,40 @@ export async function readTextFile(path: string, maxBytes: number, roomBytes = m
   }
 }
 
-/** Whether a stored file ref still names a readable regular file inside its root (the sweep check). */
-export async function fileStillPresent(realHome: string, relativePath: string, maxBytes: number): Promise<boolean> {
+/** One sweep page's folder checks: directory entries it may still read and the answers so far. */
+export interface SweepReads { left: number; readonly fits: Map<string, boolean> }
+
+/** Whether a folder holds at most dirEntriesMax entries (the walk leaves a larger one out); reads at most one more. */
+async function folderFits(directory: string, reads: SweepReads): Promise<boolean> {
+  const known = reads.fits.get(directory);
+  if (known !== undefined) return known;
+  let count = 0;
+  for await (const _entry of await opendir(directory, { bufferSize: 64 })) {
+    count += 1;
+    if (count > BRAIN_MATRIX_LIMITS.dirEntriesMax) break;
+  }
+  reads.left -= count;
+  reads.fits.set(directory, count <= BRAIN_MATRIX_LIMITS.dirEntriesMax);
+  return count <= BRAIN_MATRIX_LIMITS.dirEntriesMax;
+}
+
+/**
+ * Whether a stored file ref still names a readable regular file inside its root (the sweep check), with no folder
+ * from the root down over dirEntriesMax entries, so the sweep drops what the walk no longer reaches.
+ */
+export async function fileStillPresent(
+  realHome: string, root: string, relativePath: string, maxBytes: number, reads: SweepReads,
+): Promise<boolean> {
   const segments = relativePath.split("/");
   const parent = join(realHome, ...segments.slice(0, -1));
   try {
     if ((await realpath(parent)) !== parent) return false;
     const stats = await lstat(join(parent, segments[segments.length - 1]!));
-    return stats.isFile() && stats.size <= maxBytes;
+    if (!stats.isFile() || stats.size > maxBytes) return false;
+    for (let depth = root.split("/").length; depth < segments.length; depth += 1) {
+      if (!(await folderFits(join(realHome, ...segments.slice(0, depth)), reads))) return false;
+    }
+    return true;
   } catch (error: unknown) {
     if (isGoneError(error)) return false;
     throw error;
