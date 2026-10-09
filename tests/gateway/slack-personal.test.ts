@@ -28,6 +28,21 @@ describe("durable private Slack personal transport",()=>{
   await service.receive(envelope);await service.drain();completed=true;sendReply.mockResolvedValueOnce({status:"uncertain"});await service.drain();await service.drain();expect(sendReply).toHaveBeenCalledTimes(1);
   expect((await db.selectFrom("slack_personal_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("uncertain");
  });
+ it("delivers a fixed failure notice once for the accepted run, including across restart",async()=>{
+  const readResult=vi.fn(async()=>({status:"failed" as const,requestingActorId:envelope.ownerId,runId:"run_private",text:"private raw provider failure"}));
+  const createFailed=()=>new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,sendReply,readResult});
+  service=createFailed();await service.receive(envelope);await service.drain();await service.close();service=createFailed();await service.drain();
+  expect(sendReply).toHaveBeenCalledTimes(1);
+  expect(sendReply).toHaveBeenCalledWith(expect.objectContaining({runId:"run_private",text:"I couldn’t finish your request. Please try again. If this keeps happening, check Agents & providers in Matrix."}));
+  expect((await db.selectFrom("slack_personal_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("sent");
+ });
+ it("revalidates the failed run before sending its fixed failure notice",async()=>{
+  const readResult=vi.fn().mockResolvedValueOnce({status:"failed",requestingActorId:envelope.ownerId,runId:"run_private"})
+   .mockResolvedValueOnce({status:"failed",requestingActorId:"user_other",runId:"run_private"});
+  service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,sendReply,readResult});
+  await service.receive(envelope);await service.drain();expect(sendReply).not.toHaveBeenCalled();
+  expect((await db.selectFrom("slack_personal_outbox").select("state").executeTakeFirstOrThrow()).state).toBe("failed");
+ });
  it("rejects a canonical result belonging to another actor or accepted run",async()=>{
   service=new SlackPersonalService({db,ownerId:envelope.ownerId,now:()=>now,resolvePersonalChat,submitPersonal,sendReply,readResult:async()=>({status:"completed",requestingActorId:"user_other",runId:"run_other",text:"Wrong private data"})});
   await service.receive(envelope);await service.drain();expect(sendReply).not.toHaveBeenCalled();

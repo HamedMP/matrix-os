@@ -66,6 +66,7 @@ describe("Matrix AI credit Cloud Run deployment", () => {
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+      SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
       IMAGE_DIGEST: "image@sha256:fixture", ...overrides } });
     const disabled = deploy({ MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false",
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false", MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false" });
@@ -146,6 +147,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+      SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
       IMAGE_DIGEST: "image@sha256:fixture", ...enabled,
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false" } });
     expect(deployed.status, deployed.stderr).toBe(0);
@@ -171,6 +173,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
       `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
         Object.keys(workflow.jobs.deploy.env).map((name) => [name, "fixture"])),
         WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+        SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
         IMAGE_DIGEST: "image@sha256:fixture", ...enabled } });
       expect(deployed.status, deployed.stderr).toBe(0);
       expect(deployed.stdout).toContain(`${key}=${enabled[key as keyof typeof enabled]}`);

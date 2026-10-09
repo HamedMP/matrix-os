@@ -76,6 +76,24 @@ describe("Slack app ingress", () => {
     expect(response.status).toBe(413);
     expect(api.exchangeCode).not.toHaveBeenCalled();
   });
+  it('hands a browser callback to session refresh without consuming its installation permit', async () => {
+    const callback = await startOAuth(); actor = null;
+    const response = await app.request(callback, { headers: { accept: 'text/html' } });
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('/slack/oauth/complete' + new URL(callback, config.publicBaseUrl).search);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+    actor = 'user_employee';
+    expect((await app.request(callback, { headers: { accept: 'application/json', authorization: 'Bearer refreshed-own-session' } })).status).toBe(200);
+  });
+  it('keeps invalid and non-browser callbacks unauthorized without forwarding credentials', async () => {
+    const callback = await startOAuth(); actor = null;
+    expect((await app.request(callback, { headers: { accept: 'application/json' } })).status).toBe(401);
+    expect((await app.request('/api/slack/oauth/callback?state=invalid&code=invalid', { headers: { accept: 'text/html' } })).status).toBe(401);
+    expect((await app.request(callback, { headers: { accept: 'text/html', authorization: 'Bearer invalid' } })).status).toBe(401);
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+  });
   it("rejects unsafe callback origins and authenticates events using the live default clock",async()=>{
     for(const publicBaseUrl of ["http://app.matrix-os.com","https://user@app.matrix-os.com","https://app.matrix-os.com/path","https://app.matrix-os.com?bad=1","https://app.matrix-os.com#bad"])
       expect(()=>makeApp({config:{...config,publicBaseUrl}})).toThrow("Slack public origin unavailable");
@@ -367,7 +385,12 @@ describe("Slack account-only setup", () => {
     expect(signedOut.headers.get("referrer-policy")).toBe("no-referrer");
     actor = "user_employee";
     const signedIn = await app.request(`/slack/link?token=${token}`);
-    expect(await signedIn.text()).toContain("Connect my Matrix");
+    const page = await signedIn.text();
+    expect(page).toContain("Connect your Slack account");
+    expect(page).toContain("Your private messages stay between this Slack account and your Matrix account.");
+    expect(page).toContain('aria-label="Matrix"');
+    expect(page).toContain("@media(max-width:640px)");
+    expect(page).toContain("Connect my Matrix");
     expect(signedIn.headers.get("content-security-policy")).toContain("script-src 'nonce-");
     expect((await app.request("/slack/link?token=%3Cscript%3E")).status).toBe(422);
   });
