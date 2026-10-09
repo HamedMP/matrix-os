@@ -34,7 +34,11 @@ function renderRecipes(visible = false) {
 describe("useBotRecipes create", () => {
   beforeEach(() => {
     jest.resetAllMocks();
-    mockInstantiateNativeBot.mockResolvedValue({ chatId: "chat_inbox" });
+    mockInstantiateNativeBot.mockResolvedValue({
+      agent: { id: "bot_inbox001", name: "Inbox triage", avatarSeed: "0123456789abcdef", revision: 1, status: "active" },
+      chatId: "chat_inbox",
+      operation: "created",
+    });
   });
 
   afterEach(() => {
@@ -44,7 +48,11 @@ describe("useBotRecipes create", () => {
   it("creates an agent from a template exactly as before when no name is given", async () => {
     const { result } = renderRecipes();
 
-    await expect(result.current.create(recipe, "req_abcdefgh", selection)).resolves.toBe("chat_inbox");
+    // Both ids: the agent's, to open its own screen, and its chat's.
+    await expect(result.current.create(recipe, "req_abcdefgh", selection)).resolves.toEqual({
+      agentId: "bot_inbox001",
+      chatId: "chat_inbox",
+    });
     await result.current.create(recipe, "req_ijklmnop");
 
     expect(mockInstantiateNativeBot).toHaveBeenNthCalledWith(1, "session-token", gatewayUrl, {

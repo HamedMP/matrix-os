@@ -6,17 +6,23 @@ import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 import type { AgentTemplate } from "./agent-templates";
 import { useCreationAttempt } from "./creation-attempt";
 
+/** A new agent, and the chat the server made for it. */
+export interface CreatedAgent {
+  agentId: string;
+  chatId: string;
+}
+
 interface CreateAgentOptions {
-  /** `useBotRecipes().create`. Resolves to the id of the new agent's chat. */
+  /** `useBotRecipes().create`. */
   create: (
     recipe: BotRecipeRef,
     clientRequestId: string,
     selection?: CanonicalChatModelSelection,
     name?: string,
-  ) => Promise<string>;
+  ) => Promise<CreatedAgent>;
   /** The account and computer the agent is created for. */
   scope: string;
-  onCreated: (chatId: string) => void;
+  onCreated: (created: CreatedAgent) => void;
 }
 
 /**
@@ -42,10 +48,10 @@ export function useCreateAgent({ create, scope, onCreated }: CreateAgentOptions)
     inFlight.current = true;
     setCreating(true);
     setFailed(false);
-    let chatId: string | null = null;
+    let created: CreatedAgent | null = null;
     try {
       // No model is chosen here: the computer picks the agent's model.
-      chatId = await create(
+      created = await create(
         { recipeId: template.recipeId, version: template.version },
         requestId,
         undefined,
@@ -53,13 +59,13 @@ export function useCreateAgent({ create, scope, onCreated }: CreateAgentOptions)
       );
       if (attempt.current?.requestId === requestId) attempt.current = null;
     } catch (failure: unknown) {
-      console.warn("[mobile-bots] Bot creation failed:", failure instanceof Error ? failure.name : "UnknownError");
+      console.warn("[mobile] agent creation failed", failure instanceof Error ? failure.name : "unknown");
       setFailed(true);
     } finally {
       inFlight.current = false;
       setCreating(false);
     }
-    if (chatId !== null) onCreated(chatId);
+    if (created !== null) onCreated(created);
   };
 
   return {

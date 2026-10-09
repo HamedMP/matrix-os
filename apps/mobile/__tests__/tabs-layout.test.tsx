@@ -172,6 +172,15 @@ describe("tabs layout", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 
+  it("is hidden on an agent's chat, and returns on the Agents list", () => {
+    renderTabBar(tabState("agents", { agents: { index: 1, routes: [{ name: "index" }, { name: "[agentId]" }] } }));
+    expect(screen.queryByRole("tab")).toBeNull();
+    cleanup();
+
+    renderTabBar(tabState("agents", { agents: { index: 0, routes: [{ name: "index" }] } }));
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
+  });
+
   it("is hidden on any other screen listed as taking the whole display", () => {
     hiddenRoutes["(apps)"] = ["files"];
 
@@ -185,7 +194,7 @@ describe("tabs layout", () => {
 
   it("gives the listed screens back to the app after a test has listed its own", () => {
     expect(TAB_BAR_HIDDEN_ROUTES).toEqual(realHiddenRoutes);
-    expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new"] });
+    expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new", "[agentId]"] });
   });
 
   it("is hidden on Android while the keyboard is open, and returns when it closes", () => {

@@ -354,16 +354,76 @@ describe("chat screen: open chat", () => {
 
     expect(screen.queryByTestId("result-card")).toBeNull();
   });
+});
 
-  it("shows an agent's chat with a fixed model and a plain message when its status cannot be loaded", () => {
-    openChat();
-    mockBotSnapshot = { agentId: "bot_abcdefgh", name: "Writer", revision: 2, interactions: [], tasks: [],
-      authority: { agentId: "bot_abcdefgh", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } } };
+// An agent's chat belongs to the Agents tab. One can still become the open
+// chat here, as from a side panel row: it is then an ordinary conversation.
+describe("chat screen: an agent's chat", () => {
+  const pendingApproval = {
+    interactionId: "in_abcdefgh", chatId: "chat_habits", agentId: "bot_abcdefgh", taskId: "task_abcdefgh",
+    kind: "approval", blocking: true, status: "pending", expiresAt: "2099-01-01T00:00:00.000Z", revision: 3,
+    payload: { kind: "approval", tool: "integration.call", argsDigest: "a".repeat(64),
+      account: { service: "slack", label: "Work" }, audience: "direct", preview: "Post the brief", policyRevision: 1 },
+  };
+
+  function openAgentChat(overrides: Record<string, unknown> = {}) {
+    openChat({ runs: [finishedRun], messages: [reply("Brief ready for your call.")] });
+    mockBotSnapshot = {
+      agentId: "bot_abcdefgh", name: "Writer", revision: 2, interactions: [pendingApproval],
+      tasks: [{ taskId: "task_abcdefgh", chatId: "chat_habits", agentId: "bot_abcdefgh", status: "waiting_person",
+        revision: 1, updatedAt: "2026-09-28T12:00:00.000Z" }],
+      authority: { agentId: "bot_abcdefgh", revision: 1,
+        grants: [{ grantId: "gr_abcdefgh", service: "gmail", accountLabel: "Work", effects: ["read"], audience: "direct", expiresAt: null }],
+        connections: [{ service: "gmail", state: "granted" }], routines: [], pendingInteractions: [],
+        memory: { items: [] } },
+      ...overrides,
+    };
+  }
+
+  it("shows the conversation without any of the agent's controls", () => {
+    openAgentChat();
+    render(<ChatScreen />);
+
+    expect(screen.getByText("Brief ready for your call.")).toBeTruthy();
+    for (const text of [
+      "Writer", "Your bot's Chat", "Access & memory", "Bot model", "Needs your approval", "Approval requested",
+      "Waiting for your answer", "Post the brief",
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
+    for (const label of ["Allow once", "Approve", "Deny", "Revoke Work", "Agent details"]) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
+  });
+
+  it("shows the model as fixed, with nothing to pick", () => {
+    openAgentChat();
+    render(<ChatScreen />);
+
+    expect(screen.getByText("Agent model")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
+  });
+
+  it("still sends, on the computer's agent route", () => {
+    openAgentChat();
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "Who is next?");
+
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+
+    expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: "chat_habits", text: "Who is next?",
+      selection: { instanceId: "matrix_bot_default", model: "auto" },
+      interactionMode: "default", permissionMode: "default",
+    }), expect.anything());
+  });
+
+  it("says nothing about the agent's status, which is no longer shown here, when it cannot be read", () => {
+    openAgentChat();
     mockBotError = true;
     render(<ChatScreen />);
 
-    expect(screen.getByText("Bot model")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
-    expect(screen.getByRole("alert").props.children).toBe("Bot status could not be loaded. Try again.");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Agent model")).toBeTruthy();
   });
 });

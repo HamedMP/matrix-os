@@ -18,12 +18,14 @@ export interface MessageListProps {
   renderRequest?: (message: TranscriptMessage) => ReactNode;
   /** Draws what belongs under a reply, such as its result cards. */
   renderResults?: (message: TranscriptMessage) => ReactNode;
+  /** Drawn after the newest message, such as what an agent is waiting on the person for. */
+  footer?: ReactNode;
 }
 
 const keyExtractor = (message: TranscriptMessage) => message.id;
 
 /** A chat's messages, newest at the bottom. */
-export function MessageList({ messages, chatId, renderRequest, renderResults }: MessageListProps) {
+export function MessageList({ messages, chatId, renderRequest, renderResults, footer }: MessageListProps) {
   const renderItem = useCallback(({ item }: ListRenderItemInfo<TranscriptMessage>) => (
     <ChatContextMenu chatId={chatId}>
       <Pressable accessible={false}>
@@ -41,6 +43,8 @@ export function MessageList({ messages, chatId, renderRequest, renderResults }: 
       renderItem={renderItem}
       keyExtractor={keyExtractor}
       inverted
+      // The list is drawn from the bottom up, so its header is what comes last.
+      ListHeaderComponent={footer ? <AnalyticsMask>{footer}</AnalyticsMask> : null}
       // In a chat that exists, a tap on the messages closes the keyboard. One
       // that is still being created shows only what was just sent, and a tap
       // there goes to whatever it lands on.

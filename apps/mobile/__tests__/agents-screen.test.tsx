@@ -117,54 +117,33 @@ describe("agents tab root", () => {
     expect(mockPush).toHaveBeenCalledWith("/agents/new");
   });
 
-  it("opens the agent's chat on the Chats tab once the server has confirmed the chat", async () => {
-    let confirm: (chatId: string) => void = () => {};
-    mockEnsureChat.mockReturnValue(new Promise<string>((resolve) => { confirm = resolve; }));
+  it("opens the agent's own chat screen, leaving the Chats tab and its open chat alone", () => {
     render(<AgentsScreen />);
 
     fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
-    expect(mockEnsureChat).toHaveBeenCalledWith("bot_launch");
-    // Nothing moves until the server answers.
+
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith({ pathname: "/agents/[agentId]", params: { agentId: "bot_launch" } });
     expect(mockSelectChat).not.toHaveBeenCalled();
     expect(mockShowChatScreen).not.toHaveBeenCalled();
-
-    await act(async () => confirm("chat_launch"));
-    expect(mockSelectChat).toHaveBeenCalledWith("chat_launch");
-    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    // The agent's screen finds the chat itself.
+    expect(mockEnsureChat).not.toHaveBeenCalled();
     expect(alert).not.toHaveBeenCalled();
   });
 
-  it("asks for one chat only, however often the row is pressed meanwhile", async () => {
-    let confirm: (chatId: string) => void = () => {};
-    mockEnsureChat.mockReturnValue(new Promise<string>((resolve) => { confirm = resolve; }));
+  it("opens one screen only, however often rows are pressed, until the list is shown again", () => {
     render(<AgentsScreen />);
 
     fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
     fireEvent.press(screen.getByTestId("agent-row-bot_launch"));
     fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
-    expect(mockEnsureChat).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledTimes(1);
 
-    await act(async () => confirm("chat_launch"));
-    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
-
-    mockEnsureChat.mockResolvedValue("chat_inbox");
-    fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
-    await waitFor(() => expect(mockSelectChat).toHaveBeenLastCalledWith("chat_inbox"));
-  });
-
-  it("stays on the list with a generic alert when the chat cannot be opened", async () => {
-    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    mockEnsureChat.mockRejectedValue(new Error("upstream said no"));
-    render(<AgentsScreen />);
-
+    act(() => mockGainFocus());
     fireEvent.press(screen.getByTestId("agent-row-bot_inbox"));
 
-    await waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
-    expect(alert).toHaveBeenCalledWith("Agent could not be opened", "Try again.");
-    expect(JSON.stringify([alert.mock.calls, warn.mock.calls])).not.toContain("upstream said no");
-    expect(mockSelectChat).not.toHaveBeenCalled();
-    expect(mockShowChatScreen).not.toHaveBeenCalled();
-    warn.mockRestore();
+    expect(mockPush).toHaveBeenCalledTimes(2);
+    expect(mockPush).toHaveBeenLastCalledWith({ pathname: "/agents/[agentId]", params: { agentId: "bot_inbox" } });
   });
 
   it("leaves the first read to the queries when the screen is first shown", () => {

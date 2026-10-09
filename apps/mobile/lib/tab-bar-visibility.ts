@@ -4,7 +4,7 @@
  * bar is hidden while one of them is focused.
  */
 export const TAB_BAR_HIDDEN_ROUTES: Readonly<Record<string, readonly string[]>> = {
-  agents: ["new"],
+  agents: ["new", "[agentId]"],
 };
 
 /**

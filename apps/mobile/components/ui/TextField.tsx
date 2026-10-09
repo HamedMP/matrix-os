@@ -16,6 +16,7 @@ export interface TextFieldProps
     | "returnKeyType"
     | "maxLength"
     | "editable"
+    | "secureTextEntry"
     | "accessibilityLabel"
     | "testID"
   > {
