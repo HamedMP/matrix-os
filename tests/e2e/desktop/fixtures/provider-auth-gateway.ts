@@ -17,8 +17,10 @@ import {
 
 const NOW = "2026-09-20T00:00:00.000Z";
 
-export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSettingsSnapshot {
+export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaudeProfile = false): ProviderSettingsSnapshot {
   const authState = authenticated ? "authenticated" as const : "unauthenticated" as const;
+  const accountId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account";
+  const accessSourceId = nativeClaudeProfile ? "owner_claude_profile" : "claude_account_source";
   return ProviderSettingsSnapshotSchema.parse({
     contractVersion: 1,
     atomicConnectSupported: false,
@@ -42,11 +44,11 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
       models: [{ id: "anthropic/claude-opus-5", displayName: "Claude Opus 5", enabled: true }],
     }],
     accessSources: [{
-      id: "claude_account_source",
+      id: accessSourceId,
       kind: "provider_account",
       fundingKind: "owner_subscription",
       providerId: "anthropic",
-      accountId: "claude_account",
+      accountId,
       displayName: "Claude account",
       readiness: authenticated
         ? { state: "ready", checkedAt: NOW, staleAfter: null, action: "none", safeReason: null }
@@ -57,13 +59,13 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
         : { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account", reason: "not_authenticated", asOf: NOW },
     }],
     accounts: [{
-      id: "claude_account",
+      id: accountId,
       providerId: "anthropic",
       displayName: "Claude",
       authMethod: "terminal",
       authState,
       lastCheckedAt: NOW,
-      accessSourceId: "claude_account_source",
+      accessSourceId,
       dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
     }],
     harnesses: [{
@@ -78,9 +80,9 @@ export function providerAuthSettingsSnapshot(authenticated: boolean): ProviderSe
       loginMethods: ["terminal"],
       recommendedLoginMethod: "terminal",
       connectivity: authenticated ? "online" : "offline",
-      accountIds: ["claude_account"],
-      selectedAccountId: "claude_account",
-      accessSourceId: "claude_account_source",
+      accountIds: [accountId],
+      selectedAccountId: accountId,
+      accessSourceId,
       route: { kind: "fixed", providerId: "anthropic", modelId: "anthropic/claude-opus-5" },
       activeChatCount: 0,
     }],
@@ -109,7 +111,7 @@ export async function startProviderAuthGateway(options: {
   let workflowSequence = 0;
   let completeNativeLogin: ((code: string) => Promise<void>) | null = null;
   const settings = () => {
-    const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated);
+    const snapshot = options.settings?.(authenticated) ?? providerAuthSettingsSnapshot(authenticated, options.inlineClaude);
     return ProviderSettingsSnapshotSchema.parse({ ...snapshot, revision: committedRevision ?? snapshot.revision,
       projectionOf: { ...snapshot.projectionOf, revision: committedRevision ?? snapshot.projectionOf.revision }, harnesses: snapshot.harnesses.map(harness => harness.id in enabledOverrides
       ? { ...harness, enabled: enabledOverrides[harness.id]!, configuredEnabled: enabledOverrides[harness.id]! }
@@ -162,16 +164,20 @@ export async function startProviderAuthGateway(options: {
           const [adapter] = await createNativeProviderWorkflowAdapters({
             store: {
               getSnapshot: async () => settings(),
-              mutate: async (mutation: unknown) => {
-                const action = ProviderSettingsMutationSchema.parse(mutation);
-                if (action.type !== "set_harness_enabled" || action.harnessInstanceId !== "claude_harness"
-                  || !action.enabled || action.expectedRevision !== settings().revision)
-                  throw new Error("Invalid native fixture enablement");
+              completeClaudeNativeLogin: async (input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }) => {
+                const selection = ProviderSettingsMutationSchema.parse({ ...input, type: "select_access_source", accessSourceId: "owner_claude_profile", enableHarness: true });
+                const current = settings();
+                const source = current.accessSources.find(row => row.id === "owner_claude_profile" && row.kind === "provider_account" && row.providerId === "anthropic");
+                const account = current.accounts.find(row => row.id === source?.accountId && row.accessSourceId === source?.id && row.providerId === "anthropic" && row.authMethod === "terminal" && row.authState === "authenticated");
+                if (selection.type !== "select_access_source" || selection.harnessInstanceId !== "claude_harness" || input.expectedRevision !== current.revision
+                  || current.access.mode !== "writable" || !source || !account)
+                  throw new Error("Invalid native fixture completion");
                 enabledOverrides.claude_harness = true;
-                committedRevision = settings().revision + 1;
+                committedRevision = current.revision + 1;
                 workflowEvents.push("agent-enabled");
                 return { kind: "snapshot", snapshot: settings() };
               },
+              mutate: async () => { throw new Error("Inline fixture must use private native completion"); },
             } as unknown as ProviderSettingsStoreWriter,
             terminal: { ensureWorkspace: terminalUnavailable, createTab: terminalUnavailable,
               terminateTab: terminalUnavailable, attach: () => { throw new Error("Inline fixture must not attach Terminal"); },

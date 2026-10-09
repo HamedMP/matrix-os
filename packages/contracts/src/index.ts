@@ -1,10 +1,13 @@
+export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
+export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
 export * from "#private-preview";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
-export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
+export type { AppAiInput, AppAiRequest, AppAiResult, AppAiRouteSelection, AppAiRoute, AppAiRoutes } from "#app-ai";
+export { APP_AI_ROUTES_CHANNEL, AppAiRouteSelectionSchema, AppAiRouteSchema, AppAiRoutesSchema, AppAiRoutesRequestSchema } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
@@ -77,6 +80,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#jev";
+export * from "#jev-inbox";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#speech";
@@ -1457,3 +1461,6 @@ export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistory
 export * from "#provider-workflows";
 export * from '#chatgpt-plan-peer';
 export * from '#chatgpt-plan-wire';
+export * from '#matrix-anthropic-connection';
+
+export * from "#chat-navigation";

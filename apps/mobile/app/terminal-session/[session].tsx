@@ -1,4 +1,5 @@
 import { Stack, useLocalSearchParams } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -15,6 +16,7 @@ import { TerminalControlBar } from "@/components/TerminalControlBar";
 import { TerminalSurface, type TerminalSurfaceHandle } from "@/components/TerminalSurface";
 import { Spacer } from "@/components/ui";
 import { useGateway } from "@/app/_layout";
+import { useComputerTerminals } from "@/lib/queries/use-computer-terminals";
 import {
   MobileTerminalClient,
   type MobileTerminalConnection,
@@ -31,8 +33,17 @@ export default function TerminalSessionScreen() {
   const rawSession = Array.isArray(params.session) ? params.session[0] : params.session;
   const session = rawSession && isSafeSessionId(rawSession) ? rawSession : null;
   const { client } = useGateway();
-  const [status, setStatus] = useState<LiveStatus>("connecting");
-  const [error, setError] = useState<string | null>(null);
+  const headerHeight = useHeaderHeight();
+  const { sessions } = useComputerTerminals();
+  const listedSession = session ? sessions.find((candidate) => candidate.id === session) : undefined;
+  const sessionName = listedSession?.name;
+  const exitedOnComputer = listedSession?.status === "exited";
+  const [liveStatus, setStatus] = useState<LiveStatus>("connecting");
+  const [liveError, setError] = useState<string | null>(null);
+  // The computer's own list outranks the socket: a terminal it reports as
+  // exited has ended, however the socket was last left.
+  const status: LiveStatus = exitedOnComputer ? "ended" : liveStatus;
+  const error = exitedOnComputer ? null : liveError;
   const [fontScale, setFontScale] = useState(1);
   const surfaceRef = useRef<TerminalSurfaceHandle | null>(null);
   const connectionRef = useRef<MobileTerminalConnection | null>(null);
@@ -67,8 +78,17 @@ export default function TerminalSessionScreen() {
       surfaceRef.current?.blur();
       return;
     }
+    if (frame.type === "canonical-size") {
+      surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
+      return;
+    }
     if (frame.type === "snapshot") {
-      surfaceRef.current?.clear();
+      // A snapshot is the whole screen, laid out for the grid it names, so it
+      // replaces the emulator's state instead of continuing from it.
+      if (frame.canonicalSize) {
+        surfaceRef.current?.resize(frame.canonicalSize.cols, frame.canonicalSize.rows);
+      }
+      surfaceRef.current?.reset();
       surfaceRef.current?.write(frame.ansi);
       return;
     }
@@ -81,6 +101,7 @@ export default function TerminalSessionScreen() {
       setStatus("ended");
       setError(null);
       connectionRef.current = null;
+      surfaceRef.current?.blur();
       return;
     }
     if (frame.type === "error") {
@@ -160,6 +181,12 @@ export default function TerminalSessionScreen() {
       return;
     }
     if (!terminalClient) return;
+    if (exitedOnComputer) {
+      // There is nothing left to attach to, and nothing typed here may be sent
+      // anywhere, so the keyboard goes away with the connection.
+      surfaceRef.current?.blur();
+      return;
+    }
     void connect();
     return () => {
       connectionAttemptRef.current += 1;
@@ -167,11 +194,11 @@ export default function TerminalSessionScreen() {
       connectionRef.current?.detach();
       connectionRef.current = null;
     };
-  }, [clearHandshakeTimeout, connect, session, terminalClient]);
+  }, [clearHandshakeTimeout, connect, exitedOnComputer, session, terminalClient]);
 
   const sendData = useCallback((data: string) => {
     if (!data) return;
-    if (status === "observer") return;
+    if (status === "observer" || status === "ended") return;
     if (!connectionRef.current?.sendInput(data)) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
@@ -180,7 +207,7 @@ export default function TerminalSessionScreen() {
 
   const sendBinary = useCallback((data: string) => {
     if (!data) return;
-    if (status === "observer") return;
+    if (status === "observer" || status === "ended") return;
     if (!connectionRef.current?.sendBinary(data)) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
@@ -199,9 +226,13 @@ export default function TerminalSessionScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}
+      // This view starts below the modal's header and measures itself from
+      // there, so the header's height has to be counted or the key rows stop
+      // that far short of the keyboard.
+      keyboardVerticalOffset={headerHeight}
       style={styles.screen}
     >
-      <Stack.Screen options={{ title: session ?? "Terminal" }} />
+      <Stack.Screen options={{ title: sessionName ?? "Terminal" }} />
 
       <View style={styles.surface}>
         <TerminalSurface

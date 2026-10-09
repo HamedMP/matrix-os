@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React from "react";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
+import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
 
 afterEach(cleanup);
@@ -104,4 +105,44 @@ it('does not navigate after a recipe panel has been left',async()=>{
  const view=render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={open}/>);
  fireEvent.click(screen.getByRole('button',{name:'Use Writing Bot'}));fireEvent.change(screen.getByRole('combobox',{name:'Bot model'}),{target:{value:''}});fireEvent.click(screen.getByRole('button',{name:'Create bot'}));
  await waitFor(()=>expect(create).toHaveBeenCalledOnce());view.unmount();finish('chat_bot');await Promise.resolve();await Promise.resolve();expect(open).not.toHaveBeenCalled();
+});
+
+it("negotiates Bot run IDs and accepts older task summaries", async () => {
+  const request = vi.fn(async () => ({ tasks: [{ taskId: "task_abcdefgh", agentId: "bot_research1", chatId: "chat_research",
+    status: "waiting_person", revision: 2, updatedAt: "2026-09-28T12:00:00.000Z" }] }));
+  const result = await createBotClient(request).tasks("chat_research");
+  expect(request).toHaveBeenCalledWith("/api/chats/chat_research/bot-tasks?includeRunIds=true", "GET", undefined);
+  expect(result[0]?.runId).toBeUndefined();
+});
+
+// Catalog discovery is independent of Gmail grants and model funding.
+it("shows the built-in Jev recipe to a fresh user without connections or model choices", () => {
+  const create = vi.fn();
+  render(<AgentRecipesPanel botRecipes={createBotRecipeCatalog().list()} connections={[]} matrixModels={[]}
+    onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Use Jev Inbox Triage" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "jev" } });
+  expect(screen.getAllByRole("button", { name: "Use Jev Inbox Triage" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(create).not.toHaveBeenCalled();
+});
+
+it("instantiates the upgraded Inbox recipe with its existing identity and current Jev version", async () => {
+  const create = vi.fn(async () => "chat_0123456789abcdef");
+  const open = vi.fn();
+  render(<AgentRecipesPanel botRecipes={createBotRecipeCatalog().list()} connections={[]} matrixModels={[]}
+    onInstantiateBot={create} onOpenBotChat={open} />);
+  fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "inbox triage" } });
+  expect(screen.getAllByRole("button", { name: "Use Jev Inbox Triage" })).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Use Inbox Triage" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_0123456789abcdef"));
+  expect(create).toHaveBeenCalledOnce();
+  expect(create).toHaveBeenCalledWith(
+    { recipeId: "jev-inbox-triage", version: "2026-10-06.1" },
+    expect.stringMatching(/^req_/), MATRIX_BOT_SELECTION,
+  );
 });

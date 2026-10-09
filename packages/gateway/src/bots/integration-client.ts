@@ -4,19 +4,26 @@
  * machine that is the platform's internal integrations route, authenticated
  * with the machine token and a signed delegation of the owner; with local
  * integrations it is the gateway's own routes, called in process. Accounts
- * are selected by label, so a call names a label that is unique for its
- * service. Every call is bounded in time and size, and failures surface as
- * allowlisted codes, never upstream text.
+ * use a unique service label and the immutable connection ID from the grant.
+ * Every call is bounded in time and size, and failures surface as allowlisted
+ * codes, never upstream text.
  */
-import type { Hono } from "hono";
+import { Hono } from "hono";
 import { z } from "zod/v4";
 import { delegatedIntegrationHeaders } from "../integrations/delegated-identity.js";
+import { REFRESH_LIMITS } from "../integrations/refresh/contracts.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "../integrations/scope-provenance.js";
+import { appIntegrationReplyBytes } from "@matrix-os/contracts";
+import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../request-principal.js";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
 const MAX_LIST_BYTES = 128 * 1024;
 const MAX_CALL_BYTES = 256 * 1024;
+const MAX_GMAIL_ATTACHMENT_CALL_BYTES = 1536 * 1024;
+// Manual imports validate the data page separately; allow bounded JSON framing
+// and the optional summary without increasing ordinary bot response limits.
+const MAX_IMPORT_CALL_BYTES = REFRESH_LIMITS.maxPageBytes + 32 * 1024;
 const MAX_CATALOG_BYTES = 1024 * 1024;
 const MAX_CONNECTIONS = 256;
 
@@ -57,6 +64,10 @@ const ConnectResultSchema = z.object({ url: z.url({ protocol: /^https$/ }).max(4
 const ActionParamSchema = z.object({
   type: z.enum(["string", "number", "boolean", "object", "array"]),
   required: z.boolean().optional(), description: z.string().max(4_096).optional(),
+  minLength: z.number().int().min(0).max(1_000_000).optional(),
+  maxLength: z.number().int().min(0).max(1_000_000).optional(),
+  minimum: z.number().finite().optional(), maximum: z.number().finite().optional(),
+  pattern: z.string().max(1024).optional(), patternMessage: z.string().max(4096).optional(),
 });
 const CatalogActionSchema = z.object({ description: z.string().max(8_192), risk: z.enum(["read", "write", "destructive"]),
   params: z.record(z.string().min(1).max(128), ActionParamSchema).refine(params => Object.keys(params).length <= 128) });
@@ -134,6 +145,20 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
     }
   }
 
+  type CallInput = { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean };
+  async function call(ownerId: string, input: CallInput, maxBytes: number, signal?: AbortSignal) {
+    return send(ownerId, {
+      method: "POST",
+      path: input.read ? "/read-call" : "/call",
+      body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.connectionId ? { connectionId: input.connectionId } : {}) },
+      readScope: input.read,
+    }, CALL_TIMEOUT_MS, async (response, bounded) => {
+      const result = CallResultSchema.safeParse(await readJson(response, maxBytes, bounded));
+      if (!result.success) throw new BotIntegrationError("unavailable");
+      return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
+    }, signal, !input.read);
+  }
+
   return {
     /** The owner's active connected accounts. */
     async inventory(ownerId: string, signal?: AbortSignal): Promise<BotIntegrationConnection[]> {
@@ -169,18 +194,20 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
         await readJson(response, MAX_CALL_BYTES, bounded);
       }, signal);
     },
+    /** Trusted manual-import seam: fixed bounded allowance and read-only routing. */
+    async callImportRead(ownerId: string, input: Omit<CallInput, "read">, signal?: AbortSignal) {
+      return call(ownerId, { ...input, read: true }, MAX_IMPORT_CALL_BYTES, signal);
+    },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
-    async call(ownerId: string, input: { service: string; action: string; label: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
-      return send(ownerId, {
-        method: "POST",
-        path: input.read ? "/read-call" : "/call",
-        body: { service: input.service, action: input.action, label: input.label, params: input.params },
-        readScope: input.read,
-      }, CALL_TIMEOUT_MS, async (response, bounded) => {
-        const result = CallResultSchema.safeParse(await readJson(response, MAX_CALL_BYTES, bounded));
-        if (!result.success) throw new BotIntegrationError("unavailable");
-        return { data: result.data.data, ...(result.data.summary !== undefined ? { summary: result.data.summary } : {}) };
-      }, signal, !input.read);
+    async call(ownerId: string, input: { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
+      const maxBytes = input.read && input.service === "gmail" && input.action === "get_attachment"
+        ? MAX_GMAIL_ATTACHMENT_CALL_BYTES : MAX_CALL_BYTES;
+      return call(ownerId, input, maxBytes, signal);
+    },
+    /** Trusted app seam: action-specific read budgets do not expand ordinary bot calls. */
+    async callAppAction(ownerId: string, input: CallInput, signal?: AbortSignal) {
+      const maxBytes = input.read ? appIntegrationReplyBytes(input.service, input.action) : MAX_CALL_BYTES;
+      return call(ownerId, input, maxBytes, signal);
     },
   };
 }
@@ -208,12 +235,21 @@ export function createPlatformIntegrationTransport(options: { baseUrl: string; m
 }
 
 /** The gateway's own integration routes, called in process for the owner. */
-export function createLocalIntegrationTransport(routes: Pick<Hono, "request">): BotIntegrationTransport {
+export function createLocalIntegrationTransport(routes: Hono): BotIntegrationTransport {
   return (ownerId, request) => {
-    const headers = new Headers({ "x-platform-user-id": ownerId });
+    // This adapter is called by trusted server code, never by an app page.
+    // Project its owner into verified context instead of trusting an HTTP header.
+    const local = new Hono();
+    local.use("*", async (c, next) => {
+      setPlatformVerifiedPrincipal(c, ownerId);
+      markAuthContextReady(c);
+      await next();
+    });
+    local.route("/", routes);
+    const headers = new Headers();
     if (request.body) headers.set("content-type", "application/json");
     if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
-    return Promise.resolve(routes.request(request.path, {
+    return Promise.resolve(local.request(request.path, {
       method: request.method,
       headers,
       ...(request.body ? { body: JSON.stringify(request.body) } : {}),

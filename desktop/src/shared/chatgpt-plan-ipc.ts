@@ -12,7 +12,7 @@ export const ChatgptPlanStatusSchema = z.object({
         id: z.uuid(), label: z.string().min(1).max(256)
     }).strict().optional(), models: z.array(ChatgptPlanModelSchema).max(64), grant: z.object({
         revision: z.number().int().nonnegative(), enabled: z.boolean(), background: z.boolean()
-    }).strict(), bridgeConnected: z.boolean(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
+    }).strict(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
 }).strict();
 export const CHATGPT_PLAN_INVOKE = {
     'chatgpt-plan:status': {
@@ -20,6 +20,9 @@ export const CHATGPT_PLAN_INVOKE = {
     },
     'chatgpt-plan:connect': {
         request: ChatgptPlanSessionSchema.extend({ purpose: z.literal('personal_local') }), response: ChatgptPlanStatusSchema
+    },
+    'chatgpt-plan:rebind': {
+        request: ChatgptPlanSessionSchema.extend({ purpose: z.literal('replace_device') }), response: ChatgptPlanStatusSchema
     },
     'chatgpt-plan:cancel': {
         request: ChatgptPlanSessionSchema, response: ChatgptPlanStatusSchema

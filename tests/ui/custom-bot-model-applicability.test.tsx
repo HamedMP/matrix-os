@@ -12,12 +12,12 @@ afterEach(cleanup);
 it("excludes the ordinary subscription route from custom Bots while keeping it explicitly selectable in ordinary Chat", () => {
   const catalog = ordinaryPlanCatalog(), choices = deriveCanonicalProviderChoices(catalog), change = vi.fn();
   const custom = render(<AgentModelField id="custom-model" selected={{ instanceId: "hermes_default", model: "saved-hermes" }} pending={false} models={choices} hermesOnly={false} change={change} />);
-  expect(screen.queryByRole("option", { name: "Owner GPT · Codex · ChatGPT subscription" })).toBeNull();
+  expect(screen.queryByRole("option", { name: /Owner GPT/ })).toBeNull();
   expect(change).not.toHaveBeenCalled();
   custom.unmount();
   const select = vi.fn(), plan = choices.find(choice => choice.instanceId === planId)!;
   render(<CompactChatProviderChoices catalog={catalog} choices={choices} selected={plan} onSelect={select} />);
-  fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Codex · ChatGPT subscription" }));
+  fireEvent.click(screen.getByRole("option", { name: "Owner GPT via Matrix AI · ChatGPT subscription" }));
   expect(select).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ instanceId: planId, modelId: "gpt-owner", selectedOptions: planBinding }));
 });
 
@@ -26,6 +26,6 @@ it.each(["openai-codex:gpt-5.3-codex-spark", "openai-codex:gpt-5.6-sol"])("retai
   render(<AgentModelField id="saved-model" selected={{ instanceId: "hermes_default", model }} pending={false} models={deriveCanonicalProviderChoices(catalog)} hermesOnly={true} change={change} />);
   expect(screen.getByRole("combobox", { name: "Model" })).toHaveProperty("value", JSON.stringify(["hermes_default", model]));
   expect(screen.getByRole("option", { name: `${model} · unavailable` })).toBeTruthy();
-  expect(screen.queryByRole("option", { name: "Owner GPT · Codex · ChatGPT subscription" })).toBeNull();
+  expect(screen.queryByRole("option", { name: /Owner GPT/ })).toBeNull();
   expect(change).not.toHaveBeenCalled();
 });

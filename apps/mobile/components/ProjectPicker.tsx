@@ -1,10 +1,13 @@
-import { Host, Picker } from "@expo/ui";
-import { View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { View, useWindowDimensions } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 
+import { MenuPicker } from "@/components/ui/MenuPicker";
 import type { ProjectSummary } from "@/lib/requests";
 
 const NO_PROJECT_VALUE = "";
+// The trigger sits on its own row above the composer, so its label may take
+// most of the window before it is cut off.
+const LABEL_WIDTH_SHARE = 0.6;
 
 function projectLabel(project: ProjectSummary): string {
   return project.kind === "github" && project.github
@@ -29,7 +32,7 @@ export function ProjectPicker({
   selectedProjectId: string | null;
   onSelectionChange: (projectId: string | null) => void;
 }) {
-  const { theme } = useUnistyles();
+  const { width } = useWindowDimensions();
   if (projects.length === 0) return null;
 
   function handleChange(value: string) {
@@ -38,19 +41,17 @@ export function ProjectPicker({
 
   return (
     <View style={styles.row}>
-      <Host matchContents seedColor={theme.v2.appColors.muted}>
-        <Picker
-          appearance="menu"
-          selectedValue={selectedProjectId ?? NO_PROJECT_VALUE}
-          onValueChange={handleChange}
-          testID="project-picker"
-        >
-          <Picker.Item label="No project" value={NO_PROJECT_VALUE} />
-          {projects.map((project) => (
-            <Picker.Item key={project.id} label={projectLabel(project)} value={project.id} />
-          ))}
-        </Picker>
-      </Host>
+      <MenuPicker
+        options={[
+          { label: "No project", value: NO_PROJECT_VALUE },
+          ...projects.map((project) => ({ label: projectLabel(project), value: project.id })),
+        ]}
+        selectedValue={selectedProjectId ?? NO_PROJECT_VALUE}
+        onValueChange={handleChange}
+        accessibilityLabel="Project"
+        maxLabelWidth={Math.round(width * LABEL_WIDTH_SHARE)}
+        testID="project-picker"
+      />
     </View>
   );
 }

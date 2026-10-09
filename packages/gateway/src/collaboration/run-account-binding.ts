@@ -5,9 +5,9 @@
  * also the payer in V1), the owner-selected source/harness/model, the policy
  * revision it was admitted under, the audience generation, the execution root
  * and its fingerprint. The binding carries no status; status lives on the
- * canonical run. A stale policy revision, an owner-only scope for a member,
- * an unavailable source or a model outside the policy refuses admission and
- * keeps the request; nothing ever falls back to another source.
+ * canonical run. A stale policy revision, missing owner terms, an unavailable
+ * source or a model outside the policy refuses admission and keeps the
+ * request; nothing ever falls back to another source.
  *
  * The shared session generation derives from owner source, harness, root and
  * audience generation only, never from the owner's private provider session,
@@ -22,7 +22,6 @@ import {
   CollaborationSharedHarnessSchema,
   type CanonicalChatExecutionRootRef,
   type CollaborationExecutionScopeRef,
-  type CollaborationOrganizationAiSubmission,
   type CollaborationRunBinding,
 } from "@matrix-os/contracts";
 import type { OwnerAccountEligibility } from "./account-eligibility.js";
@@ -30,7 +29,6 @@ import type { OwnerCollaborationDatabase } from "./database.js";
 import {
   effectiveSubmitModeWithAcknowledgement,
   resolveExecutionScope,
-  type CollaborationExecutionPolicyRepository,
 } from "./execution-policy.js";
 import { jsonb, parseJson, toIso } from "./repository-shared.js";
 
@@ -85,13 +83,6 @@ export function sharedSessionKey(input: {
 }
 
 const DEFAULT_MAX_SESSION_ENTRIES = 1_024;
-/**
- * How long the fenced organization submission re-read may take while the scope
- * row is locked. The slow preflight lookup stays outside the lock; this one
- * runs under it, so it is bounded and an unresolved answer reads as `unknown`,
- * which is owner-only.
- */
-const DEFAULT_AUTHORITY_RECHECK_TIMEOUT_MS = 1_000;
 
 /**
  * Tracks one session generation per (execution scope, Chat). The generation
@@ -185,37 +176,26 @@ function isUniqueViolation(error: unknown): boolean {
 export class CollaborationRunBindingRepository {
   private readonly db: Kysely<OwnerCollaborationDatabase>;
   private readonly now: () => Date;
-  private readonly policies: CollaborationExecutionPolicyRepository;
   private readonly eligibility: OwnerAccountEligibility;
   private readonly sessions: CollaborationSharedSessionBinder;
-  private readonly authorityRecheckTimeoutMs: number;
 
   constructor(db: Kysely<OwnerCollaborationDatabase>, options: {
     now?: () => Date;
-    policies: CollaborationExecutionPolicyRepository;
     eligibility: OwnerAccountEligibility;
     sessions?: CollaborationSharedSessionBinder;
-    authorityRecheckTimeoutMs?: number;
   }) {
     this.db = db;
     this.now = options.now ?? (() => new Date());
-    this.policies = options.policies;
     this.eligibility = options.eligibility;
     this.sessions = options.sessions ?? new CollaborationSharedSessionBinder();
-    this.authorityRecheckTimeoutMs = Math.min(
-      Math.max(options.authorityRecheckTimeoutMs ?? DEFAULT_AUTHORITY_RECHECK_TIMEOUT_MS, 10),
-      5_000,
-    );
   }
 
   async admit(rawInput: CollaborationRunAdmission): Promise<CollaborationRunBinding> {
     const input = AdmissionSchema.parse(rawInput);
     const nowIso = this.now().toISOString();
-    // Preflight outside any lock: the organization AI-submission lookup and the
-    // owner's snapshot read can take seconds and must never hold the scope row.
-    // The transaction below re-reads the scope and policy under the lock, and
-    // re-reads the organization submission mode under a hard bound, so nothing
-    // this preflight saw can admit a binding after it moved.
+    // Preflight outside any lock: the owner's snapshot read can take seconds
+    // and must never hold the scope row. The transaction below re-reads the
+    // scope and policy under the lock so stale policy cannot admit a binding.
     const preflight = await resolveExecutionScope(this.db, input.scopeId);
     if (!preflight) throw new CollaborationRunBindingError("not_found", "Execution scope not found");
     const preflightPolicy = await this.db.selectFrom("collaboration_execution_policies").selectAll()
@@ -226,9 +206,7 @@ export class CollaborationRunBindingRepository {
     }
     const ownerId = preflightPolicy.owner_id;
     if (input.requestingActorId !== ownerId) {
-      const effective = await this.effectiveSubmitMode({
-        organizationId: preflight.scope.organization_id,
-        ownerId,
+      const effective = this.effectiveSubmitMode({
         submitMode: preflightPolicy.submit_mode,
         providerTermsAcknowledged: preflightPolicy.provider_terms_acknowledged_at !== null,
       });
@@ -267,18 +245,9 @@ export class CollaborationRunBindingRepository {
         throw new CollaborationRunBindingError("stale_policy", "The owner changed the execution policy");
       }
       if (input.requestingActorId !== ownerId) {
-        // The organization's submission mode is external state with no revision in this
-        // database, so the locked policy row cannot prove it still allows member submission.
-        // Re-read it here, under the admission fence, and refuse a binding the organization
-        // no longer authorizes. The read is bounded so a slow platform round trip can never
-        // hold the scope row, and it fails closed. This narrows the window to the remainder
-        // of this transaction; an authority revoked after the commit is still S05's job.
-        const fenced = await this.effectiveSubmitMode({
-          organizationId: resolution.scope.organization_id,
-          ownerId,
+        const fenced = this.effectiveSubmitMode({
           submitMode: policyRow.submit_mode,
           providerTermsAcknowledged: policyRow.provider_terms_acknowledged_at !== null,
-          bounded: true,
         });
         if (fenced !== "members") {
           throw new CollaborationRunBindingError("owner_only", "Only the owner may submit AI work on this scope");
@@ -353,41 +322,10 @@ export class CollaborationRunBindingRepository {
     return rows.map(toBinding);
   }
 
-  private async effectiveSubmitMode(input: {
-    organizationId: string | null;
-    ownerId: string;
+  private effectiveSubmitMode(input: {
     submitMode: "follow_organization" | "owner_only";
     providerTermsAcknowledged: boolean;
-    /** Set while the scope row is locked: the lookup may not outlast the fence. */
-    bounded?: boolean;
-  }): Promise<"members" | "owner_only"> {
-    const lookup = this.policies.organizationAiSubmissionFor(input.organizationId, input.ownerId);
-    const organizationAiSubmission = input.bounded === true
-      ? await this.boundedAiSubmission(lookup)
-      : await lookup;
-    return effectiveSubmitModeWithAcknowledgement({ organizationAiSubmission, ...input });
-  }
-
-  /** An unresolved or failed lookup reads as `unknown`, which resolves to owner-only. */
-  private async boundedAiSubmission(
-    lookup: Promise<CollaborationOrganizationAiSubmission>,
-  ): Promise<CollaborationOrganizationAiSubmission> {
-    const settled = lookup.catch((error: unknown) => {
-      console.warn("[collaboration] fenced organization AI submission lookup failed",
-        error instanceof Error ? error.name : "UnknownError");
-      return "unknown" as const;
-    });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        settled,
-        new Promise<CollaborationOrganizationAiSubmission>((resolve) => {
-          timer = setTimeout(() => resolve("unknown"), this.authorityRecheckTimeoutMs);
-          timer.unref?.();
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+  }): "members" | "owner_only" {
+    return effectiveSubmitModeWithAcknowledgement({ organizationAiSubmission: "members", ...input });
   }
 }

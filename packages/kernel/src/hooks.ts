@@ -230,6 +230,10 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "discord/send_message",
   "google_docs/create_document",
   "google_docs/batch_update_document",
+  "google_sheets/add_sheet",
+  "google_sheets/append_values",
+  "google_sheets/create_spreadsheet",
+  "google_sheets/update_values",
   "notion/create_page",
   "notion/update_page",
   "notion/append_blocks",
@@ -237,7 +241,11 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "jira/create_issue",
   "jira/update_issue",
   "jira/add_comment",
+  "todoist/complete_task",
+  "todoist/create_task",
+  "todoist/update_task",
   "twitter/create_post",
+  "zendesk/update_ticket",
 ]);
 
 interface CustomMcpProjectionFile {

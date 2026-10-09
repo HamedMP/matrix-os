@@ -154,7 +154,7 @@ describe("desktop provider settings transport", () => {
     const abort = new AbortController();
 
     await expect(transport.getSnapshot(abort.signal)).resolves.toEqual(snapshot());
-    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true", {
+    expect(get).toHaveBeenCalledWith("/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true", {
       maxBytes: 1024 * 1024,
       signal: abort.signal,
       timeoutMs: 15_000,
@@ -173,7 +173,7 @@ describe("desktop provider settings transport", () => {
     const transport = createDesktopProviderSettingsTransport(api({ post }));
     await expect(transport.mutate(mutation, new AbortController().signal))
       .resolves.toMatchObject({ kind: "snapshot", snapshot: { revision: 2 } });
-    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true", mutation, expect.objectContaining({
+    expect(post).toHaveBeenCalledWith("/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true", mutation, expect.objectContaining({
       maxBytes: 1024 * 1024,
       signal: expect.any(AbortSignal),
     }));
@@ -314,14 +314,22 @@ describe("desktop provider connection actions", () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("scopes provider state to owner, runtime slot, host, and credential generation", () => {
-    expect(desktopProviderIdentityKey({
+  it("scopes provider state to owner user ID, runtime slot, host, and credential generation", () => {
+    const identity = {
       status: "signed-in",
       handle: "alice",
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "vm-2",
       authGeneration: 7,
-    })).toBe("signed-in|alice|https://app.matrix-os.com|vm-2|7");
+    } as const;
+    expect(desktopProviderIdentityKey({ ...identity, userId: "user_alice" }))
+      .toBe("signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|7");
+    expect(desktopProviderIdentityKey({ ...identity, userId: "user_other" }))
+      .not.toBe(desktopProviderIdentityKey({ ...identity, userId: "user_alice" }));
+    expect(desktopProviderIdentityKey(identity))
+      .toBe("signed-in|alice|none|https://app.matrix-os.com|vm-2|7");
+    expect(desktopProviderIdentityKey({ ...identity, userId: null }))
+      .toBe(desktopProviderIdentityKey(identity));
   });
 
   it("opens and requests only the exact existing canonical Terminal tab without creating one", async () => {

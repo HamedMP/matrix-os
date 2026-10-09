@@ -79,7 +79,7 @@ function stateCode(error: BotStateError): BotToolErrorCode {
  * Settles with `work`, or rejects when `signal` aborts first, so a dispatcher
  * that ignores cancellation cannot hold the broker past its timeout.
  */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+export function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
@@ -207,7 +207,9 @@ export function createBotBrokerActions(deps: {
       await checkpoints.markObserved({ ...id, now: now().toISOString() });
       throw new BotBrokerActionError("stale_generation");
     }
-    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(request.capability === 'agent.task' ? 120000 : toolTimeoutMs)]);
+    const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
+      ? 10 * 60_000 : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
+    const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });

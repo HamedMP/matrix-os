@@ -1,3 +1,4 @@
+import { WorkflowLoadingSpinner } from "./WorkflowLoadingSpinner.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 const providerNames = { openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter" };
 export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController }) {
@@ -86,12 +87,19 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
 }
 
 export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowController }) {
-  const { client, disabled, onOpenAuthorizationUrl, operation, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, pending, copied, setCopied, run, seconds, connecting, browserLogin, subscriptionName } = state;
+  const { client, disabled, onOpenAuthorizationUrl, operation, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, pending, startingLogin, copied, setCopied, run, seconds, connecting, browserLogin, subscriptionName } = state;
+  const runningLogin = operation?.kind === "login" && connecting;
+  const preparingPage = runningLogin && state.inlineLogin && !operation.authorizationUrl && !operation.deviceCode
+    && operation.connectionOption?.method !== "terminal";
+  const status = startingLogin ? "Starting sign-in" : preparingPage ? "Preparing sign-in page" : "Waiting for sign-in";
   return <>
-          {operation?.kind === "login" && connecting ? (
+          {state.reconciling ? <p role="status" aria-label="Updating connection" className="matrix-ap-help matrix-ap-loading-status">
+            <WorkflowLoadingSpinner /><span>Sign-in complete. Updating connection…</span>
+          </p> : null}
+          {startingLogin || runningLogin ? (
             <div className="matrix-ap-device-login">
               <h3>Finish signing in to {subscriptionName}</h3>
-              {operation.deviceCode ? (
+              {!startingLogin && operation?.deviceCode ? (
                 <div className="matrix-ap-device-code">
                   <code>{operation.deviceCode}</code>
                   <button
@@ -100,7 +108,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                     onClick={() =>
                       void run(async (signal) => {
                         await navigator.clipboard.writeText(
-                          operation.deviceCode!,
+                          operation!.deviceCode!,
                         );
                         if (!signal.aborted) setCopied(true);
                       })
@@ -110,26 +118,26 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                   </button>
                 </div>
               ) : null}
-              {operation.authorizationUrl && onOpenAuthorizationUrl ? (
+              {!startingLogin && operation?.authorizationUrl && onOpenAuthorizationUrl ? (
                 <button
                   type="button"
                   className="matrix-ap-button matrix-ap-button-primary"
                   disabled={seconds === 0}
                   onClick={() =>
                     void run(async () => {
-                      onOpenAuthorizationUrl?.(operation.authorizationUrl!);
+                      onOpenAuthorizationUrl?.(operation!.authorizationUrl!);
                     })
                   }
                 >
                   Open sign-in page
                 </button>
               ) : null}
-              {browserLogin && operation.authorizationUrl ? (
+              {!startingLogin && browserLogin && operation?.authorizationUrl ? (
                 <form className="matrix-ap-key-form" onSubmit={event => {
                   event.preventDefault();
                   if (!authorizationCode.trim() || codeSubmitted) return;
                   void run(async signal => {
-                    await client.submitCode!(operation.id, authorizationCode.trim(), signal);
+                    await client.submitCode!(operation!.id, authorizationCode.trim(), signal);
                     if (!signal.aborted) { setAuthorizationCode(""); setCodeSubmitted(true); }
                   });
                 }}>
@@ -146,11 +154,14 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                   </button>
                 </form>
               ) : null}
-              <p role="status" className="matrix-ap-help">
-                Waiting for sign-in.{" "}
-                {seconds > 0
-                  ? `Code expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}.`
-                  : "Checking expiration…"}
+              <p role="status" aria-label={status} className="matrix-ap-help matrix-ap-loading-status">
+                <WorkflowLoadingSpinner />
+                <span>{startingLogin || preparingPage ? `${status}…` : <>
+                  Waiting for sign-in.{" "}
+                  {seconds > 0
+                    ? `Code expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}.`
+                    : "Checking expiration…"}
+                </>}</span>
               </p>
             </div>
           ) : null}

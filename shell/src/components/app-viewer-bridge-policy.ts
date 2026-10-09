@@ -10,7 +10,10 @@ export function isAllowedBridgeFetchUrl(appName: string, url: string): boolean {
   const parsed = new URL(url, "https://bridge.invalid");
   if (parsed.origin !== "https://bridge.invalid" || parsed.pathname.includes("%")) return false;
   if (parsed.pathname === "/api/bridge/ai" || parsed.pathname.startsWith("/api/bridge/ai/")) {
-    return url === "/api/bridge/ai";
+    return url === "/api/bridge/ai" || url === "/api/bridge/ai/routes";
+  }
+  if (["/api/bridge/capabilities", "/api/bridge/service", "/api/bridge/query", "/api/bridge/data"].some((path) => parsed.pathname === path || parsed.pathname.startsWith(`${path}/`))) {
+    return url === parsed.pathname && !parsed.pathname.endsWith("/") && ["/api/bridge/capabilities", "/api/bridge/service", "/api/bridge/query", "/api/bridge/data"].includes(url);
   }
   if (url.startsWith("/api/bridge/") && parsed.pathname.startsWith("/api/bridge/")) return true;
   const slug = appSlugFromName(appName);

@@ -12,6 +12,7 @@ import { useConnection } from "../../stores/connection";
 import { useProjectView } from "../../stores/project-view";
 import { useTabs } from "../../stores/tabs";
 import { CanonicalChatWorkspace } from "./CanonicalChatWorkspace";
+import { useScopedCanonicalChatClient } from "./CanonicalChatClientContext";
 
 type CanonicalRouteAvailability = "checking" | "available" | "unavailable";
 
@@ -63,7 +64,8 @@ export function CanonicalChatRoute({
   const clientIdentity = api?.baseUrl
     ? `${api.baseUrl}\u0000${runtimeSlot}\u0000${authGeneration}`
     : null;
-  const client = useMemo(() => {
+  const scopedClient = useScopedCanonicalChatClient(api, runtimeSlot, authGeneration);
+  const localClient = useMemo(() => {
     if (!clientIdentity) return null;
     const currentApi = () => {
       if (!latestApi.current) throw new Error("ChatApiUnavailable");
@@ -84,6 +86,7 @@ export function CanonicalChatRoute({
       },
     });
   }, [clientIdentity]);
+  const client = scopedClient ?? localClient;
   const canonicalProjectId = useBoard((state) => {
     if (projectId === null) return null;
     return state.projects.find((project) => project.slug === projectId || project.id === projectId)?.id
@@ -115,7 +118,7 @@ export function CanonicalChatRoute({
       return () => { current = false; };
     }
     if (!live) return () => { current = false; };
-    if (sharedScopeId) {
+    if (sharedScopeId || externalNavigation) {
       setAvailability({ routeKey, value: "available" });
       return () => { current = false; };
     }
@@ -138,7 +141,7 @@ export function CanonicalChatRoute({
       setAvailability({ routeKey, value: "unavailable" });
     });
     return () => { current = false; };
-  }, [canonicalProjectId, client, live, routeKey, sharedScopeId]);
+  }, [canonicalProjectId, client, live, routeKey, sharedScopeId, externalNavigation]);
 
   if (!client || (!sharedScopeId && currentAvailability === "unavailable")) return fallback;
   if (!sharedScopeId && currentAvailability === "checking") {

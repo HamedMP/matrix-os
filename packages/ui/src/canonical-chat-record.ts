@@ -1,3 +1,4 @@
+import type { ChatNavigationRecord } from "./chat-navigation/projection.js";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import { mergeChatReadState } from "./chat/read-state.js";
 
@@ -14,7 +15,7 @@ export function mergeCanonicalChatRecord(current: CanonicalChatRecord, incoming:
   return { ...latest, chat: { ...latest.chat, title: title.chat.title, titleVersion: title.chat.titleVersion } };
 }
 
-export function compareCanonicalChatActivity(a: CanonicalChatRecord, b: CanonicalChatRecord): number {
+export function compareCanonicalChatActivity(a: ChatNavigationRecord, b: ChatNavigationRecord): number {
   const left = a.chat.activityAt ?? a.chat.createdAt;
   const right = b.chat.activityAt ?? b.chat.createdAt;
   return right.localeCompare(left) || a.chat.id.localeCompare(b.chat.id);

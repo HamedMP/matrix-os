@@ -11,7 +11,11 @@
     "./codex-chat-import": "./src/codex-chat-import.ts",
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
-    "./bots": "./src/bots/index.ts"
+    "./bots": "./src/bots/index.ts",
+    "./integration-marketplace": "./src/integration-marketplace.ts",
+    "./managed-integrations": "./src/managed-integrations.ts",
+    "./bokio-integration": "./src/bokio-integration.ts",
+    "./data-imports": "./src/data-imports.ts"
   },
   "imports": {
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
@@ -38,6 +42,7 @@
     "#billing-public": "./src/billing-public.ts",
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
+    "#chat-navigation": "./src/chat-navigation.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
     "#canonical-chat-tool-activities": "./src/canonical-chat-tool-activities.ts",
     "#canonical-chat-tool-details": "./src/canonical-chat-tool-details.ts",
@@ -74,6 +79,7 @@
     "#funded-ai": "./src/funded-ai.ts",
     "#funded-ai-execution-recovery": "./src/funded-ai-execution-recovery.ts",
     "#jev": "./src/jev.ts",
+    "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
     "#os-view": "./src/os-view.ts",
@@ -89,7 +95,9 @@
     "#organization-drive-context": "./src/organization-drive-context.ts",
     "#chat-drive-project": "./src/chat-drive-project.ts",
     "#ai-credit-history": "./src/ai-credit-history.ts",
-    "#provider-workflows": "./src/provider-workflows.ts"
+    "#provider-workflows": "./src/provider-workflows.ts",
+    "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
+    "#app-capabilities": "./src/app-capabilities.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

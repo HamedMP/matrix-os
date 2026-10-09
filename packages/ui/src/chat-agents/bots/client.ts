@@ -34,7 +34,8 @@ export class BotClientError extends Error {
 
 function safeError(error: unknown): BotClientError {
   const status = typeof error === "object" && error !== null && "status" in error
-    && typeof error.status === "number" ? error.status : null;
+    && typeof error.status === "number" ? error.status
+    : typeof error === "object" && error !== null && "category" in error && error.category === "unauthorized" ? 401 : null;
   return new BotClientError(status, status === null ? fallbackMessage : safeMessages[status] ?? fallbackMessage);
 }
 
@@ -71,7 +72,7 @@ export function createBotClient(request: BotRequest): BotClient {
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
     interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
-    tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks`, "GET", BotTaskListResponseSchema)).tasks,
+    tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks?includeRunIds=true`, "GET", BotTaskListResponseSchema)).tasks,
     resolve: (chatId, interactionId, input) => call(
       `${chatPath(chatId)}/interactions/${encodeURIComponent(BotInteractionIdSchema.parse(interactionId))}/resolve`,
       "POST", ResolveBotInteractionResponseSchema, ResolveBotInteractionRequestSchema.parse(input)),

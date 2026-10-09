@@ -315,6 +315,14 @@ async function migrateConnectRetryScheduleV3(trx: Transaction<OwnerBotDatabase>)
   await sql`CREATE INDEX idx_bot_connect_requests_due ON bot_connect_requests(retry_after, requested_at) WHERE status = 'pending'`.execute(trx);
 }
 
+/** Narrow additive-label consent; existing read/write grants are not upgraded. */
+async function migrateJevLabelGrantV7(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`ALTER TABLE bot_grants DROP CONSTRAINT bot_grants_effects_check`.execute(trx);
+  await sql`ALTER TABLE bot_grants ADD CONSTRAINT bot_grants_effects_check CHECK (
+    cardinality(effects) BETWEEN 1 AND 4 AND effects <@ ARRAY['read', 'write', 'send', 'label']::text[]
+  )`.execute(trx);
+}
+
 export interface BotMigration {
   readonly version: number;
   readonly name: string;
@@ -330,4 +338,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   // Already deployed by #2198; reserve its exact identity before other v5 features.
   { version: 5, name: "bot_provider_connections", up: migrateBotProviderConnections },
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
+  { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
 ];

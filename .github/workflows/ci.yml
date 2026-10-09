@@ -142,6 +142,7 @@ jobs:
   typecheck:
     name: Type Check
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # TODO: remove continue-on-error once baseline type errors in kernel are fixed
@@ -176,6 +177,7 @@ jobs:
   shell-production-build:
     name: Shell Production Build
     needs: [changes, typecheck]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -217,6 +219,7 @@ jobs:
   patterns:
     name: Pattern Scan
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -269,6 +272,7 @@ jobs:
   react-doctor:
     name: React Doctor
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # Include observed 5m15s checkout, audit and cleanup/transfer variance.
     timeout-minutes: 10
@@ -341,6 +345,7 @@ jobs:
   sync-client:
     name: Sync Client Package
     needs: [changes, patterns]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -379,6 +384,7 @@ jobs:
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -416,12 +422,13 @@ jobs:
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    # Shard 4 has grown past the previous 20-minute ceiling: run 35911423904 was
-    # cancelled at 20m18s with no failing assertion and no summary line, which reads
-    # as a product failure but is not one. Raise rather than let a passing shard be
-    # reported as red; split the shards if this approaches the new ceiling too.
-    timeout-minutes: 30
+    # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
+    # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
+    # bounded 40-minute window for runner variance and cleanup; split the shards if
+    # normal runs approach this ceiling too.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -494,7 +501,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts --maxWorkers=1 --no-file-parallelism
+          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Account deletion PostgreSQL races
         if: needs.changes.outputs.should_run == 'true'
@@ -502,9 +509,15 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           bun run test -- tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Bot Integration grant and source admission races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
   docs-contract:
     name: Docs Contract Tests
     needs: changes
+    if: needs.changes.outputs.docs_contract_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -534,6 +547,7 @@ jobs:
   os-view-parity:
     name: OS View Parity
     needs: changes
+    if: needs.changes.outputs.os_view_parity_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -574,6 +588,7 @@ jobs:
   e2e:
     name: E2E Tests
     needs: [changes, sync-client, unit]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -662,7 +677,7 @@ jobs:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
           MATRIX_PROVIDER_AUTH_ELECTRON: "1"
           MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts
 
       - name: Upload Desktop provider auth evidence
         if: always() && needs.changes.outputs.should_run == 'true'
@@ -744,9 +759,33 @@ jobs:
           path: tests/e2e/
           retention-days: 7
 
+  funded-host-root:
+    name: Protected Funded Host Root Contracts
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Execute isolated root fixtures without skipped cases
+        run: |
+          set -euo pipefail
+          container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
+          timeout --kill-after=10s 120s docker pull node:24-bookworm
+          timeout --kill-after=10s 180s docker run --rm --init \
+            --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
+            --env MATRIX_DISPOSABLE_ROOT_TEST=true \
+            --mount "type=bind,src=$PWD,dst=/work,readonly" \
+            node:24-bookworm python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -764,6 +803,7 @@ jobs:
           AGENT_SDK_COMPATIBILITY_RESULT: ${{ needs.agent-sdk-compatibility.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
           FUNDED_POSTGRES_RESULT: ${{ needs.funded-postgres.result }}
+          FUNDED_HOST_ROOT_RESULT: ${{ needs.funded-host-root.result }}
           DOCS_CONTRACT_RESULT: ${{ needs.docs-contract.result }}
           OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
@@ -789,6 +829,7 @@ jobs:
             echo "| Agent SDK 0.3.251 Compatibility | $AGENT_SDK_COMPATIBILITY_RESULT |"
             echo "| Unit Tests | $UNIT_RESULT |"
             echo "| Funded Settlement PostgreSQL | $FUNDED_POSTGRES_RESULT |"
+            echo "| Protected Funded Host Root Contracts | $FUNDED_HOST_ROOT_RESULT |"
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
@@ -800,7 +841,7 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -811,6 +852,10 @@ jobs:
           done
 
           if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_POSTGRES_RESULT" != "success" ]; then
+            failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_HOST_ROOT_RESULT" != "success" ]; then
             failed=true
           fi
 

@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +23,7 @@ function harness({ fail = false }: { fail?: boolean } = {}) {
     return Response.json({ run: { ...aborted, id: runId, chatId }, cancellation: "aborted" });
   });
   let resolveNext!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/api/chats/events?")) return new Response(new ReadableStream(), {
       headers: { "content-type": "text/event-stream" },
     });

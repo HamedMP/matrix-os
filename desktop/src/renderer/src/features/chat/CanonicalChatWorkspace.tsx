@@ -169,7 +169,7 @@ export function CanonicalChatWorkspace({
     active: live && !explicitSharedRoute,
   });
   const providerCatalog = catalog ?? liveCatalog.catalog;
-  const providerCatalogLoading = !catalog && liveCatalog.status === "loading";
+  const providerCatalogLoading = !catalog && liveCatalog.initialLoading;
   const onCredentialInvalidation = useCallback((event: CanonicalChatInvalidation) => {
     if (event.type !== "chat.changed"
       || (event.eventType !== "chat.updated" && event.eventType !== "chat.deleted")) return;
@@ -190,6 +190,7 @@ export function CanonicalChatWorkspace({
     active: live && !explicitSharedRoute,
     initialChatId,
     autoSelectFirst: false,
+    externalNavigation,
     eventSource,
     onInvalidation: onCredentialInvalidation,
   });
@@ -269,7 +270,7 @@ export function CanonicalChatWorkspace({
   );
   const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
-    catalogReady: Boolean(catalog || liveCatalog.hasTrustedCatalog || liveCatalog.status === "error"),
+    catalogReady: Boolean(catalog || liveCatalog.lastSuccessAt !== null || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
@@ -729,7 +730,7 @@ export function CanonicalChatWorkspace({
         onReorder={(queuedTurnIds, movedQueuedTurnId) => void reorderQueuedTurns(queuedTurnIds, movedQueuedTurnId)}
         onCancel={(queuedTurnId) => void cancelQueuedTurn(queuedTurnId)}
       />
-      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading} retry={() => { botBinding.retry(); botExecution.retry(); }} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
+      <CanonicalChatIdentityGate unknown={botIdentityUnknown} loading={botBinding.loading || botExecution.loading} retry={() => { botBinding.retry(); botExecution.retry(); }} onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}><>
       <input
         ref={fileInputRef}
         type="file"
@@ -962,7 +963,7 @@ export function CanonicalChatWorkspace({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
               client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
-              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision} />
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
@@ -1003,6 +1004,7 @@ export function CanonicalChatWorkspace({
             </div>
             </ChatContextMenu>
             <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
+            </BotChatPanel>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div

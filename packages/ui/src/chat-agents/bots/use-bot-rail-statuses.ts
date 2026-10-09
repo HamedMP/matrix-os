@@ -6,7 +6,8 @@ import { BOT_RAIL_IDLE, BOT_RAIL_LOADING, BOT_RAIL_UNAVAILABLE, botRailStatus, t
 
 const MAX_AGENTS = 100;
 const REFRESH_MS = 15_000;
-type Snapshot = { client: ChatAgentClient; key: string; scope: string | undefined; statuses: Record<string, BotRailStatus> };
+type Snapshot = { client: ChatAgentClient; identities: Record<string, string>; statuses: Record<string, BotRailStatus> };
+const recipeIdentity = (agent: ChatAgent) => JSON.stringify(agent.recipeRef ? [agent.recipeRef.recipeId, agent.recipeRef.version] : null);
 
 function subscribeVisibility(listener: () => void) {
   document.addEventListener("visibilitychange", listener);
@@ -21,16 +22,17 @@ export function useBotRailVisibility(visible: boolean): boolean {
 }
 
 /** Read-only, bounded projection for every Chat rail. The client fences owner/runtime;
- * scope fences navigation; shared reads coalesce with existing attention summaries. */
+ * scope fences refresh completions; same-Bot evidence survives navigation while
+ * shared reads coalesce with existing attention summaries. */
 export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: readonly ChatAgent[], scope?: string, active = true): Record<string, BotRailStatus> {
   const visible = useBotRailVisibility(active);
-  const key = JSON.stringify(agents.slice(0, MAX_AGENTS).map(agent => ({ id: agent.id, recipe: Boolean(agent.recipeRef) })));
+  const key = JSON.stringify(agents.slice(0, MAX_AGENTS).map(agent => ({ id: agent.id, recipe: Boolean(agent.recipeRef), identity: recipeIdentity(agent) })));
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const activation = useRef(0);
   useEffect(() => {
     if (!client?.bots || !visible) return;
     const refreshToken = `rail-scope:${scope ?? ""}:activation:${++activation.current}`;
-    const entries = JSON.parse(key) as { id: string; recipe: boolean }[];
+    const entries = JSON.parse(key) as { id: string; recipe: boolean; identity: string }[];
     const reads = botSummaryReads(client);
     let current = true;
     const isCurrent = () => current && documentVisible();
@@ -62,7 +64,7 @@ export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: 
             }
           }
         }));
-        if (isCurrent()) setSnapshot({client, key, scope, statuses});
+        if (isCurrent()) setSnapshot({client, identities: Object.fromEntries(entries.map(entry => [entry.id, entry.identity])), statuses});
       } finally { pending = false; }
     };
     void refresh(refreshToken);
@@ -72,7 +74,10 @@ export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: 
     return () => { current = false; window.clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, key, scope, visible]);
   const available = visible && client?.bots;
-  const matching = available && snapshot?.client === client && snapshot.key === key && snapshot.scope === scope;
-  return Object.fromEntries(agents.map(agent => [agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
-    : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE]));
+  return Object.fromEntries(agents.map((agent, index) => {
+    if (index >= MAX_AGENTS) return [agent.id, BOT_RAIL_UNAVAILABLE];
+    const matching = available && snapshot?.client === client && snapshot.identities[agent.id] === recipeIdentity(agent);
+    return [agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
+      : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE];
+  }));
 }

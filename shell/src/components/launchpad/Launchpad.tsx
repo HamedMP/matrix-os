@@ -183,7 +183,7 @@ export function Launchpad({
               ref={searchRef}
               type="text"
               aria-label="Search apps"
-              placeholder="Search"
+              placeholder="Search apps"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -193,6 +193,10 @@ export function Launchpad({
             />
           </div>
         </div>
+
+        <p className="px-6 pb-4 text-center text-sm text-white/80">
+          Open an installed app, or choose Create app to start in Chat.
+        </p>
 
         {/* react-doctor-disable-next-line react-doctor/click-events-have-key-events, react-doctor/no-static-element-interactions -- light-dismiss surface: closes Launchpad only when the empty area around the grid (not a tile) is clicked. Keyboard dismiss is handled by the launcher's global Escape handler. */}
         <div

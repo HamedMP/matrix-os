@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { Hono } from "hono";
+import { requireRequestPrincipal } from "../../../packages/gateway/src/request-principal.js";
 import { createIntegrationRoutes } from "../../../packages/gateway/src/integrations/routes.js";
 import type { PlatformDb } from "../../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../../packages/gateway/src/integrations/pipedream.js";
@@ -17,7 +18,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 describe("bot integration client", () => {
   it("parses the actual owner catalog route DTO and preserves its scoped-read action boundary", async () => {
     const pipedream = { getAppInfo: async () => null } as unknown as PipedreamConnectClient;
-    const resolveUserId = vi.fn(async (context) => context.req.header("x-platform-user-id") ?? null);
+    const resolveUserId = vi.fn(async (context) => requireRequestPrincipal(context).userId);
     const routes = createIntegrationRoutes({ db: {} as PlatformDb, pipedream, webhookSecret: "fixture", resolveUserId });
     const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));
     const read = await client.describe(OWNER, { service: "gmail", readOnly: true });
@@ -82,6 +83,28 @@ describe("bot integration client", () => {
     expect(JSON.parse(String(calls[1]![1].body))).toEqual({ service: "gmail", action: "send_email", label: "Work", params: { to: "a" } });
   });
 
+  it("passes an immutable connection ID for scoped source reads", async () => {
+    const transport = vi.fn(async () => json({ data: {} }));
+    await createBotIntegrationClient(transport).call(OWNER, { service: "gmail", action: "list_threads", label: "Work", connectionId: "saved-one", params: {}, read: true });
+    expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ body: expect.objectContaining({ connectionId: "saved-one" }) }));
+  });
+
+  it("passes an immutable connection ID for approved writes", async () => {
+    const transport = vi.fn(async () => json({ data: {} }));
+    await createBotIntegrationClient(transport).call(OWNER, { service: "gmail", action: "send_email", label: "Work", connectionId: "saved-one", params: {}, read: false });
+    expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ path: "/call", body: expect.objectContaining({ connectionId: "saved-one" }) }));
+  });
+
+  it("keeps ordinary Drive reads at their bot response ceiling", async () => {
+    const client = createBotIntegrationClient(async () => json({ data: { content: "x".repeat(300 * 1024) } }));
+    await expect(client.call(OWNER, { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "document_1" }, read: true })).rejects.toEqual(new BotIntegrationError("unavailable"));
+  });
+  it("allows the reviewed Drive content budget only through the app action seam", async () => {
+    const client = createBotIntegrationClient(async () => json({ data: { content: "x".repeat(300 * 1024) } }));
+    const input = { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "document_1" }, read: true };
+    await expect(client.callAppAction(OWNER, input)).resolves.toEqual({ data: { content: "x".repeat(300 * 1024) } });
+    await expect(client.call(OWNER, input)).rejects.toEqual(new BotIntegrationError("unavailable"));
+  });
   it("maps upstream failures to allowlisted codes and bounds what it reads", async () => {
     for (const [status, code] of [[409, "ambiguous"], [404, "missing"], [400, "missing"], [403, "denied"], [502, "unavailable"]] as const) {
       const client = createBotIntegrationClient(async () => json({ error: "provider said something at /secret" }, status));
@@ -111,7 +134,8 @@ describe("bot integration client", () => {
     const routes = new Hono();
     const seen = vi.fn();
     routes.get("/", (context) => {
-      seen(context.req.header("x-platform-user-id"));
+      seen(requireRequestPrincipal(context).userId);
+      expect(context.req.header("x-platform-user-id")).toBeUndefined();
       return context.json([{ id: "conn_1", service: "gmail", account_label: "Work", status: "active" }]);
     });
     const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));

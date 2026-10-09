@@ -55,6 +55,11 @@ export function createChatGptPlanPeerRoutes(options: {
     challengeBody.parse(await c.req.json());
     return c.json(peers.challenge(ownerId));
   });
+  routes.post(`${root}/rebind-challenge`, async c => {
+    const { ownerId, peers } = authorized(c);
+    challengeBody.parse(await c.req.json());
+    return c.json(await peers.rebindChallenge(ownerId));
+  });
   routes.post(`${root}/connect`, async c => {
     const { ownerId, peers } = authorized(c);
     return c.json(await peers.connect(ownerId, await c.req.json()));

@@ -4,15 +4,6 @@
 require("react-native-unistyles/mocks");
 require("./lib/unistyles");
 
-// Product screens intentionally mark decorative/loading elements (Spacer,
-// Skeleton, RefreshControl wrappers, etc.) accessibilityElementsHidden so
-// screen readers skip them, but still assign them testIDs for assertions.
-// RNTL v12 excludes hidden elements from queries by default -- opt back in
-// globally so tests can find those nodes without threading
-// `{ includeHiddenElements: true }` through every query call.
-const { configure } = require("@testing-library/react-native");
-configure({ defaultIncludeHiddenElements: true });
-
 jest.mock("react-native-reanimated", () => {
   const { Text, View } = require("react-native");
   const mockReact = require("react");
@@ -45,6 +36,7 @@ jest.mock("react-native-reanimated", () => {
     withRepeat: (v) => v,
     withTiming: (v) => v,
     withSpring: (v) => v,
+    cancelAnimation: jest.fn(),
   };
 });
 
@@ -162,6 +154,11 @@ jest.mock(
   "@react-native-async-storage/async-storage",
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
+
+// The composer refreshes the Clerk session token ahead of a send. Screen tests
+// mock Clerk without one, so the refresh is a no-op for them; the hook's own
+// suite unmocks it.
+jest.mock("@/lib/use-session-token-warmup", () => ({ useSessionTokenWarmup: () => () => undefined }));
 
 // PostHog pulls in optional native modules (expo-file-system/application/device,
 // the session-replay plugin) at import time. Stub it globally so screen tests that

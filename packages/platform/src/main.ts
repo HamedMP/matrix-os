@@ -1,3 +1,4 @@
+import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -110,6 +111,7 @@ import {
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { createAtsRoutes } from './ats-routes.js';
+import { ATS_OPEN_ROLE_SLUGS } from './ats-roles.js';
 import type { AtsDB } from './ats-db.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -631,10 +633,8 @@ export function createApp(deps: {
       db: deps.atsDb,
       ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
       adminSecret: appEnv.ATS_ADMIN_SECRET ?? '',
-      allowedRoleSlugs: [
-        'founders-associate-gtm-operations',
-        'founding-engineer',
-      ],
+      mailSecret: appEnv.ATS_MAIL_INGEST_SECRET ?? '',
+      allowedRoleSlugs: ATS_OPEN_ROLE_SLUGS,
       bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));
@@ -654,6 +654,8 @@ export function createApp(deps: {
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
+
+  registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.

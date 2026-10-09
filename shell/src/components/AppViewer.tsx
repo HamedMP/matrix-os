@@ -1,8 +1,7 @@
 "use client";
 
-import { prepareAppAiRequest } from "./app-ai-request";
+import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
-import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -19,9 +18,12 @@ import { openAppSession } from "@/lib/app-session";
 import { capturePostHogEvent } from "@/lib/posthog-client";
 import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
+import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
 import {
   APP_IFRAME_SANDBOX,
   extractSlug,
+  appIdentityFromPath,
+  appDataChangeMessageForIdentity,
   shouldRenderAppIframe,
   injectBridgeIntoAppHtml,
 } from "./app-viewer-helpers";
@@ -37,13 +39,6 @@ interface AppViewerProps {
   onOpenApp?: (name: string, path: string) => void;
 }
 
-function appNameFromPath(path: string): string {
-  if (path.startsWith("modules/")) {
-    return path.split("/")[1];
-  }
-  return path.replace("apps/", "").replace(/\/index\.html$/, "").replace(".html", "");
-}
-
 function readCurrentTheme(): ThemeVars {
   if (typeof document === "undefined") return {};
   const style = getComputedStyle(document.documentElement);
@@ -55,7 +50,7 @@ function readCurrentDesign(): string {
   return document.documentElement.dataset.themeStyle ?? "flat";
 }
 
-async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort): Promise<void> {
+async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort, signal: AbortSignal): Promise<void> {
   try {
     if (!payload || typeof payload !== "object") {
       throw new Error("Invalid bridge fetch payload");
@@ -64,23 +59,20 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
     if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
       throw new Error("Blocked bridge fetch URL");
     }
-    let requestInit = init && typeof init === "object" ? init as RequestInit : {};
-    const isAi = url === "/api/bridge/ai";
-    if (isAi) requestInit = prepareAppAiRequest(appName, requestInit);
-    const response = await fetch(`${getGatewayUrl()}${url}`, {
+    const bound = prepareAppBridgeFetch(appName, url, init && typeof init === "object" ? init as RequestInit : {});
+    const requestInit = bound.init;
+    const response = await fetch(`${getGatewayUrl()}${bound.url}`, {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
-      signal: AbortSignal.timeout(isAi ? APP_AI_TIMEOUT_MS + 2_000 : BRIDGE_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(appBridgeTimeoutMs(bound.url))]),
       redirect: "error",
     });
-    const body = await response.json().catch((err: unknown) => {
-      console.warn("[app-viewer] bridge fetch JSON parse failed:", err instanceof Error ? err.message : String(err));
-      return null;
-    });
-    port.postMessage({ ok: response.ok, status: response.status, body });
+    const body = await readAppBridgeResponse(response, bound);
+    if (!signal.aborted) port.postMessage({ ok: response.ok, status: response.status, body: response.ok ? body : null });
   } catch (err: unknown) {
-    port.postMessage({ ok: false, error: err instanceof Error ? err.message : "Bridge fetch failed" });
+    console.warn("[app-viewer] bridge fetch unavailable", err instanceof Error ? err.name : "UnknownError");
+    if (!signal.aborted) port.postMessage({ ok: false, error: "App request unavailable" });
   } finally {
     port.close();
   }
@@ -88,13 +80,15 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
 
 const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => {
   try {
+    const requestBody = JSON.stringify({ action, app, key, value });
+    if (new TextEncoder().encode(requestBody).length > MAX_APP_KV_REQUEST_BYTES) throw new Error("Bridge data request failed");
     const response = await fetch(`${GATEWAY_URL}/api/bridge/data`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
-      body: JSON.stringify({ action, app, key, value }),
+      body: requestBody,
     });
-    const body = await response.json() as { value?: unknown };
+    const body = await readAppBridgeResponse(response, { url: "/api/bridge/data", init: {} }) as { value?: unknown };
     if (!response.ok) return Promise.reject(new Error("Bridge data request failed"));
     return action === "read" ? body.value : undefined;
   } catch (err: unknown) {
@@ -114,7 +108,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
-  const appName = appNameFromPath(path);
+  const appName = appIdentityFromPath(path);
 
   useFileWatcher((changedPath: string, event: string) => {
     if (changedPath === path && event === "change") {
@@ -198,8 +192,15 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       openApp: onOpenApp,
     };
 
+    const pending = new Map<MessagePort, AbortController>();
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
+      if (data?.type === "os:bridge-dispose" && event.source === iframeRef.current?.contentWindow
+        && (event.origin === window.location.origin || event.origin === "null") && data.app === appName) {
+        for (const [port, controller] of pending) { controller.abort(); port.close(); }
+        pending.clear();
+        return;
+      }
       if (
         data?.type === "os:bridge-fetch"
         && event.source === iframeRef.current?.contentWindow
@@ -207,7 +208,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         && data.app === appName
         && event.ports[0]
       ) {
-        void handleBridgeFetch(appName, data.payload, event.ports[0]);
+        const port = event.ports[0];
+        if (pending.size >= 32) { port.postMessage({ ok: false, error: "App request unavailable" }); port.close(); return; }
+        const controller = new AbortController();
+        pending.set(port, controller);
+        void handleBridgeFetch(appName, data.payload, port, controller.signal).finally(() => pending.delete(port));
         return;
       }
       handleBridgeMessage(event, handler, {
@@ -218,8 +223,12 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     };
 
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [send, sessionId, onOpenApp, appName, bridgeDataHandler]);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      for (const [port, controller] of pending) { controller.abort(); port.close(); }
+      pending.clear();
+    };
+  }, [send, sessionId, onOpenApp, appName, path, refreshKey]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {
@@ -229,10 +238,11 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         if (!iframe) return;
         const msgApp = (msg as { app: string }).app;
         const msgKey = (msg as { key: string }).key;
-        if (msgApp === appName || appName.endsWith(`/${msgApp}`)) {
+        const change = appDataChangeMessageForIdentity(appName, msgApp, msgKey);
+        if (change) {
           try {
             iframe.contentWindow?.postMessage(
-              { type: "os:data-change", payload: { app: msgApp, key: msgKey } },
+              change,
               "*",
             );
           } catch (err) {

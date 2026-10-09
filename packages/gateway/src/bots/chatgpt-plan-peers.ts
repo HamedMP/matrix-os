@@ -41,10 +41,11 @@ export function createChatGptPlanPeers(deps: {
 }) {
     const now = deps.now ?? Date.now;
     const compatible = (model: ChatGptPlanPeerSnapshot['models'][number]) => model.contextWindow >= 8192 && model.maxOutputTokens >= 256;
-    const challenges = new Map<string, { expires: number; epoch: number }>(); // cap32, expire before admission
+    const challenges = new Map<string, { expires: number; epoch: number; replacement?: { deviceId: string; publicKey: string } }>(); // cap32, expire before admission
     let peer: Peer | undefined;
     let challengeEpoch = 0;
     let closed = false;
+    let connecting = false;
     const scope = (owner: string) => {
         if (closed || !deps.ownerId || !deps.computerId)
             throw new ChatGptPlanPeerError('unavailable');
@@ -97,38 +98,68 @@ export function createChatGptPlanPeers(deps: {
             challenges.set(challenge, { expires, epoch: ++challengeEpoch });
             return { version: 1 as const, challenge, ownerId: deps.ownerId, computerId: deps.computerId, expiresAt: new Date(expires).toISOString() };
         },
+        async rebindChallenge(owner: string) {
+            scope(owner);
+            const pin = await deps.db.selectFrom('bot_chatgpt_plan_devices').selectAll()
+                .where('owner_id', '=', owner).where('computer_id', '=', deps.computerId).executeTakeFirst();
+            if (!pin) throw new ChatGptPlanPeerError('conflict');
+            const challenge = service.challenge(owner);
+            const attempt = challenges.get(challenge.challenge)!;
+            attempt.replacement = { deviceId: pin.device_id, publicKey: pin.public_key };
+            return { ...challenge, replacement: { expectedDeviceId: pin.device_id } };
+        },
         async connect(owner: string, input: unknown) {
             scope(owner);
-            const parsed = ChatGptPlanPeerConnectSchema.safeParse(input);
-            if (!parsed.success)
-                throw new ChatGptPlanPeerError('invalid_request');
-            const { challenge, publicKey, signature, snapshot } = parsed.data;
-            const attempt = challenges.get(challenge);
-            challenges.delete(challenge);
-            if (!attempt || attempt.expires <= now() || attempt.epoch !== challengeEpoch)
-                throw new ChatGptPlanPeerError('invalid_request');
-            const der = Buffer.from(publicKey, 'base64url');
+            // One registry owns this Computer's peer. Bound enrollment concurrency
+            // so a slow previous write cannot publish or drop a newer session.
+            if (connecting) throw new ChatGptPlanPeerError('unavailable');
+            connecting = true;
             try {
-                const key = createPublicKey({ key: der, type: 'spki', format: 'der' });
-                if (key.asymmetricKeyType !== 'ed25519' || createHash('sha256').update(der).digest('hex') !== snapshot.deviceId
-                    || !verify(null, Buffer.from(chatGptPlanPeerProof({ challenge, ownerId: deps.ownerId, computerId: deps.computerId, snapshot })), key, Buffer.from(signature, 'base64url')))
+                const parsed = ChatGptPlanPeerConnectSchema.safeParse(input);
+                if (!parsed.success)
                     throw new ChatGptPlanPeerError('invalid_request');
-            }
-            catch (error) {
-                if (!(error instanceof ChatGptPlanPeerError))
-                    console.warn('[chatgpt-plan] Device proof rejected:', error instanceof Error ? error.name : 'UnknownError');
-                throw new ChatGptPlanPeerError('invalid_request');
-            }
-            await deps.db.insertInto('bot_chatgpt_plan_devices').values({ owner_id: owner, computer_id: deps.computerId, device_id: snapshot.deviceId, public_key: publicKey })
-                .onConflict(c => c.columns(['owner_id', 'computer_id']).doNothing()).execute();
-            const pin = await deps.db.selectFrom('bot_chatgpt_plan_devices').selectAll().where('owner_id', '=', owner).where('computer_id', '=', deps.computerId).executeTakeFirst();
-            if (!pin || pin.device_id !== snapshot.deviceId || pin.public_key !== publicKey)
-                throw new ChatGptPlanPeerError('conflict');
-            if (closed || attempt.epoch !== challengeEpoch)
-                throw new ChatGptPlanPeerError('unavailable');
-            drop();
-            peer = { sessionId: randomUUID(), sequence: 0, snapshot, lastTouched: now(), requests: [], pending: new Map(), polling: false };
-            return { version: 1 as const, sessionId: peer.sessionId };
+                const { challenge, publicKey, signature, snapshot, replacement } = parsed.data;
+                const attempt = challenges.get(challenge);
+                challenges.delete(challenge);
+                if (!attempt || attempt.expires <= now() || attempt.epoch !== challengeEpoch
+                    || attempt.replacement?.deviceId !== replacement?.expectedDeviceId)
+                    throw new ChatGptPlanPeerError('invalid_request');
+                const der = Buffer.from(publicKey, 'base64url');
+                try {
+                    const key = createPublicKey({ key: der, type: 'spki', format: 'der' });
+                    if (key.asymmetricKeyType !== 'ed25519' || createHash('sha256').update(der).digest('hex') !== snapshot.deviceId
+                        || !verify(null, Buffer.from(chatGptPlanPeerProof({ challenge, ownerId: deps.ownerId, computerId: deps.computerId, snapshot, replacement })), key, Buffer.from(signature, 'base64url')))
+                        throw new ChatGptPlanPeerError('invalid_request');
+                }
+                catch (error) {
+                    if (!(error instanceof ChatGptPlanPeerError))
+                        console.warn('[chatgpt-plan] Device proof rejected:', error instanceof Error ? error.name : 'UnknownError');
+                    throw new ChatGptPlanPeerError('invalid_request');
+                }
+                // A single conditional write is the replacement authority. Never upsert a
+                // different key from ordinary reconnect or retry. The saved old key is
+                // server-owned and the expected device ID is included in signed bytes.
+                if (attempt.replacement) {
+                    const updated = await deps.db.updateTable('bot_chatgpt_plan_devices')
+                        .set({ device_id: snapshot.deviceId, public_key: publicKey })
+                        .where('owner_id', '=', owner).where('computer_id', '=', deps.computerId)
+                        .where('device_id', '=', attempt.replacement.deviceId)
+                        .where('public_key', '=', attempt.replacement.publicKey)
+                        .returning('device_id').executeTakeFirst();
+                    if (!updated) throw new ChatGptPlanPeerError('conflict');
+                    drop(); // Durable replacement immediately revokes the previous peer.
+                    console.info('[chatgpt-plan] Device binding replaced');
+                } else await deps.db.insertInto('bot_chatgpt_plan_devices').values({ owner_id: owner, computer_id: deps.computerId, device_id: snapshot.deviceId, public_key: publicKey })
+                    .onConflict(c => c.columns(['owner_id', 'computer_id']).doNothing()).execute();
+                const pin = await deps.db.selectFrom('bot_chatgpt_plan_devices').selectAll().where('owner_id', '=', owner).where('computer_id', '=', deps.computerId).executeTakeFirst();
+                if (!pin || pin.device_id !== snapshot.deviceId || pin.public_key !== publicKey)
+                    throw new ChatGptPlanPeerError('conflict');
+                if (closed || attempt.epoch !== challengeEpoch)
+                    throw new ChatGptPlanPeerError('unavailable');
+                drop();
+                peer = { sessionId: randomUUID(), sequence: 0, snapshot, lastTouched: now(), requests: [], pending: new Map(), polling: false };
+                return { version: 1 as const, sessionId: peer.sessionId };
+            } finally { connecting = false; }
         },
         async poll(owner: string, input: unknown) {
             const p = session(owner, input);

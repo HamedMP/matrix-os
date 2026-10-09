@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { createApiClient } from "../../desktop/src/renderer/src/lib/api";
-import { createDesktopProviderWorkflowClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "../../desktop/src/renderer/src/features/settings/provider-workflow-transport";
+import { createDesktopProviderWorkflowClient, createDesktopMatrixAnthropicClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "../../desktop/src/renderer/src/features/settings/provider-workflow-transport";
+
+it("fences a Matrix API connection response when the selected Computer changes", async () => {
+  let current = true;
+  const get = vi.fn(async () => { current = false; return {}; });
+  const api = { get } as unknown as ApiClient;
+  await expect(createDesktopMatrixAnthropicClient(api, () => current).status(new AbortController().signal)).rejects.toThrow();
+  expect(get).toHaveBeenCalledWith("/api/ai/matrix-connections/anthropic", expect.objectContaining({ maxBytes: 65536, timeoutMs: 15000 }));
+});
 
 describe("Electron provider workflow transport", () => {
   it("preserves only the safe rejection code through the real API client", async () => {
@@ -92,4 +100,9 @@ it("negotiates legacy discovery only for a real missing V2 endpoint", async () =
  }});
  await expect(createDesktopProviderWorkflowClient(api,()=>true).capabilities(new AbortController().signal)).resolves.toEqual([]);
  expect(urls).toEqual(["/api/ai/provider-settings/workflows/v2/capabilities", "/api/ai/provider-settings/workflows/capabilities"]);
+});
+
+it.each(["conflict", "unknown"])("preserves safe connection admission %s without leaking private errors", async code => {
+  const client = createDesktopProviderWorkflowClient(createApiClient({baseUrl:"https://matrix.invalid",getRuntimeSlot:()=>"primary",fetchFn:async()=>Response.json({error:{code,message:"private /credential/file"}}, {status:409})}),()=>true);
+  await expect(client.start({harnessInstanceId:"claude",kind:"login",method:"browser",idempotencyKey:"fixture"},new AbortController().signal)).rejects.toMatchObject({reason:code === "conflict" ? "conflict" : "unavailable",message:"Provider action is unavailable."});
 });

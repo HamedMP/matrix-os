@@ -1,9 +1,9 @@
-import type { CanonicalChatRecord } from '@matrix-os/contracts';
+import type { ChatNavigationRecord } from '../chat-navigation/projection.js';
 import { isChatUnread } from './read-state.js';
 
 export type CanonicalChatAttentionState = 'approval_required' | 'input_required' | 'running' | 'failed' | 'unseen_completion' | 'idle';
 /** One presentation derivation for authenticated canonical records across clients. */
-export function resolveCanonicalChatAttention(record: CanonicalChatRecord): CanonicalChatAttentionState {
+export function resolveCanonicalChatAttention(record: ChatNavigationRecord): CanonicalChatAttentionState {
   if (record.chat.attention === 'approval_required' || record.activeRun?.status === 'waiting_for_approval') return 'approval_required';
   if (record.chat.attention === 'input_required' || record.activeRun?.status === 'waiting_for_input') return 'input_required';
   if (record.activeRun) return 'running';
@@ -12,7 +12,7 @@ export function resolveCanonicalChatAttention(record: CanonicalChatRecord): Cano
 }
 
 /** Completion placement survives read acknowledgement; attention still wins. */
-export function resolveCanonicalChatLifecycleGroup(record: CanonicalChatRecord): 'needsYou' | 'working' | 'done' | 'recent' {
+export function resolveCanonicalChatLifecycleGroup(record: ChatNavigationRecord): 'needsYou' | 'working' | 'done' | 'recent' {
   const state = resolveCanonicalChatAttention(record);
   if (state === 'approval_required' || state === 'input_required' || state === 'failed') return 'needsYou';
   if (state === 'running') return 'working';

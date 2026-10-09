@@ -2,7 +2,9 @@ import type { CanonicalChatRecord } from "@matrix-os/contracts";
 
 const registeredScreens: Array<{ name: string; options?: Record<string, unknown> }> = [];
 let drawerScreenOptions: Record<string, unknown> | undefined;
-let drawerScreenListeners: Record<string, () => void> | undefined;
+type DrawerState = { history: Array<{ type: "drawer"; status: "open" | "closed" } | { type: "route"; key: string }>; default?: "open" | "closed" };
+let mockDrawerState: DrawerState = { history: [] };
+let drawerScreenListeners: Record<string, (event: { data: { state: DrawerState } }) => void> | undefined;
 
 const mockUseCanonicalChats = jest.fn();
 const mockUseProjects = jest.fn();
@@ -41,12 +43,14 @@ jest.mock("expo-router/drawer", () => {
   function Drawer({ children, screenOptions, screenListeners }: {
     children: React.ReactNode;
     screenOptions?: unknown;
-    screenListeners?: Record<string, () => void>;
+    screenListeners?: unknown;
   }) {
     drawerScreenOptions = typeof screenOptions === "function"
       ? screenOptions({ navigation: { toggleDrawer: jest.fn() } })
       : (screenOptions as Record<string, unknown>);
-    drawerScreenListeners = screenListeners;
+    drawerScreenListeners = typeof screenListeners === "function"
+      ? screenListeners({ navigation: { getState: () => mockDrawerState } })
+      : screenListeners;
     return React.createElement(React.Fragment, null, children);
   }
   Drawer.Screen = ({ name, options }: { name: string; options?: Record<string, unknown> }) => {
@@ -55,6 +59,7 @@ jest.mock("expo-router/drawer", () => {
   };
   return {
     Drawer,
+    getDrawerStatusFromState: jest.requireActual("expo-router/build/react-navigation/drawer/utils/getDrawerStatusFromState").getDrawerStatusFromState,
     DrawerContentScrollView: ({ children }: { children: React.ReactNode }) =>
       React.createElement(React.Fragment, null, children),
   };
@@ -64,7 +69,7 @@ import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import * as Haptics from "expo-haptics";
 import * as Clipboard from "expo-clipboard";
-import { Alert } from "react-native";
+import { Alert, StyleSheet as NativeStyleSheet } from "react-native";
 import DrawerLayout from "../app/(drawer)/_layout";
 import { DrawerContent } from "../components/shell/DrawerContent";
 
@@ -108,6 +113,7 @@ describe("authenticated drawer layout", () => {
     registeredScreens.length = 0;
     drawerScreenOptions = undefined;
     drawerScreenListeners = undefined;
+    mockDrawerState = { history: [] };
     jest.clearAllMocks();
     mockUseCanonicalChats.mockReturnValue({
       computer: { handle: "studio-mac" },
@@ -130,10 +136,34 @@ describe("authenticated drawer layout", () => {
 
   it("plays a medium haptic when the drawer opens and closes", () => {
     render(<DrawerLayout />);
-    drawerScreenListeners?.drawerOpen?.();
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "drawer", status: "open" }] } } });
     expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Medium);
-    drawerScreenListeners?.drawerClose?.();
+    drawerScreenListeners?.state?.({ data: { state: { history: [] } } });
     expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores repeated drawer status and route changes, including screen listener recreation", () => {
+    const app = render(<DrawerLayout />);
+    const open: DrawerState = { history: [{ type: "drawer", status: "open" }] };
+    drawerScreenListeners?.state?.({ data: { state: { history: [] } } });
+    drawerScreenListeners?.state?.({ data: { state: open } });
+    mockDrawerState = open;
+    app.rerender(<DrawerLayout />);
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "route", key: "files" }, { type: "drawer", status: "open" }] } } });
+    drawerScreenListeners?.state?.({ data: { state: open } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+    drawerScreenListeners?.state?.({ data: { state: { history: [{ type: "route", key: "files" }] } } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not buzz for a restored open drawer, then buzzes once when it closes", () => {
+    mockDrawerState = { history: [], default: "open" };
+    render(<DrawerLayout />);
+    drawerScreenListeners?.state?.({ data: { state: mockDrawerState } });
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+    drawerScreenListeners?.state?.({ data: { state: { default: "open", history: [{ type: "drawer", status: "closed" }] } } });
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
   });
 
   it("uses chat as home and exposes the mock shell routes", () => {
@@ -142,7 +172,7 @@ describe("authenticated drawer layout", () => {
     expect(registeredScreens.map((screen) => screen.name)).toEqual([
       "index", "files", "terminal", "integrations", "apps", "settings",
     ]);
-    expect(registeredScreens.find((screen) => screen.name === "index")?.options?.title).toBeNull();
+    expect(registeredScreens.find((screen) => screen.name === "index")?.options?.title).toBe("");
     expect(drawerScreenOptions?.drawerStyle).toMatchObject({ width: "80%" });
 
     const HeaderLeft = drawerScreenOptions?.headerLeft as (() => React.ReactElement) | undefined;
@@ -181,7 +211,7 @@ describe("authenticated drawer layout", () => {
     expect(screen.queryByLabelText("Switch computer")).toBeNull();
     expect(screen.getByLabelText("Files")).toBeTruthy();
     expect(screen.getByLabelText("Terminal")).toBeTruthy();
-    expect(screen.getByLabelText("Integrations")).toBeTruthy();
+    expect(screen.getByLabelText("Connect Apps")).toBeTruthy();
     expect(screen.getByLabelText("Apps")).toBeTruthy();
     expect(screen.getByLabelText("Shared with me, 3 pending invitations")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
@@ -199,6 +229,38 @@ describe("authenticated drawer layout", () => {
 
     fireEvent.press(screen.getByLabelText("New chat"));
     expect(navigate).toHaveBeenCalledWith("index");
+  });
+
+  it("left-aligns the primary navigation rows", () => {
+    render(
+      <DrawerContent
+        {...({
+          state: { index: 0, routeNames: ["index", "files", "terminal", "integrations", "apps", "shared", "settings"] },
+          navigation: { navigate: jest.fn(), closeDrawer: jest.fn() },
+          descriptors: {},
+          computerName: "Studio Mac",
+          collaborationEnabled: true,
+          pendingInvitationCount: 3,
+          recentChatsLoading: false,
+          recentChats: [],
+          projects: [],
+          activeSessionId: null,
+          onSelectConversation: jest.fn(),
+          onNewConversation: jest.fn(),
+        } as unknown as React.ComponentProps<typeof DrawerContent>)}
+      />,
+    );
+    for (const label of ["Files", "Terminal", "Connect Apps", "Apps", "Shared with me, 3 pending invitations"]) {
+      // The button stacks its vertical Spacers around the row. Laid out as a
+      // row itself, those Spacers become flex items on either side of the
+      // label and `space-between` pushes the label to the center.
+      const button = NativeStyleSheet.flatten(screen.getByLabelText(label).props.style);
+      expect(button.flexDirection).not.toBe("row");
+      expect(button.justifyContent).toBeUndefined();
+    }
+    // The pending-invitation badge still sits at the row's trailing edge.
+    const badgeRow = NativeStyleSheet.flatten(screen.getByTestId("drawer-primary-row-shared").props.style);
+    expect(badgeRow).toMatchObject({ flexDirection: "row", justifyContent: "space-between" });
   });
 
   it("shows skeleton rows while recent conversations are loading", () => {

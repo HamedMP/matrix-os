@@ -211,6 +211,31 @@ describe("provider Terminal login handoff", () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it("preserves native completion's receiver and response without resolving or opening Terminal", async () => {
+    const result = { kind: "snapshot" as const, snapshot: disconnectedSnapshot() };
+    class NativeStore {
+      readonly #result = result;
+      getSnapshot = vi.fn(async () => result.snapshot);
+      mutate = vi.fn(async () => result);
+      async completeClaudeNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }) {
+        expect(input).toEqual({ harnessInstanceId: "harness_claude_code", expectedRevision: 0, idempotencyKey: "native-completion" });
+        return this.#result;
+      }
+    }
+    const store = new NativeStore(), resolve = vi.fn(async () => REF);
+    const complete = vi.spyOn(store, "completeClaudeNativeLogin");
+    const facade = handoff(store, resolve);
+    await expect(facade.completeClaudeNativeLogin!({ harnessInstanceId: "harness_claude_code", expectedRevision: 0, idempotencyKey: "native-completion" })).resolves.toBe(result);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(resolve).not.toHaveBeenCalled(); expect(store.mutate).not.toHaveBeenCalled();
+  });
+
+  it("does not invent native completion when the registered store does not support it", () => {
+    const facade = handoff({ getSnapshot: vi.fn(), mutate: vi.fn() }, vi.fn());
+    expect(facade.completeClaudeNativeLogin).toBeUndefined();
+    expect(Object.hasOwn(facade, "completeClaudeNativeLogin")).toBe(false);
+  });
+
   it("checks dependencies at registration", () => {
     const store = { getSnapshot: vi.fn(), mutate: vi.fn() };
     expect(() => handoff(store, undefined as never)).toThrow("resolver is required");

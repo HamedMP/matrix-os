@@ -8,7 +8,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   client?: LocalChatgptPlanClient; disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
 }) {
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
-  const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string } | null>(null);
+  const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string; recovery?: boolean } | null>(null);
   const [active, setActive] = useState<{ client: LocalChatgptPlanClient; kind: "connect" | "action" } | null>(null);
   const scope = useRef<{ client: LocalChatgptPlanClient; lifetime: AbortController; revision: number; pending: boolean } | null>(null);
   const changed = useRef(onChanged);
@@ -48,7 +48,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   // Connect may return an in-progress receipt. Poll only during that transition
   // or while its authenticated device is registering; ordinary popup opens do
   // not restart model discovery or inference.
-  const awaitingDevice = status?.state === "connecting" || status?.state === "connected" && !status.bridgeConnected;
+  const awaitingDevice = status?.state === "connecting" || status?.state === "connected" && !status.bridgeConnected && !status.bridgeFailure;
   useEffect(() => {
     const current = scope.current;
     if (!client || !current || current.client !== client || !awaitingDevice || busy) return;
@@ -61,7 +61,8 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
         const value = await client.status(current.lifetime.signal);
         if (stopped || current.lifetime.signal.aborted || scope.current !== current || revision !== current.revision) return;
         setReceipt({ client, status: value });
-        if ((value.state === "connecting" || value.state === "connected" && !value.bridgeConnected) && Date.now() < expires) {
+        if (value.bridgeConnected) setError(previous => previous?.client === client && previous.recovery ? null : previous);
+        if ((value.state === "connecting" || value.state === "connected" && !value.bridgeConnected && !value.bridgeFailure) && Date.now() < expires) {
           timer = setTimeout(() => void read(), 1500);
         } else changed.current();
       } catch (caught) {
@@ -73,7 +74,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     return () => { stopped = true; clearTimeout(timer); };
   }, [client, awaitingDevice, busy, refreshRevision]);
 
-  async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" = "action") {
+  async function act(action: (signal: AbortSignal) => Promise<LocalChatgptPlanStatus>, kind: "connect" | "action" | "cancel" | "rebind" = "action") {
     const current = scope.current;
     if (!client || !current || current.client !== client || current.lifetime.signal.aborted || current.pending && kind !== "cancel" || disabled || readOnly) return;
     const revision = ++current.revision; current.pending = true;
@@ -85,7 +86,21 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
       onChanged();
     } catch (caught) {
       console.warn("[chatgpt-plan] Action unavailable:", caught instanceof Error ? caught.name : typeof caught);
-      if (!current.lifetime.signal.aborted && scope.current === current && current.revision === revision) setError({ client, text: ACTION_ERROR });
+      if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
+      setError({ client, text: ACTION_ERROR, recovery: kind === "rebind" });
+      // Replacement may have committed despite the failed response/probe. Only
+      // this action reconciles its native receipt; it never repeats replacement.
+      if (kind === "rebind") {
+        try {
+          const value = await client.status(current.lifetime.signal);
+          if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
+          setReceipt({ client, status: value });
+          if (value.bridgeConnected) { setError(null); onChanged(); }
+        } catch (statusError) {
+          console.warn("[chatgpt-plan] Recovery status unavailable:", statusError instanceof Error ? statusError.name : typeof statusError);
+          // Preserve the safe error and let the existing Settings refresh retry.
+        }
+      }
     } finally {
       if (scope.current === current && current.revision === revision) { current.pending = false; setActive(null); }
     }
@@ -101,7 +116,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     <p className="matrix-ap-help">Use your ChatGPT plan for chats and Matrix Bots. Keep this device connected while they run.</p>
     {!client ? <p className="matrix-ap-help">Available in Electron Desktop on your personal device. Native Codex login and API keys are managed separately.</p> : null}
     {connected ? <><p className="matrix-ap-help">{status.account!.label}</p>
-      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for chats and interactive Matrix Bots on this Computer." : "Reconnect ChatGPT to resume chats and interactive Matrix Bots on this Computer." : "Device connection to this Computer is unavailable. Chat and Bot requests cannot start."}</p>
+      <p className="matrix-ap-help">{status.bridgeConnected ? !status.models.length ? "No subscription models are available. Check subscription models." : status.grant.enabled ? "Available for chats and interactive Matrix Bots on this Computer." : "Reconnect ChatGPT to resume chats and interactive Matrix Bots on this Computer." : status.bridgeFailure === "device_conflict" ? "Another device is connected to this Computer. Using this device will replace that connection and stop its active Chat and Bot requests." : "Device connection to this Computer is unavailable. Chat and Bot requests cannot start."}</p>
     </> : null}
     {status?.revocation === "unconfirmed" ? <p className="matrix-ap-help" role="status">Local access stopped. Provider sign-out could not be confirmed; check your ChatGPT connected apps.</p> : null}
     {error && error.client === client ? <p className="matrix-ap-help" role="alert">{error.text}</p> : null}
@@ -109,6 +124,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
       {connecting ? <button className="matrix-ap-button" type="button" disabled={disabled || readOnly} onClick={() => void act(signal => client.cancel(signal), "cancel")}>Cancel ChatGPT connection</button>
         : !connected ? <button type="button" className="matrix-ap-button" disabled={blocked || !status} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
         : <>
+          {status.bridgeFailure === "device_conflict" && client.rebind ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.rebind!({ purpose: "replace_device" }, signal), "rebind")}>Use this device</button> : null}
           {!status.grant.enabled ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Reconnect ChatGPT</button> : null}
           {!status.models.length ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.refreshModels(signal))}>Check subscription models</button> : null}
           <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.disconnect(signal))}>Disconnect ChatGPT</button>

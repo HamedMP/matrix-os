@@ -25,6 +25,16 @@ const snapshot = {
       source: { at: "2026-09-28T12:00:00.000Z" }, confirmed: false, revision: 1 }] } },
 };
 
+it("discloses narrow Jev label authority before Native Mobile account consent", () => {
+  const choice = { ...snapshot.interactions[0], kind: "account_choice", payload: { kind: "account_choice",
+    service: "gmail", access: ["read", "label"], options: [{ connectionId: "conn_work", label: "Work" }] } };
+  render(<BotChatControls snapshot={{ ...snapshot, interactions: [choice] } as never}
+    onResolve={jest.fn()} onRevoke={jest.fn()} onMemory={jest.fn()} onRefresh={jest.fn()} />);
+  expect(screen.getByText(/read Inbox, add Jev classification labels/)).toBeTruthy();
+  expect(screen.getByText(/Preserve existing labels; no archive, send, delete, or mark read/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Work" })).toBeTruthy();
+});
+
 it("shows Native Mobile bot identity, question mapping, task status, and authority", async () => {
   const onResolve = jest.fn(async () => ({ interaction: { interactionId: "in_abcdefgh", status: "resolved", revision: 2 } }));
   const onRevoke = jest.fn(async () => undefined);

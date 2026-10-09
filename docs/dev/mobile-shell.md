@@ -17,9 +17,23 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
 - Apps open full screen through `MobileAppSurface` in Web Mobile and native runtime routes in Expo.
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
+- The native Terminal list is the computer's terminal workspace tabs
+  (`GET /api/terminal/workspaces`). A session is addressed by its
+  `workspaceId:tabId` TerminalRef and shown under its tab name, which may
+  repeat. Create, rename and delete use the same workspace tab routes as Web
+  Desktop. Tabs that belong to a chat are not listed, because they only attach
+  with that chat's context. The legacy `/api/terminal/sessions` routes answer
+  `426` and must not be called.
 - The focused native Terminal participates in gateway-coordinated presentation
   ownership: it owns one canonical grid while visible, releases on blur or app
   background, and offers **Resume here** after another renderer takes over.
+- While it holds the write lease, the native Terminal sizes the workspace's
+  shared grid to the phone with a `hard` resize, sent once the `attached` frame
+  confirms the lease and again when the surface changes size. A `soft` resize
+  carries no dimensions the runtime uses. The emulator always shows the grid
+  the computer reports (`attached`, `snapshot`, `canonical-size`) and never
+  refits itself: a grid another client keeps wider is scaled down to a 10px
+  text floor and then panned sideways.
 
 ## Local Dev Build
 
@@ -137,6 +151,18 @@ carries `packageExtensions` for `@react-native/jest-preset` and
 `react-native-worklets`. Without these the suite cannot start at all — it fails
 during config load, before any test runs.
 
+**Move the Expo SDK patch set together.** Expo's Android modules ship as
+prebuilt AARs, so a module newer than the installed `expo-modules-core` builds
+cleanly and only fails on device with `NoClassDefFoundError`. Bumping one
+`expo-*` / `@expo/*` package while the lockfile holds `expo` on an older patch
+is how `@expo/ui` crashed every Compose `Host` on Android. Run
+`pnpm exec expo install --check` from `apps/mobile`, apply the versions it
+expects, then `pnpm install` from the repo root and rebuild the dev client.
+`apps/mobile/__tests__/expo-native-core-compat.test.ts` fails when a module
+imports a core class the installed core does not ship. A patch-set bump changes
+native code, so it also needs the `version` bump described under
+"When an update cannot be used: native changes".
+
 Other environment notes:
 
 - Run everything through `flox activate -d <repo root> --` so you get Node 24.
@@ -180,8 +206,120 @@ demo credentials that work, so the review account **must have a password set**;
 an OAuth-only account cannot log in with a username and password.
 
 Sign-**up** by email is deliberately not implemented on mobile: the instance
-requires a username and legal consent at signup. New users go through OAuth or
-the web.
+requires a username and legal consent at signup. New users go through Apple,
+Google, GitHub or the web.
+
+### First-time provider accounts
+
+A first-time Apple, Google or GitHub user has no Clerk account, so Clerk turns
+the sign-in into a sign-up and returns it as `missing_requirements` (`username`,
+`legal_accepted`) with **no session**. `lib/clerk-sign-up.ts` fills both in and
+activates the session, so the tap does not end in nothing:
+
+- **Legal consent** is sent because the sign-in screen states that continuing
+  accepts the Terms of Service and Privacy Policy. Keep that sentence on the
+  screen for as long as this code sends `legalAccepted`.
+- **Username** starts as the part of the email before the `@`, reduced to what a
+  Matrix OS handle allows (lowercase letters, digits, hyphens, a leading letter,
+  31 characters). A taken or too-short name gets a random six-character suffix.
+  It is a starting value; the user can change it before a computer exists.
+- Anything else Clerk still asks for (an unverified address, a phone number)
+  cannot be supplied from the app, and the user is told to finish on the web.
+- These paths and Sign in with Apple never show Clerk's own error text.
+  `describeKnownClerkError` maps the Clerk error codes it lists to copy written
+  for this app and returns the caller's fallback for every other code. Add a
+  code and its copy there when a failure deserves its own message.
+
+### Sign in with Apple
+
+iOS only. The button is Apple's system button (`AppleAuthenticationButton`), a
+full-width row above the provider icons; Android does not render it. iOS draws
+its title at about 43% of the button's height and offers no font size, so the
+button is 38pt high to give a 16pt title, the size of the "Sign in" label.
+Changing the title size means changing the height.
+
+The flow is native, not a browser round trip: `expo-apple-authentication`
+presents Apple's sheet, and its identity token goes to Clerk as
+`signIn.create({ strategy: "oauth_token_apple", token })`. Clerk's own
+`useSignInWithApple` hook is **not** used, because it discards Apple's
+authorization code. `specs/547-account-deletion/rollout.md` needs that code: once
+the session is active the app posts it to `POST /api/account/apple-token` on the
+platform, which exchanges it for the credential used to revoke Apple access when
+the account is deleted. The post is best effort and never blocks sign-in; without
+it deletion still completes and asks the user to remove Apple access by hand.
+
+What has to be true outside the repository:
+
+- `app.json` sets `ios.usesAppleSignIn` and the `expo-apple-authentication`
+  plugin, which write the `com.apple.developer.applesignin` entitlement. The App
+  ID needs the Sign in with Apple capability and the provisioning profiles must
+  have been regenerated after it was enabled.
+- A local device build (`expo run:ios --device`) does not use those profiles. It
+  signs with Xcode's own managed development profile, "iOS Team Provisioning
+  Profile: com.matrixos.mobile", which is cached on each Mac. One created before
+  the capability was enabled fails the build with `does not support the Sign In
+  with Apple capability`. Open `apps/mobile/ios/MatrixOS.xcworkspace` in Xcode
+  and select the MatrixOS target's Signing & Capabilities tab: Xcode regenerates
+  the profile, or names what stops it (an expired sign-in, or a team role that
+  may not manage profiles). An EAS `development-device` build avoids this, since
+  it signs with the EAS-managed Ad Hoc profile.
+- Clerk has Apple enabled and the native application registered with Team ID
+  `PX4JL74Y2K` and bundle ID `com.matrixos.mobile`. The identity token's audience
+  is the bundle ID, so a build with another bundle ID is rejected by Clerk.
+- Emails to Hide My Email addresses (`@privaterelay.appleid.com`) only arrive if
+  the sending domain is registered under Apple's "Sign in with Apple for Email
+  Communication". Without it an email-code sign-in for such an account never
+  receives its code.
+
+Testing notes:
+
+- Use a physical device. The simulator renders the button, but without an Apple
+  Account it only gets Apple's "Sign in to your Apple Account" alert, so it
+  cannot complete a sign-in.
+- Dismissing Apple's sheet must leave the screen as it was, with no error.
+  `expo-modules-core` 57.0.2 rejects with a bare `Error` (the native reason as
+  the message, no `code`), so `isAppleCancellation` matches the reason text as
+  well as the documented `ERR_REQUEST_CANCELED`. Re-check this after an Expo
+  upgrade. Any other failure logs `[mobile] apple credential request failed:`
+  with what Apple reported; the screen only says it did not complete.
+- Apple shares the name and email **only the first time** an Apple Account
+  authorizes the app. To repeat a first-time run, remove the app under
+  Settings > Apple Account > Sign in with Apple, then delete the Clerk user.
+- An Apple Account whose real email matches a verified email on an existing
+  Clerk account signs in to **that** account. Hide My Email produces a relay
+  address, which matches nothing and creates a separate account.
+- Local runs use the production Clerk instance, so every test creates a real
+  user. Delete test users afterwards.
+
+## Account Deletion (App Review)
+
+App Store Review Guideline 5.1.1(v) requires an app that lets people create an
+account to let them delete it from inside the app. Native Mobile does this
+natively against the platform account API (contract:
+`specs/547-account-deletion/rollout.md`) instead of linking to the web page.
+
+- Entry points: **Settings → Account → Delete account**, and a **Delete
+  account** link under the journey gate (`app/index.tsx`), so an account with no
+  plan or computer, which never reaches Settings, can still delete itself.
+- The screen is `app/settings-detail/delete-account.tsx`. Requests live in
+  `lib/requests/account-deletion.ts` and always go to `HOSTED_GATEWAY_URL`,
+  because the account API does not need a provisioned computer.
+- It shows the five-day deadline and whether billing has stopped, offers the
+  export actions (backed-up file links, account records as a file, the web
+  computers page) and cancellation, and asks for confirmation before scheduling.
+- The Apple access-removal note stays visible in every state and is worded for
+  after deletion. Do not prompt for it during the grace period.
+- A failed request carries a reason only (`ownership_transfer_required`,
+  `conflict`, `unavailable`); the copy is chosen in `lib/account-deletion.ts`.
+  Server error text is never displayed.
+- A self-hosted computer login has no Matrix OS account, so the entry is hidden
+  there.
+
+**Never confirm deletion with a real account to test this.** Scheduling cancels
+the subscription immediately, and cancelling the deletion does not restore it.
+Point the app at a stand-in for `/api/account/*` (for example the platform route
+module mounted on an in-memory service) or use a disposable identity, as the
+rollout doc requires.
 
 ## Over-the-Air Updates (EAS Update)
 
@@ -291,6 +429,21 @@ machine that starts the build, and with pnpm's global virtual store the result
 depends on where the checkout sits on disk, so builds started from a laptop and
 updates published from CI would not agree on the runtime.
 
+## Store Purchase Policy
+
+Native builds ship as a free companion to the paid web service (App Store
+Guideline 3.1.3(f); Google Play payments policy is similar). They must contain
+no in-app purchasing and no calls to action to buy outside the app: no plan,
+pricing, checkout, upgrade, or billing-portal buttons or links, and no
+server-provided copy or URLs that point at buying. Read-only plan status is
+fine.
+
+`allowsExternalPurchaseLinks()` in `apps/mobile/lib/store-policy.ts` is the
+only place that decides this; it returns `true` only for the web build. Gate
+any purchase-related UI on it instead of checking `Platform.OS`, and keep a
+native test proving the call to action is absent (see
+`__tests__/JourneyGate.test.tsx` and `__tests__/billing-settings-screen.test.tsx`).
+
 ## iOS TestFlight Release
 
 From a clean manual worktree on the latest `origin/main`, with cwd `apps/mobile`:
@@ -307,6 +460,21 @@ when you want the TestFlight build to be distinguishable from the previous one.
 Auto-submit uploads to App Store Connect using the stored API key; Apple then
 takes about 5-10 minutes to process before the build appears in TestFlight.
 Verify at https://appstoreconnect.apple.com/apps/6785629815/testflight/ios.
+
+### Legal Links (App Review)
+
+App Store Review Guideline 5.1.1(i) requires the privacy policy to be reachable
+inside the app, not only from the App Store Connect listing. Native Mobile links
+it from two places, both driven by `apps/mobile/lib/legal-links.ts`:
+
+- the signed-out sign-in screen, in the consent line under the sign-in options,
+  so it is reachable without an account;
+- **Settings → Help → Privacy Policy** for signed-in users.
+
+Both open `https://matrix-os.com/privacy` in the system browser. Terms of Service
+(`https://matrix-os.com/terms`) sits next to it in both places. Keep the App
+Store Connect "Privacy Policy URL" field pointing at the same page, and if either
+page moves, change `legal-links.ts` instead of adding a second copy of the URL.
 
 ## Android Store Release
 
@@ -398,6 +566,38 @@ Mobile resume state is intentionally small and validated before use.
 
 Do not persist raw paths, user-controlled URLs, or unvalidated terminal identifiers in mobile shell state.
 
+### Launch Cache (Native Mobile)
+
+Native Mobile keeps five query results on the device so the next cold start can
+draw the shell before the network answers: the active computer, the chat list
+(titles and last-message previews), the chat provider catalog, the project
+list, and system info. They live in AsyncStorage under
+`matrix_os_query_cache_v1:<kind>`, one entry per kind. The mechanism is
+`apps/mobile/lib/query-persistence.ts`; the list of kinds and their schemas is
+`apps/mobile/lib/query-cache-persistence.ts`.
+
+- Restored data is display state only. It is loaded with its original
+  timestamp, so each query still refetches when its screen mounts, and the
+  gateway validates whatever is sent with it.
+- Every entry is re-validated on restore against the same schema as a fresh
+  response, and dropped if it no longer parses, is older than seven days, or is
+  larger than 512 KiB.
+- Entries belong to one Clerk user. Signing out, or signing in as someone else,
+  removes them from disk and from the query cache.
+- Chat transcripts, files, terminal output and credentials are never written.
+
+To keep another query across launches, add a kind there with a matcher for its
+`mobileQueryKeys` builder and the schema its request already parses with.
+
+The journey gate works the same way. Once `/api/journey` has answered with a
+connectable phase, `apps/mobile/lib/journey-cache.ts` remembers that for the
+user (`matrix_os_journey_ready_v1`, seven days), and the next launch opens the
+shell on that answer while the request runs in the background. A definite
+non-connectable or unauthorized answer returns the user to the gate and forgets
+the remembered one; a check that could not be made leaves them in the shell.
+The remembered answer is a hint about where to land, not an entitlement: the
+platform checks machine access and billing on every request the shell makes.
+
 The Agents route relies on its root scroll view's automatic iOS content inset.
 Keep top and bottom content padding independent of safe-area values so the
 notch and home-indicator insets are not applied twice. Its attention-first
@@ -422,18 +622,21 @@ The mobile terminal path should be checked at three layers:
 
 ```bash
 bun run test tests/gateway/terminal-ws.test.ts
-pnpm --dir apps/mobile exec jest --runInBand __tests__/terminal-client.test.ts __tests__/terminal-state.test.ts __tests__/terminal-screen.test.tsx __tests__/TerminalControlBar.test.tsx
+pnpm --dir apps/mobile exec jest --runInBand __tests__/requests-terminals.test.ts __tests__/use-computer-terminals.test.tsx __tests__/terminal-client.test.ts __tests__/terminal-state.test.ts __tests__/terminal-screen.test.tsx __tests__/live-terminal-session.test.tsx __tests__/terminal-surface.test.tsx __tests__/TerminalControlBar.test.tsx
 bun run test tests/shell/terminal-app-component.test.tsx
 ```
 
 Manual terminal checks on a phone:
 
-1. Open Terminal from Apps.
-2. Create a new session and confirm the current folder is visible.
-3. Run `pwd`.
-4. Use Tab, Escape, arrows, Control, paste, and font size controls.
+1. Open Terminal from the drawer and confirm the computer's sessions are listed.
+2. Create a new session and confirm the prompt is visible as soon as it opens.
+3. Run `pwd`, then `tput cols; tput lines`, and confirm a long command wraps at
+   the edge of the screen instead of running off it.
+4. Use Tab, Escape, arrows, Control and paste. Open the keyboard and the
+   expanded key rows and confirm `tput lines` follows the smaller surface.
 5. Leave and reopen Terminal, then continue the running session.
-6. End the session and confirm the resume card disappears or shows the safe recovery message.
+6. Rename a session to a name with spaces, and delete one.
+7. End a session and confirm it moves to Closed sessions and opens as ended.
 
 ## Coding-Agent Project Workspace Validation
 
@@ -454,6 +657,58 @@ Manual checks in the SDK 57 dev client:
 5. Confirm Kanban uses To do, Running, Waiting, Blocked, and Complete sections; archived tasks stay hidden and mixed thread states do not move a task.
 6. Check the phone layout in portrait and landscape, then verify the wrapped board at tablet width.
 7. Background and reopen the app, reconnect the gateway, and confirm stale references reconcile to the live project workspace.
+
+## Native Mobile App Preview Navigation
+
+Installed Apps open a remote web runtime in Native Mobile. The default preview
+allows top-level navigation only within the current app's origin and `/apps/<slug>` path
+(including the selected `/vm/<handle>` prefix when present). The initial session
+URL may redirect to the same app without its query token; trailing slashes, app
+routes, and hashes continue to work. Sibling Apps, same-origin system pages,
+external web links, custom URL schemes, malformed URLs, and new-window requests
+are blocked. A generic notice lets the owner continue using the existing preview.
+
+`AppRuntimeFrame` deliberately routes all URL schemes through its own navigation
+callback. In react-native-webview 13.16.1, a narrow `originWhitelist` can otherwise
+open a rejected URL through `Linking` without consulting that callback. New-window
+requests use the separate `onOpenWindow` path; Native Mobile does not open them.
+The initial source is also validated because Android skips the callback for its
+first load. iOS iframe navigations (`isTopFrame: false`) are left to the WebView;
+they neither open the native browser nor change the top-level blocked-link
+notice. This preserves embedded documents, including `about:blank`, without
+claiming to filter their content or network access. Only a host-supplied
+`canOpenExternalUrl` callback can authorize a
+normal navigation to a reviewed cross-origin HTTP(S) destination; the installed
+App preview does not supply one. Such authorization needs its own purpose,
+privacy, and storefront review and does not grant a payment entitlement.
+
+This change contains navigation requests surfaced by the WebView. It does not
+filter network subresources, sandbox generated code, or establish complete
+redirect, consent, moderation, or payment compliance. Native Mobile now supplies
+an injected app capability/AI/database bridge scoped to the launched app and
+document. Owner tokens stay in the native host; navigation and teardown abort
+pending calls. Replies are bounded while streaming. Database `schema()` and
+`onChange()` match Electron's local successful-write notifications; these are not
+subscriptions to external database changes. See
+[connected app capabilities](app-capabilities.md) for grants and transport limits.
+WebView platform limitations and the actual signed build still need device
+verification under [ENG-89](https://linear.app/matrix-os/issue/ENG-89) and the
+App Gallery journey gate under [ENG-157](https://linear.app/matrix-os/issue/ENG-157).
+The website documentation PR for Apps and Matrix App Gallery must retain these
+Native Mobile limitations.
+
+Focused checks:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/app-runtime-navigation.test.ts __tests__/app-runtime-frame.test.tsx __tests__/app-preview-screen.test.tsx
+```
+
+On the release candidate, verify the session-token redirect, app save/reopen,
+SPA/hash navigation, reload, an external redirect, a same-origin system link,
+another App's link, and `target="_blank"`/`window.open`. Confirm no browser or
+native app opens implicitly, blocked-link copy contains no raw URL, and both
+Continue in app and reopening another App recover normally. Record iOS and
+Android results separately; unit tests do not replace that evidence.
 
 ## Full Mobile Readiness Gates
 

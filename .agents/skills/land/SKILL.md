@@ -31,6 +31,22 @@ description:
 - `gh` CLI is authenticated.
 - You are on the PR branch with a clean working tree.
 
+## GitHub native stacks
+
+Before using the standalone commands below, check whether the PR belongs to a
+native stack or targets another feature branch. Dependent PRs always follow
+`docs/dev/stacked-prs.md`: use the official `gh stack` extension, validate native
+membership and the `main` stack base, and require current-head Greptile 5/5,
+zero unresolved blockers, `ready-for-ci` and passing CI for every included PR.
+Use `gh stack merge <stack-number> --yes --squash`; never loop `gh pr merge` or
+merge a child individually into its parent. Resolve lower-layer feedback in its
+own branch and rebase descendants through `gh stack rebase`, preserving remote
+work and removing stale readiness labels. Do not apply the standalone pull/merge
+recipe to a stack. Verify each included PR is actually merged at the reviewed
+head before closing tickets or safely removing clean, unused worktrees.
+
+The remaining recipe applies only to a standalone PR whose base is `main`.
+
 ## Steps
 
 1. Locate the PR for the current branch.

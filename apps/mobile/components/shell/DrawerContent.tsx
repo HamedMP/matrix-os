@@ -30,7 +30,7 @@ import { ChatContextMenu } from "@/components/ChatContextMenu";
 const primaryItems: Array<{ route: string; label: string; icon: IconData }> = [
   { route: "files", label: "Files", icon: Folder01Icon },
   { route: "terminal", label: "Terminal", icon: ComputerTerminal01Icon },
-  { route: "integrations", label: "Integrations", icon: PuzzleIcon },
+  { route: "integrations", label: "Connect Apps", icon: PuzzleIcon },
   { route: "apps", label: "Apps", icon: GridViewIcon },
   { route: "shared", label: "Shared with me", icon: UserMultiple02Icon },
 ];
@@ -117,22 +117,23 @@ export function DrawerContent({
                 onPress={() => navigate(item.route)}
                 style={({ pressed }) => [
                   styles.padded,
-                  styles.primaryRow,
                   pressed && styles.pressed,
                 ]}
               >
                 <Spacer size="xxs" />
-                <View style={styles.itemContainer}>
-                  <Icon
-                    icon={item.icon}
-                    size={20}
-                    style={styles.itemIcon}
-                  />
-                  <Text size="body">{item.label}</Text>
+                <View testID={`drawer-primary-row-${item.route}`} style={styles.primaryRow}>
+                  <View style={styles.itemContainer}>
+                    <Icon
+                      icon={item.icon}
+                      size={20}
+                      style={styles.itemIcon}
+                    />
+                    <Text size="body">{item.label}</Text>
+                  </View>
+                  {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
+                    <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
+                  </View> : null}
                 </View>
-                {item.route === "shared" && pendingInvitationCount > 0 ? <View style={styles.badge}>
-                  <Text size="muted" tone="inverse">{pendingInvitationCount > 99 ? "99+" : String(pendingInvitationCount)}</Text>
-                </View> : null}
                 <Spacer size="xxs" />
               </Pressable>
               {index < visibleItems.length - 1 ? <Spacer size="sm" /> : null}

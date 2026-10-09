@@ -119,7 +119,7 @@ describe("whole-project sharing confirmation", () => {
     const privateScope: CollaborationScope = { ...scope, organizationId: "org_matrix_team" };
     const grant = {
       id: "60000000-0000-4000-8000-000000000401", scopeId: scope.id, organizationId: "org_matrix_team",
-      audience: { kind: "member", actorId: "user_ada" }, preset: "viewer", state: "pending", policyVersion: "v1",
+      audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", state: "pending", policyVersion: "v1",
       revision: "1", createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
     };
     let grants: unknown[] = [];
@@ -151,7 +151,7 @@ describe("whole-project sharing confirmation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     expect(await screen.findByText("Access starts when you share the whole project.")).toBeVisible();
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer",
+      expectedRevision: "4", audience: { kind: "member", actorId: "user_ada" }, preset: "contributor",
     }));
     expect(await screen.findByRole("combobox", { name: "Preset for Ada" })).toBeVisible();
     // Every grant, including an organization grant stored active, reads as starting at share time.

@@ -80,7 +80,9 @@ it("keeps a visible unfocused Web Chat rail fresh and pauses only when its host 
     onSubmit={vi.fn()} agentClient={agentClient}/>;
   const { rerender } = render(chat(true));
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-  expect(screen.getByRole("button", { name: `Chat with ${agent.name}` }).getAttribute("data-agent-rail-state")).toBe("working");
+  const agentButton = screen.getByRole("button", { name: `Chat with ${agent.name}` });
+  expect(agentButton.closest("[data-agent-rail-state]")?.getAttribute("data-agent-rail-state")).toBe("working");
+  expect(agentButton.querySelector('[data-slot="chat-agent-indicator"]')?.getAttribute("data-state")).toBe("working");
   const reads = tasks.mock.calls.length;
   await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
   expect(tasks.mock.calls.length).toBeGreaterThan(reads);

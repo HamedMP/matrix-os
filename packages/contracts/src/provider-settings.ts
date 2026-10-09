@@ -3,6 +3,8 @@ import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primit
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
+import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -249,7 +251,7 @@ export const ProviderDependencyCountsSchema = z.object({
 /** Owner-only native identity, emitted only after explicit GET negotiation. */
 export const ProviderConnectionDetailsSchema = z.object({
   email: z.email().max(120).optional(),
-  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu", "Claude Pro", "Claude Max", "Claude Team", "Claude Enterprise"]).optional(),
 }).strict();
 export const ProviderAccountSchema = z.object({
   connectionDetails: ProviderConnectionDetailsSchema.optional(),
@@ -395,6 +397,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),
@@ -727,6 +730,8 @@ export function isSupportedGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | null | undefined,
 ): boolean {
+  // Paired-device authority is executable only through its managed route adapter.
+  if (source?.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) return false;
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
     return source?.kind === "provider_account"
       || isNativeGenericHarnessCredentialRoute(harness, source);

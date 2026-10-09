@@ -63,7 +63,8 @@ it("keeps a long Web chat title selectable while exposing its full accessible na
     onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} />);
 
   const row = screen.getByRole("button", { name: title });
-  expect(row.textContent).toBe(`${title.slice(0, 40)}...`);
+  expect(row.textContent).toBe(title);
+  expect(screen.getByTitle(title)).toBeTruthy();
   fireEvent.click(row, { detail: 0 });
   expect(select).toHaveBeenCalledOnce();
 });

@@ -2,7 +2,7 @@ import {BotUseAuthorizationPanel} from "./BotUseAuthorizationPanel.js";
 import type { ProviderWorkflowUICapability } from "./types.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
-import { hasConfiguredConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
+import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { type ProviderSettingsSnapshot } from "@matrix-os/contracts";
@@ -50,6 +50,7 @@ export function AgentsProvidersView({
   onSetupHarness,
   workflowClient,
   localChatgptClient,
+  matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
 }: AgentsProvidersViewProps) {
@@ -189,6 +190,7 @@ export function AgentsProvidersView({
           onUseGateway={useGateway}
           subscriptions={<YourSubscriptions snapshot={snapshot} capabilities={workflowCapabilities} client={workflowClient}
             localChatgptClient={localChatgptClient} localChatgptRefreshRevision={localChatgptRefreshRevision}
+            matrixAnthropicClient={matrixAnthropicClient}
             operationIds={operationIds} workflowStatus={workflowStatus} forbidden={workflowPermission === "forbidden"}
             disabled={busy || gatewayPending || enablement.pending} onRefresh={refreshSettings}
             onOpen={(id, kind) => { setExpandedRowId(id); setExpandedRowKind(kind); setSubscriptionTarget(id); if (snapshot.harnesses.some(item => item.id === id)) onSelectHarness(id); }} />}
@@ -255,7 +257,7 @@ export function AgentsProvidersView({
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
             const nativeSource = harness.harness !== "claude" || isNativeAccountSource("claude", source, selectedAccount);
             const allowedSavedConnection = nativeSource && (harness.harness !== "codex" || source?.fundingKind === "owner_api_key" || selectedAccount?.authMethod === "api_key");
-            const connected = nativeSource && hasConfiguredConnection(harness, source);
+            const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
@@ -345,6 +347,11 @@ export function AgentsProvidersView({
                     disabled={mutationsDisabled}
                     onSetupHarness={onSetupHarness}
                     onRefresh={refreshSettings}
+                    onRefreshAfterLogin={async () => {
+                      if (!onRefreshForConnection) { refreshSettings(); return; }
+                      const refreshed = await onRefreshForConnection();
+                      if (!refreshed) throw new Error("connection refresh unavailable");
+                    }}
                     onOpenTerminal={onOpenTerminal}
                     onOpenAuthorizationUrl={onOpenAuthorizationUrl}
                     onStateChange={(status) =>

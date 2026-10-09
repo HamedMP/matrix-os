@@ -14,6 +14,7 @@ import { Page } from "@/components/shell/Page";
 import { Spacer } from "@/components/ui";
 import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
 import { buildAppIconUrl } from "@/lib/requests";
+import { getAppSlug } from "@/lib/apps";
 
 export default function AppsScreen() {
   const router = useRouter();
@@ -26,7 +27,11 @@ export default function AppsScreen() {
   }, [apps, query]);
 
   return (
-    <Page title="Apps" subtitle={`Experiences installed on ${computer?.handle ?? "your computer"}`}>
+    <Page title="Apps" subtitle={`Web apps on ${computer?.handle ?? "your computer"}`}>
+      <Text style={styles.statusText}>
+        Apps that use workspace data or connected accounts may not work here yet. Open those apps on Web Canvas, Web Desktop or Electron Desktop.
+      </Text>
+      <Spacer size="md" />
       <SearchField placeholder="Search apps" value={query} onChangeText={setQuery} />
       <Spacer size="xl" />
       {isPending ? <GridTileSkeletonGrid testID="app-tile-skeleton" /> : null}
@@ -51,7 +56,7 @@ export default function AppsScreen() {
                 />}
                 onPress={() => router.push({
                   pathname: "/app-preview/[app]",
-                  params: { app: slug, name: app.name },
+                  params: { app: slug, runtimeSlug: getAppSlug(app), name: app.name },
                 } as never)}
               />
             );

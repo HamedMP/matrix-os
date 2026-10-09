@@ -1,6 +1,6 @@
 import { ChatProviderLoadingIndicator } from "./chat-provider-loading-indicator.js";
 import React, { useId, useRef, useState, type ReactNode } from "react";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type {
   CanonicalProviderCatalog,
   CanonicalProviderDriverKind,
@@ -10,7 +10,7 @@ import type {
 import type { CanonicalProviderChoice } from "./canonical-provider-choice.js";
 import { canonicalProviderAvailabilityLabel } from "./canonical-provider-choice.js";
 import { useLocalObservationExpiry } from "./local-observation-expiry.js";
-import { deriveChatPickerEntries, chatPickerEntryForSelection, chatPickerEntryInstance, deriveChatPickerModelRows, chatPickerModelAvailabilityLabel } from "./chat-picker-entries.js";
+import { deriveChatPickerEntries, chatPickerEntryForSelection, chatPickerEntryInstance, chatPickerEntryRecoveryInstances, deriveChatPickerModelRows, chatPickerModelAvailabilityLabel } from "./chat-picker-entries.js";
 import "./compact-chat-provider-choices.css";
 
 function modelProviderLabel(modelId: string): string | null {
@@ -55,7 +55,7 @@ function FlatChatProviderChoices({ choices, selected, lockedInstanceId, onSelect
   const [query, setQuery] = useState("");
   const listId = useId();
   const list = useRef<HTMLDivElement>(null);
-  const visible = choices.filter(choice => choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && !isLegacyMatrixSdkProvider({ id: choice.instanceId, driverKind: choice.driverKind })).filter((choice) => `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
+  const visible = choices.filter(choice => choice.instanceId !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID && choice.instanceId !== MATRIX_PI_ANTHROPIC_API_INSTANCE_ID && !isLegacyMatrixSdkProvider({ id: choice.instanceId, driverKind: choice.driverKind })).filter((choice) => `${choice.modelLabel} ${choice.harnessLabel} ${choice.connectionLabel ?? ""} ${choice.modelId}`
     .toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const focusOption = (direction: number, current?: HTMLButtonElement) => {
     const options = Array.from(list.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
@@ -109,6 +109,12 @@ function TwoPaneChatProviderChoices({
   const activeEntry = entries.find(entry => entry.id === activeEntryId)
     ?? entries.find(entry => entry.id === chatPickerEntryForSelection(entries, selected?.instanceId));
   const activeInstance = chatPickerEntryInstance(activeEntry);
+  const recoveryInstances = chatPickerEntryRecoveryInstances(activeEntry, selected?.instanceId);
+  const matrixSettingsInstance = activeEntry?.id === "matrix-ai"
+    ? recoveryInstances.find(instance => instance.setupActions.some(action => action.kind === "open_settings"))
+      ?? activeEntry.instances.find(instance => instance.setupActions.some(action => action.kind === "open_settings"))
+    : undefined;
+  const matrixSettingsAction = matrixSettingsInstance?.setupActions.find(action => action.kind === "open_settings");
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const activeRows = deriveChatPickerModelRows(catalog, choices).filter((choice) => activeEntry?.instances.some(instance => instance.id === choice.instanceId)
     && (normalizedQuery.length === 0
@@ -208,13 +214,17 @@ function TwoPaneChatProviderChoices({
           {activeEntry?.id === "matrix-ai" ? "Matrix AI is unavailable on this computer." : "No ready connections. Open Agents & providers settings to connect."}
         </p> : null}
       </div>
-      {activeInstance && activeInstance.availability !== "available" && (!loading || canonicalProviderFundingState(activeInstance) === "credit_reserved") ? <div className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
-        <p>{canonicalProviderAvailabilityLabel(activeInstance)}</p>
-        {canonicalProviderFundingState(activeInstance) === "credit_reserved"
+      {activeEntry?.id === "matrix-ai" ? onSetupAction && matrixSettingsInstance && matrixSettingsAction
+        ? <div className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
+          <button type="button" onClick={() => onSetupAction(matrixSettingsInstance, matrixSettingsAction)}>Agents &amp; providers</button>
+        </div> : null
+        : recoveryInstances.filter(instance => !loading || canonicalProviderFundingState(instance) === "credit_reserved").map(recoveryInstance => <div key={recoveryInstance.id} className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
+        <p>{activeEntry && activeEntry.instances.length > 1 ? `${recoveryInstance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : recoveryInstance.id === "matrix_pi_default" ? "Matrix AI credit" : recoveryInstance.connectionLabel ?? recoveryInstance.displayName} · ` : null}{canonicalProviderAvailabilityLabel(recoveryInstance)}</p>
+        {canonicalProviderFundingState(recoveryInstance) === "credit_reserved"
           ? <p>Your credit is reserved while usage is confirmed.</p> : null}
-        {onSetupAction ? activeInstance.setupActions.map((action) => <button key={action.id} type="button"
-          onClick={() => onSetupAction(activeInstance, action)}>{action.label}</button>) : null}
-      </div> : null}
+        {onSetupAction ? recoveryInstance.setupActions.map((action) => <button key={action.id} type="button"
+          onClick={() => onSetupAction(recoveryInstance, action)}>{action.label}</button>) : null}
+      </div>)}
     </div>
   </div>;
 }

@@ -9,7 +9,7 @@ import {
   type InstantiateBotRequest, type InstantiateBotResponse,
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "./http";
 
 export interface NativeBotChatSnapshot {
   agentId: string;
@@ -55,9 +55,13 @@ export function instantiateNativeBot(token: string, gatewayUrl: string,
 
 export async function fetchNativeBotChat(token: string, gatewayUrl: string, chatId: string): Promise<NativeBotChatSnapshot | null> {
   const chat = chatPath(chatId);
-  const direct = await fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot`),
-    token, schema: BotDirectChatResponseSchema, errorMessage: STATUS_ERROR });
-  if (!direct.agentId) return null;
+  // A computer whose gateway predates bots has no such route: its chats simply
+  // have no bot, which is not an error to show or a request to keep retrying.
+  const direct = await fetchAuthenticatedResponse(
+    { url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot`), token, errorMessage: STATUS_ERROR, expectedStatuses: [404] },
+    async (response) => response.status === 404 ? null : BotDirectChatResponseSchema.parse(await response.json()),
+  );
+  if (!direct?.agentId) return null;
   const agentId = direct.agentId;
   const [interactions, tasks, authority, library] = await Promise.allSettled([
     fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`),

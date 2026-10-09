@@ -1,3 +1,6 @@
+import { markChatNavigation } from "@matrix-os/ui";
+import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -127,6 +130,7 @@ export type ChatCredentialOccurrence = z.infer<typeof ChatCredentialOccurrenceSc
 
 export interface CanonicalChatClient {
   agents?: ChatAgentClient;
+  navigation?(): Promise<CanonicalChatNavigationResponse>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
     query: string,
@@ -218,7 +222,7 @@ export function createCanonicalChatClient(
 ): CanonicalChatClient {
   const api: Pick<ApiClient, "get" | "post" | "patch" | "delete"> = {
     get: (path, ...args) => transport.get(chatReadStateVersionUrl(path), ...args),
-    post: (path, ...args) => transport.post(chatReadStateVersionUrl(path), ...args),
+    post: (path, body, requestOptions) => postWithProviderCatalogRecovery(transport, chatReadStateVersionUrl(path), body, requestOptions),
     patch: (path, ...args) => transport.patch(chatReadStateVersionUrl(path), ...args),
     delete: (path, ...args) => transport.delete(chatReadStateVersionUrl(path), ...args),
   };
@@ -228,7 +232,12 @@ export function createCanonicalChatClient(
       : method === "POST" ? transport.post(path, body)
         : method === "DELETE" ? transport.delete(path)
           : transport.patch(path, body)),
+    async navigation() {
+      markChatNavigation("request");
+      return CanonicalChatNavigationResponseSchema.parse(await transport.get("/api/chat-navigation?version=1&limit=1000", {maxBytes:2*1024*1024}));
+    },
     async list(input = {}) {
+      markChatNavigation("legacy-request");
       const parsed = CanonicalChatListInputSchema.parse(input);
       const response = await api.get(withQuery("/api/chats", {
         unread: parsed.unreadOnly === undefined ? undefined : String(parsed.unreadOnly),

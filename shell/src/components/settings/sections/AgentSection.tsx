@@ -6,7 +6,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
-import { createWebProviderWorkflowClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
+import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 
 export function AgentSection({
   onOpenTerminal,
@@ -17,6 +17,9 @@ export function AgentSection({
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
+    isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+  }), [identityKey, runtimeSlot]);
+  const matrixAnthropicClient = useMemo(() => createWebMatrixAnthropicClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
   }), [identityKey, runtimeSlot]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadWebAiCreditHistory({ runtimeSlot, cursor, signal,
@@ -89,6 +92,7 @@ export function AgentSection({
         onOpenTerminal={(sessionId) => { onOpenTerminal?.(sessionId); }}
         onOpenBrowser={openProviderAuthorizationPath}
         workflowClient={workflowClient}
+        matrixAnthropicClient={matrixAnthropicClient}
         onOpenAuthorizationUrl={(url) => {
           if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
           if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");

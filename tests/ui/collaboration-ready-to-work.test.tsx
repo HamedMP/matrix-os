@@ -115,6 +115,123 @@ describe("organization ready-to-work presentation", () => {
     expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/policy/preflight`, {});
   });
 
+  it("requires explicit owner consent before contributors may send AI prompts", async () => {
+    const readyForContributors: CollaborationReadiness = {
+      ...projectReady,
+      effectiveSubmitMode: "members",
+    };
+    const api = {
+      baseUrl: "http://localhost",
+      get: vi.fn(async (path: string) => path.endsWith("/execution-policy/options") ? {
+        organizationAiSubmission: "members",
+        policy: null,
+        options: [{
+          source: { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" },
+          sourceLabel: "Owner Claude account",
+          sourceKind: "owner_account",
+          available: true,
+          modelIds: ["claude-sonnet-5"],
+          defaultModelId: "claude-sonnet-5",
+        }],
+      } : path.startsWith("/api/organizations/") ? { members: [] }
+        : path.endsWith("/grants") ? [] : scope),
+      post: vi.fn()
+        .mockResolvedValueOnce(projectReady)
+        .mockResolvedValue(readyForContributors),
+      put: vi.fn(async () => ({
+        scope: { kind: "project", scopeId: scope.id, projectId: scope.resourceId },
+        ownerId: scope.ownerId,
+        source: { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" },
+        submitMode: "follow_organization",
+        organizationAiSubmission: "members",
+        effectiveSubmitMode: "members",
+        providerTermsAcknowledgedAt: "2026-10-07T00:00:00.000Z",
+        allowedModelIds: ["claude-sonnet-5"],
+        revision: "1",
+        updatedAt: "2026-10-07T00:00:00.000Z",
+      })),
+      delete: vi.fn(),
+    };
+    render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]}
+      onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
+
+    const enable = await screen.findByRole("button", { name: "Use this AI source for contributors" });
+    expect(screen.getByText(/Chats already bound to another agent remain unavailable/i)).toBeVisible();
+    expect(enable).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
+    expect(enable).toBeEnabled();
+    fireEvent.click(enable);
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/execution-policy`,
+      expect.objectContaining({
+        expectedRevision: "0",
+        accessSourceId: "owner_anthropic",
+        providerInstanceId: "claude_owner",
+        submitMode: "follow_organization",
+        acknowledgeProviderTerms: true,
+        allowedModelIds: ["claude-sonnet-5"],
+      }),
+    ));
+    expect(await screen.findByText(/Contributors can now send prompts/i)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Disable contributor AI" })).not.toBeInTheDocument();
+    expect(screen.getByText(/change their access to Viewer/i)).toBeVisible();
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Contributors may submit AI requests/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Update AI source for contributors" })).toBeVisible();
+  });
+
+  it("keeps an existing contributor AI policy editable", async () => {
+    const configuredPolicy = {
+      scope: { kind: "project" as const, scopeId: scope.id, projectId: scope.resourceId },
+      ownerId: scope.ownerId,
+      source: { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" as const },
+      submitMode: "follow_organization" as const,
+      organizationAiSubmission: "members" as const,
+      effectiveSubmitMode: "members" as const,
+      providerTermsAcknowledgedAt: "2026-10-07T00:00:00.000Z",
+      allowedModelIds: ["claude-sonnet-5"],
+      revision: "3",
+      updatedAt: "2026-10-07T00:00:00.000Z",
+    };
+    const api = {
+      baseUrl: "http://localhost",
+      get: vi.fn(async (path: string) => path.endsWith("/execution-policy/options") ? {
+        organizationAiSubmission: "members",
+        policy: configuredPolicy,
+        options: [{
+          source: configuredPolicy.source,
+          sourceLabel: "Owner Claude account",
+          sourceKind: "owner_account",
+          available: true,
+          modelIds: ["claude-opus-5", "claude-sonnet-5"],
+          defaultModelId: "claude-opus-5",
+        }],
+      } : path.startsWith("/api/organizations/") ? { members: [] }
+        : path.endsWith("/grants") ? [] : scope),
+      post: vi.fn(async () => ({ ...projectReady, effectiveSubmitMode: "members" as const })),
+      put: vi.fn(async () => ({
+        ...configuredPolicy,
+        allowedModelIds: ["claude-opus-5"],
+        revision: "4",
+      })),
+      delete: vi.fn(),
+    };
+    render(<ChatCollaboratorsDialog api={api} scope={scope} members={[]}
+      onRefresh={async () => ({ scope, members: [] })} onClose={vi.fn()} />);
+
+    expect(await screen.findByLabelText("Owner AI source")).toHaveValue(
+      JSON.stringify(["owner_anthropic", "claude_owner"]),
+    );
+    expect(screen.getByLabelText("Allowed model")).toHaveValue("claude-sonnet-5");
+    fireEvent.change(screen.getByLabelText("Allowed model"), { target: { value: "claude-opus-5" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Update AI source for contributors" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/execution-policy`,
+      expect.objectContaining({ expectedRevision: "3", allowedModelIds: ["claude-opus-5"] }),
+    ));
+  });
+
   it("does not show Git details for an unrooted standalone Chat", () => {
     render(<ReadinessSummary readiness={{ ...projectReady, resourceKind: "chat", items: projectReady.items.map((item) => item.item === "chat_root_inventory"
       ? { ...item, chatRootCount: 0, dirtyRootCount: 0 } : item) }} />);
@@ -148,17 +265,17 @@ describe("organization ready-to-work presentation", () => {
     render(<AudienceGrantPicker api={api} scope={scope} />);
     expect(await screen.findByRole("option", { name: "Ada" })).toBeVisible();
     expect(screen.queryByPlaceholderText(/email|username/i)).toBeNull();
+    expect(screen.getByLabelText("Access preset")).toHaveValue("contributor");
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "user_ada" } });
-    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      audience: { kind: "member", actorId: "user_ada" }, preset: "viewer", expectedRevision: "4",
+      audience: { kind: "member", actorId: "user_ada" }, preset: "contributor", expectedRevision: "4",
     })));
     fireEvent.change(screen.getByLabelText("Share with"), { target: { value: "organization" } });
-    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "contributor" } });
+    fireEvent.change(screen.getByLabelText("Access preset"), { target: { value: "viewer" } });
     fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
     await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/api/collaboration/scopes/${scope.id}/grants`, expect.objectContaining({
-      audience: { kind: "organization" }, preset: "contributor",
+      audience: { kind: "organization" }, preset: "viewer",
     })));
   });
 

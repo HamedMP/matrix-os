@@ -3,7 +3,7 @@ import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { blockedNativeBotModelRows } from "@/lib/bot-model-discovery";
 import {
-  managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority,
+  managedPiBotModelChoices, MATRIX_BOT_SELECTION, botModelRoutingLabel, botInteractionCard, botTaskStatusCopy, groupBotAuthority, botIntegrationAccessCopy,
   type CanonicalChatModelSelection, type CanonicalProviderCatalog, type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest,
   type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
@@ -126,10 +126,14 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
     }
   };
   const payload = interaction.payload;
+  const access = payload?.kind === "connect_request" || (payload?.kind === "account_choice" && payload.access)
+    ? botIntegrationAccessCopy(payload.service, payload.access!) : null;
   return <View style={styles.card}>
     <Text style={styles.heading}>{card.title}</Text>
     {!actionable ? <Text style={styles.muted}>{settled ? "Resolved" : !actionsAvailable && card.state === "actionable"
       ? "Status unavailable. Refresh to respond." : card.state}</Text> : null}
+    {access ? <><Text style={styles.muted}>Requested access: {access.summary}</Text>
+      {access.boundary ? <Text style={styles.muted}>{access.boundary}</Text> : null}</> : null}
     {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
       ? payload.questions.map((question) => <Text key={question.questionId} style={styles.text}>{question.question}</Text>) : null}
     {actionable && payload?.kind === "question" ? <BotQuestion interaction={interaction} busy={busy} onResolve={resolve} /> : null}
@@ -142,7 +146,6 @@ function BotInteractionControl({ interaction, onResolve, onRefresh, onConnectUrl
     </> : null}
     {actionable && payload?.kind === "connect_request" ? <>
       <Text style={styles.text}>{payload.benefit}</Text>
-      <Text style={styles.muted}>Requested access: {payload.access.join(", ")}</Text>
       {(["start", "decline"] as const).map((action) => <Pressable key={action} accessibilityRole="button"
         disabled={busy} style={styles.button} onPress={() => void resolve({ kind: "connect_request",
           baseRevision: interaction.revision, action })}>
@@ -222,7 +225,9 @@ export function BotChatControls({ snapshot, catalog, onSelectionChange, actionsA
         {groupBotAuthority(authority).map((group) => <View key={group.service} style={styles.group}>
           <Text style={styles.text}>{group.service.replaceAll("_", " ")} · {group.state.replaceAll("_", " ")}</Text>
           {group.grants.map((grant) => <View key={grant.grantId} style={styles.group}>
-            <Text style={styles.text}>{grant.accountLabel} · {grant.effects.join(", ")}</Text>
+            <Text style={styles.text}>{grant.accountLabel} · {botIntegrationAccessCopy(grant.service, grant.effects).summary}</Text>
+            {botIntegrationAccessCopy(grant.service, grant.effects).boundary
+              ? <Text style={styles.muted}>{botIntegrationAccessCopy(grant.service, grant.effects).boundary}</Text> : null}
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!pending || !actionsAvailable }}
               disabled={!!pending || !actionsAvailable} style={styles.button}
               onPress={() => void change(grant.grantId, () => onRevoke(grant.grantId))}>

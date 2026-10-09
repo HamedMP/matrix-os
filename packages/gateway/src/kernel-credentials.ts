@@ -10,6 +10,7 @@ export const KernelCredentialAccessSourceIdSchema = z.enum([
   "matrix_included",
   "owner_anthropic_key",
   "owner_anthropic_profile",
+  "owner_claude_profile",
 ]);
 export type KernelCredentialAccessSourceId = z.infer<typeof KernelCredentialAccessSourceIdSchema>;
 export type KernelCredentialObservationState =
@@ -122,9 +123,10 @@ async function resolveKernelCredentials(
     delete env.ANTHROPIC_BASE_URL;
     return { mode: "api_key", env, sources };
   }
-  if (requestedAccessSourceId === "owner_anthropic_profile") {
+  if (requestedAccessSourceId === "owner_anthropic_profile" || requestedAccessSourceId === "owner_claude_profile") {
     if (!hasOwnerProfile) throw new Error("Selected AI access is unavailable");
     env.HOME = homePath;
+    if (requestedAccessSourceId === "owner_claude_profile") delete env.CLAUDE_CONFIG_DIR;
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_BASE_URL;
     return { mode: "claude_login", env, sources };

@@ -3,6 +3,7 @@ import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src/chat/errors.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
+import { CollaborationCapabilityRepository } from "../../packages/gateway/src/collaboration/capability-repository.js";
 import { CollaborationChatAdapter } from "../../packages/gateway/src/collaboration/chat-adapter.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
@@ -87,9 +88,14 @@ describe("shared project Chat assignment", () => {
   }
 
   function collaborationAccess() {
+    const capabilities = new CollaborationCapabilityRepository(fixture.db, {
+      now: () => NOW,
+      createId: () => "70000000-0000-4000-8000-000000000a71",
+    });
     const authority = new CollaborationAuthority(new CollaborationRepository(fixture.db, { now: () => NOW }), {
       now: () => NOW,
       organizationPrecondition: allowAllOrganizationPrecondition,
+      capabilities,
     });
     const adapter = new CollaborationChatAdapter({
       db: fixture.db,
@@ -170,6 +176,63 @@ describe("shared project Chat assignment", () => {
       .resolves.toMatchObject({ readThroughSeq: "2" });
     await expect(adapter.updateUserState(context, { readThroughSeq: "2", pinned: true }))
       .resolves.toMatchObject({ readThroughSeq: "2", pinned: true });
+  });
+
+  it("lets a directly granted project contributor read and discuss in an inherited Chat", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_direct_grant_project_transcript",
+      title: "Direct grant transcript",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes")
+      .select(["id", "revision"])
+      .where("kind", "=", "chat")
+      .where("resource_id", "=", created.chat.id)
+      .executeTakeFirstOrThrow();
+    await fixture.db.deleteFrom("collaboration_members")
+      .where("scope_id", "=", PROJECT_SCOPE)
+      .where("actor_id", "=", MEMBER_ID)
+      .execute();
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: "70000000-0000-4000-8000-000000000a71",
+      scope_id: PROJECT_SCOPE,
+      organization_id: ORGANIZATION_ID,
+      audience_kind: "member",
+      audience_actor_id: MEMBER_ID,
+      preset: "contributor",
+      state: "active",
+      policy_version: "v1",
+      source_id: null,
+      legacy_ceiling: null,
+      expires_at: null,
+      revision: 1,
+      created_by: OWNER_ID,
+      created_at: NOW,
+      updated_at: NOW,
+      revoked_at: null,
+    }).execute();
+    const { authority, adapter } = collaborationAccess();
+    const reader = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+
+    await expect(adapter.getChat(reader)).resolves.toMatchObject({
+      id: created.chat.id,
+      scopeId: child.id,
+    });
+    const writer = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "discuss" });
+    await expect(adapter.appendDiscussion(writer, {
+      clientRequestId: "60000000-0000-4000-8000-000000000a74",
+      expectedRevision: String(child.revision),
+      text: "Direct grant note",
+    })).resolves.toMatchObject({
+      chatId: created.chat.id,
+      actor: { actorId: MEMBER_ID, displayName: "Project member" },
+    });
+    await fixture.db.updateTable("collaboration_grants")
+      .set({ state: "revoked", revoked_at: NOW })
+      .where("id", "=", "70000000-0000-4000-8000-000000000a71")
+      .execute();
+    await expect(adapter.getChat(reader)).rejects.toMatchObject({ code: "not_found" });
+    await expect(adapter.getUserState(reader)).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("rejects an inherited Chat whose resource binding is blocked", async () => {
@@ -372,6 +435,79 @@ describe("shared project Chat assignment", () => {
     expect(await fixture.db.selectFrom("collaboration_resource_bindings").select("id")
       .where("resource_kind", "=", "chat").where("resource_id", "=", created.chat.id).execute())
       .toHaveLength(1);
+  });
+
+  it("repairs an existing inherited Chat binding that no longer matches its shared project", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_existing_stale_binding",
+      title: "Stale binding",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select(["id", "revision", "auth_epoch"])
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.updateTable("collaboration_scopes").set({
+      authority_generation: 1,
+    }).where("id", "=", child.id).execute();
+    await fixture.db.updateTable("collaboration_resource_bindings").set({
+      authority_generation: 1,
+      readiness: "blocked",
+      blocker: "stale_authority",
+    }).where("resource_scope_id", "=", child.id).execute();
+    const { authority, adapter } = collaborationAccess();
+    const stale = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+    await expect(adapter.getChat(stale)).rejects.toMatchObject({ code: "unavailable" });
+
+    await expect(coordinator().backfill()).resolves.toBe(1);
+    const repairedContext = await authority.authorize({ scopeId: child.id, actorId: MEMBER_ID, action: "read" });
+    await expect(adapter.getChat(repairedContext)).resolves.toMatchObject({ id: created.chat.id, scopeId: child.id });
+    expect(await fixture.db.selectFrom("collaboration_scopes")
+      .select(["authority_runtime_id", "authority_generation", "revision", "auth_epoch"])
+      .where("id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      authority_runtime_id: RUNTIME_ID,
+      authority_generation: 2,
+      revision: Number(child.revision) + 1,
+      auth_epoch: Number(child.auth_epoch) + 1,
+    });
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings")
+      .select(["authority_runtime_id", "authority_generation", "readiness", "blocker"])
+      .where("resource_scope_id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      authority_runtime_id: RUNTIME_ID,
+      authority_generation: 2,
+      readiness: "ready",
+      blocker: null,
+    });
+    expect(endedScopes).toEqual([child.id]);
+    await expect(coordinator().backfill()).resolves.toBe(0);
+  });
+
+  it("keeps an existing blocked binding blocked while its Chat contains company-drive material", async () => {
+    const created = await service().create(OWNER, {
+      clientRequestId: "req_existing_intentionally_blocked",
+      title: "Company drive material",
+      projectId: PROJECT_ID,
+    });
+    const child = await fixture.db.selectFrom("collaboration_scopes").select("id")
+      .where("kind", "=", "chat").where("resource_id", "=", created.chat.id).executeTakeFirstOrThrow();
+    await fixture.db.insertInto("chat_queued_turns").values({
+      id: "qturn_existing_company_drive", chat_id: created.chat.id,
+      client_request_id: "req_existing_company_drive", position: 1, status: "cancelled",
+      parts: JSON.stringify([{ type: "resource_reference", resource: { kind: "organization_drive" } }]),
+      driver_kind: "claude-code", instance_id: "default",
+      selection: JSON.stringify({ instanceId: "claude_default", model: "claude-opus-4-6" }),
+      interaction_mode: "default", permission_mode: "supervised", capability_snapshot: "{}",
+      created_at: NOW, updated_at: NOW,
+    }).execute();
+    await fixture.db.updateTable("collaboration_resource_bindings").set({
+      readiness: "blocked",
+      blocker: "company_drive_material",
+    }).where("resource_scope_id", "=", child.id).execute();
+
+    await expect(coordinator().backfill()).resolves.toBe(0);
+    expect(await fixture.db.selectFrom("collaboration_resource_bindings").select(["readiness", "blocker"])
+      .where("resource_scope_id", "=", child.id).executeTakeFirstOrThrow()).toEqual({
+      readiness: "blocked",
+      blocker: "company_drive_material",
+    });
   });
 
   it("continues startup repair after a blocked Chat", async () => {
