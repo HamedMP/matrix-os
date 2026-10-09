@@ -226,6 +226,8 @@ function SettingsFrame({
     ? "billing"
     : resolvedDefaultSection);
   const [mobileDetail, setMobileDetail] = useState(openingSection !== "appearance");
+  const showMobileAccountFooter = mobile && mobileDetail
+    && (Boolean(resolvedLockedSection) || onboardingMode || closeDisabled);
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
     : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
@@ -376,7 +378,7 @@ function SettingsFrame({
             <aside hidden={mobile && mobileDetail} className={mobile ? 'min-h-0 flex-1 overflow-y-auto bg-card' : 'flex w-full shrink-0 flex-col border-b border-sidebar-border bg-sidebar text-sidebar-foreground p-2 sm:w-52 sm:border-b-0 sm:border-r'}>
               <SettingsNavigation sections={frameVisibleSections} activeSection={activeSection} mobile={mobile} onboarding={onboardingMode} lockedSection={resolvedLockedSection}
                 onSelect={id=>{setActiveSection(id as SectionId);setMobileDetail(true);}} />
-              <SettingsAccountFooter />
+              {!showMobileAccountFooter && <SettingsAccountFooter />}
             </aside>
 
             <main hidden={mobile && !mobileDetail} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
@@ -408,6 +410,7 @@ function SettingsFrame({
               {activeSection === "plugins" && <PluginsSection />}
               {activeSection === "system" && <SystemSection billingActive={billingActive !== false} />}
             </main>
+            {showMobileAccountFooter && <SettingsAccountFooter />}
           </div>
         </div>
       </div>
