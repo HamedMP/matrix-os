@@ -1,11 +1,11 @@
 import { Alert, Linking, Text, View } from "react-native";
+import { useRouter } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
 import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
 import {
   whatsAppSettingsView,
   WHATSAPP_AI_GUIDANCE,
   WHATSAPP_AGENT_GUIDANCE,
-  whatsAppChatUrl,
   WHATSAPP_CONNECT_URL,
   WHATSAPP_GUIDE_URL,
 } from "@matrix-os/contracts";
@@ -28,6 +28,7 @@ async function open(url: string) {
   }
 }
 export default function MessagingSettingsScreen() {
+  const router = useRouter();
   const {
     data: loaded,
     isPending,
@@ -63,7 +64,7 @@ export default function MessagingSettingsScreen() {
       <SettingsCardStack>
         {data?.chatId && (
           <SettingsRow card title="Open Matrix Chat" detail="View messages or change the selected agent"
-            onPress={() => void open(whatsAppChatUrl(data.chatId!))} />
+            onPress={() => router.push({ pathname: "/open", params: { chat: data.chatId! } })} />
         )}
         {isError && (
           <SettingsRow
