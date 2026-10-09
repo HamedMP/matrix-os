@@ -17,7 +17,7 @@ describe("Utilities Matrix platform availability", () => {
       expect(tool, slug).toBeTruthy();
       expect(toolAvailability(tool!).available, slug).toBe(true);
     }
-    expect(availableToolCount(utilityCatalog)).toBeGreaterThan(70);
-    expect(availableToolCount(utilityCatalog)).toBeLessThan(104);
+    expect(availableToolCount(utilityCatalog)).toBe(71);
+    expect(utilityCatalog.filter((tool) => !toolAvailability(tool).available)).toHaveLength(33);
   });
 });

@@ -29,7 +29,10 @@ describe("Utilities folder model", () => {
     expect(processingNotice(tool("word-counter"))).toMatch(/device/);
     expect(needsModelDownload(tool("word-counter"))).toBe(false);
     expect(needsModelDownload(tool("text-summarizer", "local-ai"))).toBe(true);
-    expect(processingNotice(tool("image-ocr", "image"))).toMatch(/download/i);
+    const ocr = utilityCatalog.find((tool) => tool.slug === "image-ocr");
+    expect(ocr).toBeDefined();
+    expect(needsModelDownload(ocr!)).toBe(true);
+    expect(processingNotice(ocr!)).toContain("First use downloads a model or browser runtime.");
     expect(processingNotice(tool("text-summarizer", "local-ai"))).toMatch(/download/i);
     expect(processingNotice(tool("file-share", "collaboration"))).toMatch(/STUN/);
     expect(processingNotice(tool("pdf-podcast", "pdf"))).toMatch(/download/i);
