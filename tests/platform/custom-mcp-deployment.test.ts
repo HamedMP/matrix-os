@@ -45,7 +45,7 @@ function deploy(enabled: boolean) {
       GOOGLE_ANALYTICS_API_SECRET_VERSION: '1',
       WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
       SLACK_ENABLED: 'false', SLACK_TOKEN_ENCRYPTION_KEY_VERSION: '1',
-      WHATSAPP_ADMISSION_MODE: 'allowlist',
+      WHATSAPP_ADMISSION_MODE: 'allowlist', WHATSAPP_BUSINESS_PHONE_NUMBER: '',
       CUSTOM_MCP_ENABLED: String(enabled), MCP_OAUTH_CLIENT_ID: '', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1',
       MCP_OAUTH_CALLBACK_URL: 'https://app.example.com/api/mcp-servers/oauth/callback' },
   });

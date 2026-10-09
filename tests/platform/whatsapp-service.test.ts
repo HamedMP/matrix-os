@@ -309,6 +309,14 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
       expect(send.mock.calls[0]![1]).toContain(result.state === 'attention' ? 'needs your attention' : result.text || 'agent finished');
     },
   );
+  it('sends one attention URL for the exact Chat', async () => {
+    agent.poll.mockResolvedValue({ state: 'attention' });
+    await process(run());
+    const text=send.mock.calls[0]![1];
+    expect(text.match(/https:\/\//g)).toHaveLength(1);
+    expect(text).toContain('/open?chat=' + checkpoint.chatId);
+    expect(text).not.toContain('HTTP 401');
+  });
   it('binds an admitted run to its verified epoch and checks consent immediately before dispatch', async () => {
     agent.start.mockImplementation(async (_input, authorize) => { expect(await authorize()).toBe(true); return checkpoint; });
     await process(incoming('Do work'));
