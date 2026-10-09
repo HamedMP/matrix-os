@@ -32,7 +32,7 @@ MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_STATUS_QUOTA_REVIEW=1 flox activate -- pnpm
 ```
 
 1. In Settings → Agents & providers → Codex, confirm `29% left`, a matching partly filled meter, and the reset date.
-2. Close Settings and inspect `UI status review (synthetic)` in Chat. Confirm clear space below the divider and the compact model row. Resize Chat to check truncation.
+2. Close Settings, open Chat and select `UI status review (synthetic)`. Confirm clear space below the divider and the compact model row. Resize Chat to check truncation.
 3. Quit the test Electron app when finished; the gateway and disposable profile are cleaned up. This environment contains synthetic data only.
 
 Human Review is user-owned and remains pending. Do not merge or request Greptile before that approval.

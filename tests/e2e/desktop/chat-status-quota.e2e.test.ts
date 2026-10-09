@@ -117,7 +117,6 @@ suite("Chat quota and status in actual Electron Desktop (synthetic gateway)", ()
     }
   });
   it.skipIf(process.env.MATRIX_STATUS_QUOTA_REVIEW !== "1")("opens a Human Review window", async () => {
-    await openChat();
     await openSettings();
     console.log("ENG-203 Human Review window is open. Quit this Electron app when finished to clean up the synthetic environment.");
     await new Promise<void>(resolve => app.once("close", resolve));
