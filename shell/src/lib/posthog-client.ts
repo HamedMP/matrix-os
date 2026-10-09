@@ -169,6 +169,15 @@ function findPostHogButton(selector: string): HTMLButtonElement | null {
   return document.getElementById(POSTHOG_WIDGET_ID)?.querySelector<HTMLButtonElement>(selector) ?? null;
 }
 
+function closeSupportOnEscape(event: KeyboardEvent): void {
+  if (event.key !== "Escape" || event.isComposing) return;
+  const closeButton = findPostHogButton(POSTHOG_CLOSE_SELECTOR);
+  if (!closeButton) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeButton.click();
+}
+
 export function setPostHogPersonPropertiesOnce(
   properties: ClientProperties,
   currentConfig: typeof config = config,
@@ -281,6 +290,9 @@ export function initializeShellPostHog(
   } as PostHogInitOptions);
   posthog.register(getMarketingAttributionProperties());
   migrateLegacyPostHogConsent();
+  // Capture phase so the open support panel takes Escape before shell
+  // window/launcher shortcuts underneath it.
+  if (typeof window !== "undefined") window.addEventListener("keydown", closeSupportOnEscape, true);
   initialized = true;
 }
 

@@ -85,6 +85,7 @@
     "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#getting-started": "./src/getting-started.ts",
+    "#integration-connections": "./src/integration-connections.ts",
     "#onboarding-widget": "./src/onboarding-widget.ts",
     "#onboarding-widget-catalog": "./src/onboarding-widget-catalog.ts",
     "#onboarding-widget-view": "./src/onboarding-widget-view.ts",
