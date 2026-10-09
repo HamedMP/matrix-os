@@ -207,7 +207,7 @@ it.each(["apps/renamed-ledger", "apps/finance/renamed-ledger"])("keeps a moved G
   expect(client.apps[0].launchPath).toBe(moved);
   expect(await installGalleryApp(bridge, "folio")).toMatchObject({ status: "already_installed", path: moved });
   await openGalleryApp(bridge, client.apps[0]);
-  expect(bridge.openApp).toHaveBeenCalledWith("Folio", "apps/folio");
+  expect(bridge.openApp).toHaveBeenCalledWith("Folio", "matrix-app:folio");
   expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
   expect(await readFile(join(f.homePath, moved, "owner.txt"), "utf8")).toBe("keep owner edit");
   invalidateAppIndexCache();
