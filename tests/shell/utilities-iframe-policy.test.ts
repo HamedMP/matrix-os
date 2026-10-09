@@ -20,6 +20,33 @@ describe("Utilities sandbox policy", () => {
     expect(html).toContain("https://huggingface.co");
     expect(APP_IFRAME_SANDBOX).not.toContain("allow-same-origin");
   });
+  it.each([
+    "/vm/example/apps/utilities/",
+    "/vm/example/~runtime/preview-2/apps/utilities/",
+    "https://app.matrix-os.com/vm/example/apps/utilities/",
+    "https://app.matrix-os.com/vm/example/~runtime/preview-2/apps/utilities/",
+    "http://localhost:3000/vm/test_1/apps/utilities/",
+  ])("preserves recording/export policy on the explicit computer route %s", (base) => {
+    const html = injectBridgeIntoAppHtml("<head></head>", "Utilities", {}, base);
+    expect(html).toContain("media-src 'self' blob:");
+    expect(appIframePermissions(base)).toBe("clipboard-write");
+    expect(appIframeSandbox(base)).toContain("allow-downloads");
+    expect(appIframeSandbox(base)).not.toContain("allow-same-origin");
+  });
+  it.each([
+    "/vm/example/apps/utilities-lookalike/",
+    "/vm/example/files/apps/utilities/",
+    "/vm/example/apps/utilities/../ordinary/",
+    "/vm/example/~runtime/../apps/utilities/",
+    "/vm/example/extra/apps/utilities/",
+    "/vm/" + "x".repeat(65) + "/apps/utilities/",
+    "/vm/example/~runtime/" + "x".repeat(33) + "/apps/utilities/",
+  ])("keeps privileged capabilities off unsupported computer routes %s", (base) => {
+    const html = injectBridgeIntoAppHtml("<head></head>", "Utilities", {}, base);
+    expect(html).not.toContain("media-src 'self' blob:");
+    expect(appIframePermissions(base)).toBeUndefined();
+    expect(appIframeSandbox(base)).toBe(APP_IFRAME_SANDBOX);
+  });
   it.each(["/apps/not-utilities/", "/apps/utilities-lookalike/", "/files/apps/utilities/", "/apps/utilities/../ordinary/"])('keeps ordinary app policy at %s', (base) => {
     const html = injectBridgeIntoAppHtml("<head></head>", "Utilities", {}, base);
     expect(html).toContain("connect-src 'self'");

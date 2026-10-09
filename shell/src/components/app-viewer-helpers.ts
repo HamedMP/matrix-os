@@ -55,7 +55,7 @@ export function extractSlug(path: string): string | null {
 }
 
 function isUtilitiesRuntimeBaseHref(baseHref: string): boolean {
-  return /^\/apps\/utilities\/$/.test(baseHref) || /^https?:\/\/[^/]+\/apps\/utilities\/$/.test(baseHref);
+  return /^(?:https?:\/\/[^\s/?#@]+)?(?:\/vm\/[A-Za-z0-9_-]{1,64}(?:\/~runtime\/[A-Za-z0-9_-]{1,32})?)?\/apps\/utilities\/$/.test(baseHref);
 }
 
 export function appIframePermissions(path: string): string | undefined {
