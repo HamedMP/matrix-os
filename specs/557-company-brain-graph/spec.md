@@ -15,7 +15,7 @@ merge suggestions for persons that look like one human.
 ## Scope of this increment
 
 In scope: `brain/graph/` (four tables, pure derivation, per-document writes, the derived index with hook reactions,
-reads, service, seven routes, person merge suggestions), tests and this spec. Out of scope (no stubs): see Deferred. OS-view surface matrix: N/A
+reads, service, seven routes, person merge suggestions), tests and this spec. Out of scope (no stubs): Deferred scope under Invariants. OS-view surface matrix: N/A
 (a JSON API; the Company Brain app in spec 563 renders it).
 
 ## Graph model
@@ -47,15 +47,12 @@ reads, service, seven routes, person merge suggestions), tests and this spec. Ou
 | current decision claims | decided_in from each `#N`, spec directory, own issue key and path ref of the scope the quote names, inferred, 16 per document |
 
 - Aliases (`brain_graph_aliases`, scope level, persons only): a `name:` key merges into an `email:` entity when
-  exactly one email was ever seen with that name in the scope's live documents (`single_email_for_name`); the merge
-  goes when that stops holding. Email keys are the identity, so every observation of an email lands on one entity;
-  `same_email` is reserved for sources that pair another key with an email. `github:` keys merge only by hand
-  (`manual`). Links keep their raw endpoints and reads resolve aliases, so a merge or split rewrites no link. A merge,
-  automatic or manual, moves the aliases of the merged entity along (they count toward the cap) and records the
-  entity each came in through (`via_entity_id`), so a split, an unmerge or a dropped automatic merge sends them back.
-  A split ("not the same person") row stays, and derivation never re-merges that key. An unmerge (the app's Undo of
-  a manual merge) deletes the manual row instead, so nothing of the merge is left: the pair can be suggested again,
-  and a `name:` key goes back to derivation.
+  exactly one email was seen with that name in live documents (`single_email_for_name`), and unmerges when that stops
+  holding. Email keys are the identity; `github:` keys merge only by hand (`manual`); `same_email` is reserved for
+  sources pairing a key with an email. Links keep raw endpoints and reads resolve aliases, so no merge rewrites a link.
+  A merge moves the merged entity's aliases along (counted toward the cap) with `via_entity_id`, so a split, unmerge or
+  dropped automatic merge sends them back. A split ("not the same person") row stays and is never re-merged; an
+  unmerge (the app's Undo) deletes the manual row, so the pair can be suggested again and a `name:` key is derived.
 - State (`brain_graph_state`, per document): `(incarnation, revision)`, an md5 digest of the current decision claim
   ids (the same SQL expression in derivation and in the pending scan), the name and email pairs, the link count.
 
@@ -63,11 +60,10 @@ reads, service, seven routes, person merge suggestions), tests and this spec. Ou
 
 - `documents_changed` with ids derives those documents (a tombstoned or missing one is removed); with null ids, and
   `claims_changed`, run one refresh; `scope_erased` deletes every graph row of the scope. All under the abort signal.
-- `refresh(scope, limits)`: tombstoned documents with a state row first (every document with graph rows keeps one), then live documents missing, at another
-  `(incarnation, revision)` or with a changed decision digest, by document id; re-read until none is left or the
-  document limit or budget is spent; then the project entity (named after the project through the resolver; a failed
-  lookup keeps the stored name) and a sweep of up to 1,000 entities nothing references. A document refused at the
-  entity limit stays pending while the pass goes on; the sweep then runs first, and refresh goes on when it made room.
+- `refresh(scope, limits)`: tombstoned documents with a state row first, then live documents missing, at another
+  `(incarnation, revision)` or with a changed decision digest, by id, until none is left or the limit or budget is
+  spent; then the project entity (a failed name lookup keeps the stored name) and a sweep of up to 1,000 unreferenced
+  entities. A document refused at the entity limit stays pending; the sweep then runs first and frees room.
   `freshness(scope)` counts pending documents, capped at 1,000.
 - Deriving or removing a document marks outdated (state row kept) the documents that read it, only when what they read
   changed: children through `parent` refs (never itself) when what it describes changed; git_commit documents whose
@@ -97,9 +93,8 @@ like one human and scores each pair from these signals:
   query. One read scans at most 5,000 person entities (those `GET /entities` would list), their split rows and name
   and email pairs and ranks at most 500 pairs; past a cap the answer says `truncated`, and a pair whose split row
   went unread is left out rather than suggested again.
-- Measured on the matrix-os project graph (30 persons, 20 suggestions): the top committer's four entities
-  (`name:hamed`, `name:hamedmp`, `email:hamedmp@users.noreply.github.com`,
-  `email:3755031+hamedmp@users.noreply.github.com`) are joined by suggestions scored 0.75 to 0.99.
+- Measured on the matrix-os project graph (30 persons, 20 suggestions): the top committer's four entities (two
+  names, two GitHub noreply emails) are joined by suggestions scored 0.75 to 0.99.
 
 ## Routes
 
@@ -117,16 +112,14 @@ zod, `Cache-Control: private, no-store` on every answer, no `app.use`.
 | POST `/entities/:entityId/aliases` | bodyLimit 2 KiB; `{ action: merge, split or unmerge, aliasKey }` | `BrainEntityView` |
 | POST `/graph/refresh` | bodyLimit 1 KiB; empty or `{}` | `BrainRefreshView` |
 
-Timelines: newest `source_updated_at` first, then document id, keyset paged; file timelines match path refs exactly,
-folder timelines under the folder (the bytewise range brain_why uses), plus stored links of the entity and its
-aliases; items carry the cite, link types, mode and up to 3 matched paths. Neighbourhoods: the center's direct links
-(plus `changed` from path refs for a file or a document), paged; a page stops before the direct link that would pass
-100 nodes, so its cursor skips nothing; hops 2 adds the neighbours' stored links in both directions and the `changed`
-links of neighbour documents and files, descriptions, authors, specs and parent PRs first and `changed` last; at most
-100 nodes and 200 links, `truncated` when a cap was hit. A `file:` or `folder:` ref may end with one "/". Reads run in
-one READ ONLY transaction with a 10 s statement deadline; at most two refreshes run at once (more: 503). Cursors are
-base64url JSON bound to a fingerprint of the query; another query's cursor is 400. Trailer and `Name <email>` parsing
-is linear in the line length (messages are not whitespace-collapsed).
+Timelines: newest `source_updated_at` first, then document id, keyset paged; files match path refs exactly, folders
+the bytewise range brain_why uses, plus stored links of the entity and its aliases; items carry the cite, link types,
+mode and up to 3 matched paths. Neighbourhoods: the center's direct links (plus `changed` from path refs), paged so a
+cursor never skips a link; hops 2 adds the neighbours' stored links both ways and their `changed` links, `changed`
+last; at most 100 nodes and 200 links, `truncated` when capped. A `file:` or `folder:` ref may end with one "/".
+Reads run READ ONLY with a 10 s statement deadline; at most two refreshes run at once (more: 503). Cursors are
+base64url JSON bound to a query fingerprint (another query's cursor is 400). Trailer and `Name <email>` parsing is
+linear in the line length.
 
 ## Security architecture
 
@@ -148,9 +141,8 @@ is logged by error name and answered 503. No credentials, no third parties, no d
 
 ## Failure modes
 
-- A hook that is lost or fails is repaired by the next refresh; a crash mid-document rolls that document back.
-- A document revised or erased while it is derived: the recorded revision is older, so it is pending again; an erase
-  mid-write is a foreign-key violation and the document is skipped.
+- A lost or failed hook is repaired by the next refresh; a crash mid-document rolls that document back.
+- A document revised while derived stays pending; one erased mid-write is a foreign-key violation and is skipped.
 - Lock or statement deadlines (5 s and 15 s per document) reject the pass; the listener bus logs it by name.
 - A client abort does not stop a refresh; its own signal and budget do.
 
@@ -176,33 +168,25 @@ is logged by error name and answered 503. No credentials, no third parties, no d
   `scope_erased`.
 - **Auth source of truth**: the request principal and the owner-scoped project resolver.
 - **Deferred scope**: tracker-key and `@login` text mentions, person mentions in bodies, organization scopes, graph
-  search, a kernel tool (spec 562), the app screens (spec 563).
+  search, entity renames across paths, a kernel tool (spec 562), the app screens (spec 563).
 
 ## Integration test checkpoint
 
-`pnpm exec vitest run tests/gateway/brain-graph-*.test.ts` (PGlite, no network) covers derivation, every timeline
-kind, paging and cursor binding, entities, aliases (automatic, manual, split, unmerge, conflict, cap), one- and two-hop
-neighbourhoods, merge suggestions (signals, orientation, accept and split, paging, caps), hooks, tombstones, claim
-changes, erase, sweep, budgets, capacity and the routes. Manual (dev Docker
-stack, project `proj_db779ebd-56fb-4c55-a253-34add36251b7` after the final wiring): `POST .../graph/refresh` until
-`caughtUp`, then `GET .../timeline?entity=file:packages/gateway/src/brain/why.ts`, `GET .../entities?kind=person` and
-`GET .../entities/<pull request id>/links?hops=2`.
+`pnpm exec vitest run tests/gateway/brain-graph-*.test.ts` (PGlite, no network) covers derivation, timelines, paging,
+entities, aliases, neighbourhoods, merge suggestions, hooks, tombstones, claim changes, erase, sweep, caps and routes.
+Manual (dev Docker stack): `POST .../graph/refresh` until `caughtUp`, then a file timeline,
+`GET .../entities?kind=person` and a pull request's links with `hops=2`.
 
 ## Code review checklist
 
-Every derived write runs under the `brain-graph:<scope>` lock in one transaction; every read, page, scan, recursion
-and refresh is capped; alias changes are fenced by the alias row's state (`alias_conflict` otherwise); no `catch {`;
-bodies are strict zod under `bodyLimit`; a foreign-key refusal is a skipped document, never an error; no new
-dependency.
+Derived writes run under the `brain-graph:<scope>` lock in one transaction; every read, scan and refresh is capped;
+alias changes are fenced (`alias_conflict`); no `catch {`; strict zod under `bodyLimit`; a foreign-key refusal skips
+the document; no new dependency.
 
 ## Delivery and evidence
 
 - [ ] Stacked PRs, each under 3,000 additions, checks green, Invariants and the OS-view matrix (N/A) in the body,
-      merged only after Greptile scores its current head 5/5: the graph layer with its derivation, read and refresh
-      tests; then its store, entity, merge suggestion and route tests.
+      merged only after Greptile scores its current head 5/5: the graph layer with its derivation tests; then its
+      read, refresh, store, entity, merge suggestion and route tests.
 - [ ] Site docs PR (`FinnaAI/matrix-os-site`, `content/docs/`): the graph routes (timeline, entities, links, merge
       suggestions, aliases, refresh), what a link's mode and evidence mean, and how person merges and splits work.
-
-## Deferred
-
-Everything under Deferred scope, plus entity renames across paths.
