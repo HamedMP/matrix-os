@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { appKeys, appsQueryOptions, listApps, resolveCatalogIconUrl } from "../../shell/src/api/apps";
+import { appKeys, appsQueryOptions, listApps, resolveCatalogIconUrl, hydrateAppIconUrls } from "../../shell/src/api/apps";
 
 describe("web app catalog query", () => {
   it("keeps the complete validated catalog", async () => {
@@ -118,5 +118,27 @@ describe("web app catalog query", () => {
     expect(queryClient.getQueryData(appKeys.list())).toEqual([expect.objectContaining({
       iconUrl: "/icons/notes.png?v=server",
     })]);
+  });
+});
+
+
+describe("bundled app artwork refresh", () => {
+  it.each(["notes", "whiteboard"])("keeps current %s artwork after catalog refresh and snapshot hydration", async (slug) => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([{
+      name: slug, path: `/files/apps/${slug}/index.html`, slug, icon: slug,
+      iconUrl: `/system-app-icons/v2/${slug}.png`,
+    }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    try {
+      const apps = await listApps();
+      expect(apps[0]?.iconUrl).toBe(`/system-app-icons/v2/${slug}.png`);
+      expect(hydrateAppIconUrls(apps, { [slug]: { versionedUrl: `/icons/${slug}.png?v=old` } }, p => p)?.[0]?.iconUrl).toBe(`/system-app-icons/v2/${slug}.png`);
+    } finally { fetch.mockRestore(); }
+  });
+  it("scopes only canonical bundled artwork to the selected computer", () => {
+    const resolve = (p: string) => `https://app.test/vm/preview/~runtime/preview${p}`;
+    expect(resolveCatalogIconUrl("/system-app-icons/v2/notes.png", resolve)).toBe("https://app.test/vm/preview/~runtime/preview/system-app-icons/v2/notes.png");
+    for (const path of ["/system-app-icons/v2/../secret.png", "/system-app-icons/v2/notes.svg", "/system-app-icons/v3/notes.png", "/system-app-icons/v2/notes.png?token=secret"]) {
+      expect(resolveCatalogIconUrl(path, resolve)).toBeUndefined();
+    }
   });
 });

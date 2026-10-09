@@ -117,11 +117,13 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
       }
       const icon = selectedIcon;
       if (!icon) return app;
-      icons[iconStem] = icon;
       if (bundledSelection && (app.slug === "notes" || app.slug === "whiteboard") &&
         [ `/files/apps/${app.slug}/index.html`, `apps/${app.slug}/index.html`, `/files/apps/${app.slug}/dist/index.html` ].includes(app.path)) {
+        // Canonical bundled artwork is carried by the app itself. Do not publish
+        // legacy owner-home bytes as a snapshot fallback for this selection.
         return { ...app, iconUrl: `/system-app-icons/v2/${app.slug}.png` };
       }
+      icons[iconStem] = icon;
       return { ...app, iconUrl: icon.versionedUrl };
     }));
     hydrated.push(...entries);
