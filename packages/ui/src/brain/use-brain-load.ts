@@ -60,34 +60,37 @@ export function useBrainLoad<T>(load: () => Promise<T>, key: string | null, ask 
 }
 
 interface BrainPageView<T> { readonly items: readonly T[]; readonly nextCursor: string | null }
-interface BrainMore<T> {
-  readonly token: string; readonly items: readonly T[]; readonly nextCursor: string | null; readonly busy: boolean;
+interface BrainMore<P, T> {
+  readonly from: P; readonly items: readonly T[]; readonly nextCursor: string | null; readonly busy: boolean;
   readonly error: BrainShellErrorState | null;
 }
 
-/** A cursor-paged list: the first page through useBrainLoad, then "Load more" pages appended, capped in memory. */
+/**
+ * A cursor-paged list: the first page through useBrainLoad, then "Load more" pages appended, capped in memory. The
+ * extra pages belong to the first page their cursor came from: a reload keeps them until its new first page lands.
+ */
 export function useBrainPages<P extends BrainPageView<unknown>>(
   fetchPage: (cursor: string | undefined) => Promise<P>, key: string | null, ask = 0,
 ) {
   type T = P["items"][number];
   const first = useBrainLoad(() => fetchPage(undefined), key, ask);
-  const [more, setMore] = useState<BrainMore<T> | null>(null);
-  const extra = more !== null && more.token === first.token ? more : null;
+  const [more, setMore] = useState<BrainMore<P, T> | null>(null);
   const firstPage = first.state.status === "ready" ? first.state.data : null;
+  const extra = more !== null && more.from === firstPage ? more : null;
   const items: readonly T[] = firstPage === null ? [] : [...firstPage.items, ...(extra?.items ?? [])];
   const cursor = extra === null ? firstPage?.nextCursor ?? null : extra.nextCursor;
   const nextCursor = items.length >= BRAIN_LIST_MAX_ITEMS ? null : cursor;
   const loadMore = () => {
-    if (nextCursor === null || first.token === null || extra?.busy === true) return;
-    const token = first.token;
+    if (nextCursor === null || firstPage === null || extra?.busy === true) return;
+    const from = firstPage;
     const kept = extra?.items ?? [];
-    setMore({ token, items: kept, nextCursor, busy: true, error: null });
+    setMore({ from, items: kept, nextCursor, busy: true, error: null });
     fetchPage(nextCursor).then(
-      (page) => setMore((previous) => previous?.token === token
-        ? { token, items: [...kept, ...page.items], nextCursor: page.nextCursor, busy: false, error: null }
+      (page) => setMore((previous) => previous?.from === from
+        ? { from, items: [...kept, ...page.items], nextCursor: page.nextCursor, busy: false, error: null }
         : previous),
-      (error: unknown) => setMore((previous) => previous?.token === token
-        ? { token, items: kept, nextCursor, busy: false, error: brainShellError(error) }
+      (error: unknown) => setMore((previous) => previous?.from === from
+        ? { from, items: kept, nextCursor, busy: false, error: brainShellError(error) }
         : previous),
     );
   };
