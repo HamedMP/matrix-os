@@ -5,6 +5,7 @@ const AppIdentity = z.string().max(256).regex(/^[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9]
 // Folder names are owner-controlled; the authenticated runtime catalog resolves
 // their stable manifest identity. Never treat a folder spelling as an app ID.
 const AppPath = z.string().min(1).max(4096).refine((value) => {
+  if (value.startsWith("matrix-app:")) return /^matrix-app:[a-z0-9][a-z0-9-]{0,63}$/.test(value);
   const path = value.replace(/^(?:~\/|\/files\/)/, "").replace(/\/$/, "");
   if (!path.startsWith("apps/") || /[\\\u0000-\u001f\u007f%?#:]/.test(path)) return false;
   const parts = path.split("/");

@@ -174,3 +174,31 @@ describe("manifest-backed moved owner app launch", () => {
     expect(openApp).toHaveBeenCalledTimes(4);
   });
 });
+
+
+describe("explicit manifest launch identities", () => {
+  const catalog = [
+    { slug: "folio", name: "Folio", path: "/files/apps/ledger/index.html" },
+    { slug: "ledger", name: "Ledger", path: "/files/apps/folio/index.html" },
+  ];
+  it("opens the manifest identity despite another app occupying its old folder, while retaining folder launches", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(catalog)));
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn });
+    const openApp = vi.fn();
+    const bridge = new NativeAppBridge({ authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", resolveApp, openApp });
+    bridge.register(1, "gallery");
+    const open = createNativeAppOpenClient(value => bridge.openApp(sender, value));
+    open("Forged", "matrix-app:folio");
+    await vi.waitFor(() => expect(openApp).toHaveBeenCalledWith({ slug: "folio", name: "Folio", appIdentity: "folio" }));
+    await bridge.openApp(sender, { name: "Forged", path: "apps/folio" });
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "ledger", name: "Ledger", appIdentity: "ledger" });
+  });
+  it.each(["matrix-app:missing", "matrix-app:../folio", "matrix-app:folio?x", "matrix-app:folio/other", "matrix-app://folio"])("keeps invalid or unavailable identity %s closed", async path => {
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn: vi.fn(async () => new Response(JSON.stringify(catalog))) });
+    await expect(resolveApp({ name: "Forged", path })).rejects.toThrow();
+  });
+  it("keeps duplicate manifest identities closed instead of picking one owner folder", async () => {
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn: vi.fn(async () => new Response(JSON.stringify([catalog[0], { ...catalog[0], path: "/files/apps/duplicate/index.html" }]))) });
+    await expect(resolveApp({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow();
+  });
+});
