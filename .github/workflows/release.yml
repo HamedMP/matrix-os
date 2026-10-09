@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -117,7 +117,7 @@ jobs:
       pkg_path: ${{ steps.build.outputs.pkg_path }}
       pkg_name: ${{ steps.build.outputs.pkg_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -190,7 +190,7 @@ jobs:
         run: ./scripts/notarise-macos.sh "$PKG_PATH"
 
       - name: Upload pkg artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: macos-pkg
           path: ${{ steps.build.outputs.pkg_path }}
@@ -207,7 +207,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -240,7 +240,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -259,7 +259,7 @@ jobs:
         run: pnpm --filter @finnaai/matrix build:binaries
 
       - name: Upload standalone CLI binaries
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: cli-binaries
           path: dist/cli-binaries/*
@@ -272,7 +272,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Download macOS pkg (if built)
         if: ${{ needs.build-macos.result == 'success' }}
@@ -307,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           repository: FinnaAI/homebrew-tap
           token: ${{ secrets.TAP_PUSH_TOKEN }}

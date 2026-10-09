@@ -63,7 +63,7 @@ jobs:
       NEXT_PUBLIC_POSTHOG_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
       NEXT_PUBLIC_POSTHOG_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
       - uses: pnpm/action-setup@v6
@@ -95,7 +95,7 @@ jobs:
               ./scripts/build-host-bundle.sh
             mv dist/host-bundle "dist/user-systemd-acceptance-${suffix}"
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v6
         with:
           name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
           path: |
@@ -125,10 +125,10 @@ jobs:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL || 'https://app.matrix-os.com' }}
       PLATFORM_SECRET: ${{ secrets.PLATFORM_SECRET }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v7
         with:
           name: user-systemd-terminal-bundles-${{ needs.gate.outputs.head }}
           path: dist
@@ -161,7 +161,7 @@ jobs:
       RUN_NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
       TEST_ONLY_ACTIVATION: MATRIX_TERMINAL_USER_SYSTEMD_ENABLED=1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head }}
       - name: Recover the exact-head disposable preview updater
@@ -952,7 +952,7 @@ jobs:
           NODE
           digest="$(jq -er .summarySha256 "$RUNNER_TEMP/user-systemd-terminal-evidence.json")"
           echo "digest=$digest" >>"$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v6
         with:
           name: user-systemd-terminal-production-${{ needs.gate.outputs.head }}
           path: ${{ runner.temp }}/user-systemd-terminal-evidence.json

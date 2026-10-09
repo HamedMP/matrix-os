@@ -24,7 +24,7 @@ jobs:
     outputs:
       should_run: ${{ steps.changed.outputs.should_run }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -89,7 +89,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No Docker-relevant source changes detected; skipping image build."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Set up Docker Buildx
@@ -118,7 +118,7 @@ jobs:
 
       - name: Upload Docker image artifact
         if: needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: matrix-os-dev-image
           path: /tmp/matrix-os-dev-ci.tar.gz
@@ -137,7 +137,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo "Full Docker scenario matrix covers push runs; PR smoke runs only on pull_request events."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true' && github.event_name == 'pull_request'
 
       - name: Free runner disk before Docker load
@@ -203,7 +203,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: docker-test-logs-fresh-install
           path: /tmp/docker-test-logs/
@@ -236,7 +236,7 @@ jobs:
           - recovery
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Free runner disk before Docker load
         run: |
@@ -294,7 +294,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: docker-test-logs-${{ matrix.scenario }}
           path: /tmp/docker-test-logs/
