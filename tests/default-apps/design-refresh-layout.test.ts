@@ -26,4 +26,14 @@ describe("compact app layout safeguards", () => {
   it("gives the new-note control a theme surface in standalone dark mode", () => {
     expect(stylesheet("notes")).toMatch(/\.icon-button,\s*\.button,\s*\.search-field\s*\{\s*background:\s*var\(--card\)/);
   });
+  it("bounds Weather search results inside a panel whose close bar cannot shrink", () => {
+    const css = readFileSync(new URL("../../home/apps/weather/src/styles.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.search-panel\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*max-height:\s*72dvh/);
+    expect(css).toMatch(/\.search-bar\s*\{[^}]*flex-shrink:\s*0/);
+    expect(css).toMatch(/\.search-results\s*\{[^}]*min-height:\s*0;[^}]*flex:\s*0 1 auto;[^}]*overflow-y:\s*auto/);
+  });
+  it("matches selected Clock repeat days to the accent foreground", () => {
+    const css = readFileSync(new URL("../../home/apps/clock/src/styles.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.day--on\s*\{[^}]*background:\s*var\(--app-accent\);[^}]*color:\s*var\(--app-primary-fg\)/);
+  });
 });
