@@ -5,6 +5,11 @@ set -euo pipefail
 mode="${1:-validate}"
 enabled="${WHATSAPP_ENABLED:-false}"
 key_version="${WHATSAPP_ENCRYPTION_KEY_VERSION:-1}"
+admission_mode="${WHATSAPP_ADMISSION_MODE:-allowlist}"
+case "$admission_mode" in
+  allowlist|eea_selfserve) ;;
+  *) echo "WHATSAPP_ADMISSION_MODE must be allowlist or eea_selfserve." >&2; exit 1 ;;
+esac
 case "$enabled" in
   true|false) ;;
   *) echo "WHATSAPP_ENABLED must be true or false." >&2; exit 1 ;;
@@ -27,6 +32,9 @@ bindings=(
 
 case "$mode" in
   validate) ;;
+  env-bindings)
+    if [ "$enabled" = "true" ]; then printf '|WHATSAPP_ADMISSION_MODE=%s' "$admission_mode"; fi
+    ;;
   secret-bindings)
     if [ "$enabled" = "true" ]; then printf ',%s' "${bindings[@]}"; fi
     ;;
@@ -108,13 +116,16 @@ NODE
     trap 'rm -f "$revision_file"' EXIT
     gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" \
       --region "$GCP_REGION" --format=json > "$revision_file"
-    node - "$revision_file" "$enabled" "${bindings[@]}" <<'NODE'
+    node - "$revision_file" "$enabled" "$admission_mode" "${bindings[@]}" <<'NODE'
 const fs = require('node:fs');
 try {
   const revision = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
   const containers = revision.spec?.containers;
   if (!Array.isArray(containers) || containers.length !== 1 || !Array.isArray(containers[0].env)) throw new Error();
-  for (const binding of process.argv.slice(4)) {
+  const admission = containers[0].env.filter(entry => entry.name === 'WHATSAPP_ADMISSION_MODE');
+  if (process.argv[3] === 'false' ? admission.length !== 0
+    : admission.length !== 1 || admission[0].value !== process.argv[4] || admission[0].valueFrom !== undefined) throw new Error();
+  for (const binding of process.argv.slice(5)) {
     const [name, reference] = binding.split('=');
     const [secret, version] = reference.split(':');
     const matches = containers[0].env.filter(entry => entry.name === name);

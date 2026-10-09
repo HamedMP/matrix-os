@@ -9,7 +9,7 @@ One Matrix-owned Cloud API number accepts a user's message, replies with a short
 ## Scope and decisions
 
 - Direct Meta Cloud API, no intermediary and no personal-account QR session.
-- Pilot admits an explicit configured sender allowlist. General AI availability follows recipient market eligibility, not the operator's location. Start with EEA-number recipients, keep policy admission explicit.
+- Pilot defaults to an explicit configured sender allowlist. Production may explicitly select `WHATSAPP_ADMISSION_MODE=eea_selfserve` after verifying its registered number and credential; existing sign-in, second proof, consent, entitlement and durable queue limits remain authoritative. General AI availability follows recipient market eligibility, not the operator's location. Start with EEA-number recipients, keep policy admission explicit.
 - Text first. Other message types receive a clear text-only response. No proactive messages outside Meta's 24-hour reply window, no template or media implementation in this change.
 - One canonical Chat per linked owner and runtime. Use existing owner-authenticated Chat APIs and stable request IDs. Do not add an alternative conversation store.
 - Account linking is not inferred from profile phone numbers. Token possession plus Clerk login plus a code delivered to WhatsApp are required. Expiring, single-use tokens and bounded attempts prevent replay and forwarded-link hijacking. Existing associations cannot be reassigned silently.
