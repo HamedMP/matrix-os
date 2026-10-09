@@ -7,6 +7,7 @@ import {
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
   onboardingAiLabel,
+  onboardingRunTitle,
   parseOnboardingRepoUrl,
   reduceOnboardingWidget,
   type OnboardingRunSource,
@@ -325,6 +326,29 @@ describe("deriveOnboardingBubble", () => {
     expect(deriveOnboardingBubble(done, { status: "completed", steps: [] })).toEqual({
       tone: "ready", title: "Your brief is ready", subtitle: "AI agent pricing", count: 1,
     });
+  });
+
+  it("stops announcing a result the user already saw", () => {
+    const working = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "AI agent pricing" });
+    const requestId = working.screen.kind === "run" ? working.screen.requestId : -1;
+    const seen = run(working, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" }, { type: "size.changed", size: "bubble" });
+    expect(deriveOnboardingBubble(seen, { status: "completed", steps: [] })).toEqual({
+      tone: "idle", title: "Pick up where we left off", subtitle: "AI agent pricing", count: 0,
+    });
+  });
+
+  it("names typed tasks and follow-ups after what the user asked for", () => {
+    const typed = run(fresh(), { type: "freeform.submitted", text: "Trip ideas for Lisbon" });
+    const requestId = typed.screen.kind === "run" ? typed.screen.requestId : -1;
+    const done = run(typed, { type: "size.changed", size: "bubble" }, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" });
+    expect(deriveOnboardingBubble(done, { status: "completed", steps: [] })).toMatchObject({ title: "Your result is ready", subtitle: "Trip ideas for Lisbon", count: 1 });
+
+    const followed = run(done, { type: "followUp.chosen", choice: "Yes", prompt: "Watch this topic every week." });
+    expect(followed.screen).toMatchObject({ kind: "run", title: "Trip ideas for Lisbon" });
+    expect(deriveOnboardingBubble(followed, { status: "running", steps: [] })).toMatchObject({ title: "Working…", subtitle: "Trip ideas for Lisbon" });
+
+    const long = run(fresh(), { type: "freeform.submitted", text: "x".repeat(120) });
+    expect(long.screen.kind === "run" && onboardingRunTitle(long.screen)).toBe(`${"x".repeat(47)}…`);
   });
 
   it("invites the user back while setup is unfinished", () => {

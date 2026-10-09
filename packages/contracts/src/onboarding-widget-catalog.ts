@@ -107,8 +107,15 @@ export function onboardingResultTitle(taskId: OnboardingTaskId, answer: string):
     case "research":
     case "build-website":
     case "work-on-code": return answer || onboardingTask(taskId)?.label || "Your result";
-    case "custom": return "Your result";
+    case "custom": return clipTitle(answer) || "Your result";
   }
+}
+
+const RESULT_TITLE_MAX_CHARS = 48;
+
+function clipTitle(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > RESULT_TITLE_MAX_CHARS ? `${trimmed.slice(0, RESULT_TITLE_MAX_CHARS - 1)}…` : trimmed;
 }
 
 export function onboardingWorkingLine(taskId: OnboardingTaskId, answer: string): string {

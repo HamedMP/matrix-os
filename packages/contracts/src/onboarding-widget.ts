@@ -1,5 +1,6 @@
 import {
   ONBOARDING_FREEFORM_MAX_CHARS,
+  onboardingResultTitle,
   onboardingTask,
   parseOnboardingRepoUrl,
   type OnboardingRequiredService,
@@ -25,6 +26,8 @@ export interface OnboardingRunScreen {
   appConnected: boolean;
   simpler: boolean;
   context?: string;
+  /** Follow-ups keep the title of the result they continue. */
+  title?: string;
   phase: OnboardingRunPhase;
   requestId: number;
   runId?: string;
@@ -120,7 +123,7 @@ function boundedText(text: string): string {
 
 function startRun(
   state: OnboardingWidgetState,
-  run: Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler" | "context">,
+  run: Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler" | "context" | "title">,
   patch: Partial<OnboardingWidgetState> = {},
 ): OnboardingWidgetState {
   return {
@@ -145,6 +148,10 @@ function afterConnect(state: OnboardingWidgetState, taskId: OnboardingStarterTas
 function joinNames(names: readonly string[]): string {
   if (names.length <= 1) return names.join("");
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+export function onboardingRunTitle(run: Pick<OnboardingRunScreen, "taskId" | "answer" | "title">): string {
+  return run.title ?? onboardingResultTitle(run.taskId, run.answer);
 }
 
 function withRun(state: OnboardingWidgetState, patch: Partial<OnboardingRunScreen>): OnboardingWidgetState {
@@ -226,11 +233,12 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     }
     case "run.retried":
       if (screen.kind !== "run" || screen.phase !== "failed") return state;
-      return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler, ...(screen.context ? { context: screen.context } : {}) });
+      return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler, ...(screen.context ? { context: screen.context } : {}), ...(screen.title ? { title: screen.title } : {}) });
     case "followUp.chosen": {
       const prompt = event.prompt ? boundedText(event.prompt) : "";
       if (!prompt) return { ...state, followUpUsed: true };
-      return startRun(state, { taskId: "custom", answer: prompt, appConnected: false, simpler: false }, { echo: event.choice, notice: null, followUpUsed: true });
+      const title = screen.kind === "run" ? onboardingRunTitle(screen) : undefined;
+      return startRun(state, { taskId: "custom", answer: prompt, appConnected: false, simpler: false, ...(title ? { title } : {}) }, { echo: event.choice, notice: null, followUpUsed: true });
     }
     case "followUp.dismissed":
       return { ...state, followUpUsed: true };

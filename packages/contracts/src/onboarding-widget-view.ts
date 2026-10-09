@@ -1,5 +1,5 @@
-import { onboardingResultTitle, onboardingTask, onboardingWorkingLine } from "#onboarding-widget-catalog";
-import type { OnboardingWidgetState } from "#onboarding-widget";
+import { onboardingTask, onboardingWorkingLine } from "#onboarding-widget-catalog";
+import { onboardingRunTitle, type OnboardingWidgetState } from "#onboarding-widget";
 
 export const ONBOARDING_WORK_LOG_MAX_STEPS = 6;
 const RESULT_SUMMARY_MAX_CHARS = 160;
@@ -106,21 +106,21 @@ export function deriveOnboardingBubble(state: OnboardingWidgetState, runView: On
   const screen = state.screen;
   if (screen.kind === "run") {
     const task = onboardingTask(screen.taskId);
+    const title = onboardingRunTitle(screen);
+    const workingLine = screen.title ?? onboardingWorkingLine(screen.taskId, screen.answer);
     if (screen.phase === "done") {
-      return {
-        tone: "ready",
-        title: task?.readyBubble ?? "Your result is ready",
-        subtitle: onboardingResultTitle(screen.taskId, screen.answer),
-        count: state.unread,
-      };
+      if (state.unread === 0) return { tone: "idle", title: IDLE_BUBBLE_TITLE, subtitle: title, count: 0 };
+      return { tone: "ready", title: task?.readyBubble ?? "Your result is ready", subtitle: title, count: state.unread };
     }
     if (screen.phase === "failed" || runView?.status === "failed") {
-      return { tone: "attention", title: "I couldn't finish this one", subtitle: onboardingWorkingLine(screen.taskId, screen.answer), count: state.unread };
+      return { tone: "attention", title: "I couldn't finish this one", subtitle: workingLine, count: state.unread };
     }
     if (screen.phase === "waiting_computer") {
-      return { tone: "attention", title: "Starting your computer…", subtitle: onboardingWorkingLine(screen.taskId, screen.answer), count: 0 };
+      return { tone: "attention", title: "Starting your computer…", subtitle: workingLine, count: 0 };
     }
-    return { tone: "working", title: "Working…", subtitle: onboardingWorkingLine(screen.taskId, screen.answer), count: 0 };
+    return { tone: "working", title: "Working…", subtitle: workingLine, count: 0 };
   }
-  return { tone: "idle", title: "Pick up where we left off", subtitle: "What should I start on?", count: state.unread };
+  return { tone: "idle", title: IDLE_BUBBLE_TITLE, subtitle: "What should I start on?", count: state.unread };
 }
+
+const IDLE_BUBBLE_TITLE = "Pick up where we left off";

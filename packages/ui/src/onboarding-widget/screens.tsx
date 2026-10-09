@@ -2,7 +2,7 @@ import {
   ONBOARDING_REPO_QUESTION,
   ONBOARDING_TASKS,
   onboardingFollowUpPrompt,
-  onboardingResultTitle,
+  onboardingRunTitle,
   onboardingTask,
   type OnboardingAiChoice,
   type OnboardingRequiredService,
@@ -226,7 +226,7 @@ export function RunScreen({ run, state, runView, creditsExhausted, actions }: { 
       <WorkLog steps={steps} />
       <p className="mxo-text">{task?.readyLine ?? runView?.resultSummary ?? "Done."}</p>
       {run.taskId !== "work-on-code" ? (
-        <ResultCard title={onboardingResultTitle(run.taskId, run.answer)} subtitle={task ? runView?.resultSummary : undefined} onOpen={actions.openResult} />
+        <ResultCard title={onboardingRunTitle(run)} subtitle={task ? runView?.resultSummary : undefined} onOpen={actions.openResult} />
       ) : null}
       {creditsExhausted ? (
         <>
