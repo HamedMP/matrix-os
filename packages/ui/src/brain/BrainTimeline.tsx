@@ -64,7 +64,7 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
           onChange={(event) => setDraft(event.target.value)} className="min-w-0 flex-1 basis-56" />
         <BrainButton type="submit">Show</BrainButton>
       </form>
-      {kind === "person" && <BrainPersonMerges api={api} projectId={projectId} />}
+      {kind === "person" && <BrainPersonMerges api={api} projectId={projectId} onOpenSources={onOpenSources} />}
       {entity === "" && person === "" && (
         <BrainEmpty title="Pick a file, a person or a spec.">The timeline lists the pull requests, commits and specs that touched it.</BrainEmpty>
       )}
@@ -94,7 +94,10 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
             <h2 className="break-words text-base font-semibold">{view.entity.displayName}</h2>
             <BrainFreshness pending={view.freshness.pendingDocuments} capped={view.freshness.pendingCapped} />
             {pages.items.length === 0 ? (
-              <BrainEmpty title="Nothing touches this yet.">Check the name, or sync its sources in Sources.</BrainEmpty>
+              <BrainEmpty title="Nothing touches this yet.">
+                <p className="mb-2">Check the name, or sync its sources in Sources.</p>
+                <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>
+              </BrainEmpty>
             ) : (
               <ol aria-label="Timeline" className={`grid gap-2 border-l pl-4 ${BRAIN_TONE.border}`}>
                 {pages.items.map((item) => <TimelineItem key={item.cite.documentId} item={item} />)}

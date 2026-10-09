@@ -16,7 +16,7 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - Timeline's person view lists possible duplicates (merge suggestions) with Merge and Undo over the alias route; Undo
   sends `unmerge`, which leaves nothing behind, never a lasting split. One Merge or Undo runs at a time in the list,
   and a card naming a person another merge there moved away cannot merge until that merge is undone (the person now
-  resolves to the one who stayed).
+  resolves to the one who stayed). Empty states show an icon, a headline, the next step and maybe Open Sources.
 - Sources lists every kind with its availability ("Not set up on this server" for `not_configured`, which covers
   every server-side gap), connects with per-kind settings, and runs the repository's sync and claim reading, and
   every other source's sync, as background jobs it polls. On open it reads `GET .../jobs?limit=20` once and each card

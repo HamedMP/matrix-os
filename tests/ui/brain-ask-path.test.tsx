@@ -155,6 +155,7 @@ describe("Ask with a path", () => {
     expect(screen.getByRole("heading", { name: "History of specs/" })).toBeTruthy();
     ask("a.ts");
     expect(await screen.findByText("This project's repository is not connected.")).toBeTruthy();
+    expect(screen.getByText("Connect it in Sources to see what changed each path, and why.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open Sources" }));
     expect(onOpenSources).toHaveBeenCalledTimes(1);
     ask("b.ts");

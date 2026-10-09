@@ -4,7 +4,7 @@ import { useState } from "react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import { brainMergeEvidenceText, brainScoreText } from "./brain-format.js";
-import { BrainBadge, BrainError, BrainLoadMore, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import { BrainBadge, BrainEmpty, BrainError, BrainLoadMore, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import type { BrainEntityRefView, BrainMergeSuggestionView } from "./brain-types.js";
 import { useBrainAction, useBrainPages } from "./use-brain-load.js";
 
@@ -16,7 +16,7 @@ const EVIDENCE_SHOWN = 5;
  * second person at the first (the alias route with the suggestion's alias key), and Undo unmerges them, which leaves
  * nothing behind: the pair can be suggested and merged again.
  */
-export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "api" | "projectId">) {
+export function BrainPersonMerges({ api, projectId, onOpenSources }: BrainScreenProps) {
   const pages = useBrainPages(
     (cursor) => api.mergeSuggestions(projectId, { limit: PAGE_SIZE, cursor }), "merge-suggestions",
   );
@@ -46,7 +46,12 @@ export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "ap
       <BrainView state={pages.first.state} label="Looking for duplicates..." onRetry={pages.first.reload}>
         {(view) => (
           <div className="grid gap-2">
-            {pages.items.length === 0 ? <p className="text-xs text-muted-foreground">No likely duplicates.</p> : (
+            {pages.items.length === 0 ? (
+              <BrainEmpty title="No likely duplicates.">
+                <p className="mb-2">Names that may be one person show here. Syncing more sources finds more.</p>
+                <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>
+              </BrainEmpty>
+            ) : (
               <ul className="grid gap-2">
                 {pages.items.map((suggestion) => (
                   <MergeCard key={suggestion.suggestionId} suggestion={suggestion} action={action}
