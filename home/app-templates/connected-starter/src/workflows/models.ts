@@ -26,8 +26,10 @@ export function workoutHistory(records: OwnerRecord[]) {
   return { exercises: exercises.sort((a, b) => a.exercise.localeCompare(b.exercise)), warmups, unconfirmed };
 }
 
+export class RunwayDateError extends Error {}
+
 export function planRunway(records: OwnerRecord[], options: { today: string; payday: string }) {
-  if (!validDate(options.today) || !validDate(options.payday) || options.payday < options.today) throw new Error("Choose valid dates with payday after today.");
+  if (!validDate(options.today) || !validDate(options.payday) || options.payday < options.today) throw new RunwayDateError("Choose valid dates with payday after today.");
   const groups: Array<{ currency: string; scope: OwnerRecord["scope"]; available: number; required: number; remaining: number; shortfall: number; allocations: Array<{ record: OwnerRecord; allocated: number; shortfall: number }>; opening?: OwnerRecord }> = [];
   const eligible = rows(records).filter(row => validCurrency(row.fields.currency) && positive(row.fields.amount) && validDate(row.fields.date));
   for (const row of eligible) {

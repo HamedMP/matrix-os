@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import type { ViewProps } from "../views/common";
 import type { OwnerRecord } from "../types";
 import { formatMoney, dateText, validDate } from "../model";
-import { workoutHistory, planRunway, mealGroceries, newRecord } from "./models";
+import { workoutHistory, planRunway, RunwayDateError, mealGroceries, newRecord } from "./models";
 import { Intro, EmptyHint, RecordActions, SaveError, useSavedAction, localDate, plusDays, MiniTrend, useCreationScope, CreationGroup } from "./Shared";
 
 export function Workout(props: ViewProps) {
@@ -28,11 +28,18 @@ export function Workout(props: ViewProps) {
 
 export function Runway(props: ViewProps) {
   const [today, setToday] = useState(localDate), [payday, setPayday] = useState(() => plusDays(localDate(), 14));
-  const result = useMemo(() => { try { return { plan: planRunway(props.records, { today, payday }), error: "" }; } catch (error) { return { plan: [], error: "Choose valid dates with payday on or after today." }; } }, [props.records, today, payday]);
+  const result = useMemo(() => {
+    try { return { plan: planRunway(props.records, { today, payday }), error: "" }; }
+    catch (error) {
+      if (error instanceof RunwayDateError) return { plan: [], error: "Choose valid dates with payday on or after today." };
+      console.error("[runway] cash plan calculation failed", error instanceof Error ? error : new Error("Unknown calculation failure"));
+      return { plan: [], error: "Your cash plan could not be calculated. Try again." };
+    }
+  }, [props.records, today, payday]);
   return <div className="new-workflow nw-runway"><Intro title="Give this payday a plan." detail="Allocate confirmed cash to dated bills and reserves. Future pay never increases the money available today." action={<button className="primary" onClick={props.onAdd}>Add cash or commitment</button>} />
     <div className="nw-period"><label>Cash as of<input type="date" value={today} onChange={event => setToday(event.target.value)} /></label><label>Next payday<input type="date" value={payday} min={today} onChange={event => setPayday(event.target.value)} /></label></div><SaveError error={result.error} />
     {result.plan.map(group => <section className="nw-cash-plan" key={`${group.scope}-${group.currency}`}><header><h3>{group.currency} <small>{group.scope === "work" ? "Work" : "Personal"}</small></h3><p>{group.opening ? `Opening snapshot: ${dateText(group.opening.fields.date)}` : "Add a confirmed opening balance for this currency."}</p></header><div className="nw-money-summary"><p><span>Confirmed cash</span><strong>{formatMoney(group.available, group.currency)}</strong></p><p><span>To cover by payday</span><strong>{formatMoney(group.required, group.currency)}</strong></p><p className={group.shortfall ? "nw-shortfall" : ""}><span>{group.shortfall ? "Still to cover" : "Unallocated cash"}</span><strong>{formatMoney(group.shortfall || group.remaining, group.currency)}</strong></p></div><ol className="nw-cash-timeline">{group.allocations.map(item => <li key={item.record.id}><time>{dateText(item.record.fields.date)}</time><div><h4>{String(item.record.fields.title ?? "Commitment")}</h4><p>{formatMoney(item.allocated, group.currency)} allocated{item.shortfall > 0 ? ` · ${formatMoney(item.shortfall, group.currency)} still to cover` : " · Covered"}</p><RecordActions record={item.record} {...props} /></div><div className="nw-allocation-track" aria-label={`${item.allocated} allocated of ${item.record.fields.amount}`}><span style={{ width: `${Number(item.record.fields.amount) > 0 ? item.allocated / Number(item.record.fields.amount) * 100 : 100}%` }} /></div></li>)}</ol></section>)}
-    {!result.plan.length && <EmptyHint>Add your opening cash, currency and date, then the bills it needs to cover. Estimates remain outside confirmed allocations.</EmptyHint>}
+    {!result.error && !result.plan.length && <EmptyHint>Add your opening cash, currency and date, then the bills it needs to cover. Estimates remain outside confirmed allocations.</EmptyHint>}
     <details className="nw-record-details"><summary>All cash, income and commitments ({props.records.length})</summary>{props.records.slice(0, 1000).map(record => <article className="nw-log-row" key={record.id}><div><strong>{String(record.fields.title ?? "Record")}</strong><p>{String(record.fields.kind ?? "Kind to confirm")} · {String(record.fields.status ?? "Unconfirmed")} · {dateText(record.fields.date)}</p></div><span>{String(record.fields.amount ?? "?")} {String(record.fields.currency ?? "")}</span><RecordActions record={record} {...props} /></article>)}</details>
     <p className="nw-footnote">Each currency and Personal/Work group has its own latest opening snapshot. Received income after that snapshot is added; paid bills and reserves through today are deducted. Confirmed overdue unpaid bills stay in the plan.</p>
   </div>;
