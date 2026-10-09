@@ -14,13 +14,14 @@ type BrainOwnerDatabase = Pick<OwnerDatabaseServices, "brainServices" | "brainSe
 
 /**
  * The owner database (and the brain) starts before platform integrations: bindIntegrations binds them once they exist.
- * Only the gateway's configured owner may spend its credentials in the brain: MATRIX_BRAIN_GITHUB_TOKEN, the
- * Anthropic key of model claims and the OpenAI key of meaning search (dev: the "default" principal).
+ * Only the gateway's owner may spend its credentials in the brain: MATRIX_BRAIN_GITHUB_TOKEN, the Anthropic key of
+ * model claims and the OpenAI key of meaning search. Its principals: the configured ids and the one a request without
+ * credentials resolves to (dev: "default", also beside a MATRIX_CLERK_USER_ID alone).
  */
 export function createBrainGatewayStart(configuredOwnerIds: readonly string[], env: NodeJS.ProcessEnv = process.env) {
   const integrations = createBrainLateBoundIntegrations();
-  const ownerIds = configuredOwnerIds.length > 0
-    ? [...configuredOwnerIds] : env.NODE_ENV === "production" ? [] : ["default"];
+  const local = resolveBrainAgentOwnerId(env);
+  const ownerIds = [...new Set([...configuredOwnerIds, ...(local === null ? [] : [local])])];
   const bindIntegrations = (deps: Omit<BrainIntegrationCallerDeps, "env">) => integrations.bind({ ...deps, env });
   return { integrations, ownerIds, bindIntegrations };
 }
