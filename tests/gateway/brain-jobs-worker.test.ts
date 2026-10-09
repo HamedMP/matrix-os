@@ -356,7 +356,7 @@ describe("brain job worker", () => {
         const value: unknown = Reflect.get(object, prop, receiver);
         if (prop !== "heartbeat" || typeof value !== "function") return value;
         return async (...args: Parameters<BrainJobStore["heartbeat"]>) => {
-          if (args[3] === undefined) {
+          if (args[2] === undefined) {
             beats += 1;
             if (seen?.aborted) late.push(beats);
           } else {
