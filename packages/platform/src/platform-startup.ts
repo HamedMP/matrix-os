@@ -24,6 +24,7 @@ import {
   type PlatformDB,
 } from './db.js';
 import { createAtsDb, resolveAtsDatabaseUrl, type AtsDB } from './ats-db.js';
+import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
@@ -977,6 +978,8 @@ async function startPlatformServerWithCleanup(
     await accountDeletion?.drain();
     accountDeletion?.close();
   });
+  const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
+  registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1047,6 +1050,7 @@ async function startPlatformServerWithCleanup(
       (async () => {
         await accountDeletion?.drain();
         accountDeletion?.close();
+        await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
