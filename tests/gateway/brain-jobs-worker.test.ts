@@ -380,6 +380,34 @@ describe("brain job worker", () => {
     expect(late).toEqual([]);
   });
 
+  it("keeps at most one timed heartbeat in flight while the database is slow", async () => {
+    const jobId = await queue("sync");
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    let beats = 0;
+    const slow = new Proxy(store, {
+      get(object, prop, receiver) {
+        const value: unknown = Reflect.get(object, prop, receiver);
+        if (prop !== "heartbeat" || typeof value !== "function") return value;
+        return async (...args: Parameters<BrainJobStore["heartbeat"]>) => {
+          // The check before the first step goes through; every timed heartbeat waits on the slow database.
+          if ((beats += 1) > 1) await gate;
+          return (value as BrainJobStore["heartbeat"]).apply(object, args);
+        };
+      },
+    });
+    worker = createBrainJobWorker({
+      store: slow, ownerId: "owner_a", workerId: "w_test", steps: { sync: blocking },
+      limits: { ...FAST, heartbeatMs: 10 },
+    });
+    worker.start();
+    await settled(jobId, "running");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(beats).toBe(2);
+    open();
+    await vi.waitFor(() => expect(beats).toBeGreaterThan(2));
+  });
+
   it("ends a poll that was woken again once the worker stops", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => { release = resolve; });
