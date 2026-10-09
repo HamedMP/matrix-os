@@ -1,7 +1,7 @@
 /**
  * The graph as a derived index (hook listener "graph"). A hook only nudges: correctness comes from refresh, which
  * removes rows of tombstoned documents, derives live documents that are missing, at another (incarnation, revision)
- * or whose refs, current decision claims or quoted decision paths changed, then sweeps entities nothing references.
+ * or whose refs, decision claims or quoted decision paths changed or linked parent went, then sweeps orphan entities.
  * Every pass is bounded by a document count, a wall-clock budget and the abort signal.
  */
 import { sql, type Kysely } from "kysely";
@@ -42,6 +42,14 @@ function isForeignKeyViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 }
 
+/** Live document `d` still linked through its first `parent` ref (as derivation reads it) to a parent now gone. */
+const PARENT_GONE = sql<boolean>`EXISTS (SELECT 1 FROM brain_graph_links l WHERE l.owner_id = d.owner_id
+  AND l.scope_id = d.scope_id AND l.document_id = d.document_id AND l.ref_kind = 'parent' AND NOT EXISTS (SELECT 1
+    FROM brain_documents p WHERE p.owner_id = d.owner_id AND p.scope_id = d.scope_id AND p.deleted_at IS NULL
+    AND p.document_id = (SELECT min(r.value) FROM brain_document_refs r WHERE r.owner_id = d.owner_id
+      AND r.scope_id = d.scope_id AND r.document_id = d.document_id AND r.kind = 'parent'
+      AND r.value ~ '^[a-f0-9]{64}$')))`;
+
 /** Tombstoned documents with a state row (any with graph rows has one), then live ones missing or outdated, by id. */
 async function pendingIds(db: BrainGraphExecutor, scope: BrainScopeKey, limit: number): Promise<string[]> {
   const orphans = await sql<{ document_id: string }>`SELECT s.document_id FROM brain_graph_state s
@@ -54,7 +62,7 @@ async function pendingIds(db: BrainGraphExecutor, scope: BrainScopeKey, limit: n
     WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
       AND (s.document_id IS NULL OR s.incarnation <> d.incarnation OR s.revision <> d.revision
         OR s.claims_digest <> ${claimsDigestSql("d")} OR s.refs_digest <> ${refsDigestSql("d")}
-        OR ${decisionPathsChangedSql("s")})
+        OR ${decisionPathsChangedSql("s")} OR ${PARENT_GONE})
     ORDER BY d.document_id LIMIT ${limit}`.execute(db);
   return [...orphans.rows, ...missing.rows].map((row) => row.document_id).slice(0, limit);
 }
