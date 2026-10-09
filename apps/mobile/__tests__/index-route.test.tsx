@@ -23,7 +23,7 @@ jest.mock("@/lib/requests/computers", () => ({
   fetchComputers: (token: string) => mockFetchComputers(token),
 }));
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { act, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 
 const mockReplace = jest.fn();
 const mockFetchMobileJourney = jest.fn();
@@ -272,11 +272,59 @@ it("selects the verified main computer before opening a WhatsApp Chat", async ()
 it("keeps the handoff at a retryable gate when no main computer is available", async () => {
   mockSearchParams = { chat: "chat_12345678" };
   mockFetchComputers.mockResolvedValue({ items: [] });
+  mockFetchMobileJourney.mockResolvedValue(journey("ready"));
   render(<Index />);
   await flush();
   expect(mockReplace).not.toHaveBeenCalled();
   expect(mockSavePrimary).not.toHaveBeenCalled();
   expect(screen.getByTestId("journey-retry")).toBeTruthy();
+});
+
+it.each(["plan_required", "provisioning", "provisioning_failed"])(
+  "keeps account recovery accessible for a Chat link during %s",
+  async (phase) => {
+    mockSearchParams = { chat: "chat_12345678" };
+    mockHostedGateway = false;
+    await rememberJourneyConnectable("user_a");
+    mockFetchComputers.mockResolvedValue({ items: [] });
+    mockFetchMobileJourney.mockResolvedValue(journey(phase));
+    render(<Index />);
+    await flush();
+
+    expect(mockFetchMobileJourney).toHaveBeenCalledWith(
+      "https://example.test", "session-token",
+    );
+    expect(mockFetchComputers).not.toHaveBeenCalled();
+    expect(mockSavePrimary).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Delete account")).toBeTruthy();
+    expect(screen.queryByText("Can’t reach Matrix")).toBeNull();
+    expect(screen.getByTestId(phase === "provisioning" ? "journey-loading" : "journey-refresh")).toBeTruthy();
+  },
+);
+
+it("preserves a pending Chat through account setup before selecting its main computer", async () => {
+  mockSearchParams = { chat: "chat_12345678" };
+  const main = {
+    handle: "main", runtimeSlot: "primary", kind: "customer",
+    availability: "available", gatewayPath: "/vm/main",
+  };
+  mockFetchComputers.mockResolvedValue({ items: [main] });
+  mockFetchMobileJourney.mockResolvedValueOnce(journey("plan_required"))
+    .mockResolvedValueOnce(journey("ready"));
+  render(<Index />);
+  await flush();
+  expect(mockSavePrimary).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByTestId("journey-refresh"));
+  await flush();
+  await flush();
+  expect(mockSavePrimary).toHaveBeenCalledWith(main);
+  expect(mockReplace).toHaveBeenCalledWith({
+    pathname: "/(drawer)", params: { chat: "chat_12345678" },
+  });
+  expect(mockFetchMobileJourney.mock.invocationCallOrder[1]).toBeLessThan(
+    mockFetchComputers.mock.invocationCallOrder[0],
+  );
 });
 
 it("requires Matrix account sign-in for a WhatsApp link instead of opening saved self-hosted credentials", async () => {

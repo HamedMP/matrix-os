@@ -64,38 +64,21 @@ function SignedInJourneyGate() {
       let enteredFromMemory = false;
       try {
         const target = messagingJourneyTarget(chatId);
-        if (chatId) {
-          const token = await getToken();
-          if (!token) throw new Error("Sign in required");
-          const primary = messagingPrimaryComputer(await fetchComputers(token));
-          if (!active || getClerkInstance().user?.id !== userId) return;
-          await queryClient.cancelQueries({
-            queryKey: mobileQueryKeys.activeComputer(userId ?? "signed-out"),
-          });
-          if (!active || getClerkInstance().user?.id !== userId) return;
-          const selected = await saveSelectedHostedComputer(primary);
-          if (!active || getClerkInstance().user?.id !== userId) return;
-          setGateway(selected);
-          queryClient.setQueryData(
-            mobileQueryKeys.activeComputer(userId ?? "signed-out"),
-            primary,
-          );
-        }
         const [gateway, remembered] = await Promise.all([
           getSelectedGatewayConnection(),
           userId ? wasJourneyConnectable(userId) : false,
         ]);
-        if (!isHostedGatewayUrl(gateway.url)) {
+        if (!chatId && !isHostedGatewayUrl(gateway.url)) {
           router.replace(target as never);
           return;
         }
-        if (remembered && active) {
+        if (!chatId && remembered && active) {
           enteredFromMemory = true;
           router.replace(target as never);
         }
         const token = await getToken();
         const next = await fetchMobileJourney(
-          getMobileJourneyGatewayUrl(gateway.url),
+          chatId ? HOSTED_GATEWAY_URL : getMobileJourneyGatewayUrl(gateway.url),
           token,
         );
         // With a remembered answer the shell has been open while this was in
@@ -103,6 +86,22 @@ function SignedInJourneyGate() {
         const stillSignedIn = () =>
           !enteredFromMemory || getClerkInstance().user?.id === userId;
         if (next.status === "ok" && isConnectablePhase(next.journey.phase)) {
+          if (chatId) {
+            if (!token) throw new Error("Sign in required");
+            const primary = messagingPrimaryComputer(await fetchComputers(token));
+            if (!active || getClerkInstance().user?.id !== userId) return;
+            await queryClient.cancelQueries({
+              queryKey: mobileQueryKeys.activeComputer(userId ?? "signed-out"),
+            });
+            if (!active || getClerkInstance().user?.id !== userId) return;
+            const selected = await saveSelectedHostedComputer(primary);
+            if (!active || getClerkInstance().user?.id !== userId) return;
+            setGateway(selected);
+            queryClient.setQueryData(
+              mobileQueryKeys.activeComputer(userId ?? "signed-out"),
+              primary,
+            );
+          }
           if (userId && stillSignedIn())
             void rememberJourneyConnectable(userId);
           if (active && !enteredFromMemory) router.replace(target as never);
