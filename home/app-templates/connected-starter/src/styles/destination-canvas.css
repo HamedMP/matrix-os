@@ -1,0 +1,47 @@
+.atlas-canvas { overflow: hidden; border-radius: 18px; border: 1px solid var(--border); }
+.destination-canvas { position: relative; background: #dceaf2; color: #18394e; overflow: hidden; min-height: 360px; }
+.destination-title { position: relative; z-index: 1; padding: 30px 36px 0; pointer-events: none; }
+.destination-title > span { font-size: 12px; color: #3e6378; }
+.destination-title h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(34px, 5vw, 66px); letter-spacing: -.055em; margin: 5px 0 8px; }
+.destination-title p { font-size: 12px; }
+.world-map { position: relative; aspect-ratio: 2; width: min(100%, 1100px); margin: -95px 0 0 auto; }
+.world-shapes { display: block; width: 100%; height: 100%; }
+.map-grid { fill: none; stroke: #c3d7e2; stroke-width: .7; }
+.map-land { fill: #eff5f8; stroke: #b2cbd9; stroke-width: 1.2; stroke-linejoin: round; }
+.map-pin { position: absolute; transform: translate(-50%, -50%); width: 44px; height: 44px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: #20485e; }
+.map-pin:hover { background: #abc7d688; }
+.map-pin > span { width: 9px; height: 9px; background: #315d75; box-shadow: 0 0 0 5px #dceaf2cc; border-radius: 50%; border: 1px solid #fff; }
+.map-pin[aria-pressed="true"] > span { width: 13px; height: 13px; box-shadow: 0 0 0 9px #719db14d; }
+.map-pin small { position: absolute; top: 34px; font-size: 11px; white-space: nowrap; background: #f7fafc; color: #24485d; border-radius: 5px; padding: 4px 7px; pointer-events: none; }
+.map-pin:not([aria-pressed="true"]) small { display: none; }
+.map-caption { position: relative; padding: 10px 30px 20px; font-size: 11px; color: #42647a; }
+.map-caption strong { display: block; font-weight: 500; margin-top: 7px; }
+.atlas-bottom { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.5fr); background: var(--card); }
+.journey-picker { padding: 28px; border-right: 1px solid var(--border); }
+.journey-picker h3 { font-size: 14px; margin-bottom: 12px; }
+.journey-picker button { width: 100%; display: grid; gap: 6px; padding: 16px 14px; text-align: left; border-radius: 8px; margin: 4px 0; border: 1px solid transparent; }
+.journey-picker button[aria-pressed="true"] { background: var(--tint); border-color: var(--border); }
+.journey-picker strong { font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.journey-picker small { font-size: 11px; color: var(--muted); }
+.journey-place { font-size: 17px; letter-spacing: -.025em; }
+.journey-detail { padding: 30px 36px; min-width: 0; }
+.journey-detail .card-top > span:first-child { font-size: 12px; color: var(--muted); }
+.journey-detail h2 { font-size: 28px; font-weight: 500; margin: 0 0 26px; }
+.journey-detail .journey-dates { padding: 0 0 22px; margin: 0; }
+.journey-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding-top: 22px; margin: 0; border-top: 1px solid var(--border); }
+.journey-facts dt { color: var(--muted); font-size: 11px; margin-bottom: 6px; }
+.journey-facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.journey-notes { margin-top: 24px; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .destination-canvas { min-height: 0; }
+  .destination-title { padding: 26px 24px 0; }
+  .destination-title h2 { font-size: 38px; }
+  .world-map { margin: 20px 0 0; }
+  .map-caption { padding: 14px 24px 20px; }
+  .atlas-bottom { grid-template-columns: 1fr; }
+  .journey-picker { border-right: 0; border-bottom: 1px solid var(--border); padding: 20px; display: flex; gap: 10px; overflow-x: auto; }
+  .journey-picker h3 { display: none; }
+  .journey-picker button { flex: 0 0 200px; width: 200px; margin: 0; }
+  .journey-detail { padding: 26px 24px; }
+  .journey-detail h2 { font-size: 24px; }
+}

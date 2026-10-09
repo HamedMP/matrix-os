@@ -1,0 +1,164 @@
+/* Compact first-party app chrome. Matrix theme bridge values remain authoritative. */
+@font-face { font-family: 'Matrix App Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('../../public/fonts/geist-latin-wght-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Matrix App Bricolage'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('../../public/fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2'); }
+:root {
+  color-scheme: var(--matrix-color-scheme, light);
+  font-family: 'Matrix App Geist', Geist, system-ui, sans-serif;
+  background: var(--matrix-bg, var(--matrix-brand-paper));
+  color: var(--matrix-fg, var(--matrix-brand-forest));
+  --bg: var(--matrix-bg, var(--matrix-brand-paper));
+  --fg: var(--matrix-fg, var(--matrix-brand-forest));
+  --card: var(--matrix-card, var(--matrix-brand-paper));
+  --muted: var(--matrix-muted-fg, var(--matrix-brand-textMuted));
+  --border: var(--matrix-border, color-mix(in srgb, var(--matrix-brand-forest) 15%, var(--matrix-brand-paper)));
+}
+.workbench[data-app] {
+  color-scheme: var(--matrix-color-scheme, light);
+  --bg: var(--matrix-bg, var(--matrix-brand-paper));
+  --fg: var(--matrix-fg, var(--matrix-brand-forest));
+  --card: var(--matrix-card, var(--matrix-brand-paper));
+  --muted: var(--matrix-muted-fg, var(--matrix-brand-textMuted));
+  --border: var(--matrix-border, color-mix(in srgb, var(--matrix-brand-forest) 15%, var(--matrix-brand-paper)));
+  --brand: color-mix(in srgb, var(--identity-accent, var(--matrix-brand-forest)) 85%, var(--matrix-brand-forest));
+  --brand-fg: var(--identity-on-accent, var(--matrix-brand-paper));
+  --tint: color-mix(in srgb, var(--brand) 8%, var(--card));
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+}
+.workbench[data-app] h1, .workbench[data-app] h2, .workbench[data-app] h3, .sheet h2 {
+  font-family: 'Matrix App Bricolage', 'Bricolage Grotesque', system-ui, sans-serif;
+  letter-spacing: -.025em;
+}
+.workbench[data-app] .sidebar {
+  display: flex; flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+  gap: 16px; margin: 0; padding: 16px 12px;
+  border: 0; border-right: 1px solid var(--border); border-radius: 0;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand));
+  box-shadow: none; overflow-y: auto; min-height: 0;
+}
+.workbench[data-app] .brand { margin: 0; gap: 9px; }
+.workbench[data-app] .brand strong { font-size: 16px; }
+.workbench[data-app] .brand-mark { width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; background: var(--tint); box-shadow: none; }
+.workbench[data-app] .brand-mark svg { width: 24px; height: 24px; }
+.workbench[data-app] .brand-mark.gallery-mark, .workbench[data-app] .brand-mark.sculptural-mark { background-color: transparent; box-shadow: none; }
+.workbench[data-app] .brand-mark.gallery-mark img { width: 100%; height: 100%; object-fit: contain; }
+.workbench[data-app] .nav-active { font-size: 12px; padding: 9px; border-radius: 7px; margin: 0; }
+.workbench[data-app] .workspace-controls { margin: 0; flex-basis: auto; }
+.workbench[data-app] .workspace-controls > summary { min-height: 32px; padding: 5px 8px; border-radius: 6px; font-size: 11px; }
+.workbench[data-app] .workspace-controls .sidebar-filters { grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+.workbench[data-app] .workspace-controls .sidebar-filters > label:first-child { grid-column: auto; }
+.workbench[data-app] .workspace-controls .connection-card { padding: 12px 0 0; margin: 12px 0 0; border: 0; border-top: 1px solid var(--border); background: none; border-radius: 0; }
+.workbench[data-app] .connection-card button { width: 100%; min-height: 32px; margin-top: 6px; padding: 6px 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; }
+.workbench[data-app] .sidebar footer { margin-top: auto; line-height: 1.5; }
+.workbench[data-app] .main-column { min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.workbench[data-app] .topbar { min-height: 48px; height: auto; flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--card); gap: 8px; }
+.workbench[data-app] .topbar > span { font-size: 11px; }
+.workbench[data-app] .topbar > div { gap: 6px; }
+.workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .sheet button, .sheet input, .sheet select { min-height: 32px; font-size: 12px; border-radius: 6px; padding: 6px 9px; }
+.workbench[data-app] textarea { font-size: 13px; border-radius: 6px; }
+.workbench[data-app] button.primary { background: var(--brand); color: var(--brand-fg); box-shadow: none; }
+.workbench[data-app] main { flex: 1; min-height: 0; width: 100%; max-width: none; overflow: auto; margin: 0; padding: 18px 20px 24px; }
+.workbench[data-app] .page-heading { align-items: center; margin-bottom: 16px; gap: 12px; }
+.workbench[data-app] .page-heading h1 { font-size: 21px; margin: 0; max-width: none; line-height: 1.3; font-weight: 650; }
+.workbench[data-app] .record-count { flex-direction: row; align-items: baseline; gap: 5px; }
+.workbench[data-app] .record-count strong { font-size: 13px; letter-spacing: 0; }
+.workbench[data-app] .record-count span { font-size: 11px; }
+.workbench[data-app] .workflow-panel, .workbench[data-app] .obligations, .workbench[data-app] .spending-desk, .workbench[data-app] .revenue-overview { background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: none; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.workbench[data-app] .workflow-introduction { align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.workbench[data-app] .workflow-introduction > div { flex: 1; min-width: 0; }
+.workbench[data-app] .workflow-introduction h2 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 650; }
+.workbench[data-app] .workflow-object { width: 28px; height: 28px; border-radius: 7px; font-size: 19px; background: var(--tint); box-shadow: none; transform: none; }
+.workbench[data-app] .workflow-help { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.workbench[data-app] .workflow-help summary { cursor: pointer; width: fit-content; }
+.workbench[data-app] .workflow-help p { font-size: 12px; line-height: 1.6; margin-top: 8px; }
+.workbench[data-app] .workflow-clear { background: var(--bg); border-radius: 7px; padding: 12px; font-size: 12px; }
+.workbench[data-app] .renewal-row, .workbench[data-app] .workflow-review-row { padding: 12px 0; gap: 12px; }
+.workbench[data-app] .renewal-row h3, .workbench[data-app] .workflow-review-row h3 { font-size: 14px; margin-bottom: 4px; }
+.workbench[data-app] .renewal-row p { font-size: 12px; margin: 4px 0; }
+.workbench[data-app] .renewal-day { width: 68px; min-height: 58px; padding: 8px; border-radius: 8px; }
+.workbench[data-app] .renewal-day strong { font-size: 22px; }
+.workbench[data-app] .record-card, .workbench[data-app] .chart-card, .workbench[data-app] .commitments, .workbench[data-app] .ledger, .workbench[data-app] .board-column, .workbench[data-app] .person-panel, .workbench[data-app] .invoice-row, .workbench[data-app] .project-risk-grid article { border-radius: 10px; padding: 14px; }
+.workbench[data-app] .section-heading { margin-bottom: 12px; }
+.workbench[data-app] .section-heading h2 { font-size: 17px; margin-bottom: 4px; }
+.workbench[data-app] .record-card h3 { font-size: 16px; margin-bottom: 10px; }
+.workbench[data-app] .subscriptions-welcome { display: grid; place-items: center; min-height: 260px; padding: 28px 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); text-align: center; }
+.subscriptions-welcome-copy { max-width: 420px; }
+.subscriptions-welcome h2 { margin: 12px 0 8px; font-size: 21px; }
+.subscriptions-welcome p { font-size: 13px; line-height: 1.6; color: var(--muted); }
+.empty-symbol { color: var(--brand); font-size: 30px; }
+.subscriptions-welcome-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.subscriptions-welcome-note { display: block; margin-top: 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.backdrop { align-items: center; justify-content: center; padding: 24px; }
+.sheet { width: min(480px, 100%); height: auto; max-height: calc(100dvh - 48px); border-radius: 12px; padding: 20px; border: 1px solid var(--border); }
+.sheet > header { margin-bottom: 16px; gap: 12px; }
+.sheet > header h2 { font-size: 20px; }
+.sheet .editor { gap: 14px; }
+.sheet .check { padding: 8px; gap: 10px; border-radius: 6px; }
+.sheet .check input { min-height: 0; width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--brand); }
+.sheet .check span { overflow-wrap: anywhere; font-size: 12px; }
+.sheet .check small { font-size: 11px; color: var(--muted); }
+.sheet fieldset { margin: 0; padding: 10px; border-radius: 8px; }
+.sheet legend { font-size: 12px; padding: 0 4px; }
+@media (max-width: 700px) {
+  .workbench[data-app] { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .workbench[data-app] .sidebar { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 8px; border-right: 0; border-bottom: 1px solid var(--border); max-height: 45dvh; }
+  .workbench[data-app] .brand { margin: 0; }
+  .workbench[data-app] .brand strong { font-size: 15px; }
+  .workbench[data-app] .brand div > span, .workbench[data-app] .nav-active, .workbench[data-app] .sidebar footer { display: none; }
+  .workbench[data-app] .workspace-controls { margin-left: auto; }
+  .workbench[data-app] .workspace-controls[open] { flex-basis: 100%; }
+  .workbench[data-app] .workspace-controls .sidebar-filters { grid-template-columns: 1fr; }
+  .workbench[data-app] .topbar { padding: 8px 12px; flex-wrap: wrap; }
+  .workbench[data-app] .topbar > span { display: none; }
+  .workbench[data-app] .topbar > div { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .workbench[data-app] main { padding: 16px 12px calc(24px + env(safe-area-inset-bottom)); }
+  .workbench[data-app] .page-heading h1 { font-size: 20px; }
+  .workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] .workspace-controls > summary, .sheet button, .sheet input, .sheet select { min-height: 44px; }
+  .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] textarea, .sheet input, .sheet select, .sheet textarea { font-size: 16px; }
+  .workbench[data-app] .subscriptions-welcome { min-height: 240px; padding: 24px 14px; }
+  .backdrop { padding: 12px; }
+  .sheet { max-height: calc(100dvh - 24px); padding: 16px; }
+  .sheet .check input { min-height: 0; }
+  .sheet .check { min-height: 44px; }
+}
+@media (pointer: coarse) {
+  .workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] .workspace-controls > summary, .sheet button, .sheet input:not([type="checkbox"]), .sheet select, .sheet .check { min-height: 44px; }
+}
+/* Subject layouts retain their interaction models, with desktop-tool density. */
+.workbench[data-app] .spending-desk .balance, .workbench[data-app] .spending-desk .chart-card, .workbench[data-app] .revenue-overview .balance, .workbench[data-app] .revenue-overview .chart-card { padding: 16px; }
+.workbench[data-app] .balance h2 { font-size: 30px; margin: 10px 0; }
+.workbench[data-app] .balance select { min-height: 32px; margin-top: 10px; }
+.workbench[data-app] .segmented button { min-height: 30px; padding: 4px 8px; font-size: 11px; }
+.workbench[data-app] .commitments { margin-top: 16px; }
+.workbench[data-app] .commitment-list > li { padding: 12px 4px; gap: 12px; }
+.workbench[data-app] .commitment-name h3 { font-size: 14px; }
+.workbench[data-app] .commitment-cost strong { font-size: 18px; }
+.workbench[data-app] .provider-symbol { width: 32px; height: 32px; border-radius: 7px; font-size: 18px; }
+.workbench[data-app] .commitment-list .record-actions { gap: 10px; }
+.workbench[data-app] .briefs-desk { gap: 16px; }
+.workbench[data-app] .brief-index button { padding: 12px; border-radius: 7px; gap: 5px; }
+.workbench[data-app] .brief-index strong { font-size: 14px; }
+.workbench[data-app] .meeting-document { padding: 24px; min-height: 0; border-radius: 10px; }
+.workbench[data-app] .meeting-document h2 { font-size: 26px; }
+.workbench[data-app] .meeting-document section p { font-family: inherit; font-size: 14px; }
+.workbench[data-app] .meeting-document section { margin-top: 18px; }
+.workbench[data-app="agenda"] .agenda-event { padding: 14px; border-radius: 8px; }
+.workbench[data-app="agenda"] .agenda-event h3 { font-size: 16px; }
+.workbench[data-app="agenda"] .agenda-date > span { font-size: 36px; }
+.workbench[data-app] .destination-title { padding: 20px 24px 0; }
+.workbench[data-app] .destination-title h2 { font-size: 30px; }
+.workbench[data-app] .destination-canvas { min-height: 280px; border-radius: 10px; }
+.workbench[data-app] .atlas-canvas { border-radius: 10px; }
+.workbench[data-app] .journey-picker { padding: 16px; }
+.workbench[data-app] .journey-picker button { padding: 10px; }
+.workbench[data-app="focus"] .focus-stage { padding: 28px 16px; border-radius: 10px; gap: 20px; }
+.workbench[data-app="focus"] .timer { font-size: clamp(72px, 12vw, 140px); }
+@media (max-width: 700px), (pointer: coarse) {
+  .workbench[data-app] .segmented button, .workbench[data-app] .balance select { min-height: 44px; }
+}
