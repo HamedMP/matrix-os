@@ -9,9 +9,11 @@ import {
   BotEffectSchema,
   BotIntegrationServiceSchema,
   BotRecipeRefSchema,
+  BotRunEffortSchema,
   BotToolCapabilitySchema,
   type BotEffect,
   type BotRecipeRef,
+  type BotRunEffort,
   type BotToolCapability,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -33,6 +35,16 @@ export interface BotRecipe {
   capabilities: readonly BotToolCapability[];
   integrations: readonly BotRecipeIntegration[];
   output: string;
+  /** Server-owned answer rules that replace the generic ones (spec 567). Absent: the generic rules. */
+  promptProfile?: "default" | "company_brain";
+  /** Per-run limits. Absent: 60 tool actions and the model's own effort. */
+  limits?: { maxToolActions: number; effort?: BotRunEffort };
+  /** Allows thread Chats, each fixed to one project when it is created (spec 567). */
+  threads?: { project: "required" };
+  /** Runs get exactly these capabilities: nothing is added, not even a connected task executor. */
+  exactCapabilities?: true;
+  /** Created from its own app only: the recipe list leaves it out unless asked for by id. */
+  listed?: false;
 }
 
 const RecipeSchema = z.object({
@@ -49,7 +61,23 @@ const RecipeSchema = z.object({
     required: z.boolean(),
   }).strict()).max(8),
   output: z.string().min(1).max(1_000),
-}).strict();
+  promptProfile: z.enum(["default", "company_brain"]).optional(),
+  limits: z.object({ maxToolActions: z.number().int().min(1).max(60), effort: BotRunEffortSchema.optional() }).strict().optional(),
+  threads: z.object({ project: z.literal("required") }).strict().optional(),
+  exactCapabilities: z.literal(true).optional(),
+  listed: z.literal(false).optional(),
+}).strict().refine((recipe) => !isBrainRecipe(recipe)
+  || (recipe.exactCapabilities === true && !recipe.capabilities.includes("agent.task")), {
+  message: "A brain recipe needs exact capabilities and no task executor",
+});
+
+/**
+ * A recipe that reads the brain, uses its answer rules or has threads. Its runs must never gain a task executor,
+ * which would hand the work to a full-access agent, so the catalog refuses one without exact capabilities.
+ */
+function isBrainRecipe(recipe: Pick<BotRecipe, "capabilities" | "promptProfile" | "threads">): boolean {
+  return recipe.capabilities.includes("brain.read") || recipe.promptProfile === "company_brain" || recipe.threads !== undefined;
+}
 
 const CONVERSATION: readonly BotToolCapability[] = ["interaction.create", "memory.search", "memory.propose"];
 const ARTIFACTS: readonly BotToolCapability[] = ["artifact.read", "artifact.write"];
@@ -191,6 +219,26 @@ const RECIPES: readonly BotRecipe[] = [
     capabilities: [...CONVERSATION, ...ARTIFACTS, ...INTEGRATIONS],
     integrations: [],
     output: "A spend inventory with totals that match the source, and savings split into potential and realized.",
+  },
+  {
+    // Created from the Company Brain app only (spec 567). The answer rules live in the
+    // company_brain prompt profile; these editable instructions only set the style.
+    recipeId: "company-brain",
+    version: "2026-10-08.1",
+    name: "Company Brain",
+    description: "Answers questions about a project only from its Company Brain, with a link to every source.",
+    instructions: [
+      "Write short, plain English. Give the answer first in one to three sentences, then at most five bullets if they help.",
+      "No headings, tables or code unless asked. Use dates as YYYY-MM-DD.",
+    ].join("\n"),
+    capabilities: ["brain.read"],
+    integrations: [],
+    output: "A short answer with a Markdown link to the source of every fact, or \"I could not find that in the brain.\"",
+    promptProfile: "company_brain",
+    limits: { maxToolActions: 6, effort: "low" },
+    threads: { project: "required" },
+    exactCapabilities: true,
+    listed: false,
   },
 ];
 
