@@ -73,11 +73,13 @@ it("restores Bot startup from exact deployed v6 while preserving every trust pin
   expect(await response.json()).toEqual({chatId:"chat_existing_v6"});
   expect((await app.request("/api/chats/chat_existing_v6/bot")).status).toBe(200);
   await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[]});
-  expect(await Promise.all(tables.map(rows))).toEqual(before);
+  // v7 adds only the thread project column; every existing binding keeps no project.
+  const bindings=tables.indexOf("bot_chat_bindings");
+  expect(await Promise.all(tables.map(rows))).toEqual(before.map((list,index)=>index===bindings?list.map(row=>({...row,project_id:null})):list));
   expect(await readFile(file)).toEqual(definition);
 });
 
-it.each([[6,"wrong_device_feature","invalid_migrations"],[7,"unknown_future","newer_schema"]] as const)("rejects recorded version %i named %s before any pending DDL", async (version,name,code) => {
+it.each([[6,"wrong_device_feature","invalid_migrations"],[8,"unknown_future","newer_schema"]] as const)("rejects recorded version %i named %s before any pending DDL", async (version,name,code) => {
   await bootstrapBotDatabase(db,[BOT_MIGRATIONS[0]!]);
   await sql`INSERT INTO bot_schema_migrations (version,name) VALUES (${version},${name})`.execute(db);
   const before=await rows("bot_schema_migrations");
@@ -88,7 +90,7 @@ it.each([[6,"wrong_device_feature","invalid_migrations"],[7,"unknown_future","ne
 });
 
 it("applies released v6 on a fresh owner and preserves its device constraints on repeated startup", async () => {
-  await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[1,2,3,4,5,6]});
+  await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[1,2,3,4,5,6,7]});
   await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[]});
   await sql`INSERT INTO bot_chatgpt_plan_devices VALUES (${OWNER}, 'computer_new', ${"d".repeat(64)}, ${"valid-public-key".repeat(3)})`.execute(db);
   await expect(sql`INSERT INTO bot_chatgpt_plan_devices VALUES (${OWNER}, 'computer_bad', 'INVALID_DEVICE', ${"valid-public-key".repeat(3)})`.execute(db)).rejects.toThrow();
