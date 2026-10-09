@@ -353,7 +353,8 @@ function KeepInTouch(props: ViewProps) {
 function InvoiceDesk(props: ViewProps) {
     const [lane, setLane] = useState("All");
     const drafts = usePinnedDrafts(props.records);
-    const all = invoiceQueue(drafts.records, today());
+    const all = invoiceQueue(props.records, today());
+    const retained = [...all, ...invoiceQueue(drafts.pinned.filter(record => !props.records.some(item => item.id === record.id)), today())];
     const rows = lane === "All" ? all : all.filter(row => row.lane === lane);
     const overdue = all.filter(row => row.lane === "Overdue");
     const currencies = [...new Set(overdue.map(row => row.currency!))];
@@ -371,7 +372,10 @@ function InvoiceDesk(props: ViewProps) {
           </option>)}
         </select>
       </label>
-      <div className="invoice-queue">{keepDraftRows(rows, all, drafts.pinned).map(({ record, outstanding, currency, due, daysLate, lane: state }) => <article key={record.id} className="invoice-row">
+      <div className="invoice-queue">{keepDraftRows(rows, retained, drafts.pinned).map(({ record, outstanding, currency, due, daysLate, lane: state }) => {
+          const draftOwner = drafts.pinned.find(item => item.id === record.id);
+          const current = props.records.some(item => item.id === record.id);
+          return <article key={record.id} className="invoice-row">
           <div className="invoice-row-title">
             <div>
               <span className={`badge ${state === "Overdue" ? "attention" : ""}`}>{state}
@@ -382,15 +386,15 @@ function InvoiceDesk(props: ViewProps) {
               </p>
             </div>
             <div className="invoice-value">
-              <strong>{outstanding !== null && currency ? formatMoney(outstanding, currency) : "Amount needs review"}
+              <strong>{!current ? "Outside current filters" : outstanding !== null && currency ? formatMoney(outstanding, currency) : "Amount needs review"}
               </strong>
-              <p>{due ? `Due ${dateText(due)}${daysLate !== null && daysLate > 0 ? ` · ${daysLate} days past due` : ""}` : "Due date not recorded"}
+              <p>{!current ? "Excluded from the current totals" : due ? `Due ${dateText(due)}${daysLate !== null && daysLate > 0 ? ` · ${daysLate} days past due` : ""}` : "Due date not recorded"}
               </p>
             </div>
-          </div>{state === "Overdue" &&
-          <Draft onLockChange={locked => drafts.onLockChange(record, locked)} record={record} field="reminder-draft" label={`Reminder draft for ${text(record, "title") || "invoice"}`} help="Draft only. Recheck payment status, recipient and source evidence before sending elsewhere." onSave={props.onSave}/>}
+          </div>{draftOwner && !rows.some(item => item.record.id === record.id) && <p role="status">Your draft stays open outside the current filters; totals use only the current selection.</p>}{draftOwner && state !== "Overdue" && <p role="status">The current invoice is no longer overdue. Your draft keeps its original save revision.</p>}{(state === "Overdue" || draftOwner) &&
+          <Draft onLockChange={locked => drafts.onLockChange(draftOwner ?? record, locked)} record={draftOwner ?? record} field="reminder-draft" label={`Reminder draft for ${text(draftOwner ?? record, "title") || "invoice"}`} help="Draft only. Recheck payment status, recipient and source evidence before sending elsewhere." onSave={props.onSave}/>}
           <Actions record={record} {...props}/>
-        </article>)}
+        </article>; })}
       </div>{!rows.length && (props.records.length ?
       <p className="workflow-clear">No invoices match this queue. Choose All to review the other records.
       </p> :
