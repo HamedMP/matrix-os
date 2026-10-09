@@ -177,10 +177,18 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
 
   // Sources
 
-  async createSource(scope: BrainScopeKey, input: BrainCreateSourceInput): Promise<BrainCreateSourceResult> {
+  /** `alongside` runs in the same transaction when the source is new (the sources service writes its config row). */
+  async createSource(
+    scope: BrainScopeKey, input: BrainCreateSourceInput,
+    alongside?: (trx: Transaction<BrainDatabase>, source: BrainSource) => Promise<void>,
+  ): Promise<BrainCreateSourceResult> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const source = parseBrainInput(BrainCreateSourceSchema, input);
-    return this.withScopeWrite(key, (trx, now) => insertSource(trx, key, source, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      const result = await insertSource(trx, key, source, now);
+      if (result.created) await alongside?.(trx, result.source);
+      return result;
+    });
   }
 
   async getSource(scope: BrainScopeKey, sourceId: string): Promise<BrainSource | null> {

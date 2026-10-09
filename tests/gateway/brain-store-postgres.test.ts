@@ -195,6 +195,27 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     expect(await second.getSource(scopeA, source.sourceId)).toMatchObject({ revision: 2, label: "Renamed" });
   });
 
+  it("creates a source with the write made alongside it, so another gateway never finds one without the other", async () => {
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const [written, held] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const create = first.createSource(scopeA, natural, async (trx, next) => {
+      await sql`INSERT INTO side_config VALUES (${next.sourceId}, 'first')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    expect((await second.listSources(scopeA)).items).toEqual([]);
+    // The other gateway's create of the same identity waits for this one, then finds it with its write.
+    const again = second.createSource(scopeA, natural, async () => { throw new Error("not a new source"); });
+    held.resolve();
+    expect([(await create).created, (await again).created]).toEqual([true, false]);
+    expect((await admin.query(`SELECT value FROM "${schema}".side_config`)).rows).toEqual([{ value: "first" }]);
+    // A write alongside that fails leaves no source.
+    const refused = async () => { throw new Error("config refused"); };
+    await expect(first.createSource(scopeA, { ...natural, externalRef: "T/D" }, refused)).rejects.toThrow("config refused");
+    expect((await second.listSources(scopeA)).items).toHaveLength(1);
+  });
+
   it("commits a source's replacement with the write made alongside it, so no connection sees one without the other", async () => {
     const { source } = await first.createSource(scopeA, natural);
     await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
