@@ -174,7 +174,7 @@ export default function App() {
   const control = (name: string) => <img src={galleryArtwork(`controls/${name}.svg`)} alt="" aria-hidden="true" />;
   return (
     <main className="gallery" ref={galleryRef}>
-      {active ? <GalleryDetail app={active} connections={connections} pending={pending !== null}
+      {active ? <GalleryDetail app={active} connections={connections} pending={pending}
         error={actionErrors[active.id] ?? ""} onClose={() => setSelected(null)} onAction={() => void action(active)} /> : (
       <div className="gallery-content">
         <header className="gallery-heading">

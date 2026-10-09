@@ -9,7 +9,7 @@ import catalog from "../../home/system/app-gallery.json";
 const apps = parseListing({ version: 1, apps: catalog.apps.map(app => ({ ...app, installed: false })) });
 const folio = apps.find(app => app.id === "folio")!;
 function props() {
-  return { app: folio, connections: [], pending: false, error: "", onClose: vi.fn(), onAction: vi.fn() };
+  return { app: folio, connections: [], pending: null, error: "", onClose: vi.fn(), onAction: vi.fn() };
 }
 afterEach(cleanup);
 
@@ -39,11 +39,20 @@ describe("full-page Gallery details", () => {
     rerender(<GalleryDetail {...callbacks} app={{ ...folio, installed: true }} />);
     fireEvent.click(screen.getByRole("button", { name: "Open app" }));
     expect(callbacks.onAction).toHaveBeenCalledTimes(3);
-    rerender(<GalleryDetail {...callbacks} pending />);
+    rerender(<GalleryDetail {...callbacks} pending={folio.id} />);
     const button = screen.getByRole("button", { name: "Installing…" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);
     expect(callbacks.onAction).toHaveBeenCalledTimes(3);
+  });
+  it("disables another app without claiming it is being installed", () => {
+    const callbacks = props();
+    render(<GalleryDetail {...callbacks} pending="atlas" />);
+    const button = screen.getByRole("button", { name: "Get app" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(screen.queryByText("Installing…")).toBeNull();
+    fireEvent.click(button);
+    expect(callbacks.onAction).not.toHaveBeenCalled();
   });
   it("shows active account labels and emails without turning a connection into an import or permission grant", () => {
     const callbacks = props();

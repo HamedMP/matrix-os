@@ -8,7 +8,7 @@ import "./GalleryDetail.css";
 export interface GalleryDetailProps {
   app: GalleryAppListing;
   connections: GalleryConnection[] | null;
-  pending: boolean;
+  pending: string | null;
   error: string;
   onClose: () => void;
   onAction: () => void;
@@ -30,7 +30,7 @@ export default function GalleryDetail({ app, connections, pending, error, onClos
   const title = useRef<HTMLHeadingElement>(null);
   const readiness = deriveGalleryReadiness(app, connections);
   useEffect(() => { title.current?.focus(); }, [app.id]);
-  const actionLabel = pending ? "Installing…" : app.installed ? "Open app" : error ? "Retry installation" : "Get app";
+  const actionLabel = pending === app.id ? "Installing…" : app.installed ? "Open app" : error ? "Retry installation" : "Get app";
   return (
     <section className="gallery-detail" aria-labelledby="gallery-detail-title" onKeyDown={event => {
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
@@ -44,8 +44,8 @@ export default function GalleryDetail({ app, connections, pending, error, onClos
           <h1 id="gallery-detail-title" ref={title} tabIndex={-1}>{app.name}</h1>
           <p>{app.tagline}</p>
           <div className="gallery-detail-actions">
-            <button className="gallery-detail-action" aria-label={actionLabel} onClick={onAction} disabled={pending}>
-              {pending ? "Installing…" : app.installed ? "Open" : error ? "Retry" : "Get"}
+            <button className="gallery-detail-action" aria-label={actionLabel} onClick={onAction} disabled={pending !== null}>
+              {pending === app.id ? "Installing…" : app.installed ? "Open" : error ? "Retry" : "Get"}
             </button>
             <span className="gallery-detail-readiness" role="status">
               {app.installed ? "Already on your computer" : statusLabels[readiness.status]}
