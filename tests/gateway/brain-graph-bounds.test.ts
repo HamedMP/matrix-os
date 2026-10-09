@@ -1,5 +1,5 @@
-/** Graph bounds over PGlite: one refresh cap everywhere, pending scans under the read deadline, live links. */
-import { Kysely } from "kysely";
+/** Graph bounds and dependents over PGlite: one refresh cap, reads under the deadline, live links, stale inputs. */
+import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
@@ -69,5 +69,18 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
     const alice = brainEntityId("person", "email:alice@acme.dev");
     const view = await harness.graph.service.links(OWNER, PROJECT, alice, { limit: 1 });
     expect(view.links.map((link) => link.evidence.cite.documentId)).toEqual([id("commitB")]);
+  });
+
+  it("drops a comment's part_of link once its parent, never derived, is tombstoned", async () => {
+    await harness.sync("linear", [FIXTURE.issue, FIXTURE.comment]);
+    // A hook derives only the comment, so the issue has no graph state when it is tombstoned.
+    await harness.graph.index.handle({ type: "documents_changed", scope: SCOPE, sourceId: null,
+      documentIds: [id("comment")], at: "" }, new AbortController().signal);
+    const partOf = async () => (await sql<{ document_id: string }>`SELECT document_id FROM brain_graph_links
+      WHERE ref_kind = 'parent'`.execute(harness.db)).rows.map((row) => row.document_id);
+    expect(await partOf()).toEqual([id("comment")]);
+    await harness.sync("linear", [], [id("issue")]);
+    expect(await harness.refresh()).toMatchObject({ caughtUp: true });
+    expect(await partOf()).toEqual([]);
   });
 });
