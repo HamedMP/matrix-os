@@ -130,7 +130,7 @@ describe("app gallery", () => {
       installed: true,
       launchPath: result.path,
     } as never);
-    expect(bridge.openApp).toHaveBeenCalledWith("Folio", "apps/folio");
+    expect(bridge.openApp).toHaveBeenCalledWith("Folio", "matrix-app:folio");
   });
   it("rejects an installation result that points at another app", async () => {
     const bridge = {gatewayFetch: vi.fn().mockResolvedValue({status:'installed',slug:'folio',name:'Folio',path:'apps/other'})};
@@ -174,7 +174,7 @@ it.each(movedPaths)("accepts the reconciled already-installed path at %s", async
 it.each(movedPaths)("opens the bounded owner path at %s", async path => {
   const openApp = vi.fn();
   await openGalleryApp({ gatewayFetch: vi.fn(), openApp }, { ...apps[0], installed: true, installedName: "Owner ledger", launchPath: path } as never);
-  expect(openApp).toHaveBeenCalledWith("Owner ledger", "apps/folio");
+  expect(openApp).toHaveBeenCalledWith("Owner ledger", "matrix-app:folio");
 });
 it.each(["apps/../secret", "apps/finance/../../secret", "apps//folio", "apps/finance/./folio", "apps/folio\\secret", "apps/folio\u0000secret", "system/folio", "apps/" + "a/".repeat(16) + "folio", "apps/" + "a".repeat(256)])("rejects an unsafe or over-budget moved path %s", async path => {
   const gatewayFetch = vi.fn().mockResolvedValue({ status: "already_installed", slug: "folio", name: "Owner ledger", path });

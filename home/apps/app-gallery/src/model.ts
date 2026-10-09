@@ -151,7 +151,7 @@ export async function openGalleryApp(
     throw new Error("App unavailable");
   // Folder paths may change again after listing; hosts resolve the stable
   // manifest identity against their current authenticated runtime catalog.
-  await bridge.openApp(app.installedName ?? app.name, `apps/${app.id}`);
+  await bridge.openApp(app.installedName ?? app.name, `matrix-app:${app.id}`);
 }
 
 function knownInventory(raw: unknown): GalleryConnection[] | null {
