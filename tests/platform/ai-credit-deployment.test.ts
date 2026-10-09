@@ -147,6 +147,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
       WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+      SLACK_ENABLED: "false", SLACK_TOKEN_ENCRYPTION_KEY_VERSION: "1",
       IMAGE_DIGEST: "image@sha256:fixture", ...enabled,
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false" } });
     expect(deployed.status, deployed.stderr).toBe(0);

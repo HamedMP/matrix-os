@@ -101,6 +101,8 @@ export class ModelRuntime {
     expect(await closing).toEqual({ ok: true });
     expect(await pending).toBeInstanceOf(Error);
     expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", expect.any(Error));
+    expect(shutdown.calls).toContain("Slack.close");
+    expect(shutdown.calls).toContain("company bots.close");
     expect(shutdown.calls).toContain("platform database.destroy");
     expect(shutdown.calls.at(-1)).toBe("HTTP.close");
     const fence = join(dirname(home), ".matrix-private", basename(home), "native-writers/pi.json");
