@@ -110,6 +110,9 @@ jobs:
       MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
+      MATRIX_FUNDED_HOST_CONFIG_ENABLED: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_ENABLED || 'false' }}
+      MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS }}
+      MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH }}
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
@@ -203,7 +206,7 @@ jobs:
             echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
             exit 1
           fi
-          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED; do
+          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED MATRIX_FUNDED_HOST_CONFIG_ENABLED; do
             case "${!name}" in
               true|false) ;;
               *)
@@ -236,6 +239,31 @@ jobs:
               echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
               exit 1
             fi
+          fi
+          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
+            python3 - <<'PYCONFIG'
+          import datetime, os, re, uuid
+          def reject():
+              raise SystemExit("Funded host configuration is misconfigured")
+          if os.environ["DEPLOY_ENVIRONMENT"] != "production" or os.environ["MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED"] != "true":
+              reject()
+          raw = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS", "")
+          ids = raw.split(",") if raw else []
+          if len(ids) > 100 or len(set(ids)) != len(ids): reject()
+          for value in ids:
+              try:
+                  if str(uuid.UUID(value)) != value: reject()
+              except ValueError: reject()
+          if not re.fullmatch(r"https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app", os.environ.get("MATRIX_FUNDED_AI_RELAY_URL", "")): reject()
+          if not re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", "")): reject()
+          stamp = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH", "")
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", stamp): reject()
+          try:
+              expiry = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+          except ValueError: reject()
+          remaining = expiry - datetime.datetime.now(datetime.timezone.utc)
+          if not datetime.timedelta(0) < remaining <= datetime.timedelta(days=7): reject()
+          PYCONFIG
           fi
           case "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" in
             true)
@@ -872,6 +900,10 @@ jobs:
           fi
 
           funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}|MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=${MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED}"
+          funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_ENABLED=${MATRIX_FUNDED_HOST_CONFIG_ENABLED}"
+          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
+            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS=${MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS}|MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH=${MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH}|MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA=${GITHUB_SHA}"
+          fi
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
