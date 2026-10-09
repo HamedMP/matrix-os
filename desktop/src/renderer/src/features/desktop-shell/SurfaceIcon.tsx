@@ -47,7 +47,7 @@ export default function SurfaceIcon({
 }) {
   // Plugins and Settings reuse one settings surface; its title identifies the
   // current destination without retaining stale bundled artwork on the tab.
-  const isPlugins = tab.kind === "settings" && tab.title === "Plugins";
+  const isPlugins = tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps");
   const Icon = isPlugins ? Blocks : SURFACE_ICON[tab.kind];
   const explicitIcon = tab.icon && /^(?:https?:\/\/|\/|data:image\/)/.test(tab.icon) ? tab.icon : null;
   const paths: Partial<Record<TabKind,string>> = { home: "__browser__", browser: "__browser__", work: "__chat__", chat: "__chat__", terminal: "__terminal__", terminals: "__terminal__", files: "__file-browser__", editor: "__editor__", notes: "apps/notes/index.html", settings: "__settings__" };

@@ -141,15 +141,15 @@ describe("Electron Desktop selected artwork", () => {
     expect(useTabs.getState().openTab({ kind: "notes", title: "Notes" })).toBe(id);
     expect(useTabs.getState().tabs.find(tab => tab.id === id)?.icon).toBe(icon);
   });
-  it("keeps Plugins artwork in the shared settings tab and restores Settings artwork when the tab is reused", () => {
+  it("keeps Connect Apps artwork in the shared settings tab and restores Settings artwork when the tab is reused", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
-    const plugins = screen.getByRole("button", { name: "Plugins" });
+    const plugins = screen.getByRole("button", { name: "Connect Apps" });
     const expectedPlugins = bundledDesktopIconForPath("__plugins__");
     expect(plugins.querySelector("img")?.getAttribute("src")).toBe(expectedPlugins);
     fireEvent.doubleClick(plugins);
     const settingsId = useTabs.getState().tabs.find(tab => tab.kind === "settings")?.id;
     expect(settingsId).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Focus Plugins" }).querySelector("img")?.getAttribute("src")).toBe(expectedPlugins);
+    expect(screen.getByRole("button", { name: "Focus Connect Apps" }).querySelector("img")?.getAttribute("src")).toBe(expectedPlugins);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     expect(useTabs.getState().tabs.find(tab => tab.kind === "settings")?.id).toBe(settingsId);
     expect(screen.getByRole("button", { name: "Focus Settings" }).querySelector("img")?.getAttribute("src")).toBe(bundledDesktopIconForPath("__settings__"));
