@@ -19,7 +19,7 @@ export function Editor({
   onSave: (r: OwnerRecord) => Promise<unknown>;
   onArchive: (r: OwnerRecord) => Promise<unknown>;
   onClose: () => void;
-  onLoadLatest?: () => Promise<OwnerRecord | null>;
+  onLoadLatest?: (draftId: string) => Promise<OwnerRecord | null>;
 }) {
   const baseline = useRef(record);
   const [conflict, setConflict] = useState(false), [latest, setLatest] = useState<OwnerRecord | null>(null);
@@ -95,7 +95,7 @@ export function Editor({
     if (busy || !onLoadLatest) return;
     setBusy(true); setLatest(null);
     try {
-      const current = await onLoadLatest();
+      const current = await onLoadLatest(draftId);
       if (!current || current.id !== draftId || current.archivedAt || !current.rowId || !current.basePayload)
         throw new Error("Current record unavailable");
       setLatest(current);

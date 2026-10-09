@@ -65,3 +65,35 @@ it('the running workspace reads the exact row for review and guards the reapplie
  await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
  expect(compareAndSwap.mock.calls[1]).toEqual(['records','row',current,{payload:expect.objectContaining({fields:expect.objectContaining({title:'Owner draft',amount:20}),scope:'work',sources:latest.sources})}]);
 });
+
+
+it('recovers a new draft by its stable ID after an unacknowledged committed insert', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  let stored: { id: string; payload: Record<string, unknown> } | null = null;
+  const insert = vi.fn(async (_table: string, row: { id: string; payload: Record<string, unknown> }) => {
+    if (!stored) stored = { id: row.id, payload: row.payload };
+    throw new Error('Write acknowledgement unavailable');
+  });
+  const findOne = vi.fn().mockRejectedValueOnce(new Error('Read unavailable')).mockImplementation(async (_table: string, id: string) => stored?.id === id ? stored : null);
+  const compareAndSwap = vi.fn().mockResolvedValue({ ok: true });
+  window.MatrixOS = { db: { find: vi.fn().mockResolvedValue([]), findOne, insert, compareAndSwap } as unknown as Database };
+  render(<App app={app} />);
+  fireEvent.click(await screen.findByRole('button', { name: `+ Add ${app.entity}` }));
+  fireEvent.change(screen.getByLabelText('Title *'), { target: { value: 'First attempt' } });
+  fireEvent.change(screen.getByLabelText('Currency *'), { target: { value: 'EUR' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+  await screen.findByText('Save failed. Your changes are still here.');
+  fireEvent.change(screen.getByLabelText('Title *'), { target: { value: 'Revised draft' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+  await screen.findByRole('button', { name: 'Review latest record' });
+  expect(screen.getByRole('button', { name: 'Save record' })).toHaveProperty('disabled', true);
+  fireEvent.click(screen.getByRole('button', { name: 'Review latest record' }));
+  await screen.findByText('First attempt');
+  expect(findOne).toHaveBeenLastCalledWith('records', insert.mock.calls[0][1].id);
+  expect(screen.getByLabelText('Title *')).toHaveProperty('value', 'Revised draft');
+  fireEvent.click(screen.getByRole('button', { name: 'Reapply my changes to this version' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(insert).toHaveBeenCalledTimes(2);
+  expect(compareAndSwap).toHaveBeenCalledWith('records', insert.mock.calls[0][1].id, insert.mock.calls[0][1].payload, { payload: expect.objectContaining({ fields: expect.objectContaining({ title: 'Revised draft' }) }) });
+});

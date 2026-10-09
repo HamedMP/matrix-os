@@ -125,11 +125,11 @@ export default function App({ app }: { app: Definition }) {
           record={editor ?? undefined}
           creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
           onSave={save}
-          onLoadLatest={async () => {
+          onLoadLatest={async draftId => {
             const db = window.MatrixOS?.db;
-            if (!editor?.rowId || !db?.findOne) throw new Error("Current record unavailable");
-            const row = await db.findOne("records", editor.rowId);
-            return readRecords(row ? [row] : []).find(record => record.id === editor.id && !record.archivedAt) ?? null;
+            if (!db?.findOne) throw new Error("Current record unavailable");
+            const row = await db.findOne("records", editor?.rowId ?? draftId);
+            return readRecords(row ? [row] : []).find(record => record.id === draftId && !record.archivedAt) ?? null;
           }}
           onArchive={archive}
           onClose={() => setEditor(undefined)}
