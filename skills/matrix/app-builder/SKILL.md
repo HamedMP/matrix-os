@@ -2,7 +2,7 @@
 triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.3.0
+version: 1.4.1
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -137,6 +137,16 @@ For first-party/default apps, prefer committed PNG icons from `home/system/icons
 only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
 
 ## Data (Postgres via the MatrixOS bridge)
+
+### Public website deployments
+
+When the user wants a public app, build a production React/Vite app with `base: "./"`, no source maps, and a separate `dist/`. Declare only visitor-safe content in `matrix.json` `publishing.data` and named form schemas in `publishing.forms`. Public apps use `window.MatrixOS.site.data` and `window.MatrixOS.site.submit(formId, fields, { idempotencyKey })`; reuse a key for retries of one submission. Private Matrix bridges (`db`, services, AI) are unavailable to anonymous visitors. Do not copy private records, credentials, or environment values into public configuration or compiled code.
+
+Information-only guides publish as ordinary Matrix apps without forms or a `publishing` declaration. Include the requested guidance, support/post/channel links and discount codes; do not add forms unless requested. Outbound HTTP(S) links open a new tab without an opener/referrer, and fragment links stay in the guide.
+
+Owner controls are in **Publish app** on Web Canvas, Web Desktop, Electron Desktop and Web Mobile. Review the exact public declaration before deployment. The headless owner API is `/api/apps/:slug/site`: GET current publication, POST checked build/deploy with metadata plus `reviewedConfig` matching the current publishing declaration, PATCH metadata, DELETE with `baseRevision`, and POST `/rollback` with `versionId`/`baseRevision`. This REST API requires a genuine verified owner client; never put a token in app source or invent a login. Scoped Chat runs cannot publish or manage sites with their integration-only tokens in V1. After preparing the app, direct the owner to **Publish app** for review and deployment. Visitor submissions use owner-only `/submissions`, `/submissions/export` (paginated), and DELETE `/submissions/:id`. Publishing fails safely when hosting is unconfigured; do not claim a public deployment from a local build alone.
+
+Addresses are `https://matrix.page/<permanent-id>` or an optional friendly path. Visitors need no login. Pages remain readable with the owner runtime offline; form saves require it online. Unpublish closes new public access but retains owner records. Native Mobile has no owner publishing controls in this release; custom domains/server processes are deferred. See [public app sites](https://matrix-os.com/docs/guide/publishing-apps).
 
 Apps run in a sandboxed, null-origin iframe (CSP `connect-src 'self'`), so a direct `fetch()` to
 `/api/bridge/*` is **blocked** and `localStorage` throws `SecurityError`. Persist ONLY through the

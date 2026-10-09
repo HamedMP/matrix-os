@@ -20,6 +20,16 @@ the user needs another login. Do not promote imported apps or expose gateway cre
 Run the builder skill’s `scripts/verify-app.mjs` against the app directory, then open it
 from Matrix and verify assets, bridge operations, persistence, and visual states.
 
+### Public app sites
+
+For public launch/event/guide apps, retain the React/Vite build with relative assets and disable source maps. Declare visitor-safe `publishing.data` and exact named `publishing.forms` in `matrix.json`. The public bridge exposes `MatrixOS.site.data` and `MatrixOS.site.submit(formId, fields, { idempotencyKey })` only. Private Matrix bridges are unavailable to anonymous visitors; never embed owner data, environment values or credentials in the bundle. Reuse the same idempotency key for a submission retry.
+
+Information-only websites need no forms or publishing declaration. Build the guide as a normal Matrix app with static guidance, support links, posts/channels and optional discount codes. Outbound HTTP(S) links open a new tab without an opener/referrer; fragment links stay within the guide. Do not add RSVP/contact forms unless requested.
+
+The authenticated owner API `/api/apps/:slug/site` reads, publishes, updates metadata, rolls back and unpublishes. POST sends metadata plus `reviewedConfig` matching the exact publishing declaration, and updates include `baseRevision`. This REST API requires a genuine verified owner client outside app code. Scoped Chat runs cannot publish or manage sites with their integration-only tokens in V1. Prepare the app and direct the owner to **Publish app** for review and deployment. Owner-only `/submissions` and paginated `/submissions/export` read saved visitor responses; DELETE `/submissions/:id` erases them. The **Publish app** panel supplies these actions in Web Canvas, Web Desktop, Electron Desktop and Web Mobile. Native Mobile previews have no owner publishing controls.
+
+Publishing returns `https://matrix.page/<permanent-id>` with an optional friendly path. Hosting must be configured and the real public URL tested; a local build is not a deployment. Anonymous pages survive an offline owner runtime, but form saves require owner Postgres online. Custom domains and arbitrary server deployments are deferred. See the [public guide](https://matrix-os.com/docs/guide/publishing-apps).
+
 ### Scaffold Steps
 
 1. Create app directory: `~/apps/<slug>/`
