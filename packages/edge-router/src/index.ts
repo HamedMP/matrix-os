@@ -129,7 +129,7 @@ async function readRequestBody(request: Request, limit: number): Promise<ArrayBu
   try {
     while (true) {
       const chunk = await reader.read();
-      if (chunk.done) return bytes.slice(0, size).buffer;
+      if (chunk.done) return size === bytes.length ? bytes.buffer : bytes.slice(0, size).buffer;
       if (chunk.value.byteLength > limit - size) {
         try { await reader.cancel(); }
         catch (error) { console.error("[edge-router] body_cancel_failed", error instanceof Error ? error.name : typeof error); }

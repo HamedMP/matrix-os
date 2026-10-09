@@ -24,6 +24,16 @@ it('cancels oversized chunked mail before buffering the entire request',async()=
  const response=await handleEdgeRouterRequest(new Request('https://api.matrix-os.com/api/ats/mail',{method:'POST',body,duplex:'half'} as RequestInit),env);
  expect(response.status).toBe(413);expect(canceled).toHaveBeenCalledOnce();expect(produced).toBeLessThan(520);expect(fetcher).not.toHaveBeenCalled();
 });
+it('forwards a full size-limit buffer without allocating another body copy',async()=>{
+ const bytes=new Uint8Array(32*1024*1024).fill(65);
+ const slice=vi.spyOn(Uint8Array.prototype,'slice');
+ const fetcher=vi.spyOn(globalThis,'fetch').mockResolvedValue(new Response('accepted'));
+ const response=await handleEdgeRouterRequest(new Request('https://api.matrix-os.com/api/ats/mail',{method:'POST',body:bytes}),env);
+ expect(response.status).toBe(200);
+ expect(slice.mock.instances.filter(value=>value.byteLength===bytes.byteLength)).toHaveLength(0);
+ const forwarded=fetcher.mock.calls[0][0] as Request;
+ expect((await forwarded.arrayBuffer()).byteLength).toBe(bytes.byteLength);
+});
 
 it('returns a controlled error when request streaming fails',async()=>{
  const fetcher=vi.spyOn(globalThis,'fetch');vi.spyOn(console,'error').mockImplementation(()=>{});
