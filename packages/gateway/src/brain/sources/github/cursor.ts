@@ -4,7 +4,7 @@
  *   p  listing page at s (above 1 only while every item on the earlier pages is tied at s and applied)
  *   d  issue numbers already applied whose updated_at is exactly s (at most GITHUB_LIMITS.doneMax)
  *   c  a pull request still open across pages: its number n, its updated_at u, and o children already written
- *   r  1 while the tie pages are walked again from page 1 before the watermark moves past s
+ *   r  1 while the tie pages are walked again from page 1; a walk that applies nothing new moves s one second on
  * Pure. An unreadable cursor is cursor_invalid; the cursor never holds provider text.
  */
 import { z } from "zod/v4";

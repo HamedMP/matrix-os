@@ -4,10 +4,10 @@
  * early at its item, provider call, document, ref and time limits, or at the first provider failure (the items read
  * so far are still returned; the failure comes back on the next call that continues from that page, before any provider
  * call, so a retry never hides it or ignores its retryAfterSeconds). Each item moves the cursor only once its
- * documents are in the page, so a page's cursor never runs ahead of what it writes. Before the watermark moves past
- * ties that spanned more than one listing page, those pages are walked again from page 1, since an item changing
- * between page reads shifts the pages. A pull request too big for one page stays open in the cursor and continues
- * on the next page. Document ids use the source's stored external ref; a config whose repository is another one is
+ * documents are in the page, so a page's cursor never runs ahead of what it writes. An item changing between page
+ * reads shifts the pages, so a later page never moves the watermark: ties that spanned pages are walked again from
+ * page 1, and a walk that applies nothing new moves it one second on, read from page 1. A pull request too big for
+ * one page stays open in the cursor and continues on the next page. Document ids use the source's stored external ref; a config whose repository is another one is
  * refused.
  */
 import { createHash } from "node:crypto";
@@ -106,10 +106,15 @@ class PageCollector {
   }
 }
 
+/** The watermark one second on (GitHub times are whole seconds), listed again from page 1. */
+function nextSecond(cursor: BrainGithubCursor): BrainGithubCursor {
+  return { since: toGithubTime(Date.parse(cursor.since) + 1_000), page: 1, done: [] };
+}
+
 /** Moves the watermark one second on; items tied at the old one that were not read yet are passed over. */
 function skipSecond(cursor: BrainGithubCursor, page: PageCollector): BrainGithubCursor {
   page.notice("items_truncated");
-  return { since: toGithubTime(Date.parse(cursor.since) + 1_000), page: 1, done: [] };
+  return nextSecond(cursor);
 }
 
 /**
@@ -190,9 +195,10 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
       for (const issue of parsed.data) {
         const updatedAt = toGithubTime(Date.parse(issue.updated_at));
         if (updatedAt < cursor.since || (updatedAt === cursor.since && cursor.done.includes(issue.number))) continue;
-        if (updatedAt > cursor.since && cursor.page > 1 && cursor.recheck !== true) {
-          // An item that changed between page reads can move an unread tie onto a page already read: walk them again.
-          cursor = { ...cursor, page: 1, recheck: true };
+        if (updatedAt > cursor.since && cursor.page > 1) {
+          // An item that changed between page reads can move unread items onto a page already read: walk the ties
+          // again, and once a walk finds every tie applied, list from just past them instead of from this page.
+          cursor = cursor.recheck === true ? nextSecond(cursor) : { ...cursor, page: 1, recheck: true };
           stopped = true;
           break;
         }
