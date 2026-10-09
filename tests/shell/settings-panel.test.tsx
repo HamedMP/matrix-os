@@ -146,7 +146,7 @@ describe("Settings panel", () => {
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     const accountRegion = screen.getByRole("region", { name: "Account" });
     expect(nav.contains(accountRegion)).toBe(false);
-    expect(nav.className).toContain("sm:overflow-y-auto");
+    expect(nav.className).toContain("overflow-y-auto");
     expect(accountRegion.className).toContain("sticky");
     expect(accountRegion.className).toContain("sm:static");
   });

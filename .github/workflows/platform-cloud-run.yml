@@ -73,6 +73,7 @@ jobs:
       SLACK_ENABLED: ${{ vars.SLACK_ENABLED || 'false' }}
       SLACK_TOKEN_ENCRYPTION_KEY_VERSION: ${{ vars.SLACK_TOKEN_ENCRYPTION_KEY_VERSION || '1' }}
       WHATSAPP_ADMISSION_MODE: ${{ vars.WHATSAPP_ADMISSION_MODE || 'allowlist' }}
+      WHATSAPP_BUSINESS_PHONE_NUMBER: ${{ vars.WHATSAPP_BUSINESS_PHONE_NUMBER || '' }}
       WHATSAPP_ENCRYPTION_KEY_VERSION: ${{ vars.WHATSAPP_ENCRYPTION_KEY_VERSION || '1' }}
       MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
       # Personal remote-server broker; independent of the hosted Matrix MCP endpoint.
