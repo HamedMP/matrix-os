@@ -48,7 +48,7 @@
 :root :is(h1, h2, .title, .ms-title, .score-value, .brand-name, .stage-title h1, .library-head h1, .focus-clock span) { font-family: var(--brand-font-heading); letter-spacing: -.035em; }
 :root :is(.chess-app, .tetris-app, .snake-app, .sol-app, .bg-app, .ms-root, .app, .calc-app, .clock-app, .default-app, .weather-app, .board-shell) { background: var(--app-bg); }
 :root :is(.btn.primary, .primary-action, .primary-btn, .focus-start, .exp-primary, .button--primary, .sol-btn--primary, .sol-btn--accent, .bg-btn.primary, .key--equals) { background: var(--app-accent); color: var(--app-primary-fg); }
-:root :is(.game-cover, .calc-pad, .calc-history, .timer-card, .zone-row, .alarm-row, .score-card, .capture-tray, .history-card, .control-card, .preview, .stat, .ms-frame) { background: var(--app-card); border-color: var(--app-border); }
+:root :is(.game-cover, .calc-pad, .calc-history, .timer-card, .zone-row, .alarm-row, .score-card, .capture-tray, .history-card, .control-card, .tetris-app .preview, .stat, .ms-frame) { background: var(--app-card); border-color: var(--app-border); }
 :root .brand-mark, :root .product-mark, :root .brand__mark, :root .sol-mark, :root .exp-brand__mark, :root .app-title .app-icon {
   width: 44px; height: 44px; flex-shrink: 0; border: 0; border-radius: 0;
   background: var(--brand-icon) center / contain no-repeat; box-shadow: none;
@@ -83,7 +83,9 @@
 :root .game-cover--solitaire .game-art, :root .game-cover--minesweeper .game-art { background: color-mix(in srgb, var(--matrix-brand-coral) 12%, var(--app-card)); }
 :root[data-app='calculator'] .display { background: var(--matrix-brand-teal); color: var(--matrix-brand-paper); }
 :root[data-app='calculator'] .expr-input { color: var(--matrix-brand-paper); }
-:root[data-app='calculator'] .preview { color: var(--matrix-brand-green); }
+:root[data-app='calculator'] .preview { background: transparent; color: var(--matrix-brand-green); }
+:root[data-app='calculator'] .preview--error { color: var(--matrix-brand-gold); }
+:root[data-app='calculator'] .preview-hint, :root[data-app='calculator'] .expr-input::placeholder { color: var(--matrix-brand-blue); }
 :root .identity-art { color: var(--app-accent); }
 :root .focus-clock { border-color: var(--matrix-brand-coral); box-shadow: inset 0 0 0 12px color-mix(in srgb, var(--matrix-brand-coral) 12%, var(--app-bg)); }
 :root[data-app='whiteboard'] .wb-canvas { background: var(--app-card); }

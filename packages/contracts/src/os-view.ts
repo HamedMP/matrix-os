@@ -111,10 +111,8 @@ export function osViewBundledIconUrlForPath(path: string): string | undefined {
 
 /** Explicit owner artwork is authoritative; bundled artwork fills missing selections. */
 export function osViewUsesBundledArtworkForLegacyIcon(app: { path: string; iconUrl?: string }): boolean {
-  const id = OS_VIEW_FIXED_APP_ID_BY_PATH[app.path];
-  if (id !== "notes" && id !== "whiteboard") return false;
-  return typeof app.iconUrl === "string"
-    && new RegExp(`(?:^|/)icons/${id}\\.(?:png|svg)(?:\\?[^#]*)?(?:#.*)?$`).test(app.iconUrl);
+  // Filenames cannot distinguish replaced owner artwork from shipped bytes.
+  return false;
 }
 
 export function osViewIconUrlForApp(

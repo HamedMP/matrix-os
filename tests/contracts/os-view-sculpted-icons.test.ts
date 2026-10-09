@@ -17,9 +17,9 @@ describe('bundled Matrix app artwork', () => {
   it.each(['/icons/owner.png', 'https://owner.example/art.png?revision=2', 'data:image/png;base64,owner'])('preserves selected owner URL %s verbatim with a runtime base', (iconUrl) => {
     expect(osViewIconUrlForApp({ path: '__terminal__', iconUrl }, 'https://app.matrix-os.com/vm/pr-2294')).toBe(iconUrl);
   });
-  it.each(['notes', 'whiteboard'])('replaces the legacy %s icon URL with bundled artwork', (slug) => {
+  it.each(['notes', 'whiteboard'])('preserves explicit %s artwork even under a default filename', (slug) => {
     expect(osViewIconUrlForApp({ path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }, 'https://runtime.example.com'))
-      .toBe(`https://runtime.example.com/system-app-icons/v2/${slug}.png`);
+      .toBe(`/icons/${slug}.png?v=legacy`);
     expect(osViewIconUrlForApp({ path: `apps/${slug}/index.html`, iconUrl: `/icons/owner-${slug}.png?v=selected` }, 'https://runtime.example.com'))
       .toBe(`/icons/owner-${slug}.png?v=selected`);
   });
