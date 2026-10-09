@@ -120,9 +120,10 @@ describe("resolution", () => {
   });
 
   it("fills every star of an export target", () => {
-    const files = new Set(["p/src/feat/index.feat.ts"]);
+    const files = new Set(["p/src/feat/index.feat.ts", "p/src/$&/index.$&.ts"]);
     const packages = [pkg("p", { name: "p", exports: { "./*": "./src/*/index.*.js" } })];
     expect(resolveSpecifier("x.ts", "p/feat", files, packages)).toBe("p/src/feat/index.feat.ts");
+    expect(resolveSpecifier("x.ts", "p/$&", files, packages)).toBe("p/src/$&/index.$&.ts");
   });
 });
 
