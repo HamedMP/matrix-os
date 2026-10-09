@@ -1476,4 +1476,5 @@ export * from "#chat-navigation";
 export * from "#remote-browser";
 export * from "#shared-browser";
 export { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
+export * from "#sites";
 export * from "#funded-host-activation";
