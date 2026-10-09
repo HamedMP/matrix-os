@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { BrainFeatureError, type BrainBriefSummaryModel } from "../../packages/gateway/src/brain/contracts.js";
 import { readStoredBrief, writeStoredBrief } from "../../packages/gateway/src/brain/brief/database.js";
-import { bootstrapBrainBriefDatabase, createBrainBrief } from "../../packages/gateway/src/brain/brief/index.js";
+import { bootstrapBrainBriefDatabase, createBrainBrief, createBrainBriefScopeLister } from "../../packages/gateway/src/brain/brief/index.js";
 import { pickAttentionConflicts } from "../../packages/gateway/src/brain/brief/sections.js";
 import { briefWindow } from "../../packages/gateway/src/brain/brief/time.js";
 import { brainDocumentId } from "./helpers/brain-store-helpers.js";
@@ -89,14 +89,17 @@ describe("brief", () => {
     await fx.sync(linear, [{ seed: "eng9", body: "Rotate keys.", refs: [{ kind: "due", value: "2026-09-20" }] },
       { seed: "eng8", body: "Next steps: ship A.", at: "2026-09-29T08:00:00.000Z" }]);
     await fx.extract("eng9", [{ kind: "commitment", statement: "Rotate keys." }]);
-    await fx.extract("eng8", [{ kind: "commitment", statement: "ship A." }]);
+    const shipA = [{ kind: "commitment" as const, statement: "ship A.", fields: { due: "2026-09-25" } }];
+    await fx.extract("eng8", shipA);
     fx.harness.tick(60_000);
-    // eng8's revision 2 drops the task and is never extracted, so its claim stays on revision 1 (outdated then).
+    // eng8's revision 2 drops the task and is never extracted; revision 3 (after the day) brings the same claim back.
     await fx.sync(linear, [{ seed: "eng8", body: "Done.", at: "2026-09-30T08:00:00.000Z" }]);
-    await fx.sync(linear, [{ seed: "eng8", body: "Still done." }]);
+    await fx.sync(linear, [{ seed: "eng8", body: "Next steps: ship A." }]);
+    await fx.extract("eng8", shipA);
     const past = await brief({ date: "2026-09-30" });
     expect([past.sections.commitments, past.sections.attention]).toEqual([[], []]);
-    expect((await brief()).sections.commitments).toHaveLength(2);
+    const today = (await brief()).sections;
+    expect([today.commitments.length, today.attention.map((line) => line.text)]).toEqual([3, ["Overdue (due 2026-09-25): ship A.", "Overdue (due 2026-09-20): Rotate keys."]]);
     const notes = await fx.source("matrix_notes", "Notes");
     await fx.sync(notes, [{ seed: "n1", at: "2026-10-01T09:00:00.000Z" }, { seed: "n0", at: "2026-09-29T09:00:00.000Z" }]);
     await fx.sync(notes, [{ seed: "n1", body: "Edited.", at: "2026-10-01T09:30:00.000Z" }, { seed: "n0", body: "Edited.", at: "2026-09-29T09:30:00.000Z" }]);
@@ -144,6 +147,21 @@ describe("brief", () => {
     };
     expect(await read("2026-09-30")).toEqual([[[1, "Title spec"]], ["use A."], ["Ship A."]]);
     expect(await read("2026-10-01")).toEqual([[[1, "Spec v2"]], ["use B."], ["Ship A."]]);
+  });
+
+  it("keeps in a day's final rebuild a decision deleted by an edit after the day, not one dropped, outdated or re-extracted", async () => {
+    const git = await fx.source();
+    await fx.sync(git, [{ seed: "x", body: "Decision: use A." }, { seed: "y", body: "Decision: use C." }, { seed: "z", body: "Decision: use E." }, { seed: "w", body: "Decision: use F." }]);
+    for (const [seed, statement] of [["x", "use A."], ["y", "use C."], ["z", "use E."], ["w", "use F."]] as const) await fx.extract(seed, [{ kind: "decision", statement }]);
+    await brief();
+    // w is re-extracted as it is; y drops C inside the day; z's new revision is not extracted yet, so E is outdated.
+    await fx.extract("w", [{ kind: "decision", statement: "use F" }]);
+    await fx.sync(git, [{ seed: "y", body: "Decision: use D.", at: "2026-10-01T11:00:00.000Z" }, { seed: "z", body: "Decision: use E. Soon.", at: "2026-10-01T11:00:00.000Z" }]);
+    await fx.extract("y", [{ kind: "decision", statement: "use D." }]);
+    fx.harness.tick(86_400_000);
+    await fx.sync(git, [{ seed: "x", body: "Decision: use B.", at: "2026-10-02T08:00:00.000Z" }]);
+    await fx.extract("x", [{ kind: "decision", statement: "use B." }]);
+    expect((await brief({ date: "2026-10-01" })).sections.decisions.map((line) => [line.text, line.cites[0]!.revision])).toEqual([["use D.", 2], ["use F", 1], ["use A.", 2]]);
   });
 
   it("refuses dates in the future, too far back or not on the calendar", async () => {
@@ -405,13 +423,14 @@ describe("runner", () => {
       .toEqual({ scopes: 5, built: 0, failed: 0, skipped: 5 });
   });
 
-  it("starts no build once the pass is stopped inside a scope, and starts the next pass at that scope", async () => {
+  it("starts no build once a pass is stopped inside a scope; the lister puts that scope first, even after a restart", async () => {
     let stop = new AbortController();
     const seen: string[] = [];
     const resolve: typeof fx.resolver.resolve = async (owner, ref) => { if (seen.push(ref) === 2) stop.abort(); return fx.resolver.resolve(owner, ref); };
-    const feature = createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
-    const scopes = { listActiveScopes: async () => [BRIEF_SCOPE, { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_b" }] };
-    const pass = () => feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: stop.signal });
+    const feature = () => createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
+    for (const scopeId of [BRIEF_SCOPE.scopeId, "personal:project:proj_b"]) await fx.source("git", scopeId, { ownerId: BRIEF_OWNER, scopeId });
+    const scopes = createBrainBriefScopeLister(fx.harness.db);
+    const pass = () => feature().runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: stop.signal });
     expect(await pass()).toEqual({ scopes: 2, built: 1, failed: 0, skipped: 1 });
     stop = new AbortController();
     expect(await pass()).toEqual({ scopes: 2, built: 1, failed: 0, skipped: 1 });

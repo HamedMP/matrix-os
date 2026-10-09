@@ -97,16 +97,34 @@ async function claimLines(
   return { lines, truncated: rows.length > LIMITS.linesPerSection };
 }
 
-/** Claims first seen in the window: a revised document only contributes claims written after its new revision. */
+/** Claims first seen in the window: a revised document only adds claims written after its new revision. Claims keep no
+ * history: an `earlier` line whose claim was deleted stays if its document was edited after it, but not by the window
+ * end (a re-extraction of the same revision is left to decide). */
 async function newClaims(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange, kind: BrainClaimKind,
+  earlier: readonly BrainBriefLine[] = [],
 ) {
   const rows = await currentClaims(db, scope, range.to).where("c.kind", "=", kind).where("a.dated", ">=", range.from)
     .where((eb) => eb.or([eb("a.revision", "=", 1), eb("c.created_at", ">=", eb.ref("a.written"))]))
     .orderBy("a.dated", "desc").orderBy("d.document_id", "desc")
     .orderBy("c.span_start").orderBy("c.claim_id")
     .limit((LIMITS.linesPerSection + 1) * 2).execute();
-  return claimLines(db, scope, kind, uniqueClaims(rows));
+  const part = await claimLines(db, scope, kind, uniqueClaims(rows));
+  const lost = earlier.filter((line) => line.claimId !== null && part.lines.every((x) => x.claimId !== line.claimId));
+  if (lost.length === 0) return part;
+  const { rows: gone } = await sql<{ claim_id: string; revision: number }>`SELECT v.claim_id, a.revision
+    FROM (VALUES ${sql.join(lost.map((line) => sql`(${line.claimId}, ${line.cites[0]!.documentId})`))}) v (claim_id, id)
+    JOIN ${documentsAsOf(scope, range.to)} ON a.document_id = v.id WHERE NOT EXISTS (SELECT 1 FROM brain_claims c
+      WHERE c.owner_id = ${scope.ownerId} AND c.scope_id = ${scope.scopeId} AND c.claim_id = v.claim_id)`.execute(db);
+  const cites = await loadCites(db, scope, lost.map((line) => line.cites[0]!.documentId));
+  const lines = [...part.lines, ...lost.flatMap((line) => {
+    const [{ documentId, revision }, end] = [line.cites[0]!, gone.find((row) => row.claim_id === line.claimId)];
+    const cite = cites.get(documentId);
+    const keep = cite !== undefined && end !== undefined && end.revision <= revision && revision < cite.revision;
+    return keep ? [{ ...line, cites: [cite] }] : [];
+  })];
+  const cap = LIMITS.linesPerSection;
+  return { lines: lines.slice(0, cap), truncated: part.truncated || lines.length > cap };
 }
 
 /**
@@ -153,12 +171,14 @@ async function attention(
   return { lines, truncated: dropped };
 }
 
+/** `earlier`: the stored copy this build replaces, if any. */
 export async function buildSections(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange, now: Date,
+  earlier: BrainBriefSections | null = null,
 ): Promise<{ readonly sections: BrainBriefSections; readonly truncated: boolean }> {
   const changed = await changes(db, scope, range);
-  const decisions = await newClaims(db, scope, range, "decision");
-  const risks = await newClaims(db, scope, range, "risk");
+  const decisions = await newClaims(db, scope, range, "decision", earlier?.decisions);
+  const risks = await newClaims(db, scope, range, "risk", earlier?.risks);
   // A past window sees the brain as it was at its end; today's (still open) window sees everything.
   const before = range.to.getTime() <= now.getTime() ? range.to : null;
   const open = await openCommitments(db, scope, { limit: BRIEF_SCANS.commitments, before });
