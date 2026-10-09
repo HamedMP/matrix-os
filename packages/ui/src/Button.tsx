@@ -42,7 +42,7 @@ const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
   },
   destructive: {
     background: "var(--matrix-destructive)",
-    color: "#ffffff",
+    color: "var(--matrix-destructive-fg, var(--destructive-foreground, var(--text-on-danger, #ffffff)))",
   },
 };
 
@@ -71,7 +71,7 @@ export function Button({
         ...baseStyle,
         ...variantStyles[variant],
         ...sizeStyles[size],
-        ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}),
+        ...(disabled ? { background: "var(--muted, var(--bg-disabled))", color: "var(--muted-foreground, var(--text-disabled))", cursor: "not-allowed" } : {}),
         ...style,
       }}
       disabled={disabled}
