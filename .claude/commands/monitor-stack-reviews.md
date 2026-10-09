@@ -1,5 +1,5 @@
 ---
-description: Monitor a Graphite PR stack through Greptile 5/5, ready-for-ci labeling, and CI.
+description: Monitor a GitHub native PR stack through Greptile 5/5, ready-for-ci labeling, and CI.
 argument-hint: [pr-or-range-or-branch]
 ---
 
@@ -15,14 +15,14 @@ $ARGUMENTS
 
 ## Goal
 
-Monitor every PR in an existing Graphite stack, inspect Greptile feedback, fix
+Monitor every PR in an existing GitHub native stack, inspect Greptile feedback, fix
 actionable review findings, add the `ready-for-ci` label only after Greptile is
 `5/5`, and keep monitoring CI until every non-deferred stack PR is ready for
 final human review.
 
 ## Rules
 
-- Use Graphite for stack operations. If `gt` is missing or unauthenticated,
+- Use the official `github/gh-stack` extension for stack operations. If unavailable,
   stop and report the blocker instead of falling back to raw branch surgery.
 - Use `gh` for GitHub PR metadata, checks, draft/ready state, and review
   comments. Run `gh auth status` before network operations. If `gh` is missing
@@ -36,27 +36,36 @@ final human review.
   PR is `5/5`. There is no command-level override for this gate.
 - If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
-- Never force-push over remote work outside Graphite-managed stack branches
-  unless the requester explicitly approves that exact risk. Graphite restacks
+- Never force-push over remote work outside the requested native stack branches
+  unless the requester explicitly approves that exact risk. Cascading rebases
   necessarily rewrite stack branch SHAs; they are permitted only after verifying
   the branch is part of the requested stack and the remote head still matches
   the head observed before editing/submitting.
 - Keep fixes in the relevant stack layer. If a finding belongs to a lower PR,
-  check out that branch, patch there, amend or commit with Graphite, then
-  restack descendants.
+  check out that branch, patch there, commit explicit paths with Git, then
+  rebase descendants with `gh stack rebase --no-trunk`.
 - Treat unresolved human review threads, Codex review comments, and Greptile
   findings as blockers until fixed, acknowledged, or explicitly deferred.
-- Do not repeatedly ping Greptile. Wait for new reviews triggered by pushed
-  commits and poll status/comments instead.
+- Greptile runs on PR creation and explicit review requests, not every push.
+  After publication, request once per new head with `@greptileai please review`.
+  Match the reviewed commit to the current head and follow `AGENTS.md`'s bounded
+  retry rules; do not repeatedly ping while the same-head review is in flight.
 - Do not stage unrelated files. Run `git status --short --branch` before every
   staging operation.
+- Before a cascading rebase, verify every affected worktree is clean and idle;
+  preserve another task's branch, active process and unfinished work. Do not
+  force an occupied checkout or bypass a paused operation's lock.
 
 ## Workflow
 
 1. Resolve the stack.
    - If `$ARGUMENTS` contains a PR number/range, inspect those PRs with `gh pr view`.
-   - If `$ARGUMENTS` contains a branch, use `gt log short` and `gh pr list --head`.
-   - If no arguments are provided, use the current branch and `gt log short`.
+   - If `$ARGUMENTS` contains a branch, use `gh stack view --json` from its owning
+     worktree and `gh pr list --head`. Use the native stack REST API for remote
+     membership when no local tracking exists; do not mutate just to read status.
+   - If no arguments are provided, use the current branch and `gh stack view --json`.
+   - Verify native membership and bottom-to-top order. PR arguments must resolve
+     to the intended stack, not merely happen to have consecutive numbers.
    - Produce an ordered list of PR number, branch, base, draft state, and URL.
 
 2. Validate reviewability.
@@ -65,7 +74,7 @@ final human review.
      this command. Continue monitoring and fixing the remaining non-draft PRs in
      stack order; keep each draft PR listed as a blocker in the final status.
    - Always keep the PR order intact, regardless of draft state. Do not alter
-     bases manually unless Graphite reports the stack is malformed.
+     bases manually or flatten dependencies; report malformed native membership.
 
 3. Monitor Greptile and reviews first.
    - Inspect PR review threads with a thread-aware GitHub workflow, not only
@@ -83,7 +92,7 @@ final human review.
    - Do not treat CI as the primary gate until Greptile has reached `5/5` for
      the PR. If CI is already running, record status but keep Greptile first.
    - Before each edit/submit iteration, snapshot the current remote head for
-     every PR that could be rewritten by the next Graphite submit:
+     every PR that could be rewritten by the next native stack rebase/submit:
      `gh pr view <number> --json headRefOid,headRefName`. Keep this baseline
      with the branch list for the Step 4 conflict check.
 
@@ -92,14 +101,16 @@ final human review.
    - Before editing any file, verify the checked-out branch matches the PR branch
      that owns the fix: run `git branch --show-current` and compare it to the
      target PR's `headRefName`. If it differs, run
-     `gt checkout <target-branch>` and re-check the branch before editing.
+     `gh stack checkout <target-branch>` and re-check the branch before editing.
+     If occupied elsewhere, use its owning worktree once idle instead of forcing
+     the checkout or editing the wrong layer.
    - For code behavior changes, add or adjust a focused failing regression
      before the implementation change. Do not edit behavior code until the
      regression exists. For docs-only fixes, keep the edit scoped to the
      reviewed workflow.
    - Before any edit that will lead to a new push for a PR that currently has
      `ready-for-ci`, remove the label from that PR and every descendant PR
-     whose head will be rewritten by the next `gt submit --stack`:
+     whose head will be rewritten by the next stack rebase/submit:
      `gh pr edit <number> --remove-label "ready-for-ci"`. Re-add labels only
      after fresh current-head Greptile reviews return `5/5`.
    - Run the narrow relevant tests after the fix. Before staging or committing,
@@ -121,15 +132,13 @@ final human review.
      could not run.
    - Inspect `git status --short --branch` and stage only files belonging to the
      owning branch's fix with explicit paths:
-     `git add <paths>`. Then run `gt modify` or
-     `gt modify --commit --message "<conventional commit>"`. Staged-only is the
-     default Graphite modify behavior; do not pass a `--staged` flag, and do not
-     use `--all` in this workflow.
-   - Use Graphite to restack and sync updates before the pre-submit safety
-     check: `gt restack` and `gt sync`.
-     Run `gt restack` after any `gt modify` that touches a layer below the
+     `git add <paths>`, then `git commit -m "<conventional commit>"` or an intentional
+     `git commit --amend`. Do not stage unrelated work with `--all`.
+   - Rebase descendants without fetching or pushing before the pre-submit safety
+     check: `gh stack rebase --no-trunk`.
+     Run this after any commit that touches a layer below the
      stack tip before submitting, so descendants are anchored to the rewritten
-     parent SHA. If `gt restack` reports merge conflicts or leaves the worktree
+     parent SHA. If it reports merge conflicts or leaves the worktree
      in a conflicted state, stop immediately and report the conflicted branch,
      files, and current stack state; do not attempt autonomous conflict
      resolution inside this monitor command.
@@ -138,13 +147,16 @@ final human review.
      the head recorded for this edit iteration; if it changed unexpectedly,
      stop and report the remote-work conflict.
    - Submit only after the remote-head safety check passes:
-     `gt submit --stack --no-edit --no-ai`.
-   - After every successful `gt submit --stack`, discard the pre-submit
+     `gh stack submit --auto`. Before invoking it, confirm every locally tracked
+     layer has an existing open PR in the requested native stack and there are
+     no extra local layers. Otherwise stop: submit can create PRs, while this
+     monitor must not create them or change draft/ready state.
+   - After every successful submit, discard the pre-submit
      baseline and immediately refresh the remote-head snapshot for every
-     monitored PR before entering another fix loop. Graphite's successful
-     submit intentionally rewrites stack branch SHAs; those new SHAs become the
+     monitored PR before entering another fix loop. A cascading rebase can
+     rewrite stack branch SHAs; the published SHAs become the
      next iteration's conflict baseline.
-   - After every successful restack or submit, re-run the Step 3 label audit
+   - After every successful rebase or submit, re-run the Step 3 label audit
      for the edited PR and all descendants, removing any `ready-for-ci` label
      that is no longer backed by a current-head `5/5` Greptile review.
    - If a finding is ambiguous or conflicts with the product intent, draft a

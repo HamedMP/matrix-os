@@ -102,7 +102,7 @@ Determine how to proceed based on what was provided in `<input_document>`.
    git worktree add -b feature-branch-name ../feature-branch-name origin/[default_branch]
    cd ../feature-branch-name
    ```
-   On Matrix OS, prefer the repo's Graphite/spec worktree workflow and use a meaningful, persistent worktree name. Do not delegate this setup to a separate vendored skill; this bundle does not include one.
+   On Matrix OS, use the repo's GitHub native stack/spec worktree workflow in `docs/dev/stacked-prs.md` and a meaningful, persistent worktree name. Do not delegate this setup to a separate vendored skill; this bundle does not include one.
 
    **Option C: Continue on the default branch**
    - Requires explicit user confirmation
@@ -146,7 +146,7 @@ Determine how to proceed based on what was provided in `<input_document>`.
 
    Even with no file overlap, parallel subagents sharing the orchestrator's working directory face git index contention (concurrent staging/committing corrupts the index) and test interference (concurrent test runs pick up each other's in-progress changes). Worktree isolation eliminates both; the shared-directory fallback constraints below mitigate them.
 
-   **Subagent isolation** — on Matrix OS, do not use Claude Code's Agent-tool worktree-isolation option. The repository manages long-lived Graphite/spec worktrees explicitly, and hidden harness-created worktrees can lose uncommitted Matrix work. If parallel implementation needs isolated checkouts, the orchestrator must create named git worktrees deliberately before dispatch and merge them back explicitly; otherwise use serial subagents or the shared-directory fallback below.
+   **Subagent isolation** — on Matrix OS, do not use Claude Code's Agent-tool worktree-isolation option. The repository manages long-lived GitHub native stack/spec worktrees explicitly, and hidden harness-created worktrees can lose uncommitted Matrix work. If parallel implementation needs isolated checkouts, the orchestrator must create named git worktrees deliberately before dispatch and merge them back explicitly; otherwise use serial subagents or the shared-directory fallback below.
 
    Platforms without a deliberately prepared checkout (e.g., Codex `spawn_agent`, Pi `subagent`, or Claude Code without an orchestrator-created worktree) should treat subagents as sharing the orchestrator's directory.
 
