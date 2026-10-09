@@ -561,8 +561,7 @@ body {
   }
 }
 
-/* A stable board palette keeps dark and light pieces separate from host chrome. */
-:root { --sq-light: #ece8dd; --sq-dark: #8292a8; }
+/* Matrix board colors live in the shared brand stylesheet; local rules own geometry. */
 .stage-title h1 { font-size: 24px; }
 .board-stage { min-height: 0; }
 .board-frame { flex-shrink: 0; }

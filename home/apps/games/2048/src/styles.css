@@ -420,8 +420,6 @@ kbd {
 .controls { flex-wrap: wrap; }
 .board { border: 1px solid var(--app-border); }
 .tile-inner { box-shadow: inset 0 1px 1px rgba(255, 255, 255, .55), 0 3px 7px rgba(38, 35, 70, .1); }
-.tile-8 .tile-inner, .tile-16 .tile-inner { color: #593620; }
-.tile-128 .tile-inner, .tile-256 .tile-inner, .tile-512 .tile-inner, .tile-1024 .tile-inner { color: #53401b; }
 .overlay-actions { flex-wrap: wrap; justify-content: center; }
 @media (max-width: 380px) {
   .topbar { gap: 10px; flex-wrap: wrap; }
