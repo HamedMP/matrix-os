@@ -14,7 +14,8 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   a leading "./" dropped, and no leading "/" or empty, "." or ".." segment. "Search the words instead" shows in every
   state of the history, loading and errors included.
 - Timeline's person view lists possible duplicates (merge suggestions) with Merge and Undo over the alias route; Undo
-  sends `unmerge`, which leaves nothing behind, never a lasting split.
+  sends `unmerge`, which leaves nothing behind, never a lasting split. A card naming a person another merge there moved
+  away cannot merge until that merge is undone (the person now resolves to the one who stayed).
 - Sources lists every kind with its availability ("Not set up on this server" for `not_configured`, which covers
   every server-side gap), connects with per-kind settings, and runs the repository's sync and claim reading, and
   every other source's sync, as background jobs it polls. On open it reads `GET .../jobs?limit=20` once and each card

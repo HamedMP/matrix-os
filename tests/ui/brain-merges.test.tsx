@@ -86,6 +86,24 @@ describe("Possible duplicates", () => {
     expect(within(card).getByText("Merged hamedmp into HamedMP.")).toBeTruthy();
   });
 
+  it("holds a card whose person was merged away until that merge is undone", async () => {
+    const dee = person("ent_d", "email:d@x.co", "Dee");
+    const chained = { ...HAMED, suggestionId: "sug_2", entity: HAMED.alias, alias: dee, aliasKey: "person:email:d@x.co" };
+    openPeople({
+      mergeSuggestions: vi.fn(async () => ({ items: [HAMED, chained], nextCursor: null, truncated: false })),
+      updateAlias: vi.fn(async () => ({})),
+    });
+    const first = (await screen.findByRole("button", { name: "Merge into HamedMP" })).closest("li")!;
+    const second = screen.getByRole("button", { name: "Merge into hamedmp" }).closest("li")!;
+    fireEvent.click(within(first).getByRole("button", { name: "Merge into HamedMP" }));
+    await within(first).findByRole("button", { name: "Undo" });
+    // hamedmp now resolves to HamedMP, so this Merge would join Dee to HamedMP and its Undo would fail.
+    expect(within(second).getByRole("button", { name: "Merge into hamedmp" })).toBeDisabled();
+    expect(within(second).getByText("Undo the merge of hamedmp first.")).toBeTruthy();
+    fireEvent.click(within(first).getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(within(second).getByRole("button", { name: "Merge into hamedmp" })).toBeEnabled());
+  });
+
   it("shows each reason once and at most five", async () => {
     const login = { signal: "same_github_login", detail: "hamedmp", documents: null };
     const names = ["a", "b", "c", "d", "e"].map((detail) => ({ signal: "shared_name", detail, documents: null }));
