@@ -211,11 +211,33 @@ function trimAssistantOverflow(
 }
 
 /**
+ * Drops whole thinking blocks, oldest first, by just the overflow. A signed
+ * block is never cut, since its signature covers its exact text. The latest
+ * reply keeps its thinking: a tool loop resumed from it must send it back
+ * unchanged, while earlier replies' thinking is optional to the model.
+ */
+function dropEarlierThinking(messages: AgentMessage[], maxBytes: number): AgentMessage[] {
+  let overflow = encodedSessionBytes(messages) - maxBytes;
+  let latest = messages.length - 1;
+  while (latest >= 0 && messages[latest]!.role !== "assistant") latest -= 1;
+  return messages.map((message, index) => {
+    if (overflow <= 0 || index >= latest || message.role !== "assistant") return message;
+    const content = message.content.filter((part) => {
+      if (overflow <= 0 || part.type !== "thinking") return true;
+      overflow -= encoder.encode(JSON.stringify(part)).byteLength;
+      return false;
+    });
+    return content.length === message.content.length ? message : { ...message, content };
+  });
+}
+
+/**
  * Fits a transcript for storage. Images always become placeholders. While
  * it is still too large: tool payloads are cut with a visible note, then
- * earlier replies are shortened by just the overflow, then (if allowed) the
- * oldest turns are dropped behind a note, and only as a last resort the
- * latest reply is shortened, again by just the overflow. The person's words
+ * thinking before the latest reply is dropped whole, then earlier replies
+ * are shortened by just the overflow, then (if allowed) the oldest turns
+ * are dropped behind a note, and only as a last resort the latest reply is
+ * shortened, again by just the overflow. The person's words
  * are never shortened. A cancelled run may not drop turns; if even the
  * shortened transcript cannot fit, `encodeSession` refuses it and the
  * previous session is kept.
@@ -232,6 +254,8 @@ export function fitForStorage(
     if (fits()) return stored;
     stored = stored.map((message) => capToolPayloads(message, cap));
   }
+  stored = dropEarlierThinking(stored, maxBytes);
+  if (fits()) return stored;
   const latest = latestTurnStart(stored);
   stored = trimAssistantOverflow(stored, maxBytes, (index) => index < latest);
   if (fits()) return stored;
