@@ -1,6 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { Linking } from "react-native";
 const mockRefetch = jest.fn();
+const mockPush = jest.fn();
+jest.mock("expo-router", () => ({ useRouter: () => ({ push: mockPush }) }));
 let mockSnapshot: {
   data?: unknown;
   isPending: boolean;
@@ -60,6 +62,6 @@ it("groups Slack installation and its connection guide under Messaging", () => {
   fireEvent.press(screen.getByText("Slack connection guide"));
   expect(open).toHaveBeenCalledWith("https://matrix-os.com/docs/slack-company-brain");
   fireEvent.press(screen.getByText("Open Matrix Chat"));
-  expect(open).toHaveBeenCalledWith("https://app.matrix-os.com/open?chat=chat_whatsapp");
+  expect(mockPush).toHaveBeenCalledWith({ pathname: "/open", params: { chat: "chat_whatsapp" } });
   open.mockRestore();
 });
