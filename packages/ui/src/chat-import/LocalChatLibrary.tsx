@@ -4,9 +4,9 @@ import { type ImportHarness } from "@matrix-os/contracts/local-chat-import";
 import { ChatImportSourceIcon } from "../chat/ChatImportSource.js";
 import { importBytes, type LocalChatCandidate, type LocalChatLibraryState, type LocalImportOutcome, type LocalImportUpdate } from "./import-state.js";
 const PAGE_SIZE = 100;
-export function LocalChatLibrary({library,harness,busy,results,active,onPrepare,onImport,onOpen}: {
+export function LocalChatLibrary({library,harness,busy,results,imported,active,onPrepare,onImport,onOpen}: {
     library:LocalChatLibraryState; harness:ImportHarness | "all"; busy:boolean;
-    results:Record<string,LocalImportOutcome>;active:LocalImportUpdate|null;
+    results:Record<string,LocalImportOutcome>;imported:number;active:LocalImportUpdate|null;
     onPrepare(keys:string[]):Promise<void>;onImport(keys:string[]):Promise<void>;onOpen?:(chatId:string,title:string)=>void;
 }) {
     const {sources,loading,error,limited,refresh} = library;
@@ -18,7 +18,6 @@ export function LocalChatLibrary({library,harness,busy,results,active,onPrepare,
     const excludedKeys=useMemo(()=>new Set(excluded),[excluded]); // render-scoped, bounded by discovered catalog, discarded on refresh/unmount.
     const selected=useMemo(()=>sources.filter(source=>!excludedKeys.has(source.sourceKey) && results[source.sourceKey]?.status!=="imported"),[sources,excludedKeys,results]);
     const selectedVisible=useMemo(()=>visible.filter(source=>!excludedKeys.has(source.sourceKey) && results[source.sourceKey]?.status!=="imported").length,[visible,excludedKeys,results]);
-    const imported=useMemo(()=>Object.values(results).filter(result=>result.status==="imported").length,[results]);
     const disabled=busy||loading||Boolean(error);
     const lastPage=Math.max(0,Math.ceil(visible.length/PAGE_SIZE)-1);
     const currentPage=Math.min(page,lastPage);
@@ -67,5 +66,5 @@ function SelectionActions({total,selected,hidden,disabled,onAll,onNone,onImport}
 }
 function QueueProgress({active,imported}:{active:LocalImportUpdate|null;imported:number}) {
     return <>{active?<div className="matrix-import-transfer" role="status"><strong>{active.status==="reading"?"Reading":"Importing"} {active.title}</strong><p>{active.processed} of {active.total} processed · One conversation at a time</p>{active.progress?<progress max={active.progress.totalBytes || 1} value={active.progress.uploadedBytes}/>:null}</div>:null}
-        {imported>0?<p className="matrix-import-completion" role="status">{imported} chats ready in Matrix.</p>:null}</>;
+        {imported>0?<p className="matrix-import-completion" role="status">{imported} {imported===1?"chat":"chats"} ready in Matrix.</p>:null}</>;
 }

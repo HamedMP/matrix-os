@@ -25,7 +25,7 @@ export type ImportItem = {
     source?: LocalChatUploadSource;
     selectionId?: string;
     catalogKey?: string;
-    status: "ready" | "importing" | "failed" | "imported";
+    status: "ready" | "reading" | "importing" | "failed" | "imported";
     progress?: LocalChatImportProgress;
     result?: ImportResult;
     error?: string;
