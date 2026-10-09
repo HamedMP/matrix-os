@@ -46,7 +46,7 @@ final human review.
   rebase descendants with `gh stack rebase --no-trunk`.
 - Treat unresolved human review threads, Codex review comments, and Greptile
   findings as blockers until fixed, acknowledged, or explicitly deferred.
-- Greptile runs on PR creation and explicit review requests, not every push.
+- Automatic creation reviews may be disabled; pushes do not guarantee a review.
   After publication, request once per new head with `@greptileai please review`.
   Match the reviewed commit to the current head and follow `AGENTS.md`'s bounded
   retry rules; do not repeatedly ping while the same-head review is in flight.
