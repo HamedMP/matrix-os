@@ -1,15 +1,11 @@
 import type { OnboardingWidgetEvent } from "@matrix-os/contracts";
+import type { OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
 import { startConnectPoll } from "../integrations/connect-poll";
 import { useIntegrations } from "../integrations/integrations-store";
-
-export interface OnboardingAppConnect {
-  connectingService: string | null;
-  connectApp: (serviceId: string) => void;
-}
 
 /** Opens the integration consent page and waits for the new connection to land. */
 export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event: OnboardingWidgetEvent) => void): OnboardingAppConnect {

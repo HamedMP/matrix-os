@@ -8,7 +8,7 @@ import {
   onboardingPrefsKey,
   readOnboardingPrefs,
   writeOnboardingPrefs,
-} from "../../desktop/src/renderer/src/features/onboarding-widget/onboarding-widget-prefs";
+} from "@matrix-os/ui";
 import {
   admitOnboardingTurn,
   isComputerStartingError,

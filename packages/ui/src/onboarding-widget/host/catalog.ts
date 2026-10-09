@@ -1,0 +1,92 @@
+import type {
+  AvailableIntegration,
+  CanonicalProviderCatalog,
+  ConnectedIntegration,
+  OnboardingAiChoice,
+  OnboardingAiProvider,
+} from "@matrix-os/contracts";
+import { createCanonicalComposerSelection, type CanonicalComposerSelection } from "../../canonical-composer-selection.js";
+import type { OnboardingAppCategory, OnboardingWidgetApp } from "../types.js";
+
+export const ONBOARDING_MAX_APPS = 50;
+
+const DRIVER_FOR_PROVIDER: Record<OnboardingAiProvider, string> = { claude: "claude_code", codex: "codex" };
+const CREDIT_STATES = new Set(["credit_required", "budget_exceeded"]);
+
+export function onboardingSelection(catalog: CanonicalProviderCatalog, choice: OnboardingAiChoice): CanonicalComposerSelection | null {
+  if (choice === "matrix") return createCanonicalComposerSelection(catalog, "hermes_default") ?? createCanonicalComposerSelection(catalog);
+  const instance = catalog.instances.find((candidate) => candidate.driverKind === DRIVER_FOR_PROVIDER[choice] && candidate.availability === "available");
+  return instance ? createCanonicalComposerSelection(catalog, instance.id) : null;
+}
+
+export function onboardingConnectedProviders(catalog: CanonicalProviderCatalog): OnboardingAiProvider[] {
+  return (Object.keys(DRIVER_FOR_PROVIDER) as OnboardingAiProvider[]).filter((provider) =>
+    catalog.instances.some((instance) => instance.driverKind === DRIVER_FOR_PROVIDER[provider] && instance.availability === "available"));
+}
+
+export function onboardingCreditsExhausted(catalog: CanonicalProviderCatalog, selection: CanonicalComposerSelection | null): boolean {
+  if (!selection) return false;
+  const state = catalog.instances.find((instance) => instance.id === selection.instanceId)?.connectionState;
+  return state !== undefined && CREDIT_STATES.has(state);
+}
+
+const CATEGORY_BY_SERVICE: Record<string, OnboardingAppCategory> = {
+  github: "dev", linear: "dev", gitlab: "dev", jira: "dev",
+  gmail: "personal", google_drive: "personal", spotify: "personal", whatsapp: "personal",
+};
+
+export function onboardingApps(
+  available: readonly AvailableIntegration[],
+  connections: readonly ConnectedIntegration[],
+  connectingService: string | null,
+): OnboardingWidgetApp[] {
+  const connected = new Set(connections.map((connection) => connection.service));
+  return available.slice(0, ONBOARDING_MAX_APPS).map((app) => ({
+    id: app.id,
+    name: app.name,
+    ...(app.logoUrl ? { logoUrl: app.logoUrl } : {}),
+    category: CATEGORY_BY_SERVICE[app.id] ?? "work",
+    status: connected.has(app.id) ? "connected" : connectingService === app.id ? "connecting" : "available",
+  }));
+}
+
+const VENDOR_FOR_PROVIDER: Record<OnboardingAiProvider, string> = { claude: "anthropic", codex: "openai" };
+/** Sign-ins the widget can finish by polling; `browser` also needs the pasted code. `terminal` needs a Terminal tab. */
+const WIDGET_SIGN_IN_METHODS = ["device_code", "existing_codex", "browser"] as const;
+export type OnboardingSignInMethod = typeof WIDGET_SIGN_IN_METHODS[number];
+
+interface CapabilityRow {
+  harnessInstanceId: string;
+  harness: string;
+  connectionOptions?: ReadonlyArray<{
+    id: string;
+    providerId?: string;
+    authKind: "subscription" | "api_key";
+    method?: string;
+    availability: "available" | "unavailable";
+  }>;
+}
+
+export function pickProviderConnectionOption(
+  rows: readonly CapabilityRow[],
+  provider: OnboardingAiProvider,
+  method: "account" | "api_key",
+  { codeEntry = false }: { codeEntry?: boolean } = {},
+): { harnessInstanceId: string; optionId: string; method?: OnboardingSignInMethod } | null {
+  const vendor = VENDOR_FOR_PROVIDER[provider];
+  for (const row of rows) {
+    if (row.harness !== provider) continue;
+    const options = (row.connectionOptions ?? []).filter((candidate) => candidate.availability === "available" && candidate.providerId === vendor);
+    if (method === "api_key") {
+      const key = options.find((candidate) => candidate.authKind === "api_key");
+      if (key) return { harnessInstanceId: row.harnessInstanceId, optionId: key.id };
+      continue;
+    }
+    for (const signIn of WIDGET_SIGN_IN_METHODS) {
+      if (signIn === "browser" && !codeEntry) continue;
+      const match = options.find((candidate) => candidate.authKind === "subscription" && candidate.method === signIn);
+      if (match) return { harnessInstanceId: row.harnessInstanceId, optionId: match.id, method: signIn };
+    }
+  }
+  return null;
+}

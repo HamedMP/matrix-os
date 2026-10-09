@@ -1,5 +1,6 @@
 export { OnboardingWidget } from "./OnboardingWidget.js";
 export { AI_KEY_MAX_CHARS } from "./helpers.js";
+export * from "./host/index.js";
 export type {
   OnboardingAppCategory,
   OnboardingWidgetActions,
