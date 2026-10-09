@@ -41,7 +41,7 @@ export function Runway(props: ViewProps) {
 export function Meals(props: ViewProps) {
   const [portions, setPortions] = useState(2), [week, setWeek] = useState(localDate), [rotation, setRotation] = useState<OwnerRecord[]>([]), [savedCount, setSavedCount] = useState(0);
   const saved = useSavedAction(props.onSave), batch = useRef(false);
-  const recipes = props.records.filter(record => record.fields.status === "Recipe").slice(0, 100);
+  const recipes = props.records.filter(record => record.fields.status === "Recipe");
   const allPlanned = props.records.filter(record => record.fields.status === "Planned").sort((a, b) => String(a.fields.date).localeCompare(String(b.fields.date)));
   const weekEnd = validDate(week) ? plusDays(week, 6) : "";
   const planned = allPlanned.filter(record => validDate(record.fields.date) && String(record.fields.date) >= week && String(record.fields.date) <= weekEnd);

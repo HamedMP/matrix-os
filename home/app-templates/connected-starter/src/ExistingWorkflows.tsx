@@ -286,16 +286,30 @@ function MeetingFollowThrough(props: ViewProps) {
       <MeetingBriefs {...props}/>
     </>;
 }
+/** Inline editors retain their exact owner while search or local queues change. */
+function usePinnedDrafts(records: OwnerRecord[]) {
+    const [pinned, setPinned] = useState<OwnerRecord[]>([]);
+    const onLockChange = useCallback((record: OwnerRecord, locked: boolean) => setPinned(old => {
+      const has = old.some(item => item.id === record.id);
+      return locked ? has || old.length >= 1000 ? old : [...old, record] : has ? old.filter(item => item.id !== record.id) : old;
+    }), []);
+    return { records: [...pinned, ...records.filter(record => !pinned.some(item => item.id === record.id))], pinned, onLockChange };
+}
+function keepDraftRows<T extends {record: OwnerRecord}>(rows: T[], all: T[], pinned: OwnerRecord[]) {
+    const visible = rows.slice(0, 20);
+    return [...visible, ...all.filter(row => pinned.some(item => item.id === row.record.id) && !visible.some(item => item.record.id === row.record.id))];
+}
 function KeepInTouch(props: ViewProps) {
     const [reviewOnly, setReviewOnly] = useState(false);
-    const all = contactReview(props.records, today());
+    const drafts = usePinnedDrafts(props.records);
+    const all = contactReview(drafts.records, today());
     const rows = reviewOnly ? all.filter(row => row.identityReview || row.daysSince === null) : all;
     return <section className="workflow-panel" aria-label="Relationship desk">
       <Introduction symbol="◉" title="Contact review" detail="Contacts stay separate by record and personal/work scope. A source gap means unknown history; matching names never silently merge."/>
       <label className="workflow-toggle">
         <input type="checkbox" checked={reviewOnly} onChange={event => setReviewOnly(event.target.checked)}/>Show identity or contact-date review
       </label>
-      <div className="people-desk">{rows.slice(0, 20).map(({ record, identityReview, last, next, daysSince }) => <article className="person-panel" key={record.id}>
+      <div className="people-desk">{keepDraftRows(rows, all, drafts.pinned).map(({ record, identityReview, last, next, daysSince }) => <article className="person-panel" key={record.id}>
           <div className="person-heading">
             <span className="person-object" aria-hidden="true">{text(record, "title").slice(0, 1) || "?"}
             </span>
@@ -326,7 +340,7 @@ function KeepInTouch(props: ViewProps) {
           </dl>{text(record, "context") &&
           <p>{text(record, "context")}
           </p>}
-          <Draft record={record} field="follow-up" label={`Follow-up draft for ${text(record, "title") || "contact"}`} help="Draft only. Review identity and sources before using this text elsewhere." onSave={props.onSave}/>
+          <Draft onLockChange={locked => drafts.onLockChange(record, locked)} record={record} field="follow-up" label={`Follow-up draft for ${text(record, "title") || "contact"}`} help="Draft only. Review identity and sources before using this text elsewhere." onSave={props.onSave}/>
           <Actions record={record} {...props}/>
         </article>)}
       </div>{!rows.length && (props.records.length ?
@@ -338,7 +352,8 @@ function KeepInTouch(props: ViewProps) {
 }
 function InvoiceDesk(props: ViewProps) {
     const [lane, setLane] = useState("All");
-    const all = invoiceQueue(props.records, today());
+    const drafts = usePinnedDrafts(props.records);
+    const all = invoiceQueue(drafts.records, today());
     const rows = lane === "All" ? all : all.filter(row => row.lane === lane);
     const overdue = all.filter(row => row.lane === "Overdue");
     const currencies = [...new Set(overdue.map(row => row.currency!))];
@@ -356,7 +371,7 @@ function InvoiceDesk(props: ViewProps) {
           </option>)}
         </select>
       </label>
-      <div className="invoice-queue">{rows.slice(0, 20).map(({ record, outstanding, currency, due, daysLate, lane: state }) => <article key={record.id} className="invoice-row">
+      <div className="invoice-queue">{keepDraftRows(rows, all, drafts.pinned).map(({ record, outstanding, currency, due, daysLate, lane: state }) => <article key={record.id} className="invoice-row">
           <div className="invoice-row-title">
             <div>
               <span className={`badge ${state === "Overdue" ? "attention" : ""}`}>{state}
@@ -373,7 +388,7 @@ function InvoiceDesk(props: ViewProps) {
               </p>
             </div>
           </div>{state === "Overdue" &&
-          <Draft record={record} field="reminder-draft" label={`Reminder draft for ${text(record, "title") || "invoice"}`} help="Draft only. Recheck payment status, recipient and source evidence before sending elsewhere." onSave={props.onSave}/>}
+          <Draft onLockChange={locked => drafts.onLockChange(record, locked)} record={record} field="reminder-draft" label={`Reminder draft for ${text(record, "title") || "invoice"}`} help="Draft only. Recheck payment status, recipient and source evidence before sending elsewhere." onSave={props.onSave}/>}
           <Actions record={record} {...props}/>
         </article>)}
       </div>{!rows.length && (props.records.length ?
