@@ -2,7 +2,7 @@
 
 import { Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ChatContextMenu, OverflowingChatTitle } from "@matrix-os/ui";
+import { ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
@@ -123,6 +123,7 @@ export function RenameableConversationRow({
       }`}
     >
       {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
+      {conversation.canonicalRecord?.importSource ? <ChatImportSourceIcon harness={conversation.canonicalRecord.importSource.harness}/> : null}
       <span className={`matrix-web-chat-title flex min-w-0 flex-1 ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/></span>
     </button>
   );

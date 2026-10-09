@@ -328,3 +328,17 @@ before native fetch. Existing DNS preflight does not pin fetch resolution; retai
 that residual rebinding limitation. Redirects are rejected and all network
 operations have bounded timeouts. Renderer-origin and main-frame checks occur
 before opening the native picker.
+
+
+## Electron Desktop import experience follow-up
+
+Tracked by [ENG-184](https://linear.app/matrix-os/issue/ENG-184/import-local-claude-and-codex-chats-in-desktop-app).
+See [the delivery plan](./import-experience-plan.md) for automatic discovery, bulk imports and shared source filtering.
+
+Electron Desktop scans `~/.claude/projects`, `~/.codex/sessions`, and `~/.codex/archived_sessions` without a file picker. Metadata reads are bounded; full reconstruction runs only for selected transcripts. Codex saved titles are hints from a bounded `session_index.jsonl` read. UI discovery excludes nested agent histories and returns every found conversation within the defensive 20,000-entry traversal budget, without a per-app recent-history cut-off. A scan reaching a work/time safety budget explicitly reports that it is incomplete.
+
+All discovered conversations are selected by default; owners can uncheck any before importing each as a separate private canonical Chat. Search and app filters preserve selections and expose the hidden-selected count. Large lists use 100-row browsing pages without limiting selection. Optional individual previews support title edits. Direct Import reserves the entire selected catalog, then prepares, uploads and releases one transcript at a time. The queue preserves successes, supports retry and cancellation, and guards late responses. Source icons and All/Imported/Claude Code/Codex filters come from successful owner-scoped publication records, independently of the active execution harness. Filters operate on the existing bounded Chat navigation snapshot; they do not expand its history limit.
+
+Native IPC discover, reserve, prepare and release require a trusted main-frame sender and matching authenticated owner, runtime slot, token, gateway origin and auth generation. Only opaque catalog/selection IDs cross IPC. Catalog entries expire after 15 minutes; an atomic owner-bound reservation extends all selected IDs to 24 hours before upload. Previews expire after one hour and retain the internal 32-item prepare transport limit and 128-capture memory cap; these never limit the selected conversation count. Explicit close/reset, account changes and shutdown clear state. Scans cap directory depth, traversal work, metadata buffers and duration; previews and transfers retain captured-byte verification and timeouts.
+
+Live Web Canvas, Web Desktop and Electron Desktop screenshots/recordings remain acceptance evidence before review readiness. Native Mobile does not expose this import flow or source filter in this delivery; imported canonical history remains readable there. The separate public-docs PR must land with the implementation. Product/design review is recommended for the selection and source-filter journey.
