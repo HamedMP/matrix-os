@@ -32,6 +32,7 @@ export function BrainPathHistory({ api, projectId, onOpenSources, path, ask, onS
           <div className="grid gap-3">
             {view.source === null ? (
               <BrainEmpty title="This project's repository is not connected.">
+                <p className="mb-2">Connect it in Sources to see what changed each path, and why.</p>
                 <BrainButton size="sm" variant="outline" onClick={onOpenSources}>Open Sources</BrainButton>
               </BrainEmpty>
             ) : pages.items.length === 0 ? (

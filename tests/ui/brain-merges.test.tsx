@@ -26,9 +26,9 @@ const HAMED: BrainMergeSuggestionView = {
 const DEE = person("ent_d", "email:d@x.co", "Dee");
 const CHAINED = { ...HAMED, suggestionId: "sug_2", entity: HAMED.alias, alias: DEE, aliasKey: "person:email:d@x.co" };
 
-function openPeople(overrides: Parameters<typeof fakeBrainApi>[0]) {
+function openPeople(overrides: Parameters<typeof fakeBrainApi>[0], onOpenSources = vi.fn()) {
   const api = fakeBrainApi(overrides);
-  render(<BrainTimeline api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
+  render(<BrainTimeline api={api} projectId={PROJECT} onOpenSources={onOpenSources} />);
   expect(screen.queryByRole("region", { name: "Possible duplicates" })).toBeNull();
   fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "person" } });
   return api;
@@ -126,12 +126,18 @@ describe("Possible duplicates", () => {
   });
 
   it("shows an empty list and a failed load, and words every reason", async () => {
+    const onOpenSources = vi.fn();
     openPeople({
       mergeSuggestions: vi.fn()
         .mockResolvedValueOnce({ items: [], nextCursor: null, truncated: false })
         .mockRejectedValueOnce(apiError("notFound")),
-    });
-    expect(await screen.findByText("No likely duplicates.")).toBeTruthy();
+    }, onOpenSources);
+    // Icon, headline, what the list is for, and what to do next.
+    const empty = (await screen.findByText("No likely duplicates.")).parentElement!.parentElement!;
+    expect(empty.querySelector("svg")).toBeTruthy();
+    expect(within(empty).getByText(/Names that may be one person show here/)).toBeTruthy();
+    fireEvent.click(within(empty).getByRole("button", { name: "Open Sources" }));
+    expect(onOpenSources).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "file" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "person" } });
     expect(await screen.findByRole("alert")).toHaveTextContent("This part of the Company Brain is not turned on yet.");
@@ -171,6 +177,7 @@ describe("Finding people and following", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "file" } });
     show("a.ts");
     expect(await screen.findByText("Check the name, or sync its sources in Sources.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open Sources" })).toBeTruthy();
     show("a.ts");
     await waitFor(() => expect(api.timeline).toHaveBeenCalledTimes(2));
   });
