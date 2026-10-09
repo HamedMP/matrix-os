@@ -4,7 +4,7 @@ import { join, basename } from "node:path";
 import type { SystemIconMetadata } from "./icon-metadata.js";
 const MAX_ICON_BYTES = 2 * 1024 * 1024;
 async function boundedBytes(path: string | URL): Promise<Buffer> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
     if (!info.isFile() || info.size > MAX_ICON_BYTES) throw new Error("Icon unavailable");
