@@ -9,24 +9,26 @@ import { createHermesAppCompletion } from '../../packages/gateway/src/app-ai/her
 import { createRuntimeAppAiRoutes } from '../../packages/gateway/src/app-ai/runtime.js';
 vi.mock('../../packages/gateway/src/request-principal.js', () => ({ requireRequestPrincipal: () => ({ userId: 'owner' }) }));
 let home: string;
-const route = { harnessId: 'hermes_work', accountId: null, accessSourceId: 'harness_hermes_openai-api', modelId: 'openai-api:fixture' };
-const runtimeSource = () => Promise.resolve(normalizeHermesRuntimeSnapshot({ status: { gateway_running: true }, observedAt: Date.now(), options: { provider: 'openai-api', model: 'fixture', providers: [{ slug: 'openai-api', authenticated: true, is_user_defined: false, auth_type: 'api_key', models: ['fixture', 'other'] }] } }));
+const MODEL = 'gpt-4o-mini-2024-07-18';
+const modelMetadata = (url: unknown) => Response.json({ object: 'model', id: decodeURIComponent(String(url).split('/models/')[1]!), owned_by: 'openai' });
+const route = { harnessId: 'hermes_work', accountId: null, accessSourceId: 'harness_hermes_openai-api', modelId: `openai-api:${MODEL}` };
+const runtimeSource = () => Promise.resolve(normalizeHermesRuntimeSnapshot({ status: { gateway_running: true }, observedAt: Date.now(), options: { provider: 'openai-api', model: MODEL, providers: [{ slug: 'openai-api', authenticated: true, is_user_defined: false, auth_type: 'api_key', models: [MODEL, 'other'] }] } }));
 async function snapshots() {
   const nativeHarnessCatalog = projectHermesNativeCatalog(await runtimeSource(), new Date(Date.now())); const profile = nativeHarnessCatalog.profiles[0]!;
   const settings = { harnesses: [{ ...route, id: route.harnessId, harness: 'hermes', displayName: 'Hermes', enabled: true, configuredEnabled: true, installState: 'installed', selectedAccountId: null, accessSourceId: route.accessSourceId, route: { kind: 'configurable', providerId: 'openai-api', modelId: route.modelId } }], accounts: [], modelProviders: [{ id: 'openai-api', displayName: 'OpenAI', models: profile.models }], accessSources: [{ id: route.accessSourceId, kind: 'harness_profile', harness: 'hermes', providerId: 'openai-api', accountId: null, fundingKind: 'harness_owned', eligibleModelIds: profile.models.map(model => model.id), localObservation: profile.localObservation, readiness: { state: 'unknown', checkedAt: null, staleAfter: null } }] } as ProviderSettingsSnapshot;
   const canonical = { nativeHarnessCatalog, accessSources: [], instances: [], models: [], active: { providerInstanceId: null, accessSourceId: null, modelId: null } } as AiProviderSnapshotV3;
   return { settings, canonical };
 }
-beforeEach(async () => { home = await mkdtemp(join(tmpdir(), 'app-hermes-runtime-')); await mkdir(join(home, '.hermes')); await mkdir(join(home, 'system')); await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: ['notes'] })); await writeFile(join(home, '.hermes/config.yaml'), 'model:\n  provider: openai-api\n  default: fixture\n'); await writeFile(join(home, '.hermes/.env'), 'OPENAI_API_KEY=fixture-key'); });
+beforeEach(async () => { home = await mkdtemp(join(tmpdir(), 'app-hermes-runtime-')); await mkdir(join(home, '.hermes')); await mkdir(join(home, 'system')); await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: ['notes'] })); await writeFile(join(home, '.hermes/config.yaml'), 'model:\n  provider: openai-api\n  default: gpt-4o-mini-2024-07-18\n'); await writeFile(join(home, '.hermes/.env'), 'OPENAI_API_KEY=fixture-key'); });
 afterEach(async () => { await rm(home, { recursive: true, force: true }); await rm(join(tmpdir(), '.matrix-private', basename(home)), { recursive: true, force: true }); });
-function mounted(completion?: ReturnType<typeof createHermesAppCompletion>, update?: (value: Awaited<ReturnType<typeof snapshots>>) => void) {
-  return createRuntimeAppAiRoutes({ homePath: home, ownerIds: ['owner'], hermesCompletion: completion, providerSettingsReader: { getSnapshot: async () => { const value = await snapshots(); update?.(value); return value.settings; } }, providerSnapshotReader: { getSnapshot: async () => { const value = await snapshots(); update?.(value); return value.canonical; } } });
+function mounted(completion?: ReturnType<typeof createHermesAppCompletion>, update?: (value: Awaited<ReturnType<typeof snapshots>>) => void, fundedCredentialProvider?: Parameters<typeof createRuntimeAppAiRoutes>[0]['fundedCredentialProvider']) {
+  return createRuntimeAppAiRoutes({ homePath: home, ownerIds: ['owner'], hermesCompletion: completion, fundedCredentialProvider, providerSettingsReader: { getSnapshot: async () => { const value = await snapshots(); update?.(value); return value.settings; } }, providerSnapshotReader: { getSnapshot: async () => { const value = await snapshots(); update?.(value); return value.canonical; } } });
 }
 it('discovers exact Hermes native routes and executes actual HTTP POST without native agent fallback', async () => {
-  const fetchImpl = vi.fn(async () => Response.json({ model: 'fixture', status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Hermes text' }] }] }));
+  const fetchImpl = vi.fn(async (url, request) => request?.method === 'GET' ? modelMetadata(url) : Response.json({ model: MODEL, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Hermes text' }] }] }));
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource, fetchImpl }); const api = mounted(completion);
   const discovery = await (await api.request('/routes?app=notes')).json(); expect(discovery.routes).toContainEqual(expect.objectContaining({ ...route, availability: 'available' }));
-  const result = await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', route }) }); expect(result.status).toBe(200); expect(await result.json()).toEqual({ text: 'Hermes text' }); expect(fetchImpl).toHaveBeenCalledOnce(); await completion.close();
+  const result = await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', route }) }); expect(result.status).toBe(200); expect(await result.json()).toEqual({ text: 'Hermes text' }); expect(fetchImpl.mock.calls.filter(([, request]) => request?.method === 'POST')).toHaveLength(1); await completion.close();
 });
 it('does not advertise Hermes without the composed safe executor or exact canonical native catalog', async () => {
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource });
@@ -37,23 +39,58 @@ it('does not advertise Hermes without the composed safe executor or exact canoni
   await completion.close();
 });
 it('withholds completed text when a durable Settings entry is removed while the native lease is held', async () => {
-  const fetchImpl = vi.fn(async () => { await mkdir(join(home, 'system/ai-providers')); await writeFile(join(home, 'system/ai-providers/settings.json'), JSON.stringify({ schemaVersion: 1, revision: 2, harnesses: [], accountProfiles: [], gatewayPolicy: null, receipts: [] })); return Response.json({ model: 'fixture', status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'withhold' }] }] }); });
+  const fetchImpl = vi.fn(async (url, request) => { if (request?.method === 'GET') return modelMetadata(url); await mkdir(join(home, 'system/ai-providers')); await writeFile(join(home, 'system/ai-providers/settings.json'), JSON.stringify({ schemaVersion: 1, revision: 2, harnesses: [], accountProfiles: [], gatewayPolicy: null, receipts: [] })); return Response.json({ model: MODEL, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'withhold' }] }] }); });
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource, fetchImpl }); const api = mounted(completion);
-  expect((await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', route }) })).status).toBe(503); expect(fetchImpl).toHaveBeenCalledOnce(); await completion.close();
+  expect((await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', route }) })).status).toBe(503); expect(fetchImpl.mock.calls.filter(([, request]) => request?.method === 'POST')).toHaveLength(1); await completion.close();
 });
-it('batches discovery by physical Hermes profile/provider and filters fixed grants before probes', async () => {
-  const probe = vi.fn(async () => true); const completion = { probe, generate: vi.fn(), close: vi.fn() };
+it('reuses exact Hermes profile/provider/model discovery across saved entries and filters fixed grants before probes', async () => {
+  const probe = vi.fn(async (_input: Parameters<ReturnType<typeof createHermesAppCompletion>['probe']>[0]) => true); const completion = { probe, generate: vi.fn(), close: vi.fn() };
   const api = mounted(completion as never, value => { value.settings.harnesses.push({ ...value.settings.harnesses[0]!, id: 'hermes_second' }); });
-  expect((await api.request('/routes?app=notes')).status).toBe(200); expect(probe).toHaveBeenCalledOnce();
+  expect((await api.request('/routes?app=notes')).status).toBe(200); expect(probe).toHaveBeenCalledTimes(2);
+  expect(probe.mock.calls.map(([input])=>input.harness.route.modelId)).toEqual([route.modelId,'openai-api:other']);
   await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: ['notes'], route: { ...route, harnessId: 'different' } })); probe.mockClear(); expect((await api.request('/routes?app=notes')).status).toBe(200); expect(probe).not.toHaveBeenCalled();
 });
 it('renews Hermes snapshots when an unrelated Pi probe used the original five-second receipt window', async () => {
   let current=Date.now();const clock=vi.spyOn(Date,'now').mockImplementation(()=>current);
   try {
-    const completion=createHermesAppCompletion({homePath:home,runtimeSource});
+    const completion=createHermesAppCompletion({homePath:home,runtimeSource,fetchImpl:async(url,request)=>{if(request?.method!=='GET')throw Error('Unexpected inference');return modelMetadata(url);}});
     const pi={id:'pi_first',harness:'pi',displayName:'Pi',enabled:true,installState:'installed',authState:'authenticated',connectivity:'online',selectedAccountId:null,accessSourceId:'pi_openai',route:{kind:'configurable',providerId:'openai',modelId:'openai:fixture'}};
     const reader=async()=>{const value=await snapshots();value.settings.harnesses.unshift(pi as never);value.settings.accessSources.push({id:'pi_openai',kind:'harness_profile',harness:'pi',providerId:'openai',accountId:null,eligibleModelIds:['openai:fixture'],readiness:{state:'ready',staleAfter:null}} as never);value.settings.modelProviders.push({id:'openai',models:[{id:'openai:fixture',enabled:true}]} as never);return value.settings;};
     const api=createRuntimeAppAiRoutes({homePath:home,ownerIds:['owner'],hermesCompletion:completion,providerSettingsReader:{getSnapshot:reader},providerSnapshotReader:{getSnapshot:async()=>(await snapshots()).canonical},piSdkCompletion:{probe:async()=>{current+=6000;return['openai:fixture'];},generate:vi.fn(),close:vi.fn()} as never});
     const discovery=await(await api.request('/routes?app=notes')).json();expect(discovery.routes).toContainEqual(expect.objectContaining({...route,availability:'available'}));await completion.close();
   }finally{clock.mockRestore();}
+});
+
+it('does not advertise an unresolved alias merely because another model shares its proved Hermes profile', async () => {
+  const fetchImpl = vi.fn(async (url, request) => { if(request?.method !== 'GET') throw Error('Unexpected inference'); return modelMetadata(url); });
+  const completion = createHermesAppCompletion({homePath: home, runtimeSource, fetchImpl});
+  const discovery = await (await mounted(completion).request('/routes?app=notes')).json();
+  expect(discovery.routes).toContainEqual(expect.objectContaining({...route, availability:'available'}));
+  expect(discovery.routes).toContainEqual(expect.objectContaining({...route, modelId:'openai-api:other', availability:'unavailable'}));
+  await completion.close();
+});
+it('preserves the exact V3 active Hermes model beyond 128 preceding eligible models and reuses its proof across entries', async () => {
+  const models = Array.from({length:129},(_,i)=>({id:`openai-api:synthetic-${i}-2026-10-09`,displayName:`Synthetic ${i}`,enabled:true}));
+  const selected = {...route,harnessId:'hermes_active',modelId:models[128]!.id};
+  const probe = vi.fn(async (_input: Parameters<ReturnType<typeof createHermesAppCompletion>['probe']>[0])=>true);
+  const api = mounted({probe,generate:vi.fn(),close:vi.fn()} as never,value=>{
+    const first=value.settings.harnesses[0]!;first.route.modelId=models[0]!.id;
+    value.settings.harnesses.push({...first,id:selected.harnessId,route:{...first.route,modelId:selected.modelId}});
+    value.settings.accessSources[0]!.eligibleModelIds=models.map(m=>m.id);value.settings.modelProviders[0]!.models=models as never;
+    value.canonical.nativeHarnessCatalog!.profiles[0]!.models=models;
+    value.canonical.instances=[{id:'active-hermes',driverId:'hermes',accountId:null}] as never;
+    value.canonical.active={providerInstanceId:'active-hermes',accessSourceId:route.accessSourceId,modelId:selected.modelId};
+  });
+  const discovery=await(await api.request('/routes?app=notes')).json();
+  expect(discovery.routes).toHaveLength(128);expect(discovery.defaultRoute).toEqual(selected);
+  expect(discovery.routes).toContainEqual(expect.objectContaining({...selected,availability:'available'}));expect(probe).toHaveBeenCalledTimes(129);
+});
+it('preserves unrelated managed route readiness when Hermes model proof fails', async()=>{
+  const api=mounted({probe:vi.fn(async()=>false),generate:vi.fn(),close:vi.fn()} as never,value=>{
+    value.canonical.accessSources=[{id:'matrix_cloudflare',state:'ready',checkedAt:new Date().toISOString(),staleAfter:new Date(Date.now()+30000).toISOString(),eligibleModelIds:['managed-text']}] as never;
+    value.canonical.models=[{id:'managed-text',status:'ready',eligibleAccessSourceIds:['matrix_cloudflare']}] as never;
+  },{enabled:true} as never);
+  const discovery=await(await api.request('/routes?app=notes')).json();
+  expect(discovery.routes.filter((entry:{harnessId:string})=>entry.harnessId.startsWith('hermes')).every((entry:{availability:string})=>entry.availability==='unavailable')).toBe(true);
+  expect(discovery.routes).toContainEqual(expect.objectContaining({harnessId:'matrix_ai',modelId:'managed-text',availability:'available',reason:null}));
 });

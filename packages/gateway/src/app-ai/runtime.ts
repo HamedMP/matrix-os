@@ -81,7 +81,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         if (canonical?.instances?.some(instance=>instance.id===CHATGPT_PLAN_SOURCE)) routes.routes.push(...projectChatGptPlanAppRoutes(canonical, Boolean(planSource && options.ownerIds.includes(planSource.ownerId))));
         const managedReadiness=routes.routes.filter(entry=>entry.harnessId==="matrix_ai");
         if (policy.route) routes.routes = routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!));
-        const hermesChecks: Array<{providerId:string;available:boolean}> = [];
+        const hermesChecks: Array<{providerId:string;accessSourceId:string;modelId:string;available:boolean}> = [];
         const sdkRoutes: AppAiRouteSelection[] = [];
         const sdkChecks: Array<{providerId:string;models:string[]}> = [];
         for (const route of routes.routes) {
@@ -107,8 +107,12 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             }
             if (harness?.harness === "hermes") {
                 const hermesProviderId=harness.route.providerId;
-                let check=hermesChecks.find(entry=>entry.providerId===hermesProviderId);
+                let check=hermesChecks.find(entry=>entry.providerId===hermesProviderId && entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId);
                 if(!check){
+                    // Each alias needs its own proof. The projected authorization
+                    // catalog bounds this array (128 harnesses × 256 models), and
+                    // the caller deadline bounds lookups. Public pagination must
+                    // not suppress a later exact owner-selected model.
                     const providerId=harness.route.providerId;
                     let available=false;
                     try {
@@ -122,7 +126,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                         }
                         available=Boolean(options.hermesCompletion && canonical && source && harness && await options.hermesCompletion.probe({harness,source,canonical,signal}));
                     } catch(error){signal.throwIfAborted();console.warn("[app-ai] Hermes discovery unavailable",error instanceof Error?error.name:"UnknownError");}
-                    check={providerId,available};hermesChecks.push(check); signal.throwIfAborted();
+                    check={providerId,accessSourceId:route.accessSourceId,modelId:route.modelId,available};hermesChecks.push(check); signal.throwIfAborted();
                 }
                 if(!check.available){route.availability="unavailable";route.readiness="unavailable";route.reason="completion_unavailable";}
                 continue;
