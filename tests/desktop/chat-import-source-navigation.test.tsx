@@ -14,6 +14,34 @@ const items: CanonicalChatRecord[] = ["plain", "claude", "codex"].map((name) => 
 }));
 afterEach(() => { cleanup(); localStorage.clear(); useConnection.setState(useConnection.getInitialState(), true); });
 describe("import origin in ordinary Chat navigation", () => {
+  it.each([false, true])("keeps Web source logos before the title and unread status after it (mobile=%s)", (mobile) => {
+    for (const unread of [false, true]) {
+      const record = items[1]!;
+      render(<RenameableConversationRow conversation={{ id: record.chat.id, title: record.chat.title, preview: "", messageCount: 1, updatedAt: 0, canonicalRecord: record,
+        readState: { unread, markedUnread: unread, version: 1, readThroughSeq: 0, latestIncomingSeq: 1 } }} active={false} mobile={mobile} editing={false} renamePending={false} onSelect={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()}/>);
+      const row = screen.getByRole("button", { name: "claude" });
+      const icon = screen.getByRole("img", { name: "Imported from Claude Code" });
+      expect(row.firstElementChild).toBe(icon);
+      if (unread) {
+        expect(row.lastElementChild).toBe(screen.getByLabelText("Unread claude"));
+      } else {
+        expect(screen.queryByLabelText("Unread claude")).toBeNull();
+      }
+      cleanup();
+    }
+  });
+  it("keeps standalone Electron index logos aligned for read and unread Chats", () => {
+    const records = items.slice(1).map((record, index) => ({ ...record,
+      readState: { unread: index === 1, markedUnread: index === 1, version: 1, readThroughSeq: 0, latestIncomingSeq: 1 },
+    }));
+    render(<CanonicalChatIndex items={records} activeChatId={null} query="" status="ready" error={null} onQueryChange={vi.fn()} onSearch={vi.fn()} onSelect={vi.fn()} onDelete={vi.fn()} onNewChat={vi.fn()}/>);
+    for (const title of ["claude", "codex"]) {
+      const row = screen.getByRole("button", { name: title });
+      expect(row.firstElementChild?.querySelector("img")).toBeTruthy();
+    }
+    expect(screen.getByRole("button", { name: "codex" }).lastElementChild).toBe(screen.getByLabelText("Unread codex"));
+    expect(screen.queryByLabelText("Unread claude")).toBeNull();
+  });
   it("filters actual Electron WorkRail history and shows provenance alongside existing actions", async () => {
     useConnection.setState({ status: "signed-in", userId: "owner", platformHost: "https://platform.test", runtimeSlot: "primary" });
     const client = { list: vi.fn(async () => ({ items })), agents: { list: vi.fn(async () => ({ enabled: true, agents: [] })), bots: { directBot: vi.fn(async () => null) } } } as unknown as CanonicalChatClient;

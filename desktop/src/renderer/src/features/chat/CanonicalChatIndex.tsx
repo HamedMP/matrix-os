@@ -140,9 +140,9 @@ export function CanonicalChatIndex({
                   style={{ background: record.chat.id === activeChatId ? "var(--bg-selected)" : "transparent" }}
                   onClick={() => onSelect(record.chat.id)}
                 >
-                  {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="mr-2 size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
                   {record.importSource ? <span className="mr-2 flex"><ChatImportSourceIcon harness={record.importSource.harness}/></span> : null}
                   <span className="min-w-0 flex-1 truncate text-[14px] leading-[20px]" style={{ color: "var(--text-primary)" }}>{record.chat.title}</span>
+                  {isChatUnread(record) ? <span aria-label={`Unread ${record.chat.title}`} className="ml-2 size-2 shrink-0 rounded-full bg-[var(--accent)]" /> : null}
                 </button>
                 <time className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[12px] leading-[16px] tracking-[0.12px] transition-opacity group-hover/chat:opacity-0" style={{ color: "var(--text-tertiary)" }} dateTime={record.chat.updatedAt}>
                   {activityLabel(record.chat.updatedAt)}
