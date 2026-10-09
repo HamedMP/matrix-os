@@ -493,7 +493,7 @@ tables or weaken constraints to make an older preview run. Test both fresh
 schemas and upgraded schemas without a column default; generic health checks
 do not exercise this write contract.
 
-Land this work in independently reviewable Graphite layers, each with tests
+Land this work in independently reviewable GitHub native stack layers, each with tests
 first, applicable build/pattern gates, current visual evidence, and Greptile
 5/5:
 

@@ -47,7 +47,7 @@ sections, schemas, or response builders can move into focused modules.
 
 ## Stacked PR Guidance
 
-Use Graphite for large refactors. Good stack layers are:
+Use GitHub native stacks for large refactors. Good stack layers are:
 
 1. Documentation and guardrails.
 2. Pure helper extraction with focused tests.
