@@ -131,7 +131,7 @@ border: 1px solid rgba(214, 211, 200, 0.35);
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
+Generated launcher icons use the gateway/kernel icon style. The owner's iconStyle in `system/desktop.json` takes precedence. Otherwise use the approved Matrix front-facing matte clay family: one recognisable puffy object on a softly tinted brand-colour tile, a contrasting object accent, top-left lighting, gentle contact shadow and consistent scale. Keep each app's colours distinct. No gloss, glass, metal, text, logos or watermarks. Preserve supplied Figma assets unchanged. The shell owns the final corner radius; do not bake in an outer frame. See `../app-builder/references/clay-icons.md` for the full recipe.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 

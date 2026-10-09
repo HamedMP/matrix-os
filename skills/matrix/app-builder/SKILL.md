@@ -124,17 +124,14 @@ icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
 2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
-   light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
-   bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
-   highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
-   represents the app. Keep the icon family aligned with Matrix OS forest, cream, ember, and deep accents.
-   Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
-   backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
-   radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
-   `~/system/icons/`.
+   one puffy, front-facing toy-like clay object on a light brand tile of a contrasting hue.
+   Read [Clay icon recipe](references/clay-icons.md) for the exact palette, lighting, dimensions,
+   prompt template and semantic mappings. Keep a distinct object for each game's identity.
+   Preserve user-provided icons and icon styles when refining an existing app.
 
-For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. SVGs are acceptable
-only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
+For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. Exact supplied
+Figma clay SVGs may be packaged directly or rasterized for PNG-compatible launcher paths; keep
+their geometry and colours unchanged. Do not substitute a recreated outline for supplied artwork.
 
 ## Data (Postgres via the MatrixOS bridge)
 
@@ -200,7 +197,7 @@ When editing bundled default apps in this repo:
 - Reuse the shared default-app Vite build path; do not add stale per-app package/runtime fields unless the
   app truly needs them.
 - Run `node scripts/build-default-apps.mjs home/apps` before host-bundle work when default app source changed.
-- Prefer the shared `game-center` icon for games unless a concrete shipped icon exists.
+- Give games their own shipped semantic icon; the controller belongs to Game Center only.
 - Verify app icon slugs against `home/system/icons/<slug>.svg` or `.png`; never rely on runtime icon generation.
 
 ## Scaffold Commands

@@ -22,3 +22,11 @@ export function galleryArtwork(path: string): string | undefined {
   const asset = images[`./assets/${path}`];
   return asset === undefined ? undefined : resolveGalleryAsset(asset, import.meta.url);
 }
+
+/** Keep each app's semantic identity when newer artwork cannot be loaded. */
+export function galleryIdentitySources(app: { id: string; icon: string }): string[] {
+  return [`clay/${app.id}.svg`, `icons/${app.id}.png`, `icons/${app.icon}.svg`]
+    .map(galleryArtwork)
+    .filter((asset): asset is string => asset !== undefined)
+    .filter((asset, index, assets) => assets.indexOf(asset) === index);
+}

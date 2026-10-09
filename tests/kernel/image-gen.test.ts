@@ -316,10 +316,12 @@ describe("generateIconBatch", () => {
 });
 
 describe("DEFAULT_ICON_STYLE", () => {
-  it("keeps generated app icons aligned with the Matrix shell and landing palette", () => {
-    expect(DEFAULT_ICON_STYLE).toContain("warm off-white or pale pastel background");
-    expect(DEFAULT_ICON_STYLE).toContain("forest");
-    expect(DEFAULT_ICON_STYLE).toContain("ember");
+  it("keeps generated app icons aligned with the Figma clay family", () => {
+    expect(DEFAULT_ICON_STYLE).toContain("one puffy, inflated, toy-like object");
+    expect(DEFAULT_ICON_STYLE).toContain("Front view");
+    expect(DEFAULT_ICON_STYLE).toContain("green, teal, gold, blue, or neutral");
+    expect(DEFAULT_ICON_STYLE).toContain("70%");
+    expect(DEFAULT_ICON_STYLE).toContain("no metal, glass, neon, glow, red or coral");
     expect(DEFAULT_ICON_STYLE).toContain("Matrix shell owns the final corner radius");
   });
 });
