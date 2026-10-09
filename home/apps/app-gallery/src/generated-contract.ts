@@ -11,7 +11,7 @@ export const GalleryAppSchema = z.strictObject({
   id: slug, name: text(80), collection: z.enum(["personal", "business"]), category: text(50),
   description: text(240), tagline: text(100), icon: slug, accent: z.enum(["forest", "blue", "amber", "rose", "violet", "teal"]),
   view: z.enum(["finance", "travel", "agenda", "board", "library", "notes", "habits", "focus"]),
-  entity: text(50), fields: z.array(GalleryFieldSchema).min(1).max(12),
+  entity: text(50), fields: z.array(GalleryFieldSchema).min(1).max(16),
   services: z.array(z.strictObject({ id: z.string().regex(/^[a-z][a-z0-9_]{0,47}$/), name: text(60), actions: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(8), optional: z.boolean().optional() })).max(4),
   importGoal: text(1200), highlights: z.array(text(100)).min(1).max(4),
 }).superRefine((app, ctx) => {

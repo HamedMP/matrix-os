@@ -211,8 +211,8 @@ export default function App() {
             : loading ? <p className="installed-loading" role="status">Loading your apps…</p>
             : loadError ? <div className="installed-empty"><Icon name="grid" /><div><h3>Your apps are unavailable</h3><p>Refresh Gallery to try again.</p></div></div>
             : <div className="installed-empty"><Icon name="grid" /><div><h3>No apps yet</h3><p>Get an app from Gallery to make it yours.</p><button type="button" onClick={exploreGallery}>Explore Gallery</button></div></div>}
-          {installed.filter(app => actionErrors[app.id] && !visible.some(item => item.id === app.id)).map(app =>
-            <p className="card-error" role="alert" key={app.id}>{actionErrors[app.id]}</p>)}
+          {apps.filter(app => actionErrors[app.id] && !visible.some(item => item.id === app.id)).map(app =>
+            <div className="card-error" role="alert" key={app.id}><p>{app.name}: {actionErrors[app.id]}</p><button disabled={pending !== null} onClick={() => void action(app)}>Retry {app.name}</button></div>)}
         </section>
         <section className="catalog-section" aria-labelledby="catalog-title">
           <div className="section-heading"><h2 id="catalog-title" ref={catalogTitle} tabIndex={-1}>Gallery</h2>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import Gallery from '../../home/apps/app-gallery/src/App';
 import catalog from '../../home/system/app-gallery.json';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); delete window.MatrixOS; });
@@ -28,7 +28,7 @@ it('announces a failed installed-strip launch even when search hides its card', 
   await screen.findByRole('button',{name:`Launch ${app.name}`});
   fireEvent.change(screen.getByRole('textbox',{name:'Search apps'}),{target:{value:'not present'}});
   fireEvent.click(screen.getByRole('button',{name:`Launch ${app.name}`}));
-  expect(await screen.findByRole('alert')).toHaveProperty('textContent','The app could not open. Try again.');
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent',`${app.name}: The app could not open. Try again.Retry ${app.name}`);
 });
 
 it.each(['Explore', 'Details for'])('returns focus to the exact %s trigger after details', async (prefix) => {
@@ -82,4 +82,16 @@ it('distinguishes unavailable installed inventory from a successfully empty coll
   fireEvent.click(screen.getByRole('button',{name:'Try again'}));
   expect(await screen.findByRole('heading',{name:'No apps yet'})).toBeTruthy();
   expect(screen.queryByRole('heading',{name:'Your apps are unavailable'})).toBeNull();
+});
+
+it('announces a named install failure after collection switches',async()=>{
+ const app=catalog.apps[0];let reject!: (e:Error)=>void;
+ const pending=new Promise((_yes,no)=>{reject=no;});
+ window.MatrixOS={integrations:async()=>[],gatewayFetch:async(_url,init)=>init?.method==='POST'?pending:{version:1,apps:[{...app,installed:false}]}};
+ render(<Gallery/>);
+ const trigger=await screen.findByRole('button',{name:`Explore ${app.name}`});
+ fireEvent.click(within(trigger.closest('article')!).getByRole('button',{name:'Get',exact:true}));
+ fireEvent.click(screen.getByRole('tab',{name:'Business'}));
+ reject(new Error('Offline'));
+ expect((await screen.findByRole('alert')).textContent).toContain(app.name);
 });
