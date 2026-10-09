@@ -31,11 +31,12 @@ export function AppearanceControls({ value, resolvedMode, pending, error, onChan
     <section style={{ display: 'grid', gap: 12 }} aria-label="Themes">
       <strong>Theme</strong>
       <div role="radiogroup" aria-label="Theme" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-        {choices.map((theme, index) => <button type="button" key={theme.id} role="radio" aria-label={`Use ${theme.name} theme`} aria-checked={theme.id === value.themeId} tabIndex={theme.id === value.themeId ? 0 : -1} disabled={pending}
+        {choices.map((theme, index) => <button type="button" key={theme.id} role="radio" aria-label={`Use ${theme.name} theme`} aria-checked={theme.id === value.themeId} tabIndex={theme.id === value.themeId ? 0 : -1} aria-disabled={!!pending}
           style={{ ...fieldStyle, padding: 8, textAlign: 'left', cursor: 'pointer', outline: theme.id === value.themeId ? `2px solid ${variant.chrome.primary}` : undefined, outlineOffset: 1 }}
           onClick={() => change({ themeId: theme.id })} onKeyDown={event => {
             if (!['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key)) return;
             event.preventDefault();
+            if (pending) return;
             const offset = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : -1;
             const next = choices[(index + offset + choices.length) % choices.length]!;
             change({ themeId: next.id });
