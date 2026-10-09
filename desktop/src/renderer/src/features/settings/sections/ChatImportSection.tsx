@@ -11,23 +11,34 @@ export default function ChatImportSection() {
     const userId = useConnection(state => state.userId);
     const native = useMemo<NativeChatImportAdapter>(() => {
         const session = { runtimeSlot, authGeneration };
-        const pause = () => { void invoke("runtime:chat-import-pause", session).catch((error: unknown) => console.warn("Chat import stop unavailable", error instanceof Error ? error.name : "UnknownError")); };
-        return { pause, async select(harness, signal) {
-                signal.throwIfAborted();
-                signal.addEventListener("abort", pause, { once: true });
+        const pause = (discardSelections = false) => { void invoke("runtime:chat-import-pause", { ...session, discardSelections }).catch((error: unknown) => console.warn("Chat import stop unavailable", error instanceof Error ? error.name : "UnknownError")); };
+        return { pause, async reserve(sourceKeys, signal) {
+                signal.throwIfAborted(); const abort=()=>pause(); signal.addEventListener("abort",abort,{once:true});
                 try {
-                    const response = await invoke("runtime:chat-import-select", { ...session, harness });
-                    signal.throwIfAborted();
-                    if (response.status === "error")
-                        throw new LocalChatImportDisplayError(response.message);
-                    return response.status === "selected" ? response : null;
-                }
-                finally {
-                    signal.removeEventListener("abort", pause);
-                }
+                    const response=await invoke("runtime:chat-import-reserve",{...session,sourceKeys});signal.throwIfAborted();
+                    if(!response.ok)throw new LocalChatImportDisplayError("Local conversations changed. Refresh the list and select them again.");
+                }finally{signal.removeEventListener("abort",abort);}
+            }, async release(selectionIds) {
+                const response=await invoke("runtime:chat-import-release",{...session,selectionIds});
+                if(!response.ok)throw new LocalChatImportDisplayError("Local conversations changed. Refresh the list and select them again.");
+            }, async discover(signal) {
+                signal.throwIfAborted(); const abort = () => pause(); signal.addEventListener("abort", abort, {once:true});
+                try {
+                    const response = await invoke("runtime:chat-import-discover", session); signal.throwIfAborted();
+                    if(response.status === "error") throw new LocalChatImportDisplayError(response.message);
+                    return response.status === "discovered" ? response : null;
+                } finally { signal.removeEventListener("abort", abort); }
+            }, async prepare(sourceKeys, signal) {
+                signal.throwIfAborted(); const abort = () => pause(); signal.addEventListener("abort", abort, {once:true});
+                try {
+                    const response = await invoke("runtime:chat-import-prepare", {...session, sourceKeys}); signal.throwIfAborted();
+                    if(response.status === "error") throw new LocalChatImportDisplayError(response.message);
+                    return response.status === "selected-many" ? response : null;
+                } finally { signal.removeEventListener("abort", abort); }
             }, async apply(selectionId, title, signal, progress) {
                 signal.throwIfAborted();
-                signal.addEventListener("abort", pause, { once: true });
+                const abort = () => pause();
+                signal.addEventListener("abort", abort, { once: true });
                 const stop = onEvent("runtime:chat-import-progress", event => { if (event.selectionId === selectionId && event.runtimeSlot === runtimeSlot && event.authGeneration === authGeneration && !signal.aborted)
                     progress(event); });
                 try {
@@ -39,7 +50,7 @@ export default function ChatImportSection() {
                 }
                 finally {
                     stop();
-                    signal.removeEventListener("abort", pause);
+                    signal.removeEventListener("abort", abort);
                 }
             } };
     }, [runtimeSlot, authGeneration, userId]);
