@@ -93,8 +93,8 @@ describe("T1440-T1445: AI skills for app building", () => {
     it("documents icon generation style inheritance", () => {
       const content = readFileSync(skillPath("design-system"), "utf-8");
       expect(content).toContain("system/desktop.json");
-      expect(content).toContain("warm off-white or pale pastel background");
-      expect(content).toContain("Matrix shell owns the final corner radius");
+      expect(content).toContain("loadIconStyle");
+      expect(content).toContain("mixed silhouettes on transparent backgrounds");
     });
 
     it("documents responsive patterns", () => {

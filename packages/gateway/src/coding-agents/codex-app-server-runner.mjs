@@ -165,7 +165,7 @@ const ToolOutputDeltaSchema = z.object({
     itemId: NativeReferenceSchema,
   }).passthrough(),
 }).passthrough();
-const MessagePhaseSchema = z.enum(["commentary", "final_answer"]);
+const MessagePhaseSchema = z.enum(["commentary", "partial_answer", "final_answer"]);
 const ToolLifecycleTypeSchema = z.enum([
   "commandExecution",
   "fileChange",

@@ -89,8 +89,7 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it("qualifies exact published Codex 0.160.1 bytes on both supported targets", () => {
-    const version = "0.160.1";
+  it("retains exact published Codex 0.160.1 byte records", () => {
     const execSchemaBytes = readFileSync(new URL(
       "../fixtures/codex-0158/exec-events.rs",
       import.meta.url,
@@ -113,17 +112,27 @@ describe("Codex provider contract checker", () => {
       "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
     );
 
+    expect(contract.verifiedVersions["0.160.1"].schemaSha256).toBe(digest(execSchemaBytes));
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"] as const) {
+      expect(appServerContract.verifiedVersions["0.160.1"].schemaSha256ByTarget[runtimeTarget])
+        .toBe(digest(appServerSchemaBytes));
+    }
+  });
+
+  it("qualifies the published 0.162.0 schema on both supported targets", () => {
+    const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0162/app-server-schema-0162.json.gz", import.meta.url,
+    )));
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    expect(digest(execSchemaBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
+    expect(digest(appServerSchemaBytes)).toBe("e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1");
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
       expect(() => verifyCodexProviderContracts({
-        version,
-        execContract: contract,
-        appServerContract,
-        execSchemaBytes,
-        appServerSchemaBytes,
-        runtimeTarget,
+        version: "0.162.0", execContract: contract, appServerContract,
+        execSchemaBytes, appServerSchemaBytes, runtimeTarget,
       })).not.toThrow();
     }
-
   });
 
   it("retains earlier qualification records and rejects an unknown Codex version", () => {
@@ -146,8 +155,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.160.1", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.160.1");
+  it("retains reviewed Codex schemas through 0.162.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.162.0");
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
@@ -174,7 +183,7 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.160.0"]).toEqual(appServerContract.verifiedVersions["0.159.3"]);
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.160.1");
+    expect(appServerContract.latestVerifiedVersion).toBe("0.162.0");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
@@ -209,9 +218,9 @@ describe("Codex provider contract checker", () => {
     });
     expect(appServerContract.requiredServerProtocolSchemaDigests).toMatchObject({
       "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-      "item/started": "7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b",
-      "item/completed": "33f9ba75a8594be59e8ad8c841c9a405df51917739cf2dd87da1a87b0f5e2b83",
-      "turn/completed": "cbba93d35c49dee9ac42aa7bca7eeeeb935e0cc89c223c31094a27660427f57f",
+      "item/started": "cf1ee0c03c5e17473745ae11c8328710721a8cf7074417b7a49e3e358046e2a3",
+      "item/completed": "68920d904d688fc3e97522fc692ee17be5b7d9eb9435975644972ef43400d4c0",
+      "turn/completed": "b2500c9932e97982d2267730d43f01ab9b93423b4b662fc6040ea776766cf728",
     });
   });
 

@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.160.1",
+  "latestVerifiedVersion": "0.162.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -131,6 +131,12 @@
         "darwin-arm64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
         "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5"
       }
+    },
+    "0.162.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1",
+        "linux-x64": "e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1"
+      }
     }
   },
   "requiredServerMethods": [
@@ -159,11 +165,11 @@
     "item/tool/requestUserInput": "f998a4ecef0e0d5dfc1bf5a093ee77663ec0b9f4dc71c41e02b8c13136f439c2",
     "item/permissions/requestApproval": "a264aef4e3b05a7725eedc504148c96d2200c35a326463d5058b4c134e3890cf",
     "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-    "item/started": "7e1fcd8e3953999660d5c80e2ba4479697645e179ce3a95555712d4f60097d6b",
-    "item/completed": "33f9ba75a8594be59e8ad8c841c9a405df51917739cf2dd87da1a87b0f5e2b83",
+    "item/started": "cf1ee0c03c5e17473745ae11c8328710721a8cf7074417b7a49e3e358046e2a3",
+    "item/completed": "68920d904d688fc3e97522fc692ee17be5b7d9eb9435975644972ef43400d4c0",
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "cbba93d35c49dee9ac42aa7bca7eeeeb935e0cc89c223c31094a27660427f57f"
+    "turn/completed": "b2500c9932e97982d2267730d43f01ab9b93423b4b662fc6040ea776766cf728"
   }
 }

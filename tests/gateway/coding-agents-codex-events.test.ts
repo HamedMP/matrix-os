@@ -22,7 +22,7 @@ describe("Codex structured event normalization", () => {
   it("gates runtime parsing against exact verified CLI versions", () => {
     expect(CODEX_VERIFIED_VERSION).toBe("0.156.1");
     expect(CODEX_EXEC_CONTRACT).toMatchObject({
-      latestVerifiedVersion: "0.160.1",
+      latestVerifiedVersion: "0.162.0",
       verifiedVersions: {
         "0.144.3": {
           schemaSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -183,7 +183,7 @@ describe("Codex structured event normalization", () => {
       status: "verified", version: "0.160.1",
     });
     expect(codexExecContractStatus("codex-cli 0.160.2")).toEqual({
-      status: "unverified_newer", version: "0.160.2",
+      status: "unverified_older", version: "0.160.2",
     });
     expect(codexExecContractStatus("codex-cli 0.143.9")).toEqual({
       status: "unverified_older",
