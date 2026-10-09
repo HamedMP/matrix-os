@@ -46,6 +46,21 @@ it('retries when platform intake fails and deletes raw mail only after durable a
   } finally { vi.unstubAllGlobals(); }
 });
 
+it.each([301,302,303,307,308])('rejects a %s redirect without forwarding credentials or removing retained email',async status=>{
+ const stored={customMetadata:{receivedAt},arrayBuffer:async()=>new TextEncoder().encode(raw).buffer};
+ const env={ATS_PLATFORM_ORIGIN:'https://api.matrix-os.com',ATS_MAIL_INGEST_SECRET:'test',ATS_RAW_MAIL:{get:vi.fn(async()=>stored),delete:vi.fn()}};
+ const job={body:{key:'pending/123.eml'},ack:vi.fn(),retry:vi.fn()};
+ const fetcher=vi.fn().mockResolvedValue(new Response(null,{status,headers:{location:'https://untrusted.example/mail'}}));
+ vi.stubGlobal('fetch',fetcher);const log=vi.spyOn(console,'error').mockImplementation(()=>{});
+ try {
+  await worker.queue({messages:[job]} as never,env as never);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][1].redirect).toBe('manual');
+  expect(job.retry).toHaveBeenCalledWith({delaySeconds:60});
+  expect(job.ack).not.toHaveBeenCalled();expect(env.ATS_RAW_MAIL.delete).not.toHaveBeenCalled();
+ }finally {vi.unstubAllGlobals();log.mockRestore();}
+});
+
 it('preserves HTML email content and every attachment type instead of omitting portfolios',async()=>{
  const value=['From: Ada <ada@example.com>','To: careers@finna.ai','List-Id: <careers.finna.ai>','Message-Id: <with-file@example.com>','Content-Type: multipart/mixed; boundary="part"','','--part','Content-Type: text/html; charset=utf-8','','<p>My <b>complete</b> answer &amp; portfolio</p>','--part','Content-Type: image/png','Content-Disposition: attachment; filename="portfolio.png"','Content-Transfer-Encoding: base64','','aW1hZ2U=','--part--'].join('\r\n');
  const mail=await normalizeGroupMail(new TextEncoder().encode(value),receivedAt);
