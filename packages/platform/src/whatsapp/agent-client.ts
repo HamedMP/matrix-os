@@ -75,7 +75,9 @@ function selectRoute(catalog: CanonicalProviderCatalog, record: CanonicalChatRec
     && instance.availability === "available" && instance.connectionState !== "unavailable"
     && instance.connectionState !== "credit_required" && instance.supports.rootChat
     && instance.workspaceRequirement !== "project_required" && instance.supports.worktrees !== "required"
-    && (binding === undefined || binding === instance.id)
+    // A fresh WhatsApp Chat uses the Matrix-owned agent. Existing owner choices
+    // and immutable provider bindings remain authoritative for their Chat.
+    && (binding === undefined ? instance.driverKind === "matrix_pi" : binding === instance.id)
   ));
   for (const instance of candidates) {
     const permissionMode = ["supervised", "read_only", "default", ...(allowFullAccess ? ["full_access"] : [])]

@@ -1,3 +1,4 @@
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { createWhatsAppAgentClient } from '../../packages/platform/src/whatsapp/agent-client.js';
 import type { createWhatsAppRoutes } from '../../packages/platform/src/whatsapp/routes.js';
@@ -39,14 +40,18 @@ beforeEach(() => {
   mocks.repository.mockReturnValue({ identity: 'repository' });
   mocks.agent.mockReturnValue({ identity: 'agent' });
   mocks.service.mockReturnValue({ start: mocks.start, shutdown: mocks.shutdown });
-  mocks.routes.mockReturnValue({ identity: 'routes' });
+  mocks.routes.mockReturnValue(new Hono());
   verifyToken.mockResolvedValue({ sub: owner });
 });
 afterEach(() => vi.useRealTimers());
 
 describe('WhatsApp startup authorization', () => {
-  it('disables absent config without constructing dependencies', () => {
-    expect(compose({})).toBeUndefined();
+  it('keeps read-only disabled settings and public handoff without constructing messaging dependencies', async () => {
+    const runtime=compose({})!;
+    expect((await runtime.routes.request('/.well-known/apple-app-site-association')).status).toBe(200);
+    expect((await runtime.routes.request('/api/whatsapp/settings')).status).toBe(401);
+    const signedIn=await runtime.routes.request('/api/whatsapp/settings',{headers:{authorization:'Bearer owner-bearer'}});
+    expect(await signedIn.json()).toEqual({connected:false,admission:'unavailable'});
     expect(mocks.repository).not.toHaveBeenCalled(); expect(mocks.machine).not.toHaveBeenCalled();
   });
   it('fails closed on partial config and missing authentication dependencies', () => {
