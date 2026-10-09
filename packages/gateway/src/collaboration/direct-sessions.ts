@@ -467,11 +467,17 @@ export class DirectSessionService {
       const member = await this.options.repository.getMember(membershipScopeId, ticket.actorId);
       if (member?.status === "revoked" || member?.status === "expired") throw denied();
       const grant = await this.options.repository.db.selectFrom("collaboration_grants")
-        .select(["scope_id", "organization_id", "audience_kind", "state", "expires_at"])
+        .select(["scope_id", "organization_id", "audience_kind", "audience_actor_id", "state", "expires_at"])
         .where("id", "=", ticket.resource.pendingGrantId).executeTakeFirst();
       if (!grant || grant.scope_id !== scope.id || grant.organization_id !== ticket.organizationId
-        || grant.audience_kind !== "organization" || grant.state !== "active"
         || (grant.expires_at !== null && new Date(grant.expires_at).getTime() <= this.now().getTime())) throw denied();
+      // An organization-wide grant is always active and pends per member. A member grant is
+      // pending until its one addressee accepts it; it stays admissible once active so a
+      // ticket signed before the platform learned of the acceptance still settles.
+      const admissible = grant.audience_kind === "organization"
+        ? grant.state === "active"
+        : grant.audience_actor_id === ticket.actorId && (grant.state === "pending" || grant.state === "active");
+      if (!admissible) throw denied();
       return { evidenceExpiresAt: evidence, membershipScopeId };
     }
     try {

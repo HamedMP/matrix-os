@@ -22,6 +22,7 @@ import {
 import type { OnboardingGoalId } from "./activation-contracts.js";
 import { stepsForGoals, type ReadinessService } from "./readiness-service.js";
 import { createProfileBuilder } from "./keyword-detector.js";
+import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 
 export interface OnboardingDeps {
   homePath: string;
@@ -30,6 +31,7 @@ export interface OnboardingDeps {
   geminiModel: string;
   readinessService?: Pick<ReadinessService, "getReadiness" | "selectGoals">;
   ownerId?: string;
+  nativeProviderProfileGuard?: NativeProviderProfileGuard;
   /**
    * Optional failure telemetry sink invoked when onboarding errors (stage
    * timeouts, upstream AI failures, persistence failures). `reasonKind` is a
@@ -398,7 +400,7 @@ export function createOnboardingHandler(deps: OnboardingDeps) {
           send({ type: "api_key_result", valid: false, error: liveResult.error });
           break;
         }
-        await storeApiKey(deps.homePath, msg.apiKey);
+        await storeApiKey(deps.homePath, msg.apiKey, deps.nativeProviderProfileGuard);
         send({ type: "api_key_result", valid: true });
         sm.transition("done");
         await writeComplete();

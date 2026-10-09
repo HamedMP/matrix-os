@@ -62,6 +62,11 @@ describe("drawer apps screen", () => {
     });
   });
 
+  it("names the supported presentations for apps needing workspace capabilities", () => {
+    render(<AppsScreen />);
+    expect(screen.getByText("Apps that use workspace data or connected accounts may not work here yet. Open those apps on Web Canvas, Web Desktop or Electron Desktop.")).toBeTruthy();
+  });
+
   it("filters installed apps by name", () => {
     render(<AppsScreen />);
 

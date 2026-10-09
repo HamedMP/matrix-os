@@ -359,10 +359,10 @@ test.describe("Visual regression", () => {
     );
 
     await page.getByRole("button", { name: "Settings", exact: true }).dblclick();
-    await page.getByRole("button", { name: "Services" }).click();
-    await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+    await page.getByRole("button", { name: "Connect Apps" }).click();
+    await expect(page.getByRole("heading", { name: "Connect Apps" })).toBeVisible();
     await expect(page.getByText("X", { exact: true }).last()).toBeVisible();
-    const xLogo = page.getByRole("img", { name: "X" });
+    const xLogo = page.getByTestId("integration-card-twitter").locator("img");
     await expect(xLogo).toBeVisible();
     await expect(xLogo).toHaveAttribute("src", "/integration-logos/x.svg");
     await page.mouse.move(720, 450);

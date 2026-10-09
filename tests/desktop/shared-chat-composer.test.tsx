@@ -231,30 +231,24 @@ function Harness({
 describe("SharedChatComposer", () => {
   afterEach(cleanup);
 
-  it("previews Markdown without changing the submitted source", async () => {
+  it("keeps Markdown source editable and submits it without a Preview or Edit toggle", () => {
     const onSubmit = vi.fn();
     const markdown = "**Important**: read [the guide](https://example.com/guide).";
     render(<Harness initialValue={markdown} onSubmit={onSubmit} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
-    const preview = screen.getByRole("region", { name: "Markdown preview" });
-    expect(preview.querySelector("strong")?.textContent).toBe("Important");
-    expect(preview.querySelector("a")?.textContent).toBe("the guide");
+    expect(screen.queryByRole("button", { name: "Preview Markdown" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit Markdown" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Markdown preview" })).toBeNull();
+    expect(screen.getByLabelText("Message chat").textContent).toBe(markdown);
+    expect(screen.getByRole("button", {name:"Attach files"})).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(onSubmit.mock.calls[0]?.[0].text).toBe(markdown);
-    await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe(markdown));
-    expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy();
   });
 
-  it("returns to Edit when the selected chat draft changes", async () => {
+  it("retains the editable selected Chat draft when its scope changes", async () => {
     const { rerender } = render(<Harness controlledValue="**First chat**" draftScopeKey="chat-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Preview Markdown" }));
-    expect(screen.getByRole("region", { name: "Markdown preview" })).toBeTruthy();
-
     rerender(<Harness controlledValue="**Second chat**" draftScopeKey="chat-2" />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Preview Markdown" })).toBeTruthy());
-    expect(screen.queryByRole("region", { name: "Markdown preview" })).toBeNull();
-    expect(screen.getByLabelText("Message chat").textContent).toBe("**Second chat**");
+    await waitFor(() => expect(screen.getByLabelText("Message chat").textContent).toBe("**Second chat**"));
+    expect(screen.queryByRole("button", { name: "Preview Markdown" })).toBeNull();
   });
 
   it("renders the selected model and capability-backed controls in the Figma composer", () => {
@@ -349,11 +343,11 @@ describe("SharedChatComposer", () => {
 
     const attachmentButton = screen.getByRole("button", { name: "Attach files" });
     expect(attachmentButton.getAttribute("aria-haspopup")).toBeNull();
-    expect(attachmentButton.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    expect(attachmentButton.querySelector('[data-slot="attachment-plus-icon"]')).toBeTruthy();
     fireEvent.click(attachmentButton);
 
     expect(onAttach).toHaveBeenCalledOnce();
-    expect(container.querySelector('[data-slot="attachment-paperclip-icon"]')).toBeTruthy();
+    expect(container.querySelector('[data-slot="attachment-plus-icon"]')).toBeTruthy();
     expect(screen.queryByRole("listbox", { name: "Add" })).toBeNull();
     expect(screen.queryByText("Files and folders")).toBeNull();
   });

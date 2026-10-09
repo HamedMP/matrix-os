@@ -68,6 +68,7 @@ export * from "#collaboration-peer";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";
+export * from "#organization-management";
 export * from "#custom-mcp-policy";
 export * from "#hermes-configuration";
 export * from "#jev-hermes-route";
@@ -76,6 +77,7 @@ export * from "#kernel-conversations";
 export * from "#provider-settings";
 export * from "#funded-ai";
 export * from "#jev";
+export * from "#jev-inbox";
 export * from "#getting-started";
 export * from "#safe-client-error";
 export * from "#speech";
@@ -1457,3 +1459,8 @@ export { ImportedChatAssetRefSchema, importedChatAssetContentPath, type Imported
 export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistoryResponseSchema, type AiCreditHistoryEntry, type AiCreditHistoryResponse } from "#ai-credit-history";
 
 export * from "#provider-workflows";
+export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-wire';
+export * from '#matrix-anthropic-connection';
+
+export * from "#chat-navigation";

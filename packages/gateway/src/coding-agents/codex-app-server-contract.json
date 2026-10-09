@@ -132,6 +132,12 @@
         "linux-x64": "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5"
       }
     },
+    "0.161.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "e7eb93e544b11833bd4ac39d14ec6ef26791b5b1ea43db0e451d772d6d27067a",
+        "linux-x64": "e7eb93e544b11833bd4ac39d14ec6ef26791b5b1ea43db0e451d772d6d27067a"
+      }
+    },
     "0.162.0": {
       "schemaSha256ByTarget": {
         "darwin-arm64": "e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1",

@@ -1,8 +1,8 @@
+import { readOwnerAnthropicKey } from "./owner-anthropic-key.js";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import { isSupportedGenericHarnessCredentialRoute, type AiProviderReadiness, type ProviderAccessSource } from "@matrix-os/contracts";
-import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { readSavedProviderSettingsConfiguration } from "./provider-settings-persistence.js";
 import type { AiProviderHealthProbe } from "./service.js";
@@ -21,11 +21,11 @@ export function createOwnerAnthropicKeyPreflight(options: { homePath: string; fe
   let unfinished: Promise<AiProviderReadiness | null> | undefined;
   async function binding(context: z.infer<typeof OwnerKeyPreflightContext>, signal: AbortSignal) {
     signal.throwIfAborted();
-    const document = await readBoundedJsonFileWithIdentity(join(options.homePath, "system/config.json"), 64 * 1024);
-    const config = OwnerAnthropicKeyConfig.safeParse(document?.value);
+    const document = await readOwnerAnthropicKey(options.homePath);
+    const config = OwnerAnthropicKeyConfig.safeParse({ kernel: { anthropicApiKey: document.key } });
     const intent = await readSavedProviderSettingsConfiguration(join(options.homePath, "system/ai-providers/settings.json"));
     signal.throwIfAborted();
-    if (!config.success || !document || !intent) return null;
+    if (!config.success || !document.identity || !intent) return null;
     const key = config.data.kernel.anthropicApiKey;
     const selected = intent.harnesses.filter(h => h.harness === "hermes" && h.enabled);
     const account = intent.accountProfiles.filter(a => a.id === "owner_anthropic" && a.providerId === "anthropic"

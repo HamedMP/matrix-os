@@ -22,3 +22,31 @@ export type ProviderWorkflowCapability = z.infer<typeof ProviderWorkflowCapabili
 export type ProviderWorkflowLogs = z.infer<typeof ProviderWorkflowLogsSchema>;
 
 export const ProviderWorkflowCodeSchema = z.object({ code: z.string().min(1).max(4096).regex(/^[A-Za-z0-9._~+\/=\-]+(?:#[A-Za-z0-9._~\-]+)?$/) }).strict();
+
+// Separate wire shapes: historical strict clients must never receive these fields.
+export const ProviderWorkflowConnectionOptionSchema = z.object({
+  id: ref,
+  providerId: z.enum(['openai', 'anthropic', 'openrouter']),
+  authKind: z.enum(['subscription', 'api_key']),
+  method: ProviderWorkflowMethodSchema.optional(),
+  billingKind: z.enum(['subscription', 'api_key']),
+  executionKind: z.literal('native'),
+  availability: z.enum(['available', 'unavailable']),
+  unavailableReason: z.enum(['not_installed', 'unsupported_runtime', 'provider_access_required']).optional(),
+}).strict().refine(option => option.authKind === option.billingKind
+  && (option.authKind === 'subscription' ? option.method !== undefined : option.method === undefined)
+  && (option.availability === 'unavailable' ? option.unavailableReason !== undefined : option.unavailableReason === undefined),
+{ message: 'Invalid connection option combination' });
+export const ProviderWorkflowCapabilityV2Schema = ProviderWorkflowCapabilitySchema.extend({
+  connectionOptions: z.array(ProviderWorkflowConnectionOptionSchema).max(16),
+}).refine(row => new Set(row.connectionOptions.map(option => option.id)).size === row.connectionOptions.length,
+{ message: 'Duplicate connection option' });
+export const ProviderWorkflowCapabilitiesV2Schema = z.array(ProviderWorkflowCapabilityV2Schema).max(32);
+export const ProviderWorkflowStartV2Schema = z.object({ harnessInstanceId: ref, optionId: ref, idempotencyKey: ref }).strict();
+export const ProviderWorkflowKeyV2Schema = z.object({ harnessInstanceId: ref, optionId: ref, apiKey: ProviderWorkflowKeySchema.shape.apiKey }).strict();
+export const ProviderWorkflowV2Schema = ProviderWorkflowSchema.extend({ connectionOption: ProviderWorkflowConnectionOptionSchema.nullable() });
+export type ProviderWorkflowConnectionOption = z.infer<typeof ProviderWorkflowConnectionOptionSchema>;
+export type ProviderWorkflowCapabilityV2 = z.infer<typeof ProviderWorkflowCapabilityV2Schema>;
+export type ProviderWorkflowStartV2 = z.infer<typeof ProviderWorkflowStartV2Schema>;
+export type ProviderWorkflowKeyV2 = z.infer<typeof ProviderWorkflowKeyV2Schema>;
+export type ProviderWorkflowV2 = z.infer<typeof ProviderWorkflowV2Schema>;

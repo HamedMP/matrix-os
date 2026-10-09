@@ -110,7 +110,7 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
     iconUrl: bundledDesktopIconForPath("__plugins__"),
     kind: "settings",
     icon: Blocks,
-    name: "Plugins",
+    name: "Connect Apps",
     color: APPEARANCE.plugins.background,
     iconColor: APPEARANCE.plugins.foreground,
     settingsSection: "services",

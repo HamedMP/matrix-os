@@ -10,7 +10,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { BOT_ARTIFACT_MAX_BYTES, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { readBotArtifact } from "./artifact-read.js";
 import { BotAdmissionError } from "./admission.js";
 import { ChatExecutionRootError } from "../chat/execution-root.js";
 import { resolveBotWorkspaceRoot } from "../chat/bot-workspace-root.js";
@@ -52,8 +53,10 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "agent.task": "write",
   "artifact.read": "read",
   "artifact.write": "write",
+  "jev.inbox": "write",
   "integration.inventory": "read",
   "integration.call": "write",
   "integration.describe": "read",
@@ -188,11 +191,15 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
   managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
+  /** Recheck live source after staging, immediately before artifact publication. */
+  assertSource?: (binding: PiRuntimeBinding, signal: AbortSignal) => Promise<void>;
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
+  nativeTask?: { prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
 }): BotToolDispatcher {
   async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
@@ -216,7 +223,7 @@ export function createBotToolDispatcher(deps: {
     }
   }
 
-  async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>): Promise<BotToolResult> {
+  async function write(binding: PiRuntimeBinding, request: Extract<BotToolRequest, { capability: "artifact.write" }>, signal: AbortSignal): Promise<BotToolResult> {
     // Revision-checked replacement needs artifact revisions; a plain save overwrites.
     if (request.args.replace) throw new BotBrokerActionError("invalid_arguments");
     const parts = segments(request.args.relPath);
@@ -265,6 +272,7 @@ export function createBotToolDispatcher(deps: {
         // link is an atomic exclusive publication: existing files/links always win.
         // Never remove the target on error: publication may have happened before a
         // lost acknowledgement. Its bytes are complete; the broker retains uncertainty.
+        await deps.assertSource?.(binding, signal);
         try { await link(temp, target); }
         catch (error: unknown) {
           if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments");
@@ -273,6 +281,8 @@ export function createBotToolDispatcher(deps: {
         const parent = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
         try { await parent.sync(); } finally { await parent.close(); }
       } else {
+        // Staging/close may finish after native credentials were removed or replaced.
+        await deps.assertSource?.(binding, signal);
         await rename(temp, target);
       }
     } catch (error: unknown) {
@@ -294,36 +304,40 @@ export function createBotToolDispatcher(deps: {
       throw error;
     }
     try {
-      const info = await file.stat();
-      if (!info.isFile() || info.size > BOT_ARTIFACT_MAX_BYTES) throw new BotBrokerActionError("invalid_arguments");
-      const buffer = Buffer.alloc(BOT_ARTIFACT_MAX_BYTES + 1);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      if (bytesRead > BOT_ARTIFACT_MAX_BYTES) throw new BotBrokerActionError("invalid_arguments");
-      return textResult(buffer.subarray(0, bytesRead).toString("utf8"));
+      return textResult(await readBotArtifact(file, request.args));
     } finally {
       await file.close();
     }
   }
 
   return {
-    effectClass: (request) => request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      if (request.capability === 'agent.task') {
+        if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
+        await deps.nativeTask.prepare(binding); return;
+      }
       if (isManagedPiBinding(binding) && !request.capability.startsWith("artifact.")) {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         await deps.managedTools.prepare(binding, request, signal);
       }
     },
     async dispatch(binding, request, signal) {
+      if (request.capability === 'agent.task') {
+        if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
+        return { result: await deps.nativeTask.execute(binding, request.args.prompt, await workspace(binding), signal) };
+      }
       if (request.capability === "artifact.write") {
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;
-        return { result: await write(binding, request), outcomeRef };
+        return { result: await write(binding, request, signal), outcomeRef };
       }
       if (request.capability === "artifact.read") return { result: await read(binding, request) };
       if (isManagedPiBinding(binding)) {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedTools.dispatch(binding, request, signal) };
       }
+      if (request.capability === "jev.inbox" && deps.jev) return { result: await deps.jev.call(binding, request.args, signal) };
       if (request.capability === "interaction.create" && deps.interactions) {
         return { result: await deps.interactions.createFromTool(binding, request.args) };
       }

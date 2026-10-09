@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import appServerContract from "../../packages/gateway/src/coding-agents/codex-app-server-contract.json" with { type: "json" };
+import { codexTerminalFailureReason } from "../../packages/gateway/src/coding-agents/codex-terminal-failure.mjs";
 import contract from "../../packages/gateway/src/coding-agents/codex-exec-contract.json" with { type: "json" };
 import {
   codexProtocolMethodDigest,
@@ -130,6 +131,47 @@ describe("Codex provider contract checker", () => {
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
       expect(() => verifyCodexProviderContracts({
         version: "0.162.0", execContract: contract, appServerContract,
+        execSchemaBytes, appServerSchemaBytes, runtimeTarget,
+      })).not.toThrow();
+    }
+  });
+
+
+  it("qualifies published Codex 0.161.0 bytes and all consumed protocols on both targets", () => {
+    const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0161/app-server-schema-0161.json.gz", import.meta.url)));
+    const schema = JSON.parse(appServerSchemaBytes.toString("utf8"));
+    const previous = JSON.parse(gunzipSync(readFileSync(new URL("../fixtures/codex-0159/app-server-schema-0159.json.gz", import.meta.url))).toString("utf8"));
+    // Tagged exec source is unchanged. Published Darwin/Linux schemas have the
+    // same bytes; only turn/completed changes among the consumed payloads.
+    expect(createHash("sha256").update(execSchemaBytes).digest("hex")).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
+    expect(createHash("sha256").update(appServerSchemaBytes).digest("hex")).toBe("e7eb93e544b11833bd4ac39d14ec6ef26791b5b1ea43db0e451d772d6d27067a");
+    expect(schema.definitions.v2.CodexErrorInfo.anyOf.slice(0, -1)).toEqual(previous.definitions.v2.CodexErrorInfo.oneOf);
+    expect(schema.definitions.v2.CodexErrorInfo.anyOf.at(-1)).toEqual({ type: ["string", "object"] });
+    for (const codexErrorInfo of ["futureError", { futureError: "private detail" }]) {
+      expect(codexTerminalFailureReason({ codexErrorInfo, message: "Not logged in" })).toBeUndefined();
+    }
+    expect(codexTerminalFailureReason({ codexErrorInfo: "unauthorized" })).toBe("authentication_required");
+    for (const method of [...appServerContract.requiredServerMethods, ...appServerContract.requiredServerNotifications]) {
+      const definition = appServerContract.requiredServerMethods.includes(method) ? "ServerRequest" : "ServerNotification";
+      const digest = codexProtocolMethodDigest(schema, definition, method);
+      expect(digest).toBe(method === "turn/completed"
+        ? "f57b3b13640143308bc01d41b89134c3113b0c953004e9aea1c6892d4dc67c3f"
+        : codexProtocolMethodDigest(previous, definition, method));
+    }
+    // Reconstruct the historical qualification; the live CI gate checks only the latest version.
+    const historicalDigests = Object.fromEntries(
+      [...appServerContract.requiredServerMethods, ...appServerContract.requiredServerNotifications].map((method) => [
+        method, codexProtocolMethodDigest(schema,
+          appServerContract.requiredServerMethods.includes(method) ? "ServerRequest" : "ServerNotification", method),
+      ]),
+    );
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
+      expect(() => verifyCodexProviderContracts({
+        version: "0.161.0",
+        execContract: { ...contract, latestVerifiedVersion: "0.161.0" },
+        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.161.0",
+          requiredServerProtocolSchemaDigests: historicalDigests },
         execSchemaBytes, appServerSchemaBytes, runtimeTarget,
       })).not.toThrow();
     }

@@ -29,7 +29,7 @@ export function configuredSystemModel(settings: ProviderSettingsSnapshot | null,
   const harness = enabled[0]!;
   const source = settings?.accessSources.find(candidate => candidate.id === harness.accessSourceId);
   if (!isSupportedGenericHarnessCredentialRoute(harness, source)) return null;
-  const native = source?.kind === "harness_profile" && kind === "hermes"
+  const native = source?.kind === "harness_profile" && (kind === "hermes" || kind === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   return native === null ? null : `${harness.route.providerId}:${native ?? harness.route.modelId}`;
 }
@@ -43,7 +43,7 @@ function configuredSystemInstance(
   if (instance.availability !== "available") {
     return unavailableInstance(instance, unavailableReasonFor(instance));
   }
-  const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+  const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   if (nativeModel === null) return unavailableInstance(instance, "runtime_not_runnable");
   const modelId = `${harness.route.providerId}:${nativeModel ?? harness.route.modelId}`;

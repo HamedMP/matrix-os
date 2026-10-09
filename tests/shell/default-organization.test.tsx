@@ -38,6 +38,7 @@ vi.mock("@clerk/nextjs", () => ({
 
 import { DefaultOrganization } from "../../shell/src/components/DefaultOrganization";
 import { useCollaborationOrganization } from "../../shell/src/lib/collaboration-organization-state";
+import { writeOrganizationSelection } from "../../shell/src/lib/organization-selection";
 
 function member(id: string) {
   return { organization: { id, name: id } };
@@ -49,6 +50,7 @@ function OrganizationState() {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   clerkState.organizationLoaded = true;
   clerkState.organization = null;
   clerkState.organizationsLoaded = true;
@@ -105,6 +107,15 @@ describe("DefaultOrganization", () => {
     render(<DefaultOrganization><OrganizationState /></DefaultOrganization>);
 
     expect(screen.getByText("member:org_active")).toBeVisible();
+  });
+
+  it("preserves an explicit switch to the personal workspace", () => {
+    clerkState.memberships = [member("org_2Aolder")];
+    writeOrganizationSelection("user_a", "personal");
+
+    render(<DefaultOrganization />);
+
+    expect(clerkState.setActive).not.toHaveBeenCalled();
   });
 
   it("waits for Clerk before deciding there is no active organization", () => {

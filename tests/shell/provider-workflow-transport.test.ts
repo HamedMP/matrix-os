@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { createWebProviderWorkflowClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "../../shell/src/lib/provider-workflow-transport.js";
+import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "../../shell/src/lib/provider-workflow-transport.js";
+
+it("uses bounded current-Computer transport for Matrix API connection reads", async () => {
+  let current = true;
+  const fetcher = vi.fn<typeof fetch>(async () => { current = false; return Response.json({}); });
+  await expect(createWebMatrixAnthropicClient({ fetcher, isIdentityCurrent: () => current }).status(new AbortController().signal)).rejects.toThrow();
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/matrix-connections/anthropic");
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
+});
 vi.mock("../../shell/src/lib/gateway.js", () => ({ getGatewayUrl: () => "/vm/review" }));
 const page = { entries: [], nextCursor: null };
 describe("web provider workflow transport", () => {
@@ -68,7 +77,7 @@ describe("web provider workflow transport", () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json([]));
     const caller = new AbortController();
     await createWebProviderWorkflowClient({ fetcher }).capabilities(caller.signal);
-    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/capabilities?connectionVersion=2");
+    expect(fetcher.mock.calls[0][0]).toBe("/vm/review/api/ai/provider-settings/workflows/v2/capabilities");
     expect(fetcher.mock.calls[0][1]).toMatchObject({ cache: "no-store", credentials: "include" });
     caller.abort();
     expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
@@ -119,4 +128,20 @@ describe("web provider workflow transport", () => {
       .rejects.toMatchObject({ reason: status === 401 ? "unauthorized" : "forbidden" });
   });
 
+});
+
+it("negotiates legacy discovery only for a real missing V2 endpoint", async () => {
+ const urls: string[] = [];
+ const fetcher = vi.fn(async (url: string | URL | Request) => {
+   urls.push(String(url));
+   return urls.length === 1 ? Response.json({error:{code:"not_found",message:"Not found"}}, {status:404}) : Response.json([]);
+ }) as unknown as typeof fetch;
+ await expect(createWebProviderWorkflowClient({fetcher}).capabilities(new AbortController().signal)).resolves.toEqual([]);
+ expect(urls[0]).toContain("/api/ai/provider-settings/workflows/v2/capabilities");
+ expect(urls[1]).toContain("/api/ai/provider-settings/workflows/capabilities?connectionVersion=2");
+});
+
+it.each(["conflict", "unknown"])("preserves safe connection admission %s without leaking private errors", async code => {
+  const client = createWebProviderWorkflowClient({fetcher: async () => Response.json({error:{code,message:"private /credential/file"}}, {status:409})});
+  await expect(client.start({harnessInstanceId:"claude",kind:"login",method:"browser",idempotencyKey:"fixture"},new AbortController().signal)).rejects.toMatchObject({reason:code === "conflict" ? "conflict" : "unavailable",message:"Provider action is unavailable."});
 });

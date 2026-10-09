@@ -490,7 +490,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
             </motion.div>
           );
         })}
@@ -597,8 +597,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 function MobileAppFrame({
   openApp,
   chat,
+  visible,
 }: {
   openApp: OpenApp;
+  visible: boolean;
   chat: ReturnType<typeof useChatContext>;
 }) {
   const { app, id: openId } = openApp;
@@ -630,6 +632,8 @@ function MobileAppFrame({
     }
     return (
       <ChatApp
+        active={visible}
+        visible={visible}
         collaborationView={chat.collaborationView}
         onOpenSharedChat={chat.openSharedChat}
         onOpenSharedProject={chat.openSharedProject}
@@ -652,7 +656,7 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}

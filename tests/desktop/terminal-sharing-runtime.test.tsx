@@ -11,7 +11,7 @@ import { useState } from "react";
 const sharingButton = vi.hoisted(() => vi.fn(() => null));
 
 vi.mock("@matrix-os/ui", () => ({
-  TerminalSharingButton: sharingButton,
+  LegacyTerminalAccessButton: sharingButton,
   createCollaborationBrowserApi: () => ({ baseUrl: "https://app.matrix-os.com" }),
   // The connection store now reaches the direct collaboration client, so this mock has to
   // cover it or the module graph fails to initialise and the button is never rendered.
@@ -21,10 +21,10 @@ vi.mock("@matrix-os/ui", () => ({
 describe("DesktopTerminalSharing", () => {
   beforeEach(() => {
     sharingButton.mockClear();
-    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null });
+    useConnection.setState({ api: null, platformHost: "https://app.matrix-os.com", organizationId: null, organizationStatus: "unavailable" });
   });
 
-  it("passes the active organization from the connection state and disables sharing without one", async () => {
+  it("passes the verified organization to legacy terminal management without exposing creation", async () => {
     const api = { get: vi.fn(async () => ({ runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } })) };
     useConnection.setState({ api: api as never, organizationId: null });
     render(<DesktopTerminalSharing terminalId="terminal_release" />);

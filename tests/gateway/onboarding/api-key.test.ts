@@ -17,16 +17,18 @@ import {
 
 describe("API key validation and storage", () => {
   let homePath: string;
+  let root: string;
 
   beforeEach(() => {
     vi.stubEnv("ANTHROPIC_API_KEY", "");
     vi.stubEnv("CLAUDE_CODE_AUTH", "");
-    homePath = resolve(mkdtempSync(join(tmpdir(), "api-key-test-")));
+    root = resolve(mkdtempSync(join(tmpdir(), "api-key-test-")));
+    homePath = join(root, "home");
     mkdirSync(join(homePath, "system"), { recursive: true });
   });
 
   afterEach(() => {
-    rmSync(homePath, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -91,11 +93,11 @@ describe("API key validation and storage", () => {
   });
 
   describe("storeApiKey", () => {
-    it("stores key in config.json under kernel.anthropicApiKey", async () => {
+    it("stores the canonical private owner key", async () => {
       writeFileSync(join(homePath, "system/config.json"), "{}");
       await storeApiKey(homePath, "sk-ant-stored");
-      const config = JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8"));
-      expect(config.kernel.anthropicApiKey).toBe("sk-ant-stored");
+      const credential = JSON.parse(readFileSync(join(homePath, "system/ai-providers/anthropic-key.json"), "utf-8"));
+      expect(credential.apiKey).toBe("sk-ant-stored");
     });
 
     it("preserves existing config keys", async () => {
@@ -106,14 +108,15 @@ describe("API key validation and storage", () => {
       await storeApiKey(homePath, "sk-ant-test");
       const config = JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8"));
       expect(config.channels).toEqual({ telegram: {} });
-      expect(config.kernel.anthropicApiKey).toBe("sk-ant-test");
+      expect(config.kernel).toBeUndefined();
+      expect(await hasApiKey(homePath)).toBe(true);
     });
 
-    it("creates config if it does not exist", async () => {
+    it("creates the private source without requiring legacy config", async () => {
       rmSync(join(homePath, "system/config.json"), { force: true });
       await storeApiKey(homePath, "sk-ant-new");
-      const config = JSON.parse(readFileSync(join(homePath, "system/config.json"), "utf-8"));
-      expect(config.kernel.anthropicApiKey).toBe("sk-ant-new");
+      const credential = JSON.parse(readFileSync(join(homePath, "system/ai-providers/anthropic-key.json"), "utf-8"));
+      expect(credential.apiKey).toBe("sk-ant-new");
     });
   });
 

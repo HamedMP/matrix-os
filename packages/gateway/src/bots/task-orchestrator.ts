@@ -1,3 +1,4 @@
+import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 /**
  * Runs one bot turn in the bot workload (spec 536). For each canonical run:
  *
@@ -45,7 +46,7 @@ const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
   "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
-  "integration.inventory", "integration.call",
+  "integration.inventory", "integration.call", "jev.inbox",
 ];
 
 export type BotTurnEvent =
@@ -94,6 +95,7 @@ export function createBotTaskOrchestrator(deps: {
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
+  executorReady?(ownerId: string, botId: string): Promise<boolean>;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
@@ -218,13 +220,14 @@ export function createBotTaskOrchestrator(deps: {
 
     let resolved: ResolvedBotRoute;
     try {
-      resolved = await deps.resolveRoute(input.selection && input.selection.model !== "auto" ? { ...input.selection, instanceId: "matrix_pi_default" }
-        : agent.selection.instanceId === "matrix_pi_default" ? agent.selection : undefined);
+      resolved = await deps.resolveRoute(recipeCoordinatorSelection(input.selection, agent.selection));
     } catch (error: unknown) {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
+    try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
+    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
       memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
@@ -249,7 +252,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
-        route: resolved.route, accessSourceId: resolved.accessSourceId, capabilities, requestClass: "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;

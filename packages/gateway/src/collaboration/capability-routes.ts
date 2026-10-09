@@ -6,7 +6,7 @@ import {
   CollaborationPatchGrantRequestSchema,
   CollaborationReadinessSchema,
 } from "@matrix-os/contracts";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod/v4";
 import { readDirectCredentials } from "./direct-routes.js";
 import { DirectAuthError } from "./direct-auth.js";
@@ -15,16 +15,18 @@ import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
 import type { CollaborationCapabilityRepository, GrantRecord } from "./capability-repository.js";
 import {
-  authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson, requireScope, verifyHttp,
-  type CollaborationRouteOptions,
+  authenticateOwnerProject, authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson,
+  requireScope, verifyHttp, type CollaborationRouteOptions,
 } from "./route-support.js";
+import type { CollaborationAction } from "./authority.js";
 import { PRESET_POLICY_VERSION } from "./repository-shared.js";
 
 const GRANTS_PATH = "/api/collaboration/scopes/:scopeId/grants";
+const OWNER_RUNTIME_HEADER = "x-matrix-collaboration-owner-runtime";
 
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
-  "verifier" | "directSessions" | "onScopeCommitted" | "repository" | "readinessProbes"
+  "verifier" | "directSessions" | "onScopeCommitted" | "repository" | "readinessProbes" | "ownerRuntimeSessions" | "runtimeId"
 > & {
   capabilities?: CollaborationCapabilityRepository;
   capabilityEvaluator?: CollaborationCapabilityEvaluator;
@@ -53,6 +55,18 @@ function projectGrant(grant: GrantRecord) {
   });
 }
 
+/**
+ * The actor managing a scope's grants. A private project has no scope access yet, so its owner
+ * chooses who gets access before sharing through the exact owner setup session; the grants it
+ * makes stay unpublished until the project is shared. Every other caller needs scope access.
+ */
+async function grantManager(
+  options: CapabilityRouteOptions, c: Context, bytes: Uint8Array, action: CollaborationAction, scopeId: string,
+): Promise<string> {
+  if (c.req.header(OWNER_RUNTIME_HEADER) === "1") return (await authenticateOwnerProject(options, c, bytes, scopeId)).ownerId;
+  return (await authorize(options, c, bytes, action, scopeId)).actorId;
+}
+
 export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteOptions): void {
   routes.post(`${GRANTS_PATH}/:grantId/accept`, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
@@ -62,11 +76,11 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const scope = await requireScope(options.repository, scopeId);
     const { grants, evaluator } = requireCapabilities(options);
     const grant = await grants.getGrant(grantId);
-    if (!scope.organizationId || !grant || grant.scopeId !== scopeId
-      || grant.organizationId !== scope.organizationId || grant.audience.kind !== "organization") {
+    if (!scope.organizationId || !grant || grant.scopeId !== scopeId || grant.organizationId !== scope.organizationId) {
       throw new CollaborationAuthorizationError("not_found", "Grant not found");
     }
-    // A pending organization recipient has no ordinary scope access yet. The platform
+    // A pending recipient (any organization member for an organization-wide grant, or the
+    // one addressee of a member grant) has no ordinary scope access yet. The platform
     // signs the directory's exact grant pointer into an accept-only direct session;
     // no other capability route may authorize through that session.
     const credentials = readDirectCredentials(c);
@@ -95,7 +109,7 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
 
   routes.get(GRANTS_PATH, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
-    await authorize(options, c, new Uint8Array(), "read", scopeId);
+    await grantManager(options, c, new Uint8Array(), "read", scopeId);
     const { grants } = requireCapabilities(options);
     return c.json((await grants.listGrants(scopeId)).map(projectGrant));
   }));
@@ -103,12 +117,12 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
   routes.post(GRANTS_PATH, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "manage_members", scopeId);
+    const actorId = await grantManager(options, c, bytes, "manage_members", scopeId);
     const input = CollaborationCreateGrantRequestSchema.parse(value);
     const { grants, evaluator } = requireCapabilities(options);
     const result = await evaluator.createGrant({
       scopeId,
-      actorId: context.actorId,
+      actorId,
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       payloadHash: digest(bytes),
@@ -127,11 +141,11 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));
     const { value, bytes } = await readJson(c);
-    const context = await authorize(options, c, bytes, "manage_members", scopeId);
+    const actorId = await grantManager(options, c, bytes, "manage_members", scopeId);
     const input = CollaborationPatchGrantRequestSchema.parse(value);
     const { grants, evaluator } = requireCapabilities(options);
     await evaluator.patchGrantPreset({
-      scopeId, grantId, actorId: context.actorId,
+      scopeId, grantId, actorId,
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedGrantRevision: Number(input.expectedGrantRevision),
@@ -147,10 +161,10 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));
     const input = deleteConditions(c);
-    const context = await authorize(options, c, new Uint8Array(), "manage_members", scopeId);
+    const actorId = await grantManager(options, c, new Uint8Array(), "manage_members", scopeId);
     const { grants, evaluator } = requireCapabilities(options);
     await evaluator.revokeGrant({
-      scopeId, grantId, actorId: context.actorId,
+      scopeId, grantId, actorId,
       clientRequestId: input.clientRequestId,
       expectedRevision: Number(input.expectedRevision),
       expectedGrantRevision: Number(input.expectedMemberRevision),

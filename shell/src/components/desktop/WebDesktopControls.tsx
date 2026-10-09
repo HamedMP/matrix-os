@@ -5,7 +5,7 @@ import { DiscordIcon, MessageCircleIcon, SearchIcon, ServerIcon } from "@/lib/hu
 import { UserButton } from "../UserButton";
 import { GettingStartedPopover } from "../onboarding/GettingStartedPopover";
 
-export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers";
+export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers" | "organization";
 
 interface WebDesktopControlsProps {
   onOpenSettings: (section: WebDesktopSettingsSection) => void;

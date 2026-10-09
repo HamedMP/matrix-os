@@ -9,6 +9,7 @@ import { validateActionParams } from "./parameter-validation.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { getAction, getService } from "./registry.js";
 import { executeJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
+import type { ServiceDefinition } from "./types.js";
 
 /** Independent from Jev recipe binding; contains identity metadata only, never credentials. */
 export const IntegrationAccountBindingSchema = z.strictObject({
@@ -26,6 +27,7 @@ const ReadCallBodySchema = z.strictObject({
   binding: JevReadBindingSchema.optional(),
   accountBinding: IntegrationAccountBindingSchema.optional(),
   galleryImport: z.literal(true).optional(),
+  connectionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
 }).refine(body =>
   !(body.binding && body.accountBinding) && (!body.galleryImport || Boolean(body.accountBinding)));
 
@@ -34,6 +36,10 @@ export function createIntegrationReadCallRoutes(options: {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
   resolveUserId: (c: Context) => Promise<string | null>;
+  presetBroker?: {
+    listConnections(userId: string): Promise<Array<{ id: string; service: string; account_label: string; status: string }>>;
+    call(input: { userId: string; service: ServiceDefinition; actionId: string; params?: Record<string, unknown>; connectionId?: string }): Promise<unknown>;
+  };
 }): Hono {
   const app = new Hono();
   app.post("/read-call", bodyLimit({ maxSize: 65536 }), async (c) => {
@@ -52,7 +58,7 @@ export function createIntegrationReadCallRoutes(options: {
     }
     const parsed = ReadCallBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid request body" }, 400);
-    const { service, action, label, params, binding, accountBinding } = parsed.data;
+    const { service, action, label, params, binding, accountBinding, connectionId } = parsed.data;
     if (binding && (service !== "gmail" || label !== binding.accountLabel)) {
       return c.json({ error: "Action not permitted" }, 403);
     }
@@ -62,11 +68,25 @@ export function createIntegrationReadCallRoutes(options: {
     const def = getService(service);
     const actionDef = getAction(service, action);
     if (!def || !actionDef) return c.json({ error: "Unknown integration action" }, 400);
-    if (actionDef.risk !== "read" || def.connectorKind !== "pipedream") {
+    if (actionDef.risk !== "read") {
       return c.json({ error: "Action not permitted" }, 403);
     }
     if (!validateActionParams(actionDef, params).valid) {
       return c.json({ error: "Invalid action parameters" }, 400);
+    }
+
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
+      if (!options.presetBroker || binding || accountBinding) return c.json({ error: "Integration unavailable" }, 503);
+      try {
+        const selected = resolveIntegrationConnection(
+          (await options.presetBroker.listConnections(uid)).filter(connection => connection.status === "active"), service, label,
+        );
+        if (selected.kind === "ambiguous") return c.json({ error: "Integration account label is ambiguous" }, 409);
+        if (selected.kind === "missing") return c.json({ error: "Integration account unavailable" }, 400);
+        if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
+        const data = await options.presetBroker.call({ userId: uid, service: def, actionId: action, params, connectionId: selected.connection.id });
+        return c.json({ data, service, action });
+      } catch (err: unknown) { return integrationActionFailure(c, err, service, action); }
     }
 
     const selected = resolveIntegrationConnection(await options.db.listConnectedServices(uid), service, label);
@@ -77,6 +97,7 @@ export function createIntegrationReadCallRoutes(options: {
       selected.connection.id !== accountBinding.connectionId ||
       selected.connection.account_email !== accountBinding.expectedEmail
     )) return c.json({ error: "Integration account changed. Select the account again." }, 403);
+    if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
     const user = await options.db.getUserById(uid);
     if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
     try {

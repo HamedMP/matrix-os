@@ -3,9 +3,13 @@ import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativ
 import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
 import { BotInteractionPayloadSchema } from "#bots/interactions";
 import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotMemorySourceSchema } from "#bots/memory";
+import { JevInboxInputSchema } from "#jev-inbox";
 
 /** Leaves room for the broker envelope inside the 256 KiB broker request cap. */
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
+/** Binary imports stay in the workspace; each explicit read returns at most 32 KiB. */
+export const BOT_ARTIFACT_BINARY_MAX_BYTES = 1024 * 1024;
+export const BOT_ARTIFACT_CHUNK_MAX_BYTES = 32 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
 /** Saved bot transcripts; the runtime compacts well before this cap. */
 export const BOT_SESSION_MAX_BYTES = 512 * 1024;
@@ -18,9 +22,11 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "agent.task",
   "integration.inventory",
   "integration.call",
   "integration.describe",
+  "jev.inbox",
   "mcp.inventory",
   "mcp.describe",
   "mcp.call",
@@ -38,6 +44,8 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
+  capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
+  capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
   capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
   capability("mcp.inventory", z.object({}).strict()),
@@ -74,7 +82,14 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
     mimeType: ArtifactMimeTypeSchema,
     replace: z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
   }).strict()),
-  capability("artifact.read", z.object({ relPath: ArtifactPathSchema }).strict()),
+  capability("artifact.read", z.object({
+    relPath: ArtifactPathSchema,
+    chunk: z.object({
+      offset: z.number().int().min(0).max(BOT_ARTIFACT_BINARY_MAX_BYTES),
+      length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),
+      sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict().optional(),
+  }).strict()),
 ]);
 
 /** Serialized size includes JSON escaping, so it cannot exceed the broker's 256 KiB request cap. */

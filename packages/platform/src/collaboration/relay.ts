@@ -38,8 +38,12 @@ const SCOPE_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/|$)`);
  * only scope requests that may be routed by the owner's runtime instead.
  */
 const OWNER_PROJECT_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}(?:/members|/project/inventory)?$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}(?:/members|/project/inventory|/grants)?$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/confirm$`)],
+  // Choosing who gets access before sharing: the grants stay unpublished until the project is shared.
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/grants$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/${UUID}/grants/${UUID}$`)],
+  ["DELETE", new RegExp(`^/api/collaboration/scopes/${UUID}/grants/${UUID}$`)],
 ];
 const INVITATION_PATH = new RegExp(`^/api/collaboration/invitations/(${UUID})(?:/|$)`);
 const DIRECT_SOCKET_PATH = new RegExp(`^/ws/collaboration/direct/scopes/(${UUID})/(events|terminal)$`);

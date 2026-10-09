@@ -37,31 +37,31 @@ it('coordinates actual canonical login, logout and key endpoints, including rest
   await fixture(); let state: 'running' | 'stopped' = 'running';
   const sessions = new Set<string>();
   const registry = {
-    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error('missing'), { code: 'session_not_found' }); return { name, agent: 'codex' }; },
+    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error('missing'), { code: 'session_not_found' }); return { name, agent: 'claude' }; },
     create: vi.fn(async ({ name }: { name: string }) => { sessions.add(name); return { name }; }),
     delete: async (name: string) => { sessions.delete(name); },
     rename: async (name: string, next: string) => { sessions.delete(name); sessions.add(next); return { name: next }; },
     observeAgentLiveness: async () => state,
   };
   const guard = createNativeProviderProfileGuard({ homePath: home, registry });
-  const input = { mutation: { type: 'start_login' as const, expectedRevision: 0, idempotencyKey: 'login_shared', harnessInstanceId: 'harness_codex', accountId: null, method: 'terminal' as const }, harness: { id: 'harness_codex', driverId: 'codex', harness: 'codex' as const, providerId: 'openai', modelId: 'gpt-5', installState: 'installed' as const } };
-  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ['codex'], profileGuard: guard });
+  const input = { mutation: { type: 'start_login' as const, expectedRevision: 0, idempotencyKey: 'login_shared', harnessInstanceId: 'harness_claude_code', accountId: null, method: 'terminal' as const }, harness: { id: 'harness_claude_code', driverId: 'claude_code', harness: 'claude' as const, providerId: 'anthropic', modelId: 'claude-sonnet-5', installState: 'installed' as const } };
+  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ['claude'], profileGuard: guard });
   let release!: () => void; const gate = new Promise<void>(r => { release = r; });
   const save = vi.fn(async () => { await gate; });
-  const key = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: guard, fetchFn: async () => new Response('{}'), save });
-  const saving = key({ harnessInstanceId: 'harness_codex', providerId: 'openai', apiKey: 'sk-fixture' });
+  const key = createProviderKeyVerifier({ providerId: 'anthropic', profile: 'claude', profileGuard: guard, fetchFn: async () => new Response('{}'), save });
+  const saving = key({ harnessInstanceId: 'harness_claude_code', providerId: 'anthropic', apiKey: 'sk-fixture' });
   await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
   await expect(coordinator().startLogin(input)).rejects.toThrow(); expect(registry.create).not.toHaveBeenCalled();
-  const account: ProviderLifecycleAccount = { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1 };
+  const account: ProviderLifecycleAccount = { id: 'owner_claude', providerId: 'anthropic', authMethod: 'terminal', accessSourceId: 'owner_anthropic_profile', driverId: 'claude_code', harness: 'claude', installState: 'installed', authenticated: true, driverAccountCount: 1 };
   const run = vi.fn(async () => ({ stdout: '', stderr: '' }));
-  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run });
+  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['claude_code'], profileGuard: guard, run });
   await expect(lifecycle.logout({ account, idempotencyKey: 'logout_shared' })).rejects.toThrow(); expect(run).not.toHaveBeenCalled();
   release(); await saving;
   const attempt = await coordinator().startLogin(input);
   expect(await coordinator().startLogin(input)).toEqual(attempt); expect(registry.create).toHaveBeenCalledOnce();
   const restarted = createNativeProviderProfileGuard({ homePath: home, registry });
-  const restartedKey = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: restarted, fetchFn: async () => new Response('{}'), save });
-  await expect(restartedKey({ harnessInstanceId: 'second_codex', providerId: 'openai', apiKey: 'sk-fixture' })).rejects.toThrow();
+  const restartedKey = createProviderKeyVerifier({ providerId: 'anthropic', profile: 'claude', profileGuard: restarted, fetchFn: async () => new Response('{}'), save });
+  await expect(restartedKey({ harnessInstanceId: 'second_claude', providerId: 'anthropic', apiKey: 'sk-fixture' })).rejects.toThrow();
   state = 'stopped'; await lifecycle.logout({ account, idempotencyKey: 'logout_shared' }); expect(run).toHaveBeenCalledOnce();
   state = 'running'; await lifecycle.logout({ account, idempotencyKey: 'logout_shared' }); expect(run).toHaveBeenCalledOnce(); // durable completed replay is read-only
 });

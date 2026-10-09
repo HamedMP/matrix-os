@@ -109,6 +109,14 @@ describe("CollaborationTerminalAdapter scope binding", () => {
       execution_generation: 4,
       execution_eligibility: { profileId: "scope-runtime-terminal-v1" },
     });
+    await expect(adapter.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      terminalId,
+    })).resolves.toMatchObject({
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "shared",
+    });
   });
 
   it("records the owner's Contributor-control decision on the exact bound incarnation", async () => {

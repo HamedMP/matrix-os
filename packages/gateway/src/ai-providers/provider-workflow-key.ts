@@ -14,6 +14,10 @@ export interface ProviderKeyVerifier {
   (key: ProviderWorkflowKey): Promise<void>;
   connect?: (key: ProviderWorkflowKey, commit: () => Promise<void>) => Promise<void>;
 }
+/** Fixed remote probe failed before any native saver was invoked. */
+export class ProviderKeyPreflightError extends ProviderWorkflowError {
+  constructor(code: 'rejected' | 'unavailable') { super(code); }
+}
 /** A fixed-origin, non-billable credentials probe; persistence remains the native adapter's responsibility. */
 export function createProviderKeyVerifier(options: {
   providerId: ProviderWorkflowKey['providerId'];
@@ -26,7 +30,7 @@ export function createProviderKeyVerifier(options: {
     throw new Error('Key persistence dependency required');
   const verify = async (input: ProviderWorkflowKey, commit?: () => Promise<void>): Promise<void> => {
     if (input.providerId !== options.providerId)
-      throw new ProviderWorkflowError('rejected');
+      throw new ProviderKeyPreflightError('rejected');
     if (options.profileGuard && options.profile) {
       const release = await options.profileGuard.acquire(options.profile, { kind: "write" });
       await release();
@@ -37,13 +41,13 @@ export function createProviderKeyVerifier(options: {
       // Never buffer an upstream body, account information or error text.
       await response.body?.cancel();
       if (response.status !== 200)
-        throw new ProviderWorkflowError('rejected');
+        throw new ProviderKeyPreflightError('rejected');
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError)
         throw error;
       console.warn('[provider-workflow] Key probe unavailable:', error instanceof Error ? error.name : 'UnknownError');
-      throw new ProviderWorkflowError('unavailable');
+      throw new ProviderKeyPreflightError('unavailable');
     }
     // Validation has no native write side effects; only the selected saver
     // acquires durable profile admission.

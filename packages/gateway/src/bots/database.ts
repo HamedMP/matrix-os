@@ -2,7 +2,7 @@
  * Owner bot state in the gateway's owner Postgres (spec 536, data-model.md).
  * Tables are created by versioned migrations; see database-migrations.ts.
  */
-import { sql, type ColumnType, type Kysely } from "kysely";
+import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
 import type { ChatDatabase } from "../chat/database.js";
 import { BOT_MIGRATIONS, type BotMigration } from "./database-migrations.js";
 
@@ -192,6 +192,16 @@ export interface BotSchemaMigrationsTable {
 }
 
 export interface BotDatabase {
+  /** Dormant device trust pins: compatibility must never replace or remove these rows. */
+  bot_chatgpt_plan_devices: { owner_id: string; computer_id: string; device_id: string; public_key: string };
+  bot_provider_authorizations: {
+    owner_id: string; computer_id: string; connection_id: 'claude_code_tasks'; fingerprint: string;
+    enabled: boolean; background: boolean; revision: number | string;
+  };
+  bot_execution_bindings: {
+    owner_id: string; computer_id: string; bot_id: string; connection_id: 'claude_code_tasks' | null;
+    model: string | null; grant_revision: number | string | null; native_session_id: string | null; revision: number | string;
+  };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
   bot_schema_migrations: BotSchemaMigrationsTable;
@@ -229,6 +239,17 @@ function assertOrdered(migrations: readonly BotMigration[]): void {
   }
 }
 
+/** Called under the migration lock before any pending DDL can run. */
+async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<void> {
+  const recorded = await db.selectFrom("bot_schema_migrations").select(["version", "name"])
+    .orderBy("version").limit(migrations.length + 1).execute();
+  for (const row of recorded) {
+    const migration = migrations[row.version - 1];
+    if (!migration) throw new BotSchemaError("newer_schema");
+    if (row.name !== migration.name) throw new BotSchemaError("invalid_migrations");
+  }
+}
+
 /**
  * Applies pending bot migrations. Each version runs in its own transaction
  * under a schema advisory lock, so concurrent gateways apply it once, and a
@@ -251,6 +272,7 @@ export async function bootstrapBotDatabase(
   for (const migration of migrations) {
     const ran = await db.transaction().execute(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
+      await assertCompatibleSchema(trx, migrations);
       const existing = await trx.selectFrom("bot_schema_migrations")
         .select("version").where("version", "=", migration.version).executeTakeFirst();
       if (existing) return false;
@@ -260,8 +282,9 @@ export async function bootstrapBotDatabase(
     });
     if (ran) applied.push(migration.version);
   }
-  const newest = await db.selectFrom("bot_schema_migrations")
-    .select((eb) => eb.fn.max("version").as("version")).executeTakeFirst();
-  if (Number(newest?.version ?? 0) > (migrations.at(-1)?.version ?? 0)) throw new BotSchemaError("newer_schema");
+  await db.transaction().execute(async (trx) => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix-bot-schema', 0))`.execute(trx);
+    await assertCompatibleSchema(trx, migrations);
+  });
   return { applied };
 }

@@ -99,3 +99,13 @@ it("allows only the already bound owner run to resolve pending approval; new adm
   await expect(admission.toolAuthority(binding)).resolves.toEqual({ permissionMode: "supervised" });
   await admission.release(binding.runtimeHandle);
 });
+
+it('fences edited persisted source/options before a previously bound owner run can use tools or artifacts', async () => {
+  const { admission, input, db } = await setup();
+  const binding = await admission.admit(input);
+  await db.updateTable('chat_runs').set({ selection: { instanceId: 'matrix_pi_default', model: input.resolved.route.modelId,
+    options: [{ id: 'accountId', value: 'forged' }] } }).where('id', '=', input.runId).execute();
+  await expect(admission.toolAuthority(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
+  await expect(admission.workspace(binding)).rejects.toEqual(new BotAdmissionError('not_found'));
+  await admission.release(binding.runtimeHandle);
+});

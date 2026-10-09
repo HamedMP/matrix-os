@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { Linking, StyleSheet } from "react-native";
 
 const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
@@ -17,6 +18,15 @@ jest.mock("expo-web-browser", () => ({
   maybeCompleteAuthSession: jest.fn(),
 }));
 
+// The native Apple button and sheet have their own suite in
+// sign-in-screen-apple.test.tsx; here they only need to load.
+jest.mock("expo-apple-authentication", () => ({
+  AppleAuthenticationButton: () => null,
+  AppleAuthenticationButtonType: { SIGN_IN: 0 },
+  AppleAuthenticationButtonStyle: { WHITE: 0, BLACK: 2 },
+  AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+}));
+
 const mockStartSSOFlow = jest.fn();
 const mockSetActive = jest.fn(() => Promise.resolve());
 const mockCreate = jest.fn();
@@ -33,6 +43,7 @@ jest.mock("@clerk/clerk-expo", () => ({
     setActive: mockSetActive,
     signIn: { create: mockCreate },
   }),
+  useSignUp: () => ({ isLoaded: true, signUp: { create: jest.fn() } }),
 }));
 
 const mockNormalizeGatewayUrl = jest.fn((url: string) => url);
@@ -271,6 +282,50 @@ describe("SignInScreen email code flow", () => {
 
     expect(await screen.findByText("Enter a valid Matrix OS URL.")).toBeTruthy();
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Privacy Policy", "https://matrix-os.com/privacy"],
+    ["Terms of Service", "https://matrix-os.com/terms"],
+  ])("opens the %s from the consent line before signing in", (name, url) => {
+    // App Review needs the privacy policy reachable in-app without an account.
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    render(<SignInScreen />);
+
+    fireEvent.press(screen.getByRole("link", { name }));
+
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenCalledWith(url);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(["Privacy Policy", "Terms of Service"])(
+    "gives the %s link a 44pt target of its own instead of relying on hitSlop",
+    (name) => {
+      // hitSlop never reaches past the parent's bounds, and the consent row is
+      // only as tall as its 18pt text, so the size has to be the link's own.
+      render(<SignInScreen />);
+
+      const link = screen.getByRole("link", { name });
+      const style = StyleSheet.flatten(link.props.style);
+
+      expect(style.minHeight).toBeGreaterThanOrEqual(44);
+      expect(link.props.hitSlop).toBeUndefined();
+    },
+  );
+
+  it("keeps the link targets clear of the consent sentence above them", () => {
+    // A row pulled up over "By continuing, you agree to our" would let a tap
+    // on that plain text open a legal page.
+    render(<SignInScreen />);
+
+    const row = StyleSheet.flatten(screen.getByTestId("sign-in-legal-links").props.style);
+    const link = StyleSheet.flatten(
+      screen.getByRole("link", { name: "Privacy Policy" }).props.style,
+    );
+
+    expect(row.marginTop ?? 0).toBeGreaterThanOrEqual(0);
+    expect(link.marginTop ?? 0).toBeGreaterThanOrEqual(0);
   });
 
   it("returns to the email step so a typo can be corrected", async () => {

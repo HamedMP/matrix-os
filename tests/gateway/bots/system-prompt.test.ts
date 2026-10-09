@@ -35,7 +35,10 @@ describe("bot recipe catalog", () => {
 
   it("never gives a recipe without integrations the integration tools", () => {
     for (const recipe of createBotRecipeCatalog().list()) {
-      if (recipe.integrations.some((integration) => integration.required)) {
+      if (recipe.recipeId === "jev-inbox-triage") {
+        expect(recipe.capabilities).toContain("jev.inbox");
+        expect(recipe.capabilities).not.toContain("integration.call");
+      } else if (recipe.integrations.some((integration) => integration.required)) {
         expect(recipe.capabilities).toEqual(expect.arrayContaining(["integration.inventory", "integration.call"]));
       }
       expect(recipe.capabilities).toEqual(expect.arrayContaining(["interaction.create", "artifact.write"]));

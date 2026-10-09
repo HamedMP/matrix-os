@@ -65,6 +65,15 @@ describe("bot broker tool contracts", () => {
     }).success).toBe(false);
   });
 
+  it("bounds binary artifact chunks and requires an exact content hash", () => {
+    const chunk = { offset: 0, length: 32 * 1024, sha256: "a".repeat(64) };
+    const request = (part: unknown) => ({ toolCallId: "call_chunk", capability: "artifact.read", args: { relPath: "attachment.bin", chunk: part } });
+    expect(BotToolRequestSchema.safeParse(request(chunk)).success).toBe(true);
+    for (const part of [{ ...chunk, offset: -1 }, { ...chunk, offset: 1024 * 1024 + 1 },
+      { ...chunk, length: 32 * 1024 + 1 }, { ...chunk, length: 0 }, { ...chunk, sha256: "invalid" },
+      { offset: 0, length: 32 * 1024 }]) expect(BotToolRequestSchema.safeParse(request(part)).success).toBe(false);
+  });
+
   it("returns text content or an allowlisted error code only", () => {
     expect(BotToolResultSchema.parse({ ok: true, content: [{ type: "text", text: "3 messages" }] }).ok).toBe(true);
     expect(BotToolResultSchema.parse({ ok: false, code: "not_granted" }).ok).toBe(false);

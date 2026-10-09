@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -51,7 +52,7 @@ it.each([false, true])("cancels the exact running Pi request while reserved cred
     if (url.includes(`/api/chats/${chatId}?`)) return Response.json(detail());
     throw new Error("Unexpected request in held-credit cancellation fixture");
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubLegacyChatFetch( fetcher);
   function Harness() {
     const state = useCanonicalChatState();
     return <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} activeRunId={state.activeRunId}

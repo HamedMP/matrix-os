@@ -4,6 +4,7 @@ import type { ClerkAuth } from "../clerk-auth.js";
 import {
   getPlatformUserByClerkId,
   getUserMachine,
+  listPlatformUsersByClerkIds,
   listActivePlatformUsersByNormalizedHandle,
   type PlatformDB,
 } from "../db.js";
@@ -97,6 +98,15 @@ export async function bootstrapPlatformCollaboration(
           .execute();
         return rows.map((row) => row.runtime_id);
       },
+    },
+    managementDirectory: {
+      resolveMemberProfiles: async (actorIds) => new Map(
+        (await listPlatformUsersByClerkIds(options.db, actorIds)).map((user) => [user.clerkId, {
+          actorId: user.clerkId,
+          displayName: user.displayName,
+          emailAddress: user.email,
+        }]),
+      ),
     },
     resolveActor,
     authenticateRuntime,

@@ -1,5 +1,6 @@
 "use client";
 
+import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { useEffect } from "react";
 import { useCommandStore } from "@/stores/commands";
 
@@ -28,11 +29,12 @@ function isTextInput(el: EventTarget | null): boolean {
   return el.isContentEditable;
 }
 
-export function useGlobalShortcuts(onPalette: () => void) {
+export function useGlobalShortcuts(onPalette: () => void, paletteOpen = false) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (matchShortcut("Cmd+K", e)) {
+      if (!e.repeat && matchShortcut("Cmd+K", e)) {
         e.preventDefault();
+        if (!paletteOpen && requestChatSearchShortcut()) return;
         onPalette();
         return;
       }
@@ -51,5 +53,5 @@ export function useGlobalShortcuts(onPalette: () => void) {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onPalette]);
+  }, [onPalette, paletteOpen]);
 }

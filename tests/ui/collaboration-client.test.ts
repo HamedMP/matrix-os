@@ -68,7 +68,7 @@ describe("collaboration browser client organization directory reads", () => {
     headers: { "content-type": "application/json" },
   }));
 
-  it("reads the organization listing and member pages with the platform credentials", async () => {
+  it("reads the organization listing, member pages and pending invitations with the platform credentials", async () => {
     const fetchImpl = ok();
     const api = createCollaborationBrowserApi({
       baseUrl: "https://app.matrix-os.com",
@@ -78,16 +78,41 @@ describe("collaboration browser client organization directory reads", () => {
     await api.get("/api/organizations");
     await api.get("/api/organizations/org_alpha/members");
     await api.get(`/api/organizations/${encodeURIComponent("org_alpha")}/members?cursor=dXNlcl9tZW1iZXI_-`);
+    await api.get("/api/organizations/org_alpha/invitations");
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       "https://app.matrix-os.com/api/organizations",
       "https://app.matrix-os.com/api/organizations/org_alpha/members",
       "https://app.matrix-os.com/api/organizations/org_alpha/members?cursor=dXNlcl9tZW1iZXI_-",
+      "https://app.matrix-os.com/api/organizations/org_alpha/invitations",
     ]);
     for (const [, init] of fetchImpl.mock.calls) {
       expect(init).toMatchObject({ method: "GET", credentials: "same-origin", redirect: "error" });
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer actor-token");
       expect(init?.signal).toBeInstanceOf(AbortSignal);
     }
+  });
+
+  it("allows only the exact organization mutation routes and preserves multipart logo uploads", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ ok: true }));
+    const api = createCollaborationBrowserApi({ baseUrl: "https://app.matrix-os.com", fetchImpl });
+    const logo = new FormData();
+    logo.set("file", new Blob(["logo"], { type: "image/png" }), "logo.png");
+
+    await api.patch!("/api/organizations/org_alpha", { name: "Acme" });
+    await api.post("/api/organizations/org_alpha/invitations", { emailAddresses: ["a@example.com"], role: "org:member" });
+    await api.post("/api/organizations/org_alpha/invitations/orginv_one/resend", {});
+    await api.patch!("/api/organizations/org_alpha/members/user_member", { role: "org:admin" });
+    await api.delete("/api/organizations/org_alpha/members/user_member");
+    await api.delete("/api/organizations/org_alpha/invitations/orginv_one");
+    await api.delete("/api/organizations/org_alpha");
+    await api.patch!("/api/organizations/org_alpha/logo", logo);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(8);
+    const logoInit = fetchImpl.mock.calls[7]![1];
+    expect(logoInit?.body).toBe(logo);
+    expect(new Headers(logoInit?.headers).has("content-type")).toBe(false);
+    await expect(api.post("/api/organizations/org_alpha/members/user_member", {})).rejects.toThrow("CollaborationUnavailable");
+    await expect(api.patch!("/api/organizations/org_alpha/invitations/orginv_one", {})).rejects.toThrow("CollaborationUnavailable");
   });
 
   it.each([
@@ -98,6 +123,8 @@ describe("collaboration browser client organization directory reads", () => {
     ["a trailing slash", "get", "/api/organizations/"],
     ["an organization read", "get", "/api/organizations/org_alpha"],
     ["a member subresource", "get", "/api/organizations/org_alpha/members/user_member"],
+    ["an invitation subresource", "get", "/api/organizations/org_alpha/invitations/orginv_one"],
+    ["an invitation query", "get", "/api/organizations/org_alpha/invitations?limit=5"],
     ["a malformed organization", "get", "/api/organizations/team_alpha/members"],
     ["an encoded separator", "get", "/api/organizations/org_alpha%2Fmembers/members"],
     ["a traversal", "get", "/api/organizations/org_alpha/../members"],

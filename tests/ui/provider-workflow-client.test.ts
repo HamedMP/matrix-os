@@ -11,7 +11,7 @@ describe("provider workflow client boundary", () => {
     const client = createProviderWorkflowClient(request);
     const signal = new AbortController().signal;
     expect(await client.get("operation_1", signal)).toEqual(operation);
-    expect(request).toHaveBeenCalledWith({ method: "GET", path: "/api/ai/provider-settings/workflows/operation_1", signal });
+    expect(request).toHaveBeenCalledWith({ method: "GET", path: "/api/ai/provider-settings/workflows/v2/operation_1", signal });
     await client.cancel("operation_1", signal);
     expect(request).toHaveBeenLastCalledWith({ method: "POST", path: "/api/ai/provider-settings/workflows/operation_1/cancel", body: {}, signal });
   });
@@ -42,4 +42,32 @@ describe("provider workflow client boundary", () => {
     resolve(operation);
     await expect(pending).rejects.toThrow();
   });
+});
+
+it("negotiates provider-aware discovery without silently falling back on denial", async () => {
+  const request = vi.fn().mockRejectedValue(new (await import("../../packages/ui/src/agents-providers/provider-workflow-client.js")).ProviderWorkflowClientError("forbidden"));
+  await expect(createProviderWorkflowClient(request).capabilities(new AbortController().signal)).rejects.toMatchObject({reason: "forbidden"});
+  expect(request).toHaveBeenCalledOnce();
+  expect(request.mock.calls[0][0].path).toBe("/api/ai/provider-settings/workflows/v2/capabilities");
+});
+
+it("falls back only a missing V2 read and never retries a connection write", async () => {
+ const {ProviderWorkflowClientError} = await import("../../packages/ui/src/agents-providers/provider-workflow-client.js");
+ const request = vi.fn().mockRejectedValueOnce(new ProviderWorkflowClientError("unsupported")).mockResolvedValueOnce([]);
+ const client = createProviderWorkflowClient(request);
+ await expect(client.capabilities(new AbortController().signal)).resolves.toEqual([]);
+ expect(request.mock.calls.map(([value]) => value.path)).toEqual(["/api/ai/provider-settings/workflows/v2/capabilities", "/api/ai/provider-settings/workflows/capabilities?connectionVersion=2"]);
+ request.mockClear().mockRejectedValue(new ProviderWorkflowClientError("unsupported"));
+ await expect(client.submitConnectionKey!({harnessInstanceId: "pi", optionId: "pi:anthropic:key", apiKey: "synthetic-key"}, new AbortController().signal)).rejects.toMatchObject({reason: "unsupported"});
+ expect(request).toHaveBeenCalledOnce();
+});
+
+it("retains exact provider receipt and versioned cancellation after recovery", async () => {
+ const connectionOption = {id: "pi:openai:device", providerId: "openai", authKind: "subscription", method: "device_code", billingKind: "subscription", executionKind: "native", availability: "available"};
+ const request = vi.fn().mockResolvedValue({...operation, connectionOption});
+ const client = createProviderWorkflowClient(request);
+ const signal = new AbortController().signal;
+ expect((await client.get("operation_1", signal)).connectionOption).toEqual(connectionOption);
+ await client.cancel("operation_1", signal);
+ expect(request).toHaveBeenLastCalledWith({method: "POST", path: "/api/ai/provider-settings/workflows/v2/operation_1/cancel", body: {}, signal});
 });

@@ -11,7 +11,10 @@
 import { CollaborationDeleteConditionSchema, CollaborationDiscoveryResponseSchema, CollaborationIdSchema } from "@matrix-os/contracts";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { createCollaborationBrowserApi } from "./client.js";
-import { CollaborationDirectError, createCollaborationDirectClient, type CollaborationDirectClient, type CollaborationDirectClientOptions } from "./direct-client.js";
+import {
+  CollaborationDirectError, createCollaborationDirectClient, ownerProjectRouteAllows, parseOwnerProjectPath,
+  type CollaborationDirectClient, type CollaborationDirectClientOptions,
+} from "./direct-client.js";
 
 const MAX_HYDRATION_CONCURRENCY = 4;
 const MAX_REMEMBERED_INVITATIONS = 500;
@@ -19,8 +22,7 @@ const MAX_PREPARED_PROJECTS = 128;
 const SCOPE_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:[/?]|$)/;
 const INVITATION_PATH = /^\/api\/collaboration\/invitations\/([0-9a-f-]{36})(?:[/?]|$)/;
 const DISCOVERY_PATH = /^\/api\/collaboration\/(inbox|shared)(?:\?|$)/;
-const OWNER_RUNTIME_SETUP_PATH = /^\/api\/collaboration\/runtimes\/([^/?]+)\/(?:catalog\/resolve|scopes(?:\/preflight)?)$/;
-const OWNER_PROJECT_PATH = /^\/api\/collaboration\/scopes\/([0-9a-f-]{36})(?:\/(members|project\/inventory|project\/confirm))?$/;
+const OWNER_RUNTIME_SETUP_PATH = /^\/api\/collaboration\/runtimes\/([^/?]+)\/(?:catalog\/(?:lookup|resolve)|scopes(?:\/preflight)?)$/;
 
 export interface CollaborationDirectApi extends CollaborationApi {
   direct: CollaborationDirectClient;
@@ -106,7 +108,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     return { ...page, items };
   };
 
-  const send = async (method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> => {
+  const send = async (method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<unknown> => {
     if (DISCOVERY_PATH.test(path) && method === "GET") return discovery(path);
     const ownerRuntime = method === "POST" ? OWNER_RUNTIME_SETUP_PATH.exec(path) : null;
     if (ownerRuntime) {
@@ -137,14 +139,17 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     }
     const scopeId = scopeFor(path);
     const prepared = scopeId ? preparedProjects.get(scopeId) : undefined;
-    const ownerProject = OWNER_PROJECT_PATH.exec(path);
-    if (prepared && ownerProject && ownerProject[1] === scopeId
-      && (ownerProject[2] === "project/confirm" ? method === "POST" : method === "GET")) {
+    const ownerProject = parseOwnerProjectPath(path);
+    if (method !== "PUT" && prepared && ownerProject && ownerProject.scopeId === scopeId
+      && ownerProjectRouteAllows(ownerProject.route, method)) {
       try {
-        const result = await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method as "GET" | "POST", path, body);
+        const result = method === "DELETE"
+          ? await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method, path, undefined,
+            CollaborationDeleteConditionSchema.parse(body))
+          : await direct.requestOwnerProject(prepared.runtimeId, prepared.organizationId, method, path, body);
         // An accepted confirmation starts publishing the project: it stops being private, and the
         // owner setup key is only for private projects. Every later request uses the scope key.
-        if (ownerProject[2] === "project/confirm") preparedProjects.delete(scopeId!);
+        if (ownerProject.route === "project/confirm") preparedProjects.delete(scopeId!);
         return result;
       }
       catch (error: unknown) {
@@ -154,6 +159,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     }
     if (!scopeId) {
       if (INVITATION_PATH.test(path)) throw new Error("CollaborationUnavailable");
+      if (method === "PUT") throw new Error("CollaborationUnavailable");
       return method === "GET" ? platform.get(path) : method === "POST" ? platform.post(path, body) : method === "PATCH" ? platform.patch!(path, body) : platform.delete(path, body);
     }
     try {
@@ -171,6 +177,7 @@ export function createCollaborationDirectApi(options: CollaborationDirectClientO
     rememberInvitation,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body),
+    put: (path, body) => send("PUT", path, body),
     patch: (path, body) => send("PATCH", path, body),
     delete: (path, body) => send("DELETE", path, body),
     subscribe: (scopeId, onEvent, onUnavailable, onConnectionChange) => direct.subscribeEvents(scopeId, {

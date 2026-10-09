@@ -47,6 +47,10 @@ export const CollaborationOwnerCatalogResolveResponseSchema = z.object({
   incarnation: z.string().regex(/^[a-f0-9]{64}$/),
   revision: CollaborationRevisionSchema,
 }).strict();
+/** Read-only legacy-management lookup; `null` means this path has no current catalog identity. */
+export const CollaborationOwnerCatalogLookupResponseSchema = z.object({
+  entry: CollaborationOwnerCatalogResolveResponseSchema.nullable(),
+}).strict();
 
 export const CollaborationCatalogEntrySchema = z.object({
   id: CollaborationCatalogIdSchema,

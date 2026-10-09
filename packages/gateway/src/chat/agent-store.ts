@@ -9,6 +9,7 @@ import {
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type BotRecipeRef, type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
+import { lockChatAgentOwner } from "./agent-owner-lock.js";
 import { resolveWithinHome } from "../path-security.js";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
@@ -84,11 +85,9 @@ export class ChatAgentStore {
   }
 
   private async withOwnerLock<T>(owner: ChatOwner, action: () => Promise<T>): Promise<T> {
-    const key = this.ownerKey(owner);
+    this.ownerKey(owner);
     return this.options.db.transaction().execute(async (trx) => {
-      await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
-      await sql`INSERT INTO chat_agent_owner_locks (owner_key) VALUES (${key}) ON CONFLICT DO NOTHING`.execute(trx);
-      await sql`SELECT owner_key FROM chat_agent_owner_locks WHERE owner_key = ${key} FOR UPDATE`.execute(trx);
+      await lockChatAgentOwner(trx, owner);
       return action();
     });
   }

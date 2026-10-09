@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
 import { DEFAULT_RAIL_ORDER, moveRailItem, orderRailItems, parseRailOrderPreference, type RailOrderPreference, type RailSortMode } from "./rail-order";
 
-export function useWorkRailOrder(records: readonly CanonicalChatRecord[], projects: readonly Project[]) {
+export function useWorkRailOrder(records: readonly ChatNavigationRecord[], projects: readonly Project[]) {
   const userId = useConnection(state=>state.userId);
   const host = useConnection(state=>state.platformHost);
   const slot = useConnection(state=>state.runtimeSlot);
@@ -36,9 +36,17 @@ export function useWorkRailOrder(records: readonly CanonicalChatRecord[], projec
     projectIds: preference.projectIds.length ? preference.projectIds : orderedProjects.map(project=>project.id ?? project.slug).slice(0,1000),
   });
   const move = (kind:"chat"|"project", source:string, target:string) => {
-    if (preference.mode !== "manual") return;
-    const ids = kind === "chat" ? chats.map(record=>record.chat.id) : orderedProjects.map(project=>project.id ?? project.slug);
-    save({...preference,[kind === "chat" ? "chatIds" : "projectIds"]:moveRailItem(ids,source,target)});
+    const chatIds = chats.map(record=>record.chat.id).slice(0,1000);
+    const projectIds = orderedProjects.map(project=>project.id ?? project.slug).slice(0,1000);
+    const ids = kind === "chat" ? chatIds : projectIds;
+    if (source === target || !ids.includes(source) || !ids.includes(target)) return;
+    // An explicit reorder chooses manual mode from the order currently on screen.
+    // The other list may still be loading. Never replace its saved manual IDs
+    // with a partial/empty snapshot merely because this list was reordered.
+    save({mode:"manual",
+      chatIds: preference.mode === "manual" || !chatIds.length ? preference.chatIds : chatIds,
+      projectIds: preference.mode === "manual" || !projectIds.length ? preference.projectIds : projectIds,
+      [kind === "chat" ? "chatIds" : "projectIds"]:moveRailItem(ids,source,target)});
   };
   return {chats,projects:orderedProjects,mode:preference.mode,setMode,move,scopeKey};
 }

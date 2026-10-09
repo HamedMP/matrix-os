@@ -2,6 +2,8 @@ import type { JevInboxBatchStore } from "./inbox-batch-store.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
 import { JEV_MODEL_ID, FundedAiRuntimeChatFundingSummaryResponseSchema, type ChatAgent, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { createJevGmailAccountLookup } from "../chat/jev-recipe-authority.js";
+import type { JevBotWorkflowDependencies } from "../bots/jev-tools.js";
 import { createJevHermesCredentialResolver } from "../chat/jev-hermes-credentials.js";
 import { verifyJevHermesRuntimePin, verifyJevHermesDependencies } from "../chat/jev-hermes-runtime-pin.js";
 import { createFundedAiReadinessReader } from "../funded-ai-readiness.js";
@@ -37,13 +39,7 @@ export function createProductionJevInboxRuntime(options: {
       getRouteReadiness: call => options.routes!.getRouteReadiness({ ...call, modelId: JEV_MODEL_ID }),
     } }) : null;
   const read = createJevRecipeReadClient(options);
-  const runtime = createJevInboxRuntime({ ownerId: options.ownerId, getAgent: options.getAgent,
-    resolveCredentials: createJevHermesCredentialResolver(options),
-    verifyRuntime: async (root, signal, apiMode) => {
-      await verifyJevHermesRuntimePin(root, signal);
-      await verifyJevHermesDependencies(root, apiMode, signal);
-    },
-    fundedPolicyReady: async signal => {
+  const fundedPolicyReady = async (signal: AbortSignal) => {
       if (!options.service || !options.fundedOwnerId || !options.summary) return false;
       const raw = await options.summary.getFundingSummary({ signal }); signal.throwIfAborted();
       if (!raw.chatAvailability) return false;
@@ -53,20 +49,31 @@ export function createProductionJevInboxRuntime(options: {
         && Date.parse(policy.checkedAt) <= now && Date.parse(policy.staleAfter) > now
         && funding.remainingBudgetMicrousd > 0 && chatAvailability.availableBalanceMicrousd > 0
         && Date.parse(funding.asOf) <= now + 60_000 && now - Date.parse(funding.asOf) < 300_000;
-    },
-    fundedReady: async signal => {
+  };
+  const fundedReady = async (signal: AbortSignal) => {
       signal.throwIfAborted();
       if (!options.service || !options.fundedOwnerId || !readiness) return false;
       if (!(options.internalBaseUrl && options.machineToken) && !(options.db && options.pipedream)) return false;
       const result = await readiness.read({ signal }); signal.throwIfAborted();
       return result.readiness.state === "ready" && result.allowedModelIds.includes(JEV_MODEL_ID);
-    },
+  };
+  const botWorkflow: JevBotWorkflowDependencies = {
+    fundedReady: async signal => await fundedPolicyReady(signal) && await fundedReady(signal),
+    listGmailAccounts: createJevGmailAccountLookup(options),
     read, batchStore: options.batchStore,
     label: createJevRecipeLabelClient(options),
     evaluate: async (owner, input, signal) => {
       if (owner !== options.ownerId || !options.service || !options.fundedOwnerId) throw new InboxPreviewError("denied");
       return options.service.evaluate(options.fundedOwnerId, input, signal);
     },
+  };
+  const runtime = createJevInboxRuntime({ ownerId: options.ownerId, getAgent: options.getAgent,
+    resolveCredentials: createJevHermesCredentialResolver(options),
+    verifyRuntime: async (root, signal, apiMode) => {
+      await verifyJevHermesRuntimePin(root, signal);
+      await verifyJevHermesDependencies(root, apiMode, signal);
+    },
+    ...botWorkflow, fundedPolicyReady, fundedReady,
   });
   function resolveRecipeScope(context: Context) {
     const token = /^Bearer ([a-f0-9]{64})$/i.exec(context.req.header("authorization") ?? "")?.[1];
@@ -81,7 +88,7 @@ export function createProductionJevInboxRuntime(options: {
       return null;
     }
   }
-  return { ...runtime, resolveRecipeScope, routes: createJevRoutes({ service: options.service,
+  return { ...runtime, botWorkflow, resolveRecipeScope, routes: createJevRoutes({ service: options.service,
     inboxBroker: runtime.broker, resolveRecipeScope,
     resolveOwnerId(context) {
       const principal = getOptionalRequestPrincipal(context);

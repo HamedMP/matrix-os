@@ -66,6 +66,31 @@ describe("gallery immutable account snapshots", () => {
     expect((await call({ accountBinding: binding })).status).toBe(400);
     expect(proxyGet).not.toHaveBeenCalled();
   });
+  it("enforces both saved connection identity and gallery account snapshots", async () => {
+    const { call, proxyGet } = fixture();
+    expect((await call({ accountBinding, connectionId: "replaced_connection" })).status).toBe(403);
+    expect(proxyGet).not.toHaveBeenCalled();
+    expect((await call({ accountBinding, connectionId: accountBinding.connectionId })).status).toBe(200);
+    expect(proxyGet).toHaveBeenCalledTimes(1);
+  });
+  it("does not route gallery snapshots through a broker without snapshot validation", async () => {
+    const brokerCall = vi.fn(async () => ({ folders: [] }));
+    const app = createIntegrationReadCallRoutes({
+      db: {} as PlatformDb, pipedream: {} as PipedreamConnectClient,
+      resolveUserId: async () => "owner",
+      presetBroker: {
+        listConnections: async () => [{ id: "selected_connection", service: "granola", account_label: "Personal", status: "active" }],
+        call: brokerCall,
+      },
+    });
+    const response = await app.request("/read-call", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ service: "granola", action: "list_folders", label: "Personal", galleryImport: true,
+        accountBinding: { ...accountBinding, service: "granola" } }),
+    });
+    expect(response.status).toBe(503);
+    expect(brokerCall).not.toHaveBeenCalled();
+  });
   it("keeps legacy unbound reads compatible", async () => {
     const { call, proxyGet } = fixture();
     expect((await call({})).status).toBe(200);

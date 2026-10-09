@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { ProviderSettingsStoreWriter } from "./provider-settings-store.js";
@@ -5,7 +6,7 @@ import { z } from "zod/v4";
 import type { OpenCodeProcess, OpenCodeSpawnFn } from "../coding-agents/opencode-provider.js";
 import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-isolation.js";
 import { ProviderWorkflowError, type ProviderWorkflowAdapter } from "./provider-workflows.js";
-import { createProviderKeyVerifier } from "./provider-workflow-key.js";
+import { createProviderKeyVerifier, ProviderKeyPreflightError } from "./provider-workflow-key.js";
 
 const methodsSchema = z.record(z.string().max(100), z.array(z.object({
   type: z.enum(["oauth", "api"]), label: z.string().max(200), prompts: z.array(z.unknown()).max(20).optional(),
@@ -23,7 +24,7 @@ export interface OpenCodeAuthSession {
 export async function openOpenCodeAuthSession(options: {
   command: string; cwd: string; env: Record<string, string>; spawn?: OpenCodeSpawnFn; fetch?: typeof fetch;
 }): Promise<OpenCodeAuthSession> {
-  if (!isAbsolute(options.command) || !isAbsolute(options.cwd) || (options.env.HOME && resolve(options.env.HOME) !== resolve(options.cwd))) throw new ProviderWorkflowError("unavailable");
+  if (!isAbsolute(options.command) || !isAbsolute(options.cwd) || (options.env.HOME && resolve(options.env.HOME) !== resolve(options.cwd))) throw new NativeProviderWriteNotStartedError();
   // Never inherit operator provider keys, config redirects, or credentials.
   const environment: Record<string, string> = { HOME: options.cwd, MATRIX_HOME: options.cwd };
   for (const key of ["PATH", "MATRIX_NODE_PREFIX", "LANG", "LC_ALL"]) if (options.env[key]) environment[key] = options.env[key]!;
@@ -82,12 +83,14 @@ export async function openOpenCodeAuthSession(options: {
   } catch (error) {
     await close();
     console.warn("[provider-workflow] OpenCode auth startup unavailable:", error instanceof Error ? error.name : "UnknownError");
-    throw new ProviderWorkflowError("unavailable");
+    // The startup phase contains no credential API calls; confirmed close proves no writer remains.
+    throw new NativeProviderWriteNotStartedError();
   }
   return {
     close,
     async request(path, method = "GET", body, timeout = 10000) {
-      if (!/^\/(?:provider(?:\/auth|\/openai\/oauth\/(?:authorize|callback))?|auth\/openai|global\/health)$/.test(path)) throw new ProviderWorkflowError("unavailable");
+      if (!/^\/(?:provider(?:\/auth|\/openai\/oauth\/(?:authorize|callback))?|auth\/(?:openai|anthropic|openrouter)|global\/health)$/.test(path)) throw new ProviderWorkflowError("unavailable");
+      if (/^\/auth\//.test(path) && method !== "PUT") throw new ProviderWorkflowError("unavailable");
       const response = await (options.fetch ?? fetch)(`${origin}${path}`, { method, headers,
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: "error",
         signal: AbortSignal.any([controller.signal, AbortSignal.timeout(timeout)]) });
@@ -106,15 +109,16 @@ export function createOpenCodeSettingsConnection(options: {
   session: () => Promise<OpenCodeAuthSession>;
   enableConnected: (harnessInstanceId: string, idempotencyKey: string) => Promise<void>;
   fetch?: typeof fetch;
+  enableProviderConnected?: (harnessInstanceId: string, provider: "openai" | "anthropic" | "openrouter", idempotencyKey: string) => Promise<void>;
 }) {
   let activeSessions = 0; let shutdown = false;
   const sessions = new Set<OpenCodeAuthSession>(); // Maximum two; remove on confirmed cleanup.
   const openSession = async () => {
-    if (shutdown || activeSessions >= 2) throw new ProviderWorkflowError("unavailable");
+    if (shutdown || activeSessions >= 2) throw new NativeProviderWriteNotStartedError();
     activeSessions += 1;
     let session: OpenCodeAuthSession;
     try { session = await options.session(); } catch (error) { activeSessions -= 1; throw error; }
-    if (shutdown) { await session.close(); activeSessions -= 1; throw new ProviderWorkflowError("unavailable"); }
+    if (shutdown) { await session.close(); activeSessions -= 1; throw new NativeProviderWriteNotStartedError(); }
     let closed = false; let closing: Promise<void> | undefined;
     const tracked: OpenCodeAuthSession = { request: session.request.bind(session), async close() {
       if (closed) return;
@@ -124,7 +128,7 @@ export function createOpenCodeSettingsConnection(options: {
     sessions.add(tracked); return tracked;
   };
   let capabilityProbe: Promise<{ login: boolean; apiKey: boolean }> | undefined;
-  let cachedCapability: { value: { login: boolean; apiKey: boolean }; expiresAt: number } | undefined;
+  let cachedCapability: { value: { login: boolean; apiKey: boolean }; expiresAt: number; keys: Array<"openai" | "anthropic" | "openrouter"> } | undefined;
   async function discover(session: OpenCodeAuthSession) {
     const health = z.object({ healthy: z.literal(true), version: z.string().min(1).max(100) }).parse(await session.request("/global/health"));
     if (!/^1\./.test(health.version)) throw new ProviderWorkflowError("unavailable");
@@ -132,7 +136,8 @@ export function createOpenCodeSettingsConnection(options: {
     // Browser localhost callbacks are unusable for a remote Matrix computer.
     // Only the official headless auto-polling method is advertised.
     const index = methods.openai?.findIndex(method => method.type === "oauth" && method.label === "ChatGPT Pro/Plus (headless)" && !method.prompts?.length) ?? -1;
-    return { index, key: methods.openai?.some(method => method.type === "api" && !method.prompts?.length) ?? false };
+    const keys = (["openai", "anthropic", "openrouter"] as const).filter(provider => (provider === "openai" || !!options.enableProviderConnected) && methods[provider]?.some(method => method.type === "api" && !method.prompts?.length));
+    return { index, key: keys.includes("openai"), keys };
   }
   return {
     async close() {
@@ -149,10 +154,14 @@ export function createOpenCodeSettingsConnection(options: {
         const session = await openSession();
         try { const discovered = await discover(session);
           const value = { login: discovered.index >= 0, apiKey: discovered.key };
-          cachedCapability = { value, expiresAt: Date.now() + 15000 }; return value;
+          cachedCapability = { value, keys: discovered.keys, expiresAt: Date.now() + 15000 }; return value;
         } finally { await session.close(); }
       })();
       try { return await capabilityProbe; } finally { capabilityProbe = undefined; }
+    },
+    async apiKeyProviders() {
+      await this.capabilities();
+      return cachedCapability?.keys ?? [];
     },
     async start(input: Parameters<ProviderWorkflowAdapter["start"]>[0]) {
       if (input.request.kind !== "login" || input.request.method !== "device_code") throw new ProviderWorkflowError("unavailable");
@@ -197,14 +206,24 @@ export function createOpenCodeSettingsConnection(options: {
       } catch (error) { await cancel(); throw error; }
     },
     async verifyKey(input: Parameters<NonNullable<ProviderWorkflowAdapter["verifyKey"]>>[0]) {
-      if (input.providerId !== "openai") throw new ProviderWorkflowError("rejected");
+      if (input.providerId !== "openai" && !options.enableProviderConnected) throw new ProviderKeyPreflightError("rejected");
       const session = await openSession();
+      let writeRequested = false;
       try {
-        if (!(await discover(session)).key) throw new ProviderWorkflowError("unavailable");
-        await createProviderKeyVerifier({ providerId: "openai", fetchFn: options.fetch,
-          save: async key => { if (await session.request("/auth/openai", "PUT", { type: "api", key }) !== true) throw new ProviderWorkflowError("unavailable"); },
+        if (!(await discover(session)).keys.includes(input.providerId)) throw new ProviderWorkflowError("unavailable");
+        await createProviderKeyVerifier({ providerId: input.providerId, fetchFn: options.fetch,
+          save: async key => { writeRequested = true; if (await session.request(`/auth/${input.providerId}`, "PUT", { type: "api", key }) !== true) throw new ProviderWorkflowError("unavailable"); },
         })(input);
-        await options.enableConnected(input.harnessInstanceId, `opencode-key-${randomUUID()}`);
+        if (options.enableProviderConnected) await options.enableProviderConnected(input.harnessInstanceId, input.providerId, `opencode-key-${randomUUID()}`);
+        else await options.enableConnected(input.harnessInstanceId, `opencode-key-${randomUUID()}`);
+      } catch (error) {
+        if (!writeRequested) {
+          await session.close();
+          if (error instanceof ProviderKeyPreflightError) throw error;
+          console.warn("[provider-workflow] OpenCode read-only discovery unavailable:", error instanceof Error ? error.name : "UnknownError");
+          throw new NativeProviderWriteNotStartedError();
+        }
+        throw error;
       } finally { await session.close(); }
     },
   };
@@ -215,7 +234,7 @@ export function createOpenCodeSettingsConnection(options: {
 export async function enableOpenCodeConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, idempotencyKey: string) {
   return enableNativeSettingsConnectedRoute(store, harnessInstanceId, "opencode", "openai", idempotencyKey);
 }
-export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw", provider: "openai" | "openai-codex", idempotencyKey: string) {
+export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw" | "hermes", provider: "openai" | "openai-codex" | "openai-api" | "anthropic" | "openrouter", idempotencyKey: string) {
   const snapshot = await store.getSnapshot({ refresh: true });
   const harness = snapshot.harnesses.find(row => row.id === harnessInstanceId && row.harness === kind);
   const source = snapshot.accessSources.find(row => row.kind === "harness_profile" && row.harness === kind && row.providerId === provider && row.localObservation?.state === "present_unverified");

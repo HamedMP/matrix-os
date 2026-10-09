@@ -72,11 +72,13 @@ it("places Bot identity and Details in the host toolbar without a second identit
     expect(within(nextHost).getByRole("button", { name: "Details" }).getAttribute("aria-expanded")).toBe("true");
     expect(within(detailsHost).queryByRole("complementary")).toBeNull();
     expect(detailsHost.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(detailsHost.hasAttribute("data-bot-details-reserved")).toBe(false);
     expect(within(nextDetailsHost).getByRole("complementary", { name: "Bot details" })).toBeTruthy();
     view.rerender(<BotChatPanel chatId="chat_other" directBotId={null} client={client} headerContainer={nextHost} detailsContainer={nextDetailsHost} />);
     expect(nextHost.querySelector(".matrix-bot-identity-bar")).toBeNull();
     expect(within(nextDetailsHost).queryByRole("complementary")).toBeNull();
     expect(nextDetailsHost.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(nextDetailsHost.hasAttribute("data-bot-details-reserved")).toBe(false);
   } finally { view.unmount(); host.remove(); nextHost.remove(); detailsHost.remove(); nextDetailsHost.remove(); }
 });
 
@@ -99,6 +101,7 @@ it("anchors Details to the supplied Chat surface, responds to its width and rele
   });
   const host = document.createElement("section");
   host.className = "matrix-bot-chat-layout";
+  host.setAttribute("data-bot-details-reserved", "original");
   let width = 1000;
   vi.spyOn(host, "getBoundingClientRect").mockImplementation(() => ({ width } as DOMRect));
   document.body.append(host);
@@ -113,16 +116,20 @@ it("anchors Details to the supplied Chat surface, responds to its width and rele
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(within(host).getByRole("complementary", { name: "Bot details" }).parentElement).toBe(host);
     expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("360px");
+    expect(host.getAttribute("data-bot-details-reserved")).toBe("true");
     width = 500;
     act(() => resized?.([], {} as ResizeObserver));
     expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("0px");
+    expect(host.getAttribute("data-bot-details-reserved")).toBe("false");
     fireEvent.click(screen.getByRole("button", { name: "Close bot details" }));
     expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(host.getAttribute("data-bot-details-reserved")).toBe("original");
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(within(host).getByRole("complementary", { name: "Bot details" })).toBeTruthy();
     view.rerender(<BotChatPanel chatId="chat_other" directBotId={null} client={client} detailsContainer={host} />);
     expect(within(host).queryByRole("complementary")).toBeNull();
     expect(host.style.getPropertyValue("--matrix-bot-details-reserve")).toBe("");
+    expect(host.getAttribute("data-bot-details-reserved")).toBe("original");
     expect(disconnect).toHaveBeenCalled();
   } finally { view.unmount(); host.remove(); vi.unstubAllGlobals(); }
 });

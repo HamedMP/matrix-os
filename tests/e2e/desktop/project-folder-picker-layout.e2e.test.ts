@@ -87,7 +87,8 @@ suite("Desktop Add Project compact folder picker", () => {
       await page.getByRole("button", { name: /^(Show Chat navigation|Toggle Chat sidebar)$/ }).click();
     }
     await chatNavigation.waitFor();
-    await page.getByRole("button", { name: "Create project" }).click();
+    await chatNavigation.getByRole("button", { name: "Projects", exact: true }).hover();
+    await chatNavigation.getByRole("button", { name: "Create project" }).click();
     const dialog = page.getByRole("dialog", { name: "Create a project" });
     await dialog.waitFor();
     await dialog.getByRole("button", { name: /Existing folder/ }).click();

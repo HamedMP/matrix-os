@@ -1,14 +1,18 @@
 "use client";
 
-import { ResourceSharingButton } from "@matrix-os/ui";
-import { useEffect, useMemo, useState } from "react";
+import { LegacyResourceAccessButton } from "@matrix-os/ui";
+import { useEffect, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
 import { CollaborationOrganization, useShellCollaborationApi } from "@/lib/collaboration-organization";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
-export function FileResourceSharing({ kind, path }: { kind: "file" | "folder" | "app"; path: string }) {
+export function FileResourceSharing({ kind, path, containerClassName }: {
+  kind: "file" | "folder" | "app";
+  path: string;
+  containerClassName?: string;
+}) {
   const platformHost = useBrowserOrigin();
   const { status: organizationStatus } = useCollaborationOrganization();
   const api = useShellCollaborationApi(platformHost, organizationStatus !== "none");
@@ -28,6 +32,7 @@ export function FileResourceSharing({ kind, path }: { kind: "file" | "folder" | 
     });
     return () => { active = false; };
   }, [organizationStatus]);
-  return api ? <CollaborationOrganization>{(organizationId) => <ResourceSharingButton
-    api={api} runtimeId={runtimeId} organizationId={organizationId} kind={kind} path={path} />}</CollaborationOrganization> : null;
+  return api ? <CollaborationOrganization>{(organizationId) => <LegacyResourceAccessButton
+    api={api} runtimeId={runtimeId} organizationId={organizationId} kind={kind} path={path}
+    containerClassName={containerClassName} />}</CollaborationOrganization> : null;
 }

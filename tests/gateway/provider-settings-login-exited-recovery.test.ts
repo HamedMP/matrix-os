@@ -32,14 +32,14 @@ describe("provider login exited-terminal recovery", () => {
     }),
     observeAgentLiveness: vi.fn(async () => liveness),
     archiveStopped: vi.fn(async (name: string, nextName: string, _agent: string) => {
-      if (_agent !== "codex" || liveness !== "stopped") throw new Error("identity changed");
+      if (_agent !== "claude" || liveness !== "stopped") throw new Error("identity changed");
       if (!terminals.delete(name)) throw new Error("missing");
       terminals.add(nextName); return { name: nextName };
     }),
   };
   const input = {
-    mutation: { type: "start_login" as const, expectedRevision: 0, idempotencyKey: "first", harnessInstanceId: "harness_codex", accountId: null, method: "terminal" as const },
-    harness: { id: "harness_codex", driverId: "codex", harness: "codex" as const, providerId: "openai", modelId: "gpt-5", installState: "installed" as const },
+    mutation: { type: "start_login" as const, expectedRevision: 0, idempotencyKey: "first", harnessInstanceId: "harness_claude_code", accountId: null, method: "terminal" as const },
+    harness: { id: "harness_claude_code", driverId: "claude_code", harness: "claude" as const, providerId: "anthropic", modelId: "claude-sonnet-5", installState: "installed" as const },
   };
   beforeEach(async () => {
     homePath = await mkdtemp(join(tmpdir(), "provider-login-exited-"));
@@ -49,7 +49,7 @@ describe("provider login exited-terminal recovery", () => {
     writes.count = 0; writes.failAt = 0;
   });
   afterEach(async () => { await rm(homePath, { recursive: true, force: true }); });
-  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, profileGuard: createNativeProviderProfileGuard({ homePath, registry }), enabledHarnesses: ["codex"], now: () => clock }); }
+  function login() { return createProviderTerminalLoginCoordinator({ homePath, registry, profileGuard: createNativeProviderProfileGuard({ homePath, registry }), enabledHarnesses: ["claude"], now: () => clock }); }
   const retry = { ...input, mutation: { ...input.mutation, expectedRevision: 1, idempotencyKey: "retry" } };
 
   it.each([false, true])("preserves ended login output and starts a fresh login when expired=%s", async expired => {
@@ -60,7 +60,7 @@ describe("provider login exited-terminal recovery", () => {
     liveness = "stopped";
     const second = await service.startLogin(retry);
     expect(second.state).toBe("pending");
-    expect(registry.archiveStopped).toHaveBeenCalledWith(first.action.terminalSessionId, expect.stringMatching(/^provider-auth-ended-[a-f0-9]{40}$/), "codex");
+    expect(registry.archiveStopped).toHaveBeenCalledWith(first.action.terminalSessionId, expect.stringMatching(/^provider-auth-ended-[a-f0-9]{40}$/), "claude");
     expect(registry.create).toHaveBeenCalledTimes(2);
     expect(registry.delete).not.toHaveBeenCalled();
     expect(terminals.size).toBe(2);

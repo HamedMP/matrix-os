@@ -198,6 +198,23 @@ describe("TerminalsTab", () => {
     expect((screen.getByRole("button", { name: "Open latest-shell" }) as HTMLElement).getAttribute("aria-current")).toBe("true");
   });
 
+  it("offers no terminal share for the selected session: projects are the only live-shareable resource", async () => {
+    // A runtime with collaboration on is exactly where a terminal share control used to appear.
+    terminalPreferencesGet.mockImplementation(async (path: string) => (
+      path === "/api/system/info"
+        ? { runtime: { machineId: "10000000-0000-4000-8000-000000000001" }, capabilities: { collaboration: true } }
+        : path === "/api/agents" ? installedAgents : { preferences: { shellThemeId: "dark" } }
+    ));
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active" }] });
+
+    renderTab();
+
+    await waitFor(() => expect(screen.getByTestId("terminal-view-matrix-main").getAttribute("data-active")).toBe("true"));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.getByRole("banner").querySelector("[data-terminal-header-status]")?.textContent).toBe("Active");
+    expect(screen.queryByRole("button", { name: /^Share\b/i })).toBeNull();
+  });
+
   it("renders only canonical shell sessions in the OS View sidebar", () => {
     useShellSessions.setState({
       sessions: [

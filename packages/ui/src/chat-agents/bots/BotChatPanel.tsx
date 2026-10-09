@@ -7,15 +7,17 @@ import { AgentAvatar } from "../AgentAvatar.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { BotEditDialog } from "./BotEditDialog.js";
 import { BotDetailsPanel } from "./BotDetailsPanel.js";
-import { InteractionCard } from "./InteractionCard.js";
+import { BotMessageStateContext, BotUnassignedMessageBody } from "./BotMessageBody.js";
 import { useBotModelRecovery } from "./BotModelRecovery.js";
-import { BotCurrentTaskStatus } from "./BotCurrentTaskStatus.js";
+
+import { useChatAgentsNavigation } from "../ChatAgentsNavigation.js";
 
 import { useDirectBotChat } from "./use-direct-bot-chat.js";
 
 const REFRESH_INTERVAL_MS = 15_000;
 
 interface BotChatPanelProps {
+  children?: ReactNode;
   onSetup?: () => void; onRefreshCatalog?: () => void; onModelChanged?: () => void;
   chatId?: string;
   client?: ChatAgentClient;
@@ -23,6 +25,7 @@ interface BotChatPanelProps {
   directBotId?: string | null;
   catalog?: CanonicalProviderCatalog | null;
   catalogLoading?: boolean;
+  visible?: boolean;
   detailsContainer?: HTMLElement | null;
   headerContainer?: HTMLElement | null;
   headerLeading?: ReactNode;
@@ -30,7 +33,9 @@ interface BotChatPanelProps {
 }
 
 /** Shared by Web Canvas and Web Desktop through ChatApp. */
-export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, detailsContainer, headerContainer, headerLeading, headerActions, onSetup, onRefreshCatalog, onModelChanged }: BotChatPanelProps) {
+export function BotChatPanel({ children, chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, visible = true, detailsContainer, headerContainer, headerLeading, headerActions, onSetup, onRefreshCatalog, onModelChanged }: BotChatPanelProps) {
+  const navigation = useChatAgentsNavigation();
+  const shown = visible && navigation?.opened?.client !== client;
   const bots = client?.bots;
   const agentId = useDirectBotChat(chatId, client, directBotId);
   const [agent, setAgent] = useState<ChatAgent | null>(null);
@@ -44,7 +49,10 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
   const [tasks, setTasks] = useState<BotTaskSummary[]>([]);
   const [authority, setAuthority] = useState<BotAuthorityView | null>(null);
   const [showAuthority, setShowAuthority] = useState(false);
-  useBotDetailsHost(detailsContainer, showAuthority);
+  useBotDetailsHost(detailsContainer, shown && showAuthority);
+  useEffect(() => {
+    if (!shown) { setShowAuthority(false); setShowEdit(false); }
+  }, [shown, showAuthority, showEdit]);
   const recovery = useBotModelRecovery();
   const request = recovery?.detailsRequest;
   useEffect(() => { if (request?.agentId === agentId && request.client === client) setShowAuthority(true); }, [request, agentId, client]);
@@ -64,26 +72,37 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
     setShowAuthority(false);
     setError("");
   }, [chatId, bots, agentId]);
+  const railDetailsRequest = navigation?.detailsRequest;
+  const consumeRailDetails = navigation?.consumeDetails;
+  useEffect(() => {
+    if (!shown || !agentId || !chatId || railDetailsRequest?.agentId !== agentId || railDetailsRequest.client !== client || railDetailsRequest.chatId !== chatId) return;
+    setShowAuthority(true);
+    consumeRailDetails?.(railDetailsRequest.sequence);
+  }, [shown, agentId, chatId, client, railDetailsRequest, consumeRailDetails]);
   useEffect(() => {
     if (!agentId || !chatId || !bots || !client) return;
     let current = true;
     const refresh = async () => {
       try {
-        const [pending, activeTasks, view, library] = await Promise.allSettled([
-          bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId), client.list(),
+        const library = await client.list();
+        if (!current) return;
+        const saved = library.enabled ? library.agents.find(candidate => candidate.id === agentId && !candidate.archived) : undefined;
+        if (!saved) throw new Error("Bot definition unavailable");
+        if (saved.revision >= latestRevision.current) {
+          latestRevision.current = saved.revision; setAgent(saved); setName(saved.name);
+        }
+        if (!saved.recipeRef) {
+          setInteractions([]); setInteractionsFresh(false); setTasks([]); setAuthority(null); setError("");
+          return;
+        }
+        const [pending, activeTasks, view] = await Promise.allSettled([
+          bots.interactions(chatId), bots.tasks(chatId), bots.authority(agentId),
         ]);
         if (!current) return;
         if (pending.status === "fulfilled") setInteractions(pending.value);
         setInteractionsFresh(pending.status === "fulfilled");
         if (activeTasks.status === "fulfilled") setTasks(activeTasks.value);
         if (view.status === "fulfilled") setAuthority(view.value);
-        if (library.status === "fulfilled") {
-          const agent = library.value.agents.find((candidate) => candidate.id === agentId);
-          if (agent && agent.revision >= latestRevision.current) {
-            latestRevision.current = agent.revision; setAgent(agent); setName(agent.name);
-          }
-        }
-        if (library.status === "rejected") console.warn("[chat-agents] Bot name unavailable:", library.reason instanceof Error ? library.reason.name : "UnknownError");
         setError(pending.status === "rejected" || activeTasks.status === "rejected" || view.status === "rejected"
           ? "Bot status could not be loaded. Try again." : "");
       } catch (failure: unknown) {
@@ -112,10 +131,9 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
       if (selectionSequence.current === sequence) setError("Could not change the bot model. Refresh and try again.");
     } finally { if (selectionSequence.current === sequence) setModelPending(false); }
   };
-  if (!agentId || !chatId || !bots) return null;
-  const details = showAuthority ? <BotDetailsPanel agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
+  const details = shown && agentId && chatId && bots && showAuthority ? <BotDetailsPanel agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
     tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
-  const identity = <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
+  const identity = shown && agentId && chatId && bots ? <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
       {headerLeading}
       <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{name ?? "Your bot"}</p>
@@ -123,18 +141,14 @@ export function BotChatPanel({ chatId, client, refreshKey, directBotId, catalog,
       <button type="button" aria-label="Details" aria-expanded={showAuthority} className={`${chatAgentButtonClass} shrink-0`}
         onClick={() => setShowAuthority(value => !value)}>Details</button>
       {headerActions}
-    </div>;
-  return <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
+    </div> : null;
+  return <BotMessageStateContext.Provider value={shown && agentId && chatId && bots ? { chatId, agentId, interactions, interactionsFresh, tasks, error,
+    resolve: (interactionId, input) => bots.resolve(chatId, interactionId, input), refresh: () => setTick(value => value + 1) } : null}>
+    {identity ? <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
     {headerContainer ? createPortal(identity, headerContainer) : identity}
-    <div className="matrix-bot-status-content">
-      {interactions.filter(interaction => interaction.status === "pending").map((interaction) => <InteractionCard key={interaction.interactionId} interaction={interaction}
-        actionsAvailable={interactionsFresh}
-        onResolve={(input) => bots.resolve(chatId, interaction.interactionId, input)} onResolved={() => setTick((value) => value + 1)}
-        />)}
-      <BotCurrentTaskStatus tasks={tasks}/>
       {details && detailsContainer ? createPortal(details, detailsContainer) : details}
       {showEdit && agent && client ? <BotEditDialog key={agent.id} agent={agent} client={client} catalog={catalog} catalogLoading={catalogLoading} authority={authority} onClose={() => setShowEdit(false)} onSaved={updated => { latestRevision.current = updated.revision; setAgent(updated); setName(updated.name); }}/>:null}
-      {error ? <p role="alert" className="text-xs">{error}</p> : null}
-    </div>
-  </section>;
+    </section> : null}
+    {children ?? (shown && agentId && chatId && bots ? <BotUnassignedMessageBody runIds={[]}/> : null)}
+  </BotMessageStateContext.Provider>;
 }

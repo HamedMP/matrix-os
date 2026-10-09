@@ -1,3 +1,4 @@
+import type { NativeObservationReadScope } from "./hermes-observation-renewal.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import type {
   AiProviderSnapshotV3,
@@ -15,6 +16,8 @@ import type { ProviderSettingsDependencyReader } from "./provider-settings-proje
 
 export interface CanonicalProviderSnapshotReader {
   getSnapshot(options?: ProviderSnapshotReadOptions): Promise<AiProviderSnapshotV3>;
+  /** Reobserve only stale native evidence after optional Settings enrichment. */
+  renewNativeObservations?(snapshot: AiProviderSnapshotV3, scope: NativeObservationReadScope): Promise<AiProviderSnapshotV3>;
 }
 
 export interface ProviderAccountDependencyCoordinator extends ProviderSettingsDependencyReader {
@@ -37,7 +40,10 @@ export interface ProviderLifecycleAccount {
   harness: ProviderHarnessKind;
   installState: ProviderHarnessInstallState;
   authenticated: boolean;
-  /** CLI drivers currently own one active account; multiple rows are ambiguous. */
+  /** Private native identity proof; never serialized in snapshots or receipts. */
+  nativeClaudeAccount?: import("./claude-native-account-metadata.js").ClaudeNativeAccountMetadata;
+  nativeClaudeSignedOut?: import("./claude-native-signed-out.js").ClaudeNativeSignedOut;
+  /** Distinct credentials addressing the same native store; aliases count once. */
   driverAccountCount: number;
 }
 
@@ -59,6 +65,8 @@ export interface ProviderSettingsRuntimeMutationInput {
   canonical: AiProviderSnapshotV3;
   /** Exact public source truth used to validate credential portability. */
   snapshot?: ProviderSettingsSnapshot;
+  /** Trusted server completion, never populated from a public mutation request. */
+  claudeNativeCompletion?: boolean;
 }
 
 /** Applies settings to the real runtime/control plane and durably deduplicates the key. */

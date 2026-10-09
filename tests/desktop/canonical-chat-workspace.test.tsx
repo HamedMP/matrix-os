@@ -85,7 +85,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(surface.querySelector('[data-slot="shared-chat-composer"]')).toBeTruthy();
   });
 
-  it("uses the same content width for the transcript and canonical composer", async () => {
+  it("retains transcript width and caps the canonical composer at the approved Figma card width", async () => {
     render(
       <CanonicalChatWorkspace
         client={client()}
@@ -103,7 +103,9 @@ describe("CanonicalChatWorkspace", () => {
       .closest('[data-slot="shared-chat-composer"]');
     expect(composer?.parentElement).toBeTruthy();
     expect(transcript.className).toContain("max-w-[868px]");
-    expect(composer?.parentElement?.className).toContain("max-w-[868px]");
+    // The 808px wrapper minus 24px padding on each side yields the 760px card.
+    expect(composer?.parentElement?.className).toContain("max-w-[808px]");
+    expect(composer?.parentElement?.className).toContain("px-6");
   });
 
   it("renders Global Chat history beside the new-chat pane before a Chat is selected", async () => {
@@ -284,7 +286,7 @@ describe("CanonicalChatWorkspace", () => {
 
     const starter = screen.getByRole("button", { name: "Explore and understand code" });
     const starterLabel = within(starter).getByText("Explore and understand code");
-    expect(starterLabel.className).toContain("text-[13px]");
+    expect(starterLabel.className).toContain("text-[14px]");
     expect(starterLabel.className).toContain("font-medium");
     expect(starterLabel.className).toContain("leading-[18px]");
   });
@@ -345,7 +347,7 @@ describe("CanonicalChatWorkspace", () => {
     expect(starterScroll?.className).toContain("overflow-y-auto");
     expect(starterScroll?.className).toContain("items-start");
     expect(starterStack?.className).toContain("my-auto");
-    expect(starterScroll?.style.scrollbarGutter).toBe("stable");
+    expect(starterScroll?.style.scrollbarGutter).toBe("stable both-edges");
     expect(newChatContent?.className).toContain("overflow-hidden");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
   });

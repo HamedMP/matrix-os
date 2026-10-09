@@ -4,6 +4,8 @@
 // (FR-081). The bearer credential never appears in any schema; Hermes provider
 // credentials are accepted only by the bounded write-only setter request.
 import { z } from "zod/v4";
+import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
+import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
 import {
@@ -141,6 +143,8 @@ const BoundedJsonValue = z.unknown().refine(
 );
 
 export const INVOKE_CHANNELS = {
+  ...CHATGPT_PLAN_INVOKE,
+  ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
   "analytics:flush-complete": { request: Empty, response: Ok },

@@ -1,3 +1,4 @@
+import { readOwnerAnthropicKey } from "./ai-providers/owner-anthropic-key.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
@@ -9,6 +10,7 @@ export const KernelCredentialAccessSourceIdSchema = z.enum([
   "matrix_included",
   "owner_anthropic_key",
   "owner_anthropic_profile",
+  "owner_claude_profile",
 ]);
 export type KernelCredentialAccessSourceId = z.infer<typeof KernelCredentialAccessSourceIdSchema>;
 export type KernelCredentialObservationState =
@@ -80,20 +82,9 @@ async function resolveKernelCredentials(
   let ownerApiKey: string | undefined;
   let hasOwnerProfile = false;
 
-  try {
-    const raw = await readFile(join(homePath, "system/config.json"), "utf-8");
-    const userConfig = JSON.parse(raw);
-    const byokKey = userConfig?.kernel?.anthropicApiKey;
-    if (typeof byokKey === "string" && byokKey.trim().length > 0) {
-      ownerApiKey = byokKey;
-      apiKeyState = "unverified";
-    }
-  } catch (err) {
-    if (!isNotFound(err)) {
-      apiKeyState = observationForReadFailure(err);
-      logCredentialReadFailure("[kernel-credentials] failed to read user API key config:", err);
-    }
-  }
+  const ownerKey = await readOwnerAnthropicKey(homePath);
+  ownerApiKey = ownerKey.key;
+  apiKeyState = ownerKey.state;
 
   try {
     const raw = await readFile(join(homePath, ".claude.json"), "utf-8");
@@ -132,9 +123,10 @@ async function resolveKernelCredentials(
     delete env.ANTHROPIC_BASE_URL;
     return { mode: "api_key", env, sources };
   }
-  if (requestedAccessSourceId === "owner_anthropic_profile") {
+  if (requestedAccessSourceId === "owner_anthropic_profile" || requestedAccessSourceId === "owner_claude_profile") {
     if (!hasOwnerProfile) throw new Error("Selected AI access is unavailable");
     env.HOME = homePath;
+    if (requestedAccessSourceId === "owner_claude_profile") delete env.CLAUDE_CONFIG_DIR;
     delete env.ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_BASE_URL;
     return { mode: "claude_login", env, sources };

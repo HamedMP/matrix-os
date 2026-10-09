@@ -846,11 +846,11 @@ describe("AgentsProvidersView", () => {
     const personal = screen.getByTestId("account-account_personal");
     const work = screen.getByTestId("account-account_work");
 
-    expect(within(personal).getByText("25% used")).toBeVisible();
+    expect(within(personal).getByText("75% left")).toBeVisible();
     expect(within(personal).getByRole("progressbar", { name: "Personal remaining allowance" })).toHaveAttribute("value", "7500");
     expect(within(work).getByText("$0.13 observed")).toBeVisible();
     fireEvent.click(within(personal).getByRole("button", { name: "Log out Personal" }));
-    expect(within(work).getByRole("button", { name: "Log in Work" })).toBeDisabled();
+    expect(within(work).queryByRole("button", { name: "Log in Work" })).toBeNull();
     await waitFor(() => expect(within(work).getByRole("button", { name: "Remove Work" })).toBeEnabled());
     fireEvent.click(within(work).getByRole("button", { name: "Remove Work" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove account" }));
@@ -901,7 +901,7 @@ describe("AgentsProvidersView", () => {
     expect(choices).not.toContain("Work Anthropic key");
   });
 
-  it("opens only opaque terminal session ids and owner-gateway authorization paths", () => {
+  it("does not continue unsupported generic subscription login attempts", () => {
     const terminalAttempt: ProviderConnectionAttempt = {
       id: "attempt_terminal",
       harnessInstanceId: "harness_hermes",
@@ -915,7 +915,7 @@ describe("AgentsProvidersView", () => {
     const onOpenTerminal = vi.fn();
     const onOpenBrowser = vi.fn();
     const { rerender } = setup({ connectionAttempt: terminalAttempt, onOpenTerminal, onOpenBrowser });
-    expect(screen.getByRole("button", { name: "Continue in Terminal" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).toBeNull();
     expect(onOpenTerminal).not.toHaveBeenCalled();
 
     const browserAttempt: ProviderConnectionAttempt = {
@@ -925,7 +925,7 @@ describe("AgentsProvidersView", () => {
       action: { kind: "open_browser", authorizationPath: "/api/ai/providers/login-attempts/attempt_browser/authorize" },
     };
     rerender(<AgentsProvidersView {...setupProps(snapshot(), { connectionAttempt: browserAttempt, onOpenTerminal, onOpenBrowser })} />);
-    expect(screen.getByRole("button", { name: "Continue in browser" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in browser" })).toBeNull();
     expect(onOpenBrowser).not.toHaveBeenCalled();
   });
 
@@ -1327,3 +1327,28 @@ function setupProps(
     ...overrides,
   };
 }
+
+
+it("keeps the real grouped Claude row Connecting until scoped refresh settles", async () => {
+  vi.useFakeTimers();
+  const next = snapshot(); const row = next.harnesses.find(h=>h.harness === "claude")!;
+  row.authState = "unauthenticated";row.enabled=false;row.configuredEnabled=false;
+  const option = {id:"claude:anthropic:browser",providerId:"anthropic",authKind:"subscription",method:"browser",billingKind:"subscription",executionKind:"native",availability:"available"} as const;
+  const operation = {id:"new-login",harnessInstanceId:row.id,kind:"login",state:"running",expiresAt:new Date(Date.now()+60000).toISOString(),terminalSessionId:null,deviceCode:null,authorizationUrl:null,safeFailure:null,connectionOption:option} as const;
+  let finish!: (s:ProviderSettingsSnapshot)=>void;
+  const fresh = new Promise<ProviderSettingsSnapshot>(resolve=>{finish=resolve;});
+  const onRefreshForConnection=vi.fn(()=>fresh);
+  const workflowClient = {capabilities:vi.fn().mockResolvedValue([{harnessInstanceId:row.id,harness:"claude",displayName:"Claude Code",installState:"installed",loginMethods:["browser"],apiKeyProviders:[],install:false,uninstall:false,logs:false,connectionOptions:[option]}]),start:vi.fn(),startConnection:vi.fn().mockResolvedValue(operation),get:vi.fn().mockResolvedValue({...operation,state:"succeeded"}),cancel:vi.fn(),submitKey:vi.fn(),submitCode:vi.fn(),logs:vi.fn()};
+  const view = setup({snapshot:next,selectedHarnessId:row.id,workflowClient,onRefreshForConnection});
+  await act(async()=>{});
+  await act(async()=>fireEvent.click(screen.getByRole("button",{name:/Claude account · Sign in in browser/})));
+  await act(()=>vi.advanceTimersByTimeAsync(2000));
+  expect(onRefreshForConnection).toHaveBeenCalledOnce();
+  expect(screen.getByRole("status",{name:"Updating connection"})).toBeVisible();
+  expect(screen.getByRole("button",{name:/Claude Code.*Connecting/})).toBeVisible();
+  const connected=structuredClone(next);const current=connected.harnesses.find(h=>h.id===row.id)!;
+  current.authState="authenticated";current.enabled=true;current.configuredEnabled=true;connected.refreshedAt=new Date().toISOString();
+  await act(async()=>{view.rerender(<AgentsProvidersView {...view.props} snapshot={connected} />);finish(connected);});
+  expect(screen.queryByRole("status",{name:"Updating connection"})).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/Claude Code.*Connected/})).toBeVisible();
+});

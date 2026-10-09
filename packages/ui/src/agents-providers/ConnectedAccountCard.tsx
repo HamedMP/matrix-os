@@ -31,7 +31,7 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
         </> : null}
         {usage?.stale ? <span>Usage last confirmed {shortDate(source?.usage.asOf ?? null)}</span> : null}
       </div>
-      <div className="matrix-ap-account-actions">{action ?? <button type="button" className="matrix-ap-link-button" disabled title="Refresh or update this computer to change accounts in Settings">Change account</button>}</div>
+      <div className="matrix-ap-account-actions">{action}</div>
     </div>
     {!action || !usage || source?.usage.kind === "unavailable" ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
   </section>;

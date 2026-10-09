@@ -104,7 +104,7 @@ export function PromptInput({
           />
         </div>
       )}
-      <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
+      <div data-slot="prompt-input-toolbar" className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {controls}
         </div>
@@ -116,6 +116,7 @@ export function PromptInput({
             <button
               type="button"
               aria-label="Send"
+              data-slot="prompt-input-send"
               disabled={!submitEnabled}
               onClick={onSubmit}
               className="flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-40"

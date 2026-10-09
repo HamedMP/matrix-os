@@ -1,4 +1,5 @@
 /** Mount canonical Chat, provider and collaboration routes after startup. */
+import { createChatNavigationRepository } from "../chat/navigation-repository.js";
 import type { Context, Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { AiProviderService } from "../ai-providers/service.js";
@@ -94,6 +95,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
+          ...(botServices ? { navigation: createChatNavigationRepository(chatRepository.kysely) } : {}),
           projectOwnerToolOutput,
           ...(canonicalChatOrchestrator ? { orchestrator: canonicalChatOrchestrator } : {}),
           ...(canonicalChatExecutionRoots ? { executionRoots: canonicalChatExecutionRoots } : {}),
@@ -115,6 +117,8 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       memory: botServices.memory,
       grants: botServices.grants,
       authority: botServices.authority,
+      providerConnections: botServices.providerConnections,
+      chatgptPlanPeers: botServices.chatgptPlanPeers,
     } : {}),
     ...(botServices && chatRepository && canonicalChatOrchestrator ? {
       admitContinuation: createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }),
@@ -139,6 +143,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/api/ai", createAiProviderRoutes({
     service: aiProviderService,
+    canReadMatrixConnections: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/api/ai", createProviderSettingsRoutes({

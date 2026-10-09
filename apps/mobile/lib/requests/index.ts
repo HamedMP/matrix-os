@@ -1,4 +1,16 @@
 export {
+  AccountDeletionRequestError,
+  cancelAccountDeletion,
+  fetchAccountDeletionStatus,
+  fetchAccountExportFiles,
+  fetchAccountRecords,
+  scheduleAccountDeletion,
+  type AccountDeletionFailure,
+  type AccountDeletionStatus,
+  type AccountExportFile,
+  type AccountExportPage,
+} from "./account-deletion";
+export {
   buildAppIconUrl,
   createAppSession,
   fetchInstalledApps,
@@ -40,8 +52,9 @@ export {
   createTerminalSession,
   deleteTerminalSession,
   fetchTerminalSessions,
-  isValidEditableTerminalSessionName,
+  isValidTerminalSessionName,
   renameTerminalSession,
+  TERMINAL_SESSION_NAME_MAX_LENGTH,
   type TerminalSession,
 } from "./terminals";
 export {

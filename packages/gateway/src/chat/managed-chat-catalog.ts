@@ -69,6 +69,13 @@ export function managedChatInstances(
   });
 }
 
+/** Both managed Pi sources use the same Chat permission and workspace policy. */
+export const MANAGED_PI_CHAT_SUPPORTS: CanonicalProviderInstanceDescriptor["supports"] = {
+  rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
+  approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
+  permissionModes: ["supervised", "full_access"],
+};
+
 /** The owned Pi worker has its own identity; old kernel checkpoints remain unchanged. */
 export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefined, now = Date.now()): Array<Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">> {
   if (!snapshot) return [];
@@ -102,9 +109,7 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
         capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true }))],
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
-    supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
-      approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
-      permissionModes: ["supervised", "full_access"] },
+    supports: MANAGED_PI_CHAT_SUPPORTS,
     ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
   }];
 }

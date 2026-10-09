@@ -124,7 +124,7 @@ describe("WebDesktopSurface", () => {
     expect(onRemoveDesktopIcon).toHaveBeenCalledWith("__chat__");
   });
 
-  it("ships the Web Desktop fixture in parity order and deep-links Plugins to Services", () => {
+  it("ships the Web Desktop fixture in parity order and deep-links Connect Apps to its Settings section", () => {
     const onOpenSettings = vi.fn();
     const onOpenApp = vi.fn();
     render(
@@ -151,7 +151,7 @@ describe("WebDesktopSurface", () => {
     expect(vscodeIcon?.className).toContain("border-0 shadow-none");
     expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
-    fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
+    fireEvent.doubleClick(screen.getByRole("button", { name: "Connect Apps" }));
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     fireEvent.doubleClick(screen.getByRole("button", { name: "Notes" }));
     expect(onOpenApp).toHaveBeenCalledWith("apps/notes/index.html", "Notes");

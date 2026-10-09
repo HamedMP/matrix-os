@@ -24,9 +24,12 @@ export async function commitCodexKey(input: {
   directory: string;
   directoryIdentity: Stats;
   staging: string;
+  /** Trusted fixed filename; also used for the canonical owner Anthropic key. */
+  targetName?: "auth.json" | "anthropic-key.json";
   commit: () => Promise<void>;
 }): Promise<void> {
-  const target = join(input.directory, "auth.json"), staged = join(input.staging, "auth.json");
+  const filename = input.targetName ?? "auth.json";
+  const target = join(input.directory, filename), staged = join(input.staging, filename);
   const backup = join(input.staging, "previous-auth");
   let original: Stats | null;
   let installed: Stats;

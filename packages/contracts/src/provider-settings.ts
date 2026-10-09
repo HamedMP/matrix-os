@@ -3,6 +3,7 @@ import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primit
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -228,8 +229,8 @@ export const ProviderAccessSourceSchema = z.object({
   }
   if (source.kind === "harness_profile"
     && (matrixFunded || source.accountId !== null
-      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes")
-      || (source.harness === "hermes" && (source.providerId !== "openai-codex" || source.fundingKind !== "owner_account")))) {
+      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes" && source.harness !== "openclaw")
+      || (source.harness === "hermes" && (!["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source.providerId) || !["owner_account", "owner_api_key"].includes(source.fundingKind))))) {
     ctx.addIssue({ code: "custom", message: "Harness profiles require one exact harness and no Matrix funding or provider account" });
   }
   if (source.kind !== "harness_profile" && source.harness !== undefined) {
@@ -249,7 +250,7 @@ export const ProviderDependencyCountsSchema = z.object({
 /** Owner-only native identity, emitted only after explicit GET negotiation. */
 export const ProviderConnectionDetailsSchema = z.object({
   email: z.email().max(120).optional(),
-  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu", "Claude Pro", "Claude Max", "Claude Team", "Claude Enterprise"]).optional(),
 }).strict();
 export const ProviderAccountSchema = z.object({
   connectionDetails: ProviderConnectionDetailsSchema.optional(),
@@ -395,6 +396,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),
@@ -572,7 +574,7 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
     route: ProviderConfigurableRouteSchema, accessSourceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("select_account"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accountId: ReferenceIdSchema }).strict(),
-  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema }).strict(),
+  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema, enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("start_login"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), method: ProviderLoginMethodSchema }).strict(),
   z.object({ type: z.literal("logout_account"), ...MutationBase, accountId: ReferenceIdSchema }).strict(),
@@ -699,7 +701,8 @@ export function isNativeGenericHarnessCredentialRoute(
   > | null | undefined,
 ): boolean {
   return (harness.harness === "pi" || harness.harness === "opencode"
-      || (harness.harness === "hermes" && source?.providerId === "openai-codex"))
+      || (harness.harness === "hermes" && ["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source?.providerId ?? ""))
+      || (harness.harness === "openclaw" && ["openai", "anthropic", "openrouter"].includes(source?.providerId ?? "")))
     && harness.route.kind === "configurable"
     && harness.accessSourceId !== null
     && source?.kind === "harness_profile"
@@ -728,7 +731,7 @@ export function isSupportedGenericHarnessCredentialRoute(
 ): boolean {
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
     return source?.kind === "provider_account"
-      || (harness.harness === "hermes" && isNativeGenericHarnessCredentialRoute(harness, source));
+      || isNativeGenericHarnessCredentialRoute(harness, source);
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
     return isRunnableGenericHarnessCredentialRoute(harness, source);

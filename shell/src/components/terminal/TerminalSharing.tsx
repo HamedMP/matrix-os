@@ -1,6 +1,6 @@
 "use client";
 
-import { TerminalSharingButton } from "@matrix-os/ui";
+import { LegacyTerminalAccessButton } from "@matrix-os/ui";
 import { useEffect, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -30,6 +30,6 @@ export function TerminalSharing({ terminalId }: { terminalId: string }) {
     });
     return () => { active = false; };
   }, [organizationStatus]);
-  return api && runtimeId ? <CollaborationOrganization>{(organizationId) => <TerminalSharingButton api={api} runtimeId={runtimeId}
+  return api && runtimeId ? <CollaborationOrganization>{(organizationId) => <LegacyTerminalAccessButton api={api} runtimeId={runtimeId}
     organizationId={organizationId} terminalId={terminalId} />}</CollaborationOrganization> : null;
 }

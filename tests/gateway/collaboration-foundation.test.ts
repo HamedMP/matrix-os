@@ -57,6 +57,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["PATCH", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["DELETE", "/api/collaboration/scopes/:scopeId/grants/:grantId"],
   ["POST", "/api/collaboration/scopes/:scopeId/policy/preflight"],
+  ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/lookup"],
   ["POST", "/api/collaboration/runtimes/:runtimeId/catalog/resolve"],
   ["GET", "/api/collaboration/scopes/:scopeId/user-state"],
   ["PATCH", "/api/collaboration/scopes/:scopeId/user-state"],
@@ -87,6 +88,7 @@ const ROUTE_BASELINE: ReadonlyArray<readonly [string, string]> = [
   ["GET", "/api/collaboration/scopes/:scopeId/operations/:operationId"],
   ["GET", "/api/collaboration/scopes/:scopeId/exports/:exportId"],
   // S08 execution policy routes register after the S01 baseline.
+  ["GET", "/api/collaboration/scopes/:scopeId/execution-policy/options"],
   ["GET", "/api/collaboration/scopes/:scopeId/execution-policy"],
   ["PUT", "/api/collaboration/scopes/:scopeId/execution-policy"],
   // S12 shared files, folders and app instances register after the execution policy routes.

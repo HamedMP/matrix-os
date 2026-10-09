@@ -16,8 +16,9 @@ export function ChatSharing({ chatId }: { chatId: string }) {
 
 function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platformHost: string }) {
   const { status: organizationStatus, organizationId } = useCollaborationOrganization();
-  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null; collaborationEnabled: boolean }>({
-    handle: null, runtimeSlot: "primary", runtimeId: null, collaborationEnabled: false,
+  const verifiedOrganizationId = organizationStatus === "member" ? organizationId : null;
+  const [runtime, setRuntime] = useState<{ handle: string | null; runtimeSlot: string; runtimeId: string | null }>({
+    handle: null, runtimeSlot: "primary", runtimeId: null,
   });
   const gatewayUrl = getGatewayUrl();
   const api = useMemo(() => createChatSharingApi(gatewayUrl), [gatewayUrl]);
@@ -25,16 +26,21 @@ function BrowserChatSharing({ chatId, platformHost }: { chatId: string; platform
   useEffect(() => {
     let active = true;
     void api.get("/api/system/info").then((value) => {
-      if (active) setRuntime(collaborationRuntimeFromSystemInfo(value));
+      const { handle, runtimeSlot, runtimeId } = collaborationRuntimeFromSystemInfo(value);
+      if (active) setRuntime({ handle, runtimeSlot, runtimeId });
     }).catch((failure: unknown) => {
-      console.warn("[chat-collaboration] runtime identity unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      console.warn("[chat-share] runtime identity unavailable", failure instanceof Error ? failure.name : "UnknownError");
     });
     return () => { active = false; };
   }, [api]);
-  return <ChatSharingButton key={organizationId ?? organizationStatus} api={api} collaborationEnabled={runtime.collaborationEnabled}
-    collaborationApi={collaborationApi} runtimeId={runtime.runtimeId} organizationId={organizationId}
+  return <ChatSharingButton key={verifiedOrganizationId ?? organizationStatus} api={api}
     chatId={chatId} handle={runtime.handle} runtimeSlot={runtime.runtimeSlot}
-    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)} />;
+    platformHost={platformHost} copyText={(text) => navigator.clipboard.writeText(text)}
+    legacyCollaboration={collaborationApi ? {
+      api: collaborationApi,
+      runtimeId: runtime.runtimeId,
+      organizationId: verifiedOrganizationId,
+    } : undefined} />;
 }
 
 function createChatSharingApi(baseUrl: string) {

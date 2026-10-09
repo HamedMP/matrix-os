@@ -1,4 +1,4 @@
-import { botInteractionCard, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
@@ -50,6 +50,8 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
     // Keep the last radio choice underneath Other so clearing Other restores it.
   };
   const payload = interaction.payload;
+  const access = payload?.kind === "connect_request" || (payload?.kind === "account_choice" && payload.access)
+    ? botIntegrationAccessCopy(payload.service, payload.access!) : null;
   const questionAnswers = payload?.kind === "question"
     ? Object.fromEntries(payload.questions.map((question) => {
         const typed = typedAnswers[question.questionId]?.trim();
@@ -65,7 +67,10 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
     && payload.questions.every((question) => questionAnswers[question.questionId]?.length);
   return <section aria-label={card.title} className="matrix-chat-agent-card matrix-bot-interaction-card grid gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
     <div><h3 className="text-sm font-semibold">{card.title}</h3>
-      {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {access ? <div className="grid gap-1 text-xs" style={chatAgentMutedStyle}>
+      <p>Requested access: {access.summary}</p>{access.boundary ? <p>{access.boundary}</p> : null}
+    </div> : null}
     {!actionsAvailable && card.state === "actionable" && payload?.kind === "question"
       ? payload.questions.map((question) => <p key={question.questionId} className="text-sm">{question.question}</p>) : null}
     {actionable && payload?.kind === "question" ? <>
@@ -108,7 +113,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         onClick={() => { void decide({ kind: "account_choice", baseRevision: interaction.revision, connectionId: option.connectionId }); }}>{option.label}</button>)}
     </div> : null}
     {actionable && payload?.kind === "connect_request" ? <>
-      <p className="text-sm">{payload.benefit}</p><p className="text-xs" style={chatAgentMutedStyle}>Requested access: {payload.access.join(", ")}</p>
+      <p className="text-sm">{payload.benefit}</p>
       <div className="flex flex-wrap gap-2">{(["start", "decline"] as const).map((action) => <button key={action} type="button"
         className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "connect_request", baseRevision: interaction.revision, action }); }}>
         {action === "start" ? "Connect" : "Decline"}</button>)}</div>

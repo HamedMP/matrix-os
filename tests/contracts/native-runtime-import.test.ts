@@ -2,6 +2,13 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("contracts native Node runtime", () => {
+  it("loads personal subscription peer and inference schemas without a TypeScript resolver", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const { ChatGptPlanPeerSnapshotSchema, ChatGptPlanRawWireSchema, ChatGptPlanWireSchema } = await import("@matrix-os/contracts");
+      console.log(typeof ChatGptPlanPeerSnapshotSchema.safeParse, typeof ChatGptPlanRawWireSchema.passthrough, typeof ChatGptPlanWireSchema.safeParse);
+    `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
+    expect(output.trim()).toBe("function function function");
+  });
   it("loads the public package entrypoint without TypeScript path remapping", () => {
     const output = execFileSync(
       process.execPath,

@@ -21,14 +21,14 @@
 
 .matrix-chat-model-two-pane {
   display: flex;
-  min-height: 21rem;
+  min-height: 0;
   overflow: hidden;
 }
 
 .matrix-chat-provider-rail {
   display: flex;
-  width: 4rem;
-  flex: 0 0 4rem;
+  width: 3rem;
+  flex: 0 0 3rem;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.5rem 0.375rem;

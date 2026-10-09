@@ -26,6 +26,7 @@ job fails or is cancelled. Internal jobs may still be inspected directly for
 logs and artifacts.
 
 Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
+Source-only jobs (including the unit-test matrix) are skipped before runner allocation for docs-only changes. Documentation and OS-view parity jobs run only when their respective path planners select them; `CI Results` accepts intentional skips and still fails on a selected check's failure.
 Expensive jobs remain path-aware.
 
 ### Main CI queue and coverage frontier
@@ -61,7 +62,7 @@ Registry, not a Matrix customer-runtime package.
 | Platform | Platform service image | Google Artifact Registry, then Cloud Run | `platform-cloud-run.yml` |
 | Funded AI relay | Dedicated relay service image | Google Artifact Registry, then Cloud Run | `ai-relay-cloud-run.yml` |
 | Mobile native | Mobile native builds | EAS Build, then App Store Connect/TestFlight or Google Play | EAS operator flow in `docs/dev/mobile-shell.md` |
-| Mobile OTA | Mobile OTA update | EAS Update branch/channel | EAS operator flow in `docs/dev/mobile-shell.md` |
+| Mobile OTA | Mobile OTA update | EAS Update `preview` channel, promoted to `production` | `mobile-ota-update.yml` |
 | Desktop | Desktop installers and OTA metadata | GitHub Releases | `desktop-release.yml` and `desktop-release-canary.yml` |
 | CLI | `@finnaai/matrix` CLI plus standalone binaries | npm, GitHub Releases, and Homebrew | `release.yml` and `cli-release.yml` |
 
@@ -80,6 +81,7 @@ OTA payloads.
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
+| `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), `main` when the mobile app changes (publish to `preview`), manual (promote to `production` or roll back) | Required for mobile OTA publishing; path-filtered, so not a required PR check |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
 
 The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR

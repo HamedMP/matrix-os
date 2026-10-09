@@ -9,7 +9,7 @@ import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 
 export const HOSTED_WORK_SIDEBAR_WIDTH = 240;
 
-export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }) {
+export function HostedWorkSidebar({ tab, active, searchShortcutActive = active }: { tab: Tab; active: boolean; searchShortcutActive?: boolean }) {
   const runtime = useWorkSurfaceRuntime();
   const projects = useBoard((state) => state.projects);
   const route = tab.workRoute ?? (tab.kind === "projects" ? "projects" : tab.kind === "project" ? "project" : "chat");
@@ -46,6 +46,8 @@ export function HostedWorkSidebar({ tab, active }: { tab: Tab; active: boolean }
       projectedChatTitles={runtime?.projectedChatTitles}
       projects={projects}
       active={active}
+      searchShortcutActive={searchShortcutActive}
+      newChatShortcutActive={searchShortcutActive && route === "chat"}
       activeChatId={tab.chatId}
       activeProjectSlug={route === "project" ? tab.projectSlug : undefined}
       className="h-full w-full border-r-0"

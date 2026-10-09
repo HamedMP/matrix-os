@@ -1,8 +1,8 @@
-# Stacked PR Workflow
+# Graphite Stacked PR Workflow
 
-Use Graphite for features that naturally split into reviewable layers. The goal
-is smaller PRs with explicit dependencies, not a large branch that reviewers
-must understand all at once.
+Matrix OS allows **GitHub Stack or Graphite** as the primary tool for a stack; no project-wide preference is established. Use the existing stack's tool or choose one for a new stack, and use it consistently. This guide covers **Graphite stacks only**; its CLI requirements do not apply to GitHub Stack. For GitHub Stack, use that tool's supported workflow and the shared merge safeguards in `AGENTS.md`.
+
+The goal is smaller PRs with explicit dependencies, not a large branch that reviewers must understand all at once. A stack may share one Linear ticket. Each PR description links that ticket and names/links the stack and its chosen tool; separate tickets per layer are unnecessary.
 
 ## When To Stack
 
@@ -32,7 +32,7 @@ gt init
 
 The CLI prompts for the trunk branch, normally `main`, and stores config in
 `.git/.graphite_repo_config`. If `gt` is not installed or authenticated, stop
-and fix that before creating, submitting, or updating Matrix OS stacks.
+and fix that before creating, submitting, or updating a Graphite stack.
 
 Check the current stack before changing it:
 
@@ -118,14 +118,14 @@ gt ss -np
 `gt submit --update-only` when the stack already has PRs and you do not want to
 create new ones.
 
-## Matrix OS Rules
+## Rules for Graphite Stacks
 
-- Use Graphite commands for Matrix OS stack operations. Prefer `gt checkout`,
+- Use Graphite commands for Graphite stack operations. Prefer `gt checkout`,
   `gt create --all --message`, `gt modify --all`, `gt submit --stack`,
   `gt sync`, `gt restack`, `gt top`, and `gt pr` over raw git/gh equivalents
   when creating, updating, publishing, and opening stacked PRs.
 - If Graphite is missing or unauthenticated, treat that as an environment
-  blocker for stack operations and install/authenticate it instead of silently
+  blocker for Graphite stack operations and install/authenticate it instead of silently
   falling back to raw git for stack work.
 - PR titles must be Conventional Commit titles, for example
   `feat(messages): add permission gates`.

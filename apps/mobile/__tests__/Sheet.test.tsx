@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { presentationBackground } from "@expo/ui/swift-ui/modifiers";
 import { render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet, Text } from "react-native";
 
@@ -43,8 +44,10 @@ describe("Sheet", () => {
       </Sheet>,
     );
 
+    // Built with the real modifier so the assertion follows @expo/ui's wire
+    // format, which changed shape within SDK 57.
     expect(mockBottomSheetProps).toHaveBeenCalledWith(expect.objectContaining({
-      modifiers: [{ $type: "presentationBackground", color: "#F4F7ED" }],
+      modifiers: [presentationBackground("#F4F7ED")],
     }));
   });
 

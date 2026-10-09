@@ -1,3 +1,4 @@
+import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
@@ -118,6 +119,7 @@ const ChatDetailQuerySchema = z.object({
 }).strict();
 
 export interface CanonicalChatRouteService {
+  navigation?(owner: ChatOwner, input: CanonicalChatNavigationQuery): Promise<CanonicalChatNavigationResponse>;
   create(owner: ChatOwner, input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   updateProject(
     owner: ChatOwner,
@@ -386,6 +388,24 @@ export function createCanonicalChatRoutes(options: {
         },
       );
       return chatJson(context, CanonicalChatListResponseSchema.parse(result));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chat-navigation", async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    try {
+      const parsed = CanonicalChatNavigationQuerySchema.safeParse(context.req.query());
+      if (!parsed.success || Object.keys(context.req.query()).some(key => (context.req.queries(key)?.length ?? 0) > 1)) {
+        return validationError(context);
+      }
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      if (!options.service.navigation) throw new Error("Navigation is unavailable");
+      const result = await options.service.navigation(owner, parsed.data);
+      const snapshot = CanonicalChatNavigationResponseSchema.safeParse(result);
+      if (!snapshot.success) throw new Error("Navigation is unavailable");
+      return context.json(snapshot.data);
     } catch (error: unknown) {
       return handleError(context, error);
     }

@@ -183,7 +183,7 @@ export async function createGatewayCollaboration(options: {
     })
     : undefined;
   const runBindings = eligibility && executionPolicies
-    ? new CollaborationRunBindingRepository(options.db, { policies: executionPolicies, eligibility })
+    ? new CollaborationRunBindingRepository(options.db, { eligibility })
     : undefined;
   const ownerSource = eligibility && executionPolicies && runBindings
     ? new SharedRunOwnerSource({ policies: executionPolicies, eligibility, bindings: runBindings })
@@ -303,6 +303,10 @@ export async function createGatewayCollaboration(options: {
   const cleanupTimer = options.startTimers === false ? undefined : setInterval(() => {
     void cleanupExpiredArtifacts(options.db, new Date()).catch((error: unknown) => {
       console.warn("[collaboration] artifact cleanup failed", error instanceof Error ? error.name : "UnknownError");
+    });
+    // Lapsed grants are withdrawn from discovery here; access already ends at the expiry time.
+    void capabilities.expireGrants().catch((error: unknown) => {
+      console.warn("[collaboration] grant expiry sweep failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, ARTIFACT_CLEANUP_INTERVAL_MS);
   cleanupTimer?.unref?.();

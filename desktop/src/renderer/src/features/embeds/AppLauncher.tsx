@@ -78,6 +78,7 @@ function OsViewDestinationIcon({ path }: { path: string }) {
   );
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing launcher coordinates search, keyboard selection, placement and OS-view destinations; this change only removes a share row. Splitting it belongs in a focused refactor.
 export default function AppLauncher({
   presentation = "surface",
   launcherActive = true,
@@ -233,7 +234,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Apps unavailable"
-        description="The app catalog could not be loaded. Try again once your computer is reachable."
+        description="Your installed apps could not be loaded. Try again once your computer is reachable."
         action={
           api ? (
             <Button variant="primary" disabled={isFetching} onClick={() => void refetch()}>
@@ -250,7 +251,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="No apps installed"
-        description="Matrix OS apps you install appear here, ready to launch in this window."
+        description="Web apps in your Matrix workspace appear here. Ask Chat to create an app to get started."
       />
     );
   }
@@ -260,7 +261,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Loading apps"
-        description="The app catalog will appear here once your computer responds."
+        description="Your installed apps will appear here once your computer responds."
       />
     );
   }
@@ -303,6 +304,11 @@ export default function AppLauncher({
             style={{ color: "var(--text-primary)", boxShadow: "none", borderRadius: 0 }}
           />
         </div>
+        {presentation === "launchpad" ? (
+          <p className="mt-3 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
+            Open an installed app, or choose Create app to start in Chat.
+          </p>
+        ) : null}
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
         {filtered.length === 0 ? (

@@ -1,3 +1,4 @@
+import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
   BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
@@ -33,11 +34,13 @@ export class BotClientError extends Error {
 
 function safeError(error: unknown): BotClientError {
   const status = typeof error === "object" && error !== null && "status" in error
-    && typeof error.status === "number" ? error.status : null;
+    && typeof error.status === "number" ? error.status
+    : typeof error === "object" && error !== null && "category" in error && error.category === "unauthorized" ? 401 : null;
   return new BotClientError(status, status === null ? fallbackMessage : safeMessages[status] ?? fallbackMessage);
 }
 
-export interface BotClient {
+export interface BotClient extends Partial<BotConnectionClient> {
+  ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
@@ -62,12 +65,14 @@ export function createBotClient(request: BotRequest): BotClient {
   const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
+    ...createBotConnectionClient((path, method, body) => request(path, method, body)),
+    ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
     interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
-    tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks`, "GET", BotTaskListResponseSchema)).tasks,
+    tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks?includeRunIds=true`, "GET", BotTaskListResponseSchema)).tasks,
     resolve: (chatId, interactionId, input) => call(
       `${chatPath(chatId)}/interactions/${encodeURIComponent(BotInteractionIdSchema.parse(interactionId))}/resolve`,
       "POST", ResolveBotInteractionResponseSchema, ResolveBotInteractionRequestSchema.parse(input)),

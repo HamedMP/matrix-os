@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import type { CanonicalChatRecord } from '@matrix-os/contracts';
 import { groupWebChats, WebChatLifecycleGroups } from '../../shell/src/components/chat/WebChatLifecycleGroups';
@@ -25,4 +25,33 @@ it('keeps acknowledged successful chats in Done with attention and active-run pr
  expect(groups.done.map(item=>item.id)).toEqual(['completed']);
  expect(groups.needsYou.map(item=>item.id)).toEqual(['failed']);
  expect(groups.working.map(item=>item.id)).toEqual(['running']);
+});
+
+it('keeps all empty lifecycle headings visible and quiet on Web', () => {
+ render(<WebChatLifecycleGroups conversations={[]} renderRow={item => <button>{item.id}</button>}/>);
+ for (const label of ['Needs you', 'Working', 'Done']) {
+  const heading = screen.getByRole('button', {name:label});
+  expect(heading.textContent).toBe(label);
+  expect(heading.getAttribute('aria-expanded')).toBe('true');
+  expect(heading.closest('section')!.querySelectorAll('button')).toHaveLength(1);
+  fireEvent.click(heading);
+  expect(heading.getAttribute('aria-expanded')).toBe('false');
+  expect(heading.textContent).toBe(label);
+ }
+ expect(screen.queryByRole('button', {name:'Pinned'})).toBeNull();
+});
+
+it('retains explicit Done collapse for the mounted scope and starts the next scope expanded', () => {
+ const row = entry('ordinary');
+ const renderRow = (item: RenameableConversation) => <button>{item.id}</button>;
+ const view = render(<WebChatLifecycleGroups scopeKey="viewer-a" conversations={[row]} renderRow={renderRow}/>);
+ expect(screen.getByRole('button', {name:'ordinary'})).toBeTruthy();
+ fireEvent.click(screen.getByRole('button', {name:'Done'}));
+ view.rerender(<WebChatLifecycleGroups scopeKey="viewer-a" conversations={[row, entry('second')]} renderRow={renderRow}/>);
+ expect(screen.getByRole('button', {name:'Done'}).getAttribute('aria-expanded')).toBe('false');
+ expect(screen.queryByRole('button', {name:'ordinary'})).toBeNull();
+ expect(screen.getByLabelText('2 hidden chats').textContent).toBe('2');
+ view.rerender(<WebChatLifecycleGroups scopeKey="viewer-b" conversations={[row]} renderRow={renderRow}/>);
+ expect(screen.getByRole('button', {name:'Done'}).getAttribute('aria-expanded')).toBe('true');
+ expect(screen.getByRole('button', {name:'ordinary'})).toBeTruthy();
 });

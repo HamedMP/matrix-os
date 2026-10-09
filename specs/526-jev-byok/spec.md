@@ -1,9 +1,11 @@
 # Feature specification: Jev email triage
 
-Updated: 2026-09-29. Status: implementation approved; owner-matched runtime acceptance pending.
+Updated: 2026-10-06. Status: Matrix Pi Bot migration in implementation; Pi runtime acceptance pending.
 Tracking: [ENG-11](https://linear.app/matrix-os/issue/ENG-11), [OM-286](https://linear.app/matrix-os/issue/OM-286), [GitHub #1800](https://github.com/HamedMP/matrix-os/issues/1800), [spec PR #1812](https://github.com/HamedMP/matrix-os/pull/1812).
 
 The team narrowed the first milestone from ENG-11's earlier three-recipe and generic `use-jevs` proposal to this Gmail workflow. Research and routing recipes and the generic skill remain follow-up scope. ENG-42 now requires actual Gmail labeling: the owner explicitly enables the saved bot's fixed-category labeling permission, runs classify and add verified labels, and Gmail readback confirms the outcome. Existing bots remain read-only until opted in. Creation and Jev output alone grant no write authority. The detailed authorization, transport, failure and acceptance contract is [the Gmail labeling milestone](./gmail-labeling-spec.md).
+
+The current native Bot runtime and permission contract is [the Matrix Pi migration milestone](./pi-bot-migration-spec.md), tracked in [ENG-118](https://linear.app/matrix-os/issue/ENG-118). Hermes-specific sections below describe the retained legacy path; they do not constrain the new Pi Bot. Legacy success does not qualify Pi acceptance.
 
 ## Product scope
 
@@ -14,7 +16,7 @@ The capability has three explicit layers:
 1. The Matrix Jev Gateway authenticates the runtime, meters the request, resolves a versioned recipe, bounds work, calls Jev, validates the result and returns a typed response.
 2. The immutable `email-triage-v1` recipe defines seven independent Boolean questions and their output contract.
 3. A Gateway recipe broker binds the owner's selected Gmail account in the saved bot, verifies the pinned connection with a live Gmail `get_profile` before each mailbox read, bounds one selected thread, and constructs Jev evidence and deterministic proposals. The bundled `matrix-jev-email-triage` skill guides the interaction but cannot grant mailbox or Jev authority.
-4. The Matrix Agent Recipes market includes a Jev Inbox Triage card. **Build in Chat** creates a reusable Hermes bot using the current user's authenticated Agent API and Gmail connection from Services, verifies that the bot appears in that user's Agent library with the selected Gmail account, then opens it in Chat. Users do not author a setup prompt.
+4. The native recipe market creates a reusable Matrix Pi Bot through **Set up bot** and opens its direct conversation. The gateway asks the current owner to choose a connected Gmail account and explicitly grant read plus label-only access. Users do not author a setup prompt or select Hermes. Existing read-only and legacy Hermes definitions keep their original authority.
 
 Jev classifies. The server applies deterministic policy and executes labels only under the bot's saved owner grant. Jev and Hermes output never grant authority. Archive remains outside this milestone.
 
@@ -67,9 +69,9 @@ After a successful run, Matrix can process only new or changed Gmail threads and
 
 ## Functional requirements
 
-### Configured Hermes primary models (ENG-40)
+### Retained legacy Hermes primary models (ENG-40)
 
-The Inbox bot remains a Hermes bot. Its isolated execution mode protects the mailbox and broker authority; it does not require an additional Anthropic account. The first expansion supports the existing owner Anthropic API-key route, Hermes's configured OpenAI API or OpenRouter API-key route, and Hermes's own OpenAI Codex subscription login. OpenRouter model IDs retain their provider prefix and slash. This is Codex as a model provider within Hermes, not a Codex harness bot.
+Existing legacy Inbox agents remain Hermes bots. Its isolated execution mode protects the mailbox and broker authority; it does not require an additional Anthropic account. The first expansion supports the existing owner Anthropic API-key route, Hermes's configured OpenAI API or OpenRouter API-key route, and Hermes's own OpenAI Codex subscription login. OpenRouter model IDs retain their provider prefix and slash. This is Codex as a model provider within Hermes, not a Codex harness bot.
 
 Creation and editing expose only the current supported Hermes selection. The server validates the same route family when saving, and revalidates the exact configured provider/model, fresh native authentication observation, owner, and saved enablement before starting a run. Existing unsupported saved bots remain readable and can be repaired by selecting a supported Hermes route; their old choice never authorizes execution.
 
@@ -132,7 +134,7 @@ Validation must record failing-first route regressions, legacy Anthropic coverag
 - **SC-004**: Owner isolation, disabled policy, zero credit, malformed response, timeout and unavailable-upstream tests make no Gmail mutations and expose only safe errors.
 - **SC-005**: A personal-primary-model acceptance run completes Jev triage through Matrix AI without changing primary provider settings.
 - **SC-006**: Normal logs contain no raw fixture body or credentials; observability still identifies recipe, request, latency, status and usage/cost outcome.
-- **SC-007**: Exact-head Electron evidence shows the recipe's labeling opt-in, configured Hermes route, owner-matched bounded reads, actual Jev classification, Gmail label readback, and confirmed versus unconfirmed results. Archive remains a later milestone.
+- **SC-007**: Exact-head Electron evidence for ENG-118 shows a newly created Matrix Pi Bot, disclosed label-only Gmail consent, owner-matched bounded reads, actual funded Jev classification, Gmail label readback, resumable pagination and confirmed versus unconfirmed results. Legacy Hermes acceptance is recorded separately. Archive remains a later milestone.
 - **SC-008**: The implementation, tests, public documentation and demo evidence pass required CI and review gates before release.
 
 ## Assumptions

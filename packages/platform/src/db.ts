@@ -149,6 +149,7 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  charge_waiver: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
   execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;
@@ -1556,6 +1557,20 @@ export async function getPlatformUserByClerkId(
     .where('clerk_id', '=', clerkId)
     .executeTakeFirst();
   return row ? mapPlatformUser(row) : undefined;
+}
+
+export async function listPlatformUsersByClerkIds(
+  db: PlatformDB,
+  clerkIds: readonly string[],
+): Promise<PlatformUserRecord[]> {
+  if (clerkIds.length === 0) return [];
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('clerk_id', 'in', [...new Set(clerkIds)])
+    .execute();
+  return rows.map(mapPlatformUser);
 }
 
 export async function getPlatformUserByHandle(

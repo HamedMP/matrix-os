@@ -1,3 +1,4 @@
+import { matrixAnthropicSelectionBinding, chatgptPlanSelectionBinding } from "@matrix-os/contracts";
 import { MANAGED_PI_INSTANCE_ID } from "./route-resolver.js";
 /**
  * The `matrix_bot` provider instance (spec 536). It is added only to the
@@ -59,6 +60,19 @@ export function withBotProviderInstance(
       // checks. Bot routing reads Provider V3 at dispatch, not ordinary harness settings.
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (selection.model !== MATRIX_BOT_MODEL) {
+          if (selection.options?.length) {
+            const sourceId = matrixAnthropicSelectionBinding(selection.options) ? "matrix_anthropic_api" : chatgptPlanSelectionBinding(selection.options) ? "matrix_chatgpt_plan" : null;
+            const base = await catalog.getCatalog(principal, sourceId ? { ...selection, instanceId: sourceId } : undefined);
+            const plan = sourceId ? base.instances.find(instance => instance.id === sourceId) : undefined;
+            if (plan) {
+              const instance = { ...plan, id: MATRIX_BOT_INSTANCE_ID, supports: { ...plan.supports, rootChat: true },
+                ...(plan.defaultSelection ? { defaultSelection: { ...plan.defaultSelection, instanceId: MATRIX_BOT_INSTANCE_ID } } : {}) };
+              return { revision: base.revision, drivers: [MATRIX_BOT_DRIVER], instances: [instance] };
+            }
+            const instance = botInstance(base.revision, selection.model);
+            instance.availability = "unavailable"; instance.models = []; delete instance.defaultSelection;
+            return { revision: base.revision, drivers: [MATRIX_BOT_DRIVER], instances: [instance] };
+          }
           const base = await catalog.getCatalog(principal, { ...selection, instanceId: MANAGED_PI_INSTANCE_ID });
           const managed = base.instances.find((instance) => instance.id === "matrix_pi_default");
           const chosen = managed?.models.find((model) => model.id === selection.model && model.availability === "available");

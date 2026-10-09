@@ -32,6 +32,10 @@ import {
   fenceSharedChatAuthority,
   type SharedChatAuthorizer,
 } from "../collaboration/shared-chat-authority.js";
+import {
+  authorizedSharedChatBindingMatches,
+  directSharedChatBindingMatches,
+} from "../collaboration/shared-chat-binding.js";
 import { sharedAiEligibilitySupportsDriver } from "../collaboration/shared-ai-eligibility.js";
 import type {
   ChatDatabase,
@@ -145,6 +149,7 @@ export interface EnqueueSharedQueuedTurnInput extends Omit<
   expectedRevision: number;
   acceptedAt: string;
   retryOfQueuedTurnId?: string;
+  /** Server-derived owner-policy authority; never accepted from the HTTP request body. */
   canonicalProviderAuthority?: CanonicalSharedProviderAuthority;
 }
 
@@ -324,7 +329,10 @@ export class ChatQueueRepository {
 
       const chat = await ownedChat(executor, owner, chatId);
       if (!chat) throw new SharedChatQueueError("not_found");
-      if (chat.lifecycle !== "active" || !sharedBindingMatches(chat.collaboration, scopeId)) {
+      const bindingMatches = authority
+        ? await authorizedSharedChatBindingMatches(trx, authority, chat.collaboration, { executionFenced: true })
+        : directSharedChatBindingMatches(chat.collaboration, scope.id, { executionFenced: true });
+      if (chat.lifecycle !== "active" || !bindingMatches) {
         throw new SharedChatQueueError("unavailable");
       }
       const provider = authoritativeSharedProvider({
@@ -403,7 +411,11 @@ export class ChatQueueRepository {
         updated_at: acceptedAt,
       }).returningAll().executeTakeFirstOrThrow();
       const revision = Number(chat.revision) + 1;
-      const updated = await trx.updateTable("chats").set({ revision, updated_at: acceptedAt, activity_at: sql`clock_timestamp()` })
+      const updated = await trx.updateTable("chats").set({
+        revision,
+        updated_at: acceptedAt,
+        activity_at: sql`clock_timestamp()`,
+      })
         .where("id", "=", chatId)
         .where("revision", "=", Number(chat.revision))
         .returning("id")
@@ -1277,20 +1289,6 @@ function projectedSharedRequestState(
   return run;
 }
 
-function sharedBindingMatches(value: unknown, scopeId: string): boolean {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
-    return !!parsed && typeof parsed === "object"
-      && (parsed as { scopeId?: unknown }).scopeId === scopeId
-      && (parsed as { executionFenced?: unknown }).executionFenced === true;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[chat/queue] collaboration binding decode failed", error instanceof Error ? error.name : "UnknownError");
-    }
-    return false;
-  }
-}
-
 function authoritativeSharedProvider(input: {
   chat: Pick<Selectable<ChatsTable>,
     "current_selection" | "bound_driver_kind" | "bound_instance_id" | "bound_at_turn_id"
@@ -1324,28 +1322,33 @@ function authoritativeSharedProvider(input: {
     if (selection.data.instanceId !== input.chat.bound_instance_id) {
       return { capability: { status: "unavailable" } };
     }
-    const driverKind = CanonicalChatRunSchema.shape.driverKind.safeParse(input.chat.bound_driver_kind);
-    if (!driverKind.success || !sharedRuntimeSupports(
+    const boundDriver = CanonicalChatRunSchema.shape.driverKind.safeParse(input.chat.bound_driver_kind);
+    const authorityDriver = input.canonicalProviderAuthority === undefined ? undefined
+      : CanonicalChatRunSchema.shape.driverKind.safeParse(input.canonicalProviderAuthority.driverKind);
+    const authoritySelection = input.canonicalProviderAuthority === undefined ? undefined
+      : CanonicalChatModelSelectionSchema.safeParse(input.canonicalProviderAuthority.selection);
+    if (!boundDriver.success
+      || (authorityDriver !== undefined && (!authorityDriver.success || authorityDriver.data !== boundDriver.data))
+      || (authoritySelection !== undefined && (!authoritySelection.success
+        || authoritySelection.data.instanceId !== input.chat.bound_instance_id))) {
+      return { capability: { status: "unavailable", effectiveSelection: selection.data } };
+    }
+    const effectiveSelection = authoritySelection?.success ? authoritySelection.data : selection.data;
+    if (!sharedRuntimeSupports(
       input.executionEligibility,
-      driverKind.data,
-      selection.data.instanceId,
+      boundDriver.data,
+      effectiveSelection.instanceId,
     )) {
       return {
         capability: { status: "unavailable", effectiveSelection: selection.data },
       };
     }
     return {
-      capability: { status: "available", effectiveSelection: selection.data },
-      execution: { driverKind: driverKind.data, selection: selection.data },
+      capability: { status: "available", effectiveSelection },
+      execution: { driverKind: boundDriver.data, selection: effectiveSelection },
     };
   }
 
-  const ownerId = input.ownerId ?? input.chat.owner_id;
-  if (input.actorId !== ownerId) {
-    return {
-      capability: { status: "owner_binding_required", effectiveSelection: selection.data },
-    };
-  }
   const authorityDriver = CanonicalChatRunSchema.shape.driverKind.safeParse(
     input.canonicalProviderAuthority?.driverKind,
   );
@@ -1353,7 +1356,7 @@ function authoritativeSharedProvider(input: {
     input.canonicalProviderAuthority?.selection,
   );
   if (!authorityDriver.success || !authoritySelection.success
-    || !sameSelection(selection.data, authoritySelection.data)
+    || selection.data.instanceId !== authoritySelection.data.instanceId
     || !sharedRuntimeSupports(
       input.executionEligibility,
       authorityDriver.data,
@@ -1364,7 +1367,7 @@ function authoritativeSharedProvider(input: {
     };
   }
   return {
-    capability: { status: "available", effectiveSelection: selection.data },
+    capability: { status: "available", effectiveSelection: authoritySelection.data },
     execution: { driverKind: authorityDriver.data, selection: authoritySelection.data },
   };
 }
