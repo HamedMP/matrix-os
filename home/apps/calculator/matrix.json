@@ -18,7 +18,9 @@
           "result": "text",
           "created_at": "timestamptz"
         },
-        "indexes": ["created_at"]
+        "indexes": [
+          "created_at"
+        ]
       }
     }
   },
@@ -33,7 +35,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../system/icons/v3-*.png"
     ]
   }
 }

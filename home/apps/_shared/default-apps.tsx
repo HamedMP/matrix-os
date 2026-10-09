@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./theme.css";
+const iconchess = new URL("../../system/icons/v3-chess.png", import.meta.url).href;
+const iconsolitaire = new URL("../../system/icons/v3-solitaire.png", import.meta.url).href;
+const iconsnake = new URL("../../system/icons/v3-snake.png", import.meta.url).href;
+const iconminesweeper = new URL("../../system/icons/v3-minesweeper.png", import.meta.url).href;
+const icontetris = new URL("../../system/icons/v3-tetris.png", import.meta.url).href;
+const iconbackgammon = new URL("../../system/icons/v3-backgammon.png", import.meta.url).href;
+const icon2048 = new URL("../../system/icons/v3-2048.png", import.meta.url).href;
+
 
 type AppId = "games" | "pomodoro" | "profile" | "social";
 
@@ -13,13 +21,13 @@ function getLauncher(): ((name: string, path: string) => void) | undefined {
 }
 
 const games = [
-  { id: "2048", title: "2048", kind: "Numbers", description: "One move. A little more room.", art: "2 4 8 16" },
-  { id: "chess", title: "Chess", kind: "Strategy", description: "Take your time. Find your move.", art: "♞" },
-  { id: "solitaire", title: "Solitaire", kind: "Cards", description: "A quiet table, a fresh deal.", art: "A ♠" },
-  { id: "snake", title: "Snake", kind: "Arcade", description: "Keep moving. Leave a way out.", art: "● ● ● ●" },
-  { id: "minesweeper", title: "Minesweeper", kind: "Puzzle", description: "Every number tells you something.", art: "1 2 ✳" },
-  { id: "tetris", title: "Tetris", kind: "Arcade", description: "Make space for what comes next.", art: "▟ ▀ ▙" },
-  { id: "backgammon", title: "Backgammon", kind: "Board", description: "A little chance. A lot of strategy.", art: "◉ ◉ ⚄" },
+  { id: "2048", icon: icon2048, title: "2048", kind: "Numbers", description: "One move. A little more room.", art: "2 4 8 16" },
+  { id: "chess", icon: iconchess, title: "Chess", kind: "Strategy", description: "Take your time. Find your move.", art: "♞" },
+  { id: "solitaire", icon: iconsolitaire, title: "Solitaire", kind: "Cards", description: "A quiet table, a fresh deal.", art: "A ♠" },
+  { id: "snake", icon: iconsnake, title: "Snake", kind: "Arcade", description: "Keep moving. Leave a way out.", art: "● ● ● ●" },
+  { id: "minesweeper", icon: iconminesweeper, title: "Minesweeper", kind: "Puzzle", description: "Every number tells you something.", art: "1 2 ✳" },
+  { id: "tetris", icon: icontetris, title: "Tetris", kind: "Arcade", description: "Make space for what comes next.", art: "▟ ▀ ▙" },
+  { id: "backgammon", icon: iconbackgammon, title: "Backgammon", kind: "Board", description: "A little chance. A lot of strategy.", art: "◉ ◉ ⚄" },
 ] as const;
 
 function GameCenter() {
@@ -34,7 +42,7 @@ function GameCenter() {
       <div className="game-shelf">
         {games.map((game) => (
           <article className={`game-cover game-cover--${game.id}`} key={game.id}>
-            <div className="game-art" aria-hidden="true">{game.art}</div>
+            <div className="game-art" aria-hidden="true"><img src={game.icon} alt="" /></div>
             <div className="game-caption"><span>{game.kind}</span><h2>{game.title}</h2><p>{game.description}</p></div>
             <button className="play-button" disabled={!canLaunch} type="button" aria-label={`Play ${game.title}`} onClick={() => {
               setError(null);

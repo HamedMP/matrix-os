@@ -31,7 +31,8 @@
       "../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../system/icons/v3-*.png"
     ]
   },
   "listingTrust": "first_party"

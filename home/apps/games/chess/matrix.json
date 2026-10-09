@@ -39,7 +39,8 @@
       "package.json",
       "pnpm-lock.yaml",
       "vite.config.ts",
-      "tsconfig.json"
+      "tsconfig.json",
+      "../../../system/icons/v3-*.png"
     ]
   }
 }
