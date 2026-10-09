@@ -20,6 +20,12 @@ export const MATRIX_CUSTOM_MCP_TOOLS = [
   "mcp__matrix-integrations__call_custom_mcp_tool",
 ] as const;
 
+export const MATRIX_INTEGRATION_READ_TOOLS = [
+  "mcp__matrix-integrations__list_integration_inventory",
+  "mcp__matrix-integrations__describe_service",
+  "mcp__matrix-integrations__call_service",
+] as const;
+
 export const MATRIX_COMPANY_DRIVE_TOOLS = [
   "mcp__matrix-integrations__search_company_drive",
   "mcp__matrix-integrations__read_company_drive_file",
@@ -32,17 +38,18 @@ export interface MatrixMcpRunContext {
   runId: string;
   scope: MatrixMcpRunScope;
   driveContext?: boolean;
+  integrationRead?: boolean;
 }
 
 /** The configured stdio server only exposes Matrix's stable broker contract. */
-export function matrixMcpConfig(scope: "call" | "discovery" = "call", driveContext = false): string {
+export function matrixMcpConfig(scope: "call" | "discovery" = "call", driveContext = false, integrationRead = false): string {
   return JSON.stringify({
     mcpServers: {
       "matrix-integrations": {
         command: "/opt/matrix/bin/matrix-integrations-mcp",
         // An argv flag survives MCP child environment sanitization and makes
         // the host launcher deny machine-bearer fallback for this Chat Run.
-        args: ["--require-scoped-capability", `--tool-surface=custom-mcp-${scope}${driveContext ? "-drive" : ""}`],
+        args: ["--require-scoped-capability", `--tool-surface=custom-mcp-${scope}${integrationRead ? "-integrations" : ""}${driveContext ? "-drive" : ""}`],
       },
     },
   });
@@ -54,7 +61,7 @@ export interface MatrixMcpRunCapability {
 }
 
 export interface MatrixMcpCapabilityIssuer {
-  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean }): MatrixMcpRunCapability | null;
+  issue(input: { owner: { type: string; ownerId: string }; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean }): MatrixMcpRunCapability | null;
 }
 
 export interface MatrixMcpCapabilityRegistry extends MatrixMcpCapabilityIssuer {
@@ -67,22 +74,23 @@ function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function permitted(method: string, path: string, scope: MatrixMcpRunScope): boolean {
-  if (scope === "integration_read") {
-    return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
-      || (method === "POST" && path === "/api/integrations/read-call");
+function permitted(method: string, path: string, scope: MatrixMcpRunScope, integrationRead = false): boolean {
+  if (scope === "integration_read" || integrationRead) {
+    if ((method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
+      || (method === "POST" && path === "/api/integrations/read-call")) return true;
+    if (scope === "integration_read") return false;
   }
   return (method === "GET" && (path === "/api/mcp-servers" || DETAIL_PATH.test(path)))
     || (scope === "call" && method === "POST" && CALL_PATH.test(path));
 }
 
-/** A bounded, owner-bound, run-lifetime capability for Custom MCP only. */
+/** A bounded owner/run capability; built-in reads require an explicit opt-in. */
 export function createMatrixMcpCapabilityRegistry(options: {
   configuredOwnerId?: string;
   previewRuntime?: boolean;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
-  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; expiresAt: number }>();
+  const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean; expiresAt: number }>();
   const now = options.now ?? Date.now;
   let closed = false;
 
@@ -97,8 +105,8 @@ export function createMatrixMcpCapabilityRegistry(options: {
     if (closed || !/^[a-f0-9]{64}$/.test(token)) return null;
     sweep();
     const grant = active.get(digest(token));
-    return grant && (permitted(method, path, grant.scope) || (grant.driveContext === true && method === "POST" && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
-      ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope, ...(grant.driveContext ? {driveContext:true} : {}) }
+    return grant && (permitted(method, path, grant.scope, grant.integrationRead) || (grant.driveContext === true && method === "POST" && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
+      ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope, ...(grant.driveContext ? {driveContext:true} : {}), ...(grant.integrationRead ? {integrationRead:true} : {}) }
       : null;
   }
 
@@ -110,12 +118,13 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || input.owner.ownerId !== options.configuredOwnerId
         || (input.scope !== "discovery" && input.scope !== "call" && input.scope !== "integration_read")
         || (input.driveContext && input.scope === "integration_read")
+        || (input.integrationRead !== undefined && typeof input.integrationRead !== "boolean")
         || !input.runId || input.runId.length > 256) return null;
       sweep();
       if (active.size >= MAX_ACTIVE) return null;
       const token = randomBytes(32).toString("hex");
       const key = digest(token);
-      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? {driveContext:true} : {}), expiresAt: now() + LIFETIME_MS });
+      active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope, ...(input.driveContext ? {driveContext:true} : {}), ...(input.integrationRead === true ? {integrationRead:true} : {}), expiresAt: now() + LIFETIME_MS });
       return { token, revoke: () => { active.delete(key); } };
     },
     resolve(token, method, path) {

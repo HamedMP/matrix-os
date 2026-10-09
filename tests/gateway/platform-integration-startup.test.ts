@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { markAuthContextReady } from "../../packages/gateway/src/request-principal.js";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationUserResolver, initializePlatformIntegrations } from "../../packages/gateway/src/startup/platform-integrations.js";
 
@@ -8,15 +10,17 @@ describe("platform integration startup identity", () => {
     const getUserByClerkId = vi.fn(async (id: string) => id === "known" ? { id: "owner-id" } : null);
     const db = { getUserByClerkId } as unknown as PlatformDb;
     const app = new Hono();
+    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpCapability: token => token === "known-token" ? "known" : token === "unknown-token" ? "unknown" : null }));
     const resolve = createIntegrationUserResolver(db, { NODE_ENV: "production" });
     app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
 
-    const known = await app.request("/identity", { headers: { "x-platform-user-id": "known" } });
+    const known = await app.request("/identity", { headers: { authorization: "Bearer known-token" } });
     expect(await known.json()).toEqual({ id: "owner-id" });
-    const unknown = await app.request("/identity", { headers: { "x-platform-user-id": "unknown" } });
+    const unknown = await app.request("/identity", { headers: { authorization: "Bearer unknown-token" } });
     expect(await unknown.json()).toEqual({ id: null });
     const missing = await app.request("/identity");
-    expect(await missing.json()).toEqual({ id: null });
+    expect(missing.status).toBe(401);
+    expect((await app.request("/identity", { headers: { "x-platform-user-id": "known" } })).status).toBe(401);
     expect(getUserByClerkId).toHaveBeenCalledTimes(2);
   });
 
@@ -27,12 +31,23 @@ describe("platform integration startup identity", () => {
     const resolve = createIntegrationUserResolver(db, {
       NODE_ENV: "development", MATRIX_HANDLE: "dev", MATRIX_CLERK_USER_ID: "clerk-dev", HOSTNAME: "local",
     });
+    app.use("*", async (c, next) => { markAuthContextReady(c); await next(); });
     app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
 
     const response = await app.request("/identity");
     expect(await response.json()).toEqual({ id: "dev-owner" });
     expect(raw).toHaveBeenCalledOnce();
     expect(raw.mock.calls[0]?.[0]).toMatch(/ON CONFLICT \(clerk_id\) DO UPDATE/);
+  });
+
+  it("fails on missing auth wiring without entering the development upsert", async () => {
+    const raw = vi.fn();
+    const resolve = createIntegrationUserResolver({ raw } as unknown as PlatformDb, { NODE_ENV: "development" });
+    const app = new Hono();
+    app.onError(() => new Response("Unavailable", { status: 503 }));
+    app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
+    expect((await app.request("/identity", { headers: { "x-platform-user-id": "forged" } })).status).toBe(503);
+    expect(raw).not.toHaveBeenCalled();
   });
 });
 

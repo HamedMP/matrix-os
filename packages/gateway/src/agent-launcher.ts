@@ -11,7 +11,8 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
-import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
+import { INTEGRATION_READ_GUIDANCE } from "./chat/integration-read-guidance.js";
 import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
@@ -68,6 +69,7 @@ export interface AgentLaunchInput {
   claudeIncludePartialMessages?: boolean;
   matrixCustomMcp?: boolean;
   matrixDriveContext?: boolean;
+  matrixIntegrationRead?: boolean;
   matrixCustomMcpScope?: "call" | "discovery";
 }
 
@@ -211,12 +213,13 @@ const ClaudeAllowRuleSchema = z.union([
   ClaudeEditPermissionRuleSchema,
   z.enum(MATRIX_CUSTOM_MCP_TOOLS),
   z.enum(MATRIX_COMPANY_DRIVE_TOOLS),
+  z.enum(MATRIX_INTEGRATION_READ_TOOLS),
 ]);
 const ClaudeLaunchSettingsSchema = z.object({
   permissions: z.object({
     // The sandbox permits 20 writable roots; a scoped Claude Run adds only
-    // the three fixed Custom MCP wrappers and two scoped drive read tools.
-    allow: z.array(ClaudeAllowRuleSchema).max(25).optional(),
+    // three Custom MCP wrappers, three integration reads, and two company Drive reads.
+    allow: z.array(ClaudeAllowRuleSchema).max(28).optional(),
     deny: z.array(z.enum(["Edit", "Write", "NotebookEdit"])).max(3).optional(),
   }).strict().optional(),
   sandbox: z.object({
@@ -284,7 +287,7 @@ function claudeLaunchSettings(input: AgentLaunchInput): z.infer<typeof ClaudeLau
     input.mode !== "plan" &&
     input.mode !== "review";
   const mcpTools = input.matrixCustomMcp
-    ? [...(input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(mode === "read-only" || claudePermissionMode(input) === "default"
+    ? [...(input.matrixIntegrationRead ? MATRIX_INTEGRATION_READ_TOOLS : []), ...(input.matrixDriveContext ? MATRIX_COMPANY_DRIVE_TOOLS : []), ...(mode === "read-only" || claudePermissionMode(input) === "default"
       ? MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS : MATRIX_CUSTOM_MCP_TOOLS)]
     : [];
   if (mode === "read-only") {
@@ -333,8 +336,8 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--strict-mcp-config",
     ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
       surface: "claude", customMcpScope: input.matrixCustomMcp ? effectiveMcpScope : "none",
-    })] : []),
-    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext)] : []),
+    }) + (input.matrixCustomMcp && input.matrixIntegrationRead ? `\n\n${INTEGRATION_READ_GUIDANCE}` : "")] : []),
+    ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext, input.matrixIntegrationRead)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),
     ...(modelOption(input, "effort") ? ["--effort", modelOption(input, "effort")!] : []),

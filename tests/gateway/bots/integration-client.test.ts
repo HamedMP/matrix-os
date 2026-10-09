@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { Hono } from "hono";
+import { requireRequestPrincipal } from "../../../packages/gateway/src/request-principal.js";
 import { createIntegrationRoutes } from "../../../packages/gateway/src/integrations/routes.js";
 import type { PlatformDb } from "../../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../../packages/gateway/src/integrations/pipedream.js";
@@ -17,7 +18,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 describe("bot integration client", () => {
   it("parses the actual owner catalog route DTO and preserves its scoped-read action boundary", async () => {
     const pipedream = { getAppInfo: async () => null } as unknown as PipedreamConnectClient;
-    const resolveUserId = vi.fn(async (context) => context.req.header("x-platform-user-id") ?? null);
+    const resolveUserId = vi.fn(async (context) => requireRequestPrincipal(context).userId);
     const routes = createIntegrationRoutes({ db: {} as PlatformDb, pipedream, webhookSecret: "fixture", resolveUserId });
     const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));
     const read = await client.describe(OWNER, { service: "gmail", readOnly: true });
@@ -133,7 +134,8 @@ describe("bot integration client", () => {
     const routes = new Hono();
     const seen = vi.fn();
     routes.get("/", (context) => {
-      seen(context.req.header("x-platform-user-id"));
+      seen(requireRequestPrincipal(context).userId);
+      expect(context.req.header("x-platform-user-id")).toBeUndefined();
       return context.json([{ id: "conn_1", service: "gmail", account_label: "Work", status: "active" }]);
     });
     const client = createBotIntegrationClient(createLocalIntegrationTransport(routes));

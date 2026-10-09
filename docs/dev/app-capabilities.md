@@ -124,7 +124,7 @@ policy/inference operations run concurrently. The shared approved discovery and
 inference budget of ten per minute is charged only after the exact app/selection
 grant succeeds; denied apps cannot consume it. Cancellation retains admission
 until work drains. V3 provider truth plus owner Settings determines exact readiness. Public route
-discovery is capped at128 entries and retains the exact selected default; complete
+discovery is capped at 128 entries and retains the exact selected default; complete
 bounded internal authorization remains independent of that discovery cap. Safe completion
 adapters cover managed Matrix AI, owner Anthropic keys, verified Claude profiles,
 verified Pi 1.0.4 SDK profiles including supported static keys and OAuth, and an
@@ -150,9 +150,19 @@ alone does not prove no-tools behavior: the installed 1.16.0 isolated synthetic
 local-server audit produced no completion within the bounded deadline. Its static
 CLI executor was removed until an exact runtime/version contract is verified.
 Portable OpenCode Matrix-funded/owner-key selections still use their authorized
-HTTP source. Hermes native default profiles support fixed text-only HTTP for Anthropic, OpenAI API, OpenRouter and an
-already-fresh Hermes ChatGPT grant. The app uses an exact eligible model in the
-configured native provider, independently of Matrix Inbox selection. Native files
+HTTP source. Hermes native default profiles support fixed text-only HTTP for
+Anthropic, OpenAI API and OpenRouter after live provider metadata resolves the
+exact native selection. Metadata requests are bounded, use fixed provider
+endpoints, and contain no app prompt. Inference pins the verified model and
+accepts only its preverified response IDs. OpenRouter requires its permanent
+canonical slug to be attested as the executable API ID, preserving the exact
+pricing variant; unsupported alias or variant mappings remain unavailable.
+An unresolved OpenAI alias remains
+unavailable before paid inference; select an eligible dated snapshot instead.
+Hermes ChatGPT routes lack authoritative snapshot mapping and remain unavailable
+until that adapter is verified (ENG-201 / GitHub #2350). The separate paired
+ChatGPT source retains its own authority. The app uses an exact eligible model in
+the configured native provider, independently of Matrix Inbox selection. Native files
 are bounded and fingerprinted before and after the response. A shared durable
 Settings fence prevents competing profile writes and remains held until actual
 HTTP cancellation drains; an uncertain drain stays fenced. ChatGPT credentials
@@ -160,8 +170,9 @@ must identify one account: a singleton token store, or exactly one native manual
 device-code entry when no singleton exists. Named profiles, ambiguous pools,
 expiring tokens, custom endpoints and credential overrides remain unavailable;
 there is no token refresh, rotation or credential fallback. Request and completed
-response model IDs must agree exactly; aliases resolving to an unverifiable
-physical model fail closed. JSON completions and Codex SSE are bounded by bytes
+response model IDs must match the provider-attested mapping exactly; arbitrary
+IDs and prefix matches are rejected. Discovery verifies each exact model rather
+than sharing one availability flag across a provider's entire catalog. JSON completions and Codex SSE are bounded by bytes
 and chunk count, and reject tool output, partial completion and late errors. App discovery does
 not disable unrelated routes when one SDK is unavailable, and inference failures
 never select another route. Managed calls use existing funding admission and
@@ -175,6 +186,19 @@ drains and safety fences. Exhausted grace reports unavailable instead of proving
 completion. The funded relay retains responsibility for exact settlement or
 reconciliation when final usage is unavailable.
 
+## Chat integrations
+
+Local production integration routes resolve the owner from authenticated request
+context. In-process app and bot transports provide that same verified context;
+caller identity headers cannot select a different owner. Database outages return
+unavailable errors rather than being treated as missing accounts.
+
+App permissions and Chat tool scopes are separate. The explicit read integration
+scope gives a Claude Chat inventory, action discovery and exact-account reads
+through Matrix's built-in connection. It grants no connection management or
+writes. Existing Custom MCP scopes remain unchanged. Never ask the user to
+register a second Drive login when the built-in connection is available through
+the permitted Chat scope.
 
 ## Verification and rollout
 
