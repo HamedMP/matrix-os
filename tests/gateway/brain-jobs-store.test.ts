@@ -96,6 +96,7 @@ describe("brain job store", () => {
     const job = (await store.claim("owner_a", W, LEASE))!;
     expect(job).toEqual({
       scope: scopeA, jobId: older.job.jobId, projectId: "proj_a", request: { kind: "sync" }, attempts: 1, steps: 0,
+      lease: expect.stringMatching(/^w_one:[a-f0-9]{16}$/),
     });
     const view = (await store.get(scopeA, job.jobId))!;
     expect(view).toMatchObject({ status: "running", attempts: 1, startedAt: harness.iso(), heartbeatAt: harness.iso() });
@@ -105,19 +106,20 @@ describe("brain job store", () => {
     expect(await store.claim("owner_a", W, LEASE)).toBeNull();
 
     harness.tick(5_000);
-    expect(await store.heartbeat(job, W, LEASE)).toEqual({ owned: true, cancelRequested: false });
-    expect(await store.heartbeat(job, "w_two", LEASE)).toEqual({ owned: false, cancelRequested: false });
-    expect(await store.heartbeat(job, W, LEASE, { steps: 2, result: { written: 3 } }))
+    expect(await store.heartbeat(job, LEASE)).toEqual({ owned: true, cancelRequested: false });
+    const other = { ...job, lease: second.lease };
+    expect(await store.heartbeat(other, LEASE)).toEqual({ owned: false, cancelRequested: false });
+    expect(await store.heartbeat(job, LEASE, { steps: 2, result: { written: 3 } }))
       .toEqual({ owned: true, cancelRequested: false });
     expect(await store.get(scopeA, job.jobId)).toMatchObject({ steps: 2, result: { written: 3 }, heartbeatAt: harness.iso() });
-    expect(await store.finish(job, "w_two", { status: "failed", errorCode: "x", steps: 2, result: null })).toBe(false);
-    expect(await store.release(job, "w_two", { steps: 2, result: null })).toBe(false);
-    expect(await store.finish(job, W, { status: "succeeded", errorCode: null, steps: 3, result: { done: true } }))
+    expect(await store.finish(other, { status: "failed", errorCode: "x", steps: 2, result: null })).toBe(false);
+    expect(await store.release(other, { steps: 2, result: null })).toBe(false);
+    expect(await store.finish(job, { status: "succeeded", errorCode: null, steps: 3, result: { done: true } }))
       .toBe(true);
     expect(await store.get(scopeA, job.jobId)).toMatchObject({
       status: "succeeded", steps: 3, result: { done: true }, finishedAt: harness.iso(), errorCode: null,
     });
-    expect(await store.finish(job, W, { status: "failed", errorCode: "x", steps: 3, result: null })).toBe(false);
+    expect(await store.finish(job, { status: "failed", errorCode: "x", steps: 3, result: null })).toBe(false);
     expect((await store.enqueue(scopeA, "proj_a", sync)).created).toBe(true);
   });
 
@@ -128,26 +130,40 @@ describe("brain job store", () => {
     expect(await store.recover("owner_a", 3)).toEqual({ requeued: 1, closed: 0 });
     const fresh = (await store.claim("owner_a", W, LEASE))!;
     expect(fresh).toMatchObject({ jobId: stale.jobId, attempts: 2 });
-    expect(await store.heartbeat(stale, W, LEASE, { steps: 9, result: { stale: true } }))
+    expect(await store.heartbeat(stale, LEASE, { steps: 9, result: { stale: true } }))
       .toEqual({ owned: false, cancelRequested: false });
-    expect(await store.finish(stale, W, { status: "failed", errorCode: "x", steps: 9, result: null })).toBe(false);
-    expect(await store.release(stale, W, { steps: 9, result: null })).toBe(false);
+    expect(await store.finish(stale, { status: "failed", errorCode: "x", steps: 9, result: null })).toBe(false);
+    expect(await store.release(stale, { steps: 9, result: null })).toBe(false);
     expect(await store.get(scopeA, fresh.jobId)).toMatchObject({ status: "running", attempts: 2, steps: 0, result: null });
-    expect(await store.heartbeat(fresh, W, LEASE, { steps: 1, result: { n: 1 } }))
+    expect(await store.heartbeat(fresh, LEASE, { steps: 1, result: { n: 1 } }))
       .toEqual({ owned: true, cancelRequested: false });
-    expect(await store.finish(fresh, W, { status: "succeeded", errorCode: null, steps: 1, result: { n: 1 } })).toBe(true);
+    expect(await store.finish(fresh, { status: "succeeded", errorCode: null, steps: 1, result: { n: 1 } })).toBe(true);
     expect(await store.get(scopeA, fresh.jobId)).toMatchObject({ status: "succeeded", attempts: 2, steps: 1 });
+  });
+
+  it("fences a handed-back claim after the same worker restarts and claims the job again", async () => {
+    await store.enqueue(scopeA, "proj_a", sync);
+    const old = (await store.claim("owner_a", W, LEASE))!;
+    expect(await store.release(old, { steps: 0, result: null })).toBe(true);
+    // Release does not count the claim, so the new claim has the same worker and the same attempts.
+    const again = (await store.claim("owner_a", W, LEASE))!;
+    expect(again).toMatchObject({ jobId: old.jobId, attempts: old.attempts });
+    expect(await store.heartbeat(old, LEASE, { steps: 7, result: { stale: true } }))
+      .toEqual({ owned: false, cancelRequested: false });
+    expect(await store.finish(old, { status: "failed", errorCode: "x", steps: 7, result: null })).toBe(false);
+    expect(await store.release(old, { steps: 7, result: null })).toBe(false);
+    expect(await store.get(scopeA, old.jobId)).toMatchObject({ status: "running", attempts: 1, steps: 0 });
   });
 
   it("releases a job without counting the claim, keeping the stored result when none is given", async () => {
     await store.enqueue(scopeA, "proj_a", sync);
     const job = (await store.claim("owner_a", W, LEASE))!;
-    expect(await store.release(job, W, { steps: 4, result: null })).toBe(true);
+    expect(await store.release(job, { steps: 4, result: null })).toBe(true);
     expect(await store.get(scopeA, job.jobId)).toMatchObject({ status: "queued", attempts: 0, steps: 4, result: null });
     const again = (await store.claim("owner_a", W, LEASE))!;
-    expect(await store.release(again, W, { steps: 5, result: { written: 2 } })).toBe(true);
+    expect(await store.release(again, { steps: 5, result: { written: 2 } })).toBe(true);
     const third = (await store.claim("owner_a", W, LEASE))!;
-    expect(await store.release(third, W, { steps: 5, result: null })).toBe(true);
+    expect(await store.release(third, { steps: 5, result: null })).toBe(true);
     expect(await store.get(scopeA, job.jobId)).toMatchObject({ status: "queued", steps: 5, result: { written: 2 } });
   });
 
@@ -156,7 +172,7 @@ describe("brain job store", () => {
     const job = (await store.claim("owner_a", W, LEASE))!;
     harness.tick();
     await store.cancel(scopeA, job.jobId);
-    expect(await store.release(job, W, { steps: 1, result: null })).toBe(true);
+    expect(await store.release(job, { steps: 1, result: null })).toBe(true);
     expect(await store.get(scopeA, job.jobId)).toMatchObject({
       status: "cancelled", cancelRequested: true, attempts: 1, steps: 1, finishedAt: harness.iso(), errorCode: null,
     });
@@ -173,9 +189,9 @@ describe("brain job store", () => {
     await store.cancel(scopeA, first.jobId);
     await store.cancel(scopeB, second.jobId);
     harness.tick();
-    expect(await store.finish(first, W, { status: "succeeded", errorCode: null, steps: 2, result: { written: 4 } }))
+    expect(await store.finish(first, { status: "succeeded", errorCode: null, steps: 2, result: { written: 4 } }))
       .toBe(true);
-    expect(await store.finish(second, W, { status: "failed", errorCode: "time_limit", steps: 1, result: null }))
+    expect(await store.finish(second, { status: "failed", errorCode: "time_limit", steps: 1, result: null }))
       .toBe(true);
     expect(await store.get(scopeA, first.jobId)).toMatchObject({
       status: "cancelled", errorCode: null, cancelRequested: true, steps: 2, result: { written: 4 },
@@ -194,7 +210,7 @@ describe("brain job store", () => {
     await store.enqueue(scopeA, "proj_a", sync);
     const job = (await store.claim("owner_a", W, LEASE))!;
     expect(await store.cancel(scopeA, job.jobId)).toMatchObject({ status: "running", cancelRequested: true, finishedAt: null });
-    expect(await store.heartbeat(job, W, LEASE)).toEqual({ owned: true, cancelRequested: true });
+    expect(await store.heartbeat(job, LEASE)).toEqual({ owned: true, cancelRequested: true });
   });
 
   it("recovers expired leases: queued again, failed after max attempts, cancelled when asked", async () => {
@@ -223,7 +239,7 @@ describe("brain job store", () => {
     const job = (await store.claim("owner_a", W, LEASE))!;
     expect(job.jobId).toBe(released.job.jobId);
     harness.tick();
-    expect(await store.release(job, W, { steps: 1, result: { claimsWritten: 2 } })).toBe(true);
+    expect(await store.release(job, { steps: 1, result: { claimsWritten: 2 } })).toBe(true);
     expect(await store.get(scopeA, job.jobId)).toMatchObject({
       status: "failed", errorCode: BRAIN_JOB_INTERRUPTED_CODE, attempts: 1, steps: 1, result: { claimsWritten: 2 },
       finishedAt: harness.iso(),
@@ -231,7 +247,7 @@ describe("brain job store", () => {
     // The rules run (free) is queued again as before; nothing else is claimable for the model.
     const rulesJob = (await store.claim("owner_a", W, LEASE))!;
     expect(rulesJob.jobId).toBe(rules.job.jobId);
-    expect(await store.release(rulesJob, W, { steps: 0, result: null })).toBe(true);
+    expect(await store.release(rulesJob, { steps: 0, result: null })).toBe(true);
     expect(await store.get(scopeA, rules.job.jobId)).toMatchObject({ status: "queued", attempts: 0 });
 
     const lost = await store.enqueue(scopeB, "proj_b", model);
@@ -246,7 +262,7 @@ describe("brain job store", () => {
     const asked = await store.enqueue(scopeA, "proj_a", model);
     const claimed = (await store.claim("owner_a", W, LEASE))!;
     await store.cancel(scopeA, asked.job.jobId);
-    expect(await store.release(claimed, W, { steps: 0, result: null })).toBe(true);
+    expect(await store.release(claimed, { steps: 0, result: null })).toBe(true);
     expect(await store.get(scopeA, asked.job.jobId)).toMatchObject({ status: "cancelled", errorCode: null });
   });
 
@@ -267,7 +283,7 @@ describe("brain job store", () => {
       await store.enqueue(scopeA, "proj_a", sync);
       const job = (await store.claim("owner_a", W, LEASE))!;
       const result = clipBrainJobSummary(summary);
-      expect(await store.heartbeat(job, W, LEASE, { steps: 1, result })).toEqual({ owned: true, cancelRequested: false });
+      expect(await store.heartbeat(job, LEASE, { steps: 1, result })).toEqual({ owned: true, cancelRequested: false });
       expect((await store.get(scopeA, job.jobId))!.result).toEqual(result);
     }
   });

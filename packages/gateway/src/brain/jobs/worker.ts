@@ -175,7 +175,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
     if (step === undefined) return { status: "failed", errorCode: "job_kind_unavailable", ...progress };
     // A cancel recorded after the claim but before launch registered this run found no run to stop here, so the
     // stored flag is read once before the first step: a cancelled run never starts (paid) work.
-    const first = await deps.store.heartbeat(job, workerId, limits.leaseMs);
+    const first = await deps.store.heartbeat(job, limits.leaseMs);
     if (!first.owned) return { status: "lost" };
     if (first.cancelRequested) return { status: "cancelled", errorCode: null, ...progress };
     // The busy code of the last answer while waiting to try again; the time cap then fails the run with it.
@@ -199,7 +199,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
         // answer of a wait is recorded as `waiting`, so a client can say the run waits (the next step replaces it).
         if (progress.result?.waiting !== code) {
           progress.result = clipBrainJobSummary({ ...(progress.result ?? {}), waiting: code });
-          const beat = await deps.store.heartbeat(job, workerId, limits.leaseMs, progress);
+          const beat = await deps.store.heartbeat(job, limits.leaseMs, progress);
           if (!beat.owned) return { status: "lost" };
           if (beat.cancelRequested) return { status: "cancelled", errorCode: null, ...progress };
         }
@@ -214,7 +214,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
         return { status: "failed", errorCode: code, ...progress };
       }
       if (result.caughtUp) return { status: "succeeded", errorCode: null, ...progress };
-      const beat = await deps.store.heartbeat(job, workerId, limits.leaseMs, progress);
+      const beat = await deps.store.heartbeat(job, limits.leaseMs, progress);
       if (!beat.owned) return { status: "lost" };
       if (beat.cancelRequested) return { status: "cancelled", errorCode: null, ...progress };
       await pause(limits.stepPauseMs, signal);
@@ -233,7 +233,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
     limitTimer.unref();
     const beatTimer = setInterval(() => {
       if (controller.signal.aborted) return;
-      deps.store.heartbeat(job, workerId, limits.leaseMs).then((beat) => {
+      deps.store.heartbeat(job, limits.leaseMs).then((beat) => {
         if (!beat.owned) controller.abort("lease_lost");
         else if (beat.cancelRequested) controller.abort("cancelled");
       }, (error: unknown) => console.error("[brain-jobs] Heartbeat failed:", errorName(error)));
@@ -248,8 +248,8 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
     }
     if (end.status === "lost") return;
     const written = end.status === "release"
-      ? await deps.store.release(job, workerId, progress)
-      : await deps.store.finish(job, workerId, end);
+      ? await deps.store.release(job, progress)
+      : await deps.store.finish(job, end);
     if (!written) console.warn("[brain-jobs] Job lease lost before its result was written");
   }
 
@@ -296,7 +296,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
           if (job === null) break;
           if (!started) {
             // stop() ran while this claim was in flight: hand the job straight back.
-            const released = await deps.store.release(job, workerId, { steps: job.steps, result: null });
+            const released = await deps.store.release(job, { steps: job.steps, result: null });
             if (!released) console.warn("[brain-jobs] Job lease lost before its result was written");
             break;
           }

@@ -1,9 +1,9 @@
 /**
  * The only reader and writer of brain_jobs. Enqueue and erase take the owner's job lock; worker writes (heartbeat,
- * finish, release) are fenced by their claim instead (`status = 'running' AND lease_owner = <worker> AND attempts =
- * <the claim's attempts>`), so a run that lost its lease can never overwrite the job, not even after the same worker
- * claimed it again. Claims use FOR UPDATE SKIP LOCKED, so gateways never take the same job. Every write sets
- * lock_timeout and statement_timeout; reads run through withBrainRead.
+ * finish, release) are fenced by their claim instead (`status = 'running' AND lease_owner = <the claim's lease>`), a
+ * value no other claim has, so a run that lost its lease or handed it back can never overwrite the job, not even after
+ * the same worker claimed it again. Claims use FOR UPDATE SKIP LOCKED, so gateways never take the same job. Every
+ * write sets lock_timeout and statement_timeout; reads run through withBrainRead.
  */
 import { randomBytes } from "node:crypto";
 import { sql, type Kysely, type Selectable, type Transaction } from "kysely";
@@ -20,9 +20,9 @@ type JobsDb = Kysely<BrainJobsDatabase>;
 type JobsTrx = Transaction<BrainJobsDatabase>;
 type JobRow = Selectable<BrainJobsTable>;
 
-/** A job a worker holds the lease of. */
+/** A job a worker holds the lease of; `lease` (its lease_owner: the worker id and a random tag) is this claim's. */
 export interface BrainClaimedJob {
-  readonly scope: BrainScopeKey; readonly jobId: string; readonly projectId: string;
+  readonly scope: BrainScopeKey; readonly jobId: string; readonly projectId: string; readonly lease: string;
   readonly request: BrainJobRequest; readonly attempts: number; readonly steps: number;
 }
 export type BrainJobFinalStatus = Extract<BrainJobStatus, "succeeded" | "failed" | "cancelled">;
@@ -183,15 +183,18 @@ export class BrainJobStore {
   }
 
   /**
-   * Takes the owner's oldest queued job for `workerId` (attempts + 1), or null when none is queued. The claim's
-   * attempts fence its writes: attempts only grows while a claim lives (release, the one write that lowers it, is that
-   * claim's last), so no later claim of the job, even by the same worker, has the same attempts.
+   * Takes the owner's oldest queued job for `workerId` (attempts + 1), or null when none is queued. The claim's lease
+   * fences its writes; its random tag keeps it unique even when the same worker claims a job it handed back (release
+   * does not count a claim, so attempts can repeat).
    */
   async claim(ownerId: string, workerId: string, leaseMs: number): Promise<BrainClaimedJob | null> {
     const now = this.now();
+    // lease_owner holds at most 64 characters: up to 47 of the worker id (well-formed, so it is stored as written), a
+    // colon and 16 random hex digits.
+    const lease = `${workerId.slice(0, 47).toWellFormed()}:${randomBytes(8).toString("hex")}`;
     const row = await this.write(async (trx) => {
       const { rows } = await sql<JobRow>`
-        UPDATE brain_jobs SET status = 'running', lease_owner = ${workerId},
+        UPDATE brain_jobs SET status = 'running', lease_owner = ${lease},
           lease_expires_at = ${new Date(now.getTime() + leaseMs)}, attempts = attempts + 1,
           started_at = COALESCE(started_at, ${now}), heartbeat_at = ${now}, updated_at = ${now}
         WHERE (owner_id, scope_id, job_id) IN (
@@ -202,22 +205,19 @@ export class BrainJobStore {
     });
     if (row === undefined) return null;
     return {
-      scope: { ownerId: row.owner_id, scopeId: row.scope_id }, jobId: row.job_id, projectId: row.project_id,
+      scope: { ownerId: row.owner_id, scopeId: row.scope_id }, jobId: row.job_id, projectId: row.project_id, lease,
       request: readRequest(row), attempts: row.attempts, steps: row.steps,
     };
   }
 
   /** Renews the lease (and records progress when given); owned false when the job is no longer this claim's. */
-  async heartbeat(
-    job: BrainClaimedJob, workerId: string, leaseMs: number, progress?: BrainJobProgress,
-  ): Promise<BrainJobHeartbeat> {
+  async heartbeat(job: BrainClaimedJob, leaseMs: number, progress?: BrainJobProgress): Promise<BrainJobHeartbeat> {
     const now = this.now();
     const row = await this.write((trx) => trx.updateTable("brain_jobs").set({
       lease_expires_at: new Date(now.getTime() + leaseMs), heartbeat_at: now, updated_at: now,
       ...(progress === undefined ? {} : { steps: progress.steps, result: json(progress.result) }),
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
-      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
-      .where("attempts", "=", job.attempts)
+      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", job.lease)
       .returning("cancel_requested").executeTakeFirst());
     return { owned: row !== undefined, cancelRequested: row?.cancel_requested === true };
   }
@@ -227,7 +227,7 @@ export class BrainJobStore {
    * before this write wins over the outcome (cancelled, no error code), as in release and recover: the cancel can land
    * while the last step completes, when the worker no longer looks for it.
    */
-  async finish(job: BrainClaimedJob, workerId: string, outcome: BrainJobOutcome): Promise<boolean> {
+  async finish(job: BrainClaimedJob, outcome: BrainJobOutcome): Promise<boolean> {
     const now = this.now();
     const row = await this.write((trx) => trx.updateTable("brain_jobs").set({
       status: sql`CASE WHEN cancel_requested THEN 'cancelled' ELSE ${outcome.status}::text END`,
@@ -235,8 +235,7 @@ export class BrainJobStore {
       steps: outcome.steps, result: json(outcome.result),
       lease_owner: null, lease_expires_at: null, finished_at: now, updated_at: now,
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
-      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
-      .where("attempts", "=", job.attempts)
+      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", job.lease)
       .returning("job_id").executeTakeFirst());
     return row !== undefined;
   }
@@ -245,7 +244,7 @@ export class BrainJobStore {
    * Hands a job back on shutdown: queued again with the claim not counted as an attempt, cancelled when a cancel was
    * asked, or failed with interrupted when the run is paid. A null result keeps the stored one.
    */
-  async release(job: BrainClaimedJob, workerId: string, progress: BrainJobProgress): Promise<boolean> {
+  async release(job: BrainClaimedJob, progress: BrainJobProgress): Promise<boolean> {
     const now = this.now();
     const row = await this.write((trx) => trx.updateTable("brain_jobs").set({
       status: sql`CASE WHEN cancel_requested THEN 'cancelled' WHEN ${PAID} THEN 'failed' ELSE 'queued' END`,
@@ -255,8 +254,7 @@ export class BrainJobStore {
       lease_owner: null, lease_expires_at: null, steps: progress.steps,
       result: sql`COALESCE(${json(progress.result)}::jsonb, result)`, updated_at: now,
     }).where("owner_id", "=", job.scope.ownerId).where("scope_id", "=", job.scope.scopeId)
-      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", workerId)
-      .where("attempts", "=", job.attempts)
+      .where("job_id", "=", job.jobId).where("status", "=", "running").where("lease_owner", "=", job.lease)
       .returning("job_id").executeTakeFirst());
     return row !== undefined;
   }

@@ -188,7 +188,7 @@ describe("brain job worker stops", () => {
     await vi.waitFor(async () => expect((await store.get(scopeA, waiting))?.result)
       .toEqual({ waiting: "extraction_in_progress" }), { timeout: 4_000, interval: 5 });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(heartbeat.mock.calls.filter((call) => call[3] !== undefined)).toHaveLength(1);
+    expect(heartbeat.mock.calls.filter((call) => call[2] !== undefined)).toHaveLength(1);
     await store.cancel(scopeA, waiting);
     worker!.cancel(scopeA, waiting);
     expect(await settled(waiting, "cancelled")).toMatchObject({ result: { waiting: "extraction_in_progress" } });
