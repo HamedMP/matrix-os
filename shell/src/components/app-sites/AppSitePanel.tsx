@@ -33,6 +33,7 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
   const published = site?.status === "published";
   const disabled = pending || loading || loadFailed;
   async function review() {
+    invalidateReview();
     await action(signal => client.getConfig(appSlug, signal), declaration => {
       setConfig(declaration); setPreviewReady(true); setReviewOpen(true);
     });
@@ -74,7 +75,7 @@ function SiteMetadataFields({ fieldId, disabled, title, description, slug, inval
       {invalid && slug ? <p className="text-xs">Use 2–63 lowercase letters, numbers, or hyphens, starting with a letter. Some paths are reserved.</p> : null}
     </fieldset>; }
 function SiteDeploymentReview({ config, reviewed, setReviewed }: { config: SitePublishing | null; reviewed: boolean; setReviewed: (value: boolean) => void }) {
-  return <div className="space-y-3 rounded-lg border p-3" aria-label="Deployment preview">
+  return <div className="ph-no-capture space-y-3 rounded-lg border p-3" aria-label="Deployment preview">
       <p className="text-sm">Only declared public data and forms are available to visitors. Private app data and Matrix tools stay private.</p>
       <p className="text-xs">Review the app in its window before deploying. The app preview uses your private runtime; public visitors receive only the capabilities shown below.</p>
       {config ? <div className="space-y-2 text-xs"><p className="font-medium">Public data</p><pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded border p-2">{JSON.stringify(config.data, null, 2)}</pre><p className="font-medium">Public forms</p>{config.forms.length ? <ul className="space-y-2">{config.forms.map(form => <li key={form.id}>{form.title} ({form.id})<ul>{Object.entries(form.fields).map(([name, field]) => <li key={name}>{name} · {field.type}{field.required ? " · Required" : ""}</li>)}</ul></li>)}</ul> : <p>No public forms declared.</p>}</div> : null}
