@@ -9,7 +9,7 @@ let currentPreference: MobileThemePreference = "system";
 
 function resolveTheme(
   preference: MobileThemePreference,
-  colorScheme: ColorSchemeName = Appearance.getColorScheme(),
+  colorScheme: ColorSchemeName | null | undefined = Appearance.getColorScheme(),
 ): "light" | "dark" {
   if (preference !== "system") return preference;
   return colorScheme === "dark" ? "dark" : "light";

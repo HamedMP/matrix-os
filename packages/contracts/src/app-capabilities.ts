@@ -6,9 +6,14 @@ export const MAX_APP_CAPABILITY_BYTES = 65_536;
 /** Matches the bounded connected-account inventory accepted by the gateway. */
 export const MAX_APP_CONNECTED_SERVICES = 256;
 export const MAX_APP_BRIDGE_REPLY_BYTES = 256 * 1024;
+/** Count every streamed chunk, including empty chunks, independently of byte limits. */
+export const MAX_APP_RESPONSE_CHUNKS = 8192;
 /** Database replies retain the established Electron bridge budget. find supports
  * limit/offset paging; hosts reject oversized replies without truncating rows. */
 export const MAX_APP_DATABASE_REPLY_BYTES = 8 * 1024 * 1024;
+/** Exact JSON body limits of the existing structured database and legacy KV endpoints. */
+export const MAX_APP_DATABASE_REQUEST_BYTES = 1_000_000;
+export const MAX_APP_KV_REQUEST_BYTES = 1_000_000;
 export function appIntegrationReplyBytes(service: string, action: string): number {
   if (service === "gmail" && action === "get_attachment") return 1536 * 1024;
   //512KiB source text may require six JSON bytes per escaped ASCII character.

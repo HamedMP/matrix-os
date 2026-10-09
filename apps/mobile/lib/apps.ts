@@ -12,6 +12,13 @@ export function getAppSlug(app: Pick<MatrixAppEntry, "file" | "path" | "name" | 
   return normalized ?? slugifyName(app.name);
 }
 
+/** Catalog slugs may alias a migrated runtime; storage and grants use its file identity. */
+export function getAppIdentity(app: Pick<MatrixAppEntry, "file" | "path" | "name" | "slug">): string {
+  return (app.file ? normalizeAppSlug(app.file) : null)
+    ?? (app.path ? normalizeAppSlug(app.path) : null)
+    ?? getAppSlug(app);
+}
+
 function normalizeAppSlug(source: string): string | null {
   const withoutCacheParams = source.split(/[?#]/, 1)[0] ?? "";
   const normalizedPath = withoutCacheParams
@@ -20,7 +27,7 @@ function normalizeAppSlug(source: string): string | null {
     .replace(/^\/+/, "")
     .replace(/\/{2,}/g, "/")
     .replace(/^(files\/)?apps\//i, "")
-    .replace(/\/index\.html$/i, "")
+    .replace(/\/(?:dist\/)?index\.html$/i, "")
     .replace(/\.html$/i, "")
     .toLowerCase();
 

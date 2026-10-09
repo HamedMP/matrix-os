@@ -14,6 +14,7 @@ import { Page } from "@/components/shell/Page";
 import { Spacer } from "@/components/ui";
 import { useComputerApps, installedAppSlug } from "@/lib/queries/use-computer-apps";
 import { buildAppIconUrl } from "@/lib/requests";
+import { getAppSlug } from "@/lib/apps";
 
 export default function AppsScreen() {
   const router = useRouter();
@@ -55,7 +56,7 @@ export default function AppsScreen() {
                 />}
                 onPress={() => router.push({
                   pathname: "/app-preview/[app]",
-                  params: { app: slug, name: app.name },
+                  params: { app: slug, runtimeSlug: getAppSlug(app), name: app.name },
                 } as never)}
               />
             );

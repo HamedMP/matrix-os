@@ -9,12 +9,14 @@ import { useComputerAppSession } from "@/lib/queries/use-computer-apps";
 export default function AppPreviewScreen() {
   const params = useLocalSearchParams<{
     app?: string | string[];
+    runtimeSlug?: string | string[];
     name?: string | string[];
   }>();
   const app = Array.isArray(params.app) ? params.app[0] : params.app;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
+  const runtimeSlugHint = Array.isArray(params.runtimeSlug) ? params.runtimeSlug[0] : params.runtimeSlug;
   const title = name || app || "App";
-  const { launchUrl, isPending, isError } = useComputerAppSession(app ?? "");
+  const { launchUrl, isPending, isError, requestAppBridge, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
   const { theme } = useUnistyles();
 
   return (
@@ -25,7 +27,7 @@ export default function AppPreviewScreen() {
           <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
-        <AppRuntimeFrame url={launchUrl} title={title} />
+        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} />
       ) : (
         <View style={styles.centered}>
           <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>
