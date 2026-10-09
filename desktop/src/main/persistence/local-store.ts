@@ -5,6 +5,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
+import { FONT_OPTIONS, MONO_FONT_OPTIONS } from "@matrix-os/brand/themes";
 import { ProjectViewsStateSchema } from "../../shared/project-views";
 import {
   DesktopReleaseNotesSchema,
@@ -14,11 +15,25 @@ import { ProviderPreferencesSchema } from "../../shared/provider-preferences";
 
 export const PANEL_LAYOUT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
-// themeId and zoom are optional so older state files keep validating.
+// New fields remain optional so older state files keep validating.
+const CustomColorsSchema = z.strictObject({
+  background: z.string().regex(/^#[\da-f]{6}$/i).optional(),
+  surface: z.string().regex(/^#[\da-f]{6}$/i).optional(),
+  text: z.string().regex(/^#[\da-f]{6}$/i).optional(),
+  accent: z.string().regex(/^#[\da-f]{6}$/i).optional(),
+  border: z.string().regex(/^#[\da-f]{6}$/i).optional(),
+});
 const AppearanceSchema = z
   .object({
     theme: z.enum(["dark", "light", "system"]),
     themeId: z.string().min(1).max(64).optional(),
+    fontId: z.enum(FONT_OPTIONS.map(font => font.id)).optional(),
+    monoFontId: z.enum(MONO_FONT_OPTIONS.map(font => font.id)).optional(),
+    customTheme: z.strictObject({
+      baseThemeId: z.string().regex(/^[a-z-]{1,32}$/),
+      light: CustomColorsSchema,
+      dark: CustomColorsSchema,
+    }).nullable().optional(),
     zoom: z.number().min(0.5).max(2).optional(),
   })
   .strict();

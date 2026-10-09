@@ -156,31 +156,31 @@
 }
 
 :root {
-  --font-sans: var(--font-instrument), "Instrument Sans", system-ui, sans-serif;
+  --font-sans: var(--font-geist-sans), Geist, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --radius: 0.75rem;
 
   /* Matrix landing palette shared by shell and first-party apps. */
-  --background: #FAFAF9;
-  --foreground: #32352E;
-  --card: #FCFCF8;
-  --card-foreground: #32352E;
-  --popover: #FCFCF8;
-  --popover-foreground: #32352E;
-  --primary: #434E3F;
-  --primary-foreground: #FAFAF5;
-  --secondary: #F1F0E3;
-  --secondary-foreground: #3E4339;
-  --muted: #E1E1D0;
-  --muted-foreground: #747668;
-  --accent: #F1F0E3;
-  --accent-foreground: #3E4339;
-  --destructive: #D74A3A;
-  --success: #3A7D44;
-  --warning: #E0A12E;
-  --border: #D8D6C7;
-  --input: #D8D6C7;
-  --ring: #D06F25;
+  --background: #fafafa;
+  --foreground: #242323;
+  --card: #f3f2f2;
+  --card-foreground: #242323;
+  --popover: #f3f2f2;
+  --popover-foreground: #242323;
+  --primary: #242323;
+  --primary-foreground: #fafafa;
+  --secondary: #f3f2f2;
+  --secondary-foreground: #242323;
+  --muted: #e1e0e0;
+  --muted-foreground: #635f5f;
+  --accent: #f3f2f2;
+  --accent-foreground: #242323;
+  --destructive: #8f432d;
+  --success: #1b6541;
+  --warning: #775622;
+  --border: #c8c6c6;
+  --input: #c8c6c6;
+  --ring: #e0aa52;
 
   /* Brand palette (shared source of truth with the matrix-os.com landing).
      App iframes expose --ember as --matrix-accent for primary actions. */
@@ -236,14 +236,14 @@
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
   /* Sidebar vars derive from theme -- updated dynamically via useTheme */
-  --sidebar: var(--secondary);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  --sidebar: #ffffff;
+  --sidebar-foreground: #242323;
+  --sidebar-primary: #242323;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #f1f6e2;
+  --sidebar-accent-foreground: #475926;
+  --sidebar-border: #e3e8de;
+  --sidebar-ring: #e0aa52;
 }
 
 @theme inline {

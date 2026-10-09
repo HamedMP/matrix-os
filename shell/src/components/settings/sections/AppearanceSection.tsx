@@ -7,6 +7,7 @@ import { useDesktopConfigStore, type DockConfig } from "@/stores/desktop-config"
 import { getGatewayUrl } from "@/lib/gateway";
 import { UploadIcon, XIcon, ImageIcon, PaletteIcon } from "@/lib/hugeicons";
 import { Switch } from "@/components/ui/switch";
+import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { DesignPicker } from "@/components/settings/DesignPicker";
 
 /* ── Background Type ───────────────────────────── */
@@ -159,6 +160,7 @@ export function AppearanceSection() {
       <h2 className="text-lg font-semibold">Appearance</h2>
 
       {/* ── Design ───────────────────────────── */}
+      <ThemeSettings />
       <DesignPicker />
 
       {/* ── Background ─────────────────────────── */}
