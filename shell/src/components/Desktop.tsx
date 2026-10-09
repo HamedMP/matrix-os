@@ -144,12 +144,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   // account → journey → Desktop handoff cannot visually swap designs.
 
   const dock = useDesktopConfigStore((s) => s.dock);
-  const { pinnedApps, togglePin, dockOrder } = useCatalogAppShortcuts(apiApps);
+  const { pinnedApps, togglePin, dockOrder, addDesktopIcon } = useCatalogAppShortcuts(apiApps);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
   const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
   const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);
   const removeDesktopIcon = useDesktopConfigStore((s) => s.removeDesktopIcon);
-  const addDesktopIcon = useDesktopConfigStore((s) => s.addDesktopIcon);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";

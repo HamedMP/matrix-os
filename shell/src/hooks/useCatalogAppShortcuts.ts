@@ -11,6 +11,7 @@ const EMPTY_PINS: string[] = [];
 export function useCatalogAppShortcuts(apps: readonly ApiAppEntry[]) {
   const savedPins = useDesktopConfigStore(state => state.pinnedApps) ?? EMPTY_PINS;
   const savedOrder = useDesktopConfigStore(state => state.dockOrder);
+  const addSavedDesktopIcon = useDesktopConfigStore(state => state.addDesktopIcon);
   const toggleSavedPin = useDesktopConfigStore(state => state.togglePin);
   const resolvePath = useMemo(() => createCatalogAppPathResolver(apps), [apps]);
   const pinnedApps = useMemo(() => savedPins.map(resolvePath), [savedPins, resolvePath]);
@@ -24,5 +25,13 @@ export function useCatalogAppShortcuts(apps: readonly ApiAppEntry[]) {
     const savedPath = pins.find(pin => resolvePath(pin) === path);
     toggleSavedPin(savedPath ?? path);
   }, [resolvePath, toggleSavedPin]);
-  return { pinnedApps, dockOrder, togglePin };
+  const addDesktopIcon = useCallback<typeof addSavedDesktopIcon>((path, bounds) => {
+    const canonicalPath = resolvePath(path);
+    const placements = useDesktopConfigStore.getState().desktopIcons ?? [];
+    if (placements.some(icon => icon.path !== canonicalPath && resolvePath(icon.path) === canonicalPath)) {
+      return Promise.resolve("already-present");
+    }
+    return addSavedDesktopIcon(canonicalPath, bounds);
+  }, [resolvePath, addSavedDesktopIcon]);
+  return { pinnedApps, dockOrder, togglePin, addDesktopIcon };
 }

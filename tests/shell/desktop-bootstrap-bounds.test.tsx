@@ -117,3 +117,71 @@ it("keeps saved manifest pins when another app reuses the old folder and follows
     expect(result.current.pinnedApps).toEqual([canonical]);
   } finally { useDesktopConfigStore.setState(previous); }
 });
+
+
+it("does not add a second Desktop placement for a moved app and keeps the owner's saved reference and coordinates", async () => {
+  const old = "apps/finance/ledger/index.html";
+  const path = "apps/folio/index.html";
+  const previous = useDesktopConfigStore.getState();
+  const placement = { path: old, x: 321, y: 147 };
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+  vi.stubGlobal("fetch", fetchMock);
+  useDesktopConfigStore.getState().setDesktopIcons([placement]);
+  try {
+    const { result } = renderHook(() => useCatalogAppShortcuts([{ name: "Folio", slug: "folio", path, ownerPath: old }]));
+    const add = result.current.addDesktopIcon;
+    let outcome: string | undefined;
+    await act(async () => { outcome = await add(path); });
+    expect(outcome).toBe("already-present");
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual([placement]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally { useDesktopConfigStore.setState(previous); }
+});
+
+
+it("keeps canonical identity priority when adding another app that reused the saved folder", async () => {
+  const path = "apps/folio/index.html";
+  const previous = useDesktopConfigStore.getState();
+  const saved = { path, x: 321, y: 147 };
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+  vi.stubGlobal("fetch", fetchMock);
+  useDesktopConfigStore.getState().setDesktopIcons([saved]);
+  try {
+    const { result } = renderHook(() => useCatalogAppShortcuts([
+      { name: "Folio", slug: "folio", path, ownerPath: "apps/finance/ledger/index.html" },
+      { name: "Other", slug: "other", path: "apps/other/index.html", ownerPath: path },
+    ]));
+    await act(async () => {
+      expect(await result.current.addDesktopIcon(path)).toBe("already-present");
+      expect(await result.current.addDesktopIcon("apps/other/index.html")).toBe("added");
+    });
+    expect(useDesktopConfigStore.getState().desktopIcons).toContainEqual(saved);
+    expect(useDesktopConfigStore.getState().desktopIcons).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  } finally { useDesktopConfigStore.setState(previous); }
+});
+
+it("retains coalesced pending add failures through the catalog adapter", async () => {
+  const previous = useDesktopConfigStore.getState();
+  let resolvePatch!: (response: { ok: boolean; status: number }) => void;
+  const response = new Promise<{ ok: boolean; status: number }>(resolve => { resolvePatch = resolve; });
+  const fetchMock = vi.fn(() => response);
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  useDesktopConfigStore.getState().setDesktopIcons([]);
+  try {
+    const path = "apps/folio/index.html";
+    const { result } = renderHook(() => useCatalogAppShortcuts([{ name: "Folio", slug: "folio", path }]));
+    let first!: Promise<string>;
+    let second!: Promise<string>;
+    act(() => { first = result.current.addDesktopIcon(path); second = result.current.addDesktopIcon(path); });
+    expect(second).toBe(first);
+    await act(async () => {
+      resolvePatch({ ok: false, status: 503 });
+      expect(await first).toBe("failed");
+      expect(await second).toBe("failed");
+    });
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  } finally { useDesktopConfigStore.setState(previous); vi.restoreAllMocks(); }
+});
