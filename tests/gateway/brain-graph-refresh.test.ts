@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { PostgresDialect, sql } from "kysely";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
 import type { BrainGraphTables } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
@@ -13,7 +13,7 @@ import { BrainRepository } from "../../packages/gateway/src/brain/index.js";
 import {
   FIXTURE, OWNER, PROJECT, SCOPE, SPEC_DECISION, createGraphHarness, gitBody, id, rejectsWith, type GraphHarness,
 } from "./helpers/brain-graph-fixtures.js";
-import { BRAIN_CLOCK_START, brainDocumentId } from "./helpers/brain-store-helpers.js";
+import { BRAIN_CLOCK_START, brainDocumentId, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
 const entityCount = async (h: GraphHarness) => Number((await sql<{ n: number }>`SELECT count(*)::int AS n
   FROM brain_graph_entities WHERE owner_id = ${SCOPE.ownerId} AND scope_id = ${SCOPE.scopeId}`.execute(h.db))
@@ -155,29 +155,47 @@ describe("brain graph refresh", { timeout: 60_000 }, () => {
 // PGlite runs every transaction on one session, so only PostgreSQL shows writers waiting on the graph lock.
 const databaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 
+/**
+ * A graph harness on a fresh schema: destroy closes the store, drops the schema and ends the admin pool. A failed
+ * setup does the same before it rethrows, so no connection stays open.
+ */
+async function openPostgresGraph(
+  build: (base: BrainHarness) => Promise<GraphHarness> = createGraphHarness,
+): Promise<GraphHarness> {
+  const schema = `brain_${randomUUID().replaceAll("-", "")}`;
+  const admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  const url = new URL(databaseUrl!);
+  url.searchParams.set("options", `-c search_path=${schema}`);
+  url.searchParams.set("application_name", schema);
+  let clock = new Date(BRAIN_CLOCK_START);
+  const repository = new BrainRepository(new PostgresDialect({
+    pool: new pg.Pool({ connectionString: url.toString(), max: 4 }) }), { now: () => clock });
+  const destroy = async () => {
+    try {
+      await repository.destroy();
+    } finally {
+      await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).finally(() => admin.end());
+    }
+  };
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    await repository.bootstrap();
+    return await build({
+      repository, db: repository.kysely, now: () => clock, iso: () => clock.toISOString(),
+      tick(ms = 1_000) { clock = new Date(clock.getTime() + ms); }, destroy,
+    });
+  } catch (error) {
+    await destroy();
+    throw error;
+  }
+}
+
 describe.skipIf(!databaseUrl)("brain graph refresh on PostgreSQL", { timeout: 120_000 }, () => {
-  let admin: pg.Pool;
-  let schema: string;
   let harness: GraphHarness;
   beforeEach(async () => {
-    schema = `brain_${randomUUID().replaceAll("-", "")}`;
-    admin = new pg.Pool({ connectionString: databaseUrl, max: 1 });
-    await admin.query(`CREATE SCHEMA "${schema}"`);
-    const url = new URL(databaseUrl!);
-    url.searchParams.set("options", `-c search_path=${schema}`);
-    let clock = new Date(BRAIN_CLOCK_START);
-    const repository = new BrainRepository(new PostgresDialect({
-      pool: new pg.Pool({ connectionString: url.toString(), max: 4 }) }), { now: () => clock });
-    await repository.bootstrap();
-    harness = await createGraphHarness({
-      repository, db: repository.kysely, now: () => clock, iso: () => clock.toISOString(),
-      tick(ms = 1_000) { clock = new Date(clock.getTime() + ms); }, destroy: () => repository.destroy(),
-    });
-  });
-  afterEach(async () => {
-    await harness?.destroy();
-    if (schema && admin) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
-    await admin?.end();
+    const opened = await openPostgresGraph();
+    harness = opened;
+    return () => opened.destroy();
   });
 
   it("checks the entity limit under the graph lock when writers run at once", async () => {
@@ -190,5 +208,24 @@ describe.skipIf(!databaseUrl)("brain graph refresh on PostgreSQL", { timeout: 12
     ]);
     expect(await entityCount(harness)).toBe(base + 2);
     expect((await harness.graph.index.freshness(SCOPE)).pendingDocuments).toBe(1);
+  });
+
+  it("closes its connections and drops its schema when setup fails", async () => {
+    let schema = "";
+    const failing = async (base: BrainHarness): Promise<GraphHarness> => {
+      schema = (await sql<{ s: string }>`SELECT current_schema() AS s`.execute(base.db)).rows[0]!.s;
+      throw new Error("setup failed");
+    };
+    await expect(openPostgresGraph(failing)).rejects.toThrow("setup failed");
+    expect(schema).toMatch(/^brain_/);
+    const probe = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      await vi.waitFor(async () => expect((await probe.query(
+        "SELECT count(*)::int AS n FROM pg_stat_activity WHERE application_name = $1", [schema])).rows[0].n).toBe(0));
+      expect((await probe.query("SELECT count(*)::int AS n FROM pg_namespace WHERE nspname = $1", [schema]))
+        .rows[0].n).toBe(0);
+    } finally {
+      await probe.end();
+    }
   });
 });
