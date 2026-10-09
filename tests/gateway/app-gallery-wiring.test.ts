@@ -1,3 +1,4 @@
+import catalog from "../../home/system/app-gallery.json";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,6 +44,23 @@ async function fixture() {
   return { homePath, bridge, opened };
 }
 
+function expectOpenedApp(opened: { name: string; path: string } | undefined, definition: { name: string; id: string }) {
+  expect(opened).toEqual({ name: definition.name, path: `matrix-app:${definition.id}` });
+}
+
+it("uses the install/open wiring protocol for every catalog identity on every host", async () => {
+  const opened: { name: string; path: string }[] = [];
+  const bridge: GalleryBridge = {
+    gatewayFetch: async () => ({}), integrations: async () => [],
+    openApp: (name, path) => { opened.push({ name, path }); },
+  };
+  for (const definition of catalog.apps) {
+    await openGalleryApp(bridge, { ...definition, installed: true, launchPath: `apps/${definition.id}` } as Parameters<typeof openGalleryApp>[1]);
+    expectOpenedApp(opened.at(-1), definition);
+  }
+  expect(opened).toHaveLength(31);
+});
+
 describe("bundled gallery through client, authenticated route, and portable runtime", () => {
   it.skipIf(process.platform !== "linux")("loads the complete shipped catalog through the actual client parser", async () => {
     const { bridge } = await fixture();
@@ -70,7 +88,7 @@ describe("bundled gallery through client, authenticated route, and portable runt
         Object.fromEntries(Object.entries(definition).filter(([key]) => key !== "installed")),
       );
       await openGalleryApp(bridge, { ...definition, installed: true, installedName: installed.name, launchPath: installed.path });
-      expect(opened.at(-1)).toEqual({ name: definition.name, path: `apps/${definition.id}` });
+      expectOpenedApp(opened.at(-1), definition);
     }
     expect((await loadGallery(bridge)).apps.every(app => app.installed)).toBe(true);
   }, 120_000);
