@@ -150,9 +150,19 @@ alone does not prove no-tools behavior: the installed 1.16.0 isolated synthetic
 local-server audit produced no completion within the bounded deadline. Its static
 CLI executor was removed until an exact runtime/version contract is verified.
 Portable OpenCode Matrix-funded/owner-key selections still use their authorized
-HTTP source. Hermes native default profiles support fixed text-only HTTP for Anthropic, OpenAI API, OpenRouter and an
-already-fresh Hermes ChatGPT grant. The app uses an exact eligible model in the
-configured native provider, independently of Matrix Inbox selection. Native files
+HTTP source. Hermes native default profiles support fixed text-only HTTP for
+Anthropic, OpenAI API and OpenRouter after live provider metadata resolves the
+exact native selection. Metadata requests are bounded, use fixed provider
+endpoints, and contain no app prompt. Inference pins the verified model and
+accepts only its preverified response IDs. OpenRouter requires its permanent
+canonical slug to be attested as the executable API ID, preserving the exact
+pricing variant; unsupported alias or variant mappings remain unavailable.
+An unresolved OpenAI alias remains
+unavailable before paid inference; select an eligible dated snapshot instead.
+Hermes ChatGPT routes lack authoritative snapshot mapping and remain unavailable
+until that adapter is verified (ENG-201 / GitHub #2350). The separate paired
+ChatGPT source retains its own authority. The app uses an exact eligible model in
+the configured native provider, independently of Matrix Inbox selection. Native files
 are bounded and fingerprinted before and after the response. A shared durable
 Settings fence prevents competing profile writes and remains held until actual
 HTTP cancellation drains; an uncertain drain stays fenced. ChatGPT credentials
@@ -160,8 +170,9 @@ must identify one account: a singleton token store, or exactly one native manual
 device-code entry when no singleton exists. Named profiles, ambiguous pools,
 expiring tokens, custom endpoints and credential overrides remain unavailable;
 there is no token refresh, rotation or credential fallback. Request and completed
-response model IDs must agree exactly; aliases resolving to an unverifiable
-physical model fail closed. JSON completions and Codex SSE are bounded by bytes
+response model IDs must match the provider-attested mapping exactly; arbitrary
+IDs and prefix matches are rejected. Discovery verifies each exact model rather
+than sharing one availability flag across a provider's entire catalog. JSON completions and Codex SSE are bounded by bytes
 and chunk count, and reject tool output, partial completion and late errors. App discovery does
 not disable unrelated routes when one SDK is unavailable, and inference failures
 never select another route. Managed calls use existing funding admission and
