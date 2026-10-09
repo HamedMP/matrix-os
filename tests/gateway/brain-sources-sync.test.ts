@@ -175,26 +175,11 @@ describe("sync", () => {
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_not_found");
   });
 
-  it("syncs only the project's git source, never another one a registration race left, under its id", async () => {
+  it("syncs only the project's git source, under its id and with the caller's signal, never one a race left", async () => {
+    // Two registrations with different web bases raced; the project's git source is the older one.
     const older = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
     harness.tick();
-    const newer = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "project:proj_a", label: "A" });
-    const gitView: BrainSyncView = {
-      status: "succeeded", errorCode: null, nextAction: "", caughtUp: true, commitsProcessed: 0, commitsRemaining: 0,
-      counts: zeroCounts, notices: [], receipt: null,
-    };
-    const project = { sync: vi.fn(async () => gitView) };
-    const sources = service([], { gitSync: createBrainGitSourceSync(project) });
-    expect(await codeOf(sources.sync(OWNER, "proj_a", newer.source.sourceId))).toBe("source_conflict");
-    expect(project.sync).not.toHaveBeenCalled();
-    expect(await sources.sync(OWNER, "proj_a", older.source.sourceId)).toMatchObject({ sourceId: older.source.sourceId, status: "succeeded" });
-    expect(project.sync).toHaveBeenCalledOnce();
-  });
-
-  it("has the project service run only the git source the caller named, with the caller's signal", async () => {
-    const older = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
-    harness.tick();
-    const newer = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "project:proj_a", label: "A" });
+    const newer = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://gitlab.com/acme/app", label: "A" });
     const run = vi.fn<BrainGitSync>(async () => ({
       status: "succeeded", errorCode: null, nextAction: "", receipt: null, counts: zeroCounts, cursorBefore: null,
       cursorAfter: null, commitsProcessed: 0, commitsRemaining: 0, caughtUp: true, historyRewritten: false, batches: 0,
@@ -204,11 +189,17 @@ describe("sync", () => {
       getProjectById: async () => ({ ok: true, project: { id: "proj_a", slug: "alpha", name: "Alpha" } }),
       resolveProjectWorkingDirectory: async () => "/home/projects/alpha",
     } as unknown as BrainProjectLookup;
+    // The real chain: sources service, createBrainGitSourceSync, project service, git sync.
     const project = createBrainProjectService({ repository: harness.repository, projects, homePath: "/home", sync: run });
+    const sources = service([], { gitSync: createBrainGitSourceSync(project) });
+    expect(await codeOf(sources.sync(OWNER, "proj_a", newer.source.sourceId))).toBe("source_conflict");
+    // A race the sources service lost as the run started: the project service still refuses another source's id.
     expect(await codeOf(project.sync(OWNER, "proj_a", { sourceId: newer.source.sourceId }))).toBe("git_source_conflict");
     expect(run).not.toHaveBeenCalled();
     const stop = new AbortController();
-    await project.sync(OWNER, "proj_a", { sourceId: older.source.sourceId, signal: stop.signal });
+    expect(await sources.sync(OWNER, "proj_a", older.source.sourceId, stop.signal))
+      .toMatchObject({ sourceId: older.source.sourceId, status: "succeeded" });
+    expect(run).toHaveBeenCalledOnce();
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ sourceId: older.source.sourceId, signal: stop.signal }));
   });
 

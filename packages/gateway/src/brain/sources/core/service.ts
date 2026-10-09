@@ -286,7 +286,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
    * gitSync runs the project's git source: the oldest live one, as the project service picks it. Another git source (a
    * registration race left two) is source_conflict, never synced under the wrong id (the project service checks the id
    * again as the run starts). A paused one answers like the runner; one paused or removed while the run started
-   * answers the same way. The caller's signal stops the run between windows.
+   * answers the same way. The caller's signal stops the run before a window and kills a running git command.
    */
   async function gitSyncView(
     ownerId: string, projectRef: string, scope: BrainScopeKey, source: KnownSource, signal: AbortSignal | undefined,
