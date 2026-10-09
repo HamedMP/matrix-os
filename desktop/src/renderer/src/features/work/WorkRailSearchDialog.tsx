@@ -1,4 +1,4 @@
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { isAcceptedProjectOwnedByRail } from "@matrix-os/ui";
 import { Folder, MessageSquare, Search, UsersIcon, X } from "@renderer/lib/hugeicons";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -19,11 +19,11 @@ export function WorkRailSearchDialog({
   onOpenShared,
 }: {
   open: boolean;
-  records: readonly CanonicalChatRecord[];
+  records: readonly ChatNavigationRecord[];
   projects: readonly Project[];
   status: "idle" | "loading" | "ready" | "error";
   onClose: () => void;
-  onSelect: (record: CanonicalChatRecord, project?: Project) => void;
+  onSelect: (record: ChatNavigationRecord, project?: Project) => void;
   onSelectProject?: (project: Project) => void;
   onOpenShared?: () => void;
 }) {

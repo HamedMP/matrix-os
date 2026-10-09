@@ -132,12 +132,21 @@ describe("compact shared Chat choices", () => {
     expect(screen.queryByRole("option")).toBeNull();
     expect(select).not.toHaveBeenCalled();
   });
-  it("shows the server's managed credit state without offering an unavailable model", () => {
+  it("retains the server's credit state and offers one settings action without an unavailable model", () => {
     const funded = { ...catalog.instances[0]!, connectionLabel: "Matrix AI", connectionState: "credit_required" as const,
-      availability: "unavailable" as const, models: [], defaultSelection: undefined };
-    render(<CompactChatProviderChoices catalog={{ ...catalog, instances: [funded] }} choices={[]} selected={null} onSelect={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Matrix AI agent, Matrix AI credit required" }));
-    expect(screen.getByText("Matrix AI credit required")).toBeVisible();
+      availability: "unavailable" as const, models: [], defaultSelection: undefined,
+      setupActions: [{ id: "matrix_settings", kind: "open_settings" as const, label: "Agents & providers" }] };
+    const setup = vi.fn();
+    render(<CompactChatProviderChoices catalog={{ ...catalog, instances: [funded] }} choices={[]} selected={null}
+      onSelect={vi.fn()} onSetupAction={setup} />);
+    const entry = screen.getByRole("button", { name: "Matrix AI agent, Matrix AI credit required" });
+    expect(entry).toBeVisible();
+    fireEvent.click(entry);
+    const actions = screen.getAllByRole("button", { name: "Agents & providers" });
+    expect(actions).toHaveLength(1);
+    fireEvent.click(actions[0]!);
+    expect(setup).toHaveBeenCalledExactlyOnceWith(funded, funded.setupActions[0]);
+    expect(screen.queryByText("Matrix AI credit required")).toBeNull();
     expect(screen.queryByRole("option")).toBeNull();
   });
   it("keeps resumed chats locked to the underlying managed instance", () => {

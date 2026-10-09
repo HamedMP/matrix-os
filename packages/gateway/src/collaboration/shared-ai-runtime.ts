@@ -328,9 +328,9 @@ export async function createSharedAiRuntime(options: {
           })) throw new SharedChatRunPreparationError("unavailable");
           const adapter = sharedAdapterFor(execution.driverKind, execution.selection.instanceId, eligibility);
           if (!adapter) throw new SharedChatRunPreparationError("unavailable");
-          // S08: the owner's execution policy decides the source; a missing policy, a
-          // member on an owner-only scope or an unavailable source refuses preparation
-          // and keeps the queued request. No default credential is ever substituted.
+          // S08: the owner's execution policy decides the source; a missing policy,
+          // missing owner terms, or an unavailable source refuses preparation and
+          // keeps the queued request. No default credential is ever substituted.
           const ownerDecision = await options.ownerSource.prepare({
             scopeId,
             chatId,
@@ -449,24 +449,29 @@ export async function createSharedAiRuntime(options: {
       ...(options.codingProviders ? { codingProviders: options.codingProviders } : {}),
       ...(options.providerCatalog ? { providerCatalog: options.providerCatalog } : {}),
     }, ownerId, selection, boundDriverKind),
-    ...(options.providerCatalog ? {
-      resolveCanonicalProviderAuthority: async (ownerId, selection) => {
-        const catalog = await options.providerCatalog!.getCatalog({ userId: ownerId, source: "jwt" });
+    resolveCanonicalProviderAuthority: async (scopeId, ownerId, selection, boundDriverKind) => {
+      const decision = await options.ownerSource.authority({ scopeId, ownerId });
+      const driverKind = decision.harness === "codex" ? "codex" as const : "claude_code" as const;
+      if (boundDriverKind !== null && boundDriverKind !== driverKind) return null;
+      const policySelection = { ...selection, model: decision.modelId };
+      if (boundDriverKind === null) {
+        if (!options.providerCatalog) return null;
+        const catalog = await options.providerCatalog.getCatalog({ userId: ownerId, source: "jwt" });
         const validated = validateChatProviderSelection({
           catalog,
-          selection,
+          selection: policySelection,
           requirements: SHARED_RUN_SELECTION_REQUIREMENTS,
         });
-        if (!validated.ok) return null;
-        // The owner's first binding may only name a driver this runtime can
-        // execute in isolation; the queue re-verifies the signed eligibility.
-        const adapterId = sharedAiAdapterFor(validated.instance.driverKind, validated.selection.instanceId);
-        if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
-          return null;
-        }
-        return { driverKind: validated.instance.driverKind, selection: validated.selection };
-      },
-    } : {}),
+        if (!validated.ok || validated.instance.driverKind !== driverKind) return null;
+      }
+      // The owner's first binding may only name a driver this runtime can
+      // execute in isolation; the queue re-verifies the signed eligibility.
+      const adapterId = sharedAiAdapterFor(driverKind, policySelection.instanceId);
+      if (!adapterId || !eligibility.adapters.some((adapter) => adapter.adapterId === adapterId)) {
+        return null;
+      }
+      return { driverKind, selection: policySelection };
+    },
     requestDispatch: dispatch,
     onCommitted: (scopeId) => options.eventRegistry.broadcastScope(scopeId),
     runLoss: options.runLoss,

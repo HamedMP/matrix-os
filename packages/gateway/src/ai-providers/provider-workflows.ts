@@ -6,7 +6,7 @@ export class ProviderWorkflowError extends Error {
 }
 /** Adapter proves launch failed before acquiring any native resource or writer. */
 export class ProviderWorkflowNotStartedError extends ProviderWorkflowError {
-  constructor() { super('unavailable'); }
+  constructor(code: 'unavailable' | 'conflict' = 'unavailable') { super(code); }
 }
 /** Adapter proves no bytes were submitted; all other failures remain ambiguous. */
 export class ProviderWorkflowCodeNotAcceptedError extends ProviderWorkflowError {
@@ -183,7 +183,13 @@ export function createProviderWorkflowService(options: {
           entry.operation.state = 'running';
       }
       catch (error) {
-        console.warn('[provider-workflow] Start failed:', error instanceof Error ? error.name : 'UnknownError');
+        console.warn('[provider-workflow] Start failed:', error instanceof Error ? error.name : 'UnknownError', error instanceof ProviderWorkflowError ? error.code : "unknown");
+        if (error instanceof ProviderWorkflowNotStartedError && error.code === 'conflict' && !entry.cancel) {
+          // No new resources exist. Keep other live workflows protected and
+          // expose the current busy state without retaining a failed receipt.
+          entries.delete(operation.id);
+          throw error;
+        }
         // Only an explicit no-resource proof can free a failed preflight.
         // Registered cleanup still owns admission until it confirms the drain.
         entry.cleanupRequired = !(error instanceof ProviderWorkflowNotStartedError) || entry.cancel !== undefined;

@@ -158,7 +158,17 @@ export async function planJson(fetchFn: typeof fetch, path: 'token' | 'jwks' | '
         if (!response.bodyUsed) await response.body?.cancel();
         throw new PlanFailure(stage, refreshRejected ? 'credential_rejected' : 'http_error', response.status);
     }
-    const text = await boundedText(response);
+    let text: string;
+    try {
+        // Model metadata can be substantially larger than OAuth/JWKS documents.
+        // Keep a separate hard cap; only parsed, bounded model fields leave main.
+        text = await boundedText(response, path === 'models' ? 2 * 1024 * 1024 : 512 * 1024);
+    }
+    catch (error: unknown) {
+        if (error instanceof Error && error.message === 'response too large')
+            throw new PlanFailure(stage, 'response_oversize');
+        throw error;
+    }
     try {
         return JSON.parse(text) as unknown;
     }

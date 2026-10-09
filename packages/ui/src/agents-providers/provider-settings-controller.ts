@@ -55,7 +55,7 @@ export interface ProviderSettingsControllerOptions {
   identityKey: string;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
-  onCatalogChanged?: () => void;
+  onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
 }
 
 export interface ProviderSettingsMutationOptions {
@@ -183,12 +183,14 @@ export class ProviderSettingsController {
     const request = this.beginRequest("refresh");
     try {
       const raw = await this.options.transport.getSnapshot(request.signal, { refresh });
+      request.signal.throwIfAborted();
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       const applied = this.applySnapshot(parsed.data, { operationId });
       if (applied && refresh) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
+      if (request.signal.aborted) return false;
       console.warn("[provider-settings] Provider settings refresh failed:", error instanceof Error ? error.name : typeof error);
       if (!this.disposed && operationId >= this.appliedOperationId) this.update({ error: LOAD_ERROR });
       return false;
@@ -241,7 +243,7 @@ export class ProviderSettingsController {
         operationId,
         connectionAttempt: parsed.data.kind === "login_attempt" ? parsed.data.attempt : null,
       });
-      if (applied) this.options.onCatalogChanged?.();
+      if (applied) this.options.onCatalogChanged?.(intent, current);
       if (applied && !this.disposed && intent.type === "start_login"
         && parsed.data.kind === "login_attempt" && parsed.data.attempt.state === "pending"
         && this.state.connectionAttempt?.id === parsed.data.attempt.id && options?.onLoginAction) {

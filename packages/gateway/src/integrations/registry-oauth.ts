@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { TODOIST_DEPTH_ACTIONS, HUBSPOT_DEPTH_ACTIONS } from "./task-crm-depth.js";
 import type { ActionParam, ServiceAction, ServiceDefinition } from "./types.js";
 
 const ID: ActionParam = { type: "string", required: true, minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_!:-]+$" };
@@ -42,7 +43,7 @@ const todoist = "https://api.todoist.com/api/v1";
 const asana = "https://app.asana.com/api/1.0";
 
 // OAuth slugs checked against Pipedream's public catalog on 2026-10-06.
-// Only explicitly reviewed reads are exposed; broader vendor write scopes confer no Matrix write authority.
+// Only reviewed actions are exposed; write actions still require Matrix approval.
 export const OAUTH_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
   asana: service("asana", "Asana", "productivity", {
     list_workspaces: read("List a page of workspaces", `${asana}/workspaces`, [], { limitKey: "limit", cursorKey: "offset" }),
@@ -59,6 +60,7 @@ export const OAUTH_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     get_task: read("Read a task by ID", p => `https://api.clickup.com/api/v2/task/${segment(p, "taskId")}`, ["taskId"]),
   }),
   todoist: service("todoist", "Todoist", "productivity", {
+    ...TODOIST_DEPTH_ACTIONS,
     list_projects: read("Read a page of projects", `${todoist}/projects`, [], { limitKey: "limit", cursorKey: "cursor" }),
     list_tasks: read("Read a page of tasks", `${todoist}/tasks`, [], { limitKey: "limit", cursorKey: "cursor" }),
   }),
@@ -89,6 +91,7 @@ export const OAUTH_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
     list_channels: read("Read a team's channels", p => `${graph}/teams/${segment(p, "teamId")}/channels`, ["teamId"]),
   }),
   hubspot: service("hubspot", "HubSpot", "sales", {
+    ...HUBSPOT_DEPTH_ACTIONS,
     list_contacts: read("Read a page of CRM contacts", `${hubspot}/contacts`, [], { limitKey: "limit", cursorKey: "after" }),
     list_companies: read("Read a page of CRM companies", `${hubspot}/companies`, [], { limitKey: "limit", cursorKey: "after" }),
     list_deals: read("Read a page of CRM deals", `${hubspot}/deals`, [], { limitKey: "limit", cursorKey: "after" }),

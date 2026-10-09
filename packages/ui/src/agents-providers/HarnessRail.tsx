@@ -1,7 +1,7 @@
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { ProviderAccordion } from "./ProviderAccordion.js";
-import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
+import { resolveHarnessConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
 import type {
   ProviderAccessSource,
@@ -21,6 +21,8 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
   return (
     <span
       className="matrix-ap-agent-logo"
+      // White upstream marks retain the canonical artwork background in both appearances.
+      style={harness === "opencode" || harness === "pi" ? { background: CODING_AGENT_ARTWORK[harness].background } : undefined}
       aria-hidden="true"
     >
       <img
@@ -39,12 +41,7 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
 /** Connection means a configured account/credential, not a successful model call.
  * Canonical auth/readiness remains untouched for Chat admission and account details. */
 export function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
-  if (harness.installState === "missing") return "Not installed";
-  if (harness.installState === "installing") return "Installing";
-  if (harness.installState === "unknown") return "Checking installation";
-  if (harness.installState === "failed") return "Install failed";
-  if (harness.authState === "authenticating") return "Connecting";
-  return hasConfiguredConnection(harness, source) ? "Connected" : "Not connected";
+  return resolvedWorkflowRowStatus(harness, source);
 }
 
 function installationWorkflowStatus(installState: string, override: string | undefined) {

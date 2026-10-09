@@ -1,4 +1,4 @@
-import type { BotModelRoute } from "@matrix-os/contracts";
+import type { CanonicalChatModelSelection, BotModelRoute } from "@matrix-os/contracts";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BotAdmissionError } from "../../../packages/gateway/src/bots/admission.js";
@@ -11,6 +11,7 @@ import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver
 import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import { createBotExecutorReadiness } from "../../../packages/gateway/src/bots/executor-readiness.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
@@ -41,9 +42,9 @@ afterEach(async () => destroy());
 
 function setup(options: {
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
-  resolveRoute?: () => Promise<{ route: BotModelRoute; accessSourceId: "matrix_included" }>;
+  resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
   admit?: () => Promise<never>;
-  executorReady?: () => Promise<boolean>;
+  executorReady?: (ownerId: string, botId: string) => Promise<boolean>;
   cancelDelivered?: boolean;
   activeDeadlineMs?: number;
   cancelGraceMs?: number;
@@ -118,6 +119,40 @@ async function tasks() {
 }
 
 describe("bot turns through the matrix_bot adapter", () => {
+  it("preserves the owner API binding through recipe task admission and broker inference", async () => {
+    const generation = "e16625fe-cad7-4983-a9db-e808bbf104cc";
+    const selection = { instanceId: "matrix_anthropic_api", model: ROUTE.modelId,
+      options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: generation }] };
+    const anthropicApi = { connectionRevision: 3, credentialGeneration: generation };
+    const resolveRoute = vi.fn(async (selected?: CanonicalChatModelSelection) => {
+      expect(selected).toEqual(selection);
+      return { route: ROUTE, accessSourceId: "owner_anthropic_key" as const, anthropicApi };
+    });
+    const { forwardBotInference } = await import("../../../packages/gateway/src/bots/broker-inference.js");
+    const fetcher = vi.fn<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const authority = { observe: vi.fn(), resolve: vi.fn(), credential: vi.fn(async () => "synthetic-owner-key"), revalidate: vi.fn(async () => true) };
+    const { adapter, admission, registry } = setup({ agent: { ...AGENT, selection }, resolveRoute, worker: async input => {
+      const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+      expect(binding.anthropicApi).toEqual(anthropicApi);
+      for (let frame = 0; frame < 2; frame++) {
+        const result = await forwardBotInference({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: RUNTIME,
+          executionGeneration: "3", action: "inference.messages", path: "/v1/messages", method: "POST", headers: {},
+          body: JSON.stringify({ model: ROUTE.modelId, stream: true, messages: [] }) }, binding,
+          modelId => registry.authorize({ ...binding, modelId, action: "inference.messages" }),
+          { homePath: "/unused", matrixAnthropic: authority, fetchImpl: fetcher, lifetime: new AbortController().signal,
+            resolveCredentials: async () => { throw new Error("No ambient or funded fallback"); } });
+        expect(result.ok).toBe(true);
+      }
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start({ ...turn(), selection: { ...selection, instanceId: "matrix_bot_default" } }));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({ accessSourceId: "owner_anthropic_key", anthropicApi }));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const call of fetcher.mock.calls) expect(new Headers(call[1]?.headers).get("x-api-key")).toBe("synthetic-owner-key");
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+  });
+
   it("keeps legacy Automatic routing when an internal caller omits selection", async () => {
     const resolveRoute = vi.fn(async (selection?: unknown) => {
       if (selection !== undefined) throw new BotRouteError("model_unavailable");
@@ -128,6 +163,23 @@ describe("bot turns through the matrix_bot adapter", () => {
       text: "Hello", signal: new AbortController().signal });
     expect(await run.result).toMatchObject({ status: "completed" });
     expect(resolveRoute).toHaveBeenCalledExactlyOnceWith(undefined);
+  });
+
+  it("runs shared Preview coordinator tools without consulting the host owner's native executor", async () => {
+    const execution = vi.fn(async () => { throw new Error("foreign native owner"); });
+    const admit = vi.fn(async () => { throw new Error("foreign native owner"); });
+    const executorReady = createBotExecutorReadiness({ runtimeOwnerId: "different_host_owner", computerId: "preview", nativeTasks: true, connections: { execution, admit } });
+    const { adapter, orchestrator } = setup({ executorReady, worker: async (input) => {
+      const spec = await orchestrator.runSource.loadRunSpec({ runId: input.command.runId } as never);
+      expect(spec.capabilities).not.toContain("agent.task");
+      expect(spec.capabilities).toContain("artifact.write");
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    } });
+    const events = await collect(adapter.start(turn()));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(execution).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
   });
 
   it("advertises the selected native task executor only after fresh Bot authorization with a Matrix-funded coordinator", async () => {

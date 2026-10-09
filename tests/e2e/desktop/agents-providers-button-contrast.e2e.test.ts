@@ -1,3 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { HarnessIcon } from "../../../packages/ui/src/agents-providers/HarnessRail";
+import { CODING_AGENT_ARTWORK } from "../../../packages/ui/src/coding-agent-artwork";
 import { paintedContrast } from "./fixtures/contrast-pixels";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -102,5 +106,67 @@ it.each(themes)("keeps every button palette legible through interactions: $name"
     }
     console.info(`[button-contrast] ${name}: disabled painted ratios ${Math.min(...disabledRatios).toFixed(2)}–${Math.max(...disabledRatios).toFixed(2)}; inactive controls are WCAG-exempt`);
     expect(failures, `${name} illegible button states`).toEqual([]);
+  } finally { await page.close(); }
+}, 30_000);
+
+it.each(themes)("keeps shipped OpenCode and Pi artwork visible on its rendered background: $name", async ({ name, vars, desktop, mode }) => {
+  const kinds = ["opencode", "pi"] as const;
+  const assets = await Promise.all(kinds.map(async kind => ({
+    src: CODING_AGENT_ARTWORK[kind].src,
+    bytes: await readFile(new URL(`../../../shell/public${CODING_AGENT_ARTWORK[kind].src}`, import.meta.url)),
+  })));
+  const html = `<style>${desktop ? desktopTokens : ""}${css}</style><main class="matrix-agents-providers" style="background:var(--matrix-ap-overlay);padding:30px">${kinds.map(kind =>
+    `<button class="matrix-ap-rail-item" id="artwork-${kind}">${renderToStaticMarkup(createElement(HarnessIcon, { harness: kind }))}<span>${kind}</span></button>`).join("")}</main>`;
+  const page = await browser.newPage();
+  try {
+    // Real shipped PNGs and the actual shared component/CSS, on a same-origin fixture.
+    await page.route("http://matrix-icons.test/**", async route => {
+      const path = new URL(route.request().url()).pathname;
+      const asset = assets.find(candidate => candidate.src === path);
+      if (asset) await route.fulfill({ contentType: "image/png", body: asset.bytes });
+      else if (path === "/") await route.fulfill({ contentType: "text/html", body: html });
+      else await route.abort();
+    });
+    await page.goto("http://matrix-icons.test/");
+    await page.evaluate(mode => document.documentElement.setAttribute("data-theme", mode), mode);
+    await page.evaluate(values => { for (const [key, value] of Object.entries(values)) document.documentElement.style.setProperty(key, value); }, vars);
+    const ratios: Record<string, number> = {};
+    for (const kind of kinds) {
+      const image = page.locator(`#artwork-${kind} img`);
+      await image.evaluate(async element => { await (element as HTMLImageElement).decode(); });
+      const sample = await image.evaluate(element => {
+        const image = element as HTMLImageElement;
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width; canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const bytes = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const whitePixels: number[][] = [];
+        // Opaque interior glyph pixels avoid applying a contrast minimum to antialiased edges.
+        for (let index = 0; index < bytes.length; index += 4) {
+          const pixel = Array.from(bytes.slice(index, index + 4), value => value / 255);
+          if (pixel[3]! > .95 && pixel.slice(0, 3).every(value => value > .8)) whitePixels.push(pixel);
+        }
+        canvas.width = canvas.height = 1;
+        const rgba = (color: string) => {
+          context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+          return Array.from(context.getImageData(0, 0, 1, 1).data, value => value / 255);
+        };
+        const layers: { background: number[]; opacity: number }[] = [];
+        let current: Element | null = image;
+        while (current) {
+          const style = getComputedStyle(current);
+          layers.push({ background: rgba(style.backgroundColor), opacity: Number(style.opacity) });
+          current = current.parentElement;
+        }
+        return { whitePixels, layers, width: image.width, height: image.height };
+      });
+      expect(sample.width).toBe(24); expect(sample.height).toBe(24);
+      expect(sample.whitePixels.length, `${kind} must contain visible shipped glyph pixels`).toBeGreaterThan(8);
+      const minimum = Math.min(...sample.whitePixels.map(pixel => paintedContrast(pixel, sample.layers)));
+      ratios[kind] = minimum;
+    }
+    console.info(`[settings-artwork-contrast] ${name}: ${JSON.stringify(ratios)}`);
+    for (const kind of kinds) expect(ratios[kind], `${name}/${kind} rendered glyph contrast`).toBeGreaterThanOrEqual(3);
   } finally { await page.close(); }
 }, 30_000);

@@ -30,6 +30,8 @@ const QuestionPayloadSchema = z.object({
 const AccountChoicePayloadSchema = z.object({
   kind: z.literal("account_choice"),
   service: BotIntegrationServiceSchema,
+  /** Disclosed by the server before granting account access; absent in older stored interactions. */
+  access: BotEffectListSchema.optional(),
   options: z.array(z.object({
     connectionId: BotConnectionIdSchema,
     label: BotAccountLabelSchema,

@@ -9,6 +9,7 @@
  */
 import {
   COLLABORATION_HTTP_BODY_LIMIT,
+  CollaborationExecutionPolicyOptionsSchema,
   CollaborationExecutionPolicyPutRequestSchema,
   CollaborationExecutionPolicySchema,
   CollaborationIdSchema,
@@ -27,6 +28,7 @@ import type { DirectSessionService } from "./direct-sessions.js";
 import { authorizeCurrentScope, authorizeOwnerScope, digest, handle, readJson } from "./route-support.js";
 
 const POLICY_PATH = "/api/collaboration/scopes/:scopeId/execution-policy";
+const POLICY_OPTIONS_PATH = `${POLICY_PATH}/options`;
 
 export interface ExecutionPolicyRouteOptions {
   verifier: CollaborationActorProofVerifier;
@@ -68,6 +70,13 @@ export function registerExecutionPolicyRoutes(routes: Hono, options: ExecutionPo
     onError: (c) => c.json({ error: "Collaboration request too large", code: "invalid_request" }, 413),
   });
   routes.use(POLICY_PATH, async (c, next) => (c.req.method === "PUT" ? putLimit(c, next) : next()));
+
+  routes.get(POLICY_OPTIONS_PATH, async (c) => handlePolicy(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    const context = await authorizeOwnerScope(options, c, new Uint8Array(), scopeId);
+    const result = await requirePolicies(options).options(scopeId, context.actorId);
+    return c.json(CollaborationExecutionPolicyOptionsSchema.parse(result));
+  }));
 
   routes.get(POLICY_PATH, async (c) => handlePolicy(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));

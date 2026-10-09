@@ -505,7 +505,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const isCustomMcpPath =
       reqPath === '/api/mcp-servers' || reqPath.startsWith('/api/mcp-servers/');
     const isPublicCustomMcpCallback =
-      c.req.method === 'GET' && reqPath === '/api/mcp-servers/oauth/callback';
+      c.req.method === 'GET' && (reqPath === '/api/mcp-servers/oauth/callback'
+        || reqPath === '/api/mcp-servers/oauth/client-metadata');
     if (isAppDomain && (isPublicIntegrationPath || isPublicCustomMcpCallback)) {
       return next();
     }

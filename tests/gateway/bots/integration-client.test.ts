@@ -82,6 +82,22 @@ describe("bot integration client", () => {
     expect(JSON.parse(String(calls[1]![1].body))).toEqual({ service: "gmail", action: "send_email", label: "Work", params: { to: "a" } });
   });
 
+  it("passes an immutable connection ID for scoped source reads", async () => {
+    const transport = vi.fn(async () => json({ data: {} }));
+    await createBotIntegrationClient(transport).call(OWNER, { service: "gmail", action: "list_threads", label: "Work", connectionId: "saved-one", params: {}, read: true });
+    expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ body: expect.objectContaining({ connectionId: "saved-one" }) }));
+  });
+
+  it("passes an immutable connection ID for approved writes", async () => {
+    const transport = vi.fn(async () => json({ data: {} }));
+    await createBotIntegrationClient(transport).call(OWNER, { service: "gmail", action: "send_email", label: "Work", connectionId: "saved-one", params: {}, read: false });
+    expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ path: "/call", body: expect.objectContaining({ connectionId: "saved-one" }) }));
+  });
+
+  it("keeps ordinary Drive reads at their bot response ceiling", async () => {
+    const client = createBotIntegrationClient(async () => json({ data: { content: "x".repeat(300 * 1024) } }));
+    await expect(client.call(OWNER, { service: "google_drive", action: "read_file", label: "Work", params: { fileId: "document_1" }, read: true })).rejects.toEqual(new BotIntegrationError("unavailable"));
+  });
   it("maps upstream failures to allowlisted codes and bounds what it reads", async () => {
     for (const [status, code] of [[409, "ambiguous"], [404, "missing"], [400, "missing"], [403, "denied"], [502, "unavailable"]] as const) {
       const client = createBotIntegrationClient(async () => json({ error: "provider said something at /secret" }, status));

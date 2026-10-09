@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProviderConnectionAttempt, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { HarnessIcon } from "./HarnessRail.js";
-import { useProviderSettingsController, type ProviderSettingsTransport, ProviderSettingsTransportError } from "./provider-settings-controller.js";
+import { useProviderSettingsController, type ProviderSettingsTransport, type ProviderSettingsControllerOptions, ProviderSettingsTransportError } from "./provider-settings-controller.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
 export type ChatProviderConnectionState = "connected" | "disconnected" | "checking" | "unknown" | "unavailable";
@@ -45,7 +45,7 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
   return "disconnected";
 }
 
-export function ChatProviderConnections({ snapshot, busy = false, error, attempt, onMutate, onRefresh, onOpenAction, children }: {
+export function ChatProviderConnections({ snapshot, busy = false, error, attempt, onMutate, onRefresh, onOpenAction, onOpenSettings, children }: {
   snapshot: ProviderSettingsSnapshot | null;
   busy?: boolean;
   error?: string | null;
@@ -53,6 +53,8 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   onMutate: (intent: ProviderSettingsMutationIntent) => unknown;
   onRefresh: () => void;
   onOpenAction: (action: ProviderConnectionAttempt["action"]) => void;
+  /** Navigate to the host's current connection workflows; never initiate auth here. */
+  onOpenSettings?: () => void;
   children?: ReactNode;
 }) {
   const state = deriveChatProviderConnectionState(snapshot, Boolean(error));
@@ -78,7 +80,7 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
   const canLogin = snapshot?.access.mode === "writable" && snapshot.supportedActions.includes("start_login");
   return <section aria-label="Chat provider connection" className="matrix-chat-provider-connections" aria-busy={busy || undefined}>
     <h2>Connect a coding agent</h2>
-    <p>Sign in to Claude Code to start chatting. Configure API key connections in Agents & providers.</p>
+    <p>Sign in to Claude Code to start chatting. Connect Codex and configure API key connections in Agents & providers.</p>
     <div className="matrix-chat-provider-rows">{(["claude"] as const).map((kind) => {
       const label = "Claude Code";
       const harness = snapshot?.harnesses.find((candidate) => candidate.harness === kind
@@ -96,19 +98,28 @@ export function ChatProviderConnections({ snapshot, busy = false, error, attempt
           Connect {label}
         </button>
       </div>;
-    })}</div>
+    })}
+    {onOpenSettings && snapshot?.harnesses.some(harness => harness.harness === "codex") ? <div className="matrix-chat-provider-row">
+      <HarnessIcon harness="codex" /><strong>Codex</strong>
+      <button type="button" title="Connect in Agents & providers" disabled={busy || snapshot.access.mode !== "writable"} onClick={onOpenSettings}>Connect Codex</button>
+    </div> : null}</div>
     {recovery}
   </section>;
 }
 
 /** Reuses Settings' validated attempts and revisions; refreshes reads, never authentication mutations. */
-export function ChatProviderOnboarding({ identityKey, transport, onCatalogChanged, isIdentityCurrent, openAction, changedEvent, children }: {
+export function ChatProviderOnboarding({ identityKey, transport, onCatalogChanged, isIdentityCurrent, openAction, onOpenSettings, changedEvent, lifecycleRefresh = true, backgroundRefreshKey, children }: {
   identityKey: string;
   transport: ProviderSettingsTransport;
-  onCatalogChanged?: () => void;
+  onCatalogChanged?: ProviderSettingsControllerOptions["onCatalogChanged"];
   isIdentityCurrent: () => boolean;
   openAction: (action: ProviderConnectionAttempt["action"]) => boolean | Promise<boolean>;
+  onOpenSettings?: () => void;
   changedEvent?: string;
+  /** Electron owns refresh at application scope; Web retains foreground probes. */
+  lifecycleRefresh?: boolean;
+  /** Accepted app-level catalog observation; inspect metadata without invalidating again. */
+  backgroundRefreshKey?: number | null;
   children?: ReactNode;
 }) {
   const scopedTransport = useMemo<ProviderSettingsTransport>(() => ({
@@ -139,8 +150,10 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
   useEffect(() => {
     const focus = () => { void refresh(); };
     const visibility = () => { if (document.visibilityState === "visible") focus(); };
-    window.addEventListener("focus", focus);
-    document.addEventListener("visibilitychange", visibility);
+    if (lifecycleRefresh) {
+      window.addEventListener("focus", focus);
+      document.addEventListener("visibilitychange", visibility);
+    }
     // The originating surface already invalidated the catalog. Re-emitting
     // that event after a read makes multiple mounted Chat panels ping-pong.
     const changed = () => { void refresh(false); };
@@ -150,7 +163,13 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
       document.removeEventListener("visibilitychange", visibility);
       if (changedEvent) window.removeEventListener(changedEvent, changed);
     };
-  }, [refresh, changedEvent]);
+  }, [refresh, changedEvent, lifecycleRefresh]);
+  const previousBackgroundRefresh = useRef(backgroundRefreshKey);
+  useEffect(() => {
+    if (previousBackgroundRefresh.current === backgroundRefreshKey) return;
+    previousBackgroundRefresh.current = backgroundRefreshKey;
+    if (backgroundRefreshKey != null) void refresh(false);
+  }, [backgroundRefreshKey, refresh]);
   const acceptAction = async (action: ProviderConnectionAttempt["action"]) => {
     if (!isIdentityCurrent()) return;
     setActionError(null);
@@ -165,7 +184,8 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
         if (isIdentityCurrent()) setActionError("Connection action unavailable");
       });
     }}
-    onMutate={(intent) => isIdentityCurrent() && controller.mutate(intent, { onLoginAction: acceptAction })}>
+    onMutate={(intent) => isIdentityCurrent() && controller.mutate(intent, { onLoginAction: acceptAction })}
+    onOpenSettings={onOpenSettings ? () => { if (isIdentityCurrent()) onOpenSettings(); } : undefined}>
     {children}
   </ChatProviderConnections>;
 }

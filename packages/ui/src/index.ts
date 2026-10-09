@@ -157,6 +157,7 @@ export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationC
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
 export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
@@ -227,9 +228,21 @@ export type { ProviderWorkflowClient } from "./agents-providers/types.js";
 
 export { IntegrationMarketplace } from "./integrations/IntegrationMarketplace.js";
 export type { LocalChatgptPlanClient, LocalChatgptPlanStatus } from "./agents-providers/local-chatgpt-plan-client.js";
+export { createMatrixAnthropicConnectionClient, type MatrixAnthropicConnectionClient } from "./agents-providers/matrix-anthropic-connection-client.js";
 
 export { requestChatSearchShortcut, useChatSearchShortcut, chatSearchShortcutLabel } from "./chat-search-shortcut.js";
 
 export { listCanonicalSlashEntries, matchChatSlashToken, filterCanonicalSlashEntries, chatSlashStatusMessage, type CanonicalSlashEntry } from "./chat/canonical-slash-entries.js";
 export { useBotExecution } from "./chat-agents/bots/use-bot-execution.js";
 export { botSubmissionParts } from "./chat-agents/bots/bot-submission.js";
+
+export { ChatRailSection } from "./chat/ChatRailSection.js";
+
+export { OverflowingChatTitle } from "./chat/OverflowingChatTitle.js";
+
+export * from "./chat-navigation/store.js";
+export * from "./chat-navigation/use-chat-navigation.js";
+export * from "./chat-navigation/browser-cache.js";
+export * from "./chat-navigation/projection.js";
+export * from "./chat-navigation/legacy.js";
+export * from "./chat-navigation/metrics.js";

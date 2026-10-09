@@ -1,4 +1,4 @@
-import { isSupportedGenericHarnessCredentialRoute, type ProviderAccount, type ProviderAccessSource, type ProviderHarnessInstance } from "@matrix-os/contracts";
+import { isNativeGenericHarnessCredentialRoute, isSupportedGenericHarnessCredentialRoute, type ProviderAccount, type ProviderAccessSource, type ProviderHarnessInstance } from "@matrix-os/contracts";
 
 function fresh(observation: ProviderHarnessInstance["localObservation"]): boolean {
   if (observation?.state !== "present_unverified") return false;
@@ -28,6 +28,22 @@ export function resolveHarnessConnection(harness: ProviderHarnessInstance, accou
       : selected?.accessSourceId === source.id ? selected : linkedAccounts.length === 1 ? linkedAccounts[0] : undefined
     : harness.accessSourceId === null ? selected : undefined;
   return { account, source };
+}
+
+
+/** Historical profile presence is not logout or live execution authority. */
+export function hasStaleHermesConnection(harness: Pick<ProviderHarnessInstance, "installState" | "authState">
+  & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation" | "harness" | "route" | "accessSourceId">>, source?: ProviderAccessSource): boolean {
+  if (harness.harness !== "hermes" || harness.installState !== "installed"
+    || (harness.configuredEnabled ?? harness.enabled) === false || harness.authState !== "unknown"
+    || !source || ["invalid", "expired", "auth_required"].includes(source.readiness.state)
+    || !harness.route || harness.accessSourceId === undefined
+    || !isNativeGenericHarnessCredentialRoute({ harness: harness.harness, route: harness.route, accessSourceId: harness.accessSourceId }, source)) return false;
+  const observation = source.localObservation ?? harness.localObservation;
+  const checked = Date.parse(observation?.checkedAt ?? "");
+  const expires = Date.parse(observation?.staleAfter ?? "");
+  return observation?.state === "present_unverified" && Number.isFinite(checked) && Number.isFinite(expires)
+    && expires > checked && expires - checked <= 5000 && checked <= Date.now() && expires <= Date.now();
 }
 
 /** Native account shortcuts must not borrow a Matrix-funded route or another account. */

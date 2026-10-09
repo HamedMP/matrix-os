@@ -7,6 +7,8 @@ import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
 import { createPlanVault } from "./chatgpt-plan/vault";
+import { createNavigationCache } from "./persistence/navigation-cache";
+import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
 import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
 import { AuthService } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
@@ -89,7 +91,10 @@ if (process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
+let navigationCacheDrained = false;
+let drainingNavigationCache = false;
 let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -247,6 +252,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          navigationCache?.observe(status);
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
           fileDownloads?.cancelAll();
@@ -263,6 +269,14 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
+      registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
         openBrowser: async url => {
@@ -468,6 +482,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
           downloads.cancelAll();
@@ -609,6 +624,15 @@ if (!gotLock) {
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
+    if (!navigationCacheDrained && navigationCache) {
+      event.preventDefault();
+      if (!drainingNavigationCache) {
+        drainingNavigationCache = true;
+        void navigationCache.drain().catch((error: unknown) => logMainError("navigation cache cleanup failed", error))
+          .finally(() => { navigationCacheDrained = true; app.quit(); });
+      }
+      return;
+    }
     if (!planDrained && chatgptPlan) {
       event.preventDefault();
       if (!drainingPlan) {

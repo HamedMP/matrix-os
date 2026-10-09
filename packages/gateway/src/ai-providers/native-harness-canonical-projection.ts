@@ -1,8 +1,8 @@
+import { renewStaleHermesObservation, projectHermesObservationForRenewal, type NativeObservationReadScope } from "./hermes-observation-renewal.js";
 import { projectOpenClawNativeCatalog } from "./openclaw-native-catalog.js";
 import { AiNativeHarnessCatalogSchema, ProviderAccessSourceSchema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import type { GenericHarnessModelCatalog, GenericHarnessModelCatalogReader } from "./generic-harness-model-catalog.js";
 import type { AgentRuntimeSource } from "../agent-config/service.js";
-import { projectHermesNativeCatalog } from "./hermes-native-catalog.js";
 
 type Catalog = NonNullable<AiProviderSnapshotV3["nativeHarnessCatalog"]>;
 const unknownObservation = { state: "unknown" as const, checkedAt: null, staleAfter: null };
@@ -26,11 +26,17 @@ function canonicalCatalog(catalog: GenericHarnessModelCatalog): Catalog {
   }
   return AiNativeHarnessCatalogSchema.parse({ profiles, failures });
 }
+export type CanonicalNativeHarnessCatalogReader = ((refresh: boolean, scope?: NativeObservationReadScope) => Promise<Catalog>)
+  & { renewStale: (catalog: Catalog, scope: NativeObservationReadScope) => Promise<Catalog> };
+
 export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarnessModelCatalogReader,
   options: { hermesRuntimeSource?: AgentRuntimeSource; openclawRuntimeSource?: AgentRuntimeSource; now?: () => Date } = {},
-): (refresh: boolean) => Promise<Catalog> {
+): CanonicalNativeHarnessCatalogReader {
   let pending: { coding: Promise<Catalog>; hermes: Promise<Catalog>; openclaw: Promise<Catalog> } | null = null;
-  return async (refresh) => {
+  const now = options.now ?? (() => new Date());
+  const renewStale = (catalog: Catalog, scope: NativeObservationReadScope) => renewStaleHermesObservation(catalog, options.hermesRuntimeSource, now, scope);
+  const read = async (refresh: boolean, scope: NativeObservationReadScope = { deadline: +now() + 13000 }) => {
+    scope.signal?.throwIfAborted();
     if (!pending) {
       const coding = Promise.resolve().then(() => reader.getCatalog({ refresh })).then(canonicalCatalog).catch((error: unknown): Catalog => {
         console.warn("[ai-providers] Native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
@@ -43,7 +49,7 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
           options.hermesRuntimeSource!.invalidate?.();
           return options.hermesRuntimeSource!(AbortSignal.timeout(6500));
         })
-          .then((snapshot) => projectHermesNativeCatalog(snapshot, (options.now ?? (() => new Date()))()))
+          .then((snapshot) => projectHermesObservationForRenewal(snapshot, now()))
           .catch((error: unknown): Catalog => {
             console.warn("[ai-providers] Hermes native catalog unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
             return { profiles: [], failures: ["hermes"] };
@@ -61,19 +67,26 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
     }
     const bounded = async (attempt: Promise<Catalog>, failures: Catalog["failures"]): Promise<Catalog> => {
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
       try {
-        return await Promise.race([attempt, new Promise<Catalog>((resolve) => {
-          timer = setTimeout(() => resolve({ profiles: [], failures }), 6500);
+        return await Promise.race([attempt, new Promise<Catalog>((_, reject) => {
+          onAbort = () => reject(scope.signal?.reason);
+          scope.signal?.addEventListener("abort", onAbort, { once: true });
+          if (scope.signal?.aborted) onAbort();
+        }), new Promise<Catalog>((resolve) => {
+          timer = setTimeout(() => resolve({ profiles: [], failures }), Math.max(0, Math.min(6500, scope.deadline - +now())));
         })]);
-      } finally { if (timer) clearTimeout(timer); }
+      } finally { if (timer) clearTimeout(timer); if (onAbort) scope.signal?.removeEventListener("abort", onAbort); }
     };
     const [coding, hermes, openclaw] = await Promise.all([bounded(pending.coding, ["pi", "opencode"]), bounded(pending.hermes, ["hermes"]), bounded(pending.openclaw, ["openclaw"])]);
     const hasRoom = coding.profiles.length + hermes.profiles.length <= 48;
     const profiles = [...coding.profiles, ...(hasRoom ? hermes.profiles : [])];
     const openclawHasRoom = profiles.length + openclaw.profiles.length <= 48;
-    return AiNativeHarnessCatalogSchema.parse({ profiles: [...profiles, ...(openclawHasRoom ? openclaw.profiles : [])],
+    const catalog = AiNativeHarnessCatalogSchema.parse({ profiles: [...profiles, ...(openclawHasRoom ? openclaw.profiles : [])],
       failures: [...coding.failures, ...(hasRoom ? hermes.failures : ["hermes"]), ...(openclawHasRoom ? openclaw.failures : ["openclaw"])] });
+    return scope.deferRenewal ? catalog : renewStale(catalog, scope);
   };
+  return Object.assign(read, { renewStale });
 }
 
 /** Compatibility projection: all observations/defaults originate in canonical V3. */

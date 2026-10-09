@@ -1,3 +1,6 @@
+import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
+import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
+import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
 import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
@@ -180,6 +183,7 @@ import { createLocalIntegrationTransport, createPlatformIntegrationTransport } f
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
+import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -1283,6 +1287,12 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
+  app.route("/api/data-imports", await createRuntimeDataImportRoutes({
+    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
+    transport: internalIntegrationBaseUrl && internalPlatformToken
+      ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+      : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
+  }));
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
@@ -1421,7 +1431,10 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
     ),
   });
+  let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
   const aiProviderService = new AiProviderService({
+    matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
+    exposeClaudeProfileAccount: true,
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
     nativeHarnessCatalogReader: genericHarnessModelCatalog,
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
@@ -1471,6 +1484,7 @@ export async function createGateway(config: GatewayConfig) {
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
   providerSettingsStore = new ProviderSettingsStore({
     homePath,
+    claudeNativeAccountMetadataReader: createClaudeNativeAccountMetadataReader({ executable: "claude", cwd: homePath, environment: buildSettingsAccountEnvironment(homePath) }),
     hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
     ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
       executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
@@ -1531,12 +1545,19 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedAdmission ? { fundedAdmission } : {}),
       onFailure: logBestEffortFailure,
     });
+    matrixAnthropicRuntime = createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+      profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+      supports: { rootChat: Boolean(scopeRuntimeHost?.available), recipeBots: Boolean(scopeRuntimeHost?.available) },
+      onSourceChanged: () => botServices?.cancelAnthropicInference?.(),
+    });
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
     botServices = await startBots({
       homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
+      ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
+      ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
         ownerId: process.env.MATRIX_USER_ID, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID }),
       ...(internalIntegrationBaseUrl && internalPlatformToken
@@ -1546,12 +1567,14 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
     });
-    if (botServices?.chatgptPlanPeers) {
-      const enhanced = withChatGptPlanProviderInstance(baseCanonicalChatProviderCatalog, botServices.chatgptPlanPeers,
-        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available));
-      canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
-        refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
-    }
+    const sourceCatalog = matrixAnthropicRuntime.service
+      ? withMatrixAnthropicProviderInstances(baseCanonicalChatProviderCatalog, aiProviderService,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : baseCanonicalChatProviderCatalog;
+    const enhanced = botServices?.chatgptPlanPeers
+      ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
+    canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
+      refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
@@ -1709,6 +1732,10 @@ export async function createGateway(config: GatewayConfig) {
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
+  matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+    profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+    supports: { rootChat: false, recipeBots: false },
+  });
   const providerWorkflowLifecycle = await createNativeProviderWorkflowRuntime({
     app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
@@ -1906,6 +1933,7 @@ export async function createGateway(config: GatewayConfig) {
       proactiveHeartbeat.stop();
       cronService.stop();
       await localChatImportLifecycle.close();
+      await matrixAnthropicRuntime.close();
       await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();
       await canonicalChatOrchestrator?.close();

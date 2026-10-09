@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ it("hydrates a recipe draft without restoring a previous Chat or sending a reque
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
     throw new Error("UnexpectedRequest");
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubLegacyChatFetch( fetcher);
   const { result, rerender } = renderHook(({ prompt }) => useCanonicalChatState({ initialDraft: prompt }), { initialProps: { prompt: null as string | null } });
   rerender({ prompt: "Prepare a synthetic weekly report" });
   await waitFor(() => expect(result.current.composerDraftRequest?.text).toBe("Prepare a synthetic weekly report"));
@@ -33,7 +34,7 @@ it("hydrates a recipe draft without restoring a previous Chat or sending a reque
 });
 it("returns a rejected result and keeps the exact reference request key for retry", async () => {
   const requests: unknown[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
@@ -54,7 +55,7 @@ it("returns a rejected result and keeps the exact reference request key for retr
 it("routes referenced requests to the durable queue while a Run is active", async () => {
   const running = { ...record, activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } };
   const requests: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [running] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record: running, messages: [], turns: [], runs: [], activities: [] });
@@ -71,7 +72,7 @@ it("reuses attachment references after an ambiguous mentioned-request failure", 
   vi.stubGlobal("crypto", webcrypto);
   const requests: unknown[] = [];
   const uploads: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [record] });
     if (url.includes("/api/chats/chat_agent?")) return Response.json({ record, messages: [], turns: [], runs: [], activities: [] });
@@ -94,7 +95,7 @@ it("reuses attachment references after an ambiguous mentioned-request failure", 
 });
 it("keeps a new Chat draft selected until admission succeeds and reuses its create key", async () => {
   const createKeys: string[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
     if (url.endsWith("/api/chats?readStateVersion=1&fundingVersion=1") && init?.method === "POST") {
@@ -115,7 +116,7 @@ it("keeps a new Chat draft selected until admission succeeds and reuses its crea
 it("uses the shared automatic title without shortening the actual request", async () => {
   const creates: { title: string }[] = [];
   const turns: { parts: { text?: string }[] }[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
     if (url.endsWith("/api/chats?readStateVersion=1&fundingVersion=1") && init?.method === "POST") {
@@ -138,7 +139,7 @@ it("uses the shared automatic title without shortening the actual request", asyn
 it.each([false, true])("preserves the first operation after ambiguous acknowledgement and active state changes (initially active: %s)", async (initiallyActive) => {
   let active = initiallyActive;
   const requests: Array<{ url: string; body: { clientRequestId: string } }> = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [current] });
@@ -160,7 +161,7 @@ it.each([false, true])("preserves the first operation after ambiguous acknowledg
 it("accepts a consumed queue retry without resurrecting the visible queued item", async () => {
   let active = true;
   let attempts = 0;
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     const current = { ...record, ...(active ? { activeRun: { runId: "run_busy", turnId: "cturn_busy", status: "running" } } : {}) };
     if (url.includes("/events?")) return new Response(new ReadableStream());
     if (url.includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [current] });

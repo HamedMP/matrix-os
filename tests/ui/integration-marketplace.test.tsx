@@ -16,6 +16,11 @@ describe("integration marketplace", () => {
     expect(buildIntegrationSections(services, { query: "  GMAIL " }).flatMap(s => s.services).map(s => s.id)).toEqual(["gmail"]);
     expect(integrationDescription(services[0])).toContain("email");
   });
+  it("surfaces marketing and customer support as discoverable categories", () => {
+    const expanded = [{ id: "loops", name: "Loops", category: "communication" }, { id: "zendesk", name: "Zendesk", category: "communication" }, { id: "intercom", name: "Intercom", category: "communication" }];
+    expect(buildIntegrationSections(expanded).map(section => [section.title, section.services.map(service => service.id)])).toEqual([["Customer support", ["zendesk", "intercom"]], ["Marketing", ["loops"]]]);
+    expect(buildIntegrationSections(expanded, { query: "marketing" })[0]?.services[0]?.id).toBe("loops");
+  });
   it("filters OAuth and connected apps without duplicate category rows", () => {
     expect(buildIntegrationSections(services, { oauthOnly: true }).flatMap(s => s.services).map(s => s.id)).not.toContain("stripe");
     expect(buildIntegrationSections(services, { connectedOnly: true, connectedIds: ["gmail"] }).flatMap(s => s.services).map(s => s.id)).toEqual(["gmail"]);

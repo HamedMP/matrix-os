@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
-import { OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup";
+import { OPEN_PROVIDER_SETTINGS_EVENT, OPEN_PROVIDER_TERMINAL_EVENT } from "../../shell/src/lib/canonical-provider-setup";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 vi.mock("@clerk/nextjs", async (original) => ({
   ...(await original<typeof import("@clerk/nextjs")>()),
@@ -19,6 +19,24 @@ function renderChat() {
 }
 beforeEach(() => { window.localStorage.clear(); vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); });
 describe("hosted empty Chat connections", () => {
+  it("opens supported Codex Settings recovery without invoking legacy start_login", async () => {
+    const actions = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("/actions")) actions();
+      return Response.json(String(url).includes("provider-settings") ? disconnectedSnapshot() : catalog);
+    }));
+    const settings = vi.fn(); window.addEventListener(OPEN_PROVIDER_SETTINGS_EVENT, settings);
+    try {
+      renderChat();
+      const draft = screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send");
+      fireEvent.change(draft, { target: { value: "Keep my Codex recovery prompt" } });
+      fireEvent.click(await screen.findByRole("button", { name: "Connect Codex" }));
+      expect(settings).toHaveBeenCalledOnce();
+      expect(actions).not.toHaveBeenCalled();
+      expect(draft).toHaveValue("Keep my Codex recovery prompt");
+    } finally { window.removeEventListener(OPEN_PROVIDER_SETTINGS_EVENT, settings); }
+  });
+
   it("uses Settings login and preserves the composer across connection completion", async () => {
     let snapshot = disconnectedSnapshot();
     const mutations: unknown[] = [];
@@ -103,7 +121,7 @@ describe("hosted empty Chat connections", () => {
     fireEvent.change(draft, { target: { value: "Retain this prompt" } });
     failed = false; fireEvent(window, new Event("focus"));
     expect(await screen.findByRole("button", { name: "Connect Claude Code" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Connect Codex" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Codex" })).toBeEnabled();
     expect(draft).toHaveValue("Retain this prompt");
   });
 });

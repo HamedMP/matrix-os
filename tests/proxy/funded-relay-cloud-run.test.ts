@@ -150,7 +150,7 @@ describe("funded relay Cloud Run service", () => {
     }
   });
 
-  it("ships an isolated image and preview-gated Cloud Run workflow", () => {
+  it("ships an isolated image and reviewed Cloud Run workflow", () => {
     const dockerfile = readFileSync(join(root, "Dockerfile.ai-relay"), "utf8");
     const cloudbuild = readFileSync(join(root, "cloudbuild.ai-relay.yaml"), "utf8");
     const workflow = readFileSync(
@@ -167,7 +167,7 @@ describe("funded relay Cloud Run service", () => {
     expect(cloudbuild).toContain("Dockerfile.ai-relay");
     expect(workflow).toContain("MATRIX_FUNDED_AI_ENABLED=true");
     expect(workflow).toContain("MATRIX_FUNDED_AI_RESERVATION_MODE=usage");
-    expect(workflow).toContain("CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest");
+    expect(workflow).toContain("CLOUDFLARE_WORKERS_AI_TOKEN=${WORKERS_TOKEN_SECRET}:${WORKERS_TOKEN_VERSION}");
     for (const beta of [
       "claude-code-20250219",
       "structured-outputs-2025-11-13",
@@ -179,9 +179,9 @@ describe("funded relay Cloud Run service", () => {
       "mid-conversation-system-2026-04-07",
       "effort-2025-11-24",
     ]) expect(workflow).toContain(beta);
-    expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest");
-    expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest");
-    expect(workflow).toContain("AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest");
+    expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=${GATEWAY_TOKEN_SECRET}:${GATEWAY_TOKEN_VERSION}");
+    expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=${CONTROL_TOKEN_SECRET}:${CONTROL_TOKEN_VERSION}");
+    expect(workflow).toContain("AI_RELAY_METADATA_SECRET=${METADATA_SECRET_SECRET}:${METADATA_SECRET_VERSION}");
     expect(workflow).toContain("--allow-unauthenticated");
     expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
     expect(workflow).toContain("for _attempt in {1..10}; do");
@@ -252,11 +252,11 @@ describe("funded relay Cloud Run service", () => {
 
 function runDeploymentValidation(reviewedAt: string, validThrough: string) {
   const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
-  const block = workflow.split("- name: Validate preview deployment configuration")[1]!
+  const block = workflow.split("- name: Validate deployment configuration")[1]!
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
   const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, DEPLOY_ENVIRONMENT: "staging", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: "/dev/null", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
     ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
     AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
     CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,

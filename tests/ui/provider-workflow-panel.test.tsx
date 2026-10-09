@@ -339,7 +339,7 @@ it("keeps device-code startup in Settings while waiting for the native code", as
   const openTerminal = vi.fn();
   render(<HarnessWorkflowPanel harness={claudeHarness} capability={claudeCapability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
   fireEvent.click(screen.getByRole("button", { name: /Claude account/ }));
-  await screen.findByText(/Waiting for sign-in/);
+  await screen.findByRole("status", {name: "Preparing sign-in page"});
   expect(openTerminal).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
 });

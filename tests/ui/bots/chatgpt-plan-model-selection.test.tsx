@@ -76,3 +76,13 @@ it("selects a current subscription model with its exact account and grant bindin
   fireEvent.change(models, { target: { value: option.value } });
   expect(change).toHaveBeenCalledWith({ instanceId: "matrix_chatgpt_plan", model: "gpt-owner-second", options: binding });
 });
+
+it("shows the saved model when binding options arrive in reverse order", () => {
+ const c = catalog(), choices = deriveCanonicalProviderChoices(c), change = vi.fn();
+ const reordered = { ...selection, options: [...selection.options].reverse() };
+ const choice = choices.find(item => item.instanceId === selection.instanceId)!;
+ expect(botModelChoiceMatchesSelection(choice, reordered)).toBe(true);
+ render(<MatrixBotModelField selection={reordered} catalog={c} models={choices} pending={false} onChange={change}/>);
+ expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).selectedOptions[0]?.textContent).toBe("Owner GPT · ChatGPT subscription");
+ expect(change).not.toHaveBeenCalled();
+});

@@ -1,3 +1,6 @@
+import { invalidateDesktopProviderCatalog } from "../chat/provider-catalog-invalidation";
+import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
+import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
   useProviderSettingsController,
@@ -6,7 +9,7 @@ import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
-import { createDesktopProviderWorkflowClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
+import { createDesktopProviderWorkflowClient, createDesktopMatrixAnthropicClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
 import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
 import {
   createDesktopProviderSettingsTransport,
@@ -81,8 +84,8 @@ function ConnectedAgentsProvidersAdapter({
     () => createDesktopProviderSettingsTransport(runtimeApi),
     [runtimeApi],
   );
-  const onCatalogChanged = useCallback(() => {
-    useConnection.getState().invalidateProviderCatalog(identityKey);
+  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
+    invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
   const [actionError, setActionError] = useState<string | null>(null);
@@ -101,6 +104,7 @@ function ConnectedAgentsProvidersAdapter({
     [identityKey],
   );
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);
   const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent),
     [runtimeSlot, authGeneration, isIdentityCurrent]);
@@ -193,6 +197,7 @@ function ConnectedAgentsProvidersAdapter({
       onOpenBrowser={openBrowser}
       workflowClient={workflowClient}
       localChatgptClient={localChatgptClient}
+      matrixAnthropicClient={matrixAnthropicClient}
       onOpenAuthorizationUrl={(url) => {
         if (!isIdentityCurrent()) return;
         void openDesktopProviderWorkflowAuthorization(url).then(opened => {
@@ -208,6 +213,7 @@ function ConnectedAgentsProvidersAdapter({
 export default function AgentsProvidersAdapter() {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
+  const userId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -215,6 +221,7 @@ export default function AgentsProvidersAdapter() {
   const identityKey = desktopProviderIdentityKey({
     status,
     handle,
+    userId,
     platformHost,
     runtimeSlot,
     authGeneration,

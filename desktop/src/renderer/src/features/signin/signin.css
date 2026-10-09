@@ -5,11 +5,11 @@
   min-height: 0;
   background: var(--signin-paper);
   color: var(--signin-ink);
-  padding: 16px;
+  padding: var(--titlebar-height) 16px 16px;
   gap: 16px;
   overflow-y: auto;
 }
-.signin-titlebar { position: absolute; inset: 0 0 auto; height: var(--titlebar-height); z-index: 10; }
+.signin-titlebar { position: fixed; inset: 0 0 auto; height: var(--titlebar-height); background: var(--signin-paper); z-index: 10; }
 .signin-scene {
   position: relative;
   min-height: 600px;
@@ -66,7 +66,7 @@
   .signin-wide-break { display: none; }
 }
 @media (max-width: 680px) {
-  .signin { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 0; }
+  .signin { grid-template-columns: minmax(0, 1fr); padding: var(--titlebar-height) 12px 12px; gap: 0; }
   .signin-scene { min-height: 0; padding: 32px 24px 24px; }
   .signin-scene-copy { margin-top: 32px; }
   .signin-scene h2 { font-size: 32px; margin: 12px 0; }

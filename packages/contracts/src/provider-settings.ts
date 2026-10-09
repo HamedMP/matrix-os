@@ -3,6 +3,7 @@ import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primit
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
 import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -249,7 +250,7 @@ export const ProviderDependencyCountsSchema = z.object({
 /** Owner-only native identity, emitted only after explicit GET negotiation. */
 export const ProviderConnectionDetailsSchema = z.object({
   email: z.email().max(120).optional(),
-  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu", "Claude Pro", "Claude Max", "Claude Team", "Claude Enterprise"]).optional(),
 }).strict();
 export const ProviderAccountSchema = z.object({
   connectionDetails: ProviderConnectionDetailsSchema.optional(),
@@ -395,6 +396,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),

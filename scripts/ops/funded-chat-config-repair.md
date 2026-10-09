@@ -1,0 +1,56 @@
+# Operator funded Chat configuration repair
+
+This standalone helper repairs supported funded Chat connectivity through the existing authenticated owner terminal transport. It is not installed into customer bundles and does not create an endpoint. It changes only `MATRIX_FUNDED_AI_ENABLED`, `MATRIX_FUNDED_AI_RELAY_URL`, `MATRIX_FUNDED_AI_RUNTIME_TOKEN` and, when necessary, `MATRIX_FUNDED_AI_PLATFORM_URL` in `/opt/matrix/env/host.env`. It never modifies accounts, policy, balances, holds, epochs, bundles or owner-home data.
+
+## Preconditions
+
+The operator must independently verify current Platform identity, authorized running customer-primary status, live token epoch, enabled funded policy, installed compatibility, reviewed production origins, health, no active turns/reservations and an explicitly coordinated idle configuration-writer window. Intentional disabled/custom/Preview settings must be classified before repair. Missing host epoch metadata requires separate reconciliation; the helper never assumes epoch 1. Deferred machines remain unchanged.
+
+Use the canonical HTTPS owner terminal route with a legitimately authenticated owner session, or an existing independently trusted SSH/certificate pin. A Platform operator token is not an owner session at the canonical terminal ingress. Do not disable certificate verification, create first-contact trust with keyscan/accept-new, or invent an owner-auth bypass to reach a recipient. The encrypted repair envelope does not protect a bearer sent over an unauthenticated transport. Verify the actual trust boundary: normal client-to-Platform TLS does not by itself prove that Platform-to-VPS certificate validation is enabled. Missing recipient authentication or peer-trust evidence defers that recipient.
+
+The per-tool flock only serializes this helper. Existing speech, token and updater writers do not all share its lock. Marker/process checks and a final file digest/inode/metadata comparison detect some races; they cannot guarantee exclusion between the final check and rename. The operator must coordinate competing writers externally or defer. An idle check also cannot guarantee that a user starts no new turn before the later Gateway restart.
+
+Root operation requires the existing `sudo -n` capability, the exact reviewed Node binary bytes, `/usr/bin/python3`, `/usr/bin/getent`, Linux sealed-memfd/fd-exec support, `/proc`, and the `matrix` group. Do not weaken permissions or install alternate privileged paths when capability checks fail. The provisioned `/opt/matrix` root:matrix 0770 parent is supported. The `env` target/journal directory must remain root:matrix 0750, with a bounded, single-link, no-follow root:matrix 0640 environment file. Managed/identity assignments must have unambiguous literal syntax.
+
+The bootstrap and helper anchor protected directories using held descriptors and no-follow relative opens. Canonical path/device/inode bindings are checked before reads, before mutation and after commit/child completion. Ancestor rebinding cannot redirect privileged writes into a replacement directory: writes remain confined to the original protected descriptor. A rebind after the final check can still produce an unknown commit in that original directory; failure receipts therefore require independent investigation and no blind retry. The group-writable parent is not treated as an immutable path.
+
+The shipped runtime also permits group writes to Node's binary directory and file. Never directly run `sudo /opt/matrix/runtime/node/bin/node`. The command starts trusted system Python, snapshots bounded Node bytes, checks an independently pinned per-binary SHA-256, seals an anonymous memory file against writes/growth/shrink, then executes those immutable bytes. No executable is installed or copied through writable directories. Pin provenance must come from the exact compatible bundle's independently verified bytes or a vendor archive whose published checksum was independently verified, then the exact archive member `bin/node`. A hash read from the VPS, its local release manifest, or its local runtime is not independent provenance. Verify exact architecture/version per recipient; a pin for one version or architecture is not a fleet-wide default. Missing, mismatching or unsupported pins defer the recipient. The binary is bounded to 256 MiB and its read deadline to ten seconds. Node receives a minimal environment without `NODE_OPTIONS`, `NODE_PATH`, loader/preload variables or unrelated credentials.
+
+The snapshot holds both bounded binary bytes and sealed-memory backing during preparation. Before dispatch, inspect current host available memory and the Gateway service's actual cgroup headroom against the independently known binary size, preserving normal runtime headroom. Budget at least three times that size plus ordinary interpreter overhead for this operation; defer under memory pressure or an unknown cgroup limit rather than increase customer service quotas. This check is coordinator-owned and must be fresh. Resource caps bound the work, but do not guarantee that a busy or memory-constrained VPS can safely execute it.
+
+## Execution contract
+
+`repair-funded-chat-config.py` accepts at most 4096 bytes of JSON on stdin with exactly:
+
+- `action`: `apply` or `rollback`.
+- `rolloutId`: a unique lower-case slug, 1–48 characters.
+- `identity`: `machineId`, `ownerId`, `handle`, `runtimeSlot` (`primary`) and integer `epoch` from the current authoritative record.
+- `expectedFile`: SHA-256, inode and device from a fresh private host preflight.
+- `quiescentWindow`: `true`, attesting the coordinated window described above.
+- For `apply` only, `config`: reviewed HTTPS `relayUrl`, machine-specific `runtimeToken`, and optional origin-only `platformUrl`. General `PLATFORM_INTERNAL_URL` is preserved. The effective funded Platform origin must be valid before enabling.
+
+The Python helper accepts no command-line payload or paths, makes no network request and never restarts services. Its CLI uses fixed production paths. Local file/ownership injection is available only through the imported test function, not the stdin schema.
+
+The existing terminal runner accepts arguments without stdin. Use `buildFundedConfigRepairCommand(request, reviewedPythonSource, currentPerHostAuthBearer, independentlyVerifiedNodeSha256)` from `funded-config-repair-transport.mjs`. The returned command carries compressed reviewed code and an opaque AES-256-GCM envelope; it never includes plaintext tokens. HKDF-SHA256 uses a distinct context, random salt and the existing per-host `MATRIX_AUTH_TOKEN`, never the broad Platform secret. Authenticated metadata binds identity, epoch, action, expected file, request hash, helper hash and a maximum 120-second deadline. The stdlib launcher passes protected env-directory/file descriptors to the sealed Node bootstrap; it does not reopen the environment through writable ancestors. Node checks host identity and file safety, decrypts and validates the bounded source, then feeds the request through an isolated Python child's stdin and passes only the anchored env-directory descriptor as fd 3. Python independently checks that descriptor against its own anchored canonical chain before repair or rollback. The bridge restricts child environment, duration and output, and validates/redacts receipts. The builder rejects arguments above 4096 characters, more than 64 arguments or a JSON request body above 16384 bytes.
+
+Dispatch through the existing owner-authenticated terminal argument-vector transport with its normal signed owner principal, reviewed destination and 15-second request deadline. Never send raw Platform secrets to a runtime. A timeout or error may mean an unknown outcome: inspect the host independently before retrying.
+
+## Receipts, restart and rollback
+
+Successful receipts contain only action, `changed`, `restartRequired`, before/after file hashes and a backup basename. Exact desired state is a no-op with no new backup and no requested restart. The repair writes an exclusive root:root 0600 rollback journal, fsyncs it and its directory, writes an exclusive temporary file, rechecks activity/current file, atomically renames and fsyncs the directory. Partial temporary files are cleaned on ordinary failures; an interrupted process can leave a restrictive temporary file requiring reviewed explicit cleanup.
+
+After a changed receipt, independently verify the written configuration and schedule Gateway restart in a separate delayed `systemd-run` unit so it outlives the Gateway-owned request. Restart is owned by the coordinator, not this helper. It may disconnect WebSockets and interrupt foreground work; no zero-downtime guarantee exists. Verify loaded process configuration, health, provenance and fresh ordinary Chat projection independently. Credit visibility does not establish model readiness or settled paid inference.
+
+For rollback, provide fresh identity and current full-file guards with the same rollout ID. It refuses changed affected keys. An unchanged full post-image restores exact original bytes; otherwise it restores only this operation's original affected assignments, preserving later unrelated edits. Already restored assignments are a no-op. In-flight financial liability and compatible control-plane routing remain operator concerns; rollback never clears reservations.
+
+Retain rollback journals only for an explicitly selected verification/rollback window. They contain secret original bytes and installed tokens: do not copy them to public reports, owner-home paths or synced folders. After that window, the operator must explicitly remove the reviewed journal and any interrupted temporary artifacts using safe no-follow checks. The helper bounds retained journals to fewer than 32 before a new backup and refuses capacity exhaustion; it never silently evicts a rollback plan. Preserve the stable repair lock inode.
+
+## Validation
+
+Run the focused Vitest process suites through Flox:
+
+```text
+flox activate -- bun run test tests/deploy/customer-vps/funded-config-repair.test.ts tests/deploy/customer-vps/funded-config-transport.test.ts tests/deploy/customer-vps/funded-config-launcher.test.ts
+```
+
+Tests use synthetic identities, tokens and local temporary directories. They exercise real file locks and atomic writes, supported provisioned modes, symlink/ancestor rebinding before and after the final guard, no-op behavior, wrong identities/epochs/file guards, unsafe syntax/files, writer races, rollback conflicts/unrelated edits, write failures, authenticated decryption/tampering/expiry, fixed bootstrap reconstruction, descriptor inheritance, accidental output redaction and actual helper request size. The sealed execution case requires Linux and is skipped on macOS. `tests/deploy/customer-vps/funded-config-linux.mjs` additionally verifies the whole generated command's repair/no-op/rollback and adversarial runtime/rebind behavior in a fresh, disposable Linux container; it refuses existing Matrix installations and requires its explicit disposable-test flag. Docker is only a local test fixture, never the customer deployment path. These tests do not constitute production deployment, paid inference or customer surface acceptance.

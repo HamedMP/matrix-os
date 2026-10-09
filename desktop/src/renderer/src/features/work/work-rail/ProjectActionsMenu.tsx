@@ -1,6 +1,6 @@
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { MoreHorizontal } from "@renderer/lib/hugeicons";
+import { MoreHorizontal } from "lucide-react";
 import { Fragment, type ReactNode, type Ref } from "react";
 import { DESKTOP_Z_INDEX } from "../../../design/layering";
 

@@ -132,7 +132,7 @@ describe("SessionAccessControl", () => {
 
     await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scope.id}/grants`,
-      expect.objectContaining({ expectedRevision: "3", audience: { kind: "member", actorId: "user_ada" }, preset: "viewer" }),
+      expect.objectContaining({ expectedRevision: "3", audience: { kind: "member", actorId: "user_ada" }, preset: "contributor" }),
     ));
   });
 });

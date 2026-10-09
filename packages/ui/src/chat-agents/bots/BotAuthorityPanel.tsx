@@ -1,4 +1,4 @@
-import { groupBotAuthority, type BotAuthorityView, type BotMemoryMutationRequest } from "@matrix-os/contracts";
+import { groupBotAuthority, botIntegrationAccessCopy, type BotAuthorityView, type BotMemoryMutationRequest } from "@matrix-os/contracts";
 import { useEffect, useState, type ReactNode } from "react";
 import { RememberedItemPart } from "./RememberedItemPart.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
@@ -37,7 +37,9 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, compact
         <h4 className="text-sm font-medium">{group.service.replaceAll("_", " ")}</h4>
         <p className="text-xs" style={chatAgentMutedStyle}>{group.state.replaceAll("_", " ")}</p>
         {group.grants.map((grant) => <div key={grant.grantId} className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm">{grant.accountLabel} · {grant.effects.join(", ")}</span>
+          <div><span className="text-sm">{grant.accountLabel} · {botIntegrationAccessCopy(grant.service, grant.effects).summary}</span>
+            {botIntegrationAccessCopy(grant.service, grant.effects).boundary
+              ? <p className="text-xs" style={chatAgentMutedStyle}>{botIntegrationAccessCopy(grant.service, grant.effects).boundary}</p> : null}</div>
           <button type="button" aria-label={`Revoke ${grant.accountLabel}`} className={chatAgentButtonClass} disabled={!!pending}
             onClick={() => { void change(grant.grantId, () => onRevoke(grant.grantId),
               (value) => {

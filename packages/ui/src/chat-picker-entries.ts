@@ -1,5 +1,5 @@
 import type { CanonicalProviderCatalog, CanonicalProviderDriverKind, CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicBotRoute, isMatrixAnthropicChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import { canonicalChatSubscriptionSelectionMatches, canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
 
 export interface ChatPickerEntry {
@@ -18,9 +18,9 @@ function isEmptyBotPlaceholder(instance: CanonicalProviderInstanceDescriptor): b
 
 /** Matrix AI groups presentation only; each funding source retains its executable identity. */
 export function deriveChatPickerEntries(catalog: CanonicalProviderCatalog): ChatPickerEntry[] {
-  const visibleInstances = catalog.instances.filter(instance => !isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || instance.supports.rootChat);
+  const visibleInstances = catalog.instances.filter(instance => !(isChatgptPlanBotRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isMatrixAnthropicBotRoute({ instanceId: instance.id, driverKind: instance.driverKind })) || instance.supports.rootChat);
   const managed = visibleInstances.filter(instance => instance.driverKind === "matrix_pi" && (instance.id === "matrix_pi_default"
-    || isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })));
+    || isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind }) || isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind })));
   return [{ id: "matrix-ai", label: "Matrix AI", iconKind: "kernel", instances: managed, capabilityClass: "system_agent" },
     ...catalog.drivers.flatMap(driver => visibleInstances.filter(instance => instance.driverKind === driver.kind && !isLegacyMatrixSdkProvider(instance) && !isEmptyBotPlaceholder(instance)
       && !managed.some(candidate => candidate.id === instance.id))
@@ -68,11 +68,12 @@ export function deriveChatPickerModelRows(
       : undefined;
     const managed = instance.id === "matrix_pi_default" && instance.driverKind === "matrix_pi";
     const personal = isChatgptPlanChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
+    const apiPaid = isMatrixAnthropicChatRoute({ instanceId: instance.id, driverKind: instance.driverKind });
     // Retain prior executable-only discovery for other harnesses.
-    if (!choice && !managed && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return [];
+    if (!choice && !managed && !apiPaid && instance.id !== MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return [];
     return [{
       instanceId: instance.id, modelId: model.id, modelLabel: model.displayName, modelAvailability: model.availability,
-      harnessLabel: managed || personal ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
+      harnessLabel: managed || personal || apiPaid ? "Matrix AI" : choice?.harnessLabel ?? instance.displayName,
       connectionLabel: personal ? "ChatGPT subscription" : instance.connectionLabel, driverKind: instance.driverKind,
       ...(choice ? { choice } : {}),
     }];

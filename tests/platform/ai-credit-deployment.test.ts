@@ -91,6 +91,32 @@ describe("Matrix AI route-probe deployment wiring", () => {
     MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.com",
     MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10", MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "1" };
 
+  it("allows production control-plane canary acceptance while new-runtime provisioning stays disabled", () => {
+    const result = validate({ ...enabled, DEPLOY_ENVIRONMENT: "production", ATS_BOOKING_BASE_URL: "https://booking.example.com",
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("requires the control plane before funded runtime provisioning can be enabled", () => {
+    const result = validate({ ...enabled, MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false" });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Funded AI runtime provisioning requires the control plane");
+  });
+
+  it.each([
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "0" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "0" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "10001" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "101" },
+    { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "11" },
+    { MATRIX_FUNDED_AI_RELAY_URL: "http://relay.example.com" },
+    { MATRIX_FUNDED_AI_RELAY_URL: "https://relay.example.com/path" },
+  ])("retains Relay and probe-budget validation for control-only acceptance: %j", invalid => {
+    const result = validate({ ...enabled, MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false", ...invalid });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/positive bounded integer|budget bounds|HTTPS origin/);
+  });
+
   it.each([
     { MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: "" },
     { MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: "" },
@@ -110,6 +136,29 @@ describe("Matrix AI route-probe deployment wiring", () => {
     expect(workflow.jobs.deploy.env.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED).toContain("'false'");
   });
 
+  it("keeps control secrets and probe limits mounted during control-only acceptance", () => {
+    const script = step("Deploy tagged revision").split("candidate_url=")[0];
+    const deployed = spawnSync("bash", ["-c", `
+      gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
+      ${script}
+      printf '%s\\n' "$deploy_json"
+    `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
+      Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
+      WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+      IMAGE_DIGEST: "image@sha256:fixture", ...enabled,
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false" } });
+    expect(deployed.status, deployed.stderr).toBe(0);
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=true");
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_RUNTIME_ENABLED=false");
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=false");
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_RELAY_URL=https://relay.example.com");
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=10");
+    expect(deployed.stdout).toContain("MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=1");
+    expect(deployed.stdout).toContain("AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest");
+    expect(deployed.stdout).toContain("AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest");
+    expect(deployed.stdout).not.toContain("STRIPE_PRICE_AI_CREDIT_USD_5=");
+  });
+
   it.each(["MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT", "MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT"])(
     "wires %s from GitHub variables to the actual Cloud Run deployment", (key) => {
       expect(workflow.jobs.deploy.env[key]).toContain(`vars.${key}`);
@@ -125,4 +174,51 @@ describe("Matrix AI route-probe deployment wiring", () => {
       expect(deployed.status, deployed.stderr).toBe(0);
       expect(deployed.stdout).toContain(`${key}=${enabled[key as keyof typeof enabled]}`);
     });
+});
+
+describe("funded control-plane effective secret access", () => {
+  const member = "serviceAccount:platform@fixture.iam.gserviceaccount.com";
+  const binding = { role: "roles/secretmanager.secretAccessor", members: [member] };
+  const policy = (bindings: unknown[]) => JSON.stringify({ bindings });
+  function verify(secretPolicy: string, projectPolicy: string, failures: Record<string, string> = {}) {
+    return spawnSync("bash", ["-c", `
+      gcloud() {
+        case "$1 $2 $3" in
+          'secrets versions describe') return 0 ;;
+          'secrets get-iam-policy '* )
+            if [ "\${SECRET_POLICY_FAILURE:-false}" = true ]; then return 1; fi
+            printf '%s\\n' "$SECRET_POLICY" ;;
+          'projects get-iam-policy '* )
+            if [ "\${PROJECT_POLICY_FAILURE:-false}" = true ]; then return 1; fi
+            printf '%s\\n' "$PROJECT_POLICY" ;;
+          *) return 1 ;;
+        esac
+      }
+      ${step("Verify funded AI control-plane secrets")}
+    `], { encoding: "utf8", env: { PATH: process.env.PATH, GCP_PROJECT_ID: "fixture",
+      CLOUD_RUN_SERVICE_ACCOUNT: "platform@fixture.iam.gserviceaccount.com",
+      SECRET_POLICY: secretPolicy, PROJECT_POLICY: projectPolicy, ...failures } });
+  }
+  it("accepts unconditional secret-level access without requiring any project grant", () => {
+    const result = verify(policy([binding]), policy([]), { PROJECT_POLICY_FAILURE: "true" });
+    expect(result.status, result.stderr).toBe(0);
+  });
+  it("recognizes an existing unconditional project-level accessor without granting a new role", () => {
+    const result = verify(policy([]), policy([binding]));
+    expect(result.status, result.stderr).toBe(0);
+  });
+  it.each([
+    [policy([]), policy([]), {}],
+    [policy([]), policy([{ ...binding, members: ["serviceAccount:other@fixture.iam.gserviceaccount.com"] }]), {}],
+    [policy([{ ...binding, condition: { expression: "true" } }]), policy([]), {}],
+    [policy([]), policy([{ ...binding, condition: { expression: "true" } }]), {}],
+    [policy([]), policy([binding]), { PROJECT_POLICY_FAILURE: "true" }],
+    [policy([]), policy([binding]), { SECRET_POLICY_FAILURE: "true" }],
+    ["not-json", policy([binding]), {}],
+    [JSON.stringify({ bindings: "malformed" }), policy([binding]), {}],
+    [policy([{ ...binding, members: "malformed" }]), policy([binding]), {}],
+    [policy([]), "not-json", {}],
+  ])("fails closed when unconditional effective access is not established: %j", (secretPolicy, projectPolicy, failures) => {
+    expect(verify(secretPolicy as string, projectPolicy as string, failures as Record<string, string>).status).not.toBe(0);
+  });
 });

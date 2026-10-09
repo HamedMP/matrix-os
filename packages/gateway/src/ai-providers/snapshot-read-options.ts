@@ -5,6 +5,8 @@ export interface ProviderSnapshotReadOptions {
   admissionScope?: "managed_matrix";
   /** Trusted runtime-owner-only identity/allowance enrichment; never renderer input. */
   includeNativeAccountMetadata?: boolean;
+  /** Foreground login completion verifies identity independently of quota. */
+  includeNativeAccountUsage?: boolean;
   signal?: AbortSignal;
   /** Recipe-only exact selected key/model; never accepted from renderer input. */
   ownerKeyPreflight?: { modelId: string; credentialFingerprint: string };

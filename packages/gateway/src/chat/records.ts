@@ -186,8 +186,7 @@ export function toChatRecord(
         lockedAtTurnId: row.bound_at_turn_id,
       })
     : undefined;
-  const completedAt = asIso(latestSuccessfulCompletionRow?.completed_at);
-  const acknowledgedAt = asIso(attentionAcknowledgedAt);
+  const completion = projectSuccessfulCompletion(latestSuccessfulCompletionRow, attentionAcknowledgedAt);
   return {
     chat,
     ...(row.project_id === null ? {} : { projectId: row.project_id }),
@@ -199,14 +198,19 @@ export function toChatRecord(
         status: activeRun.status,
       }),
     } : {}),
-    ...(latestSuccessfulCompletionRow && completedAt ? {
-      latestSuccessfulCompletion: {
-        runId: latestSuccessfulCompletionRow.id,
-        completedAt,
-        unacknowledged: acknowledgedAt === undefined || acknowledgedAt < completedAt,
-      },
-    } : {}),
+    ...(completion ? { latestSuccessfulCompletion: completion } : {}),
   };
+}
+
+/** Completion acknowledgement is shared by canonical details and navigation summaries. */
+export function projectSuccessfulCompletion(
+  row: { id: string; completed_at: Date | string | null } | undefined,
+  attentionAcknowledgedAt?: Date | string | null,
+): CanonicalChatLatestSuccessfulCompletion | undefined {
+  const completedAt = asIso(row?.completed_at);
+  const acknowledgedAt = asIso(attentionAcknowledgedAt);
+  return row && completedAt ? { runId: row.id, completedAt,
+    unacknowledged: acknowledgedAt === undefined || acknowledgedAt < completedAt } : undefined;
 }
 
 export function toMessage(row: Selectable<ChatMessagesTable>): CanonicalChatMessage {
