@@ -28,6 +28,15 @@ export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "ap
     if (on) next.add(id); else next.delete(id);
     return next;
   });
+  // One Merge or Undo at a time in the list: for chained cards (A <- B, B <- C) the order the gateway applied two
+  // running at once in would decide whom the second joins. `acting` is the card of the running or last change.
+  const action = useBrainAction();
+  const [acting, setActing] = useState<string | null>(null);
+  const update = ({ suggestionId, entity, aliasKey }: BrainMergeSuggestionView, kind: "merge" | "unmerge") => {
+    setActing(suggestionId);
+    action.run(kind, () => api.updateAlias(projectId, entity.entityId, { action: kind, aliasKey }),
+      () => mark(suggestionId, kind === "merge"));
+  };
   const away = pages.items.filter((item) => merged.has(item.suggestionId));
   const heldBy = ({ suggestionId, entity, alias }: BrainMergeSuggestionView) => away.find((item) =>
     item.suggestionId !== suggestionId && [entity.entityId, alias.entityId].includes(item.alias.entityId))?.alias;
@@ -40,9 +49,9 @@ export function BrainPersonMerges({ api, projectId }: Pick<BrainScreenProps, "ap
             {pages.items.length === 0 ? <p className="text-xs text-muted-foreground">No likely duplicates.</p> : (
               <ul className="grid gap-2">
                 {pages.items.map((suggestion) => (
-                  <MergeCard key={suggestion.suggestionId} api={api} projectId={projectId} suggestion={suggestion}
-                    merged={merged.has(suggestion.suggestionId)} heldBy={heldBy(suggestion)}
-                    onMerged={(on) => mark(suggestion.suggestionId, on)} />
+                  <MergeCard key={suggestion.suggestionId} suggestion={suggestion} action={action}
+                    mine={acting === suggestion.suggestionId} merged={merged.has(suggestion.suggestionId)}
+                    heldBy={heldBy(suggestion)} onChange={(kind) => update(suggestion, kind)} />
                 ))}
               </ul>
             )}
@@ -71,17 +80,19 @@ function Person({ person, links, keeps }: {
   );
 }
 
-interface MergeCardProps extends Pick<BrainScreenProps, "api" | "projectId"> {
-  readonly suggestion: BrainMergeSuggestionView; readonly merged: boolean; readonly onMerged: (merged: boolean) => void;
+interface MergeCardProps {
+  readonly suggestion: BrainMergeSuggestionView; readonly merged: boolean;
+  readonly onChange: (kind: "merge" | "unmerge") => void;
   /** The person of this card that another merge here moved away; Merge waits until that merge is undone. */
   readonly heldBy: BrainEntityRefView | undefined;
+  /** The list's one change at a time; `mine` when it is (or last was) this card's, so its state shows here. */
+  readonly action: ReturnType<typeof useBrainAction>; readonly mine: boolean;
 }
 
-function MergeCard({ api, projectId, suggestion, merged, heldBy, onMerged }: MergeCardProps) {
-  const action = useBrainAction();
-  const { entity, alias, aliasKey, counts } = suggestion;
-  const update = (kind: "merge" | "unmerge") => action.run(kind,
-    () => api.updateAlias(projectId, entity.entityId, { action: kind, aliasKey }), () => onMerged(kind === "merge"));
+function MergeCard({ suggestion, merged, heldBy, action, mine, onChange }: MergeCardProps) {
+  const { entity, alias, counts } = suggestion;
+  const locked = action.busy !== null;
+  const running = mine ? action.busy : null;
   const moving = counts.aliasEntities - 1;
   // Each reason once, so its words are its key.
   const reasons = [...new Set(suggestion.evidence.map(brainMergeEvidenceText))].slice(0, EVIDENCE_SHOWN);
@@ -109,21 +120,21 @@ function MergeCard({ api, projectId, suggestion, merged, heldBy, onMerged }: Mer
         {merged ? (
           <>
             <p role="status" className="text-xs">Merged {alias.displayName} into {entity.displayName}.</p>
-            <BrainButton size="sm" variant="outline" disabled={action.busy !== null} onClick={() => update("unmerge")}>
-              {action.busy === "unmerge" ? "Undoing..." : "Undo"}
+            <BrainButton size="sm" variant="outline" disabled={locked} onClick={() => onChange("unmerge")}>
+              {running === "unmerge" ? "Undoing..." : "Undo"}
             </BrainButton>
           </>
         ) : (
           <>
             <BrainButton size="sm" wrap className="max-w-full break-all"
-              disabled={action.busy !== null || heldBy !== undefined} onClick={() => update("merge")}>
-              {action.busy === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
+              disabled={locked || heldBy !== undefined} onClick={() => onChange("merge")}>
+              {running === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
             </BrainButton>
             {heldBy && <p className="text-xs text-muted-foreground">Undo the merge of {heldBy.displayName} first.</p>}
           </>
         )}
       </div>
-      {action.error && <BrainError error={action.error} />}
+      {mine && action.error && <BrainError error={action.error} />}
     </li>
   );
 }
