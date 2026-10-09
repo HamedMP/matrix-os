@@ -9,7 +9,8 @@
  * running for the scope (a hook, a job, a refresh) that writes after its feature's erase finds nothing to write from:
  * per-document rows need their document (a foreign key or a live check under the feature lock), the graph's project
  * entity needs a source row of the scope and a stored brief, even one that cites nothing, a source or document row.
- * A new source needs its project to still resolve under the scope lock (createSource's admit), so none follows.
+ * A new source or job needs its project to still resolve under the scope or job lock (the admit of createSource and
+ * BrainJobStore.enqueue), so none follows.
  */
 import { sql, type Kysely } from "kysely";
 import { BRAIN_FEATURE_SCOPE_LOCK_PREFIXES } from "../contracts.js";

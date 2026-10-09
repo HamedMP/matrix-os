@@ -93,12 +93,14 @@ export class BrainJobStore {
    * Queues a job, or returns the queued or running job of the same (scope, kind, target) with created false. The
    * insert is ON CONFLICT DO NOTHING on brain_jobs_active_slot, so the slot holds even against a writer outside the
    * owner lock; the lock keeps the active cap exact. Throws jobs_full past BRAIN_JOB_LIMITS.activePerOwner; prunes the
-   * scope's finished jobs to finishedPerScope.
+   * scope's finished jobs to finishedPerScope. `admit` runs under the owner lock first and refuses by throwing (the
+   * service checks the project is still live): eraseScope takes the same lock, so no job lands after a scope erase.
    */
-  enqueue(scope: BrainScopeKey, projectId: string, request: BrainJobRequest):
+  enqueue(scope: BrainScopeKey, projectId: string, request: BrainJobRequest, admit?: () => Promise<unknown>):
     Promise<{ readonly job: BrainJobView; readonly created: boolean }> {
     const target = brainJobTarget(request);
     return this.write(async (trx) => {
+      await admit?.();
       const active = () => trx.selectFrom("brain_jobs").selectAll()
         .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
         .where("kind", "=", request.kind).where("target", "=", target)

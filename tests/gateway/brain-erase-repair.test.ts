@@ -2,8 +2,8 @@
  * The project erase and the removed source purge over PGlite with the graph: a refresh already running when the
  * project is erased writes nothing back, and a purge drops the derived rows of every tombstoned document of the
  * removed source, whenever it was tombstoned, and leaves no person only that source named readable; the start's
- * catch-up finishes a sweep a shutdown cut short. A source connect or git registration that resolved the project
- * before its deletion creates no source after the erase.
+ * catch-up finishes a sweep a shutdown cut short. A source connect, git registration or job enqueue that resolved the
+ * project before its deletion creates no source or job after the erase.
  */
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,9 @@ import { BrainFeatureError, type BrainProjectResolver } from "../../packages/gat
 import type { BrainGraphTables } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
 import { deriveGraphDocument, withGraphLock } from "../../packages/gateway/src/brain/graph/store.js";
+import {
+  BrainJobStore, bootstrapBrainJobsDatabase, createBrainJobsService,
+} from "../../packages/gateway/src/brain/jobs/index.js";
 import { createBrainSourcesService, runBrainSourceSync } from "../../packages/gateway/src/brain/sources/core/index.js";
 import { fakeHandler, gate, SCOPE_A, sourcesHarness, type SourcesHarness } from "./helpers/brain-sources-fixture.js";
 import {
@@ -93,7 +96,7 @@ describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
   });
 });
 
-describe("source creation racing a project deletion", { timeout: 60_000 }, () => {
+describe("source and job creation racing a project deletion", { timeout: 60_000 }, () => {
   let harness: SourcesHarness;
   let deleted: boolean;
   beforeEach(async () => { harness = await sourcesHarness(); deleted = false; });
@@ -145,5 +148,26 @@ describe("source creation racing a project deletion", { timeout: 60_000 }, () =>
     const project = createBrainProjectService({ repository: harness.repository, projects, homePath: "/home" });
     await rejectsWith(project.registerGitSource(OWNER, "proj_a", {}), BrainApiError, "project_not_found");
     expect(await sourceRows()).toBe(0);
+  });
+
+  it("queues no job when the project is deleted while the enqueue waits for the job lock", async () => {
+    await bootstrapBrainJobsDatabase(harness.db);
+    const resolver: BrainProjectResolver = {
+      ...harness.resolver,
+      resolve: async (ownerId, projectRef) => {
+        if (deleted) throw new BrainApiError("project_not_found");
+        const project = await harness.resolver.resolve(ownerId, projectRef);
+        // The deletion finishes after the request resolved the project, before the store takes the job lock.
+        await deleteProject();
+        return project;
+      },
+    };
+    const wake = vi.fn();
+    const jobs = createBrainJobsService({ store: new BrainJobStore(harness.db), resolver, kinds: ["sync"], wake });
+    await rejectsWith(jobs.enqueue(OWNER, "proj_a", { kind: "sync" }), BrainApiError, "project_not_found");
+    const { rows } = await sql<{ n: number }>`SELECT count(*)::int AS n FROM brain_jobs
+      WHERE owner_id = ${SCOPE_A.ownerId} AND scope_id = ${SCOPE_A.scopeId}`.execute(harness.db);
+    expect(rows[0]!.n).toBe(0);
+    expect(wake).not.toHaveBeenCalled();
   });
 });
