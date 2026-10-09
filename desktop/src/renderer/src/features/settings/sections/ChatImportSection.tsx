@@ -31,7 +31,14 @@ export default function ChatImportSection() {
             }, async prepare(sourceKeys, signal) {
                 signal.throwIfAborted(); const abort = () => pause(); signal.addEventListener("abort", abort, {once:true});
                 try {
-                    const response = await invoke("runtime:chat-import-prepare", {...session, sourceKeys}); signal.throwIfAborted();
+                    const response = await invoke("runtime:chat-import-prepare", {...session, sourceKeys});
+                    if (signal.aborted && response.status === "selected-many" && response.selections.length > 0) {
+                        // A stopped caller cannot receive these IDs to release them itself.
+                        await invoke("runtime:chat-import-release", {
+                            ...session, selectionIds: response.selections.map(selection => selection.selectionId),
+                        }).catch((error: unknown) => console.warn("Chat import preview cleanup unavailable", error instanceof Error ? error.name : "UnknownError"));
+                    }
+                    signal.throwIfAborted();
                     if(response.status === "error") throw new LocalChatImportDisplayError(response.message);
                     return response.status === "selected-many" ? response : null;
                 } finally { signal.removeEventListener("abort", abort); }
