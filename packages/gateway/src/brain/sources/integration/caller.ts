@@ -36,6 +36,13 @@ export const BRAIN_INTEGRATION_LABEL_CACHE_TTL_MS = 5 * 60_000;
 /** Bytes of the platform's connection list (remote transport). */
 export const BRAIN_INTEGRATION_CONNECTIONS_MAX_BYTES = 256 * 1024;
 const CONNECTIONS_MAX_BYTES = BRAIN_INTEGRATION_CONNECTIONS_MAX_BYTES;
+/**
+ * Bytes of a remote /read-call reply. The route caps the provider's raw bytes at BRAIN_INTEGRATION_RESPONSE_MAX_BYTES
+ * (as the local transport does), then sends them JSON-encoded in its { data, service, action } wrapper, where escaping
+ * can make them up to six times larger (a control character in a text body becomes \u00XX). The reply gets that
+ * allowance plus 64 KiB for the wrapper, so a read the local transport accepts is never refused remotely.
+ */
+export const BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES = 6 * BRAIN_INTEGRATION_RESPONSE_MAX_BYTES + 64 * 1024;
 /** The delegation id rule: an owner id outside it never reaches the platform. */
 export const BRAIN_INTEGRATION_OWNER_ID_PATTERN = /^[A-Za-z0-9_-]{1,256}$/;
 const OWNER_ID_PATTERN = BRAIN_INTEGRATION_OWNER_ID_PATTERN;
@@ -215,7 +222,7 @@ export function createBrainIntegrationCaller(deps: BrainIntegrationCallerDeps): 
       body: JSON.stringify({ service: request.service, action: request.action, label, params: request.params }),
     });
     if (!response.ok) return remoteFailure(response, signal);
-    const body = await readBoundedJson(response, BRAIN_INTEGRATION_RESPONSE_MAX_BYTES, signal);
+    const body = await readBoundedJson(response, BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES, signal);
     const envelope = body.ok ? EnvelopeSchema.safeParse(body.value) : null;
     if (envelope === null || !envelope.success || envelope.data.action !== request.action) return UNAVAILABLE;
     return { status: "ok", data: envelope.data.data };

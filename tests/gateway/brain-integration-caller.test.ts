@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import type { BrainIntegrationCallRequest } from "../../packages/gateway/src/brain/contracts.js";
 import {
-  createBrainIntegrationCaller, readBoundedJson, type BrainIntegrationCallerDeps, type BrainIntegrationRegistry,
+  BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES, createBrainIntegrationCaller, readBoundedJson, type BrainIntegrationCallerDeps,
+  type BrainIntegrationRegistry,
 } from "../../packages/gateway/src/brain/sources/integration/index.js";
 import type { ServiceAction, ServiceDefinition } from "../../packages/gateway/src/integrations/types.js";
 import { fakeFetch, jsonResponse } from "./helpers/brain-integration-fetch.js";
@@ -86,7 +87,8 @@ describe("integration caller, remote transport", () => {
     [new Response("bad gateway", { status: 502 }), { status: "unavailable" }],
     [jsonResponse({}, 503), { status: "unavailable" }],
     [envelope([], "other_action"), { status: "unavailable" }],
-    [new Response("[]", { status: 200, headers: { "content-length": String(5 * 1024 * 1024) } }), { status: "unavailable" }],
+    [new Response("[]", { status: 200, headers: { "content-length": String(BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES + 1) } }),
+      { status: "unavailable" }],
   ])("maps read-call answer %# to an outcome", async (response, outcome) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(await remote([response]).caller.call("o", { ...request, label: "work" }, signal())).toEqual(outcome);
