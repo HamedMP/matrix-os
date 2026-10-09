@@ -33,7 +33,7 @@ if (requested === "gallery") {
   const icons = import.meta.glob("../../../home/apps/app-gallery/src/assets/icons/*.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
   const iconUrl = Object.entries(icons).find(([name]) => name.endsWith(`/${app.id}.png`))?.[1];
   const iconDataUrl = iconUrl && await new Promise<string>((resolve, reject) => {
-    fetch(iconUrl).then(response => response.blob()).then(blob => {
+    fetch(iconUrl, { signal: AbortSignal.timeout(30_000) }).then(response => response.blob()).then(blob => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
       reader.onerror = () => reject(reader.error);
