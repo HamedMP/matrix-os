@@ -15,7 +15,7 @@ export function readDefinition(): Definition {
     typeof definition.id !== "string" ||
     !("fields" in definition) ||
     !Array.isArray(definition.fields) ||
-    definition.fields.length > 12 ||
+    definition.fields.length > 16 ||
     !("services" in definition) ||
     !Array.isArray(definition.services) ||
     definition.services.length > 4
