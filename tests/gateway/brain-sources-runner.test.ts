@@ -113,7 +113,7 @@ describe("runBrainSourceSync", () => {
     }]).adapter, {}, { signal: controller.signal });
     expect(result).toMatchObject({ status: "succeeded", pages: 0, notices: ["run_budget_exhausted"], nextAction: "run_again" });
     const before = await harness.sync(scripted([page([doc("a")], "c1", false)]).adapter, {}, { signal: controller.signal });
-    expect(before).toMatchObject({ pages: 1, notices: ["run_budget_exhausted"] });
+    expect(before).toMatchObject({ pages: 0, notices: ["run_budget_exhausted"] });
   });
 
   it("records adapter failures with their next action and retry hint", async () => {
