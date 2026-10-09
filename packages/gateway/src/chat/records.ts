@@ -32,6 +32,7 @@ import type {
 export type ChatOwner = CanonicalOwnerScope;
 
 export interface ChatRecord {
+  importSource?: import("@matrix-os/contracts").CanonicalChatImportSource;
   readState?: import("@matrix-os/contracts").CanonicalChatReadState;
   chat: CanonicalChat;
   projectId?: string;
