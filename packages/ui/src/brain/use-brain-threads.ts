@@ -24,8 +24,9 @@ const chatIdOf = (record: CanonicalChatRecord): string => record.chat.id;
 
 /**
  * The Company Brain chats of one project, newest activity first, 50 a page ("Show more" pages on, up to 500). The list
- * loads on open and reloads on `reload` and when the window gets focus, keeping the pages "Show more" added; it opens
- * no event stream of its own.
+ * loads on open and reloads on `reload` and when the window gets focus, keeping the pages "Show more" added while the
+ * first page keeps all its chats (a chat pushed off it would fall between the pages); it opens no event stream of its
+ * own.
  */
 export function useBrainThreads(agents: ChatAgentClient, botId: string, projectId: string) {
   const pages = useBrainPages<BrainThreadPage>(
