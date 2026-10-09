@@ -132,8 +132,8 @@ export function withBrainChangeEvents(
 ): BrainProjectService {
   return {
     ...project,
-    async sync(ownerId, projectRef) {
-      const view = await project.sync(ownerId, projectRef);
+    async sync(ownerId, projectRef, run) {
+      const view = await project.sync(ownerId, projectRef, run);
       if (view.counts.written > 0 || view.counts.deleted > 0) {
         await announce(resolver, ownerId, projectRef, (scope, at) => hooks.emit({
           type: "documents_changed", scope, sourceId: null, documentIds: null, at,
