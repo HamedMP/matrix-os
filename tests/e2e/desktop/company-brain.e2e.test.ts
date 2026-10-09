@@ -42,7 +42,7 @@ suite("Electron Desktop Company Brain", () => {
 
   const brainWindow = () => page.getByRole("dialog", { name: "Company Brain window", exact: true });
 
-  it("opens from the launcher with the title bar, the project picker and the seven screens", async () => {
+  it("opens from the launcher on the Chat tab, with the title bar, the project picker and the six tabs", async () => {
     await page.getByRole("button", { name: "Open App Launcher", exact: true }).click();
     const launcher = page.getByRole("dialog", { name: "App launcher", exact: true });
     await launcher.getByRole("button", { name: "Company Brain", exact: true }).click();
@@ -53,10 +53,13 @@ suite("Electron Desktop Company Brain", () => {
     await picker.waitFor();
     expect(await picker.locator("option").allTextContents()).toEqual(["Matrix OS"]);
     const tabs = view.getByRole("tablist", { name: "Screens" }).getByRole("tab");
-    expect(await tabs.allTextContents()).toEqual([
-      "Ask", "Today", "Decisions", "Commitments", "Risks", "Timeline", "Sources",
-    ]);
+    expect(await tabs.allTextContents()).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
+    expect(await view.getByRole("tab", { name: "Chat", exact: true }).getAttribute("aria-selected")).toBe("true");
     expect(await view.getByRole("heading", { level: 1 }).count()).toBe(0);
+    // The Brain tab lends no chat view yet, so the Chat tab says so; the other tabs still work.
+    await view.getByText("Chat is not available here.").first().waitFor();
+    await view.getByRole("tab", { name: "Search", exact: true }).click();
+    await view.getByRole("searchbox", { name: "Search the Company Brain" }).waitFor();
     await page.screenshot({ path: join(evidence, "electron-desktop-ask.png") });
 
     // The stub gateway has no brain routes, so Sources says the part is not turned on yet.
