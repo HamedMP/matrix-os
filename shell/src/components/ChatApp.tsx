@@ -15,7 +15,7 @@ import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
-import { useChatComposerDraft } from "./chat/useChatComposerDraft";
+import { useChatComposerDraft, type ChatComposerDraftKeeper } from "./chat/useChatComposerDraft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
@@ -180,6 +180,10 @@ interface ChatAppProps {
   botId?: string;
   /** The empty chat's heading and line, in place of the Chat app's own. */
   emptyState?: { title: string; detail: string };
+  /** The host's drafts when it remounts this view for each Chat, so a switch away and back keeps them. */
+  composerDrafts?: ChatComposerDraftKeeper;
+  /** The unsent draft's key, when the host keeps its drafts apart (one per brain project). */
+  newDraftScope?: string;
 }
 
 export function ChatApp(props: ChatAppProps) {
@@ -214,6 +218,8 @@ function ChatAppContent({
   layout = "full",
   botId,
   emptyState,
+  composerDrafts,
+  newDraftScope = "new",
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const agentsNavigation = useChatAgentsNavigation();
@@ -224,7 +230,7 @@ function ChatAppContent({
     active: active && !agentsNavigation?.opened, onRead: onUpdateReadState });
   const [newChatSequence, setNewChatSequence] = useState(0);
   const [agentDraftRequest, setAgentDraftRequest] = useState<ChatAgentDraftRequest | null>(null);
-  const composerScope = sessionId ?? `new:${newChatSequence}`;
+  const composerScope = sessionId ?? `${newDraftScope}:${newChatSequence}`;
   const onNewChat = () => {
     botDraftNavigation.clearNotice();
     agentsNavigation?.close();
@@ -233,7 +239,7 @@ function ChatAppContent({
     createChat();
   };
   const onSwitchConversation = (id: string) => { botDraftNavigation.clearNotice(); agentsNavigation?.close(); switchConversation(id); };
-  const composer = useChatComposerDraft(composerScope, agentClient);
+  const composer = useChatComposerDraft(composerScope, agentClient, composerDrafts);
   const botDraftNavigation = useWebBotDraftNavigation({client:agentClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });

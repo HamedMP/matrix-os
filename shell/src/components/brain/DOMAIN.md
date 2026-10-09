@@ -6,16 +6,19 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 ## Scope
 
 - `BrainApp.tsx`: the shared `BrainApp` bound to `shellApi`, plus the chat slot; `ShellBrainAppProps` omit `api`,
-  `loadProjects` and `chat`, and add `mobile`, `active` and `visible`. The windows pass the same `active` (focused and
-  shown) and `visible` (not minimized) as the Chat window, so the chat marks answers read only while it is seen.
+  `loadProjects` and `chat`, and add `mobile`, `active` and `visible` (both required). The windows pass the same
+  `active` (focused and shown) and `visible` (not minimized) as the Chat window, so the chat marks answers read only
+  while it is seen.
 - `BrainChatHost.tsx`: the Web chat slot. It fills the Chat tab with the shell's own `ChatApp` in `layout="embedded"`
   (no rail, suggestion chips, Share, settings or connection line; the same transcript, composer, Bot panel and model
   recovery notice), driven by `hooks/useCanonicalChatThread.ts`: a controller for one Chat that reuses the Chat app's
   transcript, content deltas and snapshot refresh, calls the slot's `createChat` on a draft's first send, never
   changes the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the
   slot (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own
-  model). When a new thread's first turn is refused, the question goes back into its composer. A question with a
-  reference sent while an answer runs is queued, as in the Chat app, and a retry keeps its queue. Open in Chat switches
+  model). When a new thread's first turn is refused, the question moves into its composer. A question with a
+  reference sent while an answer runs is queued, as in the Chat app, and a retry keeps its queue. A thread switch
+  remounts the view, so the host keeps the composer drafts (`composerDrafts`): each thread's unfinished question and
+  references, and each project's draft (`newDraftScope`), come back when the viewer returns. Open in Chat switches
   the Chat app to the same Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans
   to it). Rows rename and delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
@@ -24,8 +27,9 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 
 ## Source Of Truth
 
-- The gateway, through the shared view. Nothing is stored here. The client and the one event stream come from the
-  shell chat state (`useCanonicalChatState` returns them as `chatRuntime`), so the shell still opens one stream.
+- The gateway, through the shared view. Only unsent composer drafts are kept here, in memory, while the app is open.
+  The client and the one event stream come from the shell chat state (`useCanonicalChatState` returns them as
+  `chatRuntime`), so the shell still opens one stream.
 
 ## Public API
 
@@ -46,6 +50,7 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 ## Tests
 
 - `tests/shell/`: `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, one poll at a time, the
-  embedded layout, a draft sent as a brain thread, a refused first question given back, read state only while seen,
-  Open in Chat), `canonical-chat-client.test.ts`
-  (the Chat delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts`, `window-manager.test.ts`.
+  embedded layout, a draft sent as a brain thread, a refused first question given back, drafts kept across thread
+  switches, read state only while seen, Open in Chat), `chat-composer-draft.test.tsx` (the draft keeper),
+  `canonical-chat-client.test.ts` (the Chat delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts`,
+  `window-manager.test.ts`.

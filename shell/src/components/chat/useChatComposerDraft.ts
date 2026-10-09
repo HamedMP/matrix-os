@@ -3,11 +3,29 @@ import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 
 type Draft = { text: string; resources: CanonicalChatResourceReference[]; requestId: string; permissionIdentity: string };
 const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionIdentity: "" };
-export function useChatComposerDraft(scope: string, identity: unknown) {
-  const [store, setStore] = useState<{ identity: unknown; drafts: Record<string, Draft> }>({ identity, drafts: {} });
+type DraftStore = { identity: unknown; drafts: Record<string, Draft> };
+
+/**
+ * Keeps a view's drafts after it unmounts: a host that remounts the Chat view for each Chat (the Company Brain) gives
+ * every view the same keeper, so an unfinished question and its references come back with the Chat.
+ */
+export interface ChatComposerDraftKeeper { read(): DraftStore | null; write(store: DraftStore): void }
+export function createChatComposerDraftKeeper(): ChatComposerDraftKeeper {
+  let kept: DraftStore | null = null;
+  return { read: () => kept, write: (store) => { kept = store; } };
+}
+
+export function useChatComposerDraft(scope: string, identity: unknown, keeper?: ChatComposerDraftKeeper) {
+  const [store, setStore] = useState<DraftStore>(() => {
+    const kept = keeper?.read();
+    return kept && kept.identity === identity ? kept : { identity, drafts: {} };
+  });
   if (store.identity !== identity) setStore({ identity, drafts: {} });
   const storeRef = useRef(store);
-  useLayoutEffect(() => { storeRef.current = store; }, [store]);
+  useLayoutEffect(() => {
+    storeRef.current = store;
+    keeper?.write(store);
+  }, [keeper, store]);
   const draft = store.identity === identity ? store.drafts[scope] ?? emptyDraft : emptyDraft;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable draft writers are effect dependencies in ChatInput, including non-compiler tests and development.
   const update = useCallback((patch: Partial<Pick<Draft, "text" | "resources">>, replace = false) => {

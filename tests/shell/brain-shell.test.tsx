@@ -18,7 +18,7 @@ describe("Company Brain on Web", () => {
   it("binds the shared view to the Web gateway client and shows its heading by default", async () => {
     const fetchMock = vi.fn(async () => answer(200, { projects: [] }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<BrainApp />);
+    render(<BrainApp active visible />);
     expect(screen.getByRole("heading", { level: 1, name: "Company Brain" })).toBeTruthy();
     expect(await screen.findByText("No projects yet.")).toBeTruthy();
     expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain("/api/workspace/projects");
@@ -26,7 +26,7 @@ describe("Company Brain on Web", () => {
 
   it("hides the heading in a window that names the app", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => answer(200, { projects: [] })));
-    render(<BrainApp showHeading={false} />);
+    render(<BrainApp showHeading={false} active visible />);
     expect(await screen.findByText("No projects yet.")).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });

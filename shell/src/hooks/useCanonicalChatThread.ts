@@ -242,6 +242,9 @@ export function useCanonicalChatThread({
         if (!record && chatIdRef.current !== null) {
           returnedDrafts.current += 1;
           setReturnedDraft({ id: returnedDrafts.current, text, ...(options.resources?.length ? { resources: options.resources } : {}) });
+          // The question moved to the new Chat's composer, so the draft's composer lets it go (a kept draft would
+          // bring it back on the next New chat).
+          return true;
         }
         return false;
       },
