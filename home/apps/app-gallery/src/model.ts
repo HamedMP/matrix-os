@@ -147,9 +147,11 @@ export async function openGalleryApp(
   bridge: GalleryBridge,
   app: GalleryAppListing,
 ) {
-  if (!bridge.openApp || !app.installed || !safePath(app.launchPath))
+  if (!bridge.openApp || !app.installed || !safeId.test(app.id) || !safePath(app.launchPath))
     throw new Error("App unavailable");
-  await bridge.openApp(app.installedName ?? app.name, app.launchPath);
+  // Folder paths may change again after listing; hosts resolve the stable
+  // manifest identity against their current authenticated runtime catalog.
+  await bridge.openApp(app.installedName ?? app.name, `apps/${app.id}`);
 }
 
 function knownInventory(raw: unknown): GalleryConnection[] | null {
