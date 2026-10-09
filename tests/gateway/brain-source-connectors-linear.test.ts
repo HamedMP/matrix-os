@@ -136,12 +136,12 @@ describe("Linear source", () => {
     expect(integrations.calls[0]!.params.first).toBe(76);
   });
 
-  it("announces a page whose only change is a document's refs, such as a new assignee", async () => {
+  it("announces a page whose only change is a document's refs (a new assignee) or its date", async () => {
     harness = await connectorHarness("linear");
-    let assignee = "user-2";
+    let [assignee, updatedAt] = ["user-2", "2026-09-01T00:00:00.000Z"];
     const handler = createBrainLinearHandler({
       kysely: harness.db, providerTimeoutMs: 10_000, isConnected: async () => true,
-      integrations: fakeIntegrations({ "linear.brain_issues": () => connection("issues", [issue(1, { assignee: { id: assignee } })]) }),
+      integrations: fakeIntegrations({ "linear.brain_issues": () => connection("issues", [issue(1, { assignee: { id: assignee }, updatedAt })]) }),
     });
     const hooks = recordingHooks();
     const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
@@ -163,6 +163,10 @@ describe("Linear source", () => {
     expect(hooks.events).toEqual([expect.objectContaining({
       type: "documents_changed", scope: connectorScope, sourceId: harness.sourceId, documentIds: [id],
     })]);
+    // A newer updatedAt alone moves the stored date the graph links carry, so it is announced too.
+    updatedAt = "2026-09-25T00:00:00.000Z";
+    expect((await run()).counts).toMatchObject({ written: 0, unchanged: 1 });
+    expect(hooks.events.map((event) => event.type === "documents_changed" && event.documentIds)).toEqual([[id]]);
   });
 
   it("maps provider outcomes, refused output and timeouts to stable codes", async () => {

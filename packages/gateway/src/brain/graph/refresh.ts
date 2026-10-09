@@ -1,7 +1,8 @@
 /**
  * The graph as a derived index (hook listener "graph"). A hook only nudges: correctness comes from refresh, which
  * removes rows of tombstoned documents, derives live documents that are missing, at another (incarnation, revision)
- * or whose refs, decision claims or quoted decision paths changed or linked parent went, then sweeps orphan entities.
+ * or whose source time, refs, decision claims or quoted decision paths changed or linked parent went, then sweeps
+ * orphan entities.
  * Every pass is bounded by a document count, a wall-clock budget and the abort signal.
  */
 import { sql, type Kysely } from "kysely";
@@ -61,6 +62,7 @@ async function pendingIds(db: BrainGraphExecutor, scope: BrainScopeKey, limit: n
       ON s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id
     WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
       AND (s.document_id IS NULL OR s.incarnation <> d.incarnation OR s.revision <> d.revision
+        OR s.source_updated_at IS DISTINCT FROM d.source_updated_at
         OR s.claims_digest <> ${claimsDigestSql("d")} OR s.refs_digest <> ${refsDigestSql("d")}
         OR ${decisionPathsChangedSql("s")} OR ${PARENT_GONE})
     ORDER BY d.document_id LIMIT ${limit}`.execute(db);

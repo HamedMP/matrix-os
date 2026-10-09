@@ -176,7 +176,7 @@ async function readPages<TConfig>(
       for (const id of applied.rejected.slice(0, BRAIN_SOURCE_REJECTED_IDS_MAX - progress.rejected.length)) {
         progress.rejected.push(id);
       }
-      const changed = applied.created + applied.updated + applied.refsChanged + applied.deleted;
+      const changed = applied.created + applied.updated + applied.refsChanged + applied.restamped + applied.deleted;
       if (changed > 0 && options.hooks !== undefined) {
         // At most 200 upserts plus 200 deletions per page, under BRAIN_HOOK_DOCUMENT_IDS_MAX.
         const ids = [...page.upserts.map((upsert) => upsert.documentId), ...page.deletions];
