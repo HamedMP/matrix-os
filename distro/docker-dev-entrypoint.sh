@@ -18,6 +18,49 @@ launch_gateway() {
   exec node --import=tsx --watch packages/gateway/src/main.ts
 }
 
+# Content-hash based, NOT mtime based: git operations (checkout/cherry-pick/
+# rebase/pull) don't reliably bump pnpm-lock.yaml's mtime, so an mtime check
+# (`-nt`) can silently skip a reinstall after deps actually changed — the shell
+# then breaks with "Module not found" even after a restart. md5sum -c compares
+# the real content, so a restart always reinstalls iff the lockfile changed.
+# The image is Alpine, whose BusyBox md5sum has no --status flag; discard the
+# output instead so the check works with BusyBox and GNU coreutils alike.
+lockfile_unchanged() {
+  md5sum -c node_modules/.pnpm-lock-hash >/dev/null 2>&1
+}
+
+# Auto-heal dependencies while the stack is running. Without this, changing deps
+# on a running container (branch switch, cherry-pick, git pull, adding a package)
+# leaves the named-volume node_modules stale and the shell breaks with "Module
+# not found" until a manual restart. Poll the lockfile and reinstall in the
+# background so HMR just picks up new modules.
+watch_deps() {
+  # Remember the lockfile content whose install failed, so a broken or
+  # half-written lockfile is retried only after it changes again instead of
+  # every poll.
+  local failed_lock_hash="" current_lock_hash
+  while sleep 5; do
+    if lockfile_unchanged; then
+      # Back on the installed lockfile: returning to the failed one later is a
+      # new change and gets a fresh install attempt.
+      failed_lock_hash=""
+      continue
+    fi
+    current_lock_hash="$(md5sum pnpm-lock.yaml 2>/dev/null)" || current_lock_hash=""
+    [ -n "$current_lock_hash" ] || continue
+    [ "$current_lock_hash" = "$failed_lock_hash" ] && continue
+    echo "[matrix-os-dev] Lockfile changed -- reinstalling dependencies..."
+    if pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false; then
+      md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
+      failed_lock_hash=""
+      echo "[matrix-os-dev] Dependencies synced; HMR will pick up changes."
+    else
+      failed_lock_hash="$current_lock_hash"
+      echo "[matrix-os-dev] pnpm install failed; will retry on next lockfile change."
+    fi
+  done
+}
+
 case "${1:-}" in
   --prepare-gateway)
     prepare_gateway
@@ -26,17 +69,15 @@ case "${1:-}" in
   --launch-gateway)
     launch_gateway
     ;;
+  --watch-deps)
+    watch_deps
+    exit 0
+    ;;
 esac
 
 # Install deps as root (volume may be root-owned).
-#
-# Content-hash based, NOT mtime based: git operations (checkout/cherry-pick/
-# rebase/pull) don't reliably bump pnpm-lock.yaml's mtime, so an mtime check
-# (`-nt`) can silently skip a reinstall after deps actually changed — the shell
-# then breaks with "Module not found" even after a restart. md5sum -c compares
-# the real content, so a restart always reinstalls iff the lockfile changed.
 ensure_deps() {
-  if [ -d "node_modules/.pnpm" ] && md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null; then
+  if [ -d "node_modules/.pnpm" ] && lockfile_unchanged; then
     return 0
   fi
   echo "[matrix-os-dev] Installing dependencies (lockfile changed)..."
@@ -208,25 +249,10 @@ if command -v zsh >/dev/null 2>&1; then
   export SHELL=/bin/zsh
 fi
 
-# Auto-heal dependencies while the stack is running. Without this, changing deps
-# on a running container (branch switch, cherry-pick, git pull, adding a package)
-# leaves the named-volume node_modules stale and the shell breaks with "Module
-# not found" until a manual restart. Poll the lockfile and reinstall in the
-# background so HMR just picks up new modules. Disable with MATRIX_DEV_DEP_WATCH=0.
+# Keep dependencies in sync while the stack runs (see watch_deps). Disable with
+# MATRIX_DEV_DEP_WATCH=0.
 if [ "${MATRIX_DEV_DEP_WATCH:-1}" != "0" ]; then
-  (
-    while true; do
-      sleep 5
-      md5sum --status -c node_modules/.pnpm-lock-hash 2>/dev/null && continue
-      echo "[matrix-os-dev] Lockfile changed -- reinstalling dependencies..."
-      if pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false; then
-        md5sum pnpm-lock.yaml > node_modules/.pnpm-lock-hash 2>/dev/null || true
-        echo "[matrix-os-dev] Dependencies synced; HMR will pick up changes."
-      else
-        echo "[matrix-os-dev] pnpm install failed; will retry on next lockfile change."
-      fi
-    done
-  ) &
+  watch_deps &
   echo "[matrix-os-dev] Dependency watcher running (auto-reinstall on lockfile change)."
 fi
 
@@ -359,7 +385,7 @@ CODE_PROXY_EOF
     CODE_PROXY_PID=
   fi
 
-  pnpm --filter shell exec next dev -p 3000 &
+  pnpm --filter shell exec next dev --webpack -p 3000 &
   SHELL_PID=$!
 
   /app/distro/docker-dev-entrypoint.sh --launch-gateway &
