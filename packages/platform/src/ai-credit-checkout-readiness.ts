@@ -51,7 +51,7 @@ export async function isAiCreditCheckoutRouteHealthy(input: {
       // model must not consume a healthy alternative's shared request window.
       const eligible = FUNDED_PROBE_MODELS.filter(model => first.policy.allowedModelIds.includes(model));
       return await Promise.any(eligible.map(async model => {
-        const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs });
+        const result = await input.modelProbes!.probe(model, { signal: controller.signal, deadlineAtMs, runtime: { identity: input.identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision, ...(first.runtimeTokenEpoch === undefined ? {} : { runtimeTokenEpoch: first.runtimeTokenEpoch }) } });
         const afterProbe = (input.now ?? (() => new Date()))().getTime();
         if (!result.ready || expired || !(Date.parse(result.checkedAt) <= afterProbe)
           || !(Date.parse(result.staleAfter) > afterProbe)) throw new Error("Funded model unavailable");

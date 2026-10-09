@@ -64,17 +64,12 @@ import {
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
-import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
+import { type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
 import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-cleanup-worker.js';
-import {
-  createAiFundedOperatorRoutes,
-  createAiFundedRelayRoutes,
-  createAiFundedRuntimeRoutes,
-  loadAiFundedControlPlaneConfig,
-} from './ai-funded-policy-routes.js';
-import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
-import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
+import { type FundedModelProbeService } from './ai-funded-model-probes.js';
+import { createPlatformFundedAiComposition } from './platform-funded-ai.js';
+import { loadFundedAcceptanceScope } from './ai-funded-acceptance-scope.js';
 import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
@@ -289,6 +284,7 @@ async function startPlatformServerWithCleanup(
     process.exit(1);
   }
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
+  const fundedAcceptanceScope = loadFundedAcceptanceScope(process.env);
   let runtimeConfig;
   let speechConfig;
   try {
@@ -311,55 +307,14 @@ async function startPlatformServerWithCleanup(
   const atsDatabaseUrl = resolveAtsDatabaseUrl(process.env);
   const db = createPlatformDb(runtimeConfig.platformDatabaseUrl);
   await db.ready;
-  const fundedAiConfig = loadAiFundedControlPlaneConfig({
-    ...process.env,
-    PLATFORM_SECRET: platformSecret,
-  });
-  let internalFundedAiRuntimeRoutes: Hono | undefined;
-  let internalFundedAiRelayRoutes: Hono | undefined;
-  let internalFundedAiOperatorRoutes: Hono | undefined;
   const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
     ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
     : undefined;
-  let fundedAiRepository: AiFundedPolicyRepository | undefined;
-  let fundedModelProbes: FundedModelProbeService | undefined;
-  if (fundedAiConfig.enabled) {
-    fundedAiRepository = createAiFundedPolicyRepository({
-      db,
-      credentialHashSecret: fundedAiConfig.credentialHashSecret,
-      credentialTtlMs: fundedAiConfig.credentialTtlMs,
-      issueCooldownMs: fundedAiConfig.issueCooldownMs,
-      policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+  const { fundedAiRepository, fundedModelProbes, internalFundedAiRuntimeRoutes,
+    internalFundedAiRelayRoutes, internalFundedAiOperatorRoutes } = createPlatformFundedAiComposition({
+      db, platformSecret, env: process.env, acceptanceScope: fundedAcceptanceScope,
     });
-    const probeLimits = loadFundedModelProbeLimits(process.env);
-    fundedModelProbes = createFundedModelProbeService({
-      db,
-      credentials: fundedAiRepository,
-      relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
-      relayControlToken: fundedAiConfig.relayControlToken,
-      ...probeLimits,
-    });
-    internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
-      db,
-      platformSecret: fundedAiConfig.platformSecret,
-      repository: fundedAiRepository,
-      topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
-      promotionalGrant: fundedAiConfig.promotionalGrant,
-      routeProbes: fundedModelProbes,
-    });
-    internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
-      relayControlToken: fundedAiConfig.relayControlToken,
-      repository: fundedAiRepository,
-    });
-    internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
-      db,
-      operatorSecret: fundedAiConfig.platformSecret,
-      repository: fundedAiRepository,
-      promotionalGrant: fundedAiConfig.promotionalGrant,
-    });
-    console.log('[platform] Funded AI control plane enabled; relay activation remains disabled');
-  }
   const atsDb = atsDatabaseUrl ? createAtsDb(atsDatabaseUrl) : undefined;
   await atsDb?.ready;
 

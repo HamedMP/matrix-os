@@ -330,7 +330,7 @@ export function createAiFundedRuntimeRoutes(options: {
       const observations = options.routeProbes
         ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model, {
           signal: controller.signal, deadlineAtMs,
-          ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
+          runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision, ...(first.runtimeTokenEpoch === undefined ? {} : { runtimeTokenEpoch: first.runtimeTokenEpoch }) },
         }) }))), deadlineAtMs)
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
@@ -540,6 +540,7 @@ export function createAiFundedOperatorRoutes(options: {
 }
 
 export function createAiFundedRelayRoutes(options: {
+  cleanupEnabled?: boolean;
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
 }) {
@@ -609,7 +610,7 @@ export function createAiFundedRelayRoutes(options: {
       return policyErrorResponse(c, error);
     }
   });
-  app.post("/reservations/cleanup", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
+  if (options.cleanupEnabled !== false) app.post("/reservations/cleanup", bodyLimit({ maxSize: RUNTIME_BODY_LIMIT }), async (c) => {
     const request = CleanupBodySchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {

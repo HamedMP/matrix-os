@@ -1,3 +1,4 @@
+import { assertFundedAcceptanceIdentity, assertAcceptanceTransactionCurrent, type FundedAcceptanceScope } from "./ai-funded-acceptance-scope.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 /**
  * Funded AI authorization: the single owner-wide admission point before a
@@ -38,6 +39,7 @@ type AuthorizeOutcome =
 
 export interface FundedAuthorizeDependencies {
   db: PlatformDB;
+  acceptanceScope?: FundedAcceptanceScope;
   now: () => Date;
   hashCredential(credential: string): string;
   reservationIdFactory(): string;
@@ -74,10 +76,13 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // Serialize admission across every runtime/replica for this owner. The
       // namespaced transaction lock is acquired before runtime and balance locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
+      const acceptedMachine = deps.acceptanceScope ? await trx.executor.selectFrom("user_machines")
+        .select(["clerk_user_id", "runtime_slot", "runtime_token_epoch", "status", "activation_state", "deleted_at"])
+        .where("machine_id", "=", credential.machine_id).forShare().executeTakeFirst() : undefined;
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
-      const machine = await trx.executor.selectFrom("user_machines").select([
-        "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
+      const machine = deps.acceptanceScope ? acceptedMachine : await trx.executor.selectFrom("user_machines").select([
+        "clerk_user_id", "runtime_slot", "runtime_token_epoch", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", credential.machine_id).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
         .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
@@ -103,6 +108,18 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         machineId: credential.machine_id,
         runtimeSlot: credential.runtime_slot,
       };
+      if (deps.acceptanceScope) {
+        // Exact stored authorization is historical evidence, not a new reservation.
+        const replay = await trx.executor.selectFrom("ai_funded_usage_reservations")
+          .select(["payload_hash", "authorization_response", "execution_admission_release", "charge_waiver"])
+          .where("token_id", "=", credential.token_id).where("request_id", "=", request.requestId).executeTakeFirst();
+        if (replay) {
+          if (replay.execution_admission_release !== null || replay.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
+          if (replay.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
+          return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(replay.authorization_response)) };
+        }
+        assertFundedAcceptanceIdentity(deps.acceptanceScope, identity, machine.runtime_token_epoch, deps.now());
+      }
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
       const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         month_period_start: periodStart,
@@ -147,6 +164,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         checked,
       });
       // A priority rejection may have written a claim; return it so the claim commits.
+      await assertAcceptanceTransactionCurrent(trx, deps.acceptanceScope, deps.now);
       if (priority.kind === "rejected") return { kind: "rejected", reason: priority.reason };
       if (await findConflictingActiveReservation(trx.executor, credential.owner_id, billingMode)) {
         // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
@@ -279,6 +297,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           })),
         ).execute();
       }
+      await assertAcceptanceTransactionCurrent(trx, deps.acceptanceScope, deps.now);
       return { kind: "authorized", response };
     }).catch((error: unknown) => {
       if (error instanceof Error && "code" in error && error.code === "23505"
