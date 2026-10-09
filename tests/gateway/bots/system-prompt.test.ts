@@ -8,12 +8,15 @@ import {
 } from "../../../packages/gateway/src/bots/system-prompt.js";
 
 const NOW = new Date("2026-09-28T09:00:00.000Z");
+/** The launch set; the Company Brain recipe has its own rules and tests (company-brain-recipe.test.ts). */
+const launchSet = () => createBotRecipeCatalog().list().filter((recipe) => recipe.promptProfile === undefined);
 
 describe("bot recipe catalog", () => {
   it("resolves only exact launch-set versions", () => {
     const catalog = createBotRecipeCatalog();
     expect(catalog.list().map((recipe) => recipe.recipeId)).toEqual([
       "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
+      "company-brain",
     ]);
     expect(catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" }).name).toBe("Writing Bot");
     for (const ref of [
@@ -34,7 +37,7 @@ describe("bot recipe catalog", () => {
   });
 
   it("never gives a recipe without integrations the integration tools", () => {
-    for (const recipe of createBotRecipeCatalog().list()) {
+    for (const recipe of launchSet()) {
       if (recipe.integrations.some((integration) => integration.required)) {
         expect(recipe.capabilities).toEqual(expect.arrayContaining(["integration.inventory", "integration.call"]));
       }
@@ -47,7 +50,7 @@ describe("bot recipe catalog", () => {
 
 describe("bot system prompt", () => {
   it("stays under the kernel budget for every launch-set recipe, even at the instruction limit", () => {
-    for (const recipe of createBotRecipeCatalog().list()) {
+    for (const recipe of launchSet()) {
       const prompt = buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, now: NOW });
       expect(estimatePromptTokens(prompt)).toBeLessThan(2_000);
       expect(prompt).toContain(recipe.output);
