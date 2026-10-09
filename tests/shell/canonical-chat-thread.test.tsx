@@ -118,7 +118,8 @@ describe("useCanonicalChatThread", () => {
     const { result } = renderHook(() => useCanonicalChatThread({
       client, eventSource: events, chatId: null, createChat, onChatChanged,
     }));
-    await act(async () => { await result.current.onSubmit("Why?", undefined, SEND); });
+    // The draft's composer lets the question go: it moves to the new Chat's composer.
+    await act(async () => { expect(await result.current.onSubmit("Why?", undefined, SEND)).toBe(true); });
     expect(onChatChanged).not.toHaveBeenCalled();
     expect(result.current.sessionId).toBe("chat_new");
     // The new Chat's composer gets the question back once, so a refused first send loses nothing.
@@ -128,7 +129,7 @@ describe("useCanonicalChatThread", () => {
     expect(result.current.composerDraftRequest).toBeNull();
     // A refused turn in a Chat that already existed keeps its question in the same composer, so nothing comes back.
     client.admitTurn.mockRejectedValueOnce(new Error("offline"));
-    await act(async () => { await result.current.onSubmit("And then?", undefined, SEND); });
+    await act(async () => { expect(await result.current.onSubmit("And then?", undefined, SEND)).toBe(false); });
     expect(result.current.composerDraftRequest).toBeNull();
   });
 
@@ -208,7 +209,7 @@ describe("useCanonicalChatThread", () => {
 });
 
 /** The Web Brain app over a fake gateway: one project with a repository, and a Company Brain Bot. */
-function webBrain(items: unknown[] = [], connected = true, windowState: { active?: boolean; visible?: boolean } = {}) {
+function webBrain(items: unknown[] = [], connected = true, windowState = { active: true, visible: true }) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(String(url).includes("/sources")
     ? { items: [{ sourceId: "src_git", kind: "git" }], kinds: [] }
     : { projects: [{ id: "proj_matrix_os", name: "matrix-os", slug: "matrix-os" }] })));
@@ -271,6 +272,33 @@ describe("Company Brain chat on Web", () => {
     await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_brain", expect.anything()));
     await waitFor(() => expect(composer()).toHaveValue("Why did src/a.ts change?"));
     expect(screen.queryByTestId("harness-setup")).toBeNull();
+    // The question now lives in its thread, so the next draft starts empty.
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(await screen.findByRole("heading", { name: "Ask about matrix-os" })).toBeTruthy();
+    expect(composer()).toHaveValue("");
+  });
+
+  it("keeps an unfinished question in each brain thread and in the draft when the viewer switches threads", async () => {
+    const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
+    webBrain([titled("chat_a", "Release notes"), titled("chat_b", "Test plan")]);
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    const openRow = async (name: RegExp) => {
+      fireEvent.click(await screen.findByRole("button", { name }));
+      await waitFor(() => expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy());
+    };
+    await openRow(/^Release notes/);
+    fireEvent.change(composer(), { target: { value: "What shipped in" } });
+    await openRow(/^Test plan/);
+    expect(composer()).toHaveValue("");
+    fireEvent.change(composer(), { target: { value: "Which tests" } });
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: /message/i }), { target: { value: "Who owns" } });
+    await openRow(/^Release notes/);
+    expect(composer()).toHaveValue("What shipped in");
+    await openRow(/^Test plan/);
+    expect(composer()).toHaveValue("Which tests");
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(await screen.findByRole("textbox", { name: /message/i })).toHaveValue("Who owns");
   });
 
   it("marks a brain answer read only while its window is focused, like the Chat window", async () => {

@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { BrainChatHost, BrainChatSlot } from "@matrix-os/ui";
 import { ChatApp } from "@/components/ChatApp";
+import { createChatComposerDraftKeeper, type ChatComposerDraftKeeper } from "@/components/chat/useChatComposerDraft";
 import type { ChatState } from "@/hooks/useChatState";
 import { useCanonicalChatThread } from "@/hooks/useCanonicalChatThread";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -24,9 +25,9 @@ function openInChatApp(switchConversation: (chatId: string) => void, chatId: str
   else focusOrOpenShellWindow("Chat", "__chat__");
 }
 
-function BrainChatThreadView({ slot, runtime, connected, mobile, active, visible, openInChat }: {
+function BrainChatThreadView({ slot, runtime, connected, mobile, active, visible, openInChat, drafts }: {
   slot: BrainChatSlot; runtime: ChatRuntime; connected: boolean; mobile: boolean; active: boolean; visible: boolean;
-  openInChat: (chatId: string) => void;
+  openInChat: (chatId: string) => void; drafts: ChatComposerDraftKeeper;
 }) {
   const thread = useCanonicalChatThread({
     client: runtime.client, eventSource: runtime.eventSource, chatId: slot.chatId, createChat: slot.createChat,
@@ -41,6 +42,9 @@ function BrainChatThreadView({ slot, runtime, connected, mobile, active, visible
       botId={slot.agentId}
       mobile={mobile}
       emptyState={{ title: slot.prompt, detail: slot.promptDetail }}
+      // A thread switch remounts this view: the host keeps each thread's unfinished question, and each project's draft.
+      composerDrafts={drafts}
+      newDraftScope={`new:brain:${slot.projectId}`}
       connected={connected}
       conversations={[]}
       onNewChat={() => undefined}
@@ -60,6 +64,7 @@ export function useShellBrainChatHost(mobile: boolean, active: boolean, visible:
   const runtime = chat?.chatRuntime;
   const switchConversation = chat?.switchConversation;
   const connected = chat?.connected ?? false;
+  const [drafts] = useState(createChatComposerDraftKeeper);
   return useMemo(() => {
     const agents = runtime?.client.agents;
     if (!runtime || !agents || !switchConversation) return undefined;
@@ -76,8 +81,8 @@ export function useShellBrainChatHost(mobile: boolean, active: boolean, visible:
       },
       render: (slot: BrainChatSlot) => (
         <BrainChatThreadView slot={slot} runtime={runtime} connected={connected} mobile={mobile} active={active}
-          visible={visible} openInChat={openInChat} />
+          visible={visible} openInChat={openInChat} drafts={drafts} />
       ),
     };
-  }, [runtime, switchConversation, connected, mobile, active, visible]);
+  }, [runtime, switchConversation, connected, mobile, active, visible, drafts]);
 }
