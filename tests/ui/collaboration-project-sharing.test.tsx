@@ -417,6 +417,68 @@ describe("whole-project sharing confirmation", () => {
     }
   });
 
+  it("refreshes a cancelled publication and lets the owner confirm the updated inventory again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const updatedInventory = {
+        ...completeInventory(),
+        scopeRevision: "8",
+        projectRevision: "9",
+        inventoryHash: "e".repeat(64),
+        membershipHash: "f".repeat(64),
+        inventoryToken: "a".repeat(64),
+        ownedItems: [
+          ...completeInventory().ownedItems,
+          { kind: "file" as const, id: "release-notes.md", revision: "6", compatibility: "ready" as const },
+        ],
+      };
+      const api = apiFixture();
+      let scopeReads = 0;
+      let inventoryReads = 0;
+      api.post.mockImplementation(async (path: string) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "7", confirmationToken: "p".repeat(64) };
+        if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return defaultOrganizationGrant();
+        if (path.endsWith("/policy/preflight")) return undefined;
+        if (path.endsWith("/project/confirm")) return {
+          id: "20000000-0000-4000-8000-000000000401", scopeId: scope.id, status: "prepared", inventoryRevision: "7",
+          createdAt: "2026-08-22T12:00:00.000Z", updatedAt: "2026-08-22T12:00:00.000Z",
+        };
+        throw new Error(`unexpected POST ${path}`);
+      });
+      api.get.mockImplementation(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [] };
+        if (path.endsWith("/project/inventory")) return inventoryReads++ === 0 ? completeInventory() : updatedInventory;
+        if (path.endsWith("/grants")) return [];
+        if (path.startsWith("/api/organizations/")) return { members: [] };
+        scopeReads += 1;
+        return scope;
+      });
+
+      render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_matrix_team"
+        projectId="proj_launch" projectName="Launch" />);
+      fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Share whole project" }));
+      expect(await screen.findByText(/Preparing the shared project/i)).toBeVisible();
+
+      await vi.advanceTimersByTimeAsync(1_500);
+
+      expect(await screen.findByText(/Project contents changed.*confirm again/i)).toBeVisible();
+      expect(screen.getByText("release-notes.md")).toBeVisible();
+      const retry = screen.getByRole("button", { name: "Share whole project" });
+      expect(retry).toBeEnabled();
+      fireEvent.click(retry);
+
+      await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(
+        `/api/collaboration/scopes/${scope.id}/project/confirm`,
+        expect.objectContaining({ expectedScopeRevision: "8", expectedProjectRevision: "9", inventoryToken: "a".repeat(64) }),
+      ));
+      expect(scopeReads).toBeGreaterThanOrEqual(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops waiting for publication once the owner closes the dialog", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

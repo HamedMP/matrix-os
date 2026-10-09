@@ -30,6 +30,7 @@ export function ProjectSharingDialog({
   onAccessChanged,
   onConfirmed,
   publicationDelayed = false,
+  publicationFailure,
   onCheckPublication,
   onClose,
 }: {
@@ -44,6 +45,7 @@ export function ProjectSharingDialog({
   onConfirmed?: () => void;
   /** True once the bounded wait for publication ran out; the share continues on the home. */
   publicationDelayed?: boolean;
+  publicationFailure?: "inventory_changed" | "unavailable";
   onCheckPublication?: () => void;
   onClose: () => void;
 }) {
@@ -72,16 +74,22 @@ export function ProjectSharingDialog({
       });
     return () => { active = false; };
   }, [api, scope.id]);
-  const presentation = currentInventory ? deriveProjectPresentation(scope, currentInventory) : null;
-  const chatRoots = (currentInventory?.ownedItems ?? []).filter((item) => item.kind === "chat").map((item) => ({
+  const displayedInventory = publicationFailure && inventory
+    ? CollaborationProjectInventorySchema.parse(inventory)
+    : currentInventory;
+  const presentation = displayedInventory ? deriveProjectPresentation(scope, displayedInventory) : null;
+  const chatRoots = (displayedInventory?.ownedItems ?? []).filter((item) => item.kind === "chat").map((item) => ({
     chatId: item.id, ...(item.executionRoot ? { executionRoot: item.executionRoot } : {}),
     ...(item.branch ? { branch: item.branch } : {}), ...(item.dirty !== undefined ? { dirty: item.dirty } : {}),
     readiness: item.compatibility,
   }));
 
   const refreshAfterAccessChange = async () => {
+    if (scope.lifecycle === "shared" || scope.lifecycle === "archived") {
+      await onAccessChanged?.();
+      return;
+    }
     const result = await onAccessChanged?.();
-    if (scope.lifecycle === "shared" || scope.lifecycle === "archived") return;
     const parsed = CollaborationProjectInventorySchema.safeParse(result);
     const refreshed = parsed.success
       ? parsed.data
@@ -90,7 +98,9 @@ export function ProjectSharingDialog({
   };
 
   const confirm = async () => {
-    if (!presentation?.canConfirm || pending || confirmed || !currentInventory) return;
+    if (!presentation?.canConfirm || pending || (confirmed && !publicationFailure) || !displayedInventory) return;
+    const confirmationInventory = displayedInventory;
+    if (confirmationInventory !== currentInventory) setCurrentInventory(confirmationInventory);
     setPending(true);
     setError("");
     setFeedback("");
@@ -99,11 +109,11 @@ export function ProjectSharingDialog({
         `/api/collaboration/scopes/${scope.id}/project/confirm`,
         {
           clientRequestId: crypto.randomUUID(),
-          expectedScopeRevision: currentInventory.scopeRevision,
-          expectedProjectRevision: currentInventory.projectRevision,
-          inventoryHash: currentInventory.inventoryHash,
-          membershipHash: currentInventory.membershipHash,
-          inventoryToken: currentInventory.inventoryToken,
+          expectedScopeRevision: confirmationInventory.scopeRevision,
+          expectedProjectRevision: confirmationInventory.projectRevision,
+          inventoryHash: confirmationInventory.inventoryHash,
+          membershipHash: confirmationInventory.membershipHash,
+          inventoryToken: confirmationInventory.inventoryToken,
         },
       ));
       if (alive.current) {
@@ -131,6 +141,12 @@ export function ProjectSharingDialog({
   };
 
   const published = scope.lifecycle === "shared" || scope.lifecycle === "archived";
+  const confirmationLocked = confirmed && !publicationFailure;
+  const publicationError = publicationFailure === "inventory_changed"
+    ? "Project contents changed while sharing. Review the complete updated inventory, then confirm again."
+    : publicationFailure === "unavailable"
+      ? "Sharing stopped before publication completed. Refresh the project inventory and try again."
+      : "";
   return <Dialog open aria-label={`Share ${projectName}`} onClose={() => { if (!pending) onClose(); }}
     className="ph-no-capture flex max-h-[88vh] w-[min(94vw,560px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
     style={{
@@ -150,10 +166,10 @@ export function ProjectSharingDialog({
       organizationName={organizationName}
       onChanged={refreshAfterAccessChange} /> : null}
 
-    {currentInventory && !published ? <section aria-labelledby="project-contents-heading">
+    {displayedInventory && !published ? <section aria-labelledby="project-contents-heading">
       <h3 id="project-contents-heading" className="font-medium">Complete project inventory</h3>
       <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-        {currentInventory.ownedItems.map((item) => <li key={`${item.kind}:${item.id}`}
+        {displayedInventory.ownedItems.map((item) => <li key={`${item.kind}:${item.id}`}
           className="rounded-xl border px-3 py-2 text-sm">
           <span className="font-medium">{item.id}</span>
           <span className="ml-2 capitalize" style={{ color: "var(--text-secondary)" }}>{item.kind}</span>
@@ -162,23 +178,23 @@ export function ProjectSharingDialog({
     </section> : null}
 
     {readiness && !published ? <ReadinessSummary readiness={readiness} /> : null}
-    {currentInventory && !published ? <ProjectSourceSummary gitSetup={currentInventory.gitSetup} chatRoots={chatRoots} /> : null}
+    {displayedInventory && !published ? <ProjectSourceSummary gitSetup={displayedInventory.gitSetup} chatRoots={chatRoots} /> : null}
 
-    {currentInventory && !published && currentInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
+    {displayedInventory && !published && displayedInventory.externalReferences.length > 0 ? <section aria-labelledby="external-references-heading"
       className="rounded-xl border p-4">
       <h3 id="external-references-heading" className="font-medium">External references stay private</h3>
       <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
         A linked item stays outside this project share unless it was independently shared.
       </p>
       <ul className="mt-2 grid gap-1 text-sm">
-        {currentInventory.externalReferences.map((item) => <li key={`${item.kind}:${item.id}`}>{item.id}</li>)}
+        {displayedInventory.externalReferences.map((item) => <li key={`${item.kind}:${item.id}`}>{item.id}</li>)}
       </ul>
     </section> : null}
 
-    {currentInventory && !published && currentInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading">
+    {displayedInventory && !published && displayedInventory.membershipEffects.length > 0 ? <section aria-labelledby="membership-effects-heading">
       <h3 id="membership-effects-heading" className="font-medium">Membership changes</h3>
       <ul className="mt-2 grid gap-2">
-        {currentInventory.membershipEffects.map((effect) => <li key={projectMembershipEffectKey(effect)}
+        {displayedInventory.membershipEffects.map((effect) => <li key={projectMembershipEffectKey(effect)}
           className="rounded-xl border px-3 py-2 text-sm">{projectMembershipEffectLabel(effect)}</li>)}
       </ul>
     </section> : null}
@@ -186,18 +202,18 @@ export function ProjectSharingDialog({
     {presentation && presentation.blockerMessages.length > 0 ? <div role="alert" className="rounded-xl border p-4 text-sm">
       {presentation.blockerMessages.map((message) => <p key={message}>{message}</p>)}
     </div> : null}
-    {error ? <p role="alert" className="rounded-xl border p-3 text-sm">{error}</p> : null}
+    {publicationError || error ? <p role="alert" className="rounded-xl border p-3 text-sm">{publicationError || error}</p> : null}
     {publicationDelayed
       ? <div role="status" className="flex items-center justify-between gap-3 rounded-xl border p-3 text-sm">
         <span>Sharing is taking longer than expected. It continues in the background; check again in a moment.</span>
         <button type="button" className={buttonClass} onClick={onCheckPublication}>Check again</button>
       </div>
-      : feedback ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
+      : feedback && !publicationFailure ? <p role="status" className="rounded-xl border p-3 text-sm">{feedback}</p> : null}
 
     <footer className="flex justify-end gap-2">
       <button type="button" className={buttonClass} disabled={pending} onClick={onClose}>{published ? "Done" : "Cancel"}</button>
-      {!published ? <button type="button" className={buttonClass} disabled={pending || confirmed || !presentation?.canConfirm}
-        onClick={() => void confirm()}>{pending ? "Confirming…" : confirmed ? "Publishing…" : "Share whole project"}</button> : null}
+      {!published ? <button type="button" className={buttonClass} disabled={pending || confirmationLocked || !presentation?.canConfirm}
+        onClick={() => void confirm()}>{pending ? "Confirming…" : confirmationLocked ? "Publishing…" : "Share whole project"}</button> : null}
     </footer>
   </Dialog>;
 }

@@ -51,7 +51,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
   const starting = useRef(false);
   /** The scope whose publication is being awaited; cleared by close so the wait ends with the dialog. */
   const publishingScope = useRef<string | null>(null);
-  const [publication, setPublication] = useState<"idle" | "waiting" | "delayed">("idle");
+  const [publication, setPublication] = useState<"idle" | "waiting" | "delayed" | "inventory_changed" | "unavailable">("idle");
 
   useEffect(() => {
     alive.current = true;
@@ -94,13 +94,18 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
     return currentScope;
   };
 
-  const refreshInventory = async (scopeId: string) => {
+  const readInventoryState = async (scopeId: string) => {
     const next = CollaborationProjectInventorySchema.parse(await api.get(
       `/api/collaboration/scopes/${scopeId}/project/inventory`,
     ));
     if (next.projectId !== projectId || next.scopeId !== scopeId) {
       throw new Error("Project inventory mismatch");
     }
+    return next;
+  };
+
+  const refreshInventory = async (scopeId: string) => {
+    const next = await readInventoryState(scopeId);
     if (alive.current) setInventory(next);
     return next;
   };
@@ -175,6 +180,23 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
           setSurface("dialog");
           return;
         }
+        if (next.lifecycle === "private") {
+          let failure: "inventory_changed" | "unavailable" = "inventory_changed";
+          try {
+            const refreshed = await readInventoryState(scopeId);
+            if (!current()) return;
+            setInventory(refreshed);
+          } catch (inventoryFailure: unknown) {
+            failure = "unavailable";
+            console.warn("[project-collaboration] failed publication inventory unavailable",
+              inventoryFailure instanceof Error ? inventoryFailure.name : "UnknownError");
+          }
+          if (!current()) return;
+          publishingScope.current = null;
+          setScope(next);
+          setPublication(failure);
+          return;
+        }
       } catch (failure: unknown) {
         // Expected while the home finishes publishing: the scope is not routable yet.
         lastFailure = failure instanceof Error ? failure.name : "UnknownError";
@@ -213,6 +235,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
       }}
       onConfirmed={() => { void awaitPublication(scope.id); }}
       publicationDelayed={publication === "delayed"}
+      publicationFailure={publication === "inventory_changed" || publication === "unavailable" ? publication : undefined}
       onCheckPublication={() => { void awaitPublication(scope.id); }}
       onClose={close}
     /> : null}
