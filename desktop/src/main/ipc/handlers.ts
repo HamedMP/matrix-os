@@ -383,7 +383,8 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   handle("embed:deactivate", ({ embedId }) => ctx.embeds.deactivate(embedId));
   handle("embed:suspend-all", () => ({ ok: ctx.embeds.suspendAll() }));
   handle("embed:reload", async ({ embedId }) => ({ ok: await ctx.embeds.reload(embedId) }));
-  handle("embed:close", ({ embedId }) => ({ ok: ctx.embeds.close(embedId) }));
+  handle("embed:close", async ({ embedId }) => ({ ok: await ctx.embeds.requestClose(embedId) }));
+  handle("embed:close-utilities", async () => ({ ok: await ctx.embeds.closeUtilities() }));
   handle("embed:retry-auth", async ({ embedId }) => {
     try {
       return { ok: await ctx.embeds.retryAuth(embedId) };

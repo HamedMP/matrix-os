@@ -115,6 +115,7 @@ export class EmbedService {
               register: (senderId: number, appIdentity: string, appRouteSlug: string) =>
                 this.deps.appBridge!.register(senderId, appIdentity, appRouteSlug),
               unregister: (senderId: number) => this.deps.appBridge!.unregister(senderId),
+              requestUtilitiesClose: (senderId: number) => this.deps.appBridge!.requestUtilitiesClose(senderId),
             }
           : undefined;
         return createWebContentsView({
@@ -216,6 +217,22 @@ export class EmbedService {
       if (generation !== this.codeEditorGeneration || !this.codeEditorIds.has(embedId)) return false;
     }
     return this.manager.reload(embedId);
+  }
+
+  async requestClose(embedId: string): Promise<boolean> {
+    if (!this.manager.has(embedId)) return this.close(embedId);
+    const closed = await this.manager.requestClose(embedId);
+    if (closed) this.close(embedId);
+    return closed;
+  }
+
+  async closeUtilities(): Promise<boolean> {
+    const id = this.manager.findApp("utilities");
+    if (id) return this.requestClose(id);
+    // Pending launches have never created an app document; removing their exact
+    // reserved identity also invalidates the existing late-launch predicate.
+    const pending = [...this.pendingApps.entries()].find(([, app]) => app.appIdentity === "utilities" && app.slug === "utilities");
+    return pending ? this.close(pending[0]) : false;
   }
 
   close(embedId: string): boolean {

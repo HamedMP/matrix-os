@@ -73,6 +73,7 @@ export default function DesktopAppDrawer({
   tabs,
   surfaces,
   onClose,
+  onCloseAll,
   onActivate,
   onCloseTab,
 }: {
@@ -80,6 +81,7 @@ export default function DesktopAppDrawer({
   tabs: Tab[];
   surfaces: Record<string, DesktopSurface>;
   onClose: () => void;
+  onCloseAll: () => void;
   onActivate: (tabId: string) => void;
   onCloseTab: (tab: Tab) => void;
 }) {
@@ -127,10 +129,11 @@ export default function DesktopAppDrawer({
       >
         <header className="flex items-center justify-between px-3 py-3">
           <h2 className="text-xs font-medium text-[var(--text-secondary)]">All open apps</h2>
-          <button type="button" aria-label="Close all open apps" className="flex size-6 items-center justify-center rounded hover:bg-[var(--bg-hover)]" onClick={onClose}>
+          <button type="button" aria-label="Close app drawer" className="flex size-6 items-center justify-center rounded hover:bg-[var(--bg-hover)]" onClick={onClose}>
             <X size={16} aria-hidden="true" />
           </button>
         </header>
+        <button type="button" className="mx-3 mb-3 rounded border border-[var(--border-default)] px-2 py-1 text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={onCloseAll}>Close all open apps</button>
         <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto px-2 pb-3">
           {openTabs.map((tab) => (
             <PreviewTile

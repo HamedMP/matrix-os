@@ -1,3 +1,4 @@
+import { createUtilitiesCloseClient, UTILITIES_CLOSE_BRIDGE_ARG, UTILITIES_CLOSE_REQUEST, UTILITIES_CLOSE_REPLY, UTILITIES_CLOSE_READY } from "../shared/native-utilities-close";
 import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, APP_AI_ROUTES_CHANNEL, createAppAiClient } from "@matrix-os/contracts";
 // The only bridge between renderer and trusted core. Exposes exactly the
 // typed contract — payloads are validated here AND in main (defense in depth,
@@ -54,6 +55,15 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
   const database = createNativeAppDatabase((query: NativeAppQuery) =>
     ipcRenderer.invoke(NATIVE_APP_QUERY_CHANNEL, query));
   contextBridge.exposeInMainWorld("MatrixOS", Object.freeze({
+    ...(process.argv.includes(UTILITIES_CLOSE_BRIDGE_ARG) ? { utilitiesClose: createUtilitiesCloseClient(
+      reply => ipcRenderer.invoke(UTILITIES_CLOSE_REPLY, reply),
+      listener => {
+        const receive = (_event: unknown, payload: unknown) => listener(payload);
+        ipcRenderer.on(UTILITIES_CLOSE_REQUEST, receive);
+        return () => ipcRenderer.removeListener(UTILITIES_CLOSE_REQUEST, receive);
+      },
+      ready => ipcRenderer.invoke(UTILITIES_CLOSE_READY, { ready }),
+    ) } : {}),
     db: database,
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),

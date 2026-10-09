@@ -1,3 +1,4 @@
+import { afterTabClose } from "./after-tab-close";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
@@ -361,12 +362,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
 
   const close = useCallback((tab: Tab) => {
     const wasActive = useTabs.getState().activeTabId === tab.id;
-    if (tab.closable) closeTab(tab.id);
-    else closeSurface(tab.id);
-    if (wasActive) focusFallback(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
-    trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
-    scheduleDurablePersist();
+    const afterClose = () => {
+      if (wasActive) focusFallback(tab.id);
+      if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
+      trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
+      scheduleDurablePersist();
+    };
+    if (tab.closable) afterTabClose(closeTab(tab.id), afterClose);
+    else { closeSurface(tab.id); afterClose(); }
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh, scheduleDurablePersist]);
 
   const activateFromDrawer = useCallback((tabId: string) => {
@@ -394,6 +397,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         tabs={tabs}
         surfaces={surfaces}
         onClose={() => setDrawerOpen(false)}
+        onCloseAll={() => { setDrawerOpen(false); for (const tab of useTabs.getState().tabs) close(tab); }}
         onActivate={activateFromDrawer}
         onCloseTab={closeFromDrawer}
       />

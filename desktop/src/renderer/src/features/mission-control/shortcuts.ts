@@ -1,3 +1,4 @@
+import { afterTabClose } from "../desktop-shell/after-tab-close";
 import { useEffect } from "react";
 import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { onEvent } from "../../lib/operator";
@@ -81,21 +82,26 @@ export function handleCloseSelectedAppShortcut(
   const activeTab = activeShortcutTab();
   if (!activeTab) return;
   const surfaces = useDesktopSurfaces.getState();
-  const fallbackId = topmostVisibleDesktopSurfaceId(
-    tabs.tabs.map((tab) => tab.id),
-    surfaces,
-    activeTab.id,
-  );
-
-  surfaces.closeSurface(activeTab.id);
-  if (activeTab.closable) tabs.closeTab(activeTab.id);
-  if (!fallbackId) {
-    const selectedTabId = useTabs.getState().activeTabId;
-    if (selectedTabId) tabs.clearActiveTab(selectedTabId);
-    return;
-  }
-  tabs.focusTab(fallbackId);
-  surfaces.activateSurface(fallbackId);
+  const initialFallbackId = topmostVisibleDesktopSurfaceId(tabs.tabs.map(tab => tab.id), surfaces, activeTab.id);
+  const result = activeTab.closable ? tabs.closeTab(activeTab.id) : true;
+  const deferred = typeof result !== "boolean";
+  const afterClose = () => {
+    surfaces.closeSurface(activeTab.id);
+    const current = useTabs.getState();
+    const selected = current.tabs.find(tab => tab.id === current.activeTabId);
+    if (deferred && selected && selected.id !== activeTab.id && isDesktopSurfaceVisible(selected.id, useDesktopSurfaces.getState())) return;
+    const fallbackId = deferred ? topmostVisibleDesktopSurfaceId(
+      current.tabs.map(tab => tab.id), useDesktopSurfaces.getState(), activeTab.id,
+    ) : initialFallbackId;
+    if (!fallbackId) {
+      const selectedTabId = useTabs.getState().activeTabId;
+      if (selectedTabId) tabs.clearActiveTab(selectedTabId);
+      return;
+    }
+    tabs.focusTab(fallbackId);
+    surfaces.activateSurface(fallbackId);
+  };
+  afterTabClose(result, afterClose);
 }
 
 function activeShortcutTab() {

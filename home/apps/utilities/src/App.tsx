@@ -12,7 +12,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [navigation, dispatch] = useReducer(navigationReducer, initialNavigation);
-  useWorkspaceCloseGuard(navigation.dirty);
+  const { nativeClosePending, finishNativeClose } = useWorkspaceCloseGuard(navigation.dirty);
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const backButton = useRef<HTMLButtonElement>(null);
@@ -29,9 +29,9 @@ export default function App() {
   } as CSSProperties;
 
   useEffect(() => {
-    if (navigation.pending !== undefined && !dialog.current?.open) dialog.current?.showModal();
-    else if (navigation.pending === undefined && dialog.current?.open) dialog.current.close();
-  }, [navigation.pending]);
+    if ((nativeClosePending || navigation.pending !== undefined) && !dialog.current?.open) dialog.current?.showModal();
+    else if (!nativeClosePending && navigation.pending === undefined && dialog.current?.open) dialog.current.close();
+  }, [nativeClosePending, navigation.pending]);
   useEffect(() => {
     if (navigation.active) heading.current?.focus();
     else searchInput.current?.focus();
@@ -43,7 +43,7 @@ export default function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [navigation.dirty]);
   const back = () => dispatch({ type: "open", slug: null });
-  const cancel = () => { dispatch({ type: "cancel" }); backButton.current?.focus(); };
+  const cancel = () => { if (nativeClosePending) finishNativeClose(false); else dispatch({ type: "cancel" }); backButton.current?.focus(); };
   const captureEdit = (event: React.SyntheticEvent) => {
     if (!(event.target instanceof Element)) return;
     const control = event.target.closest("input,textarea,select,[contenteditable='true']");
@@ -65,7 +65,7 @@ export default function App() {
       <button ref={backButton} className="utilities-back" onClick={back}>← All utilities</button>
       <header className="utilities-workspace-heading"><span className="utilities-eyebrow">{active.category}</span><h1 ref={heading} tabIndex={-1}>{active.title}</h1><p>{active.description}</p></header>
       {toolAvailability(active).available && <p className="utilities-notice">{processingNotice(active)}</p>}
-      <div className="utilities-tool" onInputCapture={captureEdit} onChangeCapture={captureEdit} onClickCapture={captureAction} onDropCapture={(event) => { if (event.dataTransfer.files.length) dispatch({ type: "dirty" }); }}>
+      <div className="utilities-tool" onInput={captureEdit} onChange={captureEdit} onClickCapture={captureAction} onDropCapture={(event) => { if (event.dataTransfer.files.length) dispatch({ type: "dirty" }); }}>
         <WorkspaceBoundary key={active.slug} onBack={back}><Suspense fallback={<p className="utilities-feedback" role="status">Opening {active.title}…</p>}><WorkspaceRouter tool={active}/></Suspense></WorkspaceBoundary>
       </div>
       <details className="utilities-help"><summary>How to use this tool and its limits</summary><p>{active.howTo}</p><p>{active.limitations}</p></details>
@@ -78,6 +78,6 @@ export default function App() {
       {!results.length && <div className="utilities-feedback"><UtilityIcon slug="utilities"/><h2>No utilities found</h2><p>Try a shorter search or browse all categories.</p><button onClick={() => { setSearch(""); setCategory("All"); searchInput.current?.focus(); }}>Show all utilities</button></div>}
       <footer className="utilities-footer">Open files from this device and download your results. Model downloads and peer connections are identified in each workspace.</footer>
     </main>}
-    <dialog ref={dialog} className="utilities-dialog" aria-labelledby="discard-title" onCancel={(event) => { event.preventDefault(); cancel(); }}><h2 id="discard-title">Leave this workspace?</h2><p>Your input and results here are temporary. Download or copy anything you need before leaving.</p><div><button autoFocus onClick={cancel}>Keep working</button><button className="utilities-discard" onClick={() => dispatch({ type: "discard" })}>Leave workspace</button></div></dialog>
+    <dialog ref={dialog} className="utilities-dialog" aria-labelledby="discard-title" onCancel={(event) => { event.preventDefault(); cancel(); }}><h2 id="discard-title">{nativeClosePending ? "Close Utilities?" : "Leave this workspace?"}</h2><p>Your input and results here are temporary. Download or copy anything you need before leaving.</p><div><button autoFocus onClick={cancel}>Keep working</button><button className="utilities-discard" onClick={() => nativeClosePending ? finishNativeClose(true) : dispatch({ type: "discard" })}>{nativeClosePending ? "Close Utilities" : "Leave workspace"}</button></div></dialog>
   </div>;
 }
