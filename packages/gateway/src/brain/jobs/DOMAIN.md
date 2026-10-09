@@ -45,8 +45,8 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
 ## Concurrency And Recovery
 
 - Enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId), hashtext('brain-jobs'))`; worker writes are
-  fenced by their claim instead (`status = 'running' AND lease_owner = <worker> AND attempts = <the claim's
-  attempts>`), so a run whose lease was recovered writes nothing even after the same worker claimed the job again,
+  fenced by their claim instead (`status = 'running' AND lease_owner = <the claim's lease>`, the worker id and a
+  random tag), so a run recovered or handed back writes nothing even after the same worker claimed the job again,
   and that worker stops the old run before it starts the new one. Claims use `FOR UPDATE SKIP LOCKED`.
 - `heartbeatMs` is at most a third of `leaseMs` (a longer setting is shortened), so a healthy run's lease never
   expires between two heartbeats.
@@ -58,7 +58,8 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
   `interrupted`, so one confirmed model run never pays for a second pass.
 - Steps are raced against the run's abort signal: the time cap, a cancel or shutdown ends the run at once even when
   the step ignores the signal; the extract and source sync steps also pass the signal on, so a model run makes no
-  call after it and aborts the call in flight. The heartbeat timer stops renewing the lease once the run is aborted.
+  call after it and aborts the call in flight. The heartbeat timer keeps one heartbeat in flight and stops once the
+  run is aborted.
 - Cancel of a running run records `cancel_requested`, then the service tells this gateway's worker
   (`BrainJobWorker.cancel`), which aborts the run at once; a run on another gateway stops at its next heartbeat. A
   run reads the flag (a heartbeat) before its first step, so a cancel that lands between its claim and its launch,
