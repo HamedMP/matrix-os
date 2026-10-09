@@ -94,18 +94,21 @@ describe("BrainApp", () => {
     expect(screen.getByRole("navigation", { name: "Company Brain" })).toBeTruthy();
   });
 
-  it("opens on Chat, shows the six tabs, and moves between them by keyboard and click", async () => {
+  it("opens on Search without a chat view, shows the six tabs, and moves between them by keyboard and click", async () => {
     const api = renderApp();
     expect(screen.getByRole("status")).toHaveTextContent("Loading projects...");
     const tabs = await screen.findAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Today", "Decisions", "Timeline", "Search", "Sources"]);
-    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", tabs[0]!.id);
-    // Without a chat host (an older surface) the Chat tab says so and offers Search.
-    expect(screen.getByText("Chat is not available here.")).toBeTruthy();
+    // Without a chat host (a surface that lends no chat view) Chat could only say so, so the app opens on Search.
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", tabs[4]!.id);
+    expect(await screen.findByRole("searchbox", { name: "Search the Company Brain" })).toBeTruthy();
     expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue(PROJECT);
     const tablist = screen.getByRole("tablist");
     const selected = () => within(tablist).getByRole("tab", { selected: true }).textContent;
+    expect(selected()).toBe("Search");
+    fireEvent.keyDown(tablist, { key: "Home" });
     expect(selected()).toBe("Chat");
+    expect(screen.getByText("Chat is not available here.")).toBeTruthy();
     fireEvent.keyDown(tablist, { key: "ArrowLeft" });
     expect(selected()).toBe("Sources");
     fireEvent.keyDown(tablist, { key: "ArrowRight" });
