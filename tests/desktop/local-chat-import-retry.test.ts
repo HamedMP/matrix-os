@@ -72,6 +72,27 @@ async function fixture(count = 1) {
 }
 
 describe("streaming native import retry identity", () => {
+  it("imports the reviewed capture after releasing its preview and a live append", async () => {
+    const x = await fixture();
+    try {
+      const first = await x.prepare(); x.service.release({ ...session, selectionIds: [first.selectionId] });
+      await appendFile(x.path, "live appended bytes\n");
+      const prepared = await x.prepare(); expect(prepared.preview).toEqual(first.preview);
+      expect(await x.attempt(prepared)).toMatchObject({ status: "imported" });
+      expect(x.payloads[0]).toMatchObject({ sourceHash: first.preview.sourceHash, rawSize: first.preview.rawBytes });
+      expect(Buffer.from(x.puts[0]!).toString()).toBe(x.original);
+    } finally { await x.service.dispose(); }
+  });
+  it("rejects edits to the reviewed capture before PUT even without an earlier import attempt", async () => {
+    const x = await fixture();
+    try {
+      const first = await x.prepare(); x.service.release({ ...session, selectionIds: [first.selectionId] });
+      await writeFile(x.path, x.original.replace("Original prompt", "Modified prompt"));
+      const prepared = await x.prepare(); expect(prepared.preview).toEqual(first.preview);
+      expect(await x.attempt(prepared)).toMatchObject({ status: "error", message: expect.stringMatching(/changed/) });
+      expect(x.puts).toHaveLength(0);
+    } finally { await x.service.dispose(); }
+  });
   it.each(["append", "delete", "replace"])("recovers a published import after a lost result and local %s", async change => {
     const x = await fixture();
     try {
