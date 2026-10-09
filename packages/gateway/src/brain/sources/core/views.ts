@@ -83,5 +83,5 @@ export function gitSyncToSourceView(sourceId: string, view: BrainSyncView): Brai
 export function createBrainGitSourceSync(
   project: Pick<BrainProjectService, "sync">,
 ): NonNullable<BrainSourcesServiceDeps["gitSync"]> {
-  return async (ownerId, projectRef) => gitSyncToSourceView("", await project.sync(ownerId, projectRef));
+  return async (ownerId, projectRef, run) => gitSyncToSourceView("", await project.sync(ownerId, projectRef, run));
 }

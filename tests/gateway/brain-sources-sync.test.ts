@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BrainApiError, type BrainSyncView } from "../../packages/gateway/src/brain/api/types.js";
+import { createBrainProjectService } from "../../packages/gateway/src/brain/api/service.js";
+import {
+  BrainApiError, type BrainGitSync, type BrainProjectLookup, type BrainSyncView,
+} from "../../packages/gateway/src/brain/api/types.js";
 import {
   BrainFeatureError, type BrainAnySourceKindHandler, type BrainSourceSyncResult, type BrainSourceSyncRunner,
 } from "../../packages/gateway/src/brain/contracts.js";
@@ -130,13 +133,17 @@ describe("sync", () => {
     };
     const project = { sync: vi.fn(async () => gitView) };
     const sources = service([], { gitSync: createBrainGitSourceSync(project) });
-    expect(await sources.sync(OWNER, "alpha", source.sourceId)).toEqual({
+    const stop = new AbortController();
+    expect(await sources.sync(OWNER, "alpha", source.sourceId, stop.signal)).toEqual({
       sourceId: source.sourceId, status: "succeeded", errorCode: null, nextAction: "", caughtUp: true, pages: 1,
       counts: gitView.counts, notices: ["items_truncated", "body_truncated"], retryAfterSeconds: null, receipt: gitView.receipt,
     });
-    expect(project.sync).toHaveBeenCalledWith(OWNER, "alpha");
+    expect(project.sync).toHaveBeenCalledWith(OWNER, "alpha", { sourceId: source.sourceId, signal: stop.signal });
     project.sync.mockRejectedValueOnce(new BrainApiError("checkout_unavailable"));
     expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("checkout_unavailable");
+    // The project service found another git source as the run started.
+    project.sync.mockRejectedValueOnce(new BrainApiError("git_source_conflict"));
+    expect(await codeOf(sources.sync(OWNER, "proj_a", source.sourceId))).toBe("source_conflict");
   });
 
   it("answers a paused git source like any other kind, also when it is paused or removed as the run starts", async () => {
@@ -182,6 +189,27 @@ describe("sync", () => {
     expect(project.sync).not.toHaveBeenCalled();
     expect(await sources.sync(OWNER, "proj_a", older.source.sourceId)).toMatchObject({ sourceId: older.source.sourceId, status: "succeeded" });
     expect(project.sync).toHaveBeenCalledOnce();
+  });
+
+  it("has the project service run only the git source the caller named, with the caller's signal", async () => {
+    const older = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "https://github.com/acme/app", label: "App" });
+    harness.tick();
+    const newer = await harness.repository.createSource(SCOPE_A, { kind: "git", externalRef: "project:proj_a", label: "A" });
+    const run = vi.fn<BrainGitSync>(async () => ({
+      status: "succeeded", errorCode: null, nextAction: "", receipt: null, counts: zeroCounts, cursorBefore: null,
+      cursorAfter: null, commitsProcessed: 0, commitsRemaining: 0, caughtUp: true, historyRewritten: false, batches: 0,
+      rejectedDocumentIds: [], notices: [],
+    }));
+    const projects = {
+      getProjectById: async () => ({ ok: true, project: { id: "proj_a", slug: "alpha", name: "Alpha" } }),
+      resolveProjectWorkingDirectory: async () => "/home/projects/alpha",
+    } as unknown as BrainProjectLookup;
+    const project = createBrainProjectService({ repository: harness.repository, projects, homePath: "/home", sync: run });
+    expect(await codeOf(project.sync(OWNER, "proj_a", { sourceId: newer.source.sourceId }))).toBe("git_source_conflict");
+    expect(run).not.toHaveBeenCalled();
+    const stop = new AbortController();
+    await project.sync(OWNER, "proj_a", { sourceId: older.source.sourceId, signal: stop.signal });
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ sourceId: older.source.sourceId, signal: stop.signal }));
   });
 
   it("maps git codes onto the source vocabulary and keeps the git code on the receipt", () => {

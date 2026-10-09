@@ -72,10 +72,10 @@ their types and limits. `../connectors/index.ts` re-exports `runBrainSourceSync`
   or the given limits). A crash leaves at most a running receipt, closed as interrupted by the next run. A paused
   source answers the runner's failed view (`source_inactive`, no receipt) before its config or account is read, so a
   disconnected account or a lost config never turns that answer into an error.
-- A git source syncs through `gitSync`, which runs the project's git source (its oldest live one). Only that source is
-  synced here: another one a registration race left is `source_conflict`, never synced under the wrong id. A paused
-  git source answers the runner's failed view (`source_inactive`, no receipt) without running, also when it is paused
-  or removed while the run starts.
+- A git source syncs through `gitSync` (with its id and the caller's signal), which runs the project's git source (its
+  oldest live one). Only that source is synced here: another one a registration race left is `source_conflict`, never
+  synced under the wrong id, also when the race lands as the run starts. A paused git source answers the runner's
+  failed view (`source_inactive`, no receipt) without running, also when it is paused or removed while the run starts.
 
 ## Tests
 

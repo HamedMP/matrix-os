@@ -5,7 +5,7 @@
  * error codes, no provider text past server logs. Types and constants only.
  */
 import type { Kysely } from "kysely";
-import type { BrainReceiptView } from "../api/types.js";
+import type { BrainGitSyncRun, BrainReceiptView } from "../api/types.js";
 import type { BrainRepository } from "../repository.js";
 import type {
   BrainDatabase, BrainScopeKey, BrainSourceStatus, BrainSyncCounts, BrainSyncReceipt, BrainSyncUpsertInput,
@@ -323,14 +323,14 @@ export const BRAIN_SOURCES_BODY_MAX_BYTES = { connect: 16 * 1024, update: 16 * 1
 /**
  * Built by sources/core createBrainSourcesService. gitSync: BrainProjectService.sync mapped to a sync view, used
  * when POST /sources/:sourceId/sync names the git source (absent: that request is source_kind_unsupported); the
- * service sets the view's sourceId to the source the client named. accounts: the owner's connection labels of a
+ * service passes that source and the caller's signal, and sets the view's sourceId to it. accounts: the owner's connection labels of a
  * service (no provider call); present, a connect pins one account (several and none named: source_config_invalid).
  */
 export interface BrainSourcesServiceDeps {
   readonly repository: BrainRepository; readonly resolver: BrainProjectResolver;
   readonly handlers: readonly BrainAnySourceKindHandler[]; readonly runner: BrainSourceSyncRunner;
   readonly hooks?: BrainChangeHooks; readonly limits?: Partial<BrainSourceSyncLimits>;
-  readonly gitSync?: (ownerId: string, projectRef: string) => Promise<BrainSourceSyncView>;
+  readonly gitSync?: (ownerId: string, projectRef: string, run: BrainGitSyncRun) => Promise<BrainSourceSyncView>;
   readonly accounts?: (ownerId: string, service: BrainIntegrationService) => Promise<readonly string[]>;
 }
 

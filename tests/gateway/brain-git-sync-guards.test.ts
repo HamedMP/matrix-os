@@ -67,6 +67,14 @@ describe("syncGitSource guards", { timeout: 60_000 }, () => {
     expect(result.receipt).toMatchObject({ status: "succeeded", nextAction: "run_again" });
   });
 
+  it("stops before a window once the caller's signal aborts", async () => {
+    await buildBaseHistory(t.f);
+    const sourceId = await createGitSource(t.harness.repository, scopeA);
+    expect(await sync(sourceId, { signal: AbortSignal.abort(), limits: { commitsPerWindow: 1 } })).toMatchObject({
+      status: "succeeded", nextAction: "run_again", notices: ["run_budget_exhausted"], commitsProcessed: 1, commitsRemaining: 8,
+    });
+  });
+
   it("refuses git output that contradicts itself", async () => {
     const h = await buildBaseHistory(t.f);
     const sourceId = await createGitSource(t.harness.repository, scopeA);
