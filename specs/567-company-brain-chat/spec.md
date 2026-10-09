@@ -19,11 +19,10 @@ One rule shapes everything: no second chat system. A brain chat is a canonical C
 
 In scope (server): the `company-brain` recipe and its answer rules, the read-only `brain.read` broker capability
 (contract, worker tools, run setup, broker dispatch), thread Chats bound to one project (migration v7 and two routes),
-the optional run effort, and their tests.
+the optional run effort, leaving Bot chats out of the `matrix_chat` brain source, and their tests.
 
-Out of scope here and named below: the Brain app chat tab and the web and Electron hosts (App side), leaving brain
-chats out of the `matrix_chat` brain source, and every item under Deferred. OS-view surface matrix: N/A for this
-increment (no UI); the App side fills it in.
+Out of scope here and named below: the Brain app chat tab and the web and Electron hosts (App side), and every item
+under Deferred. OS-view surface matrix: N/A for this increment (no UI); the App side fills it in.
 
 ## The Company Brain Bot
 
@@ -120,6 +119,20 @@ Create (`bots/bot-threads.ts`):
 
 Deleting the Chat through the normal Chat route removes its binding (existing cascade) and frees its place.
 
+With no scope-runtime host no Bot turn can run, so `startBots` gives the routes no thread service and lists no recipe
+with `threads`: both thread routes answer `unavailable` and `?recipeId=company-brain` returns no recipe. The app then
+shows its "not running" notice before any thread is made, and a send never leaves an empty thread behind.
+
+## The brain never reads its own answers
+
+A Bot answers from tool results other people wrote, so its Chats are never brain evidence. The `matrix_chat` brain
+source (spec 559) leaves out every Bot Chat, meaning any Chat with a live direct or thread binding (the Company
+Brain's direct Chat and its threads included): the chat picker never offers one, a scan reads an opted-in one as
+missing, and the sweep removes its earlier documents, so a Chat that becomes a Bot chat after it was opted in drops
+out on the next pass. The lookup (`createBotChatIdsLookup` in `bots/repositories/bindings.ts`) reads the bindings
+owner-scoped, at most 200 ids at a time; before the Bot tables exist it finds none, and any other failure ends the
+run with `provider_unavailable` like any reader failure.
+
 ## Run limits and effort
 
 - `BotRunLimitsSchema.effort` is optional (`low`, `medium`, `high`) and sent only for recipes that set it, so older
@@ -159,13 +172,16 @@ Brain tools cost no model tokens.
 - `startup/bots.ts` takes `brain: { services, projects }`. `server.ts` passes the started brain services and
   `createBotBrainProjects` over the brain project resolver and the project manager.
 - The tool dispatcher gets `brainRead` only when the brain services exist; the orchestrator gets `brainProjects` for
-  the prompt; the routes get the thread service.
+  the prompt; the routes get the thread service only when a runtime host exists.
+- `startup/owner-database.ts` passes `botChats` (the Bot binding lookup) to `startBrainServices`, which hands it to
+  the `matrix_chat` handler.
 - The kernel exports `brainReadToolDefinitions`, `createBrainWhyToolHandler` and `BRAIN_WHY_INPUT_SHAPE` for the
   gateway. No new dependencies, environment variables or files on disk.
 
 ## Failure modes
 
 - Timeouts: a brain read runs under the broker's tool timeout (30 s); the run under its 10-minute deadline.
+- No runtime host: the thread routes answer `unavailable` and the brain recipe is not listed, so nothing is created.
 - Concurrency: thread creation runs under the owner lock in one transaction; concurrent retries of one request give
   one Chat and one binding. The thread cap is checked under the same lock.
 - Crash recovery: the Chat and its binding commit together, so a crash leaves both or neither.
@@ -206,7 +222,6 @@ Placeholders the app work fills in:
 - Find or create the Bot (`recipeId=company-brain`), list threads per project, opening order.
 - Web Desktop, Web Canvas and Web Mobile host; Electron host; Open in Chat.
 - OS-view surface matrix, unavailable states, accessibility.
-- Leave brain chats out of the `matrix_chat` brain source (options and scans).
 - Sources card spend text.
 
 ## Integration test checkpoint
@@ -215,7 +230,8 @@ Placeholders the app work fills in:
 tests/bot-runtime/run-effort.test.ts tests/gateway/bots/company-brain-recipe.test.ts
 tests/gateway/bots/company-brain-run.test.ts tests/gateway/bots/brain-read-dispatch.test.ts
 tests/gateway/bots/thread-bindings-repository.test.ts tests/gateway/bots/thread-admission.test.ts
-tests/gateway/bots/bot-threads-routes.test.ts`. No test calls a model. With `MATRIX_TEST_POSTGRES_URL` set to a
+tests/gateway/bots/bot-threads-routes.test.ts tests/gateway/bots/company-brain-no-host.test.ts
+tests/gateway/brain-matrix-chat-exclusion.test.ts`. No test calls a model. With `MATRIX_TEST_POSTGRES_URL` set to a
 dedicated test database, the pooled Postgres case checks concurrent thread creation.
 
 A real run against a dev gateway (10 questions on two threads across surfaces, at most $1 on a capped key) follows

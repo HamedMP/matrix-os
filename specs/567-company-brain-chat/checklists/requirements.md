@@ -2,9 +2,11 @@
 
 Feature: [spec](../spec.md)
 
-- [x] Outcome and bounded scope are explicit; the app side and deferred work (the `matrix_chat` source exclusion, deep
-      links, `brain.read` for Matrix AI Chats, run-scoped MCP tools, whole-document reads, brief metering, Opus 5.5, an
-      eval set) are named, not implied.
+- [x] Outcome and bounded scope are explicit; the app side and deferred work (deep links, `brain.read` for Matrix AI
+      Chats, run-scoped MCP tools, whole-document reads, brief metering, Opus 5.5, an eval set) are named, not
+      implied.
+- [x] Bot chats stay out of the `matrix_chat` brain source (picker, scans and sweep), and a gateway with no runtime
+      host makes no thread.
 - [x] The Bot's capabilities, limits, unlisted recipe and server-owned rules are stated; owner edits change only the
       style.
 - [x] The brain-only tool rule is enforced in the contract, the worker, the run and the broker, and each place is
