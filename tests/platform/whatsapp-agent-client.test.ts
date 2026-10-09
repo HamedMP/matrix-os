@@ -74,6 +74,26 @@ describe("WhatsApp general Matrix agent client", () => {
     expect(await client.start(input)).toEqual(checkpoint);
     expect(calls.find((call) => call.url.endsWith("/turns"))!.body!.selection).toEqual(selection);
   });
+  it("starts an unbound conversation with Matrix Agent even when Hermes is listed first", async () => {
+    const matrix = catalog("matrix_pi", "system_agent");
+    const matrixSelection = { ...selection, instanceId: "matrix_pi_default" };
+    matrix.instances[0] = { ...matrix.instances[0]!, id: "matrix_pi_default", defaultSelection: matrixSelection };
+    const hermes = catalog("hermes", "system_agent");
+    hermes.instances[0] = { ...hermes.instances[0]!, id: "hermes_default", defaultSelection: { ...selection, instanceId: "hermes_default" } };
+    const fresh = detail();
+    const { currentSelection: _saved, ...chat } = fresh.record.chat;
+    const { client, calls } = fixture({ detail: { ...fresh, record: { chat } }, catalog: { ...matrix,
+      drivers: [...hermes.drivers, ...matrix.drivers], instances: [...hermes.instances, ...matrix.instances] } });
+    await client.start(input);
+    expect(calls.find((call) => call.url.endsWith("/turns"))!.body!.selection).toEqual(matrixSelection);
+  });
+  it("does not silently start a new WhatsApp conversation with Hermes when Matrix Agent is unavailable", async () => {
+    const fresh = detail();
+    const { currentSelection: _saved, ...chat } = fresh.record.chat;
+    const { client, calls } = fixture({ detail: { ...fresh, record: { chat } }, catalog: catalog("hermes", "system_agent") });
+    await expect(client.start(input)).rejects.toMatchObject({ code: "unavailable" });
+    expect(calls.some((call) => call.url.endsWith("/turns"))).toBe(false);
+  });
   it("keeps a bound unavailable Matrix Pi route closed even when another general agent is ready", async () => {
     const matrixPi = catalog("matrix_pi", "system_agent");
     const { defaultSelection: _default, ...instance } = matrixPi.instances[0]!;
@@ -283,7 +303,7 @@ describe("WhatsApp general Matrix agent client", () => {
   it("uses a ready default selection for a Chat without a saved model", async () => {
     const response = detail();
     const { currentSelection: _saved, ...chat } = response.record.chat;
-    const { client, calls } = fixture({ detail: { ...response, record: { chat } } });
+    const { client, calls } = fixture({ detail: { ...response, record: { chat } }, catalog: catalog("matrix_pi", "system_agent") });
     await client.start(input);
     expect(calls.find((call) => call.url.endsWith("/turns"))?.body?.selection).toEqual(selection);
   });

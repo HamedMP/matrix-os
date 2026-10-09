@@ -1467,6 +1467,7 @@ export type {
 } from "#os-view";
 
 export { resolveChatMessageLink, resolveChatAppReference } from "#chat-links";
+export * from "#messaging-settings";
 export { ShareSnapshotSchema, ShareTokenSchema, shareHtml, isPublicShareLink, type ShareSnapshot } from "#chat-sharing";
 export * from "#terminal-keyboard";
 
