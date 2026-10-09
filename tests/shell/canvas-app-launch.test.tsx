@@ -218,3 +218,15 @@ it.each(["apps/legacy/index.html", "apps/legacy.html"])("preserves catalog-backe
   await requestOpen(frame, path);
   expect(useWindowManager.getState().windows.find(win => win.path === path)).toMatchObject({ title: "Legacy" });
 });
+
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it(`resolves a stable Gallery identity after another owner folder move on Web ${surface}`, async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+      ? new Response(JSON.stringify([{ slug: "folio", name: "Owner Ledger", path: "/files/apps/New Folder/Latest Ledger/index.html" }]))
+      : String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 })) : new Response('<html><head></head><body></body></html>')));
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, "apps/folio");
+    expect(useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")).toMatchObject({ title: "Owner Ledger" });
+  });
+}

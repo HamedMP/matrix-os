@@ -21,9 +21,11 @@ export async function resolveAppBridgeLaunch(name: string, requestedPath: string
     return path ? [{ slug: row.slug ?? "", name: row.name, path }] : [];
   });
   const app = resolveChatAppReference(requestedPath, apps, { allowRelative: true })
+    ?? resolveChatAppReference(requestedPath, apps.filter(app => app.slug).map(app => ({ ...app, ownerPath: app.path, path: `apps/${app.slug}/index.html` })), { allowRelative: true })
     ?? apps.find(candidate => !candidate.slug && candidate.path === normalized);
   if (!app || signal.aborted || getGatewayUrl() !== gateway) throw new Error("App launch unavailable");
   // Preserve only catalog-backed bundled migration identities; other moved
   // folders launch through the stable manifest slug and its bridged loader.
-  return { name: app.name, path: !app.slug || extractSlug(app.path) === app.slug ? app.path : `apps/${app.slug}/index.html` };
+  const ownerPath = "ownerPath" in app && typeof app.ownerPath === "string" ? app.ownerPath : app.path;
+  return { name: app.name, path: !app.slug || extractSlug(ownerPath) === app.slug ? ownerPath : `apps/${app.slug}/index.html` };
 }
