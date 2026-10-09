@@ -14,10 +14,11 @@ import { describe, expect, it } from "vitest";
 const root = process.cwd();
 
 describe("Docker development entrypoint dependency layout", () => {
-  it("keeps the global virtual store for host worktrees", () => {
+  it("isolates native build outputs from other host projects and Node ABIs", () => {
     const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
 
-    expect(workspace).toContain("enableGlobalVirtualStore: true");
+    expect(workspace).toContain("enableGlobalVirtualStore: false");
+    expect(workspace).toContain("sideEffectsCache: false");
   });
 
   it("uses a container-local virtual store for every Docker dependency install", () => {
@@ -33,6 +34,16 @@ describe("Docker development entrypoint dependency layout", () => {
     for (const command of installCommands) {
       expect(command).toContain("--config.enableGlobalVirtualStore=false");
     }
+  });
+
+  it("uses BusyBox-compatible lockfile checksum checks", () => {
+    const entrypoint = readFileSync(
+      join(root, "distro/docker-dev-entrypoint.sh"),
+      "utf8",
+    );
+
+    expect(entrypoint).not.toContain("md5sum --status");
+    expect(entrypoint.match(/md5sum -c node_modules\/\.pnpm-lock-hash >\/dev\/null 2>&1/g)).toHaveLength(2);
   });
 
   it("builds the brand workspace before starting the shell", () => {

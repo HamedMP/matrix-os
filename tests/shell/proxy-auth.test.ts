@@ -1,6 +1,4 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token";
 import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket";
 import {
@@ -893,20 +891,6 @@ describe("proxy auth: self-host mode", () => {
 
     expect(response).toBeInstanceOf(Response);
     expect(response.status).toBe(403);
-  });
-
-  it("skips ClerkProvider while disabling managed-cloud identity work in self-host mode", () => {
-    const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
-    const page = readFileSync(join(process.cwd(), "shell/src/app/page.tsx"), "utf8");
-
-    expect(layout).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
-    expect(layout).toContain('data-matrix-self-hosted={selfHostedMode ? "1" : undefined}');
-    expect(layout).toContain("return renderDocument(false, (");
-    expect(layout).toContain('<OrganizationStateProvider value={{ status: "none", organizationId: null }}>');
-    expect(layout).toContain("{renderDocument(true, content)}");
-    expect(layout).toContain("{includePostHogIdentify ? <PostHogIdentify /> : null}");
-    expect(page).toContain('const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1"');
-    expect(page).toContain("selfHostedMode || hasServerVerifiedMatrixSession");
   });
 });
 

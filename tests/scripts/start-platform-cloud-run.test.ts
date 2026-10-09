@@ -22,6 +22,15 @@ describe('start-platform-cloud-run.sh', () => {
     expect(platformStartIndex).toBeGreaterThan(readinessIndex);
   });
 
+  it('can scope a local Clerk credential to the bundled auth shell', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
+
+    expect(script).toContain('CLERK_SECRET_KEY="${AUTH_SHELL_CLERK_SECRET_KEY:-${CLERK_SECRET_KEY:-}}"');
+    expect(script).toContain('if [ -n "${AUTH_SHELL_CLERK_SECRET_KEY:-}" ]; then');
+    expect(script).toContain('unset CLERK_SECRET_KEY');
+  });
+
   it('loads TypeScript workspace exports in the production platform process', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
