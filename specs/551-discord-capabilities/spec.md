@@ -1,18 +1,28 @@
 # ENG-104: Discord connection capabilities
 
-The ordinary `discord` Pipedream OAuth account lists the user's servers with
-`guilds`. A user token, including a token with a `bot` install scope, does not
-become a bot credential. `discord_bot` uses the provider's separate API-key
+The `discord` Pipedream OAuth account lists the user's servers with `guilds`
+and supports managed actions through Pipedream's official Discord Bot. This is
+distinct from a user-bearer REST proxy: a `bot` install scope does not turn the
+user's bearer into a bot token. `discord_bot` uses the provider's separate API-key
 connector and the existing bot token. The connector registry is the canonical
 capability source for Settings, agent discovery, provider sync/webhooks and
 execution. Do not silently change service, account label, grant or owner.
 
-Ordinary OAuth advertises only `list_servers`. Legacy channel/message/send
-requests fail before provider dispatch with `discord_bot_required` and an
-existing-bot setup path. Bot reads use the original reviewed Discord REST
+Regular Discord advertises `list_servers` and `send_message`. Sends invoke the
+reviewed `discord-send-message` component with mapped channel/message props and
+the selected account, never the user-bearer REST proxy. Its official Bot must be
+installed in the destination server. No native write-approval gate is removed.
+Unsupported direct channel/history REST requests fail before provider dispatch
+with `discord_bot_required` and explain this operation-specific boundary.
+Bot reads use the original reviewed Discord REST
 mappings; credentials remain with Pipedream. Upstream 401, 403, 429 and 5xx remain
 separate; responses and agent recovery copy never include upstream diagnostics.
 A 200 channel-discovery response must be an array of valid channel IDs.
+The kernel's managed-write approval map covers both `discord/send_message` and
+`discord_bot/send_message`. Reads retain their read-only policy. Local `scopes=[]`
+is unknown metadata, not evidence of absent provider authorization; it never
+blocks legal server reads or managed sends. Matrix Bot/agent grants can use
+either connector's legal actions under their existing owner/account policy.
 
 Each owner-agent MCP/SDK instance owns a bounded discovery fence. Pending or
 failed discovery blocks message reads on the same selected account; success for
@@ -29,10 +39,17 @@ Regression tests cover regular scopes/unknown legacy scopes, exact provider
 slug and bot account selection, expired/revoked/ambiguous accounts, other-owner
 and immutable-grant refusal, safe error translation, malformed discovery,
 empty results, real MCP failure/read/retry continuation, pending calls, capacity,
-label aliases and run isolation. Provider responses, channel IDs, messages and
+label aliases, run isolation, native send denial/approval and read policy.
+Provider responses, channel IDs, messages and
 MCP transports in these tests are synthetic. They establish message evidence
 being supplied to the agent; they do not certify an LLM-written summary or a
-live Discord round trip.
+live Discord round trip. Both send variants are simulated, not real writes.
+
+The public regular-Discord catalog lists send actions and New Message event
+triggers, not arbitrary historical-read actions. Pipedream's component-configure
+API can load channel options, but its exact guild/account binding and response
+shape have not been verified here. This patch does not deploy event subscriptions
+or claim an unverified channel-option path works as arbitrary REST history access.
 
 Real acceptance needs owner-approved existing bot credentials, guild membership,
 View Channel and Read Message History, and Message Content Intent for message
@@ -83,4 +100,7 @@ release deliverable.
 - https://docs.discord.com/developers/topics/oauth2 (guilds and bot scopes)
 - https://docs.discord.com/developers/resources/guild#get-guild-channels
 - https://pipedream.com/apps/discord-bot (API-key slug and automatic proxy auth)
+- https://pipedream.com/apps/discord (managed OAuth Bot sends, event triggers and requested scopes)
+- https://github.com/PipedreamHQ/pipedream/blob/master/components/discord/README.md (official Bot versus custom Bot)
+- https://github.com/PipedreamHQ/pipedream/blob/master/components/discord/actions/send-message/send-message.mjs (managed send props)
 - https://linear.app/matrix-os/issue/ENG-104/fix-discord-channel-discovery-for-regular-oauth-connections

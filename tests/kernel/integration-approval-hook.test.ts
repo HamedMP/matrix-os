@@ -10,6 +10,8 @@ import {
 
 describe("integration native approval hook", () => {
   const expandedWrites = [
+    ["discord", "send_message"],
+    ["discord_bot", "send_message"],
     ["google_sheets", "add_sheet"], ["google_sheets", "append_values"],
     ["google_sheets", "create_spreadsheet"], ["google_sheets", "update_values"],
     ["todoist", "complete_task"], ["todoist", "create_task"], ["todoist", "update_task"],
@@ -33,6 +35,7 @@ describe("integration native approval hook", () => {
   });
 
   it.each([
+    ["discord", "list_servers"], ["discord_bot", "list_channels"], ["discord_bot", "list_messages"],
     ["google_sheets", "get_values"], ["todoist", "get_task"], ["zendesk", "get_ticket"],
   ])("permits the corresponding %s/%s read without asking for write consent", async (service, action) => {
     const request = vi.fn(async () => false);

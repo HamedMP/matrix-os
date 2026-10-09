@@ -13,7 +13,14 @@ function encodeDiscordSnowflake(value: unknown): string {
   return value;
 }
 
-// Connector identity is the capability boundary; OAuth scopes never imply a bot token.
+// OAuth REST credentials differ from Pipedream's managed Bot action execution.
+export function discordManagedSendProps(params: Record<string, unknown> = {}) {
+  const channel = encodeDiscordSnowflake(params.channelId);
+  if (typeof params.content !== "string" || params.content.length < 1 || params.content.length > 2000) {
+    throw new Error("Discord message must contain 1-2000 characters");
+  }
+  return { channel, message: params.content, includeSentViaPipedream: false };
+}
 export const DISCORD_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
   discord: {
     id: "discord", name: "Discord", category: "communication",
@@ -38,6 +45,15 @@ export const DISCORD_SERVICE_REGISTRY: Record<string, ServiceDefinition> = {
             ...(p.limit !== undefined ? { limit: String(p.limit) } : {}),
           }),
         },
+      },
+      send_message: {
+        description: "Send through the official Pipedream Discord Bot installed for this connected account",
+        risk: "write",
+        params: {
+          channelId: { type: "string", required: true, pattern: "^\\d{17,20}$" },
+          content: { type: "string", required: true, minLength: 1, maxLength: 2000 },
+        },
+        componentKey: "discord-send-message",
       },
     },
   },
@@ -136,7 +152,7 @@ export class DiscordBotRequiredError extends Error {
 }
 
 export function assertDiscordCapability(service: string, action: string): void {
-  if (service === "discord" && action !== "list_servers"
+  if (service === "discord" && action !== "list_servers" && action !== "send_message"
     && Object.hasOwn(DISCORD_SERVICE_REGISTRY.discord_bot.actions, action)) {
     throw new DiscordBotRequiredError();
   }

@@ -117,13 +117,16 @@ async function callService(service: string, action: string, params: unknown) {
 - Google Drive: `list_files`, `get_file`, `upload_file`, `share_file`
 - GitHub: `list_repos`, `list_issues`, `create_issue`, `list_prs`, `get_notifications`
 - Slack: `send_message`, `list_channels`, `list_messages`, `search`, `react`
-- Discord: `send_message`, `list_servers`, `list_channels`, `list_messages`
+- Discord (`discord`, OAuth and Pipedream's official Bot): `list_servers`, `send_message`
+- Discord Bot (`discord_bot`, separate existing bot connection): `list_servers`, `list_channels`, `list_messages`, `send_message`
 
 ## Pitfalls
 
 - Do not ask for provider API keys in chat.
 - Do not put OAuth tokens in `matrix.json`, app source, or Agent config.
 - Do not call provider APIs directly from app code unless the provider is public and unauthenticated.
+- Ordinary Discord supports official Pipedream Bot sends and events. Those actions do not imply direct user-bearer REST access to arbitrary channel history; never treat a bot install scope or local empty scopes as proof of a bot credential or absent provider grants.
+- After failed channel discovery, retry successfully for the same account/server before reading messages. Bot sends require native write approval.
 - After OAuth, always sync before saying the connection failed.
 - If a customer VPS lacks Pipedream env vars, that is expected. The gateway should proxy integration calls to platform.
 

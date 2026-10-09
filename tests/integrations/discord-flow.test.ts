@@ -38,12 +38,12 @@ describe("Discord discovery through owner gateway and agent tools (synthetic pro
     return app.request(`/api/integrations/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service, action, params, label, ...(connectionId ? { connectionId } : {}) }) });
   }
 
-  it.each([{ scopes: [] }, { scopes: ["identify", "guilds"] }, { scopes: ["guilds", "bot", "messages.read"] }])("blocks stale bot actions for regular OAuth scopes $scopes before provider calls", async ({ scopes }) => {
+  it.each([{ scopes: [] }, { scopes: ["identify", "guilds"] }, { scopes: ["guilds", "bot", "messages.read"] }])("blocks unsupported REST reads independently of local scope metadata $scopes", async ({ scopes }) => {
     await db.connectService({ userId, service: "discord", pipedreamAccountId: "oauth-account", accountLabel: "Work", scopes });
     const catalog = await (await app.request("/api/integrations/agent-catalog")).json();
-    expect(Object.keys(catalog.find((service: { id: string }) => service.id === "discord").actions)).toEqual(["list_servers"]);
+    expect(Object.keys(catalog.find((service: { id: string }) => service.id === "discord").actions)).toEqual(["list_servers", "send_message"]);
     for (const path of ["call", "read-call"]) {
-      for (const action of ["list_channels", "list_messages", "send_message"]) {
+      for (const action of ["list_channels", "list_messages"]) {
         const response = await call("discord", action, paramsFor(action), path);
         expect(response.status).toBe(403);
         expect(await response.json()).toMatchObject({ code: "discord_bot_required", required_service: "discord_bot" });
@@ -56,6 +56,18 @@ describe("Discord discovery through owner gateway and agent tools (synthetic pro
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Discord Bot");
     expect(result.content[0].text).toContain("Do not read messages");
+  });
+  it.each([{ scopes: [] }, { scopes: ["guilds"] }, { scopes: ["bot", "email", "identify", "guilds"] }])("allows lawful OAuth reads and managed Bot actions with local scopes $scopes", async ({ scopes }) => {
+    await db.connectService({ userId, service: "discord", pipedreamAccountId: "oauth-account", accountLabel: "Work", scopes });
+    vi.mocked(pipedream.proxyGet).mockResolvedValue([{ id: serverId }]);
+    vi.mocked(pipedream.runAction).mockResolvedValue({ ret: { id: "345678901234567890" }, exports: {} });
+    expect((await call("discord", "list_servers", {}, "read-call")).status).toBe(200);
+    expect((await call("discord", "send_message")).status).toBe(200);
+    expect(pipedream.runAction).toHaveBeenCalledExactlyOnceWith({ externalUserId: "pd_owner", componentKey: "discord-send-message",
+      configuredProps: { discord: { authProvisionId: "oauth-account" }, channel: channelId, message: "Synthetic", includeSentViaPipedream: false } });
+    expect(pipedream.proxyPost).not.toHaveBeenCalled();
+    expect((await call("discord", "send_message", paramsFor("send_message"), "read-call")).status).toBe(403);
+    expect(pipedream.runAction).toHaveBeenCalledTimes(1);
   });
   it.each(["call", "read-call"])("distinguishes provider auth, permissions, throttling and downtime on /%s", async (path) => {
     const row = await db.connectService({ userId, service: "discord_bot", pipedreamAccountId: "bot-account", accountLabel: "Work", scopes: [] });
@@ -155,8 +167,10 @@ describe("Discord discovery through owner gateway and agent tools (synthetic pro
   it("explains the OAuth limitation during agent discovery", async () => {
     const description = await describeServiceHandler({ service: "discord" }, fetcher);
     expect(description.content[0].text).toContain("list_servers");
+    expect(description.content[0].text).toContain("send_message");
     expect(description.content[0].text).not.toContain("list_channels");
-    expect(description.content[0].text).toContain("Connect Discord Bot");
+    expect(description.content[0].text).toContain("Pipedream's official Discord Bot");
+    expect(description.content[0].text).toContain("direct channel/history reads");
   });
 
   it("ignores arbitrary gateway failure text and marks transport failures as errors", async () => {

@@ -257,7 +257,13 @@ const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxRe
 - **google_drive**: `list_files`, `get_file` (metadata), `read_file` (contents), `upload_file`, `share_file`
 - **github**: `list_repos`, `list_issues`, `create_issue`, `list_prs`
 - **slack**: `send_message`, `list_channels`, `list_messages`, `search`
-- **discord**: `send_message`, `list_servers`, `list_channels`, `list_messages`
+- **discord** (OAuth plus Pipedream's official Bot): `list_servers`, `send_message`
+- **discord_bot** (separate existing bot connection): `list_servers`, `list_channels`, `list_messages`, `send_message`
+
+Discover channels with `discord_bot` before reading messages. If discovery fails,
+show the connection/setup or permission error and retry discovery successfully
+before continuing. Ordinary Discord's Pipedream actions/events do not imply
+that its user-bearer REST proxy can read arbitrary channel history.
 
 ### Read actual Drive contents
 Use `read_file`, not `get_file`, before analyzing a linked file:

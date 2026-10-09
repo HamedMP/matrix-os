@@ -1,4 +1,4 @@
-import { assertDiscordCapability, validateDiscordChannelDiscovery } from "./registry-discord.js";
+import { assertDiscordCapability, discordManagedSendProps, validateDiscordChannelDiscovery } from "./registry-discord.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
@@ -42,6 +42,13 @@ export async function executeIntegrationAction(opts: {
   const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
     accountId: connection.pipedream_account_id, serviceId, actionId, params });
   if (boundCatalog) return boundCatalog;
+  if (serviceId === "discord" && actionId === "send_message") {
+    // This reviewed component uses Pipedream's official Bot, not the account's
+    // user-bearer REST proxy. Never pass caller-controlled auth props or fall back.
+    const result = await pipedream.runAction({ externalUserId, componentKey: "discord-send-message",
+      configuredProps: { ...discordManagedSendProps(params), discord: { authProvisionId: connection.pipedream_account_id } } });
+    return { data: result.ret };
+  }
   if (serviceId === "google_drive" && actionId === "read_file") {
     if (!pipedream.readDriveFile) throw new DriveContentError();
     return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
