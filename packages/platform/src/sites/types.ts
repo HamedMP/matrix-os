@@ -31,6 +31,7 @@ export interface SiteOwner {
     ownerId: string;
     machineId: string;
     appSlug: string;
+    authenticatedRuntime?: { handle: string; runtimeSlot: string; runtimeTokenEpoch: number };
 }
 export class SiteError extends Error {
     constructor(public code: 'conflict' | 'not_found' | 'unavailable' | 'invalid_request') { super(`Site ${code}`); }
