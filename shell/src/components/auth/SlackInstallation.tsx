@@ -44,7 +44,12 @@ export function SlackInstallation() {
       <li>3. Send <strong>connect</strong> to Matrix in Slack to link your own assistant.</li>
     </ol>
   </div>} formContent={<div className="space-y-5">
-    {!isLoaded ? <p role="status">Checking your Matrix account…</p> : !isSignedIn ? <SignIn routing="hash" forceRedirectUrl={SLACK_INSTALL_PATH} fallbackRedirectUrl={SLACK_INSTALL_PATH} />
+    {!isLoaded ? <p role="status">Checking your Matrix account…</p> : !isSignedIn ? <SignIn
+      routing="hash"
+      forceRedirectUrl={SLACK_INSTALL_PATH}
+      fallbackRedirectUrl={SLACK_INSTALL_PATH}
+      signUpUrl={`/sign-up?redirect_url=${encodeURIComponent(SLACK_INSTALL_PATH)}`}
+    />
       : !organizationLoaded ? <p role="status">Loading your organizations…</p>
       : <><h2 className="text-xl font-semibold">Connect your workspace</h2>
         <p className="text-sm leading-6" style={{color:palette.subtle}}>Choose the organization whose administrator account will manage this connection.</p>

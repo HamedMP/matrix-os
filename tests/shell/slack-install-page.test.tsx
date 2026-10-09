@@ -2,8 +2,8 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const state=vi.hoisted(()=>({loaded:true,signedIn:true,userId:'user_first',sessionId:'session_first',org:{id:'org_team',name:'Team'},getToken:vi.fn(),start:vi.fn()}));
-vi.mock('@clerk/nextjs',()=>({useAuth:()=>({isLoaded:state.loaded,isSignedIn:state.signedIn,userId:state.userId,sessionId:state.sessionId,getToken:state.getToken}),useOrganization:()=>({isLoaded:state.loaded,organization:state.org}),OrganizationSwitcher:()=> <span>Choose organization</span>,SignIn:()=> <span>Sign in</span>}));
+const state=vi.hoisted(()=>({loaded:true,signedIn:true,userId:'user_first',sessionId:'session_first',org:{id:'org_team',name:'Team'},getToken:vi.fn(),start:vi.fn(),signInProps:{} as Record<string,unknown>}));
+vi.mock('@clerk/nextjs',()=>({useAuth:()=>({isLoaded:state.loaded,isSignedIn:state.signedIn,userId:state.userId,sessionId:state.sessionId,getToken:state.getToken}),useOrganization:()=>({isLoaded:state.loaded,organization:state.org}),OrganizationSwitcher:()=> <span>Choose organization</span>,SignIn:(props:Record<string,unknown>)=>{state.signInProps=props;return <span>Sign in</span>;}}));
 vi.mock('../../shell/src/lib/slack-install',()=>({startSlackInstallation:state.start}));
 import { SlackInstallation } from '../../shell/src/components/auth/SlackInstallation';
 afterEach(cleanup);
@@ -11,6 +11,7 @@ beforeEach(()=>{state.loaded=true;state.signedIn=true;state.userId='user_first';
 describe('Slack installation page',()=>{
   it('requires sign-in before organization installation',()=>{
     state.signedIn=false;render(<SlackInstallation />);expect(screen.getByText('Sign in')).toBeTruthy();expect(screen.queryByRole('button',{name:'Add to Slack'})).toBeNull();
+    expect(state.signInProps).toMatchObject({forceRedirectUrl:'/slack/install',fallbackRedirectUrl:'/slack/install',signUpUrl:'/sign-up?redirect_url=%2Fslack%2Finstall'});
   });
   it('selects an organization and contains unavailable or administrator errors',async()=>{
     state.start.mockResolvedValue({status:'forbidden'});render(<SlackInstallation />);
