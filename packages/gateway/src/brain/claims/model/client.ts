@@ -93,11 +93,11 @@ function neverSent(error: unknown): boolean {
  */
 interface CallTally { lost: number; answered: boolean }
 
-function tallied(fetch: BrainModelFetch, tally: CallTally): BrainModelFetch {
+function tallied(timedFetch: BrainModelFetch, tally: CallTally): BrainModelFetch {
   return async (input, init) => {
     let response: Response;
     try {
-      response = await fetch(input, init);
+      response = await timedFetch(input, init); // timedFetch adds the timeout signal
     } catch (error) {
       if (!neverSent(error)) tally.lost += 1;
       throw error;
