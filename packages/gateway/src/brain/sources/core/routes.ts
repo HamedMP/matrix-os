@@ -1,8 +1,9 @@
 /**
  * /api/brain/projects/:projectId/sources...: the seven /sources routes of BRAIN_ROUTES. Each answer starts with the
  * shared guard (no-store, request principal, brain on, project ref shape), then exactQuery and a strict zod/v4 schema
- * or a bounded JSON body. Path ids go to the service unchanged, which resolves the project before it looks at a
- * source id, so a malformed, missing or foreign source answers the same source_not_found. No app.use.
+ * or a bounded JSON body. A path id that fails BRAIN_SOURCE_ID_PATTERN goes to the service as "", which resolves the
+ * project before it looks at a source id, so a malformed, missing or foreign source answers the same source_not_found.
+ * No app.use.
  */
 import { Hono } from "hono";
 import { z } from "zod/v4";
@@ -13,16 +14,17 @@ import {
   type BrainFeatureRoutesDeps, type BrainSourcesService,
 } from "../../contracts.js";
 import {
-  BRAIN_KIND_PATTERN, BRAIN_MAX_REVISION, BRAIN_RECEIPTS_PER_SOURCE, BRAIN_SOURCE_LABEL_MAX_CHARS,
+  BRAIN_KIND_PATTERN, BRAIN_MAX_REVISION, BRAIN_RECEIPTS_PER_SOURCE, BRAIN_SOURCE_ID_PATTERN,
+  BRAIN_SOURCE_LABEL_MAX_CHARS,
 } from "../../types.js";
 import { isBrainConnectableSourceKind } from "./registry.js";
 import { BRAIN_SOURCES_SERVICE_LIMITS } from "./service.js";
 
 const OPTIONS_QUERY_MAX_CHARS = 256;
-/** Longer path ids reach the service as "" (no source has it), after the project check like any unknown id. */
-const SOURCE_ID_PARAM_MAX_CHARS = 64;
 
 const kindSchema = z.string().min(1).max(32).regex(BRAIN_KIND_PATTERN);
+/** Other path ids reach the service as "" (no source has it), after the project check like any unknown id. */
+const sourceIdSchema = z.string().regex(BRAIN_SOURCE_ID_PATTERN);
 const labelSchema = z.string().trim().min(1).max(BRAIN_SOURCE_LABEL_MAX_CHARS).regex(/^[^\p{Cc}]+$/u);
 const revisionSchema = z.number().int().min(1).max(BRAIN_MAX_REVISION);
 const decimal = (max: number) => z.string().regex(/^[1-9][0-9]{0,9}$/).transform(Number).pipe(z.number().int().max(max));
@@ -51,7 +53,8 @@ function connectableKind(kind: string): BrainConnectableSourceKind {
 }
 
 function sourceIdParam(value: string | undefined): string {
-  return value === undefined || value.length > SOURCE_ID_PARAM_MAX_CHARS ? "" : value;
+  const parsed = sourceIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : "";
 }
 
 export function createBrainSourcesRoutes(deps: BrainFeatureRoutesDeps<BrainSourcesService>): Hono {

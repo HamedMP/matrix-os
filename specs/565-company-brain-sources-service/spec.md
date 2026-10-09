@@ -59,8 +59,8 @@ All under `/api/brain`, `:projectId` an id or slug, success 200 (201 for a creat
 | the seven `/sources` routes | gateway auth, then `requireRequestPrincipal` | the principal's own project through `BrainProjectResolver`; every store call carries `(owner_id, scope_id)` | fixed `{ error: { code, message } }` |
 | kind handlers and the runner | server code | caller-resolved owner id and scope key | feature and sync codes |
 
-- Input validation: `:projectId` against `BRAIN_PROJECT_REF_PATTERN`; source ids are checked by the service after
-  the project (ids over 64 characters never reach it); `exactQuery` refuses unknown and repeated keys; strict zod
+- Input validation: `:projectId` against `BRAIN_PROJECT_REF_PATTERN`; source ids against `BRAIN_SOURCE_ID_PATTERN`
+  (else "", which the service checks after the project); `exactQuery` refuses unknown and repeated keys; strict zod
   bodies (kind pattern, label 1 to 300 characters without control characters, revision 1 to the store maximum,
   status `active` or `paused`); configs are parsed by the kind handler; option output is bounded again here.
 - Error policy: clients see only codes from `BRAIN_API_ERRORS` and `BRAIN_FEATURE_ERRORS`. Not-found parity: a
