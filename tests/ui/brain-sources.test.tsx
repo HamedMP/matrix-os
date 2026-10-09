@@ -74,6 +74,7 @@ describe("Repository", () => {
     const confirm = () => within(repository).queryByRole("dialog", { name: "Read with the model" });
     fireEvent.click(button("Find claims with the model"));
     expect(confirm()).toHaveTextContent(/sends this project's pull requests.*to Anthropic/);
+    expect(confirm()).toHaveFocus();
     // It floats over the receipts instead of pushing them down.
     expect(confirm()).toHaveClass("absolute");
     expect(within(repository).getByRole("list", { name: "Recent syncs" })).toBeTruthy();
@@ -85,6 +86,7 @@ describe("Repository", () => {
     fireEvent.click(button("Find claims with the model"));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(confirm()).toBeNull();
+    expect(button("Find claims with the model")).toHaveFocus();
     fireEvent.click(button("Find claims with the model"));
     fireEvent.pointerDown(within(confirm()!).getByText(/sends this project's pull requests/));
     fireEvent.pointerDown(button("Find claims with the model"));
@@ -100,6 +102,7 @@ describe("Repository", () => {
     expect(button("Read with the model")).toBeEnabled();
     fireEvent.click(button("Cancel"));
     expect(confirm()).toBeNull();
+    expect(button("Find claims with the model")).toHaveFocus();
     fireEvent.click(button("Sync now"));
     expect(await within(repository).findByText("Sync failed. Try again later.")).toBeTruthy();
     fireEvent.click(button("Find claims"));
@@ -307,16 +310,17 @@ describe("Connect a source", () => {
 
   it("types Linear team keys, Drive folder ids and calendar ids, which their handlers never list", async () => {
     const kinds = (["linear", "google_drive", "google_calendar"] as const).map((kind) => ({ kind, available: true, reason: null }));
+    let finishDrive!: (value: unknown) => void;
+    const connected = { source: source("src_new"), created: true };
     const api = renderSources({
       gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
       sources: vi.fn(async () => ({ items: [], kinds })),
       // The gateway's answer for a handler without listOptions.
       sourceOptions: vi.fn(async (_project: string, kind: string) => ({ kind, nextCursor: null, items: [] })),
-      connectSource: vi.fn(async () => ({ source: source("src_new"), created: true })),
+      connectSource: vi.fn(async (_project: string, input: { kind: string }) => input.kind === "google_drive"
+        ? new Promise((resolve) => { finishDrive = resolve; }) : connected),
     });
-    const choose = async (value: string) => {
-      fireEvent.change(await screen.findByRole("combobox", { name: "Kind" }), { target: { value } });
-    };
+    const choose = async (value: string) => fireEvent.change(await screen.findByRole("combobox", { name: "Kind" }), { target: { value } });
     await choose("linear");
     const teams = await screen.findByRole("textbox", { name: "Team keys" });
     expect(screen.queryByText("Nothing to choose from yet.")).toBeNull();
@@ -333,12 +337,13 @@ describe("Connect a source", () => {
     await choose("google_drive");
     fireEvent.change(await screen.findByRole("textbox", { name: "Folder ids" }), { target: { value: "1aB_c-D" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Connect" })); });
-    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, {
-      kind: "google_drive", config: { folderIds: ["1aB_c-D"] },
-    }));
+    await waitFor(() => expect(api.connectSource).toHaveBeenLastCalledWith(PROJECT, { kind: "google_drive", config: { folderIds: ["1aB_c-D"] } }));
+    // Kind changed while Drive still connects: its answer reloads the list but keeps the calendar draft.
     await choose("google_calendar");
     const calendars = await screen.findByRole("textbox", { name: "Calendar ids" });
     fireEvent.change(calendars, { target: { value: Array.from({ length: 11 }, (_, index) => `c${index}`).join(" ") } });
+    await act(async () => finishDrive(connected));
+    await waitFor(() => expect(api.sources).toHaveBeenCalledTimes(3));
     expect(screen.getByText("Up to 10.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Connect" })).toBeDisabled();
     fireEvent.change(calendars, { target: { value: "primary" } });

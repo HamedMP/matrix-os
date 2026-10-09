@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BrainButton, BrainInput, BrainSelect } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import { BrainBadge, BrainEmpty, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
@@ -62,7 +62,7 @@ export function BrainSourceConnect({ api, projectId, kinds, onConnected }: Pick<
       </ul>
       {kind !== null && (
         <ConnectForm key={kind} api={api} projectId={projectId} kind={kind}
-          onConnected={() => { setKind(null); onConnected(); }} />
+          onConnected={(shown) => { if (shown) setKind(null); onConnected(); }} />
       )}
     </section>
   );
@@ -111,7 +111,7 @@ function useConnectSubmit({ api, projectId, kind, onConnected }: Pick<BrainScree
 }
 
 function ConnectForm({ api, projectId, kind, onConnected }: Pick<BrainScreenProps, "api" | "projectId"> & {
-  readonly kind: BrainConnectableSourceKind; readonly onConnected: () => void;
+  readonly kind: BrainConnectableSourceKind; readonly onConnected: (shown: boolean) => void;
 }) {
   // The first page only (the gateway lists at most 100 options per page).
   const options = useBrainLoad(() => api.sourceOptions(projectId, kind, {}), kind);
@@ -119,7 +119,10 @@ function ConnectForm({ api, projectId, kind, onConnected }: Pick<BrainScreenProp
   const [text, setText] = useState("");
   const [label, setLabel] = useState("");
   const [settings, setSettings] = useState(BRAIN_SOURCE_DEFAULT_SETTINGS);
-  const submitter = useConnectSubmit({ api, projectId, kind, onConnected });
+  // A form left for another kind still reports its connect, but must not close the form shown now.
+  const shown = useRef(true);
+  useEffect(() => { shown.current = true; return () => { shown.current = false; }; }, []);
+  const submitter = useConnectSubmit({ api, projectId, kind, onConnected: () => onConnected(shown.current) });
   const draft = connectDraft(kind, options.state, picked, text, settings);
   const max = BRAIN_SOURCE_CHOICES_MAX[kind];
 

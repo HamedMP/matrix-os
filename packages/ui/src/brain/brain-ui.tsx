@@ -56,6 +56,7 @@ export function BrainEmpty({ title, children }: { readonly title: string; readon
 /**
  * A confirm spanning the nearest positioned ancestor just under it, over unpositioned content without a z-index, so
  * opening it moves nothing. The trigger toggles `open`; a click outside trigger and panel, or Escape, calls `onClose`.
+ * Focus moves into the panel on open and back to the trigger when the panel closes with it (Cancel, Escape).
  */
 export function BrainConfirm({ open, onClose, label, trigger, children }: {
   readonly open: boolean; readonly onClose: () => void; readonly label: string; readonly trigger: ReactNode;
@@ -66,6 +67,7 @@ export function BrainConfirm({ open, onClose, label, trigger, children }: {
   const close = useEffectEvent(onClose);
   useEffect(() => {
     if (!open) return undefined;
+    panel.current?.focus();
     const inside = (target: EventTarget | null) => target instanceof Node
       && (anchor.current?.contains(target) === true || panel.current?.contains(target) === true);
     const onPointerDown = (event: PointerEvent) => { if (!inside(event.target)) close(); };
@@ -75,14 +77,16 @@ export function BrainConfirm({ open, onClose, label, trigger, children }: {
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      // The panel is gone by now, so focus it held has fallen to the body.
+      if (document.activeElement === document.body) anchor.current?.querySelector<HTMLElement>("button")?.focus();
     };
   }, [open]);
   return (
     <>
       <span ref={anchor} className="contents">{trigger}</span>
       {open && (
-        <div ref={panel} role="dialog" aria-label={label}
-          className={`absolute inset-x-0 top-full mt-2 grid gap-2 rounded-md border p-3 text-sm ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
+        <div ref={panel} role="dialog" aria-label={label} tabIndex={-1}
+          className={`absolute inset-x-0 top-full mt-2 grid gap-2 rounded-md border p-3 text-sm outline-none ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
           {children}
         </div>
       )}

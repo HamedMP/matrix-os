@@ -167,8 +167,8 @@ it, down to 360 px.
 
 A tab list with arrow keys (both axes, wrapping), Home and End, a roving tab stop and a labelled panel. Every control
 has a name; progress uses `role="status"`, errors `role="alert"`; the period buttons carry `aria-pressed`, the syncs
-toggle `aria-expanded`; the model confirm is a labelled dialog over the card that its button, Escape or a click
-outside closes; an invalid typed value sets `aria-invalid`. A running
+toggle `aria-expanded`; the model confirm is a labelled dialog over the card that takes focus, and its button, Escape
+or a click outside closes it (Cancel and Escape refocus the button); an invalid typed value sets `aria-invalid`. A running
 job shows a labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose
 problem text describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
 
