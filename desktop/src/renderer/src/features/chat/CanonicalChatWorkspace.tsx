@@ -34,6 +34,7 @@ import type {
   AgentProviderSummary,
   CanonicalChatMessagePart,
   CanonicalChatDetailResponse,
+  CanonicalChatRecord,
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
@@ -109,6 +110,9 @@ export function CanonicalChatWorkspace({
   onProjectChanged,
   onActiveChatChanged,
   eventSource,
+  createChat,
+  botId,
+  draftWelcome,
 }: {
   api?: ApiClient;
   client: CanonicalChatClient;
@@ -131,6 +135,12 @@ export function CanonicalChatWorkspace({
   onProjectChanged?: (chatId: string, projectId: string | null, title: string) => void;
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  /** Makes a draft's Chat on its first send in place of POST /api/chats (a Company Brain thread). */
+  createChat?: (input: { clientRequestId: string; title: string }) => Promise<CanonicalChatRecord>;
+  /** The Bot of this Chat when the host knows it already, a draft included. */
+  botId?: string;
+  /** The empty draft's heading and line, in place of the starter cards. */
+  draftWelcome?: { title: string; detail: string };
 }) {
   const actorId = useConnection((state) => state.userId);
   const authStatus = useConnection((state) => state.status);
@@ -148,6 +158,9 @@ export function CanonicalChatWorkspace({
   const chatConnection = useSyncExternalStore(subscribeConnection, getConnection, getConnection);
   const [credentialSuspendedChatId, setCredentialSuspendedChatId] = useState<string | null>(null);
   const explicitSharedRoute = Boolean(sharedScopeId);
+  // A Chat another app hosts (a Company Brain thread) keeps no project of its own and is not shared from here: no
+  // project picker and no Share, the same as the Web embedded chat.
+  const hostedChat = createChat !== undefined || botId !== undefined;
   const collaborationApi = useMemo(
     () => createDesktopCollaborationApi(platformHost),
     [platformHost],
@@ -192,6 +205,7 @@ export function CanonicalChatWorkspace({
     autoSelectFirst: false,
     eventSource,
     onInvalidation: onCredentialInvalidation,
+    createChat,
   });
   const [botEventRevision, setBotEventRevision] = useState(0);
   useEffect(() => {
@@ -275,8 +289,8 @@ export function CanonicalChatWorkspace({
     currentSelection: controller.detail?.record.chat.currentSelection,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
-  const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
-  const directBotId = botBinding.agentId;
+  const botBinding = useDirectBotBinding(explicitSharedRoute || botId ? undefined : routedComposerChatId ?? undefined, client.agents);
+  const directBotId = botId ?? botBinding.agentId;
   useEffect(() => {
     if (explicitSharedRoute || !routedComposerChatId || !reportBotHeaderBinding) return;
     return reportBotHeaderBinding({ chatId: routedComposerChatId, client, status: botBinding.status, agentId: directBotId });
@@ -784,7 +798,7 @@ export function CanonicalChatWorkspace({
           ? "Edit queued message…"
           : globalView === "conversation" ? "Reply to chat…" : "How can I help you today?"}
         ariaLabel={globalView === "conversation" ? "Reply to chat" : "Start a chat"}
-        leadingControls={(
+        leadingControls={hostedChat ? undefined : (
           <ConversationContextPicker
             context={context}
             compact={!context}
@@ -826,7 +840,7 @@ export function CanonicalChatWorkspace({
   );
 
   const sharingChatId = controller.detail?.record.chat.id;
-  const chatSharingAction = api && !chromeHost && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
+  const chatSharingAction = api && !chromeHost && !hostedChat && sharingChatId ? <ChatSharingButton key={sharingChatId} api={api}
     chatId={sharingChatId} copyText={copyText} /> : null;
 
   return (
@@ -1015,7 +1029,7 @@ export function CanonicalChatWorkspace({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} welcome={draftWelcome} />
         )}
         </>}
       </SharedChatSurface>

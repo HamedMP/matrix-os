@@ -17,6 +17,7 @@ Feature: [spec](../spec.md)
       disabled thinking field.
 - [x] Security architecture, integration wiring, failure modes, resource limits, the five invariants, the integration
       test checkpoint, the review checklist and delivery are recorded; OS-view matrix N/A for the server side.
-- [ ] App side: tabs, chat slot, hosts on every surface, Open in Chat, unavailable states, accessibility and the
-      OS-view matrix (to be filled with the app).
-- [ ] Real run under $1 on a capped key, with answers checked for links and tool calls (with the app).
+- [x] App side: tabs, chat slot, hosts on every surface, Open in Chat, unavailable states, accessibility and the
+      OS-view matrix are specified in spec 563.
+- [ ] Real run under $1 on a capped key, with answers checked for links and tool calls, on a host with the
+      scope-runtime supervisor (not the Docker dev setup).

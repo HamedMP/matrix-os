@@ -174,6 +174,12 @@ interface ChatAppProps {
     action: CanonicalProviderSetupAction,
   ) => void;
   mobile?: boolean;
+  /** "embedded": one Chat inside another app (the Company Brain chat), with no rail and no sidebar buttons. */
+  layout?: "full" | "embedded";
+  /** The Bot of this Chat when the host knows it already, a draft included. */
+  botId?: string;
+  /** The empty chat's heading and line, in place of the Chat app's own. */
+  emptyState?: { title: string; detail: string };
 }
 
 export function ChatApp(props: ChatAppProps) {
@@ -205,6 +211,9 @@ function ChatAppContent({
   onComposerDraftConsumed,
   onProviderSetupAction,
   mobile = false,
+  layout = "full",
+  botId,
+  emptyState,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
   const agentsNavigation = useChatAgentsNavigation();
@@ -228,7 +237,9 @@ function ChatAppContent({
   const botDraftNavigation = useWebBotDraftNavigation({client:agentClient,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });
+  const embedded = layout === "embedded";
   const [sidebarOpen, setSidebarOpen] = useState(!mobile);
+  const railButtons = !embedded && !sidebarOpen;
   const revealSearch = useCallback(() => setSidebarOpen(true), []);
   const agentDraftSequence = useRef(0);
   const startAgentChat: StartAgentChat = (text, resources) => {
@@ -282,8 +293,8 @@ function ChatAppContent({
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId);
-  const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, agentClient);
-  const directBotId = botBinding.agentId;
+  const botBinding = useDirectBotBinding(collaborationView || botId ? undefined : sessionId, agentClient);
+  const directBotId = botId ?? botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);
   const [botDetailsContainer, setBotDetailsContainer] = useState<HTMLElement | null>(null);
   const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
@@ -345,7 +356,8 @@ function ChatAppContent({
 
   const listedConversations = unreadOnly ? filteredConversations.filter((item) => item.readState?.unread) : filteredConversations;
 
-  const suggestions = getMessageSuggestions(messages);
+  // An embedded chat (the Company Brain) offers no generic next steps: its Bot cannot do them, and Electron shows none.
+  const suggestions = embedded || emptyState ? [] : getMessageSuggestions(messages);
 
   const isEmpty = messages.length === 0 && !busy;
 
@@ -368,6 +380,7 @@ function ChatAppContent({
   };
 
   return (
+    // react-doctor-disable-next-line react-doctor/click-events-have-key-events -- capture-phase link routing only: Enter on a link or code chip fires the same click event this listener sees.
     <div className="relative flex h-full bg-background" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
       const anchor = element?.closest("a");
@@ -391,7 +404,7 @@ function ChatAppContent({
         </ShellNotificationPortal>
       )}
       {/* Sidebar */}
-      <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
+      {embedded ? null : <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root
         className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
@@ -486,14 +499,14 @@ function ChatAppContent({
             )}
           </div>
         </ScrollArea>
-      </aside></ChatRailOrderContext.Provider>
+      </aside></ChatRailOrderContext.Provider>}
 
       {/* Main content */}
       <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={sessionId ?? "draft"} onOpenBotChat={onSwitchConversation}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
-          {!sidebarOpen && (
+          {railButtons && (
             <>
               <Button
                 variant="ghost"
@@ -560,7 +573,7 @@ function ChatAppContent({
               </div>
             </div>
           </div>
-          {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
+          {!collaborationView && !embedded && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
           {!collaborationView && !botIdentityUnknown && !directBotId ? <Button
             data-chat-model-trigger
@@ -577,7 +590,7 @@ function ChatAppContent({
             {providerState.selectionStatus ? <span className="shrink-0">{providerState.selectionStatus}</span> : null}
             <ChevronDownIcon className="size-3.5" aria-hidden="true" />
           </Button> : null}
-          {!collaborationView ? <Button
+          {!collaborationView && !embedded ? <Button
             aria-label="Open Agents & providers settings"
             title="Agents & providers"
             variant="ghost"
@@ -590,7 +603,7 @@ function ChatAppContent({
           >
             <Settings2Icon className="size-3.5" aria-hidden="true" />
           </Button> : null}
-          {!connected && (
+          {!connected && !embedded && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header> : null}
@@ -631,11 +644,13 @@ function ChatAppContent({
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         <BotChatPanel key={sessionId} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
-          headerLeading={!sidebarOpen ? <>
+          headerLeading={railButtons ? <>
             <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
             <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
           </> : null}
-          headerActions={<>
+          // Embedded, the host app owns the chrome: no Share (a shared brain thread would become a collaboration chat),
+          // no settings and no connection line, the same as Electron's brain tab.
+          headerActions={embedded ? null : <>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
@@ -654,6 +669,7 @@ function ChatAppContent({
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
             modelLabel={directBotId ? null : providerState.selected?.modelLabel ?? null}
+            emptyState={emptyState}
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
           /></>
@@ -758,7 +774,7 @@ function ChatAppContent({
                 draftRequest={activeDraftRequest}
                 onDraftConsumed={consumeDraftRequest}
                 unavailablePlaceholder={!providerState.loading && !providerReady
-                  ? "Write or dictate a draft — connect a harness to send"
+                  ? directBotId ? BOT_UNAVAILABLE_PLACEHOLDER : "Write or dictate a draft — connect a harness to send"
                   : undefined}
                 attachmentsEnabled={!botIdentityUnknown && !directBotId && (providerState.selected?.supportsFileAttachments ?? false)}
               />
@@ -777,6 +793,14 @@ function ChatAppContent({
   );
 }
 
+/** A Bot runs on its own model route, never on a harness. */
+const BOT_UNAVAILABLE_PLACEHOLDER = "Write or dictate a draft. This Bot cannot answer right now.";
+
+/** The harness setup around a new chat's greeting; a Bot chat has none. */
+function HarnessSetup({ bot, children }: { bot: boolean; children: React.ReactNode }) {
+  return bot ? <>{children}</> : <ChatProviderOnboarding>{children}</ChatProviderOnboarding>;
+}
+
 function EmptyState({
   composerProps,
   onSubmit,
@@ -788,6 +812,7 @@ function EmptyState({
   modelLabel,
   providerReady,
   attachmentsEnabled,
+  emptyState,
 }: {
   composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
@@ -799,22 +824,23 @@ function EmptyState({
   modelLabel: string | null;
   providerReady: boolean;
   attachmentsEnabled: boolean;
+  emptyState?: { title: string; detail: string };
 }) {
   return (
     <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
       <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
-        {/* Greeting */}
-        <ChatProviderOnboarding><div className="grid justify-items-center gap-2 text-center">
+        {/* Greeting; a Bot runs on its own model, so a Bot chat shows no harness setup */}
+        <HarnessSetup bot={Boolean(composerProps.botContext)}><div className="grid justify-items-center gap-2 text-center">
           <AgentAvatar id="matrix_home" name="Matrix"/>
           <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Matrix do?
+            {emptyState?.title ?? "What should Matrix do?"}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting."}
+            {emptyState?.detail ?? (modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting.")}
           </p>
         </div>
 
-        </ChatProviderOnboarding>
+        </HarnessSetup>
 
         {/* Input */}
         <ChatInput
@@ -825,7 +851,9 @@ function EmptyState({
           autoFocus={!mobile}
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
-          unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
+          unavailablePlaceholder={!providerReady
+            ? composerProps.botContext ? BOT_UNAVAILABLE_PLACEHOLDER : "Write or dictate a draft — connect a harness to send"
+            : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
 
