@@ -2,16 +2,21 @@
  * The project erase and the removed source purge over PGlite with the graph: a refresh already running when the
  * project is erased writes nothing back, and a purge drops the derived rows of every tombstoned document of the
  * removed source, whenever it was tombstoned, and leaves no person only that source named readable; the start's
- * catch-up finishes a sweep a shutdown cut short.
+ * catch-up finishes a sweep a shutdown cut short. A source connect or git registration that resolved the project
+ * before its deletion creates no source after the erase.
  */
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { eraseBrainScopeRows } from "../../packages/gateway/src/brain/api/erase.js";
+import { eraseBrainProject, eraseBrainScopeRows } from "../../packages/gateway/src/brain/api/erase.js";
 import { purgeBrainRemovedSource, runBrainIndexCatchUp } from "../../packages/gateway/src/brain/api/index-repair.js";
-import { BrainFeatureError } from "../../packages/gateway/src/brain/contracts.js";
+import { createBrainProjectService } from "../../packages/gateway/src/brain/api/service.js";
+import { BrainApiError, type BrainProjectLookup } from "../../packages/gateway/src/brain/api/types.js";
+import { BrainFeatureError, type BrainProjectResolver } from "../../packages/gateway/src/brain/contracts.js";
 import type { BrainGraphTables } from "../../packages/gateway/src/brain/graph/index.js";
 import { createBrainGraphIndex } from "../../packages/gateway/src/brain/graph/refresh.js";
 import { deriveGraphDocument, withGraphLock } from "../../packages/gateway/src/brain/graph/store.js";
+import { createBrainSourcesService, runBrainSourceSync } from "../../packages/gateway/src/brain/sources/core/index.js";
+import { fakeHandler, gate, SCOPE_A, sourcesHarness, type SourcesHarness } from "./helpers/brain-sources-fixture.js";
 import {
   OWNER, PROJECT, SCOPE, createGraphHarness, id, rejectsWith, seedProject, type GraphHarness,
 } from "./helpers/brain-graph-fixtures.js";
@@ -85,5 +90,60 @@ describe("brain erase and removed source purge", { timeout: 60_000 }, () => {
     expect(await runBrainIndexCatchUp(harness.db, [harness.graph.index], signal))
       .toEqual({ scopes: 1, refreshed: 1, failed: 0 });
     await rejectsWith(harness.graph.service.getEntity(OWNER, PROJECT, DANA), BrainFeatureError, "entity_not_found");
+  });
+});
+
+describe("source creation racing a project deletion", { timeout: 60_000 }, () => {
+  let harness: SourcesHarness;
+  let deleted: boolean;
+  beforeEach(async () => { harness = await sourcesHarness(); deleted = false; });
+  afterEach(async () => { await harness.destroy(); vi.restoreAllMocks(); });
+
+  /** As project deletion does: the project stops resolving, then its brain is erased. */
+  async function deleteProject() {
+    deleted = true;
+    await eraseBrainProject(harness.db, OWNER, "proj_a");
+  }
+  const sourceRows = async () => Number((await sql<{ n: number }>`SELECT count(*)::int AS n FROM brain_sources
+    WHERE owner_id = ${SCOPE_A.ownerId} AND scope_id = ${SCOPE_A.scopeId}`.execute(harness.db)).rows[0]!.n);
+
+  it("connects no source when the project is deleted while the connect waits on its config check", async () => {
+    const checking = gate();
+    const checked = gate();
+    const handler = fakeHandler("linear", { checkConfig: async () => { checked.open(); await checking.wait; } });
+    const resolver: BrainProjectResolver = {
+      ...harness.resolver,
+      resolve: async (ownerId, projectRef) => {
+        if (deleted) throw new BrainApiError("project_not_found");
+        return harness.resolver.resolve(ownerId, projectRef);
+      },
+    };
+    const sources = createBrainSourcesService({
+      repository: harness.repository, resolver, handlers: [handler], runner: runBrainSourceSync,
+    });
+    const connecting = sources.connect(OWNER, "proj_a", { kind: "linear", config: { items: ["x"] } });
+    await checked.wait;
+    await deleteProject();
+    checking.open();
+    await rejectsWith(connecting, BrainApiError, "project_not_found");
+    expect(await sourceRows()).toBe(0);
+    expect(handler.calls).not.toContain("save");
+  });
+
+  it("registers no git source when the project is deleted while the registration looks for one", async () => {
+    const projects = {
+      getProjectById: async () => deleted
+        ? { ok: false, status: 404, error: { code: "not_found", message: "Project was not found" } }
+        : { ok: true, project: { id: "proj_a", slug: "alpha", name: "Alpha" } },
+    } as unknown as BrainProjectLookup;
+    const listSources = harness.repository.listSources.bind(harness.repository);
+    vi.spyOn(harness.repository, "listSources").mockImplementationOnce(async (scope, options) => {
+      const page = await listSources(scope, options);
+      await deleteProject();
+      return page;
+    });
+    const project = createBrainProjectService({ repository: harness.repository, projects, homePath: "/home" });
+    await rejectsWith(project.registerGitSource(OWNER, "proj_a", {}), BrainApiError, "project_not_found");
+    expect(await sourceRows()).toBe(0);
   });
 });

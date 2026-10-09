@@ -121,11 +121,12 @@ export function createBrainProjectService(deps: BrainProjectServiceDeps): BrainP
       // No git process runs here: a `project:<id>` source takes its web base from origin on every run.
       const githubBase = project.github?.htmlUrl ? parseWebBase(project.github.htmlUrl) : null;
       const externalRef = input.webBase ?? githubBase?.href ?? `${BRAIN_PROJECT_IDENTITY_PREFIX}${project.id}`;
+      // The project is resolved again under the scope lock, so a project deleted since gets no source after its erase.
       const result = await deps.repository.createSource(scope, {
         kind: GIT_SOURCE_KIND,
         externalRef,
         label: sourceLabel(project),
-      });
+      }, undefined, () => resolveProject(ownerId, project.id));
       return { source: toSourceView(result.source), created: result.created };
     },
 

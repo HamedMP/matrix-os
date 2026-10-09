@@ -44,6 +44,7 @@ registry, the shared sync runner and the start step for the source tables. Spec:
   `saveConfig` in its transaction: no request sees the source without its config, and a refused config leaves none.
   The same identity answers the existing source unchanged (`created: false`); a missing or refused stored config is
   saved compare-and-set on the revision read with the source, so a config another request saved since stands.
+  `createSource` resolves the project again under the scope lock, so a project deleted meanwhile gets no source.
 - Across processes the cap is settled after the create: a source not among the oldest `BRAIN_SOURCES_PER_KIND_MAX`
   of its kind by (createdAt, sourceId) removes itself (`source_conflict`). Two creates in the same millisecond in
   two processes can both stay; the queue rules this out within one process.

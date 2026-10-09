@@ -241,14 +241,17 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
   /**
    * createSource with saveConfig in its transaction, so no request sees the new source without its config; the new
    * source is removed again when the cap refuses it. The same identity again changes nothing, but a missing (or now
-   * refused) config gets this one, compare-and-set on the revision read here: a config saved since then stands.
+   * refused) config gets this one, compare-and-set on the revision read here: a config saved since then stands. The
+   * project is resolved again under the scope lock, so a project deleted since gets no source after its erase.
    */
   async function createWithConfig(
-    scope: BrainScopeKey, handler: BrainAnySourceKindHandler, config: unknown,
+    ownerId: string, project: BrainResolvedProject, handler: BrainAnySourceKindHandler, config: unknown,
     row: { readonly externalRef: string; readonly label: string },
   ): Promise<{ readonly source: KnownSource; readonly created: boolean }> {
+    const scope = project.scope;
     const { source, created } = await repository.createSource(scope, { kind: handler.kind, ...row },
-      (trx, next) => handler.saveConfig(scope, next.sourceId, config, trx));
+      (trx, next) => handler.saveConfig(scope, next.sourceId, config, trx),
+      () => deps.resolver.resolve(ownerId, project.projectId));
     const known: KnownSource = { ...source, kind: handler.kind };
     if (created) {
       try {
@@ -376,7 +379,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
         if (!same && peers.length >= BRAIN_SOURCES_PER_KIND_MAX[handler.kind]) {
           throw new BrainFeatureError("source_conflict");
         }
-        return createWithConfig(scope, handler, config, {
+        return createWithConfig(ownerId, project, handler, config, {
           externalRef: identity.externalRef, label: input.label ?? identity.label,
         });
       });

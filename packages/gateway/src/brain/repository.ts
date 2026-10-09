@@ -180,14 +180,20 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
 
   // Sources
 
-  /** `alongside` runs in the same transaction when the source is new (the sources service writes its config row). */
+  /**
+   * `alongside` runs in the same transaction when the source is new (the sources service writes its config row).
+   * `admit` runs under the scope lock before the insert and refuses by throwing (the services check the project is
+   * still live there): a scope erase takes the same lock, so a source is either refused or created before the erase.
+   */
   async createSource(
     scope: BrainScopeKey, input: BrainCreateSourceInput,
     alongside?: (trx: Transaction<BrainDatabase>, source: BrainSource) => Promise<void>,
+    admit?: () => Promise<unknown>,
   ): Promise<BrainCreateSourceResult> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const source = parseBrainInput(BrainCreateSourceSchema, input);
     return this.withScopeWrite(key, async (trx, now) => {
+      await admit?.();
       const result = await insertSource(trx, key, source, now);
       if (result.created) await alongside?.(trx, result.source);
       return result;
