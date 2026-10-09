@@ -9,7 +9,7 @@ import { normalizeBrainClaimText, type BrainClaimKind } from "../claims/types.js
 import type { BrainCiteView, BrainConflictRule, BrainConflictSideView, BrainConflictView } from "../contracts.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
 import { loadBrainCites as loadCites } from "../cite.js";
-import { currentClaims, uniqueClaims } from "./reads.js";
+import { currentClaims, documentsAsOf, uniqueClaims } from "./reads.js";
 import {
   commitmentState, commitmentWords, contradiction, cutUnits, draftStatusLine, overlap, statementClauses,
   lineText,
@@ -88,15 +88,12 @@ function pickPairs<T extends { readonly row: BriefClaimRow }>(
   return picked;
 }
 
-/** Documents dated before this instant only (a past brief); null reads everything. */
+/** A past brief's end: documents are read as they were then (reads.ts documentsAsOf); null reads them now. */
 type Before = Date | null;
-const beforeSql = (before: Before) => (before === null ? sql`` : sql`AND d.source_updated_at < ${before}`);
 
 async function claimRows(db: Kysely<BrainDatabase>, scope: BrainScopeKey, kinds: BrainClaimKind[], before: Before) {
-  let query = currentClaims(db, scope).where("c.kind", "in", kinds);
-  if (before !== null) query = query.where("d.source_updated_at", "<", before);
-  const rows = await query
-    .orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id")
+  const rows = await currentClaims(db, scope, before).where("c.kind", "in", kinds)
+    .orderBy("a.dated", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id")
     .limit(BRIEF_SCANS.conflictClaims).execute();
   return uniqueClaims(rows);
 }
@@ -126,13 +123,12 @@ interface ShippedRow {
 
 async function draftSpecsShipped(db: Kysely<BrainDatabase>, scope: BrainScopeKey, before: Before): Promise<Found[]> {
   const { rows: specs } = await sql<SpecRow>`
-    SELECT d.document_id, d.title, left(d.body, 4096) AS head, d.source_updated_at,
+    SELECT d.document_id, a.title, left(a.body, 4096) AS head, a.dated AS source_updated_at,
       (SELECT min(r.value) FROM brain_document_refs r WHERE r.owner_id = d.owner_id AND r.scope_id = d.scope_id
         AND r.document_id = d.document_id AND r.kind = 'spec') AS spec
-    FROM brain_documents d
-    WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
-      AND d.provenance = 'git_spec' ${beforeSql(before)}
-    ORDER BY d.source_updated_at DESC, d.document_id DESC LIMIT ${BRIEF_SCANS.specDocuments}`.execute(db);
+    FROM ${documentsAsOf(scope, before)} JOIN brain_documents d ON d.owner_id = ${scope.ownerId}
+      AND d.scope_id = ${scope.scopeId} AND d.document_id = a.document_id AND d.provenance = 'git_spec'
+    ORDER BY a.dated DESC, d.document_id DESC LIMIT ${BRIEF_SCANS.specDocuments}`.execute(db);
   const drafts = specs.flatMap((spec) => {
     const line = spec.spec === null || PART_TWO_OR_LATER.test(spec.title) ? null
       : draftStatusLine(spec.head, BRIEF_QUOTE_MAX_CHARS);
@@ -143,17 +139,18 @@ async function draftSpecsShipped(db: Kysely<BrainDatabase>, scope: BrainScopeKey
   // each dir's oldest Draft date.
   const dirs = [...new Map(drafts.map((draft) => [draft.dir, draft.at]))];
   const { rows: shipped } = await sql<ShippedRow>`
-    SELECT r.value AS spec, d.document_id, d.title, d.source_updated_at AS at
+    SELECT r.value AS spec, d.document_id, a.title, a.dated AS at
     FROM (VALUES ${sql.join(dirs.map(([dir, at]) => sql`(${dir}, ${new Date(at)}::timestamptz)`))}) v (spec, draft_at)
     JOIN brain_document_refs r ON r.value = v.spec JOIN brain_documents d ON d.owner_id = r.owner_id
-      AND d.scope_id = r.scope_id AND d.document_id = r.document_id AND d.source_updated_at > v.draft_at
-    WHERE r.owner_id = ${scope.ownerId} AND r.scope_id = ${scope.scopeId} AND r.kind = 'spec' AND d.deleted_at IS NULL
+      AND d.scope_id = r.scope_id AND d.document_id = r.document_id
+    JOIN ${documentsAsOf(scope, before)} ON a.document_id = d.document_id AND a.dated > v.draft_at
+    WHERE r.owner_id = ${scope.ownerId} AND r.scope_id = ${scope.scopeId} AND r.kind = 'spec'
       AND (d.provenance = 'git_pr' OR (d.provenance = 'github_pr' AND EXISTS (SELECT 1 FROM brain_document_refs s
         WHERE s.owner_id = d.owner_id AND s.scope_id = d.scope_id AND s.document_id = d.document_id
           AND s.kind = 'status' AND s.value = 'merged')))
       AND EXISTS (SELECT 1 FROM brain_document_refs p WHERE p.owner_id = d.owner_id AND p.scope_id = d.scope_id
-        AND p.document_id = d.document_id AND p.kind = 'path' AND left(p.value, 6) <> 'specs/') ${beforeSql(before)}
-    ORDER BY d.source_updated_at ASC, d.document_id ASC LIMIT ${BRIEF_SCANS.shippedPullRequests}`.execute(db);
+        AND p.document_id = d.document_id AND p.kind = 'path' AND left(p.value, 6) <> 'specs/')
+    ORDER BY a.dated ASC, d.document_id ASC LIMIT ${BRIEF_SCANS.shippedPullRequests}`.execute(db);
   return drafts.flatMap((draft) => {
     const later = shipped.filter((row) => row.spec === draft.dir && new Date(row.at).getTime() > draft.at);
     if (later.length === 0) return [];

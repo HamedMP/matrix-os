@@ -25,7 +25,7 @@ export interface StaleItem extends BrainStaleItemView {
 
 /**
  * The first `limit` open commitments: current, not stated done and not on a done or canceled document; due first,
- * then newest. `before`: only documents dated before it (a past brief). Closed documents are filtered in SQL; a
+ * then newest. `before`: as of then (a past brief, see documentsAsOf). Closed documents are filtered in SQL; a
  * statement that says done is only known once read, so pages of `limit` rows are read until `limit` open ones are
  * found, at most BRIEF_SCANS.commitmentPages pages.
  */
@@ -35,14 +35,11 @@ export async function openCommitments(
 ): Promise<BriefClaimRow[]> {
   const due = commitmentDue();
   const status = documentStatus();
-  let query = currentClaims(db, scope).where("c.kind", "=", "commitment")
+  let query = currentClaims(db, scope, options.before ?? null).where("c.kind", "=", "commitment")
     .where((eb) => eb.or([eb(status, "is", null), eb(status, "not in", CLOSED_STATUSES)]));
   if (options.dueBefore !== undefined) query = query.where(due, "<", options.dueBefore);
-  if (options.before !== undefined && options.before !== null) {
-    query = query.where("d.source_updated_at", "<", options.before);
-  }
   const ordered = query.orderBy(due, (order) => order.asc().nullsLast())
-    .orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id");
+    .orderBy("a.dated", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id");
   const open: BriefClaimRow[] = [];
   const seen = new Set<string>();
   for (let page = 0; page < BRIEF_SCANS.commitmentPages && open.length < options.limit; page += 1) {

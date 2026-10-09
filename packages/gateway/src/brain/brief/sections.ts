@@ -12,7 +12,7 @@ import {
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
 import { loadBrainCites as loadCites } from "../cite.js";
 import { computeConflicts } from "./conflicts.js";
-import { claimFields, commitmentTerms, currentClaims, uniqueClaims } from "./reads.js";
+import { claimFields, commitmentTerms, currentClaims, documentsAsOf, uniqueClaims } from "./reads.js";
 import { computeStale, openCommitments } from "./stale.js";
 import { lineText } from "./text.js";
 import { DAY_MS, type BriefWindowRange } from "./time.js";
@@ -41,17 +41,17 @@ interface ChangeRow {
 
 async function changes(db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange) {
   // New: first revision, or first published inside the window (created, then edited the same day).
-  const firstSeen = sql`(d.revision = 1 OR (d.published_at >= ${range.from} AND d.published_at < ${range.to}))`;
+  const firstSeen = sql`(a.revision = 1 OR (d.published_at >= ${range.from} AND d.published_at < ${range.to}))`;
   const { rows } = await sql<ChangeRow>`
     SELECT w.document_id, w.source_id, w.created::int AS created, w.revised::int AS revised, s.kind, s.label
     FROM (
       SELECT d.document_id, d.source_id,
-        row_number() OVER (PARTITION BY d.source_id ORDER BY d.source_updated_at DESC, d.document_id DESC) AS rn,
+        row_number() OVER (PARTITION BY d.source_id ORDER BY a.dated DESC, d.document_id DESC) AS rn,
         count(*) FILTER (WHERE ${firstSeen}) OVER (PARTITION BY d.source_id) AS created,
         count(*) FILTER (WHERE NOT ${firstSeen}) OVER (PARTITION BY d.source_id) AS revised
-      FROM brain_documents d
-      WHERE d.owner_id = ${scope.ownerId} AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
-        AND d.source_updated_at >= ${range.from} AND d.source_updated_at < ${range.to}
+      FROM ${documentsAsOf(scope, range.to)} JOIN brain_documents d ON d.owner_id = ${scope.ownerId}
+        AND d.scope_id = ${scope.scopeId} AND d.document_id = a.document_id
+      WHERE a.dated >= ${range.from}
     ) w
     LEFT JOIN brain_sources s ON s.owner_id = ${scope.ownerId} AND s.scope_id = ${scope.scopeId}
       AND s.source_id = w.source_id
@@ -101,10 +101,9 @@ async function claimLines(
 async function newClaims(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange, kind: BrainClaimKind,
 ) {
-  const rows = await currentClaims(db, scope).where("c.kind", "=", kind)
-    .where("d.source_updated_at", ">=", range.from).where("d.source_updated_at", "<", range.to)
-    .where((eb) => eb.or([eb("d.revision", "=", 1), eb("c.created_at", ">=", eb.ref("d.updated_at"))]))
-    .orderBy("d.source_updated_at", "desc").orderBy("d.document_id", "desc")
+  const rows = await currentClaims(db, scope, range.to).where("c.kind", "=", kind).where("a.dated", ">=", range.from)
+    .where((eb) => eb.or([eb("a.revision", "=", 1), eb("c.created_at", ">=", eb.ref("a.written"))]))
+    .orderBy("a.dated", "desc").orderBy("d.document_id", "desc")
     .orderBy("c.span_start").orderBy("c.claim_id")
     .limit((LIMITS.linesPerSection + 1) * 2).execute();
   return claimLines(db, scope, kind, uniqueClaims(rows));
