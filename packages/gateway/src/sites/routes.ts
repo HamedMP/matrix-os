@@ -10,7 +10,7 @@ import { requireRequestPrincipal, isRequestPrincipalError } from '../request-pri
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
 import { BuildOrchestrator } from '../app-runtime/build-orchestrator.js';
 import { parseManifest, type AppManifest } from '../app-runtime/manifest-schema.js';
-import { collectSiteFiles } from './bundle.js';
+import { collectSiteFiles, type SiteFile } from './bundle.js';
 import { SitePlatformError, type SitePlatformClient } from './platform-client.js';
 import type { SiteSubmissionRepository } from './submission-repository.js';
 const Slug=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
@@ -45,7 +45,7 @@ async function livePublicationMatches(appDir:string,binding:AppDirectoryBinding,
   return parsed.ok&&isDeepStrictEqual(publicationInputs(parsed.manifest),publicationInputs(expected))&&await sameAppDirectory(appDir,binding);
  }catch(error){console.warn('[sites] Manifest revalidation failed',error instanceof Error?error.name:'UnknownError');return false;}
 }
-export interface SiteRouteOptions {homePath:string;ownerIds:readonly string[];platform:SitePlatformClient|null;submissions:SiteSubmissionRepository|null;build?:Pick<BuildOrchestrator,'build'>}
+export interface SiteRouteOptions {homePath:string;ownerIds:readonly string[];platform:SitePlatformClient|null;submissions:SiteSubmissionRepository|null;build?:Pick<BuildOrchestrator,'buildWithSnapshot'>}
 export function createSiteRoutes(options:SiteRouteOptions):Hono {
  const app=new Hono(),build=options.build??new BuildOrchestrator({concurrency:1});let activeBuilds=0;
  const base='/api/apps/:slug/site',limit=bodyLimit({maxSize:16*1024,onError:c=>c.json({error:'Too many requests'},413)});
@@ -79,12 +79,19 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
    if(config.forms.length&&!options.submissions)return c.json({error:'Site unavailable'},503);
    const {reviewedConfig,...metadata}=parsed.data as z.infer<typeof SitePublishRequestSchema>;
    if(!isDeepStrictEqual(config,reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
-   const result=await build.build(manifest.slug,appDir,{timeoutMs:120000});if(!result.ok)return c.json({error:'App needs a public build'},400);
-   if(!await livePublicationMatches(appDir,binding,manifest))return c.json({error:'Site changed; reload and try again'},409);
-   let files;
-   try{files=await collectSiteFiles(binding.path,manifest.build.output);}catch(error){console.warn('[sites] Production artifact rejected',error instanceof Error?error.name:'UnknownError');return c.json({error:'App needs a public build'},400);}
-   if(!await livePublicationMatches(appDir,binding,manifest))return c.json({error:'Site changed; reload and try again'},409);
-   return await call(c,'POST',{title:manifest.name,description:manifest.description??'',...metadata,config,files});
+   type Snapshot={ok:true;files:SiteFile[]}|{ok:false;reason:'changed'|'artifacts'};
+   const result=await build.buildWithSnapshot<Snapshot>(manifest.slug,appDir,{timeoutMs:120000},async()=>{
+    if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
+    let files:SiteFile[];
+    try{files=await collectSiteFiles(binding.path,manifest.build!.output);}
+    catch(error){console.warn('[sites] Production artifact rejected',error instanceof Error?error.name:'UnknownError');return {ok:false,reason:'artifacts'};}
+    if(!await livePublicationMatches(appDir,binding,manifest))return {ok:false,reason:'changed'};
+    return {ok:true,files};
+   });
+   if(!result.ok)return c.json({error:'App needs a public build'},400);
+   if(!result.snapshot.ok)return result.snapshot.reason==='changed'?c.json({error:'Site changed; reload and try again'},409):c.json({error:'App needs a public build'},400);
+   // Captured bytes no longer depend on dist, so transport runs after ownership releases.
+   return await call(c,'POST',{title:manifest.name,description:manifest.description??'',...metadata,config,files:result.snapshot.files});
   }finally{activeBuilds--;}
  });
  app.patch(base,limit,async c=>{const parsed=await body(c,SiteMetadataSchema);return parsed.success?call(c,'PATCH',parsed.data):c.json({error:'Invalid request'},400);});
