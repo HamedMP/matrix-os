@@ -1,4 +1,5 @@
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
+import { CanonicalChatIdSchema } from '@matrix-os/contracts';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
 const MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH = 4_096;
@@ -132,6 +133,15 @@ export function buildPostAuthRedirectPath(rawUrl: string): string {
     }
     const deviceReturn = normalizeDeviceReturnPath(url.searchParams.get('device_return'));
     if (deviceReturn) params.set('device_return', deviceReturn);
+    // A Chat reference is navigation only; authorization is checked when it opens.
+    // Messaging handoffs always return to the owner's primary computer.
+    const chats = url.searchParams.getAll('chat');
+    const chat = CanonicalChatIdSchema.safeParse(chats.length === 1 ? chats[0] : null);
+    if (path === '/' && chat.success) {
+      params.set('chat', chat.data);
+      params.set('launch', '__chat__');
+      params.set('runtime', 'primary');
+    }
     const query = params.toString();
     return query ? `${path}?${query}` : path;
   } catch (err: unknown) {

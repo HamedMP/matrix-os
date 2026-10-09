@@ -1,6 +1,4 @@
-import { SlackInstallPanel } from "@matrix-os/ui";
-import { invoke } from "../../lib/operator";
-import { SLACK_INSTALL_URL } from "@matrix-os/contracts/slack-bridge";
+import MessagingSection from "./sections/MessagingSection";
 import {
   Blocks,
   Bot,
@@ -157,7 +155,7 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
-          {section === "messaging" ? <SlackInstallPanel onInstall={async () => { await invoke("shell:open-external", {url: SLACK_INSTALL_URL}); }} /> : null}
+          {section === "messaging" ? <MessagingSection /> : null}
           {section === "services" ? <IntegrationsSettingsSection /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}

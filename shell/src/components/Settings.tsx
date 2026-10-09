@@ -1,6 +1,6 @@
 "use client";
 
-import { SlackInstallPanel, useGettingStartedBlocker } from "@matrix-os/ui";
+import { useGettingStartedBlocker } from "@matrix-os/ui";
 import { useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
@@ -15,10 +15,12 @@ import {
   CableIcon,
   CreditCardIcon,
   DownloadIcon,
-  CheckCircle2Icon,
   UploadIcon,
   UsersIcon,
 } from "@/lib/hugeicons";
+import { useMobileViewport } from "@/hooks/useMobileViewport";
+import { SettingsNavigation } from "./settings/SettingsNavigation";
+import { MessagingSection } from "./settings/sections/MessagingSection";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { AgentSection } from "./settings/sections/AgentSection";
 import { IdentityPersonalitySection } from "./settings/sections/IdentityPersonalitySection";
@@ -205,6 +207,7 @@ function SettingsFrame({
   showBillingSection,
 }: SettingsFrameProps) {
   const onboardingMode = onboardingDefaultInstalls !== undefined;
+  const mobile=useMobileViewport();
   const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
   const canonicalLockedSection = lockedSection === undefined
     ? undefined
@@ -217,6 +220,12 @@ function SettingsFrame({
   const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
     ? undefined
     : canonicalLockedSection;
+  const openingSection = resolvedLockedSection ?? (showBillingSection && billingActive === false
+    ? "billing"
+    : resolvedDefaultSection);
+  const [mobileDetail, setMobileDetail] = useState(openingSection !== "appearance");
+  const showMobileAccountFooter = mobile && mobileDetail
+    && (Boolean(resolvedLockedSection) || onboardingMode || closeDisabled);
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
     : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
@@ -229,7 +238,7 @@ function SettingsFrame({
         return result;
       }, [])
     : standardFrameSections;
-  const [activeSection, setActiveSection] = useState<SectionId>(resolvedDefaultSection);
+  const [activeSection, setActiveSection] = useState<SectionId>(openingSection);
   // Tracks the prior `open` value so the render-time section adjustment below
   // can detect the open transition. Uses the React-documented "store previous
   // prop in state" pattern (state, not a ref): reading/writing a ref during
@@ -282,11 +291,10 @@ function SettingsFrame({
   if (open !== prevOpen) setPrevOpen(open);
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
+    if (!mobileDetail) setMobileDetail(true);
   } else if (justOpened) {
-    const openSection = showBillingSection && billingActive === false
-      ? "billing"
-      : resolvedDefaultSection;
-    if (activeSection !== openSection) setActiveSection(openSection);
+    setMobileDetail(openingSection !== "appearance");
+    if (activeSection !== openingSection) setActiveSection(openingSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }
@@ -328,7 +336,7 @@ function SettingsFrame({
 
       <div className="pointer-events-none relative z-10 flex h-full items-center justify-center overflow-hidden sm:p-4">
         <div
-          className="pointer-events-auto flex h-[100dvh] w-screen max-w-none flex-col overflow-hidden rounded-none bg-card/95 shadow-2xl backdrop-blur-xl sm:h-[90vh] sm:max-h-[90vh] sm:w-[94vw] sm:max-w-[94vw] sm:rounded-2xl xl:h-[760px] xl:w-[1180px]"
+          className={`pointer-events-auto flex flex-col overflow-hidden bg-card shadow-2xl ${mobile ? "h-[100dvh] w-screen" : "h-[90vh] max-h-[90vh] w-[94vw] max-w-[94vw] rounded-2xl xl:h-[760px] xl:w-[1180px]"}`}
           style={{
             opacity: visible ? 1 : 0,
             transform: visible ? "scale(1) translateY(0)" : "scale(0.96) translateY(8px)",
@@ -339,7 +347,12 @@ function SettingsFrame({
             className="flex items-center gap-3 px-4 py-3 border-b border-border/40 select-none"
             style={designTitleBarContainerStyle(titleBarVariant)}
           >
-            {usesCaptionButtons(titleBarVariant) ? (
+            {mobile ? <>
+              <button type="button" className="min-h-11 min-w-11 text-sm" aria-label={mobileDetail && !resolvedLockedSection && !onboardingMode ? 'Back to settings' : 'Close settings'} disabled={closeDisabled}
+                onClick={()=>{if(mobileDetail && !resolvedLockedSection && !onboardingMode)setMobileDetail(false);else onOpenChange(false);}}>{mobileDetail && !resolvedLockedSection && !onboardingMode ? '← Back' : 'Close'}</button>
+              <h1 className="flex-1 text-center text-base font-semibold">{mobileDetail ? frameVisibleSections.find(section=>section.id===activeSection)?.label ?? 'Settings' : 'Settings'}</h1>
+              <button type="button" className="min-h-11 min-w-11 text-sm" disabled={closeDisabled} aria-label="Done with settings" onClick={()=>onOpenChange(false)}>Done</button>
+            </> : usesCaptionButtons(titleBarVariant) ? (
               <>
                 <h1 className="text-xs font-medium flex-1">Settings</h1>
                 <DesignCaptionButtons
@@ -357,68 +370,21 @@ function SettingsFrame({
             )}
           </header>
 
-          <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <aside className="flex w-full shrink-0 flex-col border-b border-border/40 bg-card/50 p-2 sm:w-52 sm:border-b-0 sm:border-r">
-              <nav
-                aria-label="Settings sections"
-                className="flex flex-wrap gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
-              >
-                {frameVisibleSections.map((section) => {
-                  const Icon = section.icon;
-                  const active = activeSection === section.id;
-                  const completed = onboardingMode && section.id === "billing";
-                  const unavailable = onboardingMode && section.id !== "default-installs";
-                  const locked = unavailable || Boolean(resolvedLockedSection && section.id !== resolvedLockedSection);
-                  const accessibleLabel = completed
-                    ? `${section.label} Completed`
-                    : unavailable
-                      ? `${section.label} Unavailable until your VPS is ready`
-                      : resolvedLockedSection && locked
-                        ? `${section.label} Locked until billing is active`
-                        : section.label;
-                  return (
-                    <button
-                      key={section.id}
-                      type="button"
-                      onClick={() => {
-                        if (!locked) setActiveSection(section.id);
-                      }}
-                      disabled={locked}
-                      aria-label={accessibleLabel}
-                      aria-current={active ? "page" : undefined}
-                      className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2.5 text-[13px] transition-colors sm:order-none sm:px-2.5 sm:py-1.5 ${
-                        active
-                          ? "order-first bg-ember/12 text-deep font-semibold"
-                          : locked
-                            ? "cursor-not-allowed text-muted-foreground/45"
-                            : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-                      }`}
-                    >
-                      <Icon
-                        className={`size-4 shrink-0 ${
-                          active ? "text-ember" : ""
-                        }`}
-                      />
-                      <span>{section.label}</span>
-                      {completed ? (
-                        <CheckCircle2Icon className="ml-auto size-3.5 text-forest/65" aria-hidden="true" />
-                      ) : null}
-                      {locked && !onboardingMode ? <span className="sr-only">Locked until billing is active</span> : null}
-                    </button>
-                  );
-                })}
-              </nav>
-              <SettingsAccountFooter />
+          <div className={`flex min-h-0 flex-1 ${mobile ? "flex-col" : "flex-row"}`}>
+            <aside hidden={mobile && mobileDetail} className={mobile ? 'min-h-0 flex-1 overflow-y-auto bg-card' : 'flex w-52 shrink-0 flex-col border-r border-border/40 bg-card/50 p-2'}>
+              <SettingsNavigation sections={frameVisibleSections} activeSection={activeSection} mobile={mobile} onboarding={onboardingMode} lockedSection={resolvedLockedSection}
+                onSelect={id=>{setActiveSection(id as SectionId);setMobileDetail(true);}} />
+              {!showMobileAccountFooter && <SettingsAccountFooter />}
             </aside>
 
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+            <main hidden={mobile && !mobileDetail} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
                 <AgentSection onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
-              {activeSection === "messaging" && <SlackInstallPanel />}
+              {activeSection === "messaging" && <MessagingSection />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && <IntegrationsSection />}
               {activeSection === "skills" && <SkillsSection />}
@@ -440,6 +406,7 @@ function SettingsFrame({
               {activeSection === "plugins" && <PluginsSection />}
               {activeSection === "system" && <SystemSection billingActive={billingActive !== false} />}
             </main>
+            {showMobileAccountFooter && <SettingsAccountFooter />}
           </div>
         </div>
       </div>

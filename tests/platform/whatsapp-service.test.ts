@@ -309,6 +309,30 @@ describe('WhatsApp agent checkpoint and retry lifecycle', () => {
       expect(send.mock.calls[0]![1]).toContain(result.state === 'attention' ? 'needs your attention' : result.text || 'agent finished');
     },
   );
+  it('sends one attention URL for the exact Chat', async () => {
+    agent.poll.mockResolvedValue({ state: 'attention' });
+    await process(run());
+    const text=send.mock.calls[0]![1];
+    expect(text.match(/https:\/\//g)).toHaveLength(1);
+    expect(text).toContain('/open?chat=' + checkpoint.chatId);
+    expect(text).not.toContain('HTTP 401');
+  });
+  it('reserves the complete Chat URL when truncating a long reply', async () => {
+    const publicUrl = 'https://' + 'preview-'.repeat(10) + 'example.com';
+    const chatId = 'chat_' + 'a'.repeat(32);
+    const suffix = '\n\nOpen Matrix for the full reply.';
+    const link = '\n' + publicUrl + '/open?chat=' + chatId;
+    const budget = 4096 - suffix.length - link.length;
+    const reply = 'x'.repeat(budget - 1) + '🙂' + 'x'.repeat(4000 - suffix.length - budget - 1) + suffix;
+    expect(reply).toHaveLength(4000);
+    compose({ config: { ...config, publicUrl } });
+    agent.poll.mockResolvedValue({ state: 'complete', text: reply });
+    await process({ ...run(), checkpoint: { ...checkpoint, chatId } });
+    const text = send.mock.calls[0]![1];
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text).toBe('x'.repeat(budget - 1) + suffix + link);
+    expect(text).toMatch(/Open Matrix for the full reply\.\nhttps:\/\/.*\/open\?chat=chat_a{32}$/);
+  });
   it('binds an admitted run to its verified epoch and checks consent immediately before dispatch', async () => {
     agent.start.mockImplementation(async (_input, authorize) => { expect(await authorize()).toBe(true); return checkpoint; });
     await process(incoming('Do work'));

@@ -9,6 +9,10 @@ import { createWhatsAppRepository } from './repository.js';
 import { createWhatsAppAgentClient } from './agent-client.js';
 import { createWhatsAppService } from './service.js';
 import { createWhatsAppRoutes } from './routes.js';
+import { Hono } from 'hono';
+import { createJourneyUserResolver } from '../journey-routes.js';
+import { createWhatsAppSettingsRoutes } from './settings-routes.js';
+import { createMessagingHandoffRoutes } from './handoff-routes.js';
 
 /** Compose once at process startup. Request replicas enqueue; the designated
  * platform background worker drains the shared durable queue. */
@@ -16,7 +20,11 @@ export function createConfiguredWhatsAppRuntime(deps: {
   db: PlatformDB; env: NodeJS.ProcessEnv; clerkAuth?: ClerkAuth;
 }) {
   const config = readWhatsAppConfig(deps.env);
-  if (!config) return undefined;
+  const resolveOwner = createJourneyUserResolver({ clerkAuth: deps.clerkAuth, syncJwtSecret: deps.env.PLATFORM_JWT_SECRET });
+  const readRoutes = (getConnection?: Parameters<typeof createWhatsAppSettingsRoutes>[0]['getConnection']) =>
+    new Hono().route('/', createMessagingHandoffRoutes()).route('/', createWhatsAppSettingsRoutes({ resolveOwner, getConnection,
+      phoneNumber: deps.env.WHATSAPP_BUSINESS_PHONE_NUMBER, admissionMode: config?.admissionMode }));
+  if (!config) return { routes: readRoutes(), start: () => {}, shutdown: async () => {} };
   const secret = deps.env.PLATFORM_JWT_SECRET ?? '';
   const publishableKey = deps.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? deps.env.CLERK_PUBLISHABLE_KEY ?? '';
   if (!deps.clerkAuth || secret.length < 32 || !publishableKey) throw new Error('WhatsApp authentication is unavailable');
@@ -42,5 +50,5 @@ export function createConfiguredWhatsAppRuntime(deps: {
       return verified.authenticated && verified.userId ? verified.userId : null;
     },
   });
-  return { routes, start: service.start, shutdown: service.shutdown };
+  return { routes: readRoutes(repository.getConnection).route('/', routes), start: service.start, shutdown: service.shutdown };
 }
