@@ -14,7 +14,7 @@ export class ManagedCustomDefinitionError extends Error {
 type Definition = Pick<ChatAgent, "name" | "description" | "instructions" | "recipe">;
 
 /** Shared save/run composition. Skill text and declarations never grant access. */
-export async function resolveManagedCustomDefinition(
+export async function composeManagedCustomDefinition(
   definition: Definition,
   recipes?: Pick<ChatAgentRecipeResolver, "resolve">,
 ): Promise<BotRecipe> {
@@ -34,6 +34,15 @@ export async function resolveManagedCustomDefinition(
     integrations: (recipe?.integrations ?? []).map(item => ({ service: item.service, effects: ["read", "write", "send"], required: false })),
     output: recipe?.output ?? "Answer the owner's request and distinguish confirmed work from unavailable actions.",
   };
+  return procedure;
+}
+
+/** Save-time admission; runtime checks the same prompt after creating its task. */
+export async function resolveManagedCustomDefinition(
+  definition: Definition,
+  recipes?: Pick<ChatAgentRecipeResolver, "resolve">,
+): Promise<BotRecipe> {
+  const procedure = await composeManagedCustomDefinition(definition, recipes);
   try {
     // The timestamp has the same ISO width as runtime. Optional confirmed memory
     // retains the runtime's existing priority-based trimming; never trim the job.

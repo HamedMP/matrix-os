@@ -13,6 +13,10 @@ import { createChatAgentRecipeResolver } from "../../../packages/gateway/src/cha
 import { createBotInstantiation, ensureBotWorkspace } from "../../../packages/gateway/src/bots/instantiation.js";
 import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotProcedureResolver } from "../../../packages/gateway/src/bots/custom-procedure.js";
+import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
+import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
+import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
+import { BotRuntimeRegistry } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { BOT_SYSTEM_PROMPT_TOKEN_BUDGET, buildBotSystemPrompt, estimatePromptTokens } from "../../../packages/gateway/src/bots/system-prompt.js";
 import { createCanonicalProviderCatalogFixture } from "../../contracts/fixtures/canonical-chat.js";
 import { OWNER, createBotStateDatabase } from "./bot-state-support.js";
@@ -203,4 +207,53 @@ it("preserves description edits and archival withdrawal despite unavailable skil
   expect(gmailLookup).not.toHaveBeenCalled();
   expect(await state.db.selectFrom("bot_operations").selectAll().execute()).toEqual(operations);
   expect(await state.db.selectFrom("chats").selectAll().execute()).toEqual(chats);
+});
+
+it("accepts the editor's unchanged executable payload for description recovery but validates actual mutations", async () => {
+  const created = await service.createCustom(OWNER, { ...input, recipe });
+  const resolve = vi.spyOn(recipes, "resolve").mockRejectedValue(new Error("Synthetic filesystem outage"));
+  const unchanged = { name: input.name, instructions: input.instructions,
+    selection: { ...input.selection, options: [...input.selection.options].reverse() }, recipe };
+  expect((await patch(created.agent.id, { ...unchanged, baseRevision: 1, description: "Recovered description" })).status).toBe(200);
+  expect(resolve).not.toHaveBeenCalled();
+  const saved = (await agents.get(owner, created.agent.id))!;
+  expect(saved).toMatchObject({ revision: 2, description: "Recovered description", instructions: input.instructions, recipe });
+  expect((await patch(created.agent.id, { ...unchanged, baseRevision: 2, archived: true })).status).toBe(200);
+  expect(resolve).not.toHaveBeenCalled();
+  expect((await agents.get(owner, created.agent.id))?.archived).toBe(true);
+  const files = await definitions();
+  for (const change of [
+    { name: "Different job" }, { instructions: "Different instructions" },
+    { selection: { ...input.selection, options: [{ id: "accountId", value: "different-account" }, { id: "grantRevision", value: "3" }] } },
+    { recipe: { ...recipe, output: "Different result" } }, { archived: false },
+  ]) {
+    expect((await patch(created.agent.id, { ...unchanged, ...change, baseRevision: 3 })).status).toBe(503);
+    expect((await agents.get(owner, created.agent.id))?.revision).toBe(3);
+    expect(await definitions()).toEqual(files);
+  }
+  expect(resolve).toHaveBeenCalledTimes(5);
+  expect(gmailLookup).not.toHaveBeenCalled();
+});
+
+it("records policy_denied on a durable task when an installed skill grows beyond the saved prompt budget", async () => {
+  const created = await service.createCustom(OWNER, { ...input, recipe });
+  const files = await definitions();
+  await skill("漢".repeat(7500));
+  const admit = vi.fn(async () => { throw new Error("Oversized prompt must not reach admission"); });
+  const runBot = vi.fn(async () => { throw new Error("Oversized prompt must not reach the worker"); });
+  const orchestrator = createBotTaskOrchestrator({ agents, recipes: createBotRecipeCatalog(),
+    bindings: createBotBindingsRepository(state.db), transact: createBotStateTransactions(repository),
+    resolveProcedure: (ownerId, agent) => procedures.resolve(ownerId, agent),
+    resolveRoute: async () => ({ accessSourceId: "matrix_chatgpt_plan", subscription: { accountId: "owner-account", grantRevision: 3 },
+      route: { api: "openai-responses", modelId: "gpt-owner", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8192 } }),
+    admission: { admit, release: vi.fn() }, registry: new BotRuntimeRegistry(), client: { runBot } });
+  const run = orchestrator.start({ ownerId: OWNER, chatId: created.chatId, runId: "run_skill_growth",
+    text: "Summarize", selection: input.selection, signal: new AbortController().signal });
+  await expect(run.result).resolves.toEqual({ status: "blocked", blockedReason: "policy_denied" });
+  expect(await state.db.selectFrom("bot_tasks").select(["status", "blocked_reason", "run_id", "revision"]).execute())
+    .toEqual([{ status: "blocked", blocked_reason: "policy_denied", run_id: "run_skill_growth", revision: 3 }]);
+  expect(admit).not.toHaveBeenCalled();
+  expect(runBot).not.toHaveBeenCalled();
+  expect(await definitions()).toEqual(files);
+  expect((await agents.get(owner, created.agent.id))?.revision).toBe(1);
 });

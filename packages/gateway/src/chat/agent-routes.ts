@@ -8,6 +8,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
+import { isDeepStrictEqual } from "node:util";
 import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import { ChatAgentStoreError, type ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContextError, type ChatAgentContext } from "./agent-context.js";
@@ -22,6 +23,11 @@ const SearchSchema = z.object({
   query: z.string().trim().max(200).default(""),
   chatId: CanonicalChatIdSchema.optional(),
 }).strict();
+
+function selectionIdentity(selection: CanonicalChatModelSelection) {
+  return { instanceId: selection.instanceId, model: selection.model,
+    options: [...(selection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id)) };
+}
 
 export function createChatAgentRoutes(options: {
   agents?: ChatAgentStore;
@@ -127,10 +133,17 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
-    // Description and withdrawal cannot change the executable prompt. Preserve
-    // those actions when an installed skill is temporarily unreadable.
-    if (isManagedCustomBot(current) && (input.name !== undefined || input.instructions !== undefined
-      || input.recipe !== undefined || input.selection !== undefined || input.archived === false)) {
+    const managed = isManagedCustomBot(current);
+    const selectionChanged = input.selection !== undefined && (!managed
+      || !isDeepStrictEqual(selectionIdentity(input.selection), selectionIdentity(current.selection)));
+    const recipeChanged = input.recipe !== undefined && (!managed
+      || !isDeepStrictEqual(input.recipe ?? undefined, current.recipe));
+    // Editors resubmit unchanged executable fields. Description/withdrawal
+    // recovery must not depend on rereading skills or rebinding the same source.
+    if (managed && input.recipe?.skills.includes("matrix-jev-email-triage")) throw new ManagedCustomDefinitionError("unsupported_skill");
+    if (managed && (input.name !== undefined && input.name !== current.name
+      || input.instructions !== undefined && input.instructions !== current.instructions
+      || recipeChanged || selectionChanged || input.archived === false)) {
       await resolveManagedCustomDefinition({ ...current, ...input,
         recipe: input.recipe === null ? undefined : input.recipe ?? current.recipe }, options.recipes);
     }
@@ -142,9 +155,9 @@ export function createChatAgentRoutes(options: {
       return c.json({ error: "Choose an available Matrix AI model." }, 400);
     }
     const jev = isJevInboxRecipe(input.recipe === null ? undefined : input.recipe ?? current.recipe);
-    if ((input.selection || (input.recipe && jev) || (jev && input.archived === false))
+    if ((selectionChanged || (recipeChanged && input.recipe && jev) || (jev && input.archived === false))
       && !(current.recipeRef && automatic) && !await validSelection(principal, input.selection ?? current.selection, jev)) return c.json({ error: "Choose an available Agent model." }, 400);
-    const recipe = input.recipe ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
+    const recipe = input.recipe && recipeChanged ? await bindJevInboxRecipe({ ownerId: principal.userId, recipe: input.recipe,
       listGmailAccounts: options.listGmailAccounts }) : undefined;
     const updated = await agents.update({ type: "personal", ownerId: principal.userId }, id, input, recipe);
     revokeHermesJevCapabilitiesForAgent(principal.userId, id);

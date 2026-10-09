@@ -1,7 +1,7 @@
 import { isManagedCustomBot, isAutomaticBotSelection, chatgptPlanSelectionBinding, matrixAnthropicSelectionBinding, type ChatAgent, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
-import { resolveManagedCustomDefinition } from "./custom-definition.js";
+import { composeManagedCustomDefinition } from "./custom-definition.js";
 import { BotRouteError } from "./route-resolver.js";
 import type { BotRecipeCatalog, BotRecipe } from "./recipe-catalog.js";
 import type { BotExecutor } from "./repositories/shared.js";
@@ -35,7 +35,7 @@ export function createBotProcedureResolver(deps: {
         return deps.recipes.resolve(agent.recipeRef);
       }
       await assert(ownerId, agent);
-      return resolveManagedCustomDefinition(agent, deps.customRecipes);
+      return composeManagedCustomDefinition(agent, deps.customRecipes);
     },
     async revalidate(binding: BotRuntimeBinding): Promise<void> {
       if (binding.managedDefinitionRevision === undefined) return;
