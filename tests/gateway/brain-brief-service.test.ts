@@ -89,6 +89,20 @@ describe("brief", () => {
     expect(old.sections.changes.find((group) => group.label === "Notes")).toMatchObject({ created: 0, revised: 1 });
   });
 
+  it("lists sources in a past brief as they were at its end, citing a document dated before it", async () => {
+    const git = await fx.source();
+    await fx.sync(git, [{ seed: "a", at: "2026-09-20T08:00:00.000Z" }]);
+    await fx.receipt(git, "failed", "source_auth_failed");
+    fx.harness.tick(86_400_000);
+    await fx.receipt(git, "failed", "source_rate_limited", 9 * 86_400_000);
+    await fx.sync(git, [{ seed: "b", at: "2026-10-11T08:00:00.000Z" }]);
+    const attention = async (date: string) => (await fx.feature.service.generateBrief(BRIEF_OWNER, "proj_a", { date }))
+      .sections.attention.map((line) => `${line.text} [${line.cites[0]!.label}]`);
+    expect(await attention("2026-09-29")).toEqual([]);
+    expect(await attention("2026-10-01")).toEqual(["Source \"matrix-os\" failed its last sync (source_auth_failed) [Title a]"]);
+    expect(await attention("2026-10-08")).toEqual(["Source \"matrix-os\" has not synced successfully since it was connected on 2026-10-01 [Title a]"]);
+  });
+
   it("lists conflicts detected in the window first, then rotates the rest by day so each one shows", () => {
     const at = (n: number) => ({ detectedAt: `2026-09-${String(n).padStart(2, "0")}T08:00:00.000Z`, n });
     const items = Array.from({ length: 13 }, (_, i) => at(28 - i));
