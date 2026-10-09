@@ -38,7 +38,6 @@ import { useOnboardingAiConnect } from "./use-onboarding-ai-connect";
 import { useOnboardingAppConnect } from "./use-onboarding-app-connect";
 import { useOnboardingRun } from "./use-onboarding-run";
 
-const EXISTING_USER_CHECK_MS = 4_000;
 const FALLBACK_CATALOG = createLegacyGlobalProviderCatalog({ hasProject: false });
 
 export default function OnboardingWidgetHost() {
@@ -51,35 +50,8 @@ export default function OnboardingWidgetHost() {
   return <OnboardingWidgetLoader key={prefsKey} api={api} prefsKey={prefsKey} />;
 }
 
-/** Decides the starting prefs: stored ones, or for a first visit, whether this owner already uses Chat. */
 function OnboardingWidgetLoader({ api, prefsKey }: { api: ApiClient; prefsKey: string }) {
-  const [prefs, setPrefs] = useState<OnboardingStoredPrefs | null>(() => readOnboardingPrefs(prefsKey));
-
-  useEffect(() => {
-    if (prefs) return;
-    let settled = false;
-    const settle = (existingUser: boolean) => {
-      if (settled) return;
-      settled = true;
-      const next = { ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: existingUser };
-      writeOnboardingPrefs(prefsKey, next);
-      setPrefs(next);
-    };
-    const timer = setTimeout(() => settle(false), EXISTING_USER_CHECK_MS);
-    createCanonicalChatClient(api).list().then(
-      (result) => settle(result.items.length > 0),
-      (error: unknown) => {
-        console.warn("[onboarding-widget] chat history check failed:", error instanceof Error ? error.name : typeof error);
-        settle(false);
-      },
-    );
-    return () => {
-      settled = true;
-      clearTimeout(timer);
-    };
-  }, [api, prefs, prefsKey]);
-
-  if (!prefs) return null;
+  const [prefs] = useState<OnboardingStoredPrefs>(() => readOnboardingPrefs(prefsKey) ?? DEFAULT_ONBOARDING_PREFS);
   return <OnboardingWidgetSession api={api} prefsKey={prefsKey} initialPrefs={prefs} />;
 }
 
