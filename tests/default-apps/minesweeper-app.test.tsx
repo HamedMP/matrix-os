@@ -35,6 +35,11 @@ function installMatrixDb(rows: DbRow[] = []) {
 }
 
 describe("Minesweeper app", () => {
+  it("preserves a scrollable board viewport when Custom controls fill the frame", () => {
+    const css = readFileSync(resolve(process.cwd(), "home/apps/games/minesweeper/src/styles.css"), "utf8");
+    expect(css).toMatch(/\.ms-frame\s*\{[^}]*overflow-y:\s*auto/);
+    expect(css).toMatch(/\.ms-board-area\s*\{[^}]*min-height:\s*160px;[^}]*overflow:\s*auto/);
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();

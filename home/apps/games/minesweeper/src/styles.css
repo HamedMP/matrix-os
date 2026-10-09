@@ -57,6 +57,7 @@ button {
 }
 
 .ms-frame {
+  overflow-y: auto;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -223,7 +224,8 @@ button {
 
 .ms-board-area {
   flex: 1 1 auto;
-  min-height: 0;
+  /* Preserve a usable board viewport when Custom controls need more space. */
+  min-height: 160px;
   display: flex;
   align-items: safe center;
   justify-content: safe center;
