@@ -100,10 +100,36 @@ describe("Company Brain Bot", () => {
     expect(made.bots.instantiate).toHaveBeenCalledWith({
       recipe: { recipeId: "company-brain", version: "1" }, clientRequestId: expect.stringMatching(/^req_companybrain_/),
     });
-    // The replay returns a Bot archived since; the list leaves it out.
+    // Every replay returns a Bot archived since; the list leaves it out. Start gives up after 5 in a row.
     const replayed = client([]);
     replayed.bots.instantiate.mockResolvedValue({ agent: { id: "b_archived" }, chatId: "chat_direct", operation: "replayed" });
     expect(await createCompanyBrainBot(as(replayed))).toEqual({ kind: "archived" });
+    expect(replayed.bots.instantiate).toHaveBeenCalledTimes(5);
+  });
+
+  it("makes a new Bot once when Start replays one the owner archived, keyed on the archived Bot", async () => {
+    const requestIds = (fake: ReturnType<typeof client>) =>
+      (fake.bots.instantiate.mock.calls as unknown as [{ clientRequestId: string }][]).map(([input]) => input.clientRequestId);
+    const first = client([]);
+    first.bots.instantiate
+      .mockResolvedValueOnce({ agent: { id: "b_archived" }, chatId: "chat_old", operation: "replayed" })
+      .mockResolvedValueOnce({ agent: { id: "b2" }, chatId: "chat_direct", operation: "created" });
+    first.list.mockResolvedValueOnce({ enabled: true, agents: [] })
+      .mockResolvedValue({ enabled: true, agents: [bot("b2", "2026-10-09")] });
+    expect(await createCompanyBrainBot(as(first))).toEqual({ kind: "ready", botId: "b2" });
+    const ids = requestIds(first);
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toMatch(/^req_companybrain_[0-9a-f]{64}$/);
+    expect(ids[1]).not.toBe(ids[0]);
+    // A second Start (a double click, or another device) asks with the same ids, so it gets the same new Bot.
+    const again = client([]);
+    again.bots.instantiate
+      .mockResolvedValueOnce({ agent: { id: "b_archived" }, chatId: "chat_old", operation: "replayed" })
+      .mockResolvedValueOnce({ agent: { id: "b2" }, chatId: "chat_direct", operation: "replayed" });
+    again.list.mockResolvedValueOnce({ enabled: true, agents: [] })
+      .mockResolvedValue({ enabled: true, agents: [bot("b2", "2026-10-09")] });
+    expect(await createCompanyBrainBot(as(again))).toEqual({ kind: "ready", botId: "b2" });
+    expect(requestIds(again)).toEqual(ids);
   });
 
   it("does not create anything when the server has no Company Brain recipe", async () => {

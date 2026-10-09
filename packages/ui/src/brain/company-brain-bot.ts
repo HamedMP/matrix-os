@@ -14,6 +14,7 @@ export type CompanyBrainBotState =
   | { readonly kind: "ready"; readonly botId: string };
 
 const UNAVAILABLE: CompanyBrainBotState = { kind: "unavailable" };
+const ARCHIVED: CompanyBrainBotState = { kind: "archived" };
 
 /** Bots answer 503 when they are off here or have no runtime host: chat with the brain is not running. */
 export function botsNotRunning(error: unknown): boolean {
@@ -58,10 +59,14 @@ export async function findCompanyBrainBot(client: ChatAgentClient): Promise<Comp
   });
 }
 
+/** Start makes at most this many requests in a row when each one replays a Bot the owner archived since. */
+const START_ATTEMPTS = 5;
+
 /**
  * Creates the Company Brain Bot, then reads the library again. No model is sent: the server picks Automatic, and a
  * replay never changes the Bot's model. The request id is fixed per recipe version, so a double click or a retry makes
- * one Bot. A replay can return a Bot that was archived since, which the library no longer lists.
+ * one Bot. A replay can return a Bot that was archived since, which the library no longer lists: Start then asks again
+ * with a request id made from that Bot, so the owner gets a new Bot, still one however often Start is pressed.
  */
 export async function createCompanyBrainBot(client: ChatAgentClient): Promise<CompanyBrainBotState> {
   const bots = client.bots;
@@ -69,12 +74,18 @@ export async function createCompanyBrainBot(client: ChatAgentClient): Promise<Co
   return unlessNotRunning(async () => {
     const recipe = await brainRecipe(bots);
     if (!recipe) return UNAVAILABLE;
-    const key = bytesToHex(sha256(utf8ToBytes(`${recipe.recipeId}@${recipe.version}`)));
-    const result = await bots.instantiate({
-      recipe: { recipeId: recipe.recipeId, version: recipe.version },
-      clientRequestId: `req_companybrain_${key}`,
-    });
-    return listedState(client, result.agent.id);
+    const base = `${recipe.recipeId}@${recipe.version}`;
+    let seed = base;
+    for (let attempt = 0; attempt < START_ATTEMPTS; attempt += 1) {
+      const result = await bots.instantiate({
+        recipe: { recipeId: recipe.recipeId, version: recipe.version },
+        clientRequestId: `req_companybrain_${bytesToHex(sha256(utf8ToBytes(seed)))}`,
+      });
+      const state = await listedState(client, result.agent.id);
+      if (state.kind !== "archived" || result.operation !== "replayed") return state;
+      seed = `${base}:after:${result.agent.id}`;
+    }
+    return ARCHIVED;
   });
 }
 
@@ -83,5 +94,5 @@ async function listedState(client: ChatAgentClient, botId: string): Promise<Comp
   const library = await client.list();
   if (!library.enabled) return UNAVAILABLE;
   const made = activeBrainBot(library.agents, botId);
-  return made ? { kind: "ready", botId: made.id } : { kind: "archived" };
+  return made ? { kind: "ready", botId: made.id } : ARCHIVED;
 }
