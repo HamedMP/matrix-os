@@ -89,6 +89,19 @@ describe("T711: GET /api/apps", () => {
     expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/my-subscriptions\.png\?v=/);
   });
 
+  it("keeps legacy app artwork when the exact Gallery replacement is missing", async () => {
+    mkdirSync(join(homePath, "system/icons"), { recursive: true });
+    mkdirSync(join(homePath, "apps/subscriptions"), { recursive: true });
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), readFileSync(join(process.cwd(), "home/system/icons/subscriptions.svg")));
+    writeFileSync(join(homePath, "system/icons/game-center.png"), "fallback artwork");
+    writeFileSync(join(homePath, "apps/subscriptions/index.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify({
+      name: "Subscriptions", slug: "subscriptions", author: "Matrix OS", icon: "subscriptions",
+      listingTrust: "first_party", version: "1.0.0", runtimeVersion: "^24.0.0", runtime: "static",
+    }));
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/subscriptions\.svg\?v=/);
+  });
+
   it("lists multiple apps sorted by name", async () => {
     writeFileSync(join(homePath, "apps/notes.html"), "<html></html>");
     writeFileSync(join(homePath, "apps/notes.matrix.md"), "---\nname: Notes\ncategory: productivity\n---\n");

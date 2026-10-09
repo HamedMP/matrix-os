@@ -110,7 +110,7 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
       const bundledSelection = selectedIcon && await isUnmodifiedBundledIcon(homePath, selectedIcon);
       if (galleryStem && bundledSelection) {
         const galleryIcon = await resolveOnce(galleryStem);
-        if (galleryIcon) {
+        if (galleryIcon && [`/icons/${galleryStem}.png`, `/icons/${galleryStem}.svg`].includes(galleryIcon.url)) {
           icons[galleryStem] = galleryIcon;
           return { ...app, iconUrl: galleryIcon.versionedUrl };
         }
