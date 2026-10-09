@@ -345,18 +345,18 @@ describe("Brain chat tab", () => {
     const name = await screen.findByRole("textbox", { name: "Chat name" });
     await waitFor(() => expect(name).toHaveFocus());
     fireEvent.change(name, { target: { value: "Where bot chats show" } });
+    // The server saves the rename, so the list the rename reloads has it.
+    agents.threads.list.mockResolvedValue({ items: [
+      thread("chat_a", "Where bot chats show"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+    ] });
     fireEvent.submit(name.closest("form")!);
     await waitFor(() => expect(rows.rename).toHaveBeenCalledWith(
       expect.objectContaining({ chat: expect.objectContaining({ id: "chat_a" }) }), "Where bot chats show"));
     const renamed = await screen.findByRole("button", { name: /^Where bot chats show/ });
     await waitFor(() => expect(renamed).toHaveFocus());
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Where bot chats show", { selector: "p" })).toBeTruthy();
-    // The rename made here stays over the list only until a reloaded list has it: a later rename elsewhere shows.
-    agents.threads.list.mockResolvedValue({ items: [
-      thread("chat_a", "Where bot chats show"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
-    ] });
-    act(() => { window.dispatchEvent(new Event("focus")); });
-    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(3));
+    // A later rename elsewhere shows on the next reload.
     agents.threads.list.mockResolvedValue({ items: [
       thread("chat_a", "Renamed on the phone"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
     ] });
@@ -367,12 +367,50 @@ describe("Brain chat tab", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "More for Renamed on the phone" }), { key: "Enter" });
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     const confirm = within(await screen.findByRole("group", { name: "Delete Renamed on the phone" }));
+    agents.threads.list.mockResolvedValue({ items: [thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z")] });
     fireEvent.click(confirm.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(rows.remove).toHaveBeenCalledWith("chat_a"));
-    // The open chat was deleted: the next one opens, and the deleted row stays gone until the server agrees.
+    // The open chat was deleted: the next one opens, and the deleted row is gone.
     await waitFor(() => expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_b"));
     expect(screen.queryByRole("button", { name: /Renamed on the phone|Bot chat sidebar/ })).toBeNull();
     expect(screen.getByRole("button", { name: "New chat" })).toHaveFocus();
+  });
+
+  it("shows the server's title once the chat is read again after a rename, even one renamed elsewhere since", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [thread("chat_a", "Bot chat sidebar")] }) });
+    const rows = { rename: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) };
+    renderChat(fakeHost(agents.client, rows).host);
+    await screen.findByTestId("chat-view");
+    // The phone renames the chat just after this rename lands, so the list read after it has the phone's title.
+    agents.threads.list.mockResolvedValue({ items: [thread("chat_a", "Renamed on the phone")] });
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Bot chat sidebar" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Where bot chats show" } });
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: /^Renamed on the phone/ })).toBeTruthy();
+    expect(screen.getByText("Renamed on the phone", { selector: "p" })).toBeTruthy();
+  });
+
+  it("keeps a rename on a Show more page over it while that page is not read again", async () => {
+    const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
+      ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
+      : { items: [thread("chat_old", "An older question", "2026-09-01T00:00:00.000Z")] } });
+    const rows = { rename: vi.fn(async () => undefined), remove: vi.fn(async () => undefined) };
+    renderChat(fakeHost(agents.client, rows).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.keyDown(await screen.findByRole("button", { name: "More for An older question" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Older, renamed" } });
+    fireEvent.submit(name.closest("form")!);
+    // The reload reads the first page only; the Show more page it keeps still has the old title.
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(3));
+    expect(agents.threads.list).toHaveBeenLastCalledWith("agent_brain", { projectId: PROJECT, limit: 50 });
+    expect(await screen.findByRole("button", { name: /^Older, renamed/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^An older question/ })).toBeNull();
   });
 
   it("keeps the chat the viewer opened while a delete was on its way, and their focus", async () => {
@@ -395,6 +433,10 @@ describe("Brain chat tab", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Release notes/ }));
     const openInChat = screen.getByRole("button", { name: "Open in Chat" });
     openInChat.focus();
+    agents.threads.list.mockResolvedValue({ items: [
+      thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+      thread("chat_c", "Release notes", "2026-10-06T09:00:00.000Z"),
+    ] });
     await act(async () => { finish(); });
     expect(screen.queryByRole("button", { name: /^Bot chat sidebar/ })).toBeNull();
     expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_c");

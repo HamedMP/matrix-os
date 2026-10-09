@@ -102,9 +102,9 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - One action at a time per card, the model confirm included. Writes send the loaded source revision.
 - A chat list answer for a project the tab has left is dropped; a list that arrives late never moves the viewer off
   the chat they opened; a failed list opens a draft and offers "Try again". The open chat's title is kept apart from
-  the list, and a rename or delete made here stays over a reloaded list until a reloaded list agrees (the title
-  matches, or the chat is not listed), at most 500 of them. A delete that settles moves the viewer only if the deleted
-  chat is still the open one.
+  the list, and a rename or delete made here stays over the list only until the chat is read again (then the server's
+  title shows, a later rename elsewhere too) or is not listed, at most 500 of them. A delete that settles moves the
+  viewer only if the deleted chat is still the open one.
 - Proxies in front of the gateway end a request at 30 s, so repository runs and source syncs start a job (202) and
   poll it: 1 s, then doubling to 10 s, at most 90 polls; three failed polls in a row, or one refused poll, stop with
   "Try again", and the poll cap with "Check again". Stop asks the gateway to cancel. A gateway without the jobs route
