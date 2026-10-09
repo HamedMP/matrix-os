@@ -239,12 +239,12 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
         .rejects.toMatchObject({ code: "source_kind_unsupported" });
       // A source already in the collaborator's scope never syncs either.
       const scope = brainProjectScope("collaborator", PROJECT.id);
-      const { source } = await harness.repository.createSource(scope, {
-        kind: "matrix_notes", externalRef: "matrix_notes", label: "Notes",
-      });
-      await saveMatrixConfig(harness.db, "matrix_notes", scope, source.sourceId, { folders: [] }, new Date());
-      await expect(sources.sync("collaborator", "widgets", source.sourceId))
-        .rejects.toMatchObject({ code: "source_not_connected" });
+      for (const [kind, config] of [["matrix_notes", { folders: [] }], ["matrix_files", files]] as const) {
+        const { source } = await harness.repository.createSource(scope, { kind, externalRef: kind, label: kind });
+        await saveMatrixConfig(harness.db, kind, scope, source.sourceId, config, new Date());
+        await expect(sources.sync("collaborator", "widgets", source.sourceId))
+          .rejects.toMatchObject({ code: "source_not_connected" });
+      }
       expect(notes.listNotes).not.toHaveBeenCalled();
       // The owner connects and syncs the same home.
       const owned = await sources.connect(OWNER, "widgets", { kind: "matrix_files", config: files });
