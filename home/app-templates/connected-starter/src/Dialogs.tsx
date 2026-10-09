@@ -7,12 +7,14 @@ import type { Definition, OwnerRecord } from "./types";
 export function Editor({
   app,
   record,
+  creationScope,
   onSave,
   onArchive,
   onClose,
 }: {
   app: Definition;
   record?: OwnerRecord;
+  creationScope?: "personal" | "work";
   onSave: (r: OwnerRecord) => Promise<unknown>;
   onArchive: (r: OwnerRecord) => Promise<unknown>;
   onClose: () => void;
@@ -22,7 +24,7 @@ export function Editor({
       record?.fields ?? {},
     ),
     [scope, setScope] = useState<"personal" | "work">(
-      record?.scope ?? (app.collection === "business" ? "work" : "personal"),
+      record?.scope ?? creationScope ?? (app.collection === "business" ? "work" : "personal"),
     ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);

@@ -123,6 +123,7 @@ export default function App({ app }: { app: Definition }) {
         <Editor
           app={app}
           record={editor ?? undefined}
+          creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
           onSave={save}
           onArchive={archive}
           onClose={() => setEditor(undefined)}

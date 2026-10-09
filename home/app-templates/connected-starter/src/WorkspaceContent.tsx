@@ -44,7 +44,7 @@ export default function WorkspaceContent({
           {unavailable}
         </p>
       )}
-      {!unavailable && (error || exportError) && (
+      {(error || exportError) && (
         <p className="notice error" role="alert">
           {error || exportError}
         </p>

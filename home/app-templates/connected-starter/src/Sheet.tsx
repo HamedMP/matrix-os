@@ -20,7 +20,7 @@ export default function Sheet({
           if (e.key === "Tab") {
             const items = Array.from(
               e.currentTarget.querySelectorAll<HTMLElement>(
-                "button:not(:disabled),input,textarea,select,a[href]",
+                "button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]",
               ),
             );
             const first = items[0],

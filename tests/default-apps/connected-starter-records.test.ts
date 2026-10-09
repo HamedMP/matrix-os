@@ -79,7 +79,7 @@ afterEach(() => {
 describe("connected record orchestration", () => {
   it("invalidates an older read after a confirmed save and settles loading", async () => {
     const pending = deferred<Record<string, unknown>[]>();
-    bridge(vi.fn(() => pending.promise));
+    bridge(vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue([row("saved")]));
     const { result } = renderHook(useRecords);
     const draft = { ...record("saved"), rowId: undefined };
     await act(async () => {
@@ -98,7 +98,8 @@ describe("connected record orchestration", () => {
       vi
         .fn()
         .mockResolvedValueOnce([row("gone")])
-        .mockImplementation(() => pending.promise),
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValue([]),
     );
     const { result } = renderHook(useRecords);
     await waitFor(() => expect(result.current.records).toHaveLength(1));
@@ -120,7 +121,7 @@ describe("connected record orchestration", () => {
   it("does not surface a stale failed read after a confirmed mutation", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const pending = deferred<Record<string, unknown>[]>();
-    bridge(vi.fn(() => pending.promise));
+    bridge(vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValue([row("saved")]));
     const { result } = renderHook(useRecords);
     await act(async () => {
       await result.current.save({ ...record("saved"), rowId: undefined });

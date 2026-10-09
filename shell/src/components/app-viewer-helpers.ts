@@ -11,7 +11,7 @@ const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "tetris",
 ]);
 
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups";
+export const APP_IFRAME_SANDBOX = "allow-scripts allow-downloads allow-forms allow-popups";
 
 const APP_IFRAME_CSP = [
   "default-src 'self'",
