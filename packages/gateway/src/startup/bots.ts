@@ -125,12 +125,18 @@ export interface BotServices {
   memory: BotMemoryService;
   grants: BotGrantService;
   botChats: BotChatLookup;
-  threads: BotThreadService;
+  /** Thread Chats (spec 567); present only when the scope runtime can run their turns. */
+  threads?: BotThreadService;
   tasks(ownerId: string, chatId: string): Promise<import("@matrix-os/contracts").BotTaskSummary[]>;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   managedAdapter?: CanonicalChatProviderAdapter;
   close(): Promise<void>;
+}
+
+/** The catalog as a gateway with no runtime host lists it: without the recipes whose Chats are threads. */
+function withoutThreadRecipes(recipes: BotRecipeCatalog): BotRecipeCatalog {
+  return { list: () => recipes.list().filter((recipe) => recipe.threads === undefined), resolve: (ref) => recipes.resolve(ref) };
 }
 
 export async function startBots(options: {
@@ -265,8 +271,11 @@ export async function startBots(options: {
   };
   const host = options.host;
   if (!host?.available) {
+    // No Bot turn can run here, so nothing offers a thread recipe or makes a thread that could never answer: the
+    // thread routes answer unavailable and the recipe list leaves those recipes out (spec 567).
     return {
-      recipes, instantiation, interactions, memory, grants, authority, botChats, threads, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers,
+      recipes: withoutThreadRecipes(recipes), instantiation, interactions, memory, grants, authority, botChats, tasks,
+      startConnectionReconciler, providerConnections, chatgptPlanPeers,
       async close() {
         chatgptPlanPeers?.close();
         await stopConnections();
