@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import { BOT_ARTIFACT_BINARY_MAX_BYTES, BOT_ARTIFACT_CHUNK_MAX_BYTES, BOT_ARTIFACT_MAX_BYTES, BotToolRequestSchema, type BotToolCapability, type BotToolErrorCode, type BotToolRequest } from "@matrix-os/contracts";
+import { BRAIN_TOOL_SPECS } from "./brain-tools.js";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { bridgeToolCallId } from "./tool-call-id.js";
 
@@ -34,7 +35,7 @@ const PARAMETER_NAMES: Readonly<Record<string, string>> = {
   description: "options",
 };
 
-interface ToolSpec {
+export interface ToolSpec {
   name: string;
   capability: BotToolCapability;
   description: string;
@@ -162,6 +163,7 @@ const SPECS: ToolSpec[] = [
     })) }),
     toArgs: (params) => ({ relPath: params.path, ...(params.chunk === undefined ? {} : { chunk: params.chunk }) }),
   },
+  ...BRAIN_TOOL_SPECS,
 ];
 
 export interface BotToolsState {
