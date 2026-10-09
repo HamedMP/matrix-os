@@ -2,8 +2,10 @@ import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 /**
  * Runs one bot turn in the bot workload (spec 536). For each canonical run:
  *
- * 1. Resolve the bot from the chat's live direct binding, its saved
- *    definition, and its recipe; a bot without them never runs.
+ * 1. Resolve the bot from the chat's live direct or thread binding, its
+ *    saved definition, and its recipe; a bot without them never runs. A
+ *    thread (spec 567) runs only for a recipe that allows threads, and its
+ *    project is bound into admission so every brain read is fixed to it.
  * 2. Create a task and move it to `running` with the run ID.
  * 3. Resolve the model route through Provider V3 and build the run spec the
  *    worker loads with `bot.run.load`.
@@ -28,7 +30,8 @@ import { createCanonicalCliEventQueue, type CanonicalCliEventQueue } from "../ch
 import type { ScopeRuntimeHostClient } from "../scope-runtime-host/index.js";
 import { BotAdmissionError, type PrivateBotAdmission } from "./admission.js";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "./broker-actions.js";
-import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
+import type { BotBrainProjects } from "./brain-projects.js";
+import { BotRecipeCatalogError, type BotRecipe, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
 import type { BotStateTransactions } from "./events.js";
 import type { BotInteractionService } from "./interactions.js";
@@ -36,7 +39,7 @@ import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
-import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { buildBotSystemPrompt, BotSystemPromptError, type BrainPromptProject } from "./system-prompt.js";
 
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
@@ -46,8 +49,9 @@ const MAX_QUEUED_EVENTS = 1_000;
 /** Tools the broker serves today; the rest of a recipe's set arrives with later layers. */
 const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
   "artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
-  "integration.inventory", "integration.call",
+  "integration.inventory", "integration.call", "brain.read",
 ];
+const MAX_PROMPT_PROJECTS = 20;
 
 export type BotTurnEvent =
   | { kind: "event"; event: BotEvent["event"] }
@@ -87,7 +91,7 @@ export class BotTurnError extends Error {
 }
 
 export function createBotTaskOrchestrator(deps: {
-  bindings: Pick<BotBindingsRepository, "forChat">;
+  bindings: Pick<BotBindingsRepository, "boundBot">;
   /** Task writes and their `bot.task.updated` events commit together. */
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
@@ -96,6 +100,8 @@ export function createBotTaskOrchestrator(deps: {
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
+  /** Names the project in a Company Brain run's prompt; without it the prompt carries only the project id. */
+  brainProjects?: BotBrainProjects;
   admission: Pick<PrivateBotAdmission, "admit" | "release">;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
@@ -113,8 +119,26 @@ export function createBotTaskOrchestrator(deps: {
   const active = new Map<string, ActiveRun>();
 
   async function directBot(ownerId: string, chatId: string): Promise<string | null> {
-    const bindings = await deps.bindings.forChat({ ownerId, chatId });
-    return bindings.find((binding) => binding.kind === "direct")?.botId ?? null;
+    return (await deps.bindings.boundBot({ ownerId, chatId }))?.botId ?? null;
+  }
+
+  /** The prompt's project line; lookups are best effort, and a failure leaves only the id or no list. */
+  async function brainPromptProject(ownerId: string, projectId: string | null): Promise<BrainPromptProject> {
+    try {
+      if (projectId) {
+        const project = await deps.brainProjects?.resolve(ownerId, projectId);
+        return { kind: "thread", projectId, ...(project ? { name: project.name || project.slug } : {}) };
+      }
+      return { kind: "direct", slugs: await deps.brainProjects?.slugs(ownerId, MAX_PROMPT_PROJECTS) ?? [] };
+    } catch (error: unknown) {
+      console.warn("[bots] brain project lookup failed:", error instanceof Error ? error.name : "UnknownError");
+      return projectId ? { kind: "thread", projectId } : { kind: "direct", slugs: [] };
+    }
+  }
+
+  function runLimits(recipe: BotRecipe): BotRunSpec["limits"] {
+    const maxToolActions = Math.min(recipe.limits?.maxToolActions ?? MAX_TOOL_ACTIONS, MAX_TOOL_ACTIONS);
+    return { maxToolActions, ...(recipe.limits?.effort ? { effort: recipe.limits.effort } : {}) };
   }
 
   function taskEvent(task: BotTask) {
@@ -197,9 +221,10 @@ export function createBotTaskOrchestrator(deps: {
 
   async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
-    const botId = await directBot(input.ownerId, input.chatId);
+    const bound = await deps.bindings.boundBot({ ownerId: input.ownerId, chatId: input.chatId });
+    const botId = bound?.botId ?? null;
     const agent = botId ? await deps.agents.get(owner, botId) : null;
-    if (!botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
+    if (!bound || !botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
     let recipe;
     try {
       recipe = deps.recipes.resolve(agent.recipeRef);
@@ -207,6 +232,8 @@ export function createBotTaskOrchestrator(deps: {
       if (error instanceof BotRecipeCatalogError) return { status: "failed" };
       throw error;
     }
+    const threadProjectId = bound.kind === "thread" ? bound.projectId : null;
+    if (bound.kind === "thread" && (!recipe.threads || !threadProjectId)) return { status: "failed" };
     const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
     run.queue.push({ kind: "state", state: { taskId: task.taskId } });
     // A reply in Chat answers a question the waiting task still has open.
@@ -226,21 +253,29 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "blocked", "model_unavailable");
     }
     const capabilities = recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability));
-    try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
-    catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
+    // A recipe with exact capabilities never gets a task executor: a brain run cannot hand work to a full-access agent.
+    if (!recipe.exactCapabilities) {
+      try { if (await deps.executorReady?.(input.ownerId, botId)) capabilities.push('agent.task'); }
+      catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return settle(task, 'blocked', 'policy_denied'); }
+    }
+    const brainProfile = recipe.promptProfile === "company_brain";
     let memory: string[];
     try {
-      memory = deps.memory ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
+      memory = deps.memory && !brainProfile ? await deps.memory.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId }) : [];
     } catch (error: unknown) {
       console.warn("[bots] admitted memory failed:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "failed");
     }
+    const brainProject = brainProfile ? await brainPromptProject(input.ownerId, threadProjectId) : undefined;
     try {
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({
+          botName: agent.name, instructions: agent.instructions, recipe, memory, now: new Date(now()),
+          ...(brainProject ? { brainProject } : {}),
+        }),
         capabilities,
-        limits: { maxToolActions: MAX_TOOL_ACTIONS },
+        limits: runLimits(recipe),
         turn: { kind: "prompt", text: input.text },
       });
     } catch (error: unknown) {
@@ -253,6 +288,7 @@ export function createBotTaskOrchestrator(deps: {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
+        ...(threadProjectId ? { brainProjectId: threadProjectId } : {}),
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;
