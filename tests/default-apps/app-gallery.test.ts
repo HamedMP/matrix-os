@@ -191,3 +191,14 @@ it("never forwards an unsafe manifest identity when opening a moved app", async 
   await expect(openGalleryApp({ gatewayFetch: vi.fn(), openApp }, { ...apps[0], id: "../folio", installed: true, launchPath: "apps/renamed-ledger" } as never)).rejects.toThrow("App unavailable");
   expect(openApp).not.toHaveBeenCalled();
 });
+
+
+it("launches every installed catalog app by manifest identity even after its owner folder moves", async () => {
+  const openApp = vi.fn();
+  const bridge = { gatewayFetch: vi.fn(), integrations: vi.fn(), openApp };
+  for (const definition of apps) {
+    await openGalleryApp(bridge, { ...definition, installed: true, launchPath: `apps/My Finance/Moved ${definition.id}` } as Parameters<typeof openGalleryApp>[1]);
+    expect(openApp).toHaveBeenLastCalledWith(definition.name, `matrix-app:${definition.id}`);
+  }
+  expect(openApp).toHaveBeenCalledTimes(31);
+});
