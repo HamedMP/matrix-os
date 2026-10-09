@@ -25,7 +25,9 @@ import {
   createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart,
 } from "../../packages/gateway/src/server/brain-wiring.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
-import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import {
+  getOptionalRequestPrincipal, readPrincipalRuntimeConfig, type RequestPrincipal,
+} from "../../packages/gateway/src/request-principal.js";
 import { createBrainHarness, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
 /** No model claims: start never builds a client from the environment in these tests. */
@@ -109,6 +111,18 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
     const start = createBrainGatewayStart([], {});
     start.bindIntegrations({});
     expect(() => start.bindIntegrations({})).toThrow("Brain integrations are already bound");
+  });
+
+  it("adds the principal a local request resolves to, as with only MATRIX_CLERK_USER_ID set in dev", () => {
+    const clerkOnly = { NODE_ENV: "development", MATRIX_CLERK_USER_ID: "user_c" };
+    const local = getOptionalRequestPrincipal({ get: () => undefined }, {
+      ...readPrincipalRuntimeConfig(clerkOnly), requireAuthContextReady: false,
+    });
+    expect(local?.userId).toBe("default");
+    expect(createBrainGatewayStart(["user_c"], clerkOnly).ownerIds).toEqual(["user_c", "default"]);
+    for (const env of [{ MATRIX_AUTH_TOKEN: "t" }, { MATRIX_USER_ID: "user_c" }, { NODE_ENV: "production" }]) {
+      expect(createBrainGatewayStart(["user_c"], { ...clerkOnly, ...env }).ownerIds).toEqual(["user_c"]);
+    }
   });
 
   it("offers no agent tools while the brain is off", () => {

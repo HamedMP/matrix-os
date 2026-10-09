@@ -3,14 +3,17 @@
  * registration, and maps service failures to the kernel tool's fixed statuses.
  */
 import type { BrainAgentTools, BrainWhyAgentResult } from "@matrix-os/kernel";
-import { getOptionalRequestPrincipal, isRequestPrincipalError } from "../../request-principal.js";
+import {
+  getOptionalRequestPrincipal, isRequestPrincipalError, readPrincipalRuntimeConfig,
+} from "../../request-principal.js";
 import { BrainStoreError } from "../index.js";
 import { BrainApiError, type BrainProjectService } from "./types.js";
 
 /** The owner a request without a JWT resolves to here: MATRIX_USER_ID, or "default" in local dev; null otherwise. */
-export function resolveBrainAgentOwnerId(): string | null {
+export function resolveBrainAgentOwnerId(env: NodeJS.ProcessEnv = process.env): string | null {
   try {
-    return getOptionalRequestPrincipal({ get: () => undefined }, { requireAuthContextReady: false })?.userId ?? null;
+    const config = { ...readPrincipalRuntimeConfig(env), requireAuthContextReady: false };
+    return getOptionalRequestPrincipal({ get: () => undefined }, config)?.userId ?? null;
   } catch (error: unknown) {
     if (!isRequestPrincipalError(error)) throw error;
     console.error("[brain-agent] Owner unavailable:", error.name);
