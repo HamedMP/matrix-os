@@ -1,4 +1,4 @@
-import { LayoutGrid } from "@renderer/lib/hugeicons";
+import launcherIcon from "../../../../../../shell/public/system-app-icons/v2/launcher.png";
 import type { ReactNode } from "react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
@@ -104,7 +104,7 @@ export default function DesktopTaskbar({
         <DockAppButton
           label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
           title="App Launcher"
-          icon={<LayoutGrid size={44} className="text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]" aria-hidden="true" />}
+          icon={<img src={launcherIcon} alt="" width={44} height={44} className="size-11 object-contain" draggable={false} />}
           pressed={launcherOpen}
           onClick={onOpenApps}
         />

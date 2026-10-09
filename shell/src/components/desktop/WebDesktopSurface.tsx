@@ -371,7 +371,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <LayoutGrid className="size-11 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]" aria-hidden="true" />
+          <img src="/system-app-icons/v2/launcher.png" alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
         </TaskbarButton>
 
         <TaskbarButton

@@ -263,7 +263,8 @@ describe("WebDesktopSurface", () => {
 
     const launcher = screen.getByRole("button", { name: "Open App Launcher" });
     expect(launcher.querySelector("span svg")).toBeNull();
-    expect(launcher.querySelector("svg")?.classList.contains("size-11")).toBe(true);
+    expect(launcher.querySelector("img")?.getAttribute("src")).toBe("/system-app-icons/v2/launcher.png");
+    expect(launcher.querySelector("img")?.width).toBe(44);
     fireEvent.error(terminalTile!.querySelector("img")!);
     expect(terminalTile?.style.background).toBe("transparent");
     expect(terminalTile?.querySelector("svg")?.classList.contains("size-full")).toBe(true);

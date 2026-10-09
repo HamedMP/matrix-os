@@ -884,7 +884,7 @@ describe("native desktop shell", () => {
     expect(launcher?.style.background).toBe("");
     const launcherAppIcon = launcher?.querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(launcherAppIcon?.style.background).toBe("");
-    expect(launcher?.querySelector("svg")?.getAttribute("width")).toBe("44");
+    expect(launcher?.querySelector("img")?.getAttribute("width")).toBe("44");
     expect(launcherAppIcon?.className).toContain("group-hover:-translate-y-0.5");
     expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeNull();
     expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeNull();

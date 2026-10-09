@@ -40,7 +40,9 @@ describe("DesktopTaskbar artwork", () => {
 
     const launcher = screen.getByRole("button", { name: "Open App Launcher" });
     expect(launcher.querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background).toBe("");
-    expect(launcher.querySelector("svg")?.getAttribute("width")).toBe("44");
+    expect(launcher.querySelector("img")?.getAttribute("src")).toContain("launcher.png");
+    expect(launcher.querySelector("img")?.width).toBe(44);
+    expect(launcher.querySelector("img")?.height).toBe(44);
 
     fireEvent.error(installed.querySelector("img")!);
     expect(installed.querySelector("svg")?.getAttribute("width")).toBe("44");
