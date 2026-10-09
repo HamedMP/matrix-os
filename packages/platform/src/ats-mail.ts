@@ -3,12 +3,12 @@ import { sql } from 'kysely';
 import type { AtsDB } from './ats-db.js';
 import { applicationColumns, mapApplication } from './ats-mappers.js';
 import { enqueueAtsNotification } from './ats-notifications.js';
-import { AtsApplicationNotFoundError } from './ats-errors.js';
-import { AtsMailSchema, type AtsMailInput } from './ats-mail-input.js';
+import { AtsApplicationNotFoundError, AtsMissingSenderError } from './ats-errors.js';
+import { AtsMailSchema, LegacyInboxSchema, type AtsMailInput } from './ats-mail-input.js';
 export { AtsMailSchema, type AtsMailInput } from './ats-mail-input.js';
 
-export async function importAtsMail(db: AtsDB, input: AtsMailInput, at: string, options: { notify: boolean } = { notify: true }) {
-  const mail = AtsMailSchema.parse(input);
+export async function importAtsMail(db: AtsDB, input: AtsMailInput, at: string, options: { notify: boolean; allowMissingSender?: boolean } = { notify: true }) {
+  const mail = (options.allowMissingSender && !options.notify ? LegacyInboxSchema : AtsMailSchema).parse(input);
   await db.ready;
   return db.transaction(async (trx) => {
     // Serialize email promotion and imports for the same sender.
@@ -56,6 +56,7 @@ export async function promoteAtsMail(db: AtsDB, inboxId: string, roleSlug: strin
     if (!initial) throw new AtsApplicationNotFoundError();
     await sql`SELECT pg_advisory_xact_lock(hashtext(${initial.sender_email}))`.execute(trx.executor);
     const mail = await trx.executor.selectFrom('ats_inbox_messages').selectAll().where('id', '=', inboxId).forUpdate().executeTakeFirstOrThrow();
+    if (!mail.sender_email) throw new AtsMissingSenderError();
     let candidate = await trx.executor.selectFrom('ats_applications').select(applicationColumns)
       .where('deleted_at', 'is', null).where((eb) => mail.application_id ? eb('id', '=', mail.application_id) : eb.and([eb('candidate_email', '=', mail.sender_email), eb('role_slug', '=', roleSlug), eb('disposition', '=', 'active')]))
       .orderBy('created_at', 'desc').executeTakeFirst();

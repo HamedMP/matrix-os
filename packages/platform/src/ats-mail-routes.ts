@@ -4,7 +4,8 @@ import { z } from 'zod/v4';
 import type { AtsDB } from './ats-db.js';
 import { AtsMailSchema, importAtsMail, listAtsInbox, promoteAtsMail } from './ats-mail.js';
 import { timingSafeTokenEquals } from './platform-token.js';
-import { AtsApplicationNotFoundError } from './ats-errors.js';
+import { AtsApplicationNotFoundError, AtsMissingSenderError } from './ats-errors.js';
+import { LegacyInboxSchema } from './ats-mail-input.js';
 import { LegacyCandidateSchema, importLegacyCandidate } from './ats-legacy.js';
 import { getAtsMailAttachment } from './ats-attachments.js';
 
@@ -30,9 +31,9 @@ export function createAtsMailRoutes(options: { db: AtsDB; mailSecret: string; al
   // Mounted beneath the existing admin-secret middleware.
   app.post('/api/ats/admin/legacy-inbox', bodyLimit({ maxSize: 8 * 1024 * 1024 }), async (c) => {
     try {
-      const input = AtsMailSchema.safeParse(await c.req.json());
+      const input = LegacyInboxSchema.safeParse(await c.req.json());
       if (!input.success) return c.json({ error: 'Invalid recruiting history' }, 422);
-      const mail = await importAtsMail(options.db, input.data, new Date().toISOString(), { notify: false });
+      const mail = await importAtsMail(options.db, input.data, new Date().toISOString(), { notify: false, allowMissingSender: true });
       return c.json({ receiptId: mail.id });
     } catch (error) {
       if (error instanceof Error && error.name === 'BodyLimitError') throw error;
@@ -87,6 +88,7 @@ export function createAtsMailRoutes(options: { db: AtsDB; mailSecret: string; al
       if (error instanceof Error && error.name === 'BodyLimitError') throw error;
       if (error instanceof SyntaxError) return c.json({ error: 'Invalid email' }, 422);
       if (error instanceof AtsApplicationNotFoundError) return c.json({ error: 'Not found' }, 404);
+      if (error instanceof AtsMissingSenderError) return c.json({ error: 'Sender information is required before adding a candidate' }, 422);
       console.error('[ats] Inbox promotion failed:', error instanceof Error ? error.name : typeof error);
       return c.json({ error: 'Email review unavailable' }, 503);
     }

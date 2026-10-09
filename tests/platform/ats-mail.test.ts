@@ -63,4 +63,12 @@ describe('ATS email intake and notifications', () => {
     expect(commercial.id).not.toBe(engineer.id);
     expect(commercial.roleSlug).toBe('senior-go-to-market-lead');
   });
+  it('preserves legacy messages with missing senders without permitting candidate promotion', async () => {
+    await expect(importAtsMail(db, { ...mail, senderEmail: '' }, at)).rejects.toThrow();
+    const imported = await importAtsMail(db, { ...mail, senderEmail: '' }, at, { notify: false, allowMissingSender: true });
+    expect(imported.application_id).toBeNull();
+    expect((await listAtsInbox(db))[0].sender_email).toBe('');
+    await expect(promoteAtsMail(db, imported.id, 'founding-engineer', 'user_reviewer', at)).rejects.toThrow('sender');
+    expect(await db.executor.selectFrom('ats_applications').selectAll().execute()).toHaveLength(0);
+  });
 });

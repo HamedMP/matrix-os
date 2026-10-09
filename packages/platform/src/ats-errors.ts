@@ -11,3 +11,7 @@ export class AtsApplicationNotFoundError extends Error {
     this.name = 'AtsApplicationNotFoundError';
   }
 }
+
+export class AtsMissingSenderError extends Error {
+  constructor() { super('Imported message has no sender address'); this.name = 'AtsMissingSenderError'; }
+}

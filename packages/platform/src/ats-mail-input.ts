@@ -10,3 +10,5 @@ export const AtsMailSchema = z.object({
   attachments: z.array(AtsAttachmentSchema).max(5).default([]).refine((files) => files.reduce((sum, file) => sum + Buffer.from(file.base64, 'base64').length, 0) <= 5 * 1024 * 1024),
 });
 export type AtsMailInput = z.input<typeof AtsMailSchema>;
+// Only the authenticated, silent history-import path accepts an absent historical sender.
+export const LegacyInboxSchema = AtsMailSchema.extend({ senderEmail: z.union([AtsMailSchema.shape.senderEmail, z.literal('')]) });

@@ -30,13 +30,13 @@ for(const candidate of candidates){
     attachments.push({filename:file.name,contentType:file.mime_type,base64:chunks.sort((a,b)=>a.idx-b.idx).map(chunk=>chunk.data).join('')});
   }
   const linked=inbox.filter(mail=>mail.candidate_id===candidate.id);
-  const payload={legacyKey:config.MATRIX_CLERK_USER_ID+':'+candidate.id,name:candidate.full_name,email:candidate.email,roleSlug:role[candidate.role]??'legacy-unassigned',stage:stage[candidate.status]??'applied',disposition:candidate.status==='Archived'?'archived':candidate.status==='Rejected'?'rejected':'active',summary:candidate.summary??'',createdAt:date(candidate.created_at),notes:comments.filter(note=>note.candidate_id===candidate.id).map(note=>({body:note.body,createdAt:date(note.created_at)})),emails:linked.map(mail=>({messageId:mail.message_id,threadId:mail.thread_id??'',senderName:mail.sender_name??'',senderEmail:mail.sender_email,subject:mail.subject??'',body:mail.snippet??'',receivedAt:date(mail.received_at),sourceUrl:mail.source_url,category:'candidate'})),attachments};
+  const payload={legacyKey:config.MATRIX_CLERK_USER_ID+':'+candidate.id,name:candidate.full_name,email:candidate.email,roleSlug:role[candidate.role]??'legacy-unassigned',stage:stage[candidate.status]??'applied',disposition:candidate.status==='Archived'?'archived':candidate.status==='Rejected'?'rejected':'active',summary:candidate.summary??'',createdAt:date(candidate.created_at),notes:comments.filter(note=>note.candidate_id===candidate.id).map(note=>({body:note.body,createdAt:date(note.created_at)})),emails:linked.map(mail=>({messageId:mail.message_id,threadId:mail.thread_id??'',senderName:mail.sender_name??'',senderEmail:mail.sender_email??'',subject:mail.subject??'',body:mail.snippet??'',receivedAt:date(mail.received_at),sourceUrl:mail.source_url,category:'candidate'})),attachments};
   const line=JSON.stringify({type:'candidate',payload})+'\n';if(Buffer.byteLength(line)>8*1024*1024)throw Error('Candidate exceeds migration size limit');
   if(!process.stdout.write(line))await new Promise(resolve=>process.stdout.once('drain',resolve));
 }
 for(const mail of inbox.filter(mail=>!mail.candidate_id)){
  const category={'Vendor':'vendor','Moderation':'moderation','Groups pending':'moderation'}[mail.category]??'needs_review';
- const payload={messageId:'legacy-'+createHash('sha256').update(mail.message_id??mail.id).digest('hex'),threadId:mail.thread_id??'',senderName:mail.sender_name??'',senderEmail:mail.sender_email,subject:mail.subject??'',body:mail.snippet??'',receivedAt:date(mail.received_at),sourceUrl:mail.source_url,category,attachments:[]};
+ const payload={messageId:'legacy-'+createHash('sha256').update(mail.message_id??mail.id).digest('hex'),threadId:mail.thread_id??'',senderName:mail.sender_name??'',senderEmail:mail.sender_email??'',subject:mail.subject??'',body:mail.snippet??'',receivedAt:date(mail.received_at),sourceUrl:mail.source_url,category,attachments:[]};
  if(!process.stdout.write(JSON.stringify({type:'mail',payload})+'\n'))await new Promise(resolve=>process.stdout.once('drain',resolve));
 }
 `;
