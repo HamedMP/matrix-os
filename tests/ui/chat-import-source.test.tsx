@@ -3,12 +3,22 @@ import React, { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ChatImportSourceFilter, ChatImportSourceIcon } from "../../packages/ui/src/chat/ChatImportSource.js";
+import { HarnessIcon } from "../../packages/ui/src/agents-providers/HarnessRail.js";
 import { filterChatsByImportSource } from "../../packages/ui/src/chat/import-source.js";
 import { CanonicalChatRecordSchema } from "@matrix-os/contracts";
 import { mergeChatNavigationRecord, projectDetailNavigation } from "../../packages/ui/src/chat-navigation/projection.js";
 afterEach(cleanup);
 const items = [{ title: "Normal", source: undefined }, { title: "Claude", source: { harness: "claude" as const } }, { title: "Codex", source: { harness: "codex" as const } }];
 describe("shared Chat import source", () => {
+  it.each(["claude", "codex"] as const)("uses the same %s artwork as Agents & providers", harness => {
+    const view = render(<><HarnessIcon harness={harness}/><ChatImportSourceIcon harness={harness} size={18}/></>);
+    const reference = view.container.querySelector("img");
+    const source = screen.getByRole("img", { name: harness === "claude" ? "Imported from Claude Code" : "Imported from Codex" });
+    expect(source.tagName).toBe("IMG");
+    expect(source.getAttribute("src")).toBe(reference?.getAttribute("src"));
+    expect(source.getAttribute("width")).toBe("18");
+    expect(source.getAttribute("height")).toBe("18");
+  });
   it("filters all/imported/Claude Code/Codex from provenance only and preserves order", () => {
     const source = (item: typeof items[number]) => item.source;
     expect(filterChatsByImportSource(items, "all", source)).toEqual(items);
@@ -17,12 +27,12 @@ describe("shared Chat import source", () => {
     expect(filterChatsByImportSource(items, "codex", source).map(i => i.title)).toEqual(["Codex"]);
     expect(filterChatsByImportSource(items.filter(i => i.title.includes("Claude")), "codex", source)).toEqual([]);
   });
-  it("shows accessible monochrome source icons and shared filter labels", () => {
+  it("shows accessible source artwork and shared filter labels", () => {
     function Demo() { const [value, setValue] = useState<"all" | "imported" | "claude" | "codex">("all"); return <ChatImportSourceFilter value={value} onChange={setValue}/>; }
     const view = render(<><ChatImportSourceIcon harness="claude"/><ChatImportSourceIcon harness="codex" size={18}/><Demo/></>);
     expect(screen.getByRole("img", { name: "Imported from Claude Code" })).toBeTruthy();
     expect(screen.getByRole("img", { name: "Imported from Codex" })).toBeTruthy();
-    expect(view.container.querySelector('svg[width="18"]')).toBeTruthy();
+    expect(view.container.querySelector('img[width="18"]')).toBeTruthy();
     const select = screen.getByRole("combobox", { name: "Chat source" });
     expect(screen.getAllByRole("option").map(o => o.textContent)).toEqual(["All", "Imported", "Claude Code", "Codex"]);
     fireEvent.change(select, { target: { value: "codex" } }); expect((select as HTMLSelectElement).value).toBe("codex");

@@ -12,11 +12,11 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import {
-  codingAgentArtworkSrc, CODING_AGENT_ARTWORK,
+  codingAgentArtworkSrc, settingsHarnessArtworkSrc, CODING_AGENT_ARTWORK,
 } from "../coding-agent-artwork.js";
 /** Settings retains the shipped upstream artwork, per the reviewed design override. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  const src = harness === "claude" ? "/agents/settings/claude.svg" : harness === "codex" ? "/agents/settings/openai.svg" : CODING_AGENT_ARTWORK[harness].src;
+  const src = harness === "claude" || harness === "codex" ? settingsHarnessArtworkSrc(harness) : codingAgentArtworkSrc(CODING_AGENT_ARTWORK[harness].src);
   const size = harness === "claude" ? 22 : harness === "codex" ? 20 : 24;
   return (
     <span
@@ -26,7 +26,7 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
       aria-hidden="true"
     >
       <img
-        src={codingAgentArtworkSrc(src)}
+        src={src}
         alt=""
         className={harness === "claude" ? "matrix-ap-claude-logo" : harness === "codex" ? "matrix-ap-openai-logo" : "matrix-ap-upstream-logo"}
         width={size}
