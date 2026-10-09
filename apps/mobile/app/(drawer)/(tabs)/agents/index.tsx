@@ -1,23 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { AgentsListScreen } from "@/components/agents/AgentsListScreen";
 import { agentListRows } from "@/components/agents/agent-rows";
-import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { agentChatRoute } from "@/components/agents/agent-routes";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
-import { useAgents, useEnsureAgentChat } from "@/lib/queries/use-agents";
+import { useAgents } from "@/lib/queries/use-agents";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
-import { useShowChatScreen } from "@/lib/use-shell-navigation";
 
 export default function AgentsScreen() {
   const router = useRouter();
-  const { selectChat } = useCanonicalChatSession();
-  const showChatScreen = useShowChatScreen();
   const library = useAgents();
   const { statuses, refetch: refetchStatuses } = useAgentStatuses(library.agents);
   const { chats } = useCanonicalChats();
-  const ensureChat = useEnsureAgentChat();
   const [refreshing, setRefreshing] = useState(false);
   const opening = useRef(false);
   const shownBefore = useRef(false);
@@ -45,6 +40,7 @@ export default function AgentsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      opening.current = false;
       // The queries read on their own when the screen is first shown.
       if (!shownBefore.current) {
         shownBefore.current = true;
@@ -63,19 +59,12 @@ export default function AgentsScreen() {
     }
   };
 
-  const openAgent = async (agentId: string) => {
+  // One screen per press: a second press before the agent's chat has covered
+  // the list would open it twice. The list being shown again allows the next.
+  const openAgent = (agentId: string) => {
     if (opening.current) return;
     opening.current = true;
-    try {
-      const chatId = await ensureChat.mutateAsync(agentId);
-      selectChat(chatId);
-      showChatScreen();
-    } catch (error: unknown) {
-      console.warn("[mobile] agent chat unavailable", error instanceof Error ? error.name : "unknown");
-      Alert.alert("Agent could not be opened", "Try again.");
-    } finally {
-      opening.current = false;
-    }
+    router.push(agentChatRoute(agentId) as never);
   };
 
   const unavailable = library.agentsEnabled === false || (library.isError && library.agents.length === 0);
@@ -88,7 +77,7 @@ export default function AgentsScreen() {
       onRefresh={() => void refresh()}
       onRetry={() => void reload()}
       onNewAgent={() => router.push("/agents/new" as never)}
-      onOpenAgent={(agentId) => void openAgent(agentId)}
+      onOpenAgent={openAgent}
     />
   );
 }

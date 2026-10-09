@@ -135,7 +135,7 @@ describe("agents design frames", () => {
     expect(screen.queryByRole("header", { name: "Runs" })).toBeNull();
   });
 
-  it.each(["A1", "A5", "A5b"])("is listed in the design preview as %s, and pressing the name asks for the frame", (name) => {
+  it.each(["A1", "A2", "A3", "A4", "A5", "A5b"])("is listed in the design preview as %s, and pressing the name asks for the frame", (name) => {
     render(<DesignPreview frame={undefined} />);
 
     fireEvent.press(screen.getByRole("button", { name }));

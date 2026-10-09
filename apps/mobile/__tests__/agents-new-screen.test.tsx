@@ -12,6 +12,9 @@ const mockStartDraftChat = jest.fn();
 const mockInvalidateChats = jest.fn(() => Promise.resolve());
 const mockShowChatScreen = jest.fn();
 const mockGoBack = jest.fn();
+const mockReplace = jest.fn();
+const mockPush = jest.fn();
+const mockRefetchAgents = jest.fn(() => Promise.resolve());
 const mockCreate = jest.fn();
 const mockRefetchRecipes = jest.fn(() => Promise.resolve());
 const mockInvalidateQueries = jest.fn(() => Promise.resolve());
@@ -38,7 +41,9 @@ jest.mock("expo-router", () => ({
     isFocused: () => mockFocused,
     getState: () => ({ routes: mockStackRoutes }),
   }),
+  useRouter: () => ({ replace: mockReplace, push: mockPush }),
 }));
+jest.mock("@/lib/queries/use-agents", () => ({ useAgents: () => ({ refetch: mockRefetchAgents }) }));
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ userId: "user_a" }) }));
 jest.mock("@tanstack/react-query", () => ({
   ...jest.requireActual("@tanstack/react-query"),
@@ -70,6 +75,8 @@ const research = {
   output: "A one-page brief",
 };
 const gatewayUrl = `${HOSTED_GATEWAY_URL}/vm/solar-vale`;
+const created = { agentId: "bot_keyaccounts", chatId: "chat_new_agent" };
+const createdRoute = { pathname: "/agents/[agentId]", params: { agentId: "bot_keyaccounts" } };
 
 function recipesResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -188,8 +195,8 @@ describe("new agent route", () => {
   });
 
   it("creates the agent from the template under the typed name, with the automatic model", async () => {
-    let finishCreate: (chatId: string) => void = () => {};
-    mockCreate.mockReturnValue(new Promise<string>((resolve) => { finishCreate = resolve; }));
+    let finishCreate: (agent: typeof created) => void = () => {};
+    mockCreate.mockReturnValue(new Promise<typeof created>((resolve) => { finishCreate = resolve; }));
     render(<NewAgentRoute />);
     openSetup();
     fireEvent.changeText(screen.getByLabelText("Name"), " Key accounts ");
@@ -207,43 +214,56 @@ describe("new agent route", () => {
       expect(screen.getByRole("button", { name: "Create agent" }).props.accessibilityState).toMatchObject({ busy: true })
     ));
     expect(mockSheet.isPresented).toBe(true);
-    expect(mockSelectChat).not.toHaveBeenCalled();
-    expect(mockShowChatScreen).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
 
-    await act(async () => finishCreate("chat_new_agent"));
+    await act(async () => finishCreate(created));
     expect(mockSheet.isPresented).toBe(false);
-    expect(mockSelectChat).toHaveBeenCalledWith("chat_new_agent");
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith(createdRoute);
+    // The chat list has one chat more, and the agents list one agent more.
     expect(mockInvalidateChats).toHaveBeenCalledTimes(1);
-    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(mockRefetchAgents).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves the Agents tab on its list, not on this screen, once the agent's chat is opened", async () => {
-    mockCreate.mockResolvedValue("chat_new_agent");
+  it("opens the new agent's own chat, leaving the Chats tab and its open chat alone", async () => {
+    mockCreate.mockResolvedValue(created);
     render(<NewAgentRoute />);
     openSetup();
 
     fireEvent.press(screen.getByRole("button", { name: "Create agent" }));
 
-    await waitFor(() => expect(mockShowChatScreen).toHaveBeenCalledTimes(1));
-    expect(mockGoBack).toHaveBeenCalledTimes(1);
-    expect(mockGoBack.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith(createdRoute));
+    expect(mockSelectChat).not.toHaveBeenCalled();
+    expect(mockStartDraftChat).not.toHaveBeenCalled();
+    expect(mockShowChatScreen).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["there is nothing behind this screen", () => { mockStackRoutes = [{ name: "new" }]; }],
-    ["this screen has been left while the agent was being created", () => { mockFocused = false; }],
-  ])("opens the chat without going back when %s", async (_case, arrange) => {
-    let finishCreate: (chatId: string) => void = () => {};
-    mockCreate.mockReturnValue(new Promise<string>((resolve) => { finishCreate = resolve; }));
+  it("puts the agent's chat in this screen's place, so going back from it shows the Agents list", async () => {
+    mockCreate.mockResolvedValue(created);
+    render(<NewAgentRoute />);
+    openSetup();
+
+    fireEvent.press(screen.getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledTimes(1));
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(mockGoBack).not.toHaveBeenCalled();
+  });
+
+  it("opens the agent's chat on top of wherever the person is, when this screen was left while the agent was being created", async () => {
+    let finishCreate: (agent: typeof created) => void = () => {};
+    mockCreate.mockReturnValue(new Promise<typeof created>((resolve) => { finishCreate = resolve; }));
     render(<NewAgentRoute />);
     openSetup();
     fireEvent.press(screen.getByRole("button", { name: "Create agent" }));
 
-    arrange();
-    await act(async () => finishCreate("chat_new_agent"));
+    mockFocused = false;
+    await act(async () => finishCreate(created));
 
-    expect(mockSelectChat).toHaveBeenCalledWith("chat_new_agent");
-    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith(createdRoute);
+    // There is nothing of this screen left to replace.
+    expect(mockReplace).not.toHaveBeenCalled();
     expect(mockGoBack).not.toHaveBeenCalled();
   });
 
@@ -261,9 +281,11 @@ describe("new agent route", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("upstream said no");
     expect(mockSheet.isPresented).toBe(true);
     expect(screen.getByLabelText("Name").props.value).toBe("Key accounts");
-    expect(mockSelectChat).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
     expect(mockShowChatScreen).not.toHaveBeenCalled();
     expect(mockGoBack).not.toHaveBeenCalled();
+    expect(mockRefetchAgents).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -313,6 +335,23 @@ describe("new agent route", () => {
     expect(mockGoBack).toHaveBeenCalledTimes(1);
     expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
     expect(mockStartDraftChat.mock.invocationCallOrder[0]).toBeLessThan(mockShowChatScreen.mock.invocationCallOrder[0]);
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["there is nothing behind this screen", () => { mockStackRoutes = [{ name: "new" }]; }],
+    ["this screen is no longer the one in front", () => { mockFocused = false; }],
+  ])("sets up in chat without going back when %s", (_case, arrange) => {
+    render(<NewAgentRoute />);
+    openSetup();
+    arrange();
+
+    fireEvent.press(screen.getByRole("button", { name: "Set up in chat instead" }));
+
+    expect(mockStartDraftChat).toHaveBeenCalledTimes(1);
+    expect(mockShowChatScreen).toHaveBeenCalledTimes(1);
+    expect(mockGoBack).not.toHaveBeenCalled();
   });
 
   it("draws none of the controls the server has nothing behind", () => {

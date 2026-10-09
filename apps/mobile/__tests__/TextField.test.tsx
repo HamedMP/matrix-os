@@ -130,6 +130,15 @@ describe("TextField", () => {
     expect(screen.getByTestId("name").props.editable).toBe(false);
   });
 
+  it("hides what is typed when asked to, and shows it otherwise", () => {
+    render(<TextField testID="secret" value="1234" onChangeText={jest.fn()} secureTextEntry />);
+    expect(screen.getByTestId("secret").props.secureTextEntry).toBe(true);
+    cleanup();
+
+    render(<TextField testID="plain" value="1234" onChangeText={jest.fn()} />);
+    expect(screen.getByTestId("plain").props.secureTextEntry).toBeFalsy();
+  });
+
   it("names the input after its placeholder when no label is given", () => {
     render(<TextField testID="name" value="" onChangeText={jest.fn()} placeholder="Project name" />);
 

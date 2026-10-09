@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
 import { Alert, FlatList, StyleSheet as NativeStyleSheet, Text, View } from "react-native";
 
 import { MessageList } from "../components/chat/MessageList";
@@ -40,6 +40,25 @@ describe("MessageList", () => {
     expect(content).toMatchObject({ paddingHorizontal: 20, paddingVertical: 20, gap: 14 });
     // A short chat rests on the composer, as drawn, rather than under the top bar.
     expect(content.justifyContent).toBeUndefined();
+  });
+
+  it("draws a footer after the newest message, which an inverted list takes as its header", () => {
+    const view = render(
+      <MessageList messages={[reply, question]} chatId="chat_1" footer={<Text>Needs your approval</Text>} />,
+    );
+
+    const list = screen.UNSAFE_getByType(FlatList);
+    expect(list.props.ListHeaderComponent).toBeTruthy();
+    expect(list.props.ListFooterComponent).toBeUndefined();
+    // Like the messages, it stays out of session replay.
+    const masks = screen.UNSAFE_getAllByType(AnalyticsMask);
+    expect(masks).toHaveLength(3);
+    expect(masks.filter((mask) => within(mask).queryByText("Needs your approval"))).toHaveLength(1);
+
+    view.rerender(<MessageList messages={[reply, question]} chatId="chat_1" />);
+    expect(screen.queryByText("Needs your approval")).toBeNull();
+    expect(screen.UNSAFE_getByType(FlatList).props.ListHeaderComponent).toBeNull();
+    expect(screen.UNSAFE_getAllByType(AnalyticsMask)).toHaveLength(2);
   });
 
   it("closes the keyboard on a tap in an existing chat, and lets taps through in one that is not created yet", () => {

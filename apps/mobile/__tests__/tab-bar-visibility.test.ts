@@ -5,12 +5,14 @@ import {
 } from "../lib/tab-bar-visibility";
 
 describe("isTabBarHidden", () => {
-  it("hides the tab bar on the New agent screen and shows it on the Agents list", () => {
-    expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new"] });
+  it("hides the tab bar on the New agent screen and on an agent's chat, and shows it on the Agents list", () => {
+    expect(TAB_BAR_HIDDEN_ROUTES).toEqual({ agents: ["new", "[agentId]"] });
     expect(isTabBarHidden("agents", "new")).toBe(true);
+    expect(isTabBarHidden("agents", "[agentId]")).toBe(true);
     expect(isTabBarHidden("agents", "index")).toBe(false);
-    // Another tab's screen of the same name is not the New agent screen.
+    // Another tab's screen of the same name is neither of them.
     expect(isTabBarHidden("(chats)", "new")).toBe(false);
+    expect(isTabBarHidden("(chats)", "[agentId]")).toBe(false);
   });
 
   it("keeps the tab bar on every other screen that exists today", () => {

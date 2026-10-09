@@ -1,12 +1,11 @@
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Linking, type TextInput } from "react-native";
+import type { TextInput } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
-import { BotChatControls } from "@/components/BotChatControls";
 import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
 import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
@@ -59,6 +58,8 @@ export default function ChatScreen() {
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
   const cancelRun = useCancelRun();
 
+  // An agent's chat is read and answered in the Agents tab. One opened here
+  // all the same keeps its fixed model, so a message can still be sent.
   const directBot = Boolean(botChat.snapshot);
   // The picker marks the catalog as being checked whenever it is fetched.
   // Sending only waits when there is no catalog to choose a model from yet:
@@ -187,23 +188,6 @@ export default function ChatScreen() {
       title={chatScreenTitle(activeChatId, detail, chats)}
       onOpenSidePanel={openSidePanel}
       onNewChat={activeChatId ? handleNewChat : undefined}
-      header={botChat.snapshot ? (
-        <BotChatControls
-          catalog={catalog}
-          snapshot={botChat.snapshot}
-          actionsAvailable={!botChat.isError}
-          onSelectionChange={botChat.updateModel}
-          onResolve={botChat.resolve}
-          onRevoke={botChat.revoke}
-          onMemory={botChat.memory}
-          onRefresh={botChat.refresh}
-          onConnectUrl={async (url) => {
-            if (new URL(url).protocol !== "https:") throw new Error("Invalid consent link");
-            await Linking.openURL(url);
-          }}
-        />
-      ) : null}
-      notice={botChat.isError && activeChatId ? "Bot status could not be loaded. Try again." : null}
       showHome={activeChatId === null && messages.length === 0}
       suggestions={CHAT_SUGGESTIONS}
       onSuggestionPress={handleSuggestionPress}
@@ -222,7 +206,7 @@ export default function ChatScreen() {
         onSend: send,
         running: busy,
         onStop: handleStop,
-        modelControl: directBot ? <ModelTrigger label="Bot model" fixed /> : (
+        modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker
             catalog={catalog}
             catalogLoading={providerCatalogChecking}

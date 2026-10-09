@@ -6,7 +6,14 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { ItemRow, SectionLabel } from "@/components/ui";
 
-import { AgentsListFrame, NewAgentFrame, TemplateSetupFrame } from "./agents";
+import {
+  AgentApprovalFrame,
+  AgentChatFrame,
+  AgentDetailsFrame,
+  AgentsListFrame,
+  NewAgentFrame,
+  TemplateSetupFrame,
+} from "./agents";
 import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
 import { ModelSheetFrame } from "./chat/ModelSheetFrame";
 import { ComponentsGallery } from "./ComponentsGallery";
@@ -37,6 +44,9 @@ const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "P3", Frame: ProjectMenuFrame },
   { name: "P4", Frame: RenameProjectFrame },
   { name: "A1", Frame: AgentsListFrame },
+  { name: "A2", Frame: AgentChatFrame },
+  { name: "A3", Frame: AgentApprovalFrame },
+  { name: "A4", Frame: AgentDetailsFrame },
   { name: "A5", Frame: NewAgentFrame },
   { name: "A5b", Frame: TemplateSetupFrame },
 ];
