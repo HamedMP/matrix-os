@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMessagingHandoffRoutes } from "../../packages/platform/src/whatsapp/handoff-routes.js";
+import { buildPostAuthRedirectPath, normalizePostAuthRedirectPath } from "../../packages/platform/src/request-routing.js";
+import { getAuthPage } from "../../packages/platform/src/auth-pages.js";
 describe("mobile app handoff", () => {
   it("serves a narrow public association and authenticated web fallback without credentials", async () => {
     const app = createMessagingHandoffRoutes();
@@ -29,4 +31,20 @@ describe("mobile app handoff", () => {
       (await createMessagingHandoffRoutes().request("/open?" + query)).status,
     ).toBe(400);
   });
+  it("preserves a signed-out browser Chat target through the sign-in redirect", async () => {
+    const html = await (await createMessagingHandoffRoutes().request("/open?chat=chat_12345678")).text();
+    const fallback = html.match(/class="secondary" href="([^"]+)"/)![1].replaceAll("&amp;", "&");
+    const target = normalizePostAuthRedirectPath(buildPostAuthRedirectPath("https://app.matrix-os.com" + fallback));
+    const query = new URL(target, "https://app.matrix-os.com").searchParams;
+    expect(query.get("chat")).toBe("chat_12345678");
+    expect(query.get("launch")).toBe("__chat__");
+    expect(query.get("runtime")).toBe("primary");
+    const signIn = getAuthPage("pk_test_fixture", "sign-in", "nonce", target, "https://app.matrix-os.com");
+    expect(JSON.parse(signIn.match(/var redirectTarget = (.+);/)![1])).toBe(target);
+  });
+  it.each(["chat=../../secret", "chat=chat_12345678&chat=chat_87654321", "launch=__chat__&token=secret"])(
+    "does not carry invalid or ambiguous Chat navigation through auth: %s", (query) => {
+      expect(buildPostAuthRedirectPath("https://app.matrix-os.com/?" + query)).toBe("/");
+    },
+  );
 });
