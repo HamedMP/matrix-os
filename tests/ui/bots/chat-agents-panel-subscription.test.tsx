@@ -64,6 +64,7 @@ it("allows an existing recipe Bot to switch coordinator with account and grant b
   x.client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: recipe.recipeId, version: recipe.version }, selection: { instanceId: "matrix_pi_default", model: "sonnet" } }] });
   render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
   fireEvent.change(screen.getByRole("combobox", { name: "Connection" }), { target: { value: planSelection.instanceId } });
   const models = screen.getByRole("combobox", { name: "Model" });
   fireEvent.change(models, { target: { value: JSON.stringify([planSelection.instanceId, planSelection.model, options]) } });
@@ -119,10 +120,99 @@ it("does not reuse a saved stale account/grant binding when selecting a current 
   x.client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: recipe.recipeId, version: recipe.version }, selection: stale }] });
   render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
   const models = screen.getByRole("combobox", { name: "Model" });
   expect(within(models).getByRole("option", { name: "owner-model-2 · unavailable" })).toBeDisabled();
   expect(models).toHaveValue(JSON.stringify([planSelection.instanceId, planSelection.model, stale.options]));
   fireEvent.change(models, { target: { value: JSON.stringify([planSelection.instanceId, planSelection.model, options]) } });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(x.client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ selection: planSelection, baseRevision: saved.revision })));
+});
+
+ it("saves a new subscription Bot through managed creation and recovers readback without a second logical creation", async () => {
+ const x = fixture(); const createCustom = vi.fn(async (_input: unknown) => created);
+ (x.bots as unknown as {createCustom: ReturnType<typeof vi.fn>}).createCustom = createCustom;
+ x.client.list.mockResolvedValue({ enabled: true, agents: [saved] });
+ render(<ChatAgentsPanel client={x.client} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+ const connection = screen.getByRole("combobox", { name: "Connection" });
+ await waitFor(() => expect(connection).toBeEnabled());
+ fireEvent.change(connection, {target: {value: planSelection.instanceId}});
+ expect(within(screen.getByRole("combobox", {name: "Model"})).getAllByRole("option", {name: /Owner model/})).toHaveLength(4);
+ fireEvent.change(screen.getByRole("combobox", {name:"Model"}), {target:{value:JSON.stringify([planSelection.instanceId,planSelection.model,options])}});
+ fireEvent.change(screen.getByRole("textbox", {name:"Name"}), {target:{value:"My coordinator"}});
+ fireEvent.change(screen.getByRole("textbox", {name:"Instructions"}), {target:{value:"Only confirmed actions"}});
+ x.client.list.mockRejectedValueOnce(new Error("secret private path"));
+ fireEvent.click(screen.getByRole("button", {name:"Create Agent"}));
+ await screen.findByRole("alert");
+ expect(screen.getByRole("textbox", {name:"Instructions"})).toHaveValue("Only confirmed actions");
+ const request=createCustom.mock.calls[0]![0];
+ expect(request).toMatchObject({name:"My coordinator",instructions:"Only confirmed actions",selection:planSelection});
+ expect(request).not.toHaveProperty("recipeRef");
+ x.client.list.mockResolvedValue({enabled:true,agents:[{...saved,id:created.agent.id,name:"My coordinator",selection:planSelection,recipeRef:{recipeId:"custom-coordinator",version:"1"}}]});
+ fireEvent.click(screen.getByRole("button", {name:"Create Agent"}));
+ await screen.findByText("Saved. Open this bot’s Chat from the sidebar to send a request.");
+ expect(createCustom).toHaveBeenLastCalledWith(request);
+ expect(x.client.create).not.toHaveBeenCalled();
+ });
+ it("requires an explicit subscription choice when Matrix AI has no available models", async () => {
+ const x=fixture(); (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=vi.fn(async()=>created);
+ x.catalog.instances=x.catalog.instances.filter(instance=>instance.id===planSelection.instanceId);
+ render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button", {name:"New Agent"}));
+ await waitFor(()=>expect(screen.getByRole("combobox", {name:"Connection"})).toBeEnabled());
+ expect(screen.getByRole("combobox", {name:"Connection"})).toHaveValue("matrix_pi_default");
+ expect(screen.getByRole("combobox", {name:"Model"})).toHaveValue("unselected");
+ });
+ it("refreshes recovered models without changing the editor draft", async () => {
+ const x=fixture(); render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole("button", {name: "New Agent"}));
+ fireEvent.change(screen.getByRole("textbox", {name: "Name"}), {target:{value:"Keep my name"}});
+ fireEvent.change(screen.getByRole("textbox", {name:"Instructions"}), {target:{value:"Keep my instructions"}});
+ await waitFor(() => expect(screen.getByRole("button", {name:"Refresh models"})).toBeEnabled());
+ const next = structuredClone(x.catalog); const pi=next.instances.find(i=>i.id==="matrix_pi_default")!;
+ pi.models.push({...pi.models[0]!, id:"glm",displayName:"GLM"}); x.client.catalog.mockResolvedValue(next);
+ fireEvent.click(screen.getByRole("button", {name:"Refresh models"}));
+ await screen.findByRole("option", {name:"GLM · Matrix AI"});
+ expect(screen.getByRole("textbox", {name:"Name"})).toHaveValue("Keep my name");
+ expect(screen.getByRole("textbox", {name:"Instructions"})).toHaveValue("Keep my instructions");
+ expect(screen.getByRole("combobox", {name:"Model"})).toHaveValue(JSON.stringify(["matrix_pi_default","sonnet"]));
+ });
+
+it('recovers the created Bot after a readback failure even if the owner edits the retained draft', async () => {
+ const x=fixture(); const createCustom=vi.fn(async()=>created);
+ (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=createCustom;
+ render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ await waitFor(()=>expect(screen.getByRole('combobox',{name:'Connection'})).toBeEnabled());
+ fireEvent.change(screen.getByRole('combobox',{name:'Connection'}),{target:{value:planSelection.instanceId}});
+ fireEvent.change(screen.getByRole('combobox',{name:'Model'}),{target:{value:JSON.stringify([planSelection.instanceId,planSelection.model,options])}});
+ fireEvent.change(screen.getByRole('textbox',{name:'Name'}),{target:{value:'Created once'}});
+ fireEvent.change(screen.getByRole('textbox',{name:'Instructions'}),{target:{value:'Only confirmed actions'}});
+ x.client.list.mockRejectedValueOnce(new Error('readback unavailable'));
+ fireEvent.click(screen.getByRole('button',{name:'Create Agent'}));
+ await screen.findByRole('alert');
+ fireEvent.change(screen.getByRole('textbox',{name:'Name'}),{target:{value:'Recovered name'}});
+ const recovered={...saved,id:created.agent.id,name:'Created once',instructions:'Only confirmed actions',description:'',selection:planSelection,recipeRef:{recipeId:'custom-coordinator',version:'1'}};
+ x.client.list.mockResolvedValue({enabled:true,agents:[recovered]});
+ x.client.update.mockResolvedValue({...recovered,name:'Recovered name'});
+ fireEvent.click(screen.getByRole('button',{name:'Create Agent'}));
+ await screen.findByText('Saved. Open this bot’s Chat from the sidebar to send a request.');
+ expect(createCustom).toHaveBeenCalledTimes(1);
+ expect(x.client.update).toHaveBeenCalledWith(created.agent.id,expect.objectContaining({name:'Recovered name',baseRevision:recovered.revision}));
+ expect(x.client.create).not.toHaveBeenCalled();
+});
+
+it('preserves the supported Hermes executor when a new draft selects the legacy Jev skill', async () => {
+ const x=fixture(); (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=vi.fn(async()=>created);
+ const base=x.catalog.instances[0]!;
+ x.catalog.instances.push({...base,id:'hermes_default',driverKind:'hermes',displayName:'Hermes',defaultSelection:{instanceId:'hermes_default',model:'openai-api:gpt-5.6-sol'},models:[{...base.models[0]!,id:'openai-api:gpt-5.6-sol',displayName:'Hermes owner model'}]});
+ const recipes=await x.client.recipeCatalog();
+ x.client.recipeCatalog.mockResolvedValue({...recipes,skills:[...recipes.skills,{id:'matrix-jev-email-triage',name:'Jev Inbox Triage',description:'Legacy Hermes workflow'}]});
+ render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ fireEvent.click(await screen.findByRole('button',{name:'Add recipe'}));
+ fireEvent.click(await screen.findByRole('checkbox',{name:'Jev Inbox Triage'}));
+ await screen.findByRole('option',{name:'Hermes owner model · Hermes'});
+ expect(screen.queryByRole('option',{name:/Owner model 2/})).toBeNull();
 });

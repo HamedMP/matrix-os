@@ -49,6 +49,7 @@ function setup(options: {
   activeDeadlineMs?: number;
   cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
+  resolveProcedure?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveProcedure"];
   memory?: string[];
   admitted?: () => Promise<string[]>;
   answerWithMessage?: () => Promise<void>;
@@ -88,6 +89,7 @@ function setup(options: {
     memory: { admitted: options.admitted ?? (async () => options.memory ?? []) },
     agents: { get: vi.fn(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
+    resolveProcedure: options.resolveProcedure,
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
     executorReady: options.executorReady,
     admission,
@@ -450,4 +452,27 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect(commands).toEqual([]);
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "failed" })]);
   });
+});
+
+it("runs new custom coordinators through the Bot adapter with exact subscription and revision on fresh/resumed turns", async () => {
+ const selection={instanceId:"matrix_chatgpt_plan",model:"gpt-custom",options:[{id:"accountId",value:"own-account"},{id:"grantRevision",value:"3"}]};
+ const agent={...AGENT,selection,instructions:"Use only confirmed data",recipeRef:{recipeId:"custom-coordinator",version:"1"}};
+ const resolveProcedure=vi.fn(async()=>({...agent.recipeRef,name:agent.name,description:"",instructions:agent.instructions,
+  capabilities:["artifact.read" as const,"memory.search" as const],integrations:[],output:"A truthful answer"}));
+ const subscription={peerId:"d16576f5-6a86-4768-8f97-06a718efda36",accountId:"own-account",computerId:"own-computer",grantRevision:3};
+ const route={...ROUTE,api:"openai-responses" as const,modelId:selection.model};
+ const resolveRoute=vi.fn(async(selected?:CanonicalChatModelSelection)=>{expect(selected).toEqual(selection);return {route,accessSourceId:"matrix_chatgpt_plan" as const,subscription};});
+ const x=setup({agent,resolveProcedure,resolveRoute,worker:async(input)=>{
+  const spec=await x.orchestrator.runSource.loadRunSpec({runId:input.command.runId} as never);
+  expect(spec.systemPrompt).toContain(agent.instructions); expect(spec.route).toEqual(route);
+  expect(x.registry.lookupRun({...input,runId:input.command.runId})).toMatchObject({ownerId:OWNER,botId:BOT,managedDefinitionRevision:1,subscription});
+  return {runId:input.command.runId,status:"completed",toolActions:0,sessionRevision:1};
+ }});
+ for(const runId of ["run_custom_fresh","run_custom_resume"]){
+  await collect(x.adapter.start(turn(undefined,runId)));
+  expect(await tasks()).toContainEqual(expect.objectContaining({status:"completed",run_id:runId}));
+ }
+ expect(resolveProcedure).toHaveBeenCalledTimes(2);expect(resolveRoute).toHaveBeenCalledTimes(2);
+ const bad=x.orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_custom_changed",text:"No source changes",selection:{...selection,model:"foreign-model"},signal:new AbortController().signal});
+ expect(await bad.result).toEqual({status:"failed"}); expect(resolveRoute).toHaveBeenCalledTimes(2);
 });

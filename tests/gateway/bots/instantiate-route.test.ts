@@ -71,3 +71,16 @@ describe("POST /api/chat-agents/instantiate", () => {
     expect(await response.json()).toEqual({ code: "unavailable", message: expect.any(String) });
   });
 });
+
+it("authenticates and bounds custom coordinator creation independently of legacy Agent APIs", async()=>{
+ const createCustom=vi.fn(async()=>RESPONSE);
+ const server=new Hono().route("/",createBotRoutes({instantiation:{instantiate:vi.fn(),createCustom},getPrincipal:()=>({userId:"user_owner_1",source:"jwt"}) as never}));
+ const response=await server.request("/api/chat-agents/managed-custom",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:"Bot"})});
+ expect(response.status).toBe(201); expect(response.headers.get("cache-control")).toBe("private, no-store");
+ expect(createCustom).toHaveBeenCalledWith("user_owner_1",{name:"Bot"});
+ const large=await server.request("/api/chat-agents/managed-custom",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({instructions:"x".repeat(70*1024)})});
+ expect(large.status).toBe(413); expect(createCustom).toHaveBeenCalledTimes(1);
+ const denied=new Hono().route("/",createBotRoutes({instantiation:{instantiate:vi.fn(),createCustom},getPrincipal:()=>{throw new MissingRequestPrincipalError();}}));
+ expect((await denied.request("/api/chat-agents/managed-custom",{method:"POST",body:"{}"})).status).toBe(401);
+ expect(createCustom).toHaveBeenCalledTimes(1);
+});

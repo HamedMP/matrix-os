@@ -1,7 +1,7 @@
 import type {BotClient} from "./bots/client.js";
 import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId, type ReactNode } from "react";
-import { isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { isManagedCustomBot, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -52,22 +52,25 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack,
 }
 
 export function AgentEditor({ botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
-  change, onSave, onArchive, onBack, onSetup, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps }: {
+  change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps }: {
   botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
   change(value: Partial<AgentDraft>): void; onSave(): Promise<void>; onArchive(): Promise<void>; onBack(): void;
-  onRetryRecipe(): void; onSetup?: () => void; allowArchive?: boolean; cancelLabel?: string;
+  onRetryRecipe(): void; onSetup?: () => void; onRefreshCatalog?: () => void; allowArchive?: boolean; cancelLabel?: string;
 }) {
   const ids = useId();
   const recipeBot = editing !== "new" && Boolean(editing.recipeRef);
+  const managedCustom = editing === "new" ? false : isManagedCustomBot(editing);
+  const editableRecipe = !recipeBot || managedCustom;
   const hermesOnly = draft.recipe?.skills.includes("matrix-jev-email-triage") === true;
+  const subscriptionNew = editing === "new" && !hermesOnly && Boolean(botClient?.createCustom);
   const managedAgent = recipeBot || (editing === "new" && !hermesOnly);
-  const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot) : customAgentModelChoices(models);
+  const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot || subscriptionNew) : customAgentModelChoices(models);
   const selectionChanged = editing === "new" || JSON.stringify(draft.selection) !== JSON.stringify(editing.selection);
   const modelAvailable = eligibleModels.some((choice) => botModelChoiceMatchesSelection(choice, draft.selection));
-  const recipeValid = recipeBot || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
+  const recipeValid = !editableRecipe || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
     && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
   const saveDisabled = pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid
     || (selectionChanged && !modelAvailable && !(recipeBot && isAutomaticBotSelection(draft.selection)));
@@ -77,13 +80,13 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-instructions`}>Instructions<textarea id={`${ids}-instructions`} className={`${input} min-h-32 resize-y`} value={draft.instructions} maxLength={8000} required disabled={pending} placeholder="What should this Agent do? How should it work?" onChange={(event) => change({ instructions: event.target.value })} /></label>
       {apps}
       {managedAgent ? <div className="grid gap-3 text-sm">
-        <MatrixBotModelField botClient={botClient} id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} allowSubscription={recipeBot} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
-        <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
+        <MatrixBotModelField botClient={botClient} id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} allowSubscription={recipeBot || subscriptionNew} onRefreshCatalog={onRefreshCatalog} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
+        <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : isChatgptPlanBotRoute({instanceId: draft.selection?.instanceId ?? "", driverKind: "matrix_bot"}) ? "This bot uses its selected subscription in its own Chat. Creating it does not run it." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
-      {!recipeBot ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
+      {editableRecipe ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
         connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
         onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} /> : null}
-      {!recipeBot ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
+      {!recipeBot && draft.selection?.instanceId !== "matrix_chatgpt_plan" ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
       <AgentEditorActions editing={editing} pending={pending} saveDisabled={saveDisabled} onArchive={onArchive} onBack={onBack} allowArchive={allowArchive} cancelLabel={cancelLabel} />
     </form>;
 }

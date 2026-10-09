@@ -1,3 +1,5 @@
+import { recoverCreatedCustomBot } from "./recover-created-custom-bot.js";
+import { useAgentProviderCatalog } from "./use-agent-provider-catalog.js";
 import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
@@ -6,7 +8,7 @@ import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotModel
 import { isChatAgentDriver, MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type InstantiateBotResponse, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { DAILY_BRIEF_RECIPE_ID, isLegacyDailyBriefEntry } from "./bots/daily-brief-navigation.js";
@@ -28,7 +30,7 @@ const requestId = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
 type Draft = AgentDraft;
 type Library = {
   agents: ChatAgent[]; catalog: CanonicalProviderCatalog | null; enabled: boolean;
-  loading: boolean; pending: boolean; error: string; notice: string;
+  loading: boolean; catalogLoading?: boolean; pending: boolean; error: string; notice: string;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
   editing: ChatAgent | "new" | null; draft: Draft | null;
@@ -48,8 +50,8 @@ async function loadRecipeResources(client: ChatAgentClient) {
   };
 }
 
-function DailyBriefCreation({ onSetup, recipe, client, models, catalog, catalogLoading, onOpen, onClose }: {
-  onSetup?:()=>void; recipe: BotRecipeSummary; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+function DailyBriefCreation({ onRefreshCatalog, onSetup, recipe, client, models, catalog, catalogLoading, onOpen, onClose }: {
+  onRefreshCatalog?:()=>void; onSetup?:()=>void; recipe: BotRecipeSummary; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog: CanonicalProviderCatalog | null; catalogLoading: boolean; onOpen(chatId: string): void | Promise<void>; onClose(): void;
 }) {
   const [selection, setSelection] = useState<CanonicalChatModelSelection | null>(() => {
@@ -84,15 +86,15 @@ function DailyBriefCreation({ onSetup, recipe, client, models, catalog, catalogL
       if (current()) { opening.current = false; setPending(false); }
     }
   };
-  return <BotRecipeSetup onSetup={onSetup} botClient={client.bots} creationRetained={!!attempt.current?.chatId} recipe={recipe} selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading}
+  return <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={client.bots} creationRetained={!!attempt.current?.chatId} recipe={recipe} selection={selection} models={models} catalog={catalog} catalogLoading={catalogLoading}
     pending={pending} createDisabled={!available || catalogLoading} error={error} onSelectionChange={value => { setSelection(value); setError(""); }}
     onCreate={(name,executor) => { void create(name,executor); }} onClose={onClose} />;
 }
 
-function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup, openDailyBrief }: {
+function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup, openDailyBrief, refreshModels, setupPaused }: {
   state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   edit(agent: ChatAgent | "new"): void; openDailyBrief?: () => void; change(value: Partial<Draft>): void;
-  save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void;
+  save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void; refreshModels(): void; setupPaused: boolean;
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
@@ -120,15 +122,15 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
       ? "Recipe templates are unavailable." : "Connection status is unavailable. Recipe account choices will ask when run."}</p>
       <button type="button" className={button} onClick={retryRecipes}>Retry recipe options</button></div> : null}
     </div>
-    {state.draft && state.editing ? <Dialog open aria-label={state.editing === "new" ? "New Agent" : "Edit Agent"}
+    {state.draft && state.editing ? <Dialog open={!setupPaused} aria-label={state.editing === "new" ? "New Agent" : "Edit Agent"}
       className="matrix-agent-edit-dialog" style={{...chatAgentSurfaceStyle, width:"min(92vw,460px)"}} onClose={() => { if (!state.pending) back(); }}>
       <header className="flex items-center gap-3"><AgentAvatar id={state.editing === "new" ? "new-agent" : state.editing.id} name={state.draft.name || "New agent"} size="small" />
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
       </header>
-      <AgentEditor botClient={client.bots} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.loading}
+      <AgentEditor botClient={client.bots} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.catalogLoading}
         recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
-        connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
+        connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRefreshCatalog={refreshModels} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
       {state.error ? <p role="alert" className="mt-3 text-xs">{state.error}</p> : null}
     </Dialog> : null}
   </div>;
@@ -141,10 +143,14 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [dailyRecipe, setDailyRecipe] = useState<{ client: ChatAgentClient; recipe: BotRecipeSummary } | null>(null);
+  const customCreated = useRef<{ client: ChatAgentClient; result: InstantiateBotResponse } | null>(null);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
-  const [state, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
+  const [library, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
+  const modelCatalog = useAgentProviderCatalog(client);
+  const state = { ...library, catalog: modelCatalog.catalog, catalogLoading: modelCatalog.loading };
+  const [setupPaused, setSetupPaused] = useState(false);
   const [botRecipeAttempt, setBotRecipeAttempt] = useState(0);
   const [botRecipeResult, setBotRecipeResult] = useState<{
     client: ChatAgentClient; attempt: number; status: "ready" | "unavailable"; recipes: BotRecipeSummary[];
@@ -168,8 +174,8 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
     let current = true;
-    void Promise.all([client.list(), client.catalog()]).then(([library, catalog]) => {
-      if (current) setState((previous) => ({ ...previous, agents: library.agents, enabled: library.enabled, catalog, loading: false }));
+    void client.list().then((library) => {
+      if (current) setState((previous) => ({ ...previous, agents: library.agents, enabled: library.enabled, loading: false }));
     }).catch((failure: unknown) => {
       console.warn("[chat-agents] Library unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (current) setState((previous) => ({ ...previous, loading: false, error: "Agents could not be loaded. Close and try again." }));
@@ -184,6 +190,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     return () => { current = false; };
   }, [client]);
   const openDailyBrief = () => {
+    modelCatalog.refresh();
     const recipe = botRecipes.find(candidate => candidate.recipeId === DAILY_BRIEF_RECIPE_ID);
     if (!recipe) { patch({ error: "Daily Brief setup is unavailable. Close Agents and try again." }); return; }
     patch({ error: "" });
@@ -271,8 +278,13 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       });
   };
   const edit = (agent: ChatAgent | "new") => {
+    customCreated.current = null;
+    modelCatalog.refresh();
     const recipeBot = agent !== "new" && !!agent.recipeRef;
-    const choice = matrixBotSelectableModelChoices(recipeBot ? botModels : models, state.catalog, recipeBot)[0];
+    const managedNew = agent === "new" && Boolean(client.bots?.createCustom);
+    const choices = matrixBotSelectableModelChoices(recipeBot || managedNew ? botModels : models, state.catalog, recipeBot || managedNew);
+    // A connected subscription remains an explicit source choice for a new custom Bot.
+    const choice = managedNew ? choices.find(candidate => candidate.instanceId === "matrix_pi_default") : choices[0];
     const selection: CanonicalChatModelSelection | null = choice ? matrixBotModelSelection(choice) : null;
     patch({ editing: agent, notice: "", error: "", draft: agent === "new" ? {
       name: "", description: "", instructions: "", requestId: requestId(),
@@ -295,19 +307,33 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     patch({ pending: true, error: "" });
     try {
       const fields = { name: draft.name, description: draft.description, instructions: draft.instructions };
-      const saved = state.editing === "new"
+      const retained = customCreated.current?.client === client ? customCreated.current.result : undefined;
+      const customManaged = state.editing === "new" && (draft.selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || !!retained);
+      let managedCreated = retained;
+      if (customManaged && !managedCreated) {
+        if (!client.bots?.createCustom) throw new Error("Managed Bot creation unavailable");
+        managedCreated = await client.bots.createCustom({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) });
+        customCreated.current = { client, result: managedCreated };
+      }
+      const saved = managedCreated
+        ? await recoverCreatedCustomBot(client, managedCreated, draft)
+        : state.editing === "new"
         ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
         : await client.update(state.editing!.id, { ...fields,
           ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
           ...agentRecipePatch(state.editing!, draft.recipe) });
+      if (!saved) throw new Error("Created Bot readback unavailable");
+      customCreated.current = null;
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
-        notice: recipeBot ? "Saved. Open this bot’s Chat from the sidebar to send a request."
+        notice: recipeBot || customManaged ? "Saved. Open this bot’s Chat from the sidebar to send a request."
           : `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
       }));
     } catch (failure: unknown) {
       console.warn("[chat-agents] Save failed:", failure instanceof Error ? failure.name : "UnknownError");
-      patch({ pending: false, error: "Agent could not be saved. Your changes are still here. Try again or reopen the Agent to refresh." });
+      patch({ pending: false, error: customCreated.current?.client === client
+        ? "Bot was created, but setup could not finish. Your changes are still here. Try again to finish this Bot."
+        : "Agent could not be saved. Your changes are still here. Try again or reopen the Agent to refresh." });
     }
   };
   const archive = async () => {
@@ -332,23 +358,27 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
       {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
-    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.loading}
+    {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading}
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
-    <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
-    {recipes ? <AgentRecipesPanel onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+    {setupPaused ? <button type="button" className={button} onClick={() => { setSetupPaused(false); modelCatalog.refresh(); }}>Resume agent setup</button> : null}
+    {modelCatalog.error ? <p role="alert" className="text-xs">{modelCatalog.error}</p> : null}
+    <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
+    {recipes ? <AgentRecipesPanel onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
       botRecipeStatus={botRecipeStatus} onRetryBotRecipes={() => setBotRecipeAttempt(attempt => attempt + 1)}
-      matrixModels={botModels} catalog={state.catalog} catalogLoading={state.loading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
+      matrixModels={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
       onCreateJev={client.bots && onOpenBotChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
-    <AgentLibraryBody state={state} client={client} models={state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels
-      : state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
-        ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model) : models}
+    <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
+      ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model)
+      : state.editing === "new" && client.bots?.createCustom
+        ? botModels.filter(choice => choice.instanceId === "matrix_pi_default" || choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)
+        : state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels : models}
       openDailyBrief={client.bots && onOpenBotChat ? openDailyBrief : undefined}
       edit={edit} change={change} save={save} archive={archive}
-      back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes}
-      setup={onSetup ? () => { onClose(); onSetup(); } : undefined} />
+      back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
+      setup={onSetup ? () => { setSetupPaused(true); onSetup(); } : undefined} />
     {state.error && !state.editing ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
     </div>}
     </div>

@@ -78,6 +78,7 @@ export function createBotIntegrationTools(deps: {
   homePath?: string;
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
+  resolveProcedure?(ownerId: string, agent: import("@matrix-os/contracts").ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   agents: Pick<ChatAgentStore, "get">;
   /** Live source check at the last local checkpoint before service invocation. */
   assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
@@ -104,7 +105,7 @@ export function createBotIntegrationTools(deps: {
     const agent = await deps.agents.get({ type: "personal", ownerId }, botId);
     if (!agent?.recipeRef) return [];
     try {
-      return deps.recipes.resolve(agent.recipeRef).integrations.find((entry) => entry.service === service)?.effects ?? [];
+      return (deps.resolveProcedure ? await deps.resolveProcedure(ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations.find((entry) => entry.service === service)?.effects ?? [];
     } catch (error: unknown) {
       console.warn("[bots] recipe unavailable for grants:", error instanceof Error ? error.name : "UnknownError");
       return [];
@@ -239,7 +240,7 @@ export function createBotIntegrationTools(deps: {
       let services: string[] = [];
       if (agent?.recipeRef) {
         try {
-          services = deps.recipes.resolve(agent.recipeRef).integrations.map((entry) => entry.service);
+          services = (deps.resolveProcedure ? await deps.resolveProcedure(binding.ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations.map((entry) => entry.service);
         } catch (error: unknown) {
           console.warn("[bots] recipe unavailable for inventory:", error instanceof Error ? error.name : "UnknownError");
         }
