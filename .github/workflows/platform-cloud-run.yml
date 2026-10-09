@@ -88,6 +88,7 @@ jobs:
       MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
       CUSTOMER_VPS_IMAGE_VERSION: 'stable'
       ATS_BOOKING_BASE_URL: ${{ vars.ATS_BOOKING_BASE_URL }}
+      ATS_GROUP_INTAKE_ENABLED: ${{ vars.ATS_GROUP_INTAKE_ENABLED || 'false' }}
       GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
       GOLDEN_SNAPSHOTS_ENABLED: 'true'
       GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100'
@@ -531,6 +532,16 @@ jobs:
             ATS_ADMIN_SECRET=ats-admin-secret
           )
 
+          if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
+            required_ats_secrets+=(
+              ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret
+              ATS_SLACK_BOT_TOKEN=ats-slack-bot-token
+              ATS_SLACK_CHANNEL_ID=ats-slack-channel-id
+            )
+          elif [ "$ATS_GROUP_INTAKE_ENABLED" != "false" ]; then
+            echo "ATS_GROUP_INTAKE_ENABLED must be true or false." >&2
+            exit 1
+          fi
           for entry in "${required_ats_secrets[@]}"; do
             env_name="${entry%%=*}"
             secret_name="${entry#*=}"
@@ -896,6 +907,9 @@ jobs:
           if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
             ats_env_bindings="|ATS_BOOKING_BASE_URL=${ATS_BOOKING_BASE_URL}"
             ats_secret_bindings=",ATS_DATABASE_URL=ats-database-url:latest,ATS_INGEST_SECRET=ats-ingest-secret:latest,ATS_ADMIN_SECRET=ats-admin-secret:latest"
+            if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
+              ats_secret_bindings="${ats_secret_bindings},ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret:latest,ATS_SLACK_BOT_TOKEN=ats-slack-bot-token:latest,ATS_SLACK_CHANNEL_ID=ats-slack-channel-id:latest"
+            fi
             reddit_secret_bindings=",REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest"
           fi
 

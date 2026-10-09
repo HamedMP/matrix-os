@@ -111,6 +111,7 @@ import {
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { createAtsRoutes } from './ats-routes.js';
+import { ATS_OPEN_ROLE_SLUGS } from './ats-roles.js';
 import type { AtsDB } from './ats-db.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -632,10 +633,8 @@ export function createApp(deps: {
       db: deps.atsDb,
       ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
       adminSecret: appEnv.ATS_ADMIN_SECRET ?? '',
-      allowedRoleSlugs: [
-        'founders-associate-gtm-operations',
-        'founding-engineer',
-      ],
+      mailSecret: appEnv.ATS_MAIL_INGEST_SECRET ?? '',
+      allowedRoleSlugs: ATS_OPEN_ROLE_SLUGS,
       bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));

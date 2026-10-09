@@ -1,0 +1,29 @@
+name = "matrix-recruiting-intake"
+main = "src/ats-email-worker.ts"
+compatibility_date = "2026-10-09"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[vars]
+ATS_PLATFORM_ORIGIN = "https://api.matrix-os.com"
+# ATS_INTAKE_ADDRESS and ATS_MAIL_INGEST_SECRET are Wrangler secrets from Engineering.
+
+[[r2_buckets]]
+binding = "ATS_RAW_MAIL"
+bucket_name = "matrix-recruiting-mail"
+jurisdiction = "eu"
+# Provision a 30-day pending/ lifecycle before enabling SMTP routing.
+
+[[queues.producers]]
+binding = "ATS_MAIL_QUEUE"
+queue = "matrix-recruiting-mail"
+
+[[queues.consumers]]
+queue = "matrix-recruiting-mail"
+max_batch_size = 5
+max_batch_timeout = 5
+max_retries = 10
+dead_letter_queue = "matrix-recruiting-mail-failed"
+
+[observability]
+enabled = true
