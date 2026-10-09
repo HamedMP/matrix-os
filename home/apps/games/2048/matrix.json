@@ -3,7 +3,7 @@
   "description": "Merge tiles to reach 2048",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "v3-2048",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -34,7 +34,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../../system/icons/v3-*.png"
     ]
   }
 }
