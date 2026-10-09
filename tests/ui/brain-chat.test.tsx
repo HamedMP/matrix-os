@@ -144,6 +144,43 @@ describe("Brain chat tab", () => {
     expect(agents.threads.create).toHaveBeenCalledTimes(2);
   });
 
+  it("sends a draft again with its first request id after a failed create, so a saved thread is not made twice", async () => {
+    const agents = fakeAgents();
+    const view = fakeHost(agents.client);
+    renderChat(view.host);
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("draft");
+    const sentIds = () => agents.threads.create.mock.calls.map(([, input]) => input.clientRequestId);
+    // The server saved the thread but its answer was lost: the next send replays that request id.
+    agents.threads.create.mockRejectedValueOnce(new Error("lost"));
+    await act(() => expect(view.last().createChat({ clientRequestId: "req_one_chat", title: "Risks" })).rejects.toThrow("lost"));
+    await act(() => view.last().createChat({ clientRequestId: "req_two_chat", title: "Risks" }));
+    expect(sentIds()).toEqual(["req_one_chat", "req_one_chat"]);
+    // A new draft, from the list or from the view itself, sends its own request id.
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    agents.threads.create.mockRejectedValueOnce(new Error("lost"));
+    await act(() => expect(view.last().createChat({ clientRequestId: "req_three_chat", title: "Owners" })).rejects.toThrow("lost"));
+    act(() => view.last().onChatChanged(null));
+    await act(() => view.last().createChat({ clientRequestId: "req_four_chat", title: "Owners" }));
+    expect(sentIds()).toEqual(["req_one_chat", "req_one_chat", "req_three_chat", "req_four_chat"]);
+  });
+
+  it("opens a remembered chat from a later page, and the newest when no page has it", async () => {
+    window.localStorage.setItem(REMEMBERED, "chat_old");
+    const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
+      ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
+      : { items: [thread("chat_old", "An older question", "2026-09-01T00:00:00.000Z")] } });
+    renderChat(fakeHost(agents.client).host);
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("chat_old");
+    expect(agents.threads.list).toHaveBeenLastCalledWith("agent_brain", { projectId: PROJECT, limit: 50, cursor: "chatcur_2" });
+    expect(screen.getByRole("button", { name: /An older question/ })).toHaveAttribute("aria-current", "true");
+    expect(window.localStorage.getItem(REMEMBERED)).toBe("chat_old");
+    cleanup();
+    window.localStorage.setItem(REMEMBERED, "chat_gone");
+    renderChat(fakeHost(agents.client).host);
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("chat_a");
+    await waitFor(() => expect(window.localStorage.getItem(REMEMBERED)).toBe("chat_a"));
+  });
+
   it("keeps the chats Show more loaded, and the open chat's title, when the list reloads", async () => {
     const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
       ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
@@ -336,6 +373,48 @@ describe("Brain chat tab", () => {
     await waitFor(() => expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_b"));
     expect(screen.queryByRole("button", { name: /Renamed on the phone|Bot chat sidebar/ })).toBeNull();
     expect(screen.getByRole("button", { name: "New chat" })).toHaveFocus();
+  });
+
+  it("keeps the chat the viewer opened while a delete was on its way, and their focus", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [
+      thread("chat_a", "Bot chat sidebar"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),
+      thread("chat_c", "Release notes", "2026-10-06T09:00:00.000Z"),
+    ] }) });
+    let finish: () => void = () => undefined;
+    const rows = {
+      rename: vi.fn(async () => undefined),
+      remove: vi.fn(() => new Promise<undefined>((resolve) => { finish = () => resolve(undefined); })),
+    };
+    renderChat(fakeHost(agents.client, rows).host);
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("chat_a");
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Bot chat sidebar" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    const confirm = within(await screen.findByRole("group", { name: "Delete Bot chat sidebar" }));
+    fireEvent.click(confirm.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(rows.remove).toHaveBeenCalledWith("chat_a"));
+    fireEvent.click(screen.getByRole("button", { name: /^Release notes/ }));
+    const openInChat = screen.getByRole("button", { name: "Open in Chat" });
+    openInChat.focus();
+    await act(async () => { finish(); });
+    expect(screen.queryByRole("button", { name: /^Bot chat sidebar/ })).toBeNull();
+    expect(screen.getByTestId("chat-view")).toHaveTextContent("chat_c");
+    expect(openInChat).toHaveFocus();
+  });
+
+  it("checks the sources again on focus and on Check again while none is connected", async () => {
+    const api = chatApi(async () => ({ items: [], kinds: [] }));
+    renderChat(fakeHost(fakeAgents().client).host, api);
+    expect(await screen.findByText("Connect this project's repository in Sources first.")).toBeTruthy();
+    expect(api.sources).toHaveBeenCalledTimes(1);
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(api.sources).toHaveBeenCalledTimes(2));
+    // A repository connected in another window or on another device unblocks the draft.
+    api.sources.mockResolvedValue({ items: [{ sourceId: "src_git", kind: "git" }], kinds: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    expect(await screen.findByTestId("chat-view")).toHaveTextContent("draft");
+    // Once a source is there, focus leaves the draft alone.
+    await act(async () => { window.dispatchEvent(new Event("focus")); });
+    expect(api.sources).toHaveBeenCalledTimes(3);
   });
 
   it("drops a list that answers after a project switch, and folds the list on narrow screens with focus kept", async () => {
