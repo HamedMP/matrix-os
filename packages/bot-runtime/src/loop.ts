@@ -3,7 +3,7 @@ import { normalizeContext, type Api, type ImageContent, type Model, type Provide
 import type { BotRunCommand, BotRunOutcome, BotSessionSnapshot, BotToolErrorCode } from "@matrix-os/contracts";
 import { BotBrokerError, type BotBrokerClient } from "./broker-client.js";
 import { createEventProjector } from "./events.js";
-import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
+import { BROKER_PLACEHOLDER_KEY, createBridgeModel, routeEffort } from "./providers.js";
 import {
   BotSessionError,
   compactSession,
@@ -85,7 +85,8 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   if (input.signal?.aborted) {
     return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
   }
-  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
+  const effort = routeEffort(command.route, command.limits.effort);
+  const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket, effort);
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;
@@ -97,7 +98,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     initialState: {
       systemPrompt: command.systemPrompt,
       model,
-      thinkingLevel: "off",
+      thinkingLevel: effort ?? "off",
       tools: createBotTools({ capabilities: command.capabilities, broker, state: tools }),
       messages: history,
     },

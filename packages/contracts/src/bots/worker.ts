@@ -19,8 +19,13 @@ export const BotImageInputSchema = z.object({
   data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(BOT_IMAGE_MAX_BASE64_CHARS),
 }).strict();
 
+/** How much a model may think on routes that support it; other routes ignore it. */
+export const BotRunEffortSchema = z.enum(["low", "medium", "high"]);
+
 export const BotRunLimitsSchema = z.object({
   maxToolActions: z.number().int().min(1).max(60),
+  /** Sent only for recipes that set it, so older workers never see it. */
+  effort: BotRunEffortSchema.optional(),
 }).strict();
 
 const RunIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/);
@@ -89,6 +94,8 @@ export const BotRunOutcomeSchema = z.object({
 }).strict();
 
 export type BotModelRoute = z.infer<typeof BotModelRouteSchema>;
+export type BotRunEffort = z.infer<typeof BotRunEffortSchema>;
+export type BotRunLimits = z.infer<typeof BotRunLimitsSchema>;
 export type BotImageInput = z.infer<typeof BotImageInputSchema>;
 export type BotWorkerCommand = z.infer<typeof BotWorkerCommandSchema>;
 export type BotRunCommand = Extract<BotWorkerCommand, { kind: "bot.run" }>;

@@ -33,7 +33,14 @@ export const BotToolCapabilitySchema = z.enum([
   "interaction.create",
   "artifact.write",
   "artifact.read",
+  "brain.read",
 ]);
+
+/** Company Brain views a Bot may read (spec 567). `impact` is not one of them. */
+export const BotBrainReadToolSchema = z.enum(["search", "why", "timeline", "claims", "brief", "conflicts"]);
+export const BOT_BRAIN_READ_INPUT_MAX_BYTES = 4 * 1024;
+/** A project id or slug, as the Company Brain tools accept it. */
+const BrainProjectRefSchema = z.string().regex(/^(?:proj_[A-Za-z0-9_-]{1,128}|[a-z0-9][a-z0-9-]{0,62})$/);
 
 const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args extends z.ZodType>(name: Name, args: Args) => z.object({
   toolCallId: ToolCallIdSchema,
@@ -78,6 +85,14 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
       .refine((content) => textEncoder.encode(content).byteLength <= BOT_ARTIFACT_MAX_BYTES, { message: "Artifact is too large" }),
     mimeType: ArtifactMimeTypeSchema,
     replace: z.object({ baseRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
+  }).strict()),
+  capability("brain.read", z.object({
+    tool: BotBrainReadToolSchema,
+    /** Only in a chat with no fixed project; a thread's own project always wins. */
+    project: BrainProjectRefSchema.optional(),
+    /** The tool's own fields; the gateway parses them again with the brain tool's strict shape. */
+    input: z.record(z.string().min(1).max(64), z.unknown())
+      .refine((input) => canonicalEncodedByteLength(input) <= BOT_BRAIN_READ_INPUT_MAX_BYTES, { message: "Input is too large" }),
   }).strict()),
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
@@ -156,6 +171,7 @@ export const BotImageChunkSchema = z.object({
 
 export type BotToolRequest = z.infer<typeof BotToolRequestSchema>;
 export type BotToolCapability = z.infer<typeof BotToolCapabilitySchema>;
+export type BotBrainReadTool = z.infer<typeof BotBrainReadToolSchema>;
 export type BotToolErrorCode = z.infer<typeof BotToolErrorCodeSchema>;
 export type BotToolResult = z.infer<typeof BotToolResultSchema>;
 export type BotEvent = z.infer<typeof BotEventSchema>;
