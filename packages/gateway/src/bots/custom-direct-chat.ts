@@ -41,10 +41,10 @@ export function createCustomBotChats(options: {
         .where("lifecycle", "=", "active").where("collaboration", "is", null).executeTakeFirst();
       return chat?.id ?? null;
     },
+    /** The bot of a direct Chat or of one of its threads; a thread runs its bot like the direct Chat does. */
     async directBot(owner, chatId) {
       if (owner.type !== "personal") return null;
-      const bound = await bindings.forChat({ ownerId: owner.ownerId, chatId });
-      return bound.find(binding => binding.kind === "direct")?.botId ?? null;
+      return (await bindings.boundBot({ ownerId: owner.ownerId, chatId }))?.botId ?? null;
     },
     async ensureDirectChat(ownerInput, agentIdInput) {
       const owner = personal(ownerInput), agentId = ChatAgentIdSchema.parse(agentIdInput);
