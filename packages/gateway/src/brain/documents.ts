@@ -280,6 +280,28 @@ export async function applyUpsert(
   return { outcome: "created", document: toBrainDocument(created) };
 }
 
+/**
+ * Sync batches only: an unchanged document still takes the source's newest stamp, so an adapter that compares stamps
+ * does not rebuild it on every run. Content, revision, snapshots and updated_at stay as they are. Returns whether
+ * it wrote (derived indexes that carry the date must be told).
+ */
+export async function recordSourceUpdatedAt(
+  context: BrainWriteContext,
+  document: BrainDocument,
+  sourceUpdatedAt: string,
+): Promise<boolean> {
+  if (Date.parse(document.sourceUpdatedAt) === Date.parse(sourceUpdatedAt)) return false;
+  await context.db.updateTable("brain_documents").set({ source_updated_at: sourceUpdatedAt })
+    .where("owner_id", "=", context.scope.ownerId)
+    .where("scope_id", "=", context.scope.scopeId)
+    .where("document_id", "=", document.documentId)
+    .where("revision", "=", document.revision)
+    .where("deleted_at", "is", null)
+    .returning("document_id")
+    .executeTakeFirstOrThrow(conflict);
+  return true;
+}
+
 export async function applyRevise(context: BrainWriteContext, input: BrainApplyReviseInput): Promise<BrainDocument> {
   const row = await loadDocumentForUpdate(context.db, context.scope, input.documentId);
   if (!row || row.deleted_at !== null) throw new BrainStoreError("not_found");

@@ -47,7 +47,7 @@ describe("brain store sync", () => {
     const first = await repository.applySyncBatch(scopeA, batch(sourceId, { upserts: [one, two] }));
     expect(first).toEqual({
       cursor: { scopeId: "scope_a", sourceId, cursor: "c1", updatedAt: harness.iso() },
-      created: 2, updated: 0, unchanged: 0, deleted: 0, rejected: [],
+      created: 2, updated: 0, unchanged: 0, refsChanged: 0, restamped: 0, deleted: 0, rejected: [],
     });
     expect(await repository.getSyncCursor(scopeA, sourceId)).toEqual(first.cursor);
     expect(await repository.getDocument(scopeA, one.documentId)).toMatchObject({
@@ -117,6 +117,28 @@ describe("brain store sync", () => {
       upserts: [{ ...one, body: "" }],
     })), "invalid");
     await expectBrainError(repository.getSyncCursor(scopeA, "bad"), "invalid");
+  });
+
+  it("records the source's newest stamp on an unchanged synced document without a new revision", async () => {
+    const { repository } = harness;
+    const { source } = await repository.createSource(scopeA, { kind: "slack", externalRef: "T/C", label: "Slack" });
+    const one = brainContent("one", { provenance: "slack_thread", sourceUpdatedAt: "2026-09-01T00:00:00.000Z" });
+    await repository.applySyncBatch(scopeA, batch(source.sourceId, { upserts: [one] }));
+    const before = await repository.getDocument(scopeA, one.documentId);
+
+    harness.tick();
+    const touched = await repository.applySyncBatch(scopeA, batch(source.sourceId, {
+      expectedCursor: "c1", nextCursor: "c2", upserts: [{ ...one, sourceUpdatedAt: "2026-09-02T00:00:00.000Z" }],
+    }));
+    expect(touched).toMatchObject({ created: 0, updated: 0, unchanged: 1, restamped: 1 });
+    expect(await repository.getDocument(scopeA, one.documentId))
+      .toEqual({ ...before, sourceUpdatedAt: "2026-09-02T00:00:00.000Z" });
+    expect(await repository.listRevisions(scopeA, one.documentId)).toEqual([]);
+
+    // A manual upsert keeps its contract: unchanged content writes nothing.
+    const manual = (await repository.upsertDocument(scopeA, manualDocument("manual"))).document;
+    const again = await repository.upsertDocument(scopeA, manualDocument("manual", { sourceUpdatedAt: "2026-09-03T00:00:00.000Z" }));
+    expect(again).toEqual({ outcome: "unchanged", document: manual });
   });
 
   it("rolls back the whole batch when capacity is exceeded", async () => {

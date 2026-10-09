@@ -102,15 +102,16 @@ export interface BrainSourceAdapter<TConfig> {
 
 // Runner (sources/core/runner.ts implements BrainSourceSyncRunner).
 
+/** Per-call provider timeouts belong to each kind's handler or client, not to the run. */
 export interface BrainSourceSyncLimits {
   readonly pagesPerRun: number; readonly upsertsPerPage: number; readonly refsPerPage: number;
-  readonly runBudgetMs: number; readonly providerTimeoutMs: number;
+  readonly runBudgetMs: number;
 }
 export const BRAIN_SOURCE_SYNC_DEFAULT_LIMITS: BrainSourceSyncLimits = {
-  pagesPerRun: 20, upsertsPerPage: 100, refsPerPage: 5_000, runBudgetMs: 20_000, providerTimeoutMs: 10_000,
+  pagesPerRun: 20, upsertsPerPage: 100, refsPerPage: 5_000, runBudgetMs: 20_000,
 };
 export const BRAIN_SOURCE_SYNC_LIMIT_CEILINGS: BrainSourceSyncLimits = {
-  pagesPerRun: 200, upsertsPerPage: 200, refsPerPage: 10_000, runBudgetMs: 120_000, providerTimeoutMs: 30_000,
+  pagesPerRun: 200, upsertsPerPage: 200, refsPerPage: 10_000, runBudgetMs: 120_000,
 };
 /** In-process runs at once, one per (owner, scope, source); a capped Set guards re-entry, cleared in finally. */
 export const BRAIN_SOURCE_MAX_CONCURRENT_SYNCS = 16;
