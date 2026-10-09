@@ -18,7 +18,7 @@ import {
 import { bootstrapBrainGithubDatabase, createBrainGithubSourceHandler } from "../github/index.js";
 import {
   bootstrapBrainMatrixDatabase, createBrainMatrixChatHandler, createBrainMatrixFilesHandler,
-  createBrainMatrixNotesHandler, type BrainMatrixChatReader, type BrainMatrixNotesReader,
+  createBrainMatrixNotesHandler, type BrainMatrixBotChats, type BrainMatrixChatReader, type BrainMatrixNotesReader,
 } from "../matrix/index.js";
 import type { BrainSourceAccounts } from "./registry.js";
 import { runBrainSourceSync } from "./runner.js";
@@ -50,6 +50,8 @@ export interface BrainSourceHandlersDeps {
   readonly notes: BrainMatrixNotesReader | null;
   /** The owner's ChatRepository; null turns matrix_chat off. */
   readonly chats: BrainMatrixChatReader | null;
+  /** The owner's Bot Chats, which matrix_chat never offers or reads; absent: none. */
+  readonly botChats?: BrainMatrixBotChats;
   /** Company Brain capture; absent turns slack_bridge off (not_configured). */
   readonly capture?: BrainSlackCaptureReader;
   /** Principals that may use MATRIX_BRAIN_GITHUB_TOKEN (the gateway's owner); absent: nobody. */
@@ -115,7 +117,9 @@ export function createBrainSourceHandlers(
     handlers.push(
       createBrainMatrixNotesHandler({ kysely, notes: deps.notes, ...owners }),
       createBrainMatrixFilesHandler({ kysely, homePath: deps.homePath, ...owners }),
-      createBrainMatrixChatHandler({ kysely, chats: deps.chats }),
+      createBrainMatrixChatHandler({
+        kysely, chats: deps.chats, ...(deps.botChats === undefined ? {} : { botChats: deps.botChats }),
+      }),
     );
   }
   if (ready.includes("connectors")) {

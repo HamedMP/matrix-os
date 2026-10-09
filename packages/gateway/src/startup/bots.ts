@@ -1,5 +1,8 @@
 import { createChatGptPlanPeers, type ChatGptPlanPeers } from '../bots/chatgpt-plan-peers.js';
 import { createCustomBotChats } from "../bots/custom-direct-chat.js";
+import { createBotThreads, type BotThreadService } from "../bots/bot-threads.js";
+import { createBotBrainRead, type BotBrainServices } from "../bots/brain-read.js";
+import type { BotBrainProjects } from "../bots/brain-projects.js";
 import { createManagedPiOwnerTools } from "../chat/managed-pi-owner-tools.js";
 import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
@@ -122,11 +125,18 @@ export interface BotServices {
   memory: BotMemoryService;
   grants: BotGrantService;
   botChats: BotChatLookup;
+  /** Thread Chats (spec 567); present only when the scope runtime can run their turns. */
+  threads?: BotThreadService;
   tasks(ownerId: string, chatId: string): Promise<import("@matrix-os/contracts").BotTaskSummary[]>;
   /** Present only when the scope runtime can run bot workloads. */
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   managedAdapter?: CanonicalChatProviderAdapter;
   close(): Promise<void>;
+}
+
+/** The catalog as a gateway with no runtime host lists it: without the recipes whose Chats are threads. */
+function withoutThreadRecipes(recipes: BotRecipeCatalog): BotRecipeCatalog {
+  return { list: () => recipes.list().filter((recipe) => recipe.threads === undefined), resolve: (ref) => recipes.resolve(ref) };
 }
 
 export async function startBots(options: {
@@ -135,7 +145,7 @@ export async function startBots(options: {
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -145,6 +155,8 @@ export async function startBots(options: {
   managedMcp?: { client: import("../chat/managed-pi-mcp-client.js").ManagedPiMcpClient; approvals: import("../chat/custom-mcp-approval-client.js").CustomMcpApprovalClient };
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
+  /** Company Brain reads and project lookups for brain Bots (spec 567); services are null while the brain is off. */
+  brain?: { services: BotBrainServices | null; projects: BotBrainProjects };
   now?: () => Date;
   /** Test hook for startup checkpoint passes; bounded to the defaults. */
   checkpointReconcile?: { passes?: number; intervalMs?: number };
@@ -245,6 +257,9 @@ export async function startBots(options: {
     await sweeping;
   };
   const botChats = createCustomBotChats({ chats: options.repository, agents: options.agents });
+  const threads = createBotThreads({
+    chats: options.repository, agents: options.agents, recipes, ...(options.brain ? { projects: options.brain.projects } : {}),
+  });
   const tasks: BotServices["tasks"] = async (ownerId, chatId) => {
     const botId = await botChats.directBot({ type: "personal", ownerId }, chatId);
     if (!botId) return [];
@@ -256,8 +271,11 @@ export async function startBots(options: {
   };
   const host = options.host;
   if (!host?.available) {
+    // No Bot turn can run here, so nothing offers a thread recipe or makes a thread that could never answer: the
+    // thread routes answer unavailable and the recipe list leaves those recipes out (spec 567).
     return {
-      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers,
+      recipes: withoutThreadRecipes(recipes), instantiation, interactions, memory, grants, authority, botChats, tasks,
+      startConnectionReconciler, providerConnections, chatgptPlanPeers,
       async close() {
         chatgptPlanPeers?.close();
         await stopConnections();
@@ -345,6 +363,7 @@ export async function startBots(options: {
     registry,
     client: host.client,
     onRunFinished: (runId) => forgetRun(runId),
+    ...(options.brain ? { brainProjects: options.brain.projects } : {}),
   });
   const managed = createManagedPiRuntime({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
@@ -352,6 +371,7 @@ export async function startBots(options: {
     homePath: options.homePath, managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateAnthropicSource,
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
+    ...(options.brain?.services ? { brainRead: createBotBrainRead(options.brain.services) } : {}),
   });
   const qualifiedTools: BotToolDispatcher = {
     effectClass: request => tools.effectClass(request),
@@ -410,6 +430,7 @@ export async function startBots(options: {
     chatgptPlanPeers,
     startConnectionReconciler,
     botChats,
+    threads,
     tasks,
     adapter,
     managedAdapter: managed.adapter,

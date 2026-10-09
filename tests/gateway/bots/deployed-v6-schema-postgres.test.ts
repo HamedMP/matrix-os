@@ -32,7 +32,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
     const authorizations=await sql`SELECT * FROM bot_provider_authorizations`.execute(db);
     const bindings=await sql`SELECT * FROM bot_execution_bindings`.execute(db);
     const starts=await concurrentStarts();
-    expect(starts.flatMap(result=>result.applied)).toEqual([6]);
+    expect(starts.flatMap(result=>result.applied).sort()).toEqual([6,7]);
     expect(await db.selectFrom("bot_schema_migrations").select(["version","name"]).where("version","=",6).execute()).toEqual([{version:6,name:"bot_chatgpt_plan_devices"}]);
     expect(await pins()).toEqual([]);
     expect((await sql`SELECT * FROM bot_provider_authorizations`.execute(db)).rows).toEqual(authorizations.rows);
@@ -49,7 +49,8 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
       {owner_id:"other_owner",computer_id:"computer_saved",device_id:"c".repeat(64),public_key:"fixture-public-key-c".repeat(3)}];
     await db.insertInto("bot_chatgpt_plan_devices").values(saved).execute();
     const before=await pins();
-    expect((await concurrentStarts()).every(result=>result.applied.length===0)).toBe(true);
+    // Only the later v7 thread bindings apply, once; the v6 pins stay as they were.
+    expect((await concurrentStarts()).flatMap(result=>result.applied)).toEqual([7]);
     expect(await pins()).toEqual(before);
   });
 });

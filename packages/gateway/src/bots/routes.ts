@@ -4,8 +4,9 @@
  * Bodies are bounded and strictly validated, errors come from one mapper
  * with allowlisted codes and generic messages, and responses are private.
  */
-import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
+import { BotRecipeRefSchema, BotThreadListQuerySchema, BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, type BotTaskSummary } from "@matrix-os/contracts";
 import { BotEntryError } from "./custom-direct-chat.js";
+import { BotThreadError, type BotThreadService } from "./bot-threads.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod/v4";
@@ -26,6 +27,8 @@ import type { BotProviderConnectionsService } from './provider-connections.js';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const includeRunIdsSchema = z.enum(["true", "false"]).optional();
+/** An unlisted recipe (the Company Brain) is returned only when its app asks for it by id. */
+const RecipeListQuerySchema = z.object({ recipeId: BotRecipeRefSchema.shape.recipeId.optional() }).strict();
 
 type ErrorCode = "invalid_request" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
 const ERRORS: Record<ErrorCode, { status: 400 | 404 | 409 | 410 | 429 | 503; message: string }> = {
@@ -53,6 +56,8 @@ export function createBotRoutes(options: {
   authority?: Pick<BotAuthority, "view">;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
+  /** Thread Chats of a recipe Bot, each fixed to one project (spec 567). */
+  threads?: Pick<BotThreadService, "create" | "list">;
   /** Admits the owner's answer as the next message; resolved at route registration. */
   admitContinuation?: BotContinuationAdmitter;
   getPrincipal(context: Context): RequestPrincipal;
@@ -76,7 +81,7 @@ export function createBotRoutes(options: {
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
     if (error instanceof BotEntryError || error instanceof BotInstantiationError || error instanceof BotInteractionError || error instanceof BotMemoryError
-      || error instanceof BotGrantError || error instanceof BotAuthorityError) {
+      || error instanceof BotGrantError || error instanceof BotAuthorityError || error instanceof BotThreadError) {
       return errorResponse(context, error.code);
     }
     console.warn("[bots] request failed:", error instanceof Error ? error.name : "UnknownError");
@@ -94,8 +99,11 @@ export function createBotRoutes(options: {
   routes.get("/api/chat-agents/bot-recipes", (context) => {
     options.getPrincipal(context);
     if (!options.recipes) return errorResponse(context, "unavailable");
-    const recipes = options.recipes.list().map(({ recipeId, version, name, description, output }) =>
-      ({ recipeId, version, name, description, output }));
+    const query = RecipeListQuerySchema.safeParse(context.req.query());
+    if (!query.success) return errorResponse(context, "invalid_request");
+    const recipes = options.recipes.list()
+      .filter((recipe) => (query.data.recipeId === undefined ? recipe.listed !== false : recipe.recipeId === query.data.recipeId))
+      .map(({ recipeId, version, name, description, output }) => ({ recipeId, version, name, description, output }));
     context.header("Cache-Control", "private, no-store");
     return context.json(BotRecipeListResponseSchema.parse({ recipes }));
   });
@@ -119,6 +127,30 @@ export function createBotRoutes(options: {
     const chatId = await options.botChats.ensureDirectChat({ type: "personal", ownerId: principal.userId }, agentId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json(BotChatBindingResponseSchema.parse({ chatId }));
+  });
+
+  routes.post("/api/chat-agents/:agentId/threads", limit, async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.threads) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    if (!agentId.success) return errorResponse(context, "invalid_request");
+    const { record, operation } = await options.threads.create(principal.userId, agentId.data, await context.req.json());
+    context.header("Cache-Control", "private, no-store");
+    return context.json(record, operation === "created" ? 201 : 200);
+  });
+
+  routes.get("/api/chat-agents/:agentId/threads", async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.threads) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const query = BotThreadListQuerySchema.safeParse(context.req.query());
+    // A repeated key is refused, never collapsed to one of its values.
+    if (!agentId.success || !query.success || Object.values(context.req.queries()).some((values) => values.length > 1)) {
+      return errorResponse(context, "invalid_request");
+    }
+    const page = await options.threads.list(principal.userId, agentId.data, query.data);
+    context.header("Cache-Control", "private, no-store");
+    return context.json(page);
   });
 
   routes.get("/api/chats/:chatId/bot", async (context) => {
