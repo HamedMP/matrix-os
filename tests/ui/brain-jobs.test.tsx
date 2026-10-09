@@ -7,7 +7,7 @@ import { BrainSources } from "../../packages/ui/src/brain/BrainSources.js";
 import { brainJobText } from "../../packages/ui/src/brain/brain-format.js";
 import { BrainJobProgress } from "../../packages/ui/src/brain/brain-ui.js";
 import {
-  BRAIN_JOB_MAX_POLLS, brainJobPollDelay, brainJobView, useBrainJob,
+  BRAIN_JOB_MAX_POLLS, brainActiveJobs, brainJobKey, brainJobPollDelay, brainJobView, useBrainJob,
 } from "../../packages/ui/src/brain/use-brain-job.js";
 import { apiError, fakeBrainApi, PROJECT } from "./brain-fixtures.js";
 
@@ -15,12 +15,27 @@ const GIT = {
   sourceId: "src_git", label: "matrix-os", externalRef: "x", webBase: null, status: "active" as const,
   createdAt: "x", updatedAt: "x",
 };
+const LINEAR = {
+  sourceId: "src_lin", kind: "linear" as const, label: "Linear ENG", externalRef: null, status: "active" as const,
+  revision: 3, createdAt: "x", updatedAt: "x", config: null, lastSync: null,
+};
 const job = (status: string, extra: Record<string, unknown> = {}) => ({ jobId: "job_1", status, ...extra });
 const flush = () => act(async () => { await Promise.resolve(); });
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
 beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+/** Sources over a connected repository and no other sources, unless the test says otherwise. */
+function renderRepository(overrides: Parameters<typeof fakeBrainApi>[0]) {
+  const api = fakeBrainApi({
+    gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+    sources: vi.fn(async () => ({ items: [], kinds: [] })),
+    ...overrides,
+  });
+  render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
+  return api;
+}
 
 describe("job answers", () => {
   it("reads a job field by field and drops what it cannot trust", () => {
@@ -73,15 +88,6 @@ describe("job answers", () => {
 });
 
 describe("Repository background runs", () => {
-  function renderRepository(overrides: Parameters<typeof fakeBrainApi>[0]) {
-    const api = fakeBrainApi({
-      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
-      sources: vi.fn(async () => ({ items: [], kinds: [] })),
-      ...overrides,
-    });
-    render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
-    return api;
-  }
   const region = () => screen.getByRole("region", { name: "Repository" });
   const button = (name: string) => within(region()).getByRole("button", { name });
 
@@ -274,15 +280,8 @@ describe("Repository background runs", () => {
 });
 
 describe("Model budget and other sources' background runs", () => {
-  const LINEAR = {
-    sourceId: "src_lin", kind: "linear" as const, label: "Linear ENG", externalRef: null, status: "active" as const,
-    revision: 3, createdAt: "x", updatedAt: "x", config: null, lastSync: null,
-  };
-
   it("shows the model budget in the confirm and words a run that hit the spend limit", async () => {
-    const api = fakeBrainApi({
-      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
-      sources: vi.fn(async () => ({ items: [], kinds: [] })),
+    const api = renderRepository({
       claims: vi.fn(async () => ({
         kind: null, path: null, match: null, items: [], nextCursor: null,
         modelSpend: { windowStart: "x", capMicroUsd: 5_000_000, spentMicroUsd: 1_250_001, remainingMicroUsd: 3_749_999 },
@@ -294,7 +293,6 @@ describe("Model budget and other sources' background runs", () => {
         result: { status: "failed", errorCode: "spend_cap_reached", nextAction: "raise_budget", caughtUp: false },
       })),
     });
-    render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
     await flush();
     const repository = screen.getByRole("region", { name: "Repository" });
     fireEvent.click(within(repository).getByRole("button", { name: "Find claims with the model" }));
@@ -315,8 +313,7 @@ describe("Model budget and other sources' background runs", () => {
 
   it("syncs another source as a background job and reloads the list when it ends", async () => {
     const sources = vi.fn(async () => ({ items: [LINEAR], kinds: [] }));
-    const api = fakeBrainApi({
-      gitReceipts: vi.fn(async () => ({ source: GIT, receipts: [] })),
+    const api = renderRepository({
       sources,
       startJob: vi.fn(async () => ({ job: job("queued"), deduped: false })),
       job: vi.fn()
@@ -325,7 +322,6 @@ describe("Model budget and other sources' background runs", () => {
           steps: 1, errorCode: "not_connected", result: { errorCode: "not_connected", nextAction: "connect_account" },
         })),
     });
-    render(<BrainSources api={api} projectId={PROJECT} onOpenSources={vi.fn()} />);
     await flush();
     const row = within(screen.getByRole("list", { name: "Connected sources" })).getByRole("listitem");
     fireEvent.click(within(row).getByRole("button", { name: "Sync now" }));
@@ -432,5 +428,87 @@ describe("useBrainJob", () => {
     fireEvent.click(screen.getByRole("button", { name: "start" }));
     await act(async () => refused(apiError("offline")));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+/** Sources resumes following the runs that were still going when it opened (spec 563, Crash recovery). */
+describe("Resuming runs on open", () => {
+  it("reads the project's running jobs, newest first, one per slot", () => {
+    const listed = (status: string, request: unknown, jobId: string) => ({ jobId, status, request });
+    const active = brainActiveJobs({ jobs: [
+      listed("running", { kind: "extract", extractor: "model" }, "job_new"),
+      listed("queued", { kind: "extract", extractor: "model" }, "job_old"),
+      listed("succeeded", { kind: "sync" }, "job_done"),
+      listed("queued", { kind: "sync", sourceId: "src_lin" }, "job_lin"),
+      listed("running", { kind: "brief", window: "day" }, "job_brief"),
+      listed("running", { kind: "sync", sourceId: "bad id" }, "job_bad"),
+      { jobId: "no status", request: { kind: "sync" } },
+    ] });
+    expect([...active.keys()]).toEqual(["extract:model", "sync:src_lin"]);
+    expect(active.get("extract:model")?.jobId).toBe("job_new");
+    expect(brainJobKey({ kind: "extract" })).toBe("extract:rules");
+    expect(brainJobKey({ kind: "sync" })).toBe("sync:git");
+    for (const bad of [null, [], { jobs: "x" }]) expect(brainActiveJobs(bad).size).toBe(0);
+  });
+
+  it("follows every run still going when the screen opens, and keeps the buttons off until all end", async () => {
+    let gitPolls = 0;
+    const api = renderRepository({
+      sources: vi.fn(async () => ({ items: [LINEAR], kinds: [] })),
+      jobs: vi.fn(async () => ({ jobs: [
+        { jobId: "job_model", status: "running", steps: 0, request: { kind: "extract", extractor: "model" },
+          result: { waiting: "extraction_in_progress" } },
+        { jobId: "job_lin", status: "queued", steps: 0, request: { kind: "sync", sourceId: "src_lin" } },
+        { jobId: "job_git", status: "running", steps: 0, request: { kind: "sync" } },
+      ] })),
+      job: vi.fn(async (_project: string, jobId: string) => ({ jobId, steps: 1, status: jobId === "job_git" && (gitPolls += 1) === 1 ? "running" : "succeeded" })),
+    });
+    await flush();
+    await flush();
+    expect(api.jobs).toHaveBeenCalledWith(PROJECT, 20);
+    const repository = screen.getByRole("region", { name: "Repository" });
+    const statuses = () => within(repository).getAllByRole("status").map((status) => status.textContent);
+    // Both repository runs show at once, each with its own Stop.
+    expect(statuses()).toEqual(["Sync: running, 0 steps done.", "Finding claims with the model: waiting for another run of this project to finish, 0 steps done."]);
+    expect(within(repository).getAllByRole("button", { name: "Stop" })).toHaveLength(2);
+    expect(within(repository).getByRole("button", { name: "Find claims" })).toBeDisabled();
+    const row = within(screen.getByRole("list", { name: "Connected sources" })).getByRole("listitem");
+    expect(within(row).getByRole("status")).toHaveTextContent("Sync: waiting to start.");
+    expect(within(row).getByRole("button", { name: "Syncing..." })).toBeDisabled();
+    await advance(1_000);
+    // The model run ended while the older sync still runs: its progress and Stop stay, and so do the buttons off.
+    expect(statuses()).toEqual(["Sync: running, 1 step done.", "Finding claims with the model: done, 1 step done."]);
+    expect(within(repository).getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(within(repository).getByRole("button", { name: "Find claims" })).toBeDisabled();
+    await advance(2_000);
+    expect(statuses()[0]).toBe("Sync: done, 1 step done.");
+    expect(within(repository).getByRole("button", { name: "Find claims" })).toBeEnabled();
+    expect(api.job).toHaveBeenCalledWith(PROJECT, "job_model");
+    expect(api.job).toHaveBeenCalledWith(PROJECT, "job_lin");
+  });
+
+  it("keeps a run the card already follows when the list arrives late, and follows the others too", async () => {
+    let listJobs!: (value: unknown) => void;
+    renderRepository({
+      jobs: vi.fn(() => new Promise((resolve) => { listJobs = resolve; })),
+      startJob: vi.fn(async () => ({ job: { jobId: "job_sync", status: "queued" }, deduped: false })),
+    });
+    await flush();
+    const repository = screen.getByRole("region", { name: "Repository" });
+    fireEvent.click(within(repository).getByRole("button", { name: "Sync now" }));
+    await flush();
+    listJobs({ jobs: [{ jobId: "job_model", status: "running", request: { kind: "extract", extractor: "model" } }, { jobId: "job_old", status: "running", request: { kind: "sync" } }] });
+    await flush();
+    expect(within(repository).getAllByRole("status").map((status) => status.textContent))
+      .toEqual(["Sync: waiting to start.", "Finding claims with the model: running."]);
+  });
+
+  it("resumes nothing when the gateway has no jobs route", async () => {
+    renderRepository({ jobs: vi.fn(async () => { throw apiError("notFound"); }) });
+    await flush();
+    await flush();
+    const repository = screen.getByRole("region", { name: "Repository" });
+    expect(within(repository).queryByRole("status")).toBeNull();
+    expect(within(repository).getByRole("button", { name: "Sync now" })).toBeEnabled();
   });
 });

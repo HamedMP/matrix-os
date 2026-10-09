@@ -8,12 +8,12 @@ import {
 } from "./brain-format.js";
 import type { BrainJobView, BrainSourceView } from "./brain-types.js";
 import {
-  BrainBadge, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
+  BrainBadge, BrainConfirm, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
 import { BrainReceipts, BrainRepositoryCard } from "./BrainRepositoryCard.js";
 import { BrainSourceConnect } from "./BrainSourceConnect.js";
 import {
-  BRAIN_JOBS_READ_MAX, brainActiveJobs, brainStartOrRun, useBrainJob, useBrainJobResume, type BrainActiveJobs,
+  BRAIN_JOBS_READ_MAX, brainActiveJobs, brainStartOrRun, useBrainSlotJob, type BrainActiveJobs,
 } from "./use-brain-job.js";
 import { useBrainAction, useBrainLoad } from "./use-brain-load.js";
 
@@ -81,11 +81,7 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
   const paused = source.status !== "active";
   // A sync adds a receipt under the same key, so an open list is reloaded (a hidden one loads nothing).
   const changed = () => { onChanged(); receipts.reload(); };
-  const job = useBrainJob({
-    poll: (jobId) => api.job(projectId, jobId), cancel: (jobId) => api.cancelJob(projectId, jobId),
-    onFinished: changed,
-  });
-  useBrainJobResume(job, active, { [`sync:${source.sourceId}`]: "sync" });
+  const job = useBrainSlotJob(api, projectId, active, `sync:${source.sourceId}`, "sync", changed);
   const busy = action.busy !== null || job.running;
   // Syncs run in the background like the repository's; a gateway without jobs syncs directly.
   const sync = () => action.run("sync", () => brainStartOrRun(api, projectId, { kind: "sync", sourceId: source.sourceId },
@@ -107,7 +103,7 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
           </span>
         )}
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="relative flex flex-wrap gap-2">
         <BrainButton size="sm" disabled={busy || paused} onClick={sync}>
           {action.busy === "sync" || job.running ? "Syncing..." : "Sync now"}
         </BrainButton>
@@ -120,15 +116,20 @@ function SourceRow({ api, projectId, source, active, onChanged }: Pick<BrainScre
         <BrainButton size="sm" variant="outline" aria-expanded={showReceipts} onClick={() => setShowReceipts(!showReceipts)}>
           {showReceipts ? "Hide syncs" : "Show syncs"}
         </BrainButton>
-        {confirming ? (
-          <>
-            <BrainButton size="sm" variant="destructive" disabled={busy}
-              onClick={() => action.run("remove", () => api.removeSource(projectId, source.sourceId, source.revision), onChanged)}>
-              Disconnect for good
-            </BrainButton>
+        <BrainConfirm open={confirming} onClose={() => setConfirming(false)} label={`Disconnect ${source.label}`}
+          trigger={(
+            <BrainButton size="sm" variant="ghost" aria-haspopup="dialog" aria-expanded={confirming}
+              onClick={() => setConfirming(!confirming)}>Disconnect</BrainButton>
+          )}>
+          <p>Disconnect {source.label}? What it added to this project's brain is removed.</p>
+          <div className="flex flex-wrap gap-2">
+            <BrainButton size="sm" variant="destructive" disabled={busy} onClick={() => {
+              setConfirming(false);
+              action.run("remove", () => api.removeSource(projectId, source.sourceId, source.revision), onChanged);
+            }}>Disconnect for good</BrainButton>
             <BrainButton size="sm" variant="ghost" onClick={() => setConfirming(false)}>Keep</BrainButton>
-          </>
-        ) : <BrainButton size="sm" variant="ghost" onClick={() => setConfirming(true)}>Disconnect</BrainButton>}
+          </div>
+        </BrainConfirm>
       </div>
       <BrainJobProgress job={job} labels={SOURCE_RUN_LABELS} />
       {message !== "" && <p role="status" className="text-sm">{message}</p>}

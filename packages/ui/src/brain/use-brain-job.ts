@@ -123,33 +123,25 @@ export async function brainStartOrRun(api: BrainShellClient, projectId: string, 
 }
 
 /**
- * Follows, in turn and newest first, the jobs still queued or running when the screen opened (`active`, from
- * brainActiveJobs), so a reload or a reopen shows each; true while more wait, so the card's buttons stay off until all
- * end. `names` maps the card's slots to the run names it starts; a job the card already follows is left out.
+ * The job of one slot (brainJobKey) of a card, which also follows, once, the run of that slot still queued or running
+ * when the screen opened (`active`, from brainActiveJobs) as `name`, unless a run already started; so a reload or a
+ * reopen shows it. A card follows each of its slots with its own job.
  */
-export function useBrainJobResume(job: Pick<ReturnType<typeof useBrainJob>, "watch" | "start" | "running">,
-  active: BrainActiveJobs, names: Readonly<Record<string, string>>): boolean {
+export function useBrainSlotJob(api: BrainShellClient, projectId: string, active: BrainActiveJobs, slot: string,
+  name: string, onFinished: (name: string, view: BrainJobView) => void) {
+  const job = useBrainJob({
+    poll: (jobId) => api.job(projectId, jobId), cancel: (jobId) => api.cancelJob(projectId, jobId), onFinished,
+  });
   const done = useRef(false);
-  const [queue, setQueue] = useState<readonly { name: string; view: BrainJobView }[]>([]);
-  const resume = useEffectEvent((jobs: ReadonlyMap<string, BrainJobView>) => {
-    setQueue([...jobs].flatMap(([key, view]) => {
-      const name = Object.hasOwn(names, key) ? names[key] : undefined;
-      return name === undefined || view.jobId === job.watch?.view.jobId ? [] : [{ name, view }];
-    }));
+  const resume = useEffectEvent((view: BrainJobView | undefined) => {
+    if (view !== undefined && job.watch === null) job.start(name, view);
   });
   useEffect(() => {
     if (active === null || done.current) return;
     done.current = true;
-    resume(active);
-  }, [active]);
-  const next = useEffectEvent(() => {
-    const [first, ...rest] = queue;
-    if (first === undefined || job.running) return;
-    job.start(first.name, first.view);
-    setQueue(rest);
-  });
-  useEffect(() => { next(); }, [queue, job.running]);
-  return queue.length > 0;
+    resume(active.get(slot));
+  }, [active, slot]);
+  return job;
 }
 
 function finishOnce(finished: { round: number; readonly onFinished: (name: string, view: BrainJobView) => void },

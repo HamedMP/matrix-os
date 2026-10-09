@@ -65,7 +65,9 @@ describe("Repository", () => {
     });
     const repository = await screen.findByRole("region", { name: "Repository" });
     const button = (name: string) => within(repository).getByRole("button", { name });
-    fireEvent.click(await within(repository).findByRole("button", { name: "Connect repository" }));
+    const connect = await within(repository).findByRole("button", { name: "Connect repository" });
+    expect(connect.closest(".border-dashed")).toHaveTextContent(/read its commits, pull requests and specs/);
+    fireEvent.click(connect);
     expect(await within(repository).findByText("Repository connected. Sync it next.")).toBeTruthy();
     expect(api.registerGitSource).toHaveBeenCalledWith(PROJECT, {});
     expect(api.gitReceipts).toHaveBeenCalledWith(PROJECT, 5);
@@ -163,9 +165,20 @@ describe("Other sources", () => {
     await waitFor(() => expect(api.sourceReceipts).toHaveBeenCalledTimes(2));
     fireEvent.click(within(linear).getByRole("button", { name: "Hide syncs" }));
     expect(within(linear).queryByRole("list", { name: "Recent syncs" })).toBeNull();
-    fireEvent.click(within(linear).getByRole("button", { name: "Disconnect" }));
-    fireEvent.click(within(linear).getByRole("button", { name: "Keep" }));
-    fireEvent.click(within(linear).getByRole("button", { name: "Disconnect" }));
+    const disconnect = () => within(linear).getByRole("button", { name: "Disconnect" });
+    const confirm = () => within(linear).queryByRole("dialog", { name: "Disconnect Source src_lin" });
+    // The shared confirm: it floats over the row and takes focus; Escape (focus back), a click outside or Keep closes it.
+    fireEvent.click(disconnect());
+    expect(confirm()).toHaveClass("absolute", "z-10");
+    expect(confirm()).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(disconnect()).toHaveFocus();
+    fireEvent.click(disconnect());
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(disconnect());
+    fireEvent.click(within(confirm()!).getByRole("button", { name: "Keep" }));
+    expect(confirm()).toBeNull();
+    fireEvent.click(disconnect());
     fireEvent.click(within(linear).getByRole("button", { name: "Disconnect for good" }));
     await waitFor(() => expect(api.removeSource).toHaveBeenCalledWith(PROJECT, "src_lin", 3));
     await waitFor(() => expect(sources.mock.calls.length).toBeGreaterThanOrEqual(4));
@@ -236,10 +249,9 @@ describe("Connect a source", () => {
       kind: "github", config: { repo: "HamedMP/matrix-os", mode: "integration", include: { pullRequests: true, reviews: true, issues: true } },
     });
     fireEvent.change(kind, { target: { value: "matrix_files" } });
-    expect(await screen.findByText("Nothing to choose from yet.")).toBeTruthy();
-    fireEvent.change(kind, { target: { value: "" } });
-    expect(screen.queryByText("Nothing to choose from yet.")).toBeNull();
-    fireEvent.change(kind, { target: { value: "matrix_files" } });
+    const empty = (await screen.findByText("Nothing to choose from yet.")).closest(".border-dashed") as HTMLElement;
+    expect(empty).toHaveTextContent(/Add one first, then check again/);
+    fireEvent.click(within(empty).getByRole("button", { name: "Check again" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This source kind is not available.");
   });
 
