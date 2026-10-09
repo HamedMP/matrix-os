@@ -33,7 +33,7 @@ function SiteSubmissionsPage({ appSlug, client, state }: SiteSubmissionsProps) {
       setDownload(blob); downloadSubmissionExport(appSlug, blob);
     }, "This page of submissions was exported.");
   }
-  return <section aria-label="Visitor submissions" className="space-y-3 rounded-lg border p-3">
+  return <section aria-label="Visitor submissions" className="ph-no-capture space-y-3 rounded-lg border p-3">
     <h3 className="font-medium">Visitor submissions</h3>
     <p className="text-xs">Visitor details are private. Updating or restoring a version keeps these records.</p>
     <div className="flex flex-wrap gap-2"><Button variant="secondary" size="sm" disabled={state.pending} onClick={() => { invalidateExport(); void state.loadSubmissions(); }}>Refresh submissions</Button><Button variant="secondary" size="sm" disabled={state.pending || !state.submissions} onClick={exportPage}>Export this page</Button></div>
