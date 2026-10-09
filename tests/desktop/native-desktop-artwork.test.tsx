@@ -95,12 +95,12 @@ describe("Electron Desktop selected artwork", () => {
     fireEvent.doubleClick(tile);
     expect(screen.getByRole("button", { name: `Focus ${name}` }).querySelector("img")?.getAttribute("src")).toBe(expected);
   });
-  it.each([['notes', 'Notes'], ['whiteboard', 'Whiteboard']])("uses bundled %s artwork instead of its legacy default icon URL", (slug, name) => {
+  it.each([['notes', 'Notes'], ['whiteboard', 'Whiteboard']])("preserves an owner-selected %s URL even when its filename matches the default", (slug, name) => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
     seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }]);
     render(<NativeDesktopShell overlayOpen={false} />);
     const tile = screen.getByRole("button", { name });
-    const expected = bundledDesktopIconForPath(`apps/${slug}/index.html`);
+    const expected = `https://runtime.example.com/icons/${slug}.png?v=legacy`;
     expect(tile.querySelector("img")?.getAttribute("src")).toBe(expected);
     fireEvent.doubleClick(tile);
     expect(screen.getByRole("button", { name: `Focus ${name}` }).querySelector("img")?.getAttribute("src")).toBe(expected);

@@ -2,7 +2,7 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { desktopPalette, fonts } from '@matrix-os/brand';
+import { desktopPalette, desktopFonts } from '@matrix-os/brand';
 import NotesWorkspace from '../../desktop/src/renderer/src/features/notes/NotesWorkspace';
 import { bundledDesktopIconForPath } from '../../desktop/src/renderer/src/features/desktop-shell/bundled-app-icons';
 const { api } = vi.hoisted(() => ({ api: { post: vi.fn(), forRuntime: vi.fn() } }));
@@ -21,8 +21,8 @@ it('uses the launcher artwork and Matrix typography while keeping note creation 
   for (const icon of icons) expect(icon.getAttribute('src')).toBe(bundledDesktopIconForPath('apps/notes/index.html'));
   const workspace = container.querySelector<HTMLElement>('[data-slot="notes-workspace"]')!;
   expect(workspace.style.getPropertyValue('--notes-brand-teal')).toBe(desktopPalette.forest);
-  expect(workspace.style.fontFamily).toBe(fonts.ui);
-  expect(screen.getByRole('heading', { name: 'A little space for your thoughts' }).style.fontFamily).toBe(fonts.heading);
+  expect(workspace.style.fontFamily).toBe(desktopFonts.sans);
+  expect(screen.getByRole('heading', { name: 'A little space for your thoughts' }).style.fontFamily).toBe(desktopFonts.display);
   fireEvent.click(create);
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/bridge/query', expect.objectContaining({ app: 'notes', action: 'insert' })));
 });

@@ -8,7 +8,7 @@ import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 import NoteEditor from "./NoteEditor";
 import { NotesController, registerActiveNotesController } from "./notes-controller";
 
-import { desktopPalette, fonts } from "@matrix-os/brand";
+import { desktopPalette, desktopFonts } from "@matrix-os/brand";
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
 import "./notes.css";
 
@@ -17,7 +17,7 @@ const brandStyle = {
   "--notes-brand-teal": desktopPalette.forest,
   "--notes-brand-gold": desktopPalette.gold,
   "--notes-brand-paper": desktopPalette.paper,
-  fontFamily: fonts.ui,
+  fontFamily: desktopFonts.sans,
 } as CSSProperties;
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -92,7 +92,7 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
           <header className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default)" }}>
             <div className="flex items-center gap-1">
               <img data-notes-artwork src={notesArtwork} alt="" width={32} height={32} />
-              <h1 className="text-[20px] font-medium leading-6 tracking-[-0.4px]" style={{ fontFamily: fonts.heading }}>Notes</h1>
+              <h1 className="text-[20px] font-medium leading-6 tracking-[-0.4px]" style={{ fontFamily: desktopFonts.display }}>Notes</h1>
             </div>
             <div className="flex items-center gap-1">
               <button type="button" aria-label="Search notes" className="notes-tool flex items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" onClick={() => setSearchOpen(!searchOpen)}><Search size={15} /></button>
@@ -133,7 +133,7 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
           {state.error && <div role="alert" className="absolute bottom-4 left-4 right-4 rounded-lg bg-[var(--bg-sunken)] p-3 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-2)]">{state.error} <button type="button" className="underline" onClick={() => void controller.flush()}>Retry</button></div>}
         </> : <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <img data-notes-artwork src={notesArtwork} alt="" width={88} height={88} className="mb-2 object-contain" />
-          <h2 className="text-[28px] font-medium leading-tight" style={{ fontFamily: fonts.heading }}>A little space for your thoughts</h2>
+          <h2 className="text-[28px] font-medium leading-tight" style={{ fontFamily: desktopFonts.display }}>A little space for your thoughts</h2>
           <p className="max-w-64 text-sm text-[var(--text-tertiary)]">Ideas, lists, and everything in between.</p>
           {state.error && <p role="alert" className="text-sm text-[var(--text-secondary)]">{state.error}</p>}
           <button type="button" disabled={state.loading || state.creating} className="notes-primary mt-2 rounded-lg px-5 py-3 text-sm disabled:opacity-40" onClick={() => state.error ? void controller.load() : void controller.create()}>{state.error ? "Try again" : state.creating ? "Creating…" : "Create a note"}</button>

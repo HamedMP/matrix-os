@@ -149,13 +149,13 @@ describe("AppLauncher", () => {
     const notes = screen.getByRole("button", { name: "Notes" });
     expect(notes.querySelector("img")?.getAttribute("src")).toContain("/system-app-icons/v2/notes.png");
   });
-  it.each(["notes", "whiteboard"])("replaces the legacy %s icon in the launchpad while preserving a custom selection", (slug) => {
+  it.each(["notes", "whiteboard"])("preserves the owner-selected %s icon even with the default filename", (slug) => {
     const name = slug === "notes" ? "Notes" : "Whiteboard";
     clearDesktopApps();
     seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/${slug}.png?v=legacy` }]);
     const view = render(<AppLauncher presentation="launchpad" />);
     expect(screen.getByRole("button", { name }).querySelector("img")?.getAttribute("src"))
-      .toContain(`/system-app-icons/v2/${slug}.png`);
+      .toContain(`/icons/${slug}.png?v=legacy`);
     view.unmount();
     seedDesktopApps([{ slug, name, path: `apps/${slug}/index.html`, iconUrl: `/icons/owner-${slug}.svg?v=selected` }]);
     render(<AppLauncher presentation="launchpad" />);
