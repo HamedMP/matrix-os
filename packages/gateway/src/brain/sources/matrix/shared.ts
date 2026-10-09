@@ -153,14 +153,15 @@ export interface MatrixSweepDocument {
 
 /**
  * One sweep step: the next page of this source's live documents after `after`, each kept or deleted by `keep`.
- * `full`, asked before every document but the first, ends the step early. Returns the cursor for the next step, or
- * null when the sweep is done.
+ * `full`, asked before every document but the first, ends the step early, and so does a `keep` that answers null
+ * (out of room): the next step starts at that document. Null for the first document keeps it, so every step moves on.
+ * Returns the cursor for the next step, or null when the sweep is done.
  */
 export async function sweepStep(
   context: BrainSourceReadContext<unknown>,
   draft: MatrixPageDraft,
   after: string | null,
-  keep: (document: MatrixSweepDocument) => Promise<boolean>,
+  keep: (document: MatrixSweepDocument) => Promise<boolean | null>,
   full: () => boolean = () => false,
 ): Promise<string | null> {
   const limit = Math.max(1, Math.min(BRAIN_MATRIX_LIMITS.sweepPageMax, context.limits.maxDeletions));
@@ -171,7 +172,9 @@ export async function sweepStep(
   for (const summary of page.items) {
     if (last !== null && full()) return last;
     const refs = await context.documents.listDocumentRefs(context.scope, summary.documentId);
-    if (!(await keep({ documentId: summary.documentId, refs }))) draft.deletions.push(summary.documentId);
+    const kept = await keep({ documentId: summary.documentId, refs });
+    if (kept === null && last !== null) return last;
+    if (kept === false) draft.deletions.push(summary.documentId);
     last = summary.documentId;
   }
   return page.nextCursor;

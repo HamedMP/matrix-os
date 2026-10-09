@@ -82,8 +82,9 @@ export const BRAIN_MATRIX_LIMITS = {
   dirEntriesMax: 5_000,
   fileEntriesPerPage: 5_000,
   /**
-   * Directory entries read per page, skipped names included. More than fileDepthMax * dirEntriesMax: a page that
-   * resumes reads at most fileDepthMax folders on the way back to its position and still has room to move on.
+   * Directory entries read per page, skipped names included. More than fileDepthMax * (dirEntriesMax + 1): a page that
+   * resumes reads at most fileDepthMax folders on the way back to its position and still has room to move on, and a
+   * sweep page has room to check the folders of one whole file.
    */
   dirReadsPerPage: 65_000,
   fileBytesPerPage: 16 * 1024 * 1024,
