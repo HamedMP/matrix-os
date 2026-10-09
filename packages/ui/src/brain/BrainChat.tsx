@@ -12,7 +12,7 @@ import type { BrainShellClient, BrainShellErrorState } from "./brain-types.js";
 import { BrainEmpty, BrainError, BrainLoading } from "./brain-ui.js";
 import { BrainChatList, type BrainChatRowActions } from "./BrainChatList.js";
 import { createCompanyBrainBot, findCompanyBrainBot, type CompanyBrainBotState } from "./company-brain-bot.js";
-import { useBrainLoad } from "./use-brain-load.js";
+import { BRAIN_LIST_MAX_ITEMS, useBrainLoad } from "./use-brain-load.js";
 import { brainChatStorageKey, useBrainThreads } from "./use-brain-threads.js";
 
 /**
@@ -218,8 +218,29 @@ function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string,
   return { key, current, open, createChat, onChatChanged };
 }
 
-/** Renames and deletes made here, kept over the list until the server list has them (a "Show more" page may not). */
+/**
+ * Renames and deletes made here, kept over the list until a reloaded list agrees: the chat has that title, or is not
+ * listed (gone, or on a page not loaded, which loads it new). At most one per item a list holds, the oldest dropped.
+ */
 type LocalEdits = ReadonlyMap<string, string | null>;
+
+function pendingEdits(edits: LocalEdits, listed: readonly CanonicalChatRecord[]): LocalEdits {
+  if (edits.size === 0) return edits;
+  const pending = [...edits].filter(([id, value]) => listed.some((record) => record.chat.id === id
+    && record.chat.title !== value));
+  return pending.length === edits.size ? edits : new Map(pending);
+}
+
+function withEdit(edits: LocalEdits, id: string, value: string | null): LocalEdits {
+  const next = new Map(edits);
+  next.delete(id);
+  next.set(id, value);
+  for (const oldest of next.keys()) {
+    if (next.size <= BRAIN_LIST_MAX_ITEMS) break;
+    next.delete(oldest);
+  }
+  return next;
+}
 
 function BrainChatThreads({
   host, api, botId, projectId, projectName, onOpenSearch, onOpenSources,
@@ -229,13 +250,15 @@ function BrainChatThreads({
   const { key, current, open, createChat, onChatChanged } = useBrainChatSlot(host, botId, projectId, threads);
   const [listOpen, setListOpen] = useState(false);
   const [edits, setEdits] = useState<LocalEdits>(() => new Map());
+  const pending = pendingEdits(edits, threads.items);
+  if (pending !== edits) setEdits(pending);
   const toggle = useRef<HTMLButtonElement>(null);
   const listId = useId();
   if (threads.notRunning) return <ChatNotice text={NOT_RUNNING} onOpenSearch={onOpenSearch} />;
   if (current === null) return <BrainLoading label="Loading chats..." />;
   const { chatId } = current;
   const items = threads.items.flatMap((record) => {
-    const edit = edits.get(record.chat.id);
+    const edit = pending.get(record.chat.id);
     if (edit === null) return [];
     return [edit === undefined ? record : { ...record, chat: { ...record.chat, title: edit } }];
   });
@@ -246,7 +269,7 @@ function BrainChatThreads({
     toggle.current?.focus();
   };
   const edit = (id: string, value: string | null) => {
-    setEdits((previous) => new Map(previous).set(id, value));
+    setEdits((previous) => withEdit(previous, id, value));
     threads.reload();
   };
   return (
