@@ -24,8 +24,9 @@ function openInChatApp(switchConversation: (chatId: string) => void, chatId: str
   else focusOrOpenShellWindow("Chat", "__chat__");
 }
 
-function BrainChatThreadView({ slot, runtime, connected, mobile, openInChat }: {
-  slot: BrainChatSlot; runtime: ChatRuntime; connected: boolean; mobile: boolean; openInChat: (chatId: string) => void;
+function BrainChatThreadView({ slot, runtime, connected, mobile, active, visible, openInChat }: {
+  slot: BrainChatSlot; runtime: ChatRuntime; connected: boolean; mobile: boolean; active: boolean; visible: boolean;
+  openInChat: (chatId: string) => void;
 }) {
   const thread = useCanonicalChatThread({
     client: runtime.client, eventSource: runtime.eventSource, chatId: slot.chatId, createChat: slot.createChat,
@@ -35,6 +36,8 @@ function BrainChatThreadView({ slot, runtime, connected, mobile, openInChat }: {
     <ChatApp
       {...thread}
       layout="embedded"
+      active={active}
+      visible={visible}
       botId={slot.agentId}
       mobile={mobile}
       emptyState={{ title: slot.prompt, detail: slot.promptDetail }}
@@ -52,7 +55,7 @@ function BrainChatThreadView({ slot, runtime, connected, mobile, openInChat }: {
  * event stream as the Chat app) for one brain chat, with rename and delete over the normal Chat routes. Without the
  * shell chat state (a test, an older host) it is absent and the Chat tab says chat is not available here.
  */
-export function useShellBrainChatHost(mobile: boolean): BrainChatHost | undefined {
+export function useShellBrainChatHost(mobile: boolean, active: boolean, visible: boolean): BrainChatHost | undefined {
   const chat = useChatContext();
   const runtime = chat?.chatRuntime;
   const switchConversation = chat?.switchConversation;
@@ -72,8 +75,9 @@ export function useShellBrainChatHost(mobile: boolean): BrainChatHost | undefine
         remove: (chatId) => runtime.client.delete(chatId, requestId()),
       },
       render: (slot: BrainChatSlot) => (
-        <BrainChatThreadView slot={slot} runtime={runtime} connected={connected} mobile={mobile} openInChat={openInChat} />
+        <BrainChatThreadView slot={slot} runtime={runtime} connected={connected} mobile={mobile} active={active}
+          visible={visible} openInChat={openInChat} />
       ),
     };
-  }, [runtime, switchConversation, connected, mobile]);
+  }, [runtime, switchConversation, connected, mobile, active, visible]);
 }

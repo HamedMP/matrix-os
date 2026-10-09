@@ -154,10 +154,29 @@ describe("useCanonicalChatThread", () => {
     await waitFor(() => expect(result.current.messages[0]?.content).toBe("From the snapshot"));
     expect(client.detail).toHaveBeenCalledTimes(2);
   });
+
+  it("without a stream, polls a running answer one snapshot at a time", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = fakeClient();
+      const running = { ...detail("chat_a", 1, "Thinking"), record: { ...record("chat_a", 1), activeRun: { runId: "run_1" } } };
+      client.detail.mockResolvedValueOnce(running).mockImplementation(() => new Promise(() => undefined));
+      const events = { ...fakeEvents(), connectionState: vi.fn(() => "reconnecting" as const) };
+      const { result } = renderHook(() => useCanonicalChatThread({ client, eventSource: events, chatId: "chat_a", createChat: vi.fn() }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.busy).toBe(true);
+      expect(client.detail).toHaveBeenCalledTimes(1);
+      // The snapshot never answers: no second poll starts while it is in flight.
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(client.detail).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /** The Web Brain app over a fake gateway: one project with a repository, and a Company Brain Bot. */
-function webBrain(items: unknown[] = [], connected = true) {
+function webBrain(items: unknown[] = [], connected = true, windowState: { active?: boolean; visible?: boolean } = {}) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(String(url).includes("/sources")
     ? { items: [{ sourceId: "src_git", kind: "git" }], kinds: [] }
     : { projects: [{ id: "proj_matrix_os", name: "matrix-os", slug: "matrix-os" }] })));
@@ -172,8 +191,9 @@ function webBrain(items: unknown[] = [], connected = true) {
   const client = fakeClient(agents);
   const switchConversation = vi.fn();
   const chat = { chatRuntime: { client, eventSource: fakeEvents() }, switchConversation, connected } as unknown as ChatState;
-  render(<ChatProvider value={chat}><BrainApp showHeading={false} /></ChatProvider>);
-  return { bot, threads, agents, client, switchConversation };
+  const view = (state: typeof windowState) => <ChatProvider value={chat}><BrainApp showHeading={false} {...state} /></ChatProvider>;
+  const { rerender } = render(view(windowState));
+  return { bot, threads, agents, client, switchConversation, rerender: (state: typeof windowState) => rerender(view(state)) };
 }
 
 describe("Company Brain chat on Web", () => {
@@ -219,6 +239,20 @@ describe("Company Brain chat on Web", () => {
     await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_brain", expect.anything()));
     await waitFor(() => expect(composer()).toHaveValue("Why did src/a.ts change?"));
     expect(screen.queryByTestId("harness-setup")).toBeNull();
+  });
+
+  it("marks a brain answer read only while its window is focused, like the Chat window", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const unread = { unread: true, markedUnread: false, version: 3, readThroughSeq: 0, latestIncomingSeq: 1 };
+    // A minimized (or unfocused) Brain window stays mounted, so its chat must not read the answer for the viewer.
+    const { client, rerender } = webBrain([record("chat_old", 1)], true, { active: false, visible: false });
+    client.detail.mockImplementation(async (chatId: string) => ({ ...detail(chatId, 1, "Answer"), record: { ...record(chatId, 1), readState: unread } }));
+    const read = { ...unread, unread: false, version: 4, readThroughSeq: 1 };
+    vi.mocked(client.updateReadState).mockImplementation(async (chatId: string) => ({ ...record(chatId, 1), readState: read }));
+    expect(await screen.findByText("Answer")).toBeTruthy();
+    expect(client.updateReadState).not.toHaveBeenCalled();
+    rerender({ active: true, visible: true });
+    await waitFor(() => expect(client.updateReadState).toHaveBeenCalledWith("chat_old", { type: "mark_read", throughSeq: 1, baseVersion: 3 }));
   });
 
   it("on Web Canvas, Open in Chat brings the Chat window back and pans the view to it", async () => {

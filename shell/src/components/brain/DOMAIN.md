@@ -1,12 +1,13 @@
 # Company Brain app: Web adapter
 
-Binds the shared Company Brain view (`packages/ui/src/brain/`, spec 563; its `DOMAIN.md` has the rules, client and
-screens) to `shellApi`, the same-origin gateway session, for Web Desktop, Web Canvas and Web Mobile. It stores nothing;
-the client is made once per page, `ClientApiError` carries the category and code, and deletes send no body.
+Binds the shared Company Brain view (`packages/ui/src/brain/`, spec 563) to the Web gateway client for Web Desktop,
+Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src/brain/DOMAIN.md`.
 
-- `index.ts` (the only entry): `BrainApp`, `ShellBrainAppProps` (no `api`, `loadProjects` or `chat`; adds `mobile`),
-  `BRAIN_SHELL_VIEW`, `BRAIN_SHELL_SCREENS`, `BRAIN_APP_KEYWORDS`, `brainShellError`, `createBrainShellApi`,
-  `listBrainProjects`, types. Outside a `ChatProvider` (tests, an older host) the Chat tab says chat is not available.
+## Scope
+
+- `BrainApp.tsx`: the shared `BrainApp` bound to `shellApi`, plus the chat slot; `ShellBrainAppProps` omit `api`,
+  `loadProjects` and `chat`, and add `mobile`, `active` and `visible`. The windows pass the same `active` (focused and
+  shown) and `visible` (not minimized) as the Chat window, so the chat marks answers read only while it is seen.
 - `BrainChatHost.tsx`: the Web chat slot. It fills the Chat tab with the shell's own `ChatApp` in `layout="embedded"`
   (no rail, suggestion chips, Share, settings or connection line; the same transcript, composer, Bot panel and model
   recovery notice), driven by `hooks/useCanonicalChatThread.ts`: a controller for one Chat that reuses the Chat app's
@@ -16,12 +17,34 @@ the client is made once per page, `ClientApiError` carries the category and code
   model). When a new thread's first turn is refused, the question goes back into its composer. Open in Chat switches
   the Chat app to the same Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans
   to it). Rows rename and delete over the shell chat client.
-- The client and the one event stream come from the shell chat state (`useCanonicalChatState` returns them as
-  `chatRuntime`), so the shell still opens one stream. The thread view drops a snapshot answer meant for an older
-  request, falls back to a snapshot on a content gap, and polls every 2 s while an answer runs without an open stream.
-- The window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx` (no heading),
-  `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the palette in `Desktop.tsx`,
-  `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`. Tests in `tests/shell/`:
-  `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, the embedded layout, a draft sent as a
-  brain thread, a refused first question given back, Open in Chat), `canonical-chat-client.test.ts` (the Chat
-  delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts` and `window-manager.test.ts`.
+- The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
+  (no heading, the title bar names the app), `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the
+  palette in `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`.
+
+## Source Of Truth
+
+- The gateway, through the shared view. Nothing is stored here. The client and the one event stream come from the
+  shell chat state (`useCanonicalChatState` returns them as `chatRuntime`), so the shell still opens one stream.
+
+## Public API
+
+- `@/components/brain` (`index.ts`, the only entry point): `BrainApp`, `ShellBrainAppProps`, `BRAIN_SHELL_VIEW`,
+  `BRAIN_SHELL_SCREENS`, `BRAIN_APP_KEYWORDS`, `brainShellError`, `createBrainShellApi`, `listBrainProjects`, types.
+  Outside a `ChatProvider` (tests, an older host) the Chat tab says chat is not available here.
+
+## Auth And Trust Boundaries
+
+- The same-origin gateway session (`shellApi`); `ClientApiError` carries the category and code. Deletes send no body.
+
+## Concurrency And Recovery
+
+- As in the shared view; the client is created once per page. The thread view drops a snapshot answer meant for an
+  older request, falls back to a snapshot on a content gap, and polls every 2 s while an answer runs without an open
+  stream, each poll after the one before.
+
+## Tests
+
+- `tests/shell/`: `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, one poll at a time, the
+  embedded layout, a draft sent as a brain thread, a refused first question given back, read state only while seen,
+  Open in Chat), `canonical-chat-client.test.ts`
+  (the Chat delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts`, `window-manager.test.ts`.

@@ -1,5 +1,5 @@
 import type { BrainChatHost, BrainChatSlot } from "@matrix-os/ui";
-import { useMemo, useRef } from "react";
+import { useMemo, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -20,9 +20,10 @@ function openInChatTab(chatId: string): void {
 function DesktopBrainChat({ slot, live }: { slot: BrainChatSlot; live: boolean }) {
   const runtime = useWorkSurfaceRuntime();
   const api = useConnection((state) => state.api);
-  // The workspace also reports the Chat it opened; the slot picked that one itself, so only turns are passed on,
-  // the same as the Web view does.
-  const opened = useRef(slot.chatId);
+  // The Chat shown follows this workspace's own reports, not the slot: the slot shows a draft's thread once it exists,
+  // and moving there before the first turn is admitted would empty the composer and lose a refused question.
+  // react-doctor-disable-next-line react-doctor/no-derived-useState -- seeded from the slot once on purpose, then moved only by this workspace's reports; another slot Chat remounts this view.
+  const [chatId, setChatId] = useState(slot.chatId);
   if (!runtime?.client) return null;
   return (
     <CanonicalChatWorkspace
@@ -30,8 +31,8 @@ function DesktopBrainChat({ slot, live }: { slot: BrainChatSlot; live: boolean }
       client={runtime.client}
       eventSource={runtime.eventSource ?? undefined}
       projectId={null}
-      initialChatId={slot.chatId ?? undefined}
-      initialView={slot.chatId ? "conversation" : "draft"}
+      initialChatId={chatId ?? undefined}
+      initialView={chatId ? "conversation" : "draft"}
       // Never the active Chat surface: requests meant for the Chat tab (create an app, a Files draft, focus) stay there.
       active={false}
       live={live}
@@ -39,12 +40,11 @@ function DesktopBrainChat({ slot, live }: { slot: BrainChatSlot; live: boolean }
       createChat={slot.createChat}
       botId={slot.agentId}
       draftWelcome={{ title: slot.prompt, detail: slot.promptDetail }}
-      onActiveChatChanged={(chatId, title) => {
-        if (chatId !== null && chatId === opened.current) {
-          opened.current = null;
-          return;
-        }
-        slot.onChatChanged(chatId, title);
+      // Each project's brain draft is its own, never the Chat tab's new-chat draft.
+      newDraftScope={`new:brain:${slot.projectId}`}
+      onActiveChatChanged={(shown, title) => {
+        setChatId(shown);
+        slot.onChatChanged(shown, title);
       }}
     />
   );

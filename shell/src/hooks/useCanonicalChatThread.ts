@@ -146,12 +146,24 @@ export function useCanonicalChatThread({
     };
   }, [chatId, eventSource, loadDetail, setSafeError, show]);
 
-  // Without an open stream, a running answer is followed by polling the snapshot.
+  // Without an open stream, a running answer is followed by polling the snapshot. Each poll waits for the one before,
+  // so a slow snapshot never stacks requests.
   const running = Boolean(detail?.record.activeRun);
   useEffect(() => {
     if (chatId === null || !running || streamState === "open") return;
-    const timer = window.setInterval(() => { void loadDetail(chatId); }, ACTIVE_RUN_FALLBACK_POLL_MS);
-    return () => window.clearInterval(timer);
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = () => {
+      timer = window.setTimeout(async () => {
+        await loadDetail(chatId);
+        if (!cancelled) poll();
+      }, ACTIVE_RUN_FALLBACK_POLL_MS);
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [chatId, running, streamState, loadDetail]);
 
   const onSubmit = useCallback((

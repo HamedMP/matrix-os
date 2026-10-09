@@ -625,7 +625,7 @@ function MobileAppFrame({
     return <PreviewWindow />;
   }
   if (app.path === "__brain__") {
-    return <BrainApp mobile />;
+    return <BrainApp mobile active={visible} visible={visible} />;
   }
   if (app.path === "__chat__") {
     if (!chat) {

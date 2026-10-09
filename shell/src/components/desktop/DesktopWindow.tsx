@@ -248,7 +248,7 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : win.path === "__brain__" ? (
-          <BrainApp showHeading={false} />
+          <BrainApp showHeading={false} active={focusedWindowId === win.id && !win.minimized} visible={!win.minimized} />
         ) : (
           <AppViewer path={win.path} onOpenApp={onOpenWindow} />
         )}

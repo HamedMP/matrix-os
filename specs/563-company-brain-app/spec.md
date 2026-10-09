@@ -158,8 +158,10 @@ remounts the view. The Electron Desktop chat slot (`features/brain/DesktopBrainC
 (threaded into `useCanonicalChatRouteController` for a draft's first send) and `draftWelcome` (in place of the starter
 cards), on the tab's own chat client and event stream (`WorkSurfaceRuntimeProvider`, streaming while the tab is
 visible). With `createChat` or `botId` the workspace shows no project picker (a brain thread keeps no project of its
-own) and no Share. The workspace's report of the Chat it opened is not passed on; its report after each turn is.
-Open in Chat opens the Chat tab on the same Chat; rows rename and delete over the tab's chat client. The tile (`OS_VIEW_FIXED_APP_APPEARANCES.brain`, brand green with forest ink) is shared with the
+own) and no Share. Every report the workspace makes after an admitted turn is passed on, and the Chat it shows follows
+those reports (not the slot), so a refused first question stays in the draft's composer with the error. Each project's
+brain draft has its own key, apart from the Chat tab's new-chat draft. The Web windows pass the brain chat the same
+focus and visibility as the Chat window, so it marks answers read only while it is seen. Open in Chat opens the Chat tab on the same Chat; rows rename and delete over the tab's chat client. The tile (`OS_VIEW_FIXED_APP_APPEARANCES.brain`, brand green with forest ink) is shared with the
 Web Launchpad and the Web Desktop icon, dock and window icons. The Windows-style taskbar start list and Web Mobile draw
 every built-in app from the gateway's shipped icon images, not tiles, and there is no brain image, so Company Brain
 shows the `search` image there. No environment variables and no new dependencies.
@@ -266,10 +268,11 @@ Web client by default, its errors read by the shared reader, a delete with no bo
 `tests/shell/canonical-chat-thread.test.tsx` covers the one-Chat hook (one create per draft, a report after every
 admitted turn and none when it fails, a refused first question given back, content deltas, a snapshot on a gap, no
 URL change) and the Web slot end to end (no rail, chips, harness setup, settings or connection line, a draft sent as
-a brain thread, Open in Chat, and on Web Canvas the Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
+a brain thread, read state only while the window is focused, Open in Chat, and on Web Canvas the Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
 `tests/desktop/brain-chat-tab.test.tsx` covers the Electron slot through `useDesktopBrainChatHost().render(slot)` (a
 draft made through the host and sent as the Bot, the turn reported once, a saved chat opened in the conversation
-view without its open report, no project picker or Share, no Chat tab opened on its own, Open in Chat), and
+view without its open report and its first turn reported, a refused first question kept, a draft apart from the Chat
+tab's, no project picker or Share, no Chat tab opened on its own, Open in Chat), and
 `tests/desktop/canonical-new-chat-content.test.tsx` the brain greeting with no starter cards or harness setup.
 `tests/desktop/brain-desktop-view.test.tsx` covers the Electron Desktop transport (empty delete body, the two
 desktop-only categories) and view (connect message, runtime pinning, remount on a runtime switch or new sign-in); the

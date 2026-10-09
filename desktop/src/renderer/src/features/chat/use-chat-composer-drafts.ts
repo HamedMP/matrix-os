@@ -43,14 +43,17 @@ export function useChatComposerDrafts({
   chatId,
   projectId,
   conversation,
+  newDraftScope = newChatDraftScope(projectId),
 }: {
   clientIdentity: unknown;
   retentionIdentity?: string;
   chatId: string | null | undefined;
   projectId: string | null;
   conversation: boolean;
+  /** The new-chat draft's key; a hosted chat (a Company Brain thread) keeps its own. */
+  newDraftScope?: string;
 }) {
-  const scope = conversation && chatId ? `chat:${chatId}` : newChatDraftScope(projectId);
+  const scope = conversation && chatId ? `chat:${chatId}` : newDraftScope;
   const [localCache, setLocalCache] = useState<{ clientIdentity: unknown; drafts: ComposerDrafts }>({ clientIdentity, drafts: {} });
   const localDrafts = localCache.clientIdentity === clientIdentity ? localCache.drafts : EMPTY_DRAFTS;
   const liveIdentity = useConnection(desktopComposerDraftIdentity);
@@ -129,12 +132,11 @@ export function useChatComposerDrafts({
       updateCurrent({ projectId: nextProjectId })
     ), [updateCurrent]),
     prepareNewChatDraft: useCallback((patch: Partial<ComposerDraft> = {}) => {
-      const target = newChatDraftScope(projectId);
-      setDrafts((current, revision) => rememberDraft(current, target, {
+      setDrafts((current, revision) => rememberDraft(current, newDraftScope, {
         projectId, text: "", referenceTokens: [], ...patch,
         requestIdentity: revision,
       }, projectId, revision));
-    }, [projectId, setDrafts]),
+    }, [newDraftScope, projectId, setDrafts]),
     removeChatDraft: useCallback((removedChatId: string) => {
       setDrafts((current) => {
         const next = { ...current };
