@@ -32,7 +32,7 @@ export function MobileDock({
     >
       {apps.map((app) => (
         <DockButton key={app.id} label={app.name} current={currentPath === app.path} onClick={() => onOpen(app)}>
-          <MobileAppIcon slug={app.iconSlug} size={28} />
+          <MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={28} />
         </DockButton>
       ))}
       <DockButton label="Apps" current={view === "launcher"} onClick={onShowApps}>

@@ -37,3 +37,14 @@ it("opens newly installed apps from Gallery and focuses existing mobile stack en
   expect(screen.getAllByTestId("viewer:apps/focus/index.html")).toHaveLength(1);
   expect(screen.getByText("Focus", { selector: "header span" })).toBeTruthy();
 });
+
+
+it("preserves the owner-selected catalog artwork in the mobile launcher", async () => {
+  setPhoneViewport();
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [{
+    name: "Folio", path: "apps/folio/index.html", icon: "folio", iconUrl: "/icons/gallery-folio.png?v=owner",
+  }] })));
+  render(<MobileShell />);
+  const button = await screen.findByRole("button", { name: "Folio" });
+  expect(button.querySelector("img")?.getAttribute("src")).toBe("http://localhost:3000/icons/gallery-folio.png?v=owner");
+});

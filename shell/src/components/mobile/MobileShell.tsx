@@ -36,6 +36,7 @@ import {
   tapScale,
 } from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
+import { resolveCatalogIconUrl } from "@/api/apps";
 import { getGatewayUrl } from "@/lib/gateway";
 import { nameToSlug } from "@/lib/utils";
 import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
@@ -108,10 +109,12 @@ function mobileAppsFromBootstrap(
   return list.flatMap((a) => {
     if (typeof a.name !== "string" || typeof a.path !== "string") return [];
     const relative = a.path.replace(/^\/files\//, "");
+    const iconUrl = resolveCatalogIconUrl("iconUrl" in a ? a.iconUrl : undefined);
     return [{
       id: `app:${relative}`,
       name: a.name,
       path: relative,
+      ...(iconUrl ? { iconUrl } : {}),
       iconSlug: a.icon ?? ("slug" in a && typeof a.slug === "string" ? a.slug : nameToSlug(a.name)),
     }];
   });
@@ -776,7 +779,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <MobileAppIcon slug={o.app.iconSlug} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"

@@ -3,5 +3,6 @@ export interface MobileApp {
   name: string;
   path: string;
   iconSlug: string;
+  iconUrl?: string;
 }
 

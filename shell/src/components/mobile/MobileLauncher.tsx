@@ -89,7 +89,7 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
             {...tapScale}
             style={LAUNCHER_APP_BUTTON_STYLE}
           >
-            <MobileAppIcon slug={app.iconSlug} size={56} />
+            <MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={56} />
             <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
           </motion.button>
         ))}
