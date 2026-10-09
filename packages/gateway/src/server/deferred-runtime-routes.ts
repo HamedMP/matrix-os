@@ -1,4 +1,6 @@
 /** Mount integration/app runtime routes and metrics after gateway auth. */
+import type { Kysely } from "kysely";
+import { registerSiteRuntime } from "../sites/wiring.js";
 import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -13,6 +15,7 @@ const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 export interface DeferredRuntimeRouteOptions {
   app: Hono;
   homePath: string;
+  ownerDatabase: Kysely<any> | null;
   integrationRoutes: Hono | null;
   internalIntegrationBaseUrl: string | null;
   internalPlatformToken: string | undefined;
@@ -29,11 +32,12 @@ export interface DeferredRuntimeRoutes {
   customMcp: CustomMcpGatewayRegistration;
 }
 
-export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): DeferredRuntimeRoutes {
+export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): Promise<DeferredRuntimeRoutes> {
   const { app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest, posthogErrorTracker, ownerTelemetryDistinctId } = options;
   const APP_AUTH_DEV_BYPASS = options.devAppAuthBypass;
+  await registerSiteRuntime(app, { homePath, db: options.ownerDatabase, platformUrl: internalPlatformUrl, handle: internalHandle });
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
