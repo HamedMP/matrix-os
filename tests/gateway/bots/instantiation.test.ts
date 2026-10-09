@@ -422,7 +422,8 @@ it.runIf(process.env.MATRIX_TEST_POSTGRES_URL)("serializes custom creates across
     ensureWorkspace: botId => ensureBotWorkspace(home, botId),
   });
   try {
-    await Promise.all(stores.map(store => store.bootstrap()));
+    // Bootstrap the shared schema before racing creation from independent stores.
+    for (const store of stores) await store.bootstrap();
     const services = stores.map(store => service(store));
     const results = await Promise.all([services[0]!, services[1]!, services[0]!].map(instance => instance.createCustom(OWNER, input)));
     expect(new Set(results.map(result => result.agent.id)).size).toBe(1);
@@ -446,7 +447,9 @@ it.runIf(process.env.MATRIX_TEST_POSTGRES_URL)("serializes custom creates across
     const recovered = await services[1]!.createCustom(OWNER, retryInput);
     expect(recovered).toMatchObject({ operation: "replayed", chatId: operation.chatId, agent: { id: operation.botId } });
     expect(await stores[0]!.count(scope)).toBe(2);
-    expect(await real.db.selectFrom("chat_outbox").selectAll().where("chat_id", "=", operation.chatId).execute()).toHaveLength(1);
+    const recoveredEvents = await real.db.selectFrom("chat_outbox").select("event_type")
+      .where("chat_id", "=", operation.chatId).execute();
+    expect(recoveredEvents.map(event => event.event_type).sort()).toEqual(["bot.created", "chat.created"]);
   } finally {
     await Promise.all(stores.map(store => store.close()));
     await real.destroy();
