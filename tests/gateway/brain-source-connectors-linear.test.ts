@@ -182,6 +182,12 @@ describe("Linear source", () => {
     }
     const { run } = setup({ "linear.brain_issues": () => new Promise<never>(() => undefined) }, 10); // ignores its signal
     expect((await run()).errorCode).toBe("provider_timeout");
+    // A page that ignores its signal (a store read with no timeout) still ends the run when the caller stops it.
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(), 10);
+    const hung = { kind: "linear" as const, readPage: () => new Promise<never>(() => undefined) };
+    const stopped = await harness.sync(hung, config, { signal: stop.signal });
+    expect(stopped).toMatchObject({ pages: 0, notices: ["run_budget_exhausted"] });
     // The provider timeout is the handler's; the runner refuses a per-run one rather than ignore it.
     expect((await run(config, { providerTimeoutMs: 1 })).errorCode).toBe("invalid_options");
     const thrown = setup({ "linear.brain_issues": () => { throw new TypeError("transport bug"); } });

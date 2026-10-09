@@ -130,6 +130,20 @@ describe("Google Drive source", () => {
     const id = (fileId: string) => connectorDocumentId("google_drive", harness!.externalRef, ["file", fileId]);
     expect(await harness.liveIds()).toEqual([id("old"), id("new")].sort());
   });
+
+  it("retries skipped files after the ones that follow them, so they never hold back newer files", async () => {
+    harness = await connectorHarness("google_drive");
+    const routes: Record<string, FakeRoute> = {
+      "google_drive.brain_list_folder": () => ok({ files: ["a", "b", "c"].map((id, day) => file(id, DOC, {
+        modifiedTime: `2026-09-0${day + 1}T00:00:00Z` })) }),
+      "google_drive.brain_export_text": (params) => params.fileId === "c" ? ok("Text of c") : { status: "invalid" },
+    };
+    const skipped: number[] = [];
+    const limits = { pagesPerRun: 1, upsertsPerPage: 1 };
+    for (let run = 0; run < 3; run += 1) skipped.push((await driveRun(routes, { folderIds: ["f1"] }, limits)).result.skipped);
+    expect(skipped).toEqual([1, 1, 0]);
+    expect(await harness.liveIds()).toEqual([connectorDocumentId("google_drive", harness.externalRef, ["file", "c"])]);
+  });
 });
 
 const calendarConfig: BrainGoogleCalendarSourceConfig = {

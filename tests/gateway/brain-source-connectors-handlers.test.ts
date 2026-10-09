@@ -159,7 +159,8 @@ describe("snapshot adapter", () => {
   const id = (n: number) => `${n}`.padStart(64, "0");
   const stamp = "2026-09-01T00:00:00.000Z";
   function setup(
-    stored: number[], options: { storedMax?: number; retain?: number; sweepOnMigrate?: boolean } = {}, complete = true,
+    stored: number[], options: { storedMax?: number; retain?: number; sweepOnMigrate?: boolean; revoked?: boolean } = {},
+    complete = true,
   ) {
     let lists = 0;
     const documents = {
@@ -177,6 +178,8 @@ describe("snapshot adapter", () => {
       ...options,
       list: async () => {
         lists += 1;
+        const revoked = { ok: false, code: "auth_failed" } as const;
+        if (options.revoked === true) return { ok: true, value: { items: [], complete, gone: [], notices: [], revoked } };
         return { ok: true, value: { items: [{ documentId: id(1), stamp: "2026-09-02T00:00:00.000Z" }, { documentId: id(2), stamp }],
           complete, gone: [id(3), id(4)], notices: [] } };
       },
@@ -198,6 +201,21 @@ describe("snapshot adapter", () => {
     expect(full.ok && full.page.deletions).toEqual([id(3), id(5)]);
     const capped = await setup([3, 5], { storedMax: 1 }).read(null);
     expect(capped.ok && [capped.page.deletions, capped.page.notices]).toEqual([[id(3)], ["items_truncated"]]);
+  });
+
+  it("on lost access deletes every stored document a bounded read at a time, then fails", async () => {
+    const stored = [3, 5, 6];
+    const run = setup(stored, { storedMax: 1, revoked: true });
+    const pages: unknown[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 6; page += 1) {
+      const result = await run.read(cursor);
+      pages.push(result.ok ? result.page.deletions : result.code);
+      if (!result.ok) break;
+      for (const documentId of result.page.deletions) stored.splice(stored.indexOf(Number(documentId)), 1);
+      cursor = result.page.nextCursor;
+    }
+    expect(pages).toEqual([[id(3)], [id(5)], [id(6)], "auth_failed"]);
   });
 
   it("keeps at most retain documents by deleting the oldest stored ones missing from the listing", async () => {

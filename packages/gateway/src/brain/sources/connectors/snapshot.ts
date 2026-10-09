@@ -3,12 +3,15 @@
  * a run lists the remote items (bounded), reads back this source's stored documents (bounded) and plans the work:
  * items whose stamp differs from the stored source_updated_at, every item when the render fingerprint changed, and
  * deletions for stored documents missing from a complete listing (or, with `retain`, the oldest ones past that
- * bound; with `sweepOnMigrate`, every one of them while a re-render is in progress; with `revoked`, every one, after
- * which the run fails with that code). Later pages of the run pop from that plan. A build that fails after the page built something ends the page with what it built; the next page
- * returns that failure without calling the provider again.
+ * bound; with `sweepOnMigrate`, every one of them while a re-render is in progress; with `revoked`, every one read,
+ * planning again until none is left, after which the run fails with that code). Later pages of the run pop from that
+ * plan, oldest first but starting after the cursor's r, so items skipped earlier (never stored) wait behind the rest.
+ * A build that fails after the page built something ends the page with what it built; the next page returns that
+ * failure without calling the provider again.
  *
  * Cursor ("<prefix>:" + base64url JSON): { v: 1, f: fingerprint, m: re-render (or its sweep) in progress, p: last
- * re-rendered [stamp, documentId] or null, n: random token }: a progress marker only; the store decides what changed.
+ * re-rendered [stamp, documentId] or null, r: last item handled while some were left, n: random token }: a progress
+ * marker only; the store decides what changed.
  * Every page that writes takes a new n, so a run that read the cursor before another run committed fails its
  * compare-and-set (cursor_conflict) instead of writing older content over newer; a page that writes nothing keeps it.
  */
@@ -62,9 +65,9 @@ export interface SnapshotSpec<TConfig, TItem extends SnapshotItem> {
   build(item: TItem, context: BrainSourceReadContext<TConfig>): Promise<ConnectorResult<SnapshotBuild>>;
 }
 
+const PositionSchema = z.tuple([z.string().max(64), z.string().regex(BRAIN_DOCUMENT_ID_PATTERN)]);
 const CursorSchema = z.object({
-  v: z.literal(1), f: z.string().max(128), m: z.boolean(),
-  p: z.tuple([z.string().max(64), z.string().regex(BRAIN_DOCUMENT_ID_PATTERN)]).nullable(),
+  v: z.literal(1), f: z.string().max(128), m: z.boolean(), p: PositionSchema.nullable(), r: PositionSchema.optional(),
   n: z.string().regex(/^[A-Za-z0-9_-]{16}$/).optional(),
 }).strict();
 type Position = readonly [string, string];
@@ -77,6 +80,10 @@ interface Plan<TItem extends SnapshotItem> {
   /** The sweepOnMigrate sweep could not run: the cursor keeps m. */
   readonly sweepPending: boolean;
   position: Position | null;
+  /** The last item handled (built or skipped); the next run starts after it. */
+  resume: Position | undefined;
+  /** Access revoked and more stored documents than one plan reads: plan again once these deletions are written. */
+  readonly unswept: boolean;
   halted: BrainSourceReadResult | null;
   /** Returned by the page after the last sweep page (access revoked). */
   readonly revoked: BrainSourceReadResult | null;
@@ -110,6 +117,7 @@ async function makePlan<TConfig, TItem extends SnapshotItem>(
   const same = cursor !== null && cursor.f === spec.fingerprint;
   const migrating = !same || cursor.m;
   const position = same ? cursor.p : null;
+  const resume = same ? cursor.r : undefined;
   const listed = await spec.list(context);
   if (!listed.ok) return listed;
   const stored = await readStored(context, spec.storedMax ?? BRAIN_CONNECTOR_LIMITS.storedDocumentsMax);
@@ -118,10 +126,13 @@ async function makePlan<TConfig, TItem extends SnapshotItem>(
   const pending = [...remote.values()].filter((item) => stored.stamps.get(item.documentId) !== item.stamp
     || (migrating && (position === null || compareKey(item, position) > 0)));
   pending.sort((a, b) => compareKey(a, [b.stamp, b.documentId]));
+  const after = resume === undefined ? -1 : pending.findIndex((item) => compareKey(item, resume) > 0);
+  if (after > 0) pending.push(...pending.splice(0, after));
   const deletions = new Set<string>();
   const complete = listed.value.complete && stored.complete;
   const migrationSweep = spec.sweepOnMigrate === true && migrating;
-  if ((spec.sweep || migrationSweep) && complete) {
+  const revoked = listed.value.revoked ?? null;
+  if (((spec.sweep || migrationSweep) && complete) || revoked !== null) {
     for (const documentId of stored.stamps.keys()) if (!remote.has(documentId)) deletions.add(documentId);
   }
   for (const documentId of listed.value.gone) if (stored.stamps.has(documentId)) deletions.add(documentId);
@@ -133,9 +144,11 @@ async function makePlan<TConfig, TItem extends SnapshotItem>(
   }
   const notices = [...listed.value.notices];
   if (!stored.complete) notices.push("items_truncated");
-  const revoked = listed.value.revoked ?? null;
   const nonce = cursor?.n;
-  const plan = { pending, deletions: [...deletions], notices, migrating, position, halted: null, revoked, nonce };
+  const unswept = revoked !== null && !stored.complete;
+  const plan = {
+    pending, deletions: [...deletions], notices, migrating, position, resume, unswept, halted: null, revoked, nonce,
+  };
   return { ok: true, value: { ...plan, sweepPending: migrationSweep && !complete } };
 }
 
@@ -162,7 +175,8 @@ async function nextPage<TConfig, TItem extends SnapshotItem>(
     const size = upsert?.refs?.length ?? 0;
     if (upsert !== null && upserts.length > 0 && refs + size > context.limits.maxRefs) break;
     plan.pending.shift();
-    if (plan.migrating) plan.position = [item.stamp, item.documentId];
+    plan.resume = [item.stamp, item.documentId];
+    if (plan.migrating && (plan.position === null || compareKey(item, plan.position) > 0)) plan.position = plan.resume;
     if (built.ok) notices.push(...built.value.notices);
     if (upsert === null) {
       skipped += 1;
@@ -173,14 +187,15 @@ async function nextPage<TConfig, TItem extends SnapshotItem>(
   }
   let caughtUp = plan.pending.length === 0 && plan.deletions.length === 0;
   if (caughtUp && plan.revoked !== null) {
-    // The sweep commits with this page; the next page reports the lost access, so the source shows failing.
-    plan.halted = plan.revoked;
+    // The sweep commits with this page; once nothing stored is left the next page reports the lost access.
+    if (!plan.unswept) plan.halted = plan.revoked;
     caughtUp = false;
   }
   const migrating = (plan.migrating && !caughtUp) || plan.sweepPending;
   const p = migrating ? plan.position : null;
   if (upserts.length > 0 || deletions.length > 0) plan.nonce = randomBytes(12).toString("base64url");
-  const nextCursor = encodeCursor(spec.cursorPrefix, { v: 1, f: spec.fingerprint, m: migrating, p, n: plan.nonce });
+  const r = caughtUp ? undefined : plan.resume;
+  const nextCursor = encodeCursor(spec.cursorPrefix, { v: 1, f: spec.fingerprint, m: migrating, p, r, n: plan.nonce });
   return { ok: true, page: { upserts, deletions, nextCursor, caughtUp, skipped, notices: [...new Set(notices)] } };
 }
 
@@ -193,7 +208,7 @@ export function createSnapshotAdapter<TConfig, TItem extends SnapshotItem>(
   return {
     kind: spec.kind,
     async readPage(context) {
-      if (plan === null || context.cursor !== lastCursor) {
+      if (plan === null || context.cursor !== lastCursor || (plan.unswept && plan.deletions.length === 0)) {
         const made = await makePlan(spec, context);
         if (!made.ok) return made;
         plan = made.value;
