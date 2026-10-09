@@ -1,9 +1,9 @@
 import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
-  BotAccountLabelSchema, BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
+  BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
   BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
-  BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatApiCursorSchema, CanonicalChatIdSchema,
-  CanonicalChatListResponseSchema, CanonicalChatRecordSchema, CanonicalChatRequestIdSchema, ChatAgentIdSchema,
+  BotRecipeListResponseSchema, BotTaskListResponseSchema, BotThreadListQuerySchema, CanonicalChatIdSchema,
+  CanonicalChatListResponseSchema, CanonicalChatRecordSchema, ChatAgentIdSchema, CreateBotThreadRequestSchema,
   InstantiateBotRequestSchema, InstantiateBotResponseSchema, ResolveBotInteractionRequestSchema,
   ResolveBotInteractionResponseSchema, RevokeBotGrantResponseSchema,
   type BotAuthorityView, type BotInteraction, type BotMemoryMutationRequest, type CanonicalChatListResponse,
@@ -28,11 +28,6 @@ const safeMessages: Record<number, string> = {
 const fallbackMessage = "Bots are temporarily unavailable.";
 
 /** Thread routes (spec 567): a thread is one more Chat of a recipe Bot, fixed to one project when it is created. */
-const ThreadProjectIdSchema = z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/);
-/** The thread title rule is the same safe label as an account label: at most 120 characters. */
-const ThreadTitleSchema = BotAccountLabelSchema;
-const ThreadPageLimit = z.number().int().min(1).max(100);
-
 export interface BotThreadCreateInput { clientRequestId: string; projectId: string; title?: string }
 export interface BotThreadListInput { projectId: string; limit?: number; cursor?: string }
 
@@ -92,17 +87,16 @@ export function createBotClient(request: BotRequest): BotClient {
     threads: {
       create: async (agentId, input) => {
         // An unsafe or long generated title is left out; the server then names the thread itself.
-        const title = ThreadTitleSchema.safeParse(input.title);
-        return call(`${agentPath(agentId)}/threads`, "POST", CanonicalChatRecordSchema, {
-          clientRequestId: CanonicalChatRequestIdSchema.parse(input.clientRequestId),
-          projectId: ThreadProjectIdSchema.parse(input.projectId),
-          ...(title.success ? { title: title.data } : {}),
-        });
+        const title = CreateBotThreadRequestSchema.shape.title.safeParse(input.title);
+        return call(`${agentPath(agentId)}/threads`, "POST", CanonicalChatRecordSchema, CreateBotThreadRequestSchema.parse({
+          clientRequestId: input.clientRequestId, projectId: input.projectId,
+          ...(title.success && title.data !== undefined ? { title: title.data } : {}),
+        }));
       },
       list: async (agentId, input) => {
-        const query = new URLSearchParams({ projectId: ThreadProjectIdSchema.parse(input.projectId) });
-        if (input.limit !== undefined) query.set("limit", String(ThreadPageLimit.parse(input.limit)));
-        if (input.cursor !== undefined) query.set("cursor", CanonicalChatApiCursorSchema.parse(input.cursor));
+        const { projectId, limit, cursor } = BotThreadListQuerySchema.parse(input);
+        const query = new URLSearchParams({ projectId, limit: String(limit) });
+        if (cursor !== undefined) query.set("cursor", cursor);
         return call(`${agentPath(agentId)}/threads?${query}`, "GET", CanonicalChatListResponseSchema);
       },
     },
