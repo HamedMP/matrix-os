@@ -226,6 +226,21 @@ export function useCanonicalChatThread({
     });
   }, [client, loadDetail, setSafeError]);
 
+  // A question queued on another surface while an answer runs: ChatQueuedRequests shows the error when this is false.
+  const onCancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    const current = detailRef.current;
+    if (!current) return false;
+    const id = current.record.chat.id;
+    try {
+      await client.cancelQueuedTurn(id, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
+      await loadDetail(id);
+      return true;
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] Thread queue cancellation failed:", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  }, [client, loadDetail]);
+
   const onComposerDraftConsumed = useCallback((id: number) => {
     setReturnedDraft((current) => (current?.id === id ? null : current));
   }, []);
@@ -259,6 +274,7 @@ export function useCanonicalChatThread({
     activeConversationTitle: shown?.record.chat.title,
     botEventRevision,
     queuedTurns: shown?.queuedTurns ?? [],
+    onCancelQueuedTurn,
     providerSelection: shown?.record.chat.currentSelection,
     boundProviderInstanceId: shown?.record.providerBinding?.instanceId,
     composerDraftRequest: returnedDraft,

@@ -257,6 +257,28 @@ describe("Company Brain chat on Web", () => {
     await waitFor(() => expect(client.updateReadState).toHaveBeenCalledWith("chat_old", { type: "mark_read", throughSeq: 1, baseVersion: 3 }));
   });
 
+  it("cancels a queued brain question from the brain chat, then shows the queue without it", async () => {
+    const { client } = webBrain([record("chat_old", 1)]);
+    const queued = { id: "qturn_next", chatId: "chat_old", clientRequestId: "req_queued", position: 1,
+      parts: [{ type: "text" as const, text: "And the tests?" }], selection: BOT_SELECTION, interactionMode: "default",
+      permissionMode: "default", createdAt: "2026-10-08T00:00:00.000Z", updatedAt: "2026-10-08T00:00:00.000Z" };
+    // Queued from another surface while an answer runs.
+    client.detail.mockImplementation(async (chatId: string) => ({ ...detail(chatId, 2, "Answer"),
+      record: { ...record(chatId, 2), activeRun: { runId: "run_1" } }, queuedTurns: [queued] }));
+    const cancelQueuedTurn = vi.fn(async () => {
+      client.detail.mockImplementation(async (chatId: string) => ({ ...detail(chatId, 3, "Answer"), queuedTurns: [] }));
+      return { queuedTurnId: queued.id, queueDepth: 0, cancellation: "cancelled" as const };
+    });
+    Object.assign(client, { cancelQueuedTurn });
+    const cancel = await screen.findByRole("button", { name: "Cancel queued request" });
+    await waitFor(() => expect(cancel).toHaveProperty("disabled", false));
+    fireEvent.click(cancel);
+    await waitFor(() => expect(cancelQueuedTurn).toHaveBeenCalledWith("chat_old", "qturn_next",
+      { clientRequestId: expect.stringMatching(/^req_/), baseRevision: 2 }));
+    await waitFor(() => expect(screen.queryByText("And the tests?")).toBeNull());
+    expect(screen.queryByText("Queued request could not be cancelled. Try again.")).toBeNull();
+  });
+
   it("on Web Canvas, Open in Chat brings the Chat window back and pans the view to it", async () => {
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { callback(0); return 0; });
     const focusOnWindow = vi.spyOn(useCanvasTransform.getState(), "focusOnWindow").mockImplementation(() => undefined);
