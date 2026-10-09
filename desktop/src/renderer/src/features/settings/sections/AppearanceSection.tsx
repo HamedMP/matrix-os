@@ -10,13 +10,13 @@ export default function AppearanceSection() {
   const { zoom, setZoom } = appearance;
   return <>
     <SettingsSectionHeader title="Appearance" description="Make Matrix feel like home." />
-    <Card><AppearanceControls value={appearance} resolvedMode={resolveThemeMode(appearance.mode)} pending={appearance.pending || !appearance.hydrated} error={appearance.error} onChange={appearance.update} /></Card>
+    <Card>{!appearance.hydrated ? <p role={appearance.error ? "alert" : "status"}>{appearance.error ?? "Loading appearance…"}</p> : <AppearanceControls value={appearance} resolvedMode={resolveThemeMode(appearance.mode)} pending={appearance.pending || !appearance.hydrated} error={appearance.error} onChange={appearance.update} />}</Card>
       <Card>
         <span className="text-sm" style={{ color: "var(--text-secondary)" }}>Zoom</span>
         <div className="flex items-center gap-2">
           <IconButton
             label={`Zoom out (${desktopShortcutLabel("-")})`}
-            disabled={zoom <= MIN_ZOOM}
+            disabled={!appearance.hydrated || appearance.pending || zoom <= MIN_ZOOM}
             onClick={() => setZoom(zoom - ZOOM_STEP)}
           >
             <Minus size={14} aria-hidden="true" />
@@ -29,7 +29,7 @@ export default function AppearanceSection() {
           </span>
           <IconButton
             label={`Zoom in (${desktopShortcutLabel("=")})`}
-            disabled={zoom >= MAX_ZOOM}
+            disabled={!appearance.hydrated || appearance.pending || zoom >= MAX_ZOOM}
             onClick={() => setZoom(zoom + ZOOM_STEP)}
           >
             <Plus size={14} aria-hidden="true" />

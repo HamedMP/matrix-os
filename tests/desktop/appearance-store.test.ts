@@ -8,7 +8,7 @@ describe("appearance store", () => {
   let eventListeners: Map<string, (payload: unknown) => void>;
 
   beforeEach(() => {
-    useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: false, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
+    useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: true, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
     eventListeners = new Map();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -34,6 +34,15 @@ describe("appearance store", () => {
     root.removeAttribute("data-theme-id");
     root.removeAttribute("style");
     vi.restoreAllMocks();
+  });
+
+  it('blocks writes while the initial preferences remain unread', async () => {
+    useAppearance.setState({ hydrated: false });
+    await useAppearance.getState().setMode('dark');
+    useAppearance.getState().setZoom(1.4);
+    expect(window.operator.invoke).not.toHaveBeenCalled();
+    expect(useAppearance.getState().mode).toBe('light');
+    expect(useAppearance.getState().zoom).toBe(1);
   });
 
   it("loads the persisted theme and applies it to the document", async () => {
@@ -81,7 +90,7 @@ describe("appearance store", () => {
     });
   });
 
-  it("hydrates and applies the default when loading fails", async () => {
+  it("keeps editing unavailable when loading fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     window.operator.invoke = vi.fn(async () => {
       throw new Error("state unavailable");
@@ -92,7 +101,8 @@ describe("appearance store", () => {
       warn.mockRestore();
     }
 
-    expect(useAppearance.getState().hydrated).toBe(true);
+    expect(useAppearance.getState().hydrated).toBe(false);
+    expect(useAppearance.getState().error).toBe("Could not load appearance. Reload before making changes.");
     expect(document.documentElement.getAttribute("data-theme-id")).toBe(DEFAULT_THEME_ID);
   });
 
@@ -160,7 +170,7 @@ describe("appearance store", () => {
 
 describe('custom appearance persistence', () => {
   beforeEach(() => {
-    useAppearance.setState({ mode: 'light', themeId: 'matrix', fontId: 'geist', monoFontId: 'jetbrains', customTheme: null, pending: false, error: null });
+    useAppearance.setState({ mode: 'light', themeId: 'matrix', fontId: 'geist', monoFontId: 'jetbrains', customTheme: null, hydrated: true, pending: false, error: null });
     window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => {}) };
   });
   it('applies a custom theme and fonts only after the save succeeds', async () => {
