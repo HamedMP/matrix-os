@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from './customer-funded-starter-policy.js';
 import { z } from 'zod/v4';
 import type { MatrixBillingInterval, MatrixBillingPlanSlug } from './billing.js';
 import { insertProviderDeletion, type PlatformDB, type PrebillingProvisioningIntentsTable } from './db.js';
@@ -395,6 +396,7 @@ export async function markPrebillingIntentReady(
   },
 ): Promise<boolean> {
   await db.ready;
+  await lockCustomerFundedStarterActivation(db, input.clerkUserId);
   const updated = await sql<{ ready: boolean }>`
     WITH eligible AS (
       SELECT intent.id, intent.payment_confirmed_at
@@ -477,7 +479,9 @@ export async function markPrebillingIntentReady(
         AND machine.deleted_at IS NULL
     ) AS ready
   `.execute(db.executor);
-  return updated.rows[0]?.ready ?? false;
+  const ready = updated.rows[0]?.ready ?? false;
+  if (ready) await initializeCustomerFundedStarterPolicy(db, input.machineId, { now: input.now });
+  return ready;
 }
 
 export async function markPrebillingPreparationFailed(
@@ -524,6 +528,7 @@ export async function authorizePrebillingIntent(
   input: { intentId: string; clerkUserId: string; runtimeSlot: string; now: string },
 ): Promise<{ authorized: boolean; machineId: string | null }> {
   await db.ready;
+  await lockCustomerFundedStarterActivation(db, input.clerkUserId);
   const current = await db.executor.selectFrom('prebilling_provisioning_intents').selectAll()
     .where('id', '=', input.intentId)
     .where('clerk_user_id', '=', input.clerkUserId)
@@ -533,6 +538,7 @@ export async function authorizePrebillingIntent(
   const intent = mapIntent(current);
   if (intent.state === 'authorized') {
     if (!intent.machineId) throw new Error('prebilling_machine_not_ready');
+    await initializeCustomerFundedStarterPolicy(db, intent.machineId, { now: input.now });
     return { authorized: true, machineId: intent.machineId };
   }
   if (intent.state !== 'ready_waiting_for_billing' || !intent.machineId) {
@@ -581,6 +587,7 @@ export async function authorizePrebillingIntent(
   }).where('id', '=', intent.id).where('revision', '=', intent.revision)
     .returning('id').executeTakeFirst();
   if (!authorized) throw new Error('prebilling_authorization_conflict');
+  await initializeCustomerFundedStarterPolicy(db, intent.machineId, { now: input.now });
   return { authorized: true, machineId: intent.machineId };
 }
 
