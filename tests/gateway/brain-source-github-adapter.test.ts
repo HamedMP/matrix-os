@@ -4,7 +4,7 @@ import {
   bootstrapBrainGithubDatabase, createGithubAdapter, githubDocumentId, type BrainGithubConditionalStore,
   type BrainGithubFetchResult, type BrainGithubResource,
 } from "../../packages/gateway/src/brain/sources/github/index.js";
-import { decodeGithubCursor } from "../../packages/gateway/src/brain/sources/github/cursor.js";
+import { decodeGithubCursor, encodeGithubCursor } from "../../packages/gateway/src/brain/sources/github/cursor.js";
 import { createBrainHarness, scopeA, type BrainHarness } from "./helpers/brain-store-helpers.js";
 import {
   fakeGithubClient, fixtureResponder, githubConfig, githubFixture, ok, runGithubPages, type FakeResponder,
@@ -243,6 +243,26 @@ describe("github adapter", () => {
     expect(client.calls.filter((call) => call.kind === "issues").map((call) => "page" in call ? call.page : 0)).toContain(3);
     const cursor = decodeGithubCursor((await harness.repository.getSyncCursor(scopeA, sourceId))!.cursor);
     expect(cursor).toEqual({ since: "2026-02-01T00:00:01Z", page: 1, done: [] });
+  });
+
+  it("walks the tie pages again before moving on when a tied item changes between pages", async () => {
+    const tied = Array.from({ length: 60 }, (_, i) => issue(i + 1, "2026-02-01T00:00:00Z"));
+    let changed = false;
+    const { adapter, client } = adapterFor((resource) => {
+      if (resource.kind !== "issues") return ok([]);
+      // Issue 5 changes just before page 2 is read: issue 51 slides back onto page 1.
+      if (resource.page === 2 && !changed) [changed, tied[4]] = [true, issue(5, "2026-02-02T00:00:00Z")];
+      return ok(listing(() => tied)(resource));
+    });
+    expect(await run(adapter, { maxPages: 20 })).toMatchObject({ status: "succeeded", caughtUp: true });
+    expect(await harness.repository.getDocument(scopeA, githubDocumentId(externalRef, "issue", 51))).not.toBeNull();
+    expect(client.calls.map((call) => "page" in call ? call.page : 0)).toEqual([1, 1, 1, 2, 1, 1, 2, 1, 2]);
+    const cursor = decodeGithubCursor((await harness.repository.getSyncCursor(scopeA, sourceId))!.cursor);
+    expect(cursor).toEqual({ since: "2026-02-02T00:00:00Z", page: 1, done: [5] });
+    const recheck = { since: "2026-02-01T00:00:00Z", page: 2, done: [1], recheck: true as const };
+    expect(decodeGithubCursor(encodeGithubCursor(recheck))).toEqual(recheck);
+    const raw = `gh1:${Buffer.from(JSON.stringify({ v: 1, s: recheck.since, p: 1, d: [], r: 2 })).toString("base64url")}`;
+    expect(decodeGithubCursor(raw)).toBeNull();
   });
 
   it("stops a page at its document, time and abort limits", async () => {

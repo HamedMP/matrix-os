@@ -4,9 +4,11 @@
  * early at its item, provider call, document, ref and time limits, or at the first provider failure (the items read
  * so far are still returned; the failure comes back on the next call that continues from that page, before any provider
  * call, so a retry never hides it or ignores its retryAfterSeconds). Each item moves the cursor only once its
- * documents are in the page, so a page's cursor never runs ahead of what it writes. A pull request too big for one
- * page stays open in the cursor and continues on the next page. Document ids use the source's stored external ref; a
- * config whose repository is another one is refused.
+ * documents are in the page, so a page's cursor never runs ahead of what it writes. Before the watermark moves past
+ * ties that spanned more than one listing page, those pages are walked again from page 1, since an item changing
+ * between page reads shifts the pages. A pull request too big for one page stays open in the cursor and continues
+ * on the next page. Document ids use the source's stored external ref; a config whose repository is another one is
+ * refused.
  */
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
@@ -110,7 +112,10 @@ function skipSecond(cursor: BrainGithubCursor, page: PageCollector): BrainGithub
   return { since: toGithubTime(Date.parse(cursor.since) + 1_000), page: 1, done: [] };
 }
 
-/** Cursor after applying an item (no item is open any more): a newer timestamp moves the watermark; a tie joins the done list. */
+/**
+ * Cursor after applying an item (no item is open any more): a newer timestamp moves the watermark; a tie joins the done
+ * list and ends any recheck walk, so the tie pages are walked again once more.
+ */
 function advance(cursor: BrainGithubCursor, updatedAt: string, number: number, page: PageCollector): BrainGithubCursor {
   if (updatedAt > cursor.since) return { since: updatedAt, page: 1, done: [number] };
   if (cursor.done.length < GITHUB_LIMITS.doneMax) return { since: cursor.since, page: cursor.page, done: [...cursor.done, number] };
@@ -185,6 +190,12 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
       for (const issue of parsed.data) {
         const updatedAt = toGithubTime(Date.parse(issue.updated_at));
         if (updatedAt < cursor.since || (updatedAt === cursor.since && cursor.done.includes(issue.number))) continue;
+        if (updatedAt > cursor.since && cursor.page > 1 && cursor.recheck !== true) {
+          // An item that changed between page reads can move an unread tie onto a page already read: walk them again.
+          cursor = { ...cursor, page: 1, recheck: true };
+          stopped = true;
+          break;
+        }
         // Children already written on earlier pages, while the pull request has not changed since.
         const skip = cursor.open?.number === issue.number && cursor.open.updatedAt === updatedAt ? cursor.open.written : 0;
         const cost = issue.pull_request !== undefined && context.config.include.pullRequests ? pullRequestCalls(context.config) : 0;
@@ -208,7 +219,7 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
         if (added !== null && !added.done) {
           // Too big for one page: the watermark stays before it and the cursor keeps it open.
           const open = { number: issue.number, updatedAt, written: added.written };
-          cursor = { since: cursor.since, page: cursor.page, done: cursor.done, open };
+          cursor = { ...cursor, open };
         }
         if (added === null || !added.done) {
           stopped = true;
@@ -219,8 +230,9 @@ export function createGithubAdapter(deps: BrainGithubAdapterDeps): BrainSourceAd
       }
       if (!stopped && full && !progressed) {
         // Every item on this page is tied at the watermark and already applied: look at the next page of ties.
+        const recheck = cursor.recheck === true ? { recheck: true as const } : {};
         cursor = cursor.page < GITHUB_LIMITS.tiePagesMax
-          ? { since: cursor.since, page: cursor.page + 1, done: cursor.done } : skipSecond(cursor, page);
+          ? { since: cursor.since, page: cursor.page + 1, done: cursor.done, ...recheck } : skipSecond(cursor, page);
       }
       const caughtUp = !stopped && !full;
       const nextCursor = encodeGithubCursor(cursor);
