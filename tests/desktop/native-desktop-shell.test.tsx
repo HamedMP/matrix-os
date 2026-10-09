@@ -131,30 +131,18 @@ describe("native desktop shell", () => {
     expect(browserLabel?.style.color).toBe("rgb(255, 255, 255)");
     expect(browserLabel?.style.background).toBe("");
     expect(browserLabel?.style.textShadow).toContain("rgba(0, 0, 0");
-    const browserGlow = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon-shine]");
-    expect(browserGlow?.style.background).toContain("linear-gradient(180deg");
-    expect(browserGlow?.style.height).toBe("50%");
-    const browserAppIcon = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(browserAppIcon?.style.background).toBe("var(--surface-info-emphasis, #3B85BA)");
-    expect(browserAppIcon?.style.color).toBe("white");
-    expect(screen.getByRole("button", { name: "Chat" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-error-emphasis, #BA5236)");
-    expect(screen.getByRole("button", { name: "Terminal" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-warning-emphasis, #E0AA52)");
-    expect(screen.getByRole("button", { name: "Files" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-brand-emphasis, #748E59)");
+    for (const name of ["Browser", "Chat", "Terminal", "Files", "Settings", "VS Code"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.querySelector("img")?.className).toContain("object-contain");
+      expect(button.querySelector("[data-desktop-app-icon]")).toBeNull();
+      expect(button.querySelector("[data-desktop-app-icon-shine]")).toBeNull();
+    }
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.getByRole("button", { name: "Plugins" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Editor" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "VS Code" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Settings" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-neutral-emphasis, #6B7280)");
     const filesDockIcon = screen.getByTestId("desktop-taskbar-files")
       .querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(filesDockIcon?.classList.contains("absolute")).toBe(true);

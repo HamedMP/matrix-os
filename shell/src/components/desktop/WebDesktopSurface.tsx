@@ -105,14 +105,14 @@ function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: st
   return (
     <span
       data-desktop-app-icon
-      className={`flex items-center justify-center overflow-hidden border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)] ${className}`}
-      style={{ background: appearance.color, color: appearance.iconColor }}
+      className={`flex items-center justify-center overflow-hidden ${showImage ? "border-0 shadow-none" : "border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]"} ${className}`}
+      style={{ background: showImage ? "transparent" : appearance.color, color: appearance.iconColor }}
     >
       {showImage && iconUrl ? (
         // Gateway-owned app icons can change at runtime and are already
         // versioned by ETag, so Next/Image cannot statically optimize them.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={iconUrl} alt="" className="size-full object-cover" draggable={false} onError={onError} />
+        <img src={iconUrl} alt="" className="size-full object-contain" draggable={false} onError={onError} />
       ) : (
         <Glyph className="size-[48%]" aria-hidden="true" />
       )}

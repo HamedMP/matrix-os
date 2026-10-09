@@ -147,7 +147,8 @@ describe("WebDesktopSurface", () => {
     expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
       .toEqual(OS_VIEW_FIXED_APP_NAMES);
     const vscodeIcon = screen.getByRole("button", { name: "VS Code" }).querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(vscodeIcon?.style.background).toBe("rgb(255, 254, 252)");
+    expect(vscodeIcon?.style.background).toBe("transparent");
+    expect(vscodeIcon?.className).toContain("border-0 shadow-none");
     expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Plugins" }));
