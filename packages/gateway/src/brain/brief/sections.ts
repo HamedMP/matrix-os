@@ -121,7 +121,7 @@ async function newClaims(
     const [{ documentId, revision }, end] = [line.cites[0]!, gone.find((row) => row.claim_id === line.claimId)];
     const cite = cites.get(documentId);
     const keep = cite !== undefined && end !== undefined && end.revision <= revision && revision < cite.revision;
-    return keep ? [{ ...line, cites: [cite] }] : [];
+    return keep ? [{ ...line, cites: [{ ...cite, revision }] }] : []; // the revision read, so a rebuild keeps it too
   })];
   const cap = LIMITS.linesPerSection;
   return { lines: lines.slice(0, cap), truncated: part.truncated || lines.length > cap };

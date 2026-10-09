@@ -161,7 +161,10 @@ describe("brief", () => {
     fx.harness.tick(86_400_000);
     await fx.sync(git, [{ seed: "x", body: "Decision: use B.", at: "2026-10-02T08:00:00.000Z" }]);
     await fx.extract("x", [{ kind: "decision", statement: "use B." }]);
-    expect((await brief({ date: "2026-10-01" })).sections.decisions.map((line) => [line.text, line.cites[0]!.revision])).toEqual([["use D.", 2], ["use F", 1], ["use A.", 2]]);
+    // So does a later rebuild (a POST for a summary, say): the kept line still names the revision it was read from.
+    for (const rebuild of [brief, (query: object) => fx.feature.service.generateBrief(BRIEF_OWNER, "proj_a", query)]) {
+      expect((await rebuild({ date: "2026-10-01" })).sections.decisions.map((line) => [line.text, line.cites[0]!.revision])).toEqual([["use D.", 2], ["use F", 1], ["use A.", 1]]);
+    }
   });
 
   it("refuses dates in the future, too far back or not on the calendar", async () => {
@@ -403,7 +406,7 @@ describe("runner", () => {
   it("builds today's brief per scope, completes past unfinished copies and counts skips and failures", async () => {
     const other = { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_b" };
     const broken = { ownerId: "o".repeat(300), scopeId: "s" };
-    const throwing = { ownerId: "o", get scopeId(): string { throw "boom"; } };
+    const throwing = { scopeId: "t", get ownerId(): string { throw "boom"; } };
     const gone = { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_gone" };
     const scopes = { listActiveScopes: vi.fn(async () => [BRIEF_SCOPE, other, broken, throwing, gone]) };
     const signal = new AbortController().signal;
@@ -437,16 +440,20 @@ describe("runner", () => {
     expect(seen).toEqual(["proj_a", "proj_b", "proj_b", "proj_a"]);
   });
 
-  it("counts a scope as failed and builds nothing when its project lookup is down", async () => {
+  it("counts a scope as failed and builds nothing when its project lookup is down, and next tries the others first", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const down = createBrainBrief({
-      repository: fx.harness.repository, now: fx.harness.now,
-      resolver: { ...fx.resolver, resolve: async () => { throw new BrainApiError("brain_unavailable"); } },
-    });
-    const scopes = { listActiveScopes: vi.fn(async () => [BRIEF_SCOPE]) };
-    const signal = new AbortController().signal;
-    expect(await down.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal }))
-      .toEqual({ scopes: 1, built: 0, failed: 1, skipped: 0 });
+    let stop = new AbortController();
+    // proj_a sorts first and its lookup is down; each try also uses up the pass (as a slow failure would).
+    const resolve: typeof fx.resolver.resolve = async (owner, ref) => (ref === "proj_a" ? (stop.abort(), Promise.reject(new BrainApiError("brain_unavailable"))) : fx.resolver.resolve(owner, ref));
+    const down = createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
+    for (const scopeId of [BRIEF_SCOPE.scopeId, "personal:project:proj_b"]) await fx.source("git", scopeId, { ownerId: BRIEF_OWNER, scopeId });
+    const runs: unknown[] = [];
+    for (const days of [0, 0, 1]) {
+      fx.harness.tick(days * 86_400_000);
+      stop = new AbortController();
+      runs.push(await down.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes: createBrainBriefScopeLister(fx.harness.db), signal: stop.signal }));
+    }
+    expect(runs).toEqual([{ scopes: 2, built: 0, failed: 1, skipped: 1 }, ...Array(2).fill({ scopes: 2, built: 1, failed: 1, skipped: 0 })]);
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "BrainApiError");
     expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-10-01", "day")).toBeNull();
   });

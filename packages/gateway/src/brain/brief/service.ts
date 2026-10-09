@@ -123,25 +123,33 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
     },
   };
 
+  let tries = 0;
+  /** When this runner last tried each scope of the last pass's list (so at most BRAIN_SCHEDULED_SCOPES_MAX). */
+  let tried = new Map<string, number>();
   /**
    * Per scope: drops stored briefs citing deleted documents, skips a project scope whose project is gone, then builds
    * today's day brief (skipped when fresh) and a final rebuild of each stored day copy of the last BRIEF_FINISH_DAYS
-   * built before its day ended, so a failed one is retried. Scopes come in the lister's order (stalest brief first).
+   * built before its day ended, so a failed one is retried. Scopes tried least lately go first (ties: the lister's
+   * order, stalest brief first), so one that fails or runs long every pass never holds the others back.
    */
   const runner: BrainBriefRunner = async ({ ownerId, now, scopes, signal }) => {
     const deadline = performance.now() + BRAIN_BRIEF_SCHEDULE.passBudgetMs;
     const stopped = () => signal.aborted || performance.now() > deadline;
-    const list = await scopes.listActiveScopes(ownerId, BRAIN_SCHEDULED_SCOPES_MAX);
+    const max = BRAIN_SCHEDULED_SCOPES_MAX;
+    const last = (scope: BrainScopeKey) => tried.get(scope.scopeId) ?? 0;
+    const list = (await scopes.listActiveScopes(ownerId, max)).slice(0, max).sort((x, y) => last(x) - last(y));
+    tried = new Map(list.map((scope) => [scope.scopeId, last(scope)]));
     const today = utcDate(now);
     const since = utcDate(new Date(now.getTime() - BRIEF_FINISH_DAYS * DAY_MS));
     let built = 0;
     let failed = 0;
     let skipped = 0;
-    for (const scope of list.slice(0, BRAIN_SCHEDULED_SCOPES_MAX)) {
+    for (const scope of list) {
       if (stopped()) {
         skipped += 1;
         continue;
       }
+      tried.set(scope.scopeId, ++tries);
       try {
         await purgeDeletedBriefs(db, scope);
         if (await projectGone(ownerId, scope)) {
