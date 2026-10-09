@@ -1,6 +1,7 @@
 /**
  * Search index guards over PGlite: embedding writes and marks fenced by the claims set, refresh limits and paid usage
- * per provider call, restored documents' claims, and orphaned vectors and chunks swept with no provider.
+ * per provider call, restored documents' claims, orphaned vectors and chunks swept with no provider or until halted,
+ * and snippet text of failed reference links read in bounded time.
  */
 import { vector as pgvector } from "@electric-sql/pglite/vector";
 import { sql, type Kysely } from "kysely";
@@ -18,6 +19,7 @@ import {
 } from "../../packages/gateway/src/brain/search/index-sql.js";
 import { createBrainSearchIndex } from "../../packages/gateway/src/brain/search/indexer.js";
 import { parseBrainSearchQuery } from "../../packages/gateway/src/brain/search/query.js";
+import { brainPlainText } from "../../packages/gateway/src/brain/search/snippet-plain.js";
 import { rankBrainTextHits } from "../../packages/gateway/src/brain/search/text.js";
 import type { BrainEmbeddingsUsage, BrainSearchVectorStore } from "../../packages/gateway/src/brain/search/types.js";
 import { chunkBrainBody } from "../../packages/gateway/src/brain/search/vector.js";
@@ -269,5 +271,34 @@ describe("brain search guards", { timeout: 60_000 }, () => {
     expect(await h.count("brain_search_vectors")).toBe(0);
     if (vector) expect(await h.count("brain_search_chunks")).toBe(0);
     expect(await h.count("brain_search_documents")).toBe(0);
+  });
+
+  it("stops sweeping once the refresh is halted and leaves the rest for the next", async () => {
+    h = await createHarness();
+    await h.sync([{ seed: "a" }, { seed: "b" }, { seed: "c" }]);
+    await createBrainSearchIndex({ db: h.db, meaning: null, now }).refresh(SCOPE, {}, signal());
+    await h.sync([], ["a", "b", "c"]);
+    const abort = new AbortController();
+    const dropped: string[] = [];
+    const vectors: BrainSearchVectorStore = { nearest: async () => [], async replaceChunks(_, input) {
+      dropped.push(input.documentId);
+      abort.abort();
+    } };
+    const { provider } = meteredProvider(() => ({ tokens: 0, costMicroUsd: 0 }));
+    const index = createBrainSearchIndex({ db: h.db, meaning: { provider, vectors }, now });
+    expect(await index.refresh(SCOPE, {}, abort.signal)).toMatchObject({ removed: 1, caughtUp: false });
+    expect(dropped).toHaveLength(1);
+    expect(await h.count("brain_search_documents")).toBe(2);
+    expect(await index.refresh(SCOPE, {}, signal())).toMatchObject({ removed: 2, caughtUp: true });
+    expect(dropped).toHaveLength(3);
+  });
+
+  it("reads failed reference links in bounded time and defined ones as links", () => {
+    const text = `${"[".repeat(32_000)}x${"][]".repeat(32_000)}`;
+    const started = performance.now();
+    expect(brainPlainText(text).text).toBe(text);
+    expect(brainPlainText(`${text}\n\n[y]: https://example.com`).text).toBe(text);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(brainPlainText("See [the docs][d] and [d][].\n\n[d]: https://example.com").text).toBe("See the docs and d.");
   });
 });

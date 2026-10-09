@@ -54,7 +54,7 @@ weights and seams are `contracts/search.ts`; this spec adds the rest.
   pgvector chunks go even with no provider, and a tombstoned document is found by a row in any of those tables. Text
   pass: outdated rows in id order, 25 documents per transaction, text vectors computed by Postgres in the statement
   that records the revision. Embedding pass (meaning search on): see Embeddings. Defaults 500 documents and 20 s
-  (ceilings 5,000 and 120 s), signal and budget checked before each batch and each provider call.
+  (ceilings 5,000 and 120 s), signal and budget checked before each orphan, batch and provider call.
 - Hooks: `documents_changed` and `claims_changed` refresh the listed ids (at most 500, malformed ids ignored) or, with
   null ids, the whole scope (bounded); `scope_erased` deletes any leftover rows of the scope.
 
