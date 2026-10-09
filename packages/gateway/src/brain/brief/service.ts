@@ -14,14 +14,15 @@ import {
 import type { BrainScopeKey } from "../types.js";
 import { computeConflicts } from "./conflicts.js";
 import {
-  citesDeleted, deleteStoredBriefs, purgeDeletedBriefs, readStoredBrief, writeStoredBrief, type BrainStoredBrief,
+  citesDeleted, deleteStoredBriefs, purgeDeletedBriefs, readStoredBrief, unfinishedDays, writeStoredBrief,
+  type BrainStoredBrief,
 } from "./database.js";
 import { pageOf, queryFingerprint } from "./paging.js";
 import { buildSections } from "./sections.js";
 import { computeStale, staleView } from "./stale.js";
 import { summarizeBrief } from "./summary.js";
 import { DAY_MS, briefWindow, iso, utcDate } from "./time.js";
-import { BRIEF_REBUILD_AFTER_MS } from "./types.js";
+import { BRIEF_FINISH_DAYS, BRIEF_REBUILD_AFTER_MS } from "./types.js";
 
 const listOf = <T extends string>(values: readonly [T, ...T[]]) =>
   z.array(z.enum(values)).min(1).max(BRAIN_QUERY_LIST_MAX_ITEMS).optional();
@@ -124,18 +125,20 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
 
   /**
    * Per scope: drops stored briefs citing deleted documents, skips a project scope whose project is gone, then builds
-   * today's day brief (skipped when a fresh copy is stored) and a final rebuild of yesterday's copy.
+   * today's day brief (skipped when a fresh copy is stored) and a final rebuild of each stored day copy of the last
+   * BRIEF_FINISH_DAYS built before its day ended, so a failed one is retried next pass.
    */
   const runner: BrainBriefRunner = async ({ ownerId, now, scopes, signal }) => {
     const deadline = performance.now() + BRAIN_BRIEF_SCHEDULE.passBudgetMs;
+    const stopped = () => signal.aborted || performance.now() > deadline;
     const list = await scopes.listActiveScopes(ownerId, BRAIN_SCHEDULED_SCOPES_MAX);
     const today = utcDate(now);
-    const yesterday = utcDate(new Date(now.getTime() - DAY_MS));
+    const since = utcDate(new Date(now.getTime() - BRIEF_FINISH_DAYS * DAY_MS));
     let built = 0;
     let failed = 0;
     let skipped = 0;
     for (const scope of list.slice(0, BRAIN_SCHEDULED_SCOPES_MAX)) {
-      if (signal.aborted || performance.now() > deadline) {
+      if (stopped()) {
         skipped += 1;
         continue;
       }
@@ -146,14 +149,18 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
           continue;
         }
         const current = await readStoredBrief(db, scope, today, "day");
-        const previous = await readStoredBrief(db, scope, yesterday, "day");
         const todo = [
           ...(current === null || needsRebuild(current, now) ? [today] : []),
-          ...(previous !== null && needsRebuild(previous, now) ? [yesterday] : []),
+          ...await unfinishedDays(db, scope, since, today),
         ];
-        // The same cap as requests: a pass never adds a third build while two are running.
-        for (const date of todo) await capped(() => build(scope, date, "day", now, null));
-        if (todo.length > 0) built += 1;
+        let done = 0;
+        // The same cap as requests (never a third build while two run); a stop or the deadline ends it before a build.
+        for (const date of todo) {
+          if (stopped()) break;
+          await capped(() => build(scope, date, "day", now, null));
+          done += 1;
+        }
+        if (done > 0) built += 1;
         else skipped += 1;
       } catch (error: unknown) {
         failed += 1;

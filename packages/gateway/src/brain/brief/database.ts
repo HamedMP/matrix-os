@@ -11,7 +11,7 @@ import {
   type BrainBriefView, type BrainBriefWindow,
 } from "../contracts.js";
 import type { BrainDatabase, BrainScopeKey } from "../types.js";
-import type { BrainBriefTables } from "./types.js";
+import { BRIEF_FINISH_DAYS, type BrainBriefTables } from "./types.js";
 
 type BriefDatabase = BrainDatabase & BrainBriefTables;
 export type BrainStoredBrief = Omit<BrainBriefView, "stored">;
@@ -79,6 +79,17 @@ export async function readStoredBrief(
   const parsed = StoredBriefSchema.safeParse(row.body);
   if (!parsed.success) console.error("[brain-brief] Stored brief unreadable:", parsed.error.name);
   return parsed.success ? parsed.data : null;
+}
+
+/** Dates in [since, today) of stored day briefs built before their day ended, newest first. */
+export async function unfinishedDays(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, since: string, today: string,
+): Promise<string[]> {
+  const { rows } = await sql<{ brief_date: string }>`
+    SELECT brief_date FROM brain_brief_briefs WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}
+      AND brief_window = 'day' AND brief_date >= ${since} AND brief_date < ${today}
+      AND generated_at < (body->>'to')::timestamptz ORDER BY brief_date DESC LIMIT ${BRIEF_FINISH_DAYS}`.execute(db);
+  return rows.map((row) => row.brief_date);
 }
 
 async function withScopeLock<T>(

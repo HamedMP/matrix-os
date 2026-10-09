@@ -81,10 +81,12 @@ describe("brief", () => {
     expect([past.sections.commitments, past.sections.attention]).toEqual([[], []]);
     expect((await brief()).sections.commitments).toHaveLength(2);
     const notes = await fx.source("matrix_notes", "Notes");
-    await fx.sync(notes, [{ seed: "n1", at: "2026-10-01T09:00:00.000Z" }]);
-    await fx.sync(notes, [{ seed: "n1", body: "Edited.", at: "2026-10-01T09:30:00.000Z" }]);
+    await fx.sync(notes, [{ seed: "n1", at: "2026-10-01T09:00:00.000Z" }, { seed: "n0", at: "2026-09-29T09:00:00.000Z" }]);
+    await fx.sync(notes, [{ seed: "n1", body: "Edited.", at: "2026-10-01T09:30:00.000Z" }, { seed: "n0", body: "Edited.", at: "2026-09-29T09:30:00.000Z" }]);
     const day = await fx.feature.service.generateBrief(BRIEF_OWNER, "proj_a", {});
     expect(day.sections.changes.find((group) => group.label === "Notes")).toMatchObject({ created: 1, revised: 0 });
+    const old = await fx.feature.service.generateBrief(BRIEF_OWNER, "proj_a", { date: "2026-09-29" });
+    expect(old.sections.changes.find((group) => group.label === "Notes")).toMatchObject({ created: 0, revised: 1 });
   });
 
   it("lists conflicts detected in the window first, then rotates the rest by day so each one shows", () => {
@@ -341,7 +343,7 @@ describe("stored briefs", () => {
 });
 
 describe("runner", () => {
-  it("builds today's brief per scope, completes yesterday's copy and counts skips and failures", async () => {
+  it("builds today's brief per scope, completes past unfinished copies and counts skips and failures", async () => {
     const other = { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_b" };
     const broken = { ownerId: "o".repeat(300), scopeId: "s" };
     const throwing = { ownerId: "o", get scopeId(): string { throw "boom"; } };
@@ -349,19 +351,28 @@ describe("runner", () => {
     const scopes = { listActiveScopes: vi.fn(async () => [BRIEF_SCOPE, other, broken, throwing, gone]) };
     const signal = new AbortController().signal;
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await writeStoredBrief(fx.harness.db, other, { ...(await brief()), date: "2026-09-30",
-      generatedAt: "2026-09-30T06:00:00.000Z", from: "2026-09-30T00:00:00.000Z", to: "2026-10-01T00:00:00.000Z" });
+    await writeStoredBrief(fx.harness.db, other, { ...(await brief()), date: "2026-09-29",
+      generatedAt: "2026-09-29T06:00:00.000Z", from: "2026-09-29T00:00:00.000Z", to: "2026-09-30T00:00:00.000Z" });
     const run = (now = fx.harness.now()) => fx.feature.runner({ ownerId: BRIEF_OWNER, now, scopes, signal });
     expect(await run()).toEqual({ scopes: 5, built: 1, failed: 2, skipped: 2 });
     expect(await readStoredBrief(fx.harness.db, gone, "2026-10-01", "day")).toBeNull();
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "error");
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "UnknownError");
-    expect((await readStoredBrief(fx.harness.db, other, "2026-09-30", "day"))!.generatedAt).toBe("2026-10-01T10:00:00.000Z");
+    expect((await readStoredBrief(fx.harness.db, other, "2026-09-29", "day"))!.generatedAt).toBe("2026-10-01T10:00:00.000Z");
     expect((await readStoredBrief(fx.harness.db, other, "2026-10-01", "day"))).not.toBeNull();
     expect(await run()).toEqual({ scopes: 5, built: 0, failed: 2, skipped: 3 });
     const aborted = AbortSignal.abort();
     expect(await fx.feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: aborted }))
       .toEqual({ scopes: 5, built: 0, failed: 0, skipped: 5 });
+  });
+
+  it("starts no build once the pass is stopped inside a scope", async () => {
+    const stop = new AbortController();
+    const resolve: typeof fx.resolver.resolve = async (...args) => { stop.abort(); return fx.resolver.resolve(...args); };
+    const feature = createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
+    const scopes = { listActiveScopes: async () => [BRIEF_SCOPE] };
+    expect(await feature.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes, signal: stop.signal }))
+      .toEqual({ scopes: 1, built: 0, failed: 0, skipped: 1 });
   });
 
   it("counts a scope as failed and builds nothing when its project lookup is down", async () => {
