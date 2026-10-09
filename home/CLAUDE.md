@@ -142,7 +142,10 @@ const gmail = services.find(s => s.service === "gmail" && s.status === "active")
 const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
 ```
 
-Services: gmail, google_calendar, google_drive, github, slack, discord. User connects in Settings > Integrations.
+Services: gmail, google_calendar, google_drive, github, slack, discord, discord_bot.
+Discord (`discord`) lists servers and sends through Pipedream's official Bot action.
+Direct channel/history REST reads use the separate existing bot credential
+(`discord_bot`). User connects in Settings > Integrations.
 
 For simple per-app state without declared `storage`, use the bridge KV helpers (NOT `localStorage`,
 which can be blocked in the sandbox):

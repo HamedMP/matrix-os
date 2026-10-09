@@ -1,3 +1,5 @@
+import { INTEGRATION_ACTION_FAILURES } from "@matrix-os/contracts/integration-marketplace";
+import { DiscordBotRequiredError } from "./registry-discord.js";
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
@@ -62,6 +64,10 @@ export async function integrationActionSuccess(c: Context, input: {
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
 export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+  if (err instanceof DiscordBotRequiredError) {
+    return c.json({ error: INTEGRATION_ACTION_FAILURES.discord_bot_required.message,
+      code: "discord_bot_required", required_service: "discord_bot" }, 403);
+  }
   if (err instanceof DriveContentError) {
     const messages = {
       unsupported_file_type: "This file type cannot be read as text. Choose a text file or a supported document export.",
@@ -80,6 +86,11 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     return c.json({ error: "Action not available" }, 501);
   }
   const upstreamStatus = getErrorStatusCode(err);
+  if (upstreamStatus === 401 || upstreamStatus === 403) {
+    const code = upstreamStatus === 401 ? "integration_authorization_required"
+      : service === "discord_bot" ? "discord_access_denied" : "integration_access_denied";
+    return c.json({ error: INTEGRATION_ACTION_FAILURES[code].message, code }, upstreamStatus);
+  }
   if (upstreamStatus === 429) {
     const retryAfter = getRetryAfterSeconds(err);
     return c.json(

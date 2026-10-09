@@ -228,6 +228,7 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "slack/send_message",
   "slack/react",
   "discord/send_message",
+  "discord_bot/send_message",
   "google_docs/create_document",
   "google_docs/batch_update_document",
   "google_sheets/add_sheet",

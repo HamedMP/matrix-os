@@ -1,3 +1,4 @@
+import { assertDiscordCapability } from "./registry-discord.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -51,6 +52,12 @@ export function createIntegrationReadCallRoutes(options: {
     if (binding && (service !== "gmail" || label !== binding.accountLabel)) {
       return c.json({ error: "Action not permitted" }, 403);
     }
+    try {
+      assertDiscordCapability(service, action);
+    } catch (err: unknown) {
+      return integrationActionFailure(c, err, service, action);
+    }
+
     const def = getService(service);
     const actionDef = getAction(service, action);
     if (!def || !actionDef) return c.json({ error: "Unknown integration action" }, 400);

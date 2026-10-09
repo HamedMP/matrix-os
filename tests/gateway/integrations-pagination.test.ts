@@ -14,7 +14,11 @@ const cases: [string, string, Record<string, unknown>, Record<string, string>][]
   ["slack", "list_messages", { channel: "C123", cursor: "opaque" }, { channel: "C123", cursor: "opaque" }],
   ["slack", "search", { query: "meetings", page: 2, count: 50 }, { page: "2", count: "50" }],
   ["discord", "list_servers", { after: "18446744073709551615", limit: 50 }, { after: "18446744073709551615", limit: "50" }],
-  ["discord", "list_messages", { channelId: "123456789012345678", before: "18446744073709551615" }, { before: "18446744073709551615" }],
+  ["discord", "list_servers", { before: "18446744073709551615" }, { before: "18446744073709551615" }],
+  ["discord_bot", "list_servers", { before: "18446744073709551615", limit: 50 }, { before: "18446744073709551615", limit: "50" }],
+  ["discord_bot", "list_servers", { after: "18446744073709551615" }, { after: "18446744073709551615" }],
+  ["discord_bot", "list_messages", { channelId: "123456789012345678", before: "18446744073709551615" }, { before: "18446744073709551615" }],
+  ["discord_bot", "list_messages", { channelId: "123456789012345678", after: "18446744073709551615", limit: 50 }, { after: "18446744073709551615", limit: "50" }],
 ];
 
 describe("managed list pagination", () => {
@@ -49,7 +53,7 @@ describe("managed list pagination", () => {
     ["slack", "list_messages", { channel: "C123", limit: 0 }],
     ["slack", "search", { query: "a", count: 101 }],
     ["discord", "list_servers", { after: 123456789012345678 }],
-    ["discord", "list_messages", { channelId: "123456789012345678", before: "1", after: "2" }],
+    ["discord_bot", "list_messages", { channelId: "123456789012345678", before: "1", after: "2" }],
   ] as [string, string, Record<string, unknown>][])("rejects invalid %s/%s boundaries", (serviceId, actionId, params) => {
     expect(validateActionParams(getAction(serviceId, actionId)!, params).valid).toBe(false);
   });

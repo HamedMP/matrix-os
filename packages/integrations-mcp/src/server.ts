@@ -5,6 +5,7 @@ import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
 import {
   callServiceHandler,
+  createDiscordDiscoveryGuard,
   connectServiceHandler,
   describeServiceHandler,
   disconnectServiceHandler,
@@ -49,6 +50,7 @@ export function createIntegrationsMcpServer(
   const fetcher = options.fetcher;
   const surface = IntegrationsMcpToolSurfaceSchema.parse(options.toolSurface ?? "full");
   const full = surface === "full";
+  const callService = createDiscordDiscoveryGuard(input => callServiceHandler(input, fetcher));
   const server = new McpServer(
     { name: "matrix-integrations", version: "1.0.0" },
     {
@@ -123,7 +125,7 @@ export function createIntegrationsMcpServer(
         },
         annotations: { destructiveHint: true },
       },
-      async (input) => callServiceHandler(input, fetcher),
+      async (input) => callService(input),
     );
     server.registerTool(
       "disconnect_service",

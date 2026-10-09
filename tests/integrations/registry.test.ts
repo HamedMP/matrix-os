@@ -11,9 +11,9 @@ import {
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
 describe("Service Registry", () => {
-  it("has the 38-service managed catalog", () => {
-    expect(listServices()).toHaveLength(38);
-    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(38);
+  it("has the 39-service managed catalog including separate Discord Bot", () => {
+    expect(listServices()).toHaveLength(39);
+    expect(Object.keys(SERVICE_REGISTRY)).toHaveLength(39);
   });
 
   it("returns service by id", () => {

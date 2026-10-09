@@ -35,6 +35,7 @@ import {
 import {
   connectServiceHandler,
   callServiceHandler,
+  createDiscordDiscoveryGuard,
   describeServiceHandler,
   disconnectServiceHandler,
   listIntegrationInventoryHandler,
@@ -88,6 +89,7 @@ export async function createIpcServer(
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
     ? createTranscribeAudioToolHandler({ homePath, transcriber: ownerAudioTranscriber })
     : undefined;
+  const callService = createDiscordDiscoveryGuard(input => callServiceHandler(input));
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
@@ -1133,7 +1135,7 @@ export async function createIpcServer(
           label: z.string().optional().describe("Which account to use if multiple are connected (e.g. 'Work Gmail')"),
         },
         async ({ service, action, params, label }) => {
-          return callServiceHandler({ service, action, params, label });
+          return callService({ service, action, params, label });
         },
       ),
 

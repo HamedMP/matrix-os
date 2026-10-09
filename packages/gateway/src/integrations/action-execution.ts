@@ -1,3 +1,4 @@
+import { assertDiscordCapability, discordManagedSendProps, validateDiscordChannelDiscovery } from "./registry-discord.js";
 import type { ServiceAction, ServiceDefinition } from "./types.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import { validateActionParams } from "./parameter-validation.js";
@@ -33,12 +34,21 @@ export async function executeIntegrationAction(opts: {
 }): Promise<{ data: unknown; summary?: string }> {
   const { pipedream, externalUserId, connection, def, actionDef, serviceId, actionId, params } = opts;
 
+  assertDiscordCapability(serviceId, actionId);
+
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
   }
   const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
     accountId: connection.pipedream_account_id, serviceId, actionId, params });
   if (boundCatalog) return boundCatalog;
+  if (serviceId === "discord" && actionId === "send_message") {
+    // This reviewed component uses Pipedream's official Bot, not the account's
+    // user-bearer REST proxy. Never pass caller-controlled auth props or fall back.
+    const result = await pipedream.runAction({ externalUserId, componentKey: "discord-send-message",
+      configuredProps: { ...discordManagedSendProps(params), discord: { authProvisionId: connection.pipedream_account_id } } });
+    return { data: result.ret };
+  }
   if (serviceId === "google_drive" && actionId === "read_file") {
     if (!pipedream.readDriveFile) throw new DriveContentError();
     return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
@@ -86,16 +96,17 @@ export async function executeIntegrationAction(opts: {
     const accountId = connection.pipedream_account_id;
 
     switch (api.method) {
-      case "GET":
-        return {
-          data: await pipedream.proxyGet({
-            externalUserId,
-            accountId,
-            url,
-            params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
-            ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
-          }),
-        };
+      case "GET": {
+        const data = await pipedream.proxyGet({
+          externalUserId,
+          accountId,
+          url,
+          params: api.mapParams ? api.mapParams(params ?? {}) : undefined,
+          ...(api.staticHeaders ? { headers: { ...api.staticHeaders } } : {}),
+        });
+        if (serviceId === "discord_bot" && actionId === "list_channels") validateDiscordChannelDiscovery(data);
+        return { data };
+      }
       case "DELETE":
         return {
           data: await pipedream.proxyDelete({
