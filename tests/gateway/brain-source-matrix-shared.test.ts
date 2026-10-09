@@ -230,6 +230,31 @@ describe("matrix sources shared pieces", () => {
     expect(await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config)).toMatchObject({ caughtUp: true, deleted: 0 });
   });
 
+  it("shares one read budget across the roots of a page", async () => {
+    const { dirEntriesMax: max, dirReadsPerPage } = BRAIN_MATRIX_LIMITS;
+    // Two roots of 8 folders of max entries each: 80,000 entries, more than one page may read across both.
+    const hidden = Array.from({ length: max - 1 }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    const paths = ["a", "b"].flatMap((root) => Array.from({ length: 8 }, (_, index) => `${root}/d${index}/x.md`));
+    const listings = paths.map((path) => {
+      mkdirSync(join(home, path, ".."), { recursive: true });
+      writeFileSync(join(home, path), path);
+      const listing: FakeListing = { entries: [...hidden, { name: "x.md", kind: "file" }], read: 0 };
+      faults.listings.set(join(home, path, ".."), listing);
+      return listing;
+    });
+    const read = () => listings.reduce((sum, listing) => sum + listing.read, 0);
+    const adapter = createMatrixFilesAdapter(home);
+    const config = { roots: ["a", "b"], extensions: ["md"], maxFileBytes: 1_000 };
+    const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:x");
+    const first = await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config, { maxPages: 1 });
+    // The second root starts with what the first one left, not a fresh budget.
+    expect(first.written).toBeGreaterThan(8);
+    expect(first.written).toBeLessThan(paths.length);
+    expect(read()).toBeLessThanOrEqual(dirReadsPerPage + max);
+    expect(await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config)).toMatchObject({ caughtUp: true });
+    expect(await liveTitles(harness, sourceId)).toEqual(paths);
+  });
+
   it("stops a sweep page between the folder checks of a deep file and checks it again on the next page", async () => {
     const { dirEntriesMax: max, dirReadsPerPage, fileDepthMax } = BRAIN_MATRIX_LIMITS;
     // A whole page has room for the folder checks of one file, so the first file of a page always gets an answer.
