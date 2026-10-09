@@ -1,9 +1,9 @@
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import type { OnboardingWorkStep } from "@matrix-os/contracts";
 import {
-  Alert02Icon,
+  AlertCircleIcon,
   CheckmarkCircle02Icon,
-  File01Icon,
+  File02Icon,
   Loading03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
@@ -66,7 +66,7 @@ export function WorkLog({ steps }: { steps: readonly OnboardingWorkStep[] }) {
       {steps.map((step) => (
         <li key={step.id} className={`mxo-log__step mxo-log__step--${step.state}`}>
           <Icon
-            icon={step.state === "done" ? CheckmarkCircle02Icon : step.state === "failed" ? Alert02Icon : Loading03Icon}
+            icon={step.state === "done" ? CheckmarkCircle02Icon : step.state === "failed" ? AlertCircleIcon : Loading03Icon}
             size={14}
             className={step.state === "running" ? "mxo-spin" : undefined}
           />
@@ -80,7 +80,7 @@ export function WorkLog({ steps }: { steps: readonly OnboardingWorkStep[] }) {
 export function ResultCard({ title, subtitle, onOpen }: { title: string; subtitle?: string; onOpen(): void }) {
   return (
     <div className="mxo-card mxo-result">
-      <span className="mxo-tile mxo-tile--neutral"><Icon icon={File01Icon} size={16} /></span>
+      <span className="mxo-tile mxo-tile--neutral"><Icon icon={File02Icon} size={16} /></span>
       <span className="mxo-result__text">
         <span className="mxo-result__title">{title}</span>
         {subtitle ? <span className="mxo-muted">{subtitle}</span> : null}

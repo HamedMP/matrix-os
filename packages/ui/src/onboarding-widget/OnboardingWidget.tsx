@@ -1,26 +1,19 @@
 import {
   ONBOARDING_FREEFORM_MAX_CHARS,
   ONBOARDING_REPO_QUESTION,
-  deriveOnboardingBubble,
-  onboardingAiLabel,
+  onboardingRunInFlight,
   onboardingTask,
   parseOnboardingRepoUrl,
+  type OnboardingWidgetEvent,
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
-import {
-  ArrowExpand01Icon,
-  ArrowShrink02Icon,
-  ArrowUp02Icon,
-  MinusSignIcon,
-  MoreHorizontalIcon,
-  PinIcon,
-} from "@hugeicons/core-free-icons";
+import { ArrowUp02Icon } from "@hugeicons/core-free-icons";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { AiFlow, AiMenu } from "./ai-panel.js";
+import { AiMenu } from "./ai-panel.js";
 import { providerWaitingLabel } from "./helpers.js";
-import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
-import { AppsScreen, ConnectScreen, QuestionScreen, RepoScreen, RunScreen, TasksScreen } from "./screens.js";
+import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
+import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
 function headerStatus(state: OnboardingWidgetState): { tone: "working" | "attention"; label: string } | null {
   const connecting = providerWaitingLabel(state.ai);
@@ -39,19 +32,26 @@ function placeholderFor(state: OnboardingWidgetState): string {
   return "Or type what you need…";
 }
 
-function Toggle({ on }: { on: boolean }) {
-  return <span className={`mxo-toggle${on ? " mxo-toggle--on" : ""}`} aria-hidden><span /></span>;
+function composerEvent(state: OnboardingWidgetState, text: string): OnboardingWidgetEvent {
+  if (state.screen.kind === "repo") {
+    const repo = parseOnboardingRepoUrl(text);
+    if (repo) return { type: "answer.submitted", text: repo.name, context: repo.url };
+  }
+  return state.screen.kind === "question" ? { type: "answer.submitted", text } : { type: "freeform.submitted", text };
 }
 
 export function OnboardingWidget(props: OnboardingWidgetProps) {
   const { state, actions, prefs, runView, zIndex = 45 } = props;
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const bubbleRef = useRef<HTMLButtonElement>(null);
+  const focusBubbleRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [appQuery, setAppQuery] = useState("");
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
+  const runInFlight = onboardingRunInFlight(state);
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -75,12 +75,19 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [actions, isBubble, keepInCorner]);
 
+  useEffect(() => {
+    if (!isBubble || !focusBubbleRef.current) return;
+    focusBubbleRef.current = false;
+    bubbleRef.current?.focus();
+  }, [isBubble]);
+
   const open = () => {
     actions.dispatch({ type: "size.changed", size: "corner" });
     requestAnimationFrame(() => inputRef.current?.focus());
   };
   const minimize = () => {
     setMoreOpen(false);
+    focusBubbleRef.current = true;
     actions.dispatch({ type: "size.changed", size: "bubble" });
   };
 
@@ -92,128 +99,52 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     else minimize();
   };
 
+  const isApps = state.screen.kind === "apps";
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const text = draft.trim().slice(0, ONBOARDING_FREEFORM_MAX_CHARS);
-    if (!text || state.screen.kind === "apps") return;
+    if (!text || isApps || runInFlight) return;
     setDraft("");
-    if (state.screen.kind === "repo") {
-      const repo = parseOnboardingRepoUrl(text);
-      if (repo) {
-        actions.dispatch({ type: "answer.submitted", text: repo.name, context: repo.url });
-        return;
-      }
-    }
-    actions.dispatch(state.screen.kind === "question" ? { type: "answer.submitted", text } : { type: "freeform.submitted", text });
+    actions.dispatch(composerEvent(state, text));
   };
 
   const sideClass = prefs.side === "left" ? " mxo-root--left" : "";
 
   if (isBubble) {
-    const bubble = deriveOnboardingBubble(state, runView);
     return (
       <div className={`mxo-root${sideClass}`} style={{ zIndex }}>
-        <button type="button" className="mxo-bubble" onClick={open} aria-label={`Open Matrix. ${bubble.title}. ${bubble.subtitle}`}>
-          <RabbitAvatar size={32} />
-          <span className="mxo-bubble__text">
-            <span className="mxo-bubble__title">
-              {bubble.tone === "working" ? <StatusDot tone="working" /> : bubble.tone === "attention" ? <StatusDot tone="attention" /> : null}
-              {bubble.title}
-            </span>
-            <span className="mxo-bubble__subtitle">{bubble.subtitle}</span>
-          </span>
-          {bubble.count > 0 ? <span className="mxo-badge" aria-label={`${bubble.count} new`}>{bubble.count}</span> : null}
-        </button>
+        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} onOpen={open} />
       </div>
     );
   }
 
-  const status = headerStatus(state);
-  const aiFlow = state.ai && state.ai.step !== "menu" ? state.ai : null;
-  const screen = state.screen;
+  const choosingAi = state.ai !== null;
+  const compact = (state.screen.kind === "tasks" || isApps) && (!choosingAi || state.ai?.step === "menu");
+  const showModelLine = state.screen.kind === "tasks" || choosingAi;
 
   return (
     <div ref={rootRef} className={`mxo-root${sideClass}`} style={{ zIndex }} onKeyDown={onKeyDown}>
-      <section className="mxo-card mxo-widget" aria-label="Matrix">
-        <header className="mxo-header">
-          <RabbitAvatar size={30} />
-          <span className="mxo-header__text">
-            <span className="mxo-header__name">Matrix</span>
-            {status ? <span className="mxo-header__status"><StatusDot tone={status.tone} />{status.label}</span> : null}
-          </span>
-          <span className="mxo-header__actions">
-            <button type="button" className="mxo-icon-btn" aria-label="More" aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen((value) => !value)}>
-              <Icon icon={MoreHorizontalIcon} size={16} />
-            </button>
-            {keepInCorner ? <span className="mxo-icon-btn mxo-icon-btn--active" title="Kept in the corner"><Icon icon={PinIcon} size={14} /></span> : null}
-            <button type="button" className="mxo-icon-btn" aria-label="Minimize" onClick={minimize}>
-              <Icon icon={MinusSignIcon} size={16} />
-            </button>
-            <button type="button" className="mxo-icon-btn" aria-label="Open as full chat" onClick={actions.openFullChat}>
-              <Icon icon={ArrowExpand01Icon} size={14} />
-            </button>
-          </span>
-          {moreOpen ? (
-            <div className="mxo-popover mxo-more" role="menu" aria-label="Matrix options">
-              <button type="button" role="menuitemcheckbox" aria-checked={keepInCorner} className="mxo-menu__row mxo-menu__row--compact"
-                onClick={() => actions.changePrefs({ ...prefs, keepInCorner: !keepInCorner })}>
-                <Icon icon={PinIcon} size={14} /><span>Keep in the corner</span><Toggle on={keepInCorner} />
-              </button>
-              <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={() => { setMoreOpen(false); actions.openFullChat(); }}>
-                <Icon icon={ArrowExpand01Icon} size={14} /><span>Open as full chat</span><kbd>⌘⇧K</kbd>
-              </button>
-              <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={minimize}>
-                <Icon icon={ArrowShrink02Icon} size={14} /><span>Shrink to a bubble</span>
-              </button>
-              <div className="mxo-menu__sep" />
-              <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact"
-                onClick={() => { setMoreOpen(false); actions.changePrefs({ ...prefs, side: prefs.side === "left" ? "right" : "left" }); }}>
-                <span>{prefs.side === "left" ? "Move to the right corner" : "Move to the left corner"}</span>
-              </button>
-              <button type="button" role="menuitemcheckbox" aria-checked={prefs.showOnLogin} className="mxo-menu__row mxo-menu__row--compact"
-                onClick={() => actions.changePrefs({ ...prefs, showOnLogin: !prefs.showOnLogin })}>
-                <span>Show on every login</span><Toggle on={prefs.showOnLogin} />
-              </button>
-            </div>
-          ) : null}
-        </header>
+      <section className={`mxo-card mxo-widget${compact ? "" : " mxo-widget--tall"}`} aria-label="Matrix">
+        <WidgetHeader status={headerStatus(state)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
 
-        <div className="mxo-body" aria-live="polite">
-          {state.echo ? <UserEcho text={state.echo} /> : null}
-          {state.notice ? <DoneLine text={state.notice} /> : null}
-          {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} /> : (
-            <>
-              {screen.kind === "tasks" ? <TasksScreen state={state} apps={props.apps} userName={props.userName} actions={actions} /> : null}
-              {screen.kind === "apps" ? <AppsScreen apps={props.apps} actions={actions} query={appQuery} onQuery={setAppQuery} /> : null}
-              {screen.kind === "question" ? <QuestionScreen taskId={screen.taskId} actions={actions} /> : null}
-              {screen.kind === "connect" ? <ConnectScreen taskId={screen.taskId} status={screen.status} apps={props.apps} actions={actions} /> : null}
-              {screen.kind === "repo" ? <RepoScreen repos={props.repos} actions={actions} /> : null}
-              {screen.kind === "run" ? <RunScreen run={screen} state={state} runView={runView} creditsExhausted={props.creditsExhausted} actions={actions} /> : null}
-              {screen.kind !== "tasks" && screen.kind !== "apps" && !(screen.kind === "run" && (screen.phase === "starting" || screen.phase === "running")) ? (
-                <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
-              ) : null}
-            </>
-          )}
-        </div>
+        <WidgetBody props={props} appQuery={appQuery} onAppQuery={setAppQuery} runInFlight={runInFlight} />
 
         <footer className="mxo-footer">
           {state.ai?.step === "menu" ? <AiMenu choice={state.aiChoice} connected={props.connectedProviders} actions={actions} /> : null}
           <form className="mxo-composer" onSubmit={submit}>
             <input
               ref={inputRef}
-              value={screen.kind === "apps" ? appQuery : draft}
-              onChange={(event) => (screen.kind === "apps" ? setAppQuery(event.target.value) : setDraft(event.target.value))}
+              value={isApps ? appQuery : draft}
+              onChange={(event) => (isApps ? setAppQuery(event.target.value) : setDraft(event.target.value))}
               placeholder={placeholderFor(state)}
               aria-label="Message Matrix"
               maxLength={ONBOARDING_FREEFORM_MAX_CHARS}
             />
-            <button type="submit" className="mxo-send" aria-label="Send" disabled={screen.kind === "apps" || !draft.trim()}>
+            <button type="submit" className="mxo-send" aria-label="Send" disabled={isApps || runInFlight || !draft.trim()}>
               <Icon icon={ArrowUp02Icon} size={14} />
             </button>
           </form>
-          <p className="mxo-model-line">
-            {onboardingAiLabel(state.aiChoice)} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
-          </p>
+          {showModelLine ? <ModelLine state={state} actions={actions} /> : null}
         </footer>
       </section>
     </div>

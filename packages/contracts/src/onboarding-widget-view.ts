@@ -109,7 +109,10 @@ export function deriveOnboardingBubble(state: OnboardingWidgetState, runView: On
     const title = onboardingRunTitle(screen);
     const workingLine = screen.title ?? onboardingWorkingLine(screen.taskId, screen.answer);
     if (screen.phase === "done") {
-      if (state.unread === 0) return { tone: "idle", title: IDLE_BUBBLE_TITLE, subtitle: title, count: 0 };
+      if (state.unread === 0) {
+        if (task && !state.followUpUsed) return { tone: "idle", title: IDLE_BUBBLE_TITLE, subtitle: `1 step left · ${task.nextStep}`, count: 1 };
+        return { tone: "idle", title: IDLE_BUBBLE_TITLE, subtitle: title, count: 0 };
+      }
       return { tone: "ready", title: task?.readyBubble ?? "Your result is ready", subtitle: title, count: state.unread };
     }
     if (screen.phase === "failed" || runView?.status === "failed") {

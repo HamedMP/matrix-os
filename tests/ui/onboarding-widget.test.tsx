@@ -130,6 +130,31 @@ describe("OnboardingWidget", () => {
     expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
   });
 
+  it("returns focus to the bubble after Escape so the keyboard can reopen it", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.keyDown(screen.getByPlaceholderText("Or type what you need…"), { key: "Escape" });
+    expect(screen.getByRole("button", { name: /Open Matrix/ })).toHaveFocus();
+  });
+
+  it("keeps typing open but holds the message while a task is still running", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} events={[{ type: "freeform.submitted", text: "Summarize today" }]} />);
+    const input = screen.getByPlaceholderText("Or type what you need…") as HTMLInputElement;
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "And tomorrow" } });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    fireEvent.submit(input.closest("form")!);
+    expect(actions.dispatch).not.toHaveBeenCalledWith({ type: "freeform.submitted", text: "And tomorrow" });
+    expect(input.value).toBe("And tomorrow");
+  });
+
+  it("shows which AI is in use on the task list and hides it mid-task", () => {
+    render(<Harness actions={makeActions()} />);
+    expect(screen.getByText(/Matrix AI ·/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Research anything/ }));
+    expect(screen.queryByText(/Matrix AI ·/)).not.toBeInTheDocument();
+  });
+
   it("walks Change AI to API key entry and clears the key after submit", () => {
     const actions = makeActions();
     render(<Harness actions={actions} />);

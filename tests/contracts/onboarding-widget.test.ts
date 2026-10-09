@@ -7,6 +7,7 @@ import {
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
   onboardingAiLabel,
+  onboardingRunInFlight,
   onboardingRunTitle,
   parseOnboardingRepoUrl,
   reduceOnboardingWidget,
@@ -129,6 +130,17 @@ describe("reduceOnboardingWidget", () => {
     const started = run(fresh(), { type: "freeform.submitted", text: "Summarize today" });
     const stale = run(started, { type: "run.admitted", requestId: 999, chatId: "chat_x", runId: "run_x" });
     expect(stale).toBe(started);
+  });
+
+  it("holds new messages while a run is admitting or running, because the chat accepts one turn at a time", () => {
+    const started = run(fresh(), { type: "freeform.submitted", text: "Summarize today" });
+    expect(onboardingRunInFlight(started)).toBe(true);
+    expect(run(started, { type: "freeform.submitted", text: "And tomorrow" })).toBe(started);
+    const running = run(started, { type: "run.admitted", requestId: 1, chatId: "c", runId: "r" });
+    expect(run(running, { type: "freeform.submitted", text: "And tomorrow" })).toBe(running);
+    const settled = run(running, { type: "run.settled", runId: "r", outcome: "completed" });
+    expect(onboardingRunInFlight(settled)).toBe(false);
+    expect(run(settled, { type: "freeform.submitted", text: "And tomorrow" }).screen).toMatchObject({ kind: "run", phase: "starting", answer: "And tomorrow" });
   });
 
   it("queues the task while the computer starts and resumes when ready", () => {
@@ -331,10 +343,20 @@ describe("deriveOnboardingBubble", () => {
   it("stops announcing a result the user already saw", () => {
     const working = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "AI agent pricing" });
     const requestId = working.screen.kind === "run" ? working.screen.requestId : -1;
-    const seen = run(working, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" }, { type: "size.changed", size: "bubble" });
+    const seen = run(working, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" }, { type: "followUp.dismissed" }, { type: "size.changed", size: "bubble" });
     expect(deriveOnboardingBubble(seen, { status: "completed", steps: [] })).toEqual({
       tone: "idle", title: "Pick up where we left off", subtitle: "AI agent pricing", count: 0,
     });
+  });
+
+  it("counts an unanswered follow-up as the one step left", () => {
+    const working = run(fresh(), { type: "task.selected", taskId: "plan-week", connectedServices: ["google_calendar"] });
+    const requestId = working.screen.kind === "run" ? working.screen.requestId : -1;
+    const seen = run(working, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" }, { type: "size.changed", size: "bubble" });
+    expect(deriveOnboardingBubble(seen, { status: "completed", steps: [] })).toEqual({
+      tone: "idle", title: "Pick up where we left off", subtitle: "1 step left · Schedule your weekly plan", count: 1,
+    });
+    for (const task of ONBOARDING_TASKS) expect(task.nextStep.length).toBeGreaterThan(0);
   });
 
   it("names typed tasks and follow-ups after what the user asked for", () => {

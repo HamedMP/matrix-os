@@ -30,6 +30,8 @@ export interface OnboardingTaskDefinition {
   readyBubble: string;
   failedStep: string;
   followUp: { question?: string; chips: readonly string[] };
+  /** Names the unanswered follow-up in the bubble ("1 step left · …"). */
+  nextStep: string;
 }
 
 export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
@@ -46,6 +48,7 @@ export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
     readyBubble: "Your brief is ready",
     failedStep: "Couldn't write the brief",
     followUp: { question: "Watch this topic weekly?", chips: ["Yes", "Not now"] },
+    nextStep: "Watch this topic weekly",
   },
   {
     id: "plan-week",
@@ -62,6 +65,7 @@ export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
     readyBubble: "Your week is ready",
     failedStep: "Couldn't draft your week",
     followUp: { question: "Do this every Monday?", chips: ["Yes", "Not now"] },
+    nextStep: "Schedule your weekly plan",
   },
   {
     id: "build-website",
@@ -76,6 +80,7 @@ export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
     readyBubble: "Your site is live",
     failedStep: "Couldn't publish it",
     followUp: { chips: ["Change colors", "Add a page"] },
+    nextStep: "Make your site yours",
   },
   {
     id: "work-on-code",
@@ -92,6 +97,7 @@ export const ONBOARDING_TASKS: readonly OnboardingTaskDefinition[] = [
     readyBubble: "Your repo is ready",
     failedStep: "Couldn't open the repo",
     followUp: { chips: ["Explain this repo", "Fix a bug", "Add a feature"] },
+    nextStep: "Pick what to work on",
   },
 ];
 

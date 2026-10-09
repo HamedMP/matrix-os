@@ -154,6 +154,11 @@ export function onboardingRunTitle(run: Pick<OnboardingRunScreen, "taskId" | "an
   return run.title ?? onboardingResultTitle(run.taskId, run.answer);
 }
 
+/** The shared chat admits one turn at a time; a second admission while this is true is rejected as busy. */
+export function onboardingRunInFlight(state: OnboardingWidgetState): boolean {
+  return state.screen.kind === "run" && (state.screen.phase === "starting" || state.screen.phase === "running");
+}
+
 function withRun(state: OnboardingWidgetState, patch: Partial<OnboardingRunScreen>): OnboardingWidgetState {
   if (state.screen.kind !== "run") return state;
   return { ...state, screen: { ...state.screen, ...patch } };
@@ -185,7 +190,7 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     }
     case "freeform.submitted": {
       const answer = boundedText(event.text);
-      if (!answer) return state;
+      if (!answer || onboardingRunInFlight(state)) return state;
       return startRun(state, { taskId: "custom", answer, appConnected: false, simpler: false }, { echo: answer, notice: null });
     }
     case "connect.started":

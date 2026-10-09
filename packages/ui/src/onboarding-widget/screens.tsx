@@ -10,11 +10,12 @@ import {
   type OnboardingRunScreen,
   type OnboardingTaskDefinition,
   type OnboardingWidgetState,
+  type OnboardingWorkStep,
 } from "@matrix-os/contracts";
 import {
   Alert02Icon,
   Calendar03Icon,
-  Folder01Icon,
+  FolderOpenIcon,
   GithubIcon,
   Globe02Icon,
   Search01Icon,
@@ -178,9 +179,11 @@ export function RepoScreen({ repos, actions }: Pick<OnboardingWidgetProps, "repo
               className="mxo-task"
               onClick={() => actions.dispatch({ type: "answer.submitted", text: repo.name, context: repo.url })}
             >
-              <span className="mxo-tile mxo-tile--neutral"><Icon icon={Folder01Icon} size={16} /></span>
-              <span className="mxo-task__label">{repo.name}</span>
-              {repo.updatedLabel ? <span className="mxo-muted">{repo.updatedLabel}</span> : null}
+              <span className="mxo-tile mxo-tile--neutral"><Icon icon={FolderOpenIcon} size={16} /></span>
+              <span className="mxo-result__text">
+                <span className="mxo-result__title">{repo.name}</span>
+                {repo.updatedLabel ? <span className="mxo-muted">{repo.updatedLabel}</span> : null}
+              </span>
             </button>
           ))}
         </div>
@@ -191,40 +194,86 @@ export function RepoScreen({ repos, actions }: Pick<OnboardingWidgetProps, "repo
 
 const CODE_AGENT_LABELS: Record<OnboardingAiChoice, string> = { matrix: "Matrix AI", claude: "Claude Code", codex: "Codex" };
 
-export function RunScreen({ run, state, runView, creditsExhausted, actions }: { run: OnboardingRunScreen; state: OnboardingWidgetState } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "actions">) {
-  const task = onboardingTask(run.taskId);
-  if (run.phase === "waiting_computer") {
-    return (
-      <>
-        <p className="mxo-text">Got it. I'll start once your computer is ready.</p>
-        <div className="mxo-card mxo-starting">
-          <span className="mxo-starting__row">
-            <span className="mxo-result__title">Starting your computer</span>
-            <span className="mxo-muted">~1 min</span>
-          </span>
-          <span className="mxo-progress" aria-hidden><span /></span>
-        </div>
-      </>
-    );
-  }
+type RunActions = OnboardingWidgetProps["actions"];
+
+function WaitingForComputer() {
+  return (
+    <>
+      <p className="mxo-text">Got it. I'll start once your computer is ready.</p>
+      <div className="mxo-card mxo-starting">
+        <span className="mxo-starting__row">
+          <span className="mxo-result__title">Starting your computer</span>
+          <span className="mxo-muted">~1 min</span>
+        </span>
+        <span className="mxo-progress" aria-hidden><span /></span>
+      </div>
+    </>
+  );
+}
+
+function RunFailed({ steps, failedStep, actions }: { steps: readonly OnboardingWorkStep[]; failedStep: string; actions: RunActions }) {
+  return (
+    <>
+      <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-failed", label: failedStep, state: "failed" }]} />
+      <p className="mxo-text">I couldn't finish this one.</p>
+      <div className="mxo-chips">
+        <button type="button" className="mxo-chip" onClick={() => actions.dispatch({ type: "run.retried", simpler: false })}>Try again</button>
+        <button type="button" className="mxo-chip" onClick={() => actions.dispatch({ type: "run.retried", simpler: true })}>Try a simpler version</button>
+      </div>
+    </>
+  );
+}
+
+function CreditsOffer({ actions }: { actions: RunActions }) {
+  return (
+    <>
+      <p className="mxo-text">You've used your free credits.</p>
+      <div className="mxo-stack">
+        <button type="button" className="mxo-btn mxo-btn--dark mxo-btn--block" onClick={actions.addCredits}>Add credits</button>
+        <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
+      </div>
+    </>
+  );
+}
+
+function FollowUpOffer({ run, followUp, aiChoice, actions }: {
+  run: OnboardingRunScreen;
+  followUp: OnboardingTaskDefinition["followUp"];
+  aiChoice: OnboardingAiChoice;
+  actions: RunActions;
+}) {
+  return (
+    <>
+      {followUp.question ? <p className="mxo-text">{followUp.question}</p> : null}
+      <Chips
+        chips={followUp.chips}
+        onPick={(choice) => actions.dispatch({ type: "followUp.chosen", choice, prompt: onboardingFollowUpPrompt(run.taskId, choice, run.answer) })}
+      />
+      {run.taskId === "work-on-code" ? (
+        <p className="mxo-model-line">
+          Using {CODE_AGENT_LABELS[aiChoice]} · <button type="button" className="mxo-inline-link" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+type RunScreenProps = { run: OnboardingRunScreen; state: OnboardingWidgetState } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "actions">;
+
+export function RunScreen(props: RunScreenProps) {
+  const { run, runView, actions } = props;
   const steps = runView?.steps ?? [];
-  if (run.phase === "failed") {
-    return (
-      <>
-        <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-failed", label: task?.failedStep ?? "Couldn't finish this", state: "failed" }]} />
-        <p className="mxo-text">I couldn't finish this one.</p>
-        <ButtonRow>
-          <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => actions.dispatch({ type: "run.retried", simpler: false })}>Try again</button>
-          <button type="button" className="mxo-btn mxo-btn--outline" onClick={() => actions.dispatch({ type: "run.retried", simpler: true })}>Try a simpler version</button>
-        </ButtonRow>
-      </>
-    );
-  }
-  if (run.phase !== "done") {
-    const label = run.taskId === "custom" ? "Working on it" : onboardingWorkingLine(run.taskId, run.answer);
-    return <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-working", label, state: "running" }]} />;
-  }
-  const followUp = task?.followUp;
+  if (run.phase === "waiting_computer") return <WaitingForComputer />;
+  if (run.phase === "failed") return <RunFailed steps={steps} failedStep={onboardingTask(run.taskId)?.failedStep ?? "Couldn't finish this"} actions={actions} />;
+  if (run.phase === "done") return <RunDone {...props} />;
+  const label = run.taskId === "custom" ? "Working on it" : onboardingWorkingLine(run.taskId, run.answer);
+  return <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-working", label, state: "running" }]} />;
+}
+
+function RunDone({ run, state, runView, creditsExhausted, actions }: RunScreenProps) {
+  const task = onboardingTask(run.taskId);
+  const steps = runView?.steps ?? [];
+  const followUp = task && !state.followUpUsed && !creditsExhausted ? task.followUp : null;
   return (
     <>
       <WorkLog steps={steps} />
@@ -232,28 +281,8 @@ export function RunScreen({ run, state, runView, creditsExhausted, actions }: { 
       {run.taskId !== "work-on-code" ? (
         <ResultCard title={onboardingRunTitle(run)} subtitle={task ? runView?.resultSummary : undefined} onOpen={actions.openResult} />
       ) : null}
-      {creditsExhausted ? (
-        <>
-          <p className="mxo-text">You've used your free credits.</p>
-          <div className="mxo-stack">
-            <button type="button" className="mxo-btn mxo-btn--dark mxo-btn--block" onClick={actions.addCredits}>Add credits</button>
-            <button type="button" className="mxo-btn mxo-btn--outline mxo-btn--block" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Use my Claude or ChatGPT</button>
-          </div>
-        </>
-      ) : followUp && !state.followUpUsed ? (
-        <>
-          {followUp.question ? <p className="mxo-text">{followUp.question}</p> : null}
-          <Chips
-            chips={followUp.chips}
-            onPick={(choice) => actions.dispatch({ type: "followUp.chosen", choice, prompt: onboardingFollowUpPrompt(run.taskId, choice, run.answer) })}
-          />
-          {run.taskId === "work-on-code" ? (
-            <p className="mxo-model-line">
-              Using {CODE_AGENT_LABELS[state.aiChoice]} · <button type="button" className="mxo-inline-link" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
-            </p>
-          ) : null}
-        </>
-      ) : null}
+      {creditsExhausted ? <CreditsOffer actions={actions} /> : null}
+      {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={state.aiChoice} actions={actions} /> : null}
     </>
   );
 }
