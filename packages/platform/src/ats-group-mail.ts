@@ -22,9 +22,9 @@ export async function normalizeGroupMail(raw: Uint8Array, receivedAt: string, ar
   const attachments = declaredAttachments.filter((file) => file.base64.length > 0);
   // Preserve the actual HTML too: text extraction never substitutes a link for the body.
   if (mail.html) attachments.push({filename:'original-message.html',contentType:'text/html',base64:Buffer.from(mail.html).toString('base64')});
-  // An empty MIME part cannot be uploaded as a CV. Keep its exact source and
-  // make the absence visible instead of blocking the whole Group delivery.
-  if (emptyAttachments.length) attachments.push({filename:'original-message.eml',contentType:'message/rfc822',base64:Buffer.from(raw).toString('base64')});
+  // Empty MIME parts have no file bytes to retain. Report them in the body;
+  // copying the entire source here would duplicate valid files and exceed
+  // their allowance. The original stays available at the Group source URL.
   const originalBody = mail.text ?? (mail.html ? htmlMailText(mail.html) : '');
   const body = originalBody + emptyAttachments.map((file) => `\n\nAttachment unavailable: ${(file.filename || 'attachment').slice(0, 180)} (the original email contains no file bytes).`).join('');
   const parentId = mail.references?.match(/<[^>]+>/)?.[0] || mail.inReplyTo;
