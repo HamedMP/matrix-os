@@ -1346,8 +1346,8 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const { processManager, customMcp, browserLab } = registerDeferredRuntimeRoutes({
-    app, homePath, integrationRoutes, internalIntegrationBaseUrl,
+  const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
     ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
