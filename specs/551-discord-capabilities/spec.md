@@ -40,8 +40,9 @@ text. Send Messages is additionally required for `send_message`. Verify Settings
 shows separate Discord/Discord Bot entries, connect through the existing
 provider-hosted credential flow, then perform the original server → channel →
 summary request on an explicitly approved channel. Record the exact runtime and
-release. Do not reconnect Liz, create a new account, read real messages or deploy
-under the local implementation authorization.
+release. Real read-only acceptance is authorized only on the requester's confirmed Main
+Computer using its existing connections and an approved channel. Do not reconnect
+Liz, create a bot/account, widen permissions or alter global production routing.
 
 ## Invariants
 
@@ -73,8 +74,9 @@ evicts successful retries and is discarded with its owner-agent instance.
 The repository constitution requires a companion public-docs PR in
 `FinnaAI/matrix-os-site/content/docs/`. Prepare a Discord OAuth versus Discord Bot
 capability/setup explanation for that existing integrations guide after this
-implementation is approved for publication. This local task authorizes neither
-site edits nor creating that PR, so this follow-up remains a release deliverable.
+implementation is approved for release. The current draft-PR authorization does
+not include a separate site-repository publication, so that follow-up remains a
+release deliverable.
 
 ## Primary references checked during implementation
 
