@@ -14,7 +14,6 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { createCanonicalChatClient } from "../../lib/canonical-chat-client";
 import { useConnection } from "../../stores/connection";
-import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import { createLegacyGlobalProviderCatalog } from "../chat/canonical-composer-adapter";
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
@@ -27,6 +26,7 @@ import {
   writeOnboardingPrefs,
   type OnboardingStoredPrefs,
 } from "./onboarding-widget-prefs";
+import { showOnboardingTab as showTab } from "./onboarding-widget-navigation";
 import {
   loadOnboardingRepos,
   onboardingApps,
@@ -111,7 +111,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   }, [prefs, prefsKey, state.aiChoice, state.chatId, state.firstTaskCompleted]);
 
   const openChat = useCallback(() => {
-    useTabs.getState().openTab(state.chatId
+    showTab(state.chatId
       ? { kind: "work", title: "Chat", workRoute: "chat", chatId: state.chatId, chatView: "conversation", closable: false }
       : { kind: "work", title: "Chat", workRoute: "chat", chatView: "draft", closable: false });
     dispatch({ type: "size.changed", size: "bubble" });
@@ -119,7 +119,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
 
   const openSettings = useCallback((section: string) => {
     requestSettingsSection(section);
-    useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+    showTab({ kind: "settings", title: "Settings" });
   }, [requestSettingsSection]);
 
   const actions = useMemo<OnboardingWidgetActions>(() => ({
@@ -127,7 +127,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
     connectApp: appConnect.connectApp,
     openResult: openChat,
     openFullChat: openChat,
-    openSettings: () => openSettings("providers"),
+    openSettings: () => openSettings("agents-providers"),
     addCredits: () => openSettings("billing"),
     startAiSignIn: ai.startSignIn,
     reopenAiSignIn: ai.reopenSignIn,
