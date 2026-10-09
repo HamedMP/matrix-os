@@ -51,10 +51,13 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
       await logged.sync("git", [FIXTURE.pr12, FIXTURE.commitB]);
       statements.length = 0;
       expect(await logged.refresh()).toMatchObject({ processed: 2, caughtUp: true });
-      // Each pending scan runs in an open transaction that began read only, under the read statement deadline.
-      const scans = statements.flatMap((statement, at) => statement.includes("LEFT JOIN brain_graph_state")
-        ? [statements.slice(Math.max(0, statements.lastIndexOf("BEGIN", at)), at)] : []);
-      expect(scans.length).toBeGreaterThan(1);
+      await logged.graph.service.timeline(OWNER, PROJECT, { entity: "file:src/alpha.ts" });
+      await logged.graph.service.updateAlias(OWNER, PROJECT, "person:email:alice@acme.dev",
+        { action: "merge", aliasKey: "person:name:bob jones" });
+      // Every pending scan (3 refresh, 1 timeline) and the alias answer's read run read only under the deadline.
+      const scans = statements.flatMap((statement, at) => /LEFT JOIN brain_graph_state|^select "alias_key"/
+        .test(statement) ? [statements.slice(Math.max(0, statements.lastIndexOf("BEGIN", at)), at)] : []);
+      expect(scans).toHaveLength(5);
       const read = ["BEGIN", "SET TRANSACTION READ ONLY", "SET LOCAL statement_timeout = '10000ms'"];
       for (const before of scans) expect(before).toEqual([...read, ...before.slice(3).filter((s) => s !== "COMMIT")]);
     } finally {
@@ -82,6 +85,21 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
     await harness.sync("linear", [], [id("issue")]);
     expect(await harness.refresh()).toMatchObject({ caughtUp: true });
     expect(await partOf()).toEqual([]);
+  });
+
+  it("re-derives a decision when a path it quotes gains or loses its path ref", async () => {
+    await harness.sync("git", [FIXTURE.spec]);
+    await harness.decide(id("spec"), "Keep alpha in src/alpha.ts");
+    const decided = async () => {
+      await harness.refresh();
+      return (await sql<{ n: number }>`SELECT count(*)::int AS n FROM brain_graph_links WHERE type = 'decided_in'
+        AND from_entity_id = ${brainEntityId("file", "src/alpha.ts")}`.execute(harness.db)).rows[0]!.n;
+    };
+    expect(await decided()).toBe(0);
+    await harness.sync("git", [FIXTURE.commitB]);
+    expect(await decided()).toBe(1);
+    await harness.sync("git", [{ ...FIXTURE.commitB, refs: [] }]);
+    expect(await decided()).toBe(0);
   });
 
   it("lists a merged alias of an entity whose fifty older split rows fill the alias limit", async () => {
