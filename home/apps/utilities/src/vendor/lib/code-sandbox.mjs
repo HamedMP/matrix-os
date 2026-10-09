@@ -1,15 +1,23 @@
 /** A disposable, opaque-origin iframe hosts each run; its worker has no site storage. */
+export function sandboxApiLockdownDiagnostic(cause) {
+  if (!(cause instanceof TypeError)) throw cause;
+  return "Sandbox isolation could not disable one browser API (type).";
+}
+
 const FRAME_DOCUMENT = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src 'none'; img-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'"></head><body><script>
 window.addEventListener('message', function (event) {
   if (event.source !== parent || !event.data || event.data.type !== 'run') return;
   const nonce = event.data.nonce;
   const workerSource = \`const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  const sandboxApiLockdownDiagnostic = ${sandboxApiLockdownDiagnostic.toString()};
+  const lockdownDiagnostics = [];
   const send = self.postMessage.bind(self);
   for (const name of ['postMessage', 'Worker', 'SharedWorker', 'importScripts', 'BroadcastChannel']) {
-    try { Object.defineProperty(self, name, { value: undefined, writable: false, configurable: false }); } catch {}
+    try { Object.defineProperty(self, name, { value: undefined, writable: false, configurable: false }); }
+    catch (error) { lockdownDiagnostics.push(sandboxApiLockdownDiagnostic(error)); }
   }
   self.onmessage = async function(event) {
-    const lines = [];
+    const lines = lockdownDiagnostics.slice();
     const format = (value) => {
       if (typeof value === 'string') return value;
       try { return JSON.stringify(value); } catch { return String(value); }

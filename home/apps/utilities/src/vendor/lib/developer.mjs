@@ -98,9 +98,10 @@ export async function developerTool(slug, input) {
     }
     case "regex-tester": return regexResult(input);
     case "text-diff": {
-      const parts = input.split(/^---$/m);
+      const parts = input.split(/^---\r?$/m);
       if (parts.length !== 2) throw new Error("Separate the two text blocks with --- on its own line.");
-      const left = parts[0].trim().split("\n"), right = parts[1].trim().split("\n");
+      // The separator consumes one adjacent line break on each side, not content whitespace.
+      const left = parts[0].replace(/\r?\n$/, "").split(/\r?\n/), right = parts[1].replace(/^\r?\n/, "").split(/\r?\n/);
       if (left.length > 200 || right.length > 200) throw new Error("Diff is limited to 200 lines per side.");
       const matrix = Array.from({ length: left.length + 1 }, () => new Uint16Array(right.length + 1));
       for (let i = left.length - 1; i >= 0; i--) for (let j = right.length - 1; j >= 0; j--) matrix[i][j] = left[i] === right[j] ? 1 + matrix[i + 1][j + 1] : Math.max(matrix[i + 1][j], matrix[i][j + 1]);

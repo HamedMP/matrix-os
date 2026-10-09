@@ -51,7 +51,9 @@ export function previewCron(input, now = new Date()) {
   const dayWildcard = day.startsWith("*"), weekdayWildcard = weekday.startsWith("*");
   const results = [];
   const startDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  for (let offset = 0; offset < 5 * 366 && results.length < 5; offset++) {
+  // A leap-day schedule can need 24 years to yield five runs around a skipped century.
+  // Scan days (rather than every minute) inside a fixed 28-year window.
+  for (let offset = 0; offset < 28 * 366 && results.length < 5; offset++) {
     const date = new Date(startDay + offset * 86_400_000);
     if (!months.has(date.getUTCMonth() + 1)) continue;
     const dayMatches = days.has(date.getUTCDate()), weekdayMatches = weekdays.has(date.getUTCDay());
@@ -65,7 +67,7 @@ export function previewCron(input, now = new Date()) {
       }
     }
   }
-  if (results.length < 5) throw new Error("No run found within five years in UTC. Check the expression.");
+  if (results.length < 5) throw new Error("No run found within 28 years in UTC. Check the expression.");
   return results;
 }
 
@@ -94,7 +96,7 @@ function cleanText(input) {
 function replaceLiteral(input) {
   const lines = input.split("\n");
   if (lines.length < 3 || !lines[0]) throw new Error("Enter search, replacement, and text on consecutive lines.");
-  return lines.slice(2).join("\n").replaceAll(lines[0], () => lines[1]);
+  return replaceText(lines.slice(2).join("\n"), lines[0], lines[1]);
 }
 
 async function formatHash(input, format) {

@@ -1,22 +1,34 @@
 import { decodeEntities, escapeHtml, validUrl } from "./shared.mjs";
+import { replaceText } from "./workspace-tools.mjs";
 
 const words = (input) => input.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu) ?? [];
 const sentences = (input) => input.split(/[.!?]+/).map((part) => part.trim()).filter(Boolean);
 
 function markdown(input) {
-  const inline = (value) => escapeHtml(value)
+  const emphasis = (value) => escapeHtml(value)
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
-      try { return `<a href="${escapeHtml(validUrl(decodeEntities(url)).href)}" rel="noopener noreferrer">${label}</a>`; }
-      catch { return label; }
-    });
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
+  // Parse protected spans first; generated HTML and URL destinations never pass through emphasis.
+  const inline = (value, links = true) => {
+    let output = "", offset = 0;
+    const spans = links ? /`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g : /`([^`]+)`/g;
+    for (const match of value.matchAll(spans)) {
+      output += emphasis(value.slice(offset, match.index));
+      if (match[1] !== undefined) output += `<code>${escapeHtml(match[1])}</code>`;
+      else {
+        const label = inline(match[2], false);
+        try { output += `<a href="${escapeHtml(validUrl(decodeEntities(match[3])).href)}" rel="noopener noreferrer">${label}</a>`; }
+        catch { output += label; }
+      }
+      offset = match.index + match[0].length;
+    }
+    return output + emphasis(value.slice(offset));
+  };
   return input.split(/\n\s*\n/).map((paragraph) => {
     const lines = paragraph.split("\n");
     if (lines.every((line) => /^#{1,6} /.test(line))) return lines.map((line) => { const depth = line.match(/^#+/)[0].length; return `<h${depth}>${inline(line.slice(depth + 1))}</h${depth}>`; }).join("\n");
     if (lines.every((line) => /^[-*] /.test(line))) return `<ul>\n${lines.map((line) => `<li>${inline(line.slice(2))}</li>`).join("\n")}\n</ul>`;
-    return `<p>${lines.map(inline).join("<br>\n")}</p>`;
+    return `<p>${lines.map((line) => inline(line)).join("<br>\n")}</p>`;
   }).join("\n\n");
 }
 
@@ -45,7 +57,7 @@ export function writingTool(slug, input) {
     case "duplicate-line-remover": return [...new Set(input.split("\n"))].join("\n");
     case "find-replace": {
       const lines = input.split("\n"); if (lines.length < 3 || !lines[0]) throw new Error("Enter search, replacement, and text on consecutive lines.");
-      return lines.slice(2).join("\n").replaceAll(lines[0], lines[1]);
+      return replaceText(lines.slice(2).join("\n"), lines[0], lines[1]);
     }
     case "markdown-preview": return markdown(input);
     case "html-to-text": return decodeEntities(input.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "").replace(/<\/?(?:p|div|h[1-6]|li|br|section|article)\b[^>]*>/gi, "\n").replace(/<[^>]*>/g, " ").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim());

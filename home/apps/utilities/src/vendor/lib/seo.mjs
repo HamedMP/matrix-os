@@ -1,7 +1,14 @@
-import { escapeHtml, splitParts, validUrl } from "./shared.mjs";
+import { decodeEntities, escapeHtml, splitParts, validUrl } from "./shared.mjs";
 
 function meta(name, content, property = false) { return `<meta ${property ? "property" : "name"}="${name}" content="${escapeHtml(content)}">`; }
 function xml(value) { return escapeHtml(value).replaceAll("&#39;", "&apos;"); }
+
+function attribute(tag, name) {
+  for (const match of tag.matchAll(/([^\s=/>]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)) {
+    if (match[1].toLowerCase() === name) return decodeEntities(match[2] ?? match[3] ?? match[4]);
+  }
+  return "";
+}
 
 export function seoTool(slug, input) {
   switch (slug) {
@@ -51,7 +58,8 @@ export function seoTool(slug, input) {
       const description = input.match(/<meta\s+[^>]*name=["']description["'][^>]*>/i)?.[0] ?? input.match(/<meta\s+[^>]*content=["'][^"']*["'][^>]*name=["']description["'][^>]*>/i)?.[0];
       const canonical = /<link\s+[^>]*rel=["']canonical["'][^>]*>/i.test(input);
       const h1 = [...input.matchAll(/<h1\b/gi)].length;
-      const noindex = /<meta\s+[^>]*name=["']robots["'][^>]*content=["'][^"']*noindex/i.test(input);
+      const noindex = [...input.matchAll(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)].some(([tag]) =>
+        attribute(tag, "name").toLowerCase() === "robots" && /(?:^|[\s,])noindex(?:$|[\s,])/i.test(attribute(tag, "content")));
       return [`Title: ${title ? `${title.replace(/<[^>]*>/g, "")} (${title.length} characters)` : "Missing"}`, `Meta description: ${description ? "Present" : "Missing"}`, `H1 headings: ${h1}`, `Canonical tag: ${canonical ? "Present" : "Missing"}`, `Noindex directive: ${noindex ? "Found" : "Not found"}`, "Static pasted-HTML check only."].join("\n");
     }
     default: throw new Error("Unknown SEO tool.");

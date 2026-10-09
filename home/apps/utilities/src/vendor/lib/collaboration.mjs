@@ -1,3 +1,5 @@
+import { reportToolFailure } from "./diagnostics.mjs";
+
 /** Browser-to-browser collaboration. Signaling is copied manually; no Matrix relay is used. */
 export const ICE_CONFIG = { iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }] };
 export const MAX_TRANSFER_BYTES = 20 * 1024 * 1024;
@@ -150,7 +152,7 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
       pendingAck = { id, timer: null, resolve, reject };
     });
     // Avoid an unhandled rejection if the peer closes while chunks are still being read.
-    ackPromise.catch(() => {});
+    ackPromise.catch((cause) => reportToolFailure(cause));
     try {
       channel.send(JSON.stringify({ type: "file-start", id, name: cleanName(file.name), size: file.size, mime: String(file.type || "application/octet-stream").slice(0, 100) }));
       let sent = 0;
