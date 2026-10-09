@@ -48,8 +48,10 @@ afterEach(async () => { vi.unstubAllGlobals(); await destroyTestPlatformDb(db); 
 
 it('preserves permanent IDs, aliases and versions and signs submissions for the recovered runtime', async () => {
   const site = await sites.deploy(owner, deployment);
+  await insertUserMachine(db, { machineId: 'secondary', clerkUserId: owner.ownerId, handle: 'recovery', runtimeSlot: 'secondary', status: 'running', provisionedAt: now.toISOString() });
+  await insertUserMachine(db, { machineId: 'other-runtime', clerkUserId: 'user_other', handle: 'other-recovery', status: 'running', provisionedAt: now.toISOString() });
   const secondary = await sites.deploy({ ...owner, machineId: 'secondary' }, { ...deployment, slug: 'secondary-event' });
-  const otherOwner = await sites.deploy({ ...owner, ownerId: 'user_other' }, { ...deployment, slug: 'other-owner-event' });
+  const otherOwner = await sites.deploy({ ...owner, ownerId: 'user_other', machineId: 'other-runtime' }, { ...deployment, slug: 'other-owner-event' });
   const recovered = await customer.recover({ clerkUserId: owner.ownerId });
   expect(vi.mocked(hetzner.createServer).mock.calls[0][0].userData).toContain(`MATRIX_SYNC_RUNTIME_TOKEN=${buildPlatformSyncVerificationToken({ ...identity, machineId: recovered.machineId }, secret, 2)}`);
   const currentOwner = { ...owner, machineId: recovered.machineId };
@@ -57,7 +59,7 @@ it('preserves permanent IDs, aliases and versions and signs submissions for the 
   expect(await sites.get(owner)).toBeNull();
   expect(await sites.resolve('recovery-event')).toEqual(site);
   expect((await db.executor.selectFrom('public_sites').select('machine_id').where('id', '=', secondary.id).executeTakeFirstOrThrow()).machine_id).toBe('secondary');
-  expect((await db.executor.selectFrom('public_sites').select('machine_id').where('id', '=', otherOwner.id).executeTakeFirstOrThrow()).machine_id).toBe(owner.machineId);
+  expect((await db.executor.selectFrom('public_sites').select('machine_id').where('id', '=', otherOwner.id).executeTakeFirstOrThrow()).machine_id).toBe('other-runtime');
 
   const forward = vi.fn(async () => Response.json({ accepted: true }));
   vi.stubGlobal('fetch', forward);

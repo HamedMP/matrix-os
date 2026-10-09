@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
+import { createPlatformDb, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
@@ -20,7 +20,9 @@ postgres('public sites independent PostgreSQL sessions', () => {
         url.searchParams.set('application_name', name);
         return url.toString();
     }
-    beforeAll(async () => { admin = new pg.Pool({ connectionString: postgresUrl, max: 1 }); await admin.query(`CREATE SCHEMA "${schema}"`); dbA = createPlatformDb(connectionUrl('sites-admit')); await dbA.ready; dbB = createPlatformDb(connectionUrl('sites-revoke')); await dbB.ready; });
+    beforeAll(async () => { admin = new pg.Pool({ connectionString: postgresUrl, max: 1 }); await admin.query(`CREATE SCHEMA "${schema}"`); dbA = createPlatformDb(connectionUrl('sites-admit')); await dbA.ready; dbB = createPlatformDb(connectionUrl('sites-revoke')); await dbB.ready;
+        await insertUserMachine(dbA, { machineId: owner.machineId, clerkUserId: owner.ownerId, handle: 'sites-owner', status: 'running', provisionedAt: new Date().toISOString() });
+    });
     afterAll(async () => {
         await Promise.all([dbA?.destroy(), dbB?.destroy()]);
         if (admin) {

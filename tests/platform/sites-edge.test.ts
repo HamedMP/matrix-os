@@ -1,5 +1,23 @@
 import { expect, it, vi } from 'vitest';
 import worker from '../../packages/edge-router/src/sites.js';
+it.each(['/launch-2026', '/launch-2026/frame', '/launch-2026/assets/11111111-1111-4111-8111-111111111111/assets/main.js'])('serves accepted public reads with query-bearing references (%s)', async path => {
+ const forward = vi.fn(async (_request: Request) => new Response('app'));
+ vi.stubGlobal('fetch', forward);
+ try {
+  const response = await worker.fetch(new Request(`https://matrix.page${path}?v=3&visitor=private`), { SITES_PLATFORM_ORIGIN: 'https://platform.example.com', SITES_EDGE_SECRET: 'x'.repeat(40) });
+  expect(response.status).toBe(200);
+  expect(forward).toHaveBeenCalledOnce();
+  expect(forward.mock.calls[0]![0].url).toBe(`https://platform.example.com/public/sites${path}`);
+ } finally { vi.unstubAllGlobals(); }
+});
+it('rejects query-bearing form requests without forwarding them', async () => {
+ const forward = vi.fn(async (_request: Request) => new Response('app'));
+ vi.stubGlobal('fetch', forward);
+ try {
+  const response = await worker.fetch(new Request('https://matrix.page/launch-2026/forms/rsvp?token=private', { method: 'POST', body: '{}' }), { SITES_PLATFORM_ORIGIN: 'https://platform.example.com', SITES_EDGE_SECRET: 'x'.repeat(40) });
+  expect(response.status).toBe(400); expect(forward).not.toHaveBeenCalled();
+ } finally { vi.unstubAllGlobals(); }
+});
 it('redirects only the homepage to Matrix without forwarding queries or requiring site configuration', async () => {
  const forward = vi.fn(async () => new Response('app'));
  vi.stubGlobal('fetch', forward);

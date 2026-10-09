@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createSitePublicRoutes } from '../../packages/platform/src/sites/public-routes.js';
 let db: PlatformDB;
@@ -12,7 +12,10 @@ const deployment = { title: 'Launch', slug: 'matrix-launch', config: { data: { g
         { path: 'index.html', contentType: 'text/html', body: Buffer.from('<!doctype html><div>Hello launch</div>').toString('base64') },
         { path: 'assets/main.js', contentType: 'text/javascript', body: Buffer.from('console.log("launch")').toString('base64') },
     ] };
-beforeAll(async () => { db = (await createTestPlatformDb()).db; });
+beforeAll(async () => { db = (await createTestPlatformDb()).db;
+    await insertUserMachine(db, { machineId: owner.machineId, clerkUserId: owner.ownerId, handle: 'sites-owner', status: 'running', provisionedAt: new Date().toISOString() });
+    await insertUserMachine(db, { machineId: 'other', clerkUserId: 'other', handle: 'other-sites-owner', status: 'running', provisionedAt: new Date().toISOString() });
+});
 beforeEach(async () => {
     await db.executor.deleteFrom('public_sites').execute(); await db.executor.deleteFrom('public_site_aliases').execute();
     objects = new Map();

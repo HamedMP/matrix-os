@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 let db: PlatformDB;
 const owner = { ownerId: 'review_owner', machineId: '6ca1865c-25c2-46bc-93b6-0273ef7c5527', appSlug: 'review' };
 const deployment = { title: 'Review', config: { data: { greeting: 'live' }, forms: [] }, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('live asset').toString('base64') }] };
-beforeAll(async () => { db = (await createTestPlatformDb()).db; });
+beforeAll(async () => { db = (await createTestPlatformDb()).db;
+ await insertUserMachine(db, { machineId: owner.machineId, clerkUserId: owner.ownerId, handle: 'review-sites', status: 'running', provisionedAt: new Date().toISOString() });
+});
 afterAll(async () => { await destroyTestPlatformDb(db); });
 function storage() {
  const objects = new Map<string, Uint8Array>();
