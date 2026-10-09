@@ -1,16 +1,20 @@
 /** A disposable, opaque-origin iframe hosts each run; its worker has no site storage. */
+import { toolFailureDiagnostic as sandboxFailureDiagnostic } from "./diagnostics.mjs";
+export { sandboxFailureDiagnostic };
+
 export function sandboxApiLockdownDiagnostic(cause) {
   if (!(cause instanceof TypeError)) throw cause;
   return "Sandbox isolation could not disable one browser API (type).";
 }
 
-export function sandboxFailureDiagnostic(cause) {
-  const error_type = cause instanceof TypeError ? "type"
-    : cause instanceof SyntaxError ? "syntax"
-    : cause instanceof RangeError ? "range"
-    : cause instanceof Error ? cause.name === "AbortError" ? "aborted" : "error"
-    : "unknown";
-  return { error_type };
+function sandboxFailureOutput(cause) {
+  try {
+    if (cause instanceof Error) {
+      const message = Object.getOwnPropertyDescriptor(cause, "message");
+      if (typeof message?.value === "string") return message.value.slice(0, 1000);
+    }
+  } catch (inspectionFailure) { return "Execution failed."; }
+  return "Execution failed.";
 }
 
 const FRAME_DOCUMENT = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' blob:; worker-src blob:; connect-src 'none'; img-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'"></head><body><script>
@@ -21,7 +25,11 @@ window.addEventListener('message', function (event) {
   const workerSource = \`const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
   const sandboxApiLockdownDiagnostic = ${sandboxApiLockdownDiagnostic.toString()};
   const sandboxFailureDiagnostic = ${sandboxFailureDiagnostic.toString()};
-  const reportToolFailure = (cause) => console.warn('Utility operation failed.', sandboxFailureDiagnostic(cause));
+  const reportToolFailure = (cause) => {
+    try { console.warn('Utility operation failed.', sandboxFailureDiagnostic(cause)); }
+    catch (loggingFailure) { sandboxFailureDiagnostic(loggingFailure); }
+  };
+  const sandboxFailureOutput = ${sandboxFailureOutput.toString()};
   const lockdownDiagnostics = [];
   const send = self.postMessage.bind(self);
   for (const name of ['postMessage', 'Worker', 'SharedWorker', 'importScripts', 'BroadcastChannel']) {
@@ -43,7 +51,7 @@ window.addEventListener('message', function (event) {
       send({ type: 'done', output: lines.join('\\\\n') || 'Completed without console output.' });
     } catch (error) {
       reportToolFailure(error);
-      send({ type: 'error', output: error instanceof Error ? error.message.slice(0, 1000) : 'Execution failed.' });
+      send({ type: 'error', output: sandboxFailureOutput(error) });
     }
   };\`;
   const blobUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));

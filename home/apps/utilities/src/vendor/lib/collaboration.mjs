@@ -9,6 +9,8 @@ const MAX_SIGNAL_CHARS = 250_000;
 const MAX_CONTROL_CHARS = 32_000;
 const SEND_HIGH_WATER = 256 * 1024;
 const SEND_LOW_WATER = 64 * 1024;
+const MAX_RECEIVE_QUEUE_BYTES = 512 * 1024;
+const MAX_RECEIVE_QUEUE_MESSAGES = 128;
 const ID = /^[a-f0-9-]{1,64}$/i;
 
 function validDescription(value, expected) {
@@ -100,8 +102,17 @@ function waitForDrain(channel, timeoutMs = 15_000) {
 export function createTransferProtocol(channel, { onFile = () => {}, onProgress = () => {}, onStroke = () => {}, onClear = () => {}, onError = () => {} } = {}) {
   if (!channel || typeof channel.send !== "function") throw new Error("A data channel is required.");
   channel.binaryType = "arraybuffer";
-  let receiving = null, pendingAck = null, queue = Promise.resolve(), disposed = false;
-  const fail = (message) => { receiving = null; onError(new Error(message)); };
+  let receiving = null, pendingAck = null, disposed = false, draining = false, queuedBytes = 0;
+  const queue = [];
+  const fail = (message) => {
+    receiving = null;
+    try { onError(new Error(message)); } catch (error) { reportToolFailure(error); }
+  };
+
+  const requireOpen = () => {
+    if (disposed) throw new Error("The peer connection closed.");
+    assertChannel(channel);
+  };
 
   async function process(data) {
     if (disposed) return;
@@ -120,7 +131,7 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
         const id = receiving.id;
         receiving = null;
         await onFile(file);
-        if (channel.readyState === "open") channel.send(JSON.stringify({ type: "file-ack", id }));
+        if (!disposed && channel.readyState === "open") channel.send(JSON.stringify({ type: "file-ack", id }));
       } else if (message?.type === "file-ack") {
         if (pendingAck && message.id === pendingAck.id) { const ack = pendingAck; pendingAck = null; clearTimeout(ack.timer); ack.resolve(); }
       } else if (message?.type === "board-stroke") {
@@ -132,19 +143,48 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
     }
     if (!receiving) { fail("Peer sent an unexpected file chunk."); return; }
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data instanceof Uint8Array ? data : null;
+    if (disposed || !receiving) return;
     if (!bytes || bytes.length < 1 || bytes.length > CHUNK_BYTES || receiving.bytes + bytes.length > receiving.size) { fail("Peer sent an invalid file chunk."); return; }
     receiving.parts.push(bytes); receiving.bytes += bytes.length;
     onProgress({ direction: "receive", bytes: receiving.bytes, total: receiving.size });
   }
 
+  async function drainQueue() {
+    if (draining) return;
+    draining = true;
+    try {
+      while (!disposed && queue.length) {
+        const entry = queue.shift();
+        queuedBytes -= entry.bytes;
+        try { await process(entry.data); }
+        catch (error) { reportToolFailure(error); fail("Could not process peer data."); }
+        finally { entry.data = null; entry.resolve(); }
+      }
+    } finally { draining = false; }
+  }
+
   function handleMessage(data) {
-    queue = queue.then(() => process(data)).catch((error) => fail(error instanceof Error ? error.message : "Could not process peer data."));
-    return queue;
+    if (disposed) return Promise.resolve();
+    const bytes = typeof data === "string" ? data.length * 2
+      : data instanceof ArrayBuffer || data instanceof Uint8Array ? data.byteLength
+      : data instanceof Blob ? data.size : -1;
+    if (bytes < 0 || (typeof data === "string" ? data.length > MAX_CONTROL_CHARS : bytes < 1 || bytes > CHUNK_BYTES)) {
+      fail("Peer sent an oversized or invalid message.");
+      return Promise.resolve();
+    }
+    if (queue.length >= MAX_RECEIVE_QUEUE_MESSAGES || queuedBytes + bytes > MAX_RECEIVE_QUEUE_BYTES) {
+      dispose(); fail("Peer exceeded the receive queue limit.");
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      queue.push({ data, bytes, resolve }); queuedBytes += bytes;
+      void drainQueue();
+    });
   }
 
   /** @param {File} file @param {(progress: {direction:string,bytes:number,total:number}) => void} progress */
   async function sendFile(file, progress = () => {}) {
-    assertChannel(channel);
+    requireOpen();
     if (disposed || pendingAck) throw new Error("Finish the current transfer first.");
     if (!file || typeof file.slice !== "function" || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_TRANSFER_BYTES) throw new Error("Choose a file of 20 MB or smaller.");
     const id = globalThis.crypto.randomUUID();
@@ -159,7 +199,7 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
       for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
         await waitForDrain(channel);
         const bytes = await file.slice(offset, offset + CHUNK_BYTES).arrayBuffer();
-        assertChannel(channel);
+        requireOpen();
         channel.send(bytes);
         sent += bytes.byteLength;
         progress({ direction: "send", bytes: sent, total: file.size });
@@ -171,16 +211,24 @@ export function createTransferProtocol(channel, { onFile = () => {}, onProgress 
       }, 60_000);
       await ackPromise;
     } catch (error) {
+      reportToolFailure(error);
       if (pendingAck?.id === id) { clearTimeout(pendingAck.timer); pendingAck.reject(error); pendingAck = null; }
       throw error;
     }
   }
 
-  function sendStroke(stroke) { assertChannel(channel); const valid = validateStroke(stroke); channel.send(JSON.stringify({ type: "board-stroke", stroke: valid })); }
-  function clearBoard() { assertChannel(channel); channel.send(JSON.stringify({ type: "board-clear" })); }
+  function sendStroke(stroke) { requireOpen(); const valid = validateStroke(stroke); channel.send(JSON.stringify({ type: "board-stroke", stroke: valid })); }
+  function clearBoard() { requireOpen(); channel.send(JSON.stringify({ type: "board-clear" })); }
   function dispose() {
+    if (disposed) return;
     disposed = true; receiving = null;
+    channel.removeEventListener?.("close", dispose);
+    channel.removeEventListener?.("error", dispose);
+    for (const entry of queue.splice(0)) { entry.data = null; entry.resolve(); }
+    queuedBytes = 0;
     if (pendingAck) { clearTimeout(pendingAck.timer); pendingAck.reject(new Error("The peer connection closed.")); pendingAck = null; }
   }
+  channel.addEventListener?.("close", dispose);
+  channel.addEventListener?.("error", dispose);
   return { handleMessage, sendFile, sendStroke, clearBoard, dispose };
 }

@@ -36,7 +36,7 @@ async function regexResult(input) {
   if (pattern.length > 200 || sample.length > 10_000) throw new Error("Regex input is too large.");
   // Potentially costly patterns never run on the UI thread. Browser workers have a hard deadline.
   if (typeof Worker !== "undefined" && typeof Blob !== "undefined") {
-    const source = `onmessage=({data})=>{try{const r=new RegExp(data.pattern,"g");const hits=[];for(const m of data.sample.matchAll(r)){hits.push(m[0]+" @ "+m.index);if(hits.length>=100)break}postMessage({hits})}catch(e){postMessage({error:"Enter a valid regular expression."})}}`;
+    const source = `const toolFailureDiagnostic=${toolFailureDiagnostic.toString()};const reportToolFailure=(cause)=>{try{console.warn("Utility operation failed.",toolFailureDiagnostic(cause))}catch(loggingFailure){toolFailureDiagnostic(loggingFailure)}};onmessage=({data})=>{try{const r=new RegExp(data.pattern,"g");const hits=[];for(const m of data.sample.matchAll(r)){hits.push(m[0]+" @ "+m.index);if(hits.length>=100)break}postMessage({hits})}catch(error){reportToolFailure(error);postMessage({error:"Enter a valid regular expression."})}}`;
     const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     try {
       return await new Promise((resolve, reject) => {
@@ -132,4 +132,4 @@ export async function developerTool(slug, input) {
     default: throw new Error("Unknown developer tool.");
   }
 }
-import { reportToolFailure } from "./diagnostics.mjs";
+import { reportToolFailure, toolFailureDiagnostic } from "./diagnostics.mjs";
