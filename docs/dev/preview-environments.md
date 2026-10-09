@@ -197,6 +197,22 @@ Who can use it: members of the internal Clerk organization named by
 organization projection, so the platform needs collaboration configured; without
 it the routes return 503 and personal accounts stay denied.
 
+For canonical Platform Cloud Run deployments, store the existing internal
+organization ID in the repository Actions **secret** named
+`MATRIX_INTERNAL_CLERK_ORG_ID`. This is a configuration identifier, not an API key
+or a membership override. Secret-backed transport masks the identifier before
+the runner prints step environments; an ordinary Actions variable cannot provide
+that protection. A historical same-name variable is not a deployment source.
+
+The deployment helper rejects malformed or whitespace-padded IDs before deploy,
+binds the setting explicitly, and reads it back from the exact candidate,
+production-role, and dedicated worker revisions. An absent secret remains
+optional and emits an explicit disabled diagnostic: Private Preview routes stay
+unavailable (503). Readback must show the setting absent when unconfigured, so a
+production-role revision cannot silently retain a stale organization ID.
+Organization membership, runtime authentication, and all funding, Relay, and
+background-worker switches retain their existing rules.
+
 First give the PR a bundle: add the **`preview-bundle`** label (same-repository
 PRs only). The Preview workflow builds the exact head, registers it without a
 channel and with the PR number and author, and comments the version on the PR.
