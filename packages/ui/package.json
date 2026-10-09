@@ -14,7 +14,8 @@
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
     "./appearance": "./src/appearance/index.ts",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
-    "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css"
+    "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
+    "./chat-import.css": "./src/chat-import/chat-import.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

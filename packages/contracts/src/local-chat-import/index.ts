@@ -1,3 +1,6 @@
+export const LOCAL_CHAT_IMPORT_BATCH_LIMIT = 32;
+/** Defensive catalog capacity; independent of the owner's selected import count. */
+export const LOCAL_CHAT_DISCOVERY_LIMIT = 20_000;
 export { readLocalChatJsonl } from "#local-chat-import/jsonl";
 export type { LocalChatSourceEntry, LocalChatSourceRecord, LocalChatSourceIssue } from "#local-chat-import/jsonl";
 export { reconstructLocalChat } from "#local-chat-import/reconstruct";

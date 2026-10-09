@@ -34,6 +34,9 @@ const SAFE_DISPLAY_MESSAGES = new Set([
   "Chat import unavailable. Check your connection and Matrix version, then retry. Your local file was not changed.",
   "Another import is in progress. Try again when it finishes.",
   "Choose a supported transcript.",
+  "Local conversations changed. Refresh the list and select them again.",
+  "Choose up to 32 transcripts at a time.",
+  "Too many transcript previews are open. Reopen Settings and select your files again.",
 ]); // Fixed allowlist: no runtime inserts or eviction needed.
 /** Only known recovery copy crosses the native error projection boundary. */
 export class LocalChatImportDisplayError extends Error {

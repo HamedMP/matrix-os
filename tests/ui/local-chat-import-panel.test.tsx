@@ -12,11 +12,12 @@ describe("full Chat import Settings", () => {
         const apply = vi.fn(async () => ({ chatId: "chat_synthetic", jobId: sourceId, messageCount: 2 }));
         const open = vi.fn();
         render(<ChatImportPanel native={{ select, apply, pause: vi.fn() }} onOpenChat={open}/>);
-        fireEvent.change(screen.getByLabelText("Chat tool"), { target: { value: "claude" } });
+        fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
         fireEvent.click(screen.getByRole("button", { name: "Choose transcript" }));
         expect(await screen.findByText("Synthetic prompt")).toBeTruthy();
         expect(select).toHaveBeenCalledWith("claude", expect.any(AbortSignal));
         expect(apply).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByText("History and source details"));
         expect(screen.getByText(/1 tool call/)).toBeTruthy();
         expect(screen.getByText(/1 external reference/)).toBeTruthy();
         fireEvent.click(screen.getByRole("button", { name: "Import private Chat" }));
