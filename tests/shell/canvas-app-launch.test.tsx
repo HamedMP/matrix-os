@@ -230,3 +230,36 @@ for (const surface of ["canvas", "desktop"] as const) {
     expect(useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")).toMatchObject({ title: "Owner Ledger" });
   });
 }
+
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it(`distinguishes explicit Gallery identities from occupied old folders on Web ${surface}`, async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+      ? new Response(JSON.stringify([
+        { slug: "folio", name: "Folio", path: "/files/apps/ledger/index.html" },
+        { slug: "ledger", name: "Ledger", path: "/files/apps/folio/index.html" },
+      ]))
+      : String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 })) : new Response('<html><head></head><body></body></html>')));
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, "matrix-app:folio");
+    expect(useWindowManager.getState().windows.find(win => win.path === "apps/folio/index.html")).toMatchObject({ title: "Folio" });
+    await requestOpen(frame, "apps/folio");
+    expect(useWindowManager.getState().windows.find(win => win.path === "apps/ledger/index.html")).toMatchObject({ title: "Ledger" });
+  });
+  it.each(["matrix-app:missing", "matrix-app:../folio", "matrix-app:folio?x", "matrix-app:folio/other", "matrix-app://folio"])(`keeps invalid or unavailable explicit identity %s closed on Web ${surface}`, async path => {
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, path);
+    expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+  });
+  it(`rejects ambiguous explicit identities on Web ${surface}`, async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => String(url).endsWith("/api/apps")
+      ? new Response(JSON.stringify([
+        { slug: "folio", name: "First", path: "/files/apps/first/index.html" },
+        { slug: "folio", name: "Second", path: "/files/apps/second/index.html" },
+      ]))
+      : String(url).endsWith("/session") ? new Response(JSON.stringify({ expiresAt: Date.now() + 60_000 })) : new Response('<html><head></head><body></body></html>')));
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, "matrix-app:folio");
+    expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+  });
+}
