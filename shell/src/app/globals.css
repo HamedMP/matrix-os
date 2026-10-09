@@ -1,3 +1,4 @@
+@import "./theme-defaults.css";
 @import "tailwindcss";
 @source "../../../packages/ui/src/integrations";
 @source "../../../packages/ui/src/chat-import";
@@ -155,96 +156,7 @@
   }
 }
 
-:root {
-  --font-sans: var(--font-geist-sans), Geist, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
-  --radius: 0.75rem;
-
-  /* Matrix landing palette shared by shell and first-party apps. */
-  --background: #fafafa;
-  --foreground: #242323;
-  --card: #f3f2f2;
-  --card-foreground: #242323;
-  --popover: #f3f2f2;
-  --popover-foreground: #242323;
-  --primary: #242323;
-  --primary-foreground: #fafafa;
-  --secondary: #f3f2f2;
-  --secondary-foreground: #242323;
-  --muted: #e1e0e0;
-  --muted-foreground: #635f5f;
-  --accent: #f3f2f2;
-  --accent-foreground: #242323;
-  --destructive: #8f432d;
-  --success: #1b6541;
-  --warning: #775622;
-  --border: #c8c6c6;
-  --input: #c8c6c6;
-  --ring: #e0aa52;
-
-  /* Brand palette (shared source of truth with the matrix-os.com landing).
-     App iframes expose --ember as --matrix-accent for primary actions. */
-  --forest: #434E3F;
-  --deep: #32352E;
-  --ember: #D06F25;
-  --ember-foreground: #FAFAF5;
-  --cream: #E0E1CA;
-  --page-bg: #E2E2CF;
-
-  /* Neumorphic tokens — no-op defaults, overridden by retro theme via applyTheme() */
-  --neu-shadow-light: transparent;
-  --neu-shadow-dark: transparent;
-  --neu-distance: 0px;
-  --neu-blur: 0px;
-
-  /* ─── Semantic surface / elevation / motion tokens (spec 102) ───
-     Layered on the brand palette above. Mobile chrome, sheets, toasts and
-     the terminal share these so glass + depth + easing stay consistent. */
-
-  /* Glass surfaces: brand bg at ~80% opacity, paired with a backdrop blur.
-     --surface-glass sits on light page chrome; --surface-glass-strong is a
-     denser variant for headers/sheets that overlap busy content. */
-  --surface-glass: color-mix(in srgb, var(--card) 80%, transparent);
-  --surface-glass-strong: color-mix(in srgb, var(--card) 92%, transparent);
-  --surface-glass-deep: color-mix(in srgb, var(--deep) 78%, transparent);
-  --surface-glass-blur: 16px;
-  --surface-glass-border: color-mix(in srgb, var(--foreground) 10%, transparent);
-
-  /* Elevation shadow scale — soft, brand-tinted (deep instead of pure black)
-     so raised surfaces read warm rather than clinical. */
-  --elevation-1: 0 1px 2px color-mix(in srgb, var(--deep) 8%, transparent);
-  --elevation-2: 0 2px 8px color-mix(in srgb, var(--deep) 12%, transparent);
-  --elevation-3: 0 8px 24px color-mix(in srgb, var(--deep) 16%, transparent);
-  --elevation-4: 0 16px 48px color-mix(in srgb, var(--deep) 22%, transparent);
-
-  /* Emphasized easing (iOS-style decelerate) for sheets/app transitions. */
-  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);
-  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-
-  /* Live keyboard height, published by useVisualViewport on mobile so the
-     key bar / toasts can offset above the on-screen keyboard. */
-  --terminal-keyboard-height: 0px;
-
-  /* Page background gradient tokens (separate from app --background) */
-  --gradient-deep: #323D2E;
-  --gradient-mid: #9AA48C;
-  --gradient-light: #B8C4A8; /* lighter lichen tint — keeps mid->light contrast */
-  --gradient-accent: #6a8a7a;
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  /* Sidebar vars derive from theme -- updated dynamically via useTheme */
-  --sidebar: #ffffff;
-  --sidebar-foreground: #242323;
-  --sidebar-primary: #242323;
-  --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: #f1f6e2;
-  --sidebar-accent-foreground: #475926;
-  --sidebar-border: #e3e8de;
-  --sidebar-ring: #e0aa52;
-}
+/* Theme tokens are kept in a focused stylesheet. */
 
 @theme inline {
   --color-background: var(--background);

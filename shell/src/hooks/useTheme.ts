@@ -1,5 +1,6 @@
 "use client";
 
+import { RETIRED_THEME_IDS } from "@matrix-os/brand/themes";
 import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
 import { normalizeAppearance, type AppearancePreferences } from "@matrix-os/brand/themes/preferences";
 import { useEffect, useRef, useState } from "react";
@@ -38,6 +39,10 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   if (!isRecord(value)) return fallbackTheme;
   if (Object.keys(value).length === 0) return fallbackTheme;
 
+  if (typeof value.name === 'string' && (RETIRED_THEME_IDS as readonly string[]).includes(value.name) && !value.appearance) {
+    const mode = value.mode === 'light' || value.mode === 'dark' ? value.mode : typeof (value.colors as Record<string, unknown> | undefined)?.background === 'string' && parseInt(String((value.colors as Record<string, unknown>).background).slice(1, 3), 16) < 128 ? 'dark' : 'light';
+    return buildWebTheme({ ...normalizeAppearance({}), mode });
+  }
   const colors = { ...fallbackTheme.colors, ...stringEntries(value.colors) };
   const savedColors = stringEntries(value.colors);
   // Older files used general chrome tokens for navigation.
@@ -68,7 +73,7 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
 
 function applyTheme(saved: Theme) {
   const derived = saved.appearance ? buildWebTheme(saved.appearance, window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false) : null;
-  const theme = derived ? { ...saved, ...derived, colors: { ...saved.colors, ...derived.colors }, fonts: { ...saved.fonts, ...derived.fonts }, radius: saved.radius } : saved;
+  const theme = derived ? { ...saved, ...derived, colors: { ...saved.colors, ...derived.colors }, fonts: { ...saved.fonts, ...derived.fonts } } : saved;
   const root = document.documentElement;
 
   // Set mode attribute so CSS and apps can detect light/dark
@@ -201,7 +206,9 @@ export function useThemeState(options: ShellCacheHookOptions = {}) {
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
       const version = ++requestVersion.current;
-      fetchTheme(fallbackTheme).then((nextTheme) => {
+      fetchTheme(fallbackTheme, undefined, (ok) => {
+        if (version === requestVersion.current) { setLoaded(ok); setLoadError(!ok); }
+      }).then((nextTheme) => {
         if (version !== requestVersion.current) return;
         setTheme(nextTheme);
         saveShellSnapshot(cacheScope, { theme: nextTheme });

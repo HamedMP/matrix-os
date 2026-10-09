@@ -5,9 +5,8 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { DEFAULT_THEME, getThemeFallback, normalizeTheme, resetThemeRuntimeCacheForTests, saveTheme, useTheme, useThemeState, type Theme } from "../../shell/src/hooks/useTheme";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
 
-vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
-  useFileWatcher: () => undefined,
-}));
+const watcher = vi.hoisted(() => ({ callback: null as null | ((path: string, event: string) => void) }));
+vi.mock("../../shell/src/hooks/useFileWatcher", () => ({ useFileWatcher: (callback: typeof watcher.callback) => { watcher.callback = callback; } }));
 
 function themeToCssVars(theme: Theme): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -87,6 +86,24 @@ describe("theme system", () => {
     expect(result.current.loaded).toBe(false);
   });
 
+  it('completes loading when a file-watch read overtakes the initial read', async () => {
+    let finish!: (value: unknown) => void;
+    vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValueOnce({ ok: true, json: async () => ({ ...DEFAULT_THEME, name: 'watched' }) }));
+    const { result } = renderHook(() => useThemeState());
+    await act(async () => { watcher.callback?.('system/theme.json', 'change'); });
+    expect(result.current.loaded).toBe(true);
+    expect(result.current.loadError).toBe(false);
+    expect(result.current.theme.name).toBe('watched');
+    await act(async () => { finish({ ok: true, json: async () => DEFAULT_THEME }); });
+    expect(result.current.theme.name).toBe('watched');
+  });
+  it.each(['tokyo-night', 'solarized', 'catppuccin'])('migrates a retired legacy preset %s while retaining dark mode', name => {
+    const result = normalizeTheme({ name, mode: 'dark', colors: { background: '#101010' } });
+    expect(result.name).toBe('matrix');
+    expect(result.mode).toBe('dark');
+    expect(result.appearance?.themeId).toBe('matrix');
+    expect(normalizeTheme({ name, mode: 'light', colors: { background: '#101010' } }).mode).toBe('light');
+  });
   it("default theme has all required color keys", () => {
     for (const key of REQUIRED_COLOR_KEYS) {
       expect(DEFAULT_THEME.colors[key]).toBeDefined();
@@ -169,7 +186,7 @@ describe("theme system", () => {
     expect(vars["--background"]).toBe("#fafafa");
     expect(vars["--primary"]).toBe("#242323");
     expect(vars["--font-mono"]).toBe('"JetBrains Mono", ui-monospace, monospace');
-    expect(vars["--radius"]).toBe("0.75rem");
+    expect(vars["--radius"]).toBe("0.5rem");
   });
 
   it("all color values are valid hex", () => {

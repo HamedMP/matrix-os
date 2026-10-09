@@ -8,7 +8,7 @@
   --bg-app: #fafafa;
   --bg-surface: #f3f2f2;
   --bg-raised: #fafafa;
-  --bg-overlay: #f3f2f2;
+  --bg-overlay: #fafafa;
   --bg-sunken: #fafafa;
   --bg-hover: #f3f2f2;
   --bg-active: #f3f2f2;
@@ -30,12 +30,12 @@
   --gradient-accent: #6a8a7a;
 
   /* ── Brand surfaces (the dark forest panel) ─────────────────── */
-  --sidebar: #ffffff;
+  --sidebar: #fafafa;
   --sidebar-foreground: #242323;
-  --sidebar-accent: #f1f6e2;
-  --sidebar-accent-foreground: #475926;
-  --sidebar-border: #e3e8de;
-  --forest: #ffffff;
+  --sidebar-accent: #f3f2f2;
+  --sidebar-accent-foreground: #242323;
+  --sidebar-border: #c8c6c6;
+  --forest: #fafafa;
   --forest-deep: #fafafa;
   --forest-foreground: #242323;
   --forest-muted: #635f5f;
@@ -45,11 +45,11 @@
      Matrix forest + orange identity survives every workspace theme. */
   --brand-forest: #434e3f;
   --brand-forest-deep: #32352e;
-  --brand-forest-foreground: #fafaf5;
+  --brand-forest-foreground: #fafafa;
   --brand-forest-muted: rgba(250, 250, 245, 0.62);
 
   /* ── Hairlines & borders ────────────────────────────────────── */
-  --border-subtle: #e3e8de;
+  --border-subtle: #c8c6c6;
   --border-xsoft: color-mix(in srgb, var(--border-subtle) 50%, transparent);
   --border-default: #c8c6c6;
   --border-strong: #c8c6c6;
@@ -64,23 +64,23 @@
   --text-subtle: #635f5f;
   --text-disabled: #635f5f;
   --text-on-accent: #fafafa;
-  --text-inverse: #fafaf5;
+  --text-inverse: #fafafa;
   --text-danger: #8f432d;
 
   /* ── Brand & semantic ───────────────────────────────────────── */
   --accent: #242323;
-  --accent-hover: #242323;
+  --accent-hover: #475926;
   --accent-muted: #f3f2f2;
   --highlight: #475926;
   --highlight-muted: #f3f2f2;
-  --success: #1b6541;
-  --success-muted: #f3f2f2;
-  --warning: #775622;
-  --warning-muted: #f3f2f2;
-  --danger: #8f432d;
-  --danger-muted: #f3f2f2;
-  --info: #306991;
-  --info-muted: #f3f2f2;
+  --success: #288a5b;
+  --success-muted: #eef7f2;
+  --warning: #d2932d;
+  --warning-muted: #fcf5e8;
+  --danger: #ba5236;
+  --danger-muted: #faeeeb;
+  --info: #3b85ba;
+  --info-muted: #edf3f7;
   --surface-brand-emphasis: #748e59;
   --surface-error-emphasis: #ba5236;
   --surface-info-emphasis: #3b85ba;
@@ -100,10 +100,10 @@
 
   /* ── Status (tasks / threads / sessions) ────────────────────── */
   --status-todo: #635f5f;
-  --status-running: #306991;
+  --status-running: #254d6a;
   --status-waiting: #775622;
   --status-blocked: #8f432d;
-  --status-complete: #1b6541;
+  --status-complete: #13492f;
   --status-attention: #775622;
   --status-failed: #8f432d;
 
@@ -130,14 +130,14 @@
   --sidebar-account-menu-width: 224px;
 
   /* ── Elevation ──────────────────────────────────────────────── */
-  --shadow-1: 0 1px 2px rgba(40, 44, 37, 0.06);
-  --shadow-2: 0 6px 20px rgba(40, 44, 37, 0.1);
-  --shadow-3: 0 18px 48px rgba(40, 44, 37, 0.16);
+  --shadow-1: 0 1px 2px rgba(36, 35, 35, 0.06);
+  --shadow-2: 0 6px 20px rgba(36, 35, 35, 0.1);
+  --shadow-3: 0 18px 48px rgba(36, 35, 35, 0.16);
 
   /* ── Chrome (scrollbars, dialog dim) ────────────────────────── */
-  --scrollbar-thumb: rgba(40, 44, 37, 0.18);
-  --scrollbar-thumb-hover: rgba(40, 44, 37, 0.3);
-  --overlay-dim: rgba(40, 44, 37, 0.35);
+  --scrollbar-thumb: rgba(36, 35, 35, 0.18);
+  --scrollbar-thumb-hover: rgba(36, 35, 35, 0.3);
+  --overlay-dim: rgba(36, 35, 35, 0.35);
 
   /* ── Focus & motion ─────────────────────────────────────────── */
   --focus-ring: 0 0 0 3px color-mix(in srgb, #e0aa52 33%, transparent);
@@ -145,6 +145,17 @@
   --duration-fast: 120ms;
   --duration-base: 160ms;
 
+    --bg-disabled: #e1e0e0;
+  --muted: #e1e0e0;
+  --text-on-accent-hover: #fafafa;
+  --success-text: #13492f;
+  --text-on-success: #0d0c0c;
+  --warning-text: #775622;
+  --text-on-warning: #0d0c0c;
+  --danger-text: #8f432d;
+  --text-on-danger: #fafafa;
+  --info-text: #254d6a;
+  --text-on-info: #0d0c0c;
   color-scheme: light;
 }
 
@@ -154,54 +165,54 @@
   --bg-raised: #413e3e;
   --bg-overlay: #242323;
   --bg-sunken: #0d0c0c;
-  --bg-hover: #242323;
-  --bg-active: #242323;
-  --bg-selected: #242323;
+  --bg-hover: #413e3e;
+  --bg-active: #413e3e;
+  --bg-selected: #413e3e;
 
   --surface-base-background: #0d0c0c;
   --surface-primary: #242323;
   --surface-overlay: #242323;
-  --surface-tertiary: #242323;
+  --surface-tertiary: #413e3e;
   --surface-success: #173827;
   --surface-card-foreground-subtle: #242323;
 
-  --sidebar: #101c16;
+  --sidebar: #061810;
   --sidebar-foreground: #fafafa;
-  --sidebar-accent: #263525;
-  --sidebar-accent-foreground: #bed77b;
-  --sidebar-border: #2e3e2a;
-  --forest: #101c16;
+  --sidebar-accent: #413e3e;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #413e3e;
+  --forest: #061810;
   --forest-deep: #0d0c0c;
   --forest-foreground: #fafafa;
-  --forest-muted: #a8a4a4;
+  --forest-muted: #c8c6c6;
 
   /* Brand surfaces stay identical across OS color schemes. The surrounding
      workspace may go dark, but sign-in must retain the recognizable Matrix
      forest palette rather than collapsing into the app's near-black chrome. */
   --brand-forest: #434e3f;
   --brand-forest-deep: #32352e;
-  --brand-forest-foreground: #fafaf5;
+  --brand-forest-foreground: #fafafa;
   --brand-forest-muted: rgba(250, 250, 245, 0.62);
 
-  --border-subtle: #2e3e2a;
+  --border-subtle: #413e3e;
   --border-default: #413e3e;
   --border-strong: #413e3e;
   --border-success: #3fae78;
 
   --text-primary: #fafafa;
-  --text-secondary: #a8a4a4;
-  --text-tertiary: #a8a4a4;
-  --text-subtle: #a8a4a4;
-  --text-disabled: #a8a4a4;
+  --text-secondary: #c8c6c6;
+  --text-tertiary: #c8c6c6;
+  --text-subtle: #c8c6c6;
+  --text-disabled: #c8c6c6;
   --text-on-accent: #0d0c0c;
-  --text-inverse: #fafaf5;
-  --text-danger: #da9481;
+  --text-inverse: #fafafa;
+  --text-danger: #e6b5a8;
 
   --accent: #fafafa;
-  --accent-hover: #fafafa;
-  --accent-muted: #242323;
+  --accent-hover: #bed77b;
+  --accent-muted: #413e3e;
   --highlight: #bed77b;
-  --highlight-muted: #242323;
+  --highlight-muted: #413e3e;
   --surface-brand-emphasis: #748e59;
   --surface-error-emphasis: #ba5236;
   --surface-info-emphasis: #3b85ba;
@@ -217,11 +228,53 @@
   --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 18px 48px rgba(0, 0, 0, 0.6);
 
-  --scrollbar-thumb: rgba(140, 199, 190, 0.22);
-  --scrollbar-thumb-hover: rgba(140, 199, 190, 0.36);
+  --scrollbar-thumb: rgba(168, 164, 164, 0.22);
+  --scrollbar-thumb-hover: rgba(168, 164, 164, 0.36);
   --overlay-dim: rgba(0, 0, 0, 0.55);
 
   --focus-ring: 0 0 0 3px color-mix(in srgb, #e0aa52 33%, transparent);
 
+    --bg-disabled: #413e3e;
+  --muted: #413e3e;
+  --text-on-accent-hover: #0d0c0c;
+  --success: #5ec996;
+  --success-muted: #061810;
+  --success-text: #97d8b9;
+  --text-on-success: #0d0c0c;
+  --warning: #f1c379;
+  --warning-muted: #251c0e;
+  --warning-text: #f6daac;
+  --text-on-warning: #0d0c0c;
+  --danger: #da9481;
+  --danger-muted: #25130e;
+  --danger-text: #e6b5a8;
+  --text-on-danger: #0d0c0c;
+  --info: #9dbfd7;
+  --info-muted: #0f1b24;
+  --info-text: #9dbfd7;
+  --text-on-info: #0d0c0c;
+  --status-todo: #c8c6c6;
+  --status-running: #9dbfd7;
+  --status-waiting: #f6daac;
+  --status-blocked: #e6b5a8;
+  --status-complete: #97d8b9;
+  --status-attention: #f6daac;
+  --status-failed: #e6b5a8;
   color-scheme: dark;
 }
+
+/* Control states keep fill, hover and text semantics together. */
+button:disabled, input:disabled, select:disabled, textarea:disabled {
+  background: var(--bg-disabled) !important;
+  color: var(--text-disabled) !important;
+}
+.matrix-control-primary:hover:not(:disabled), button.bg-accent:hover:not(:disabled) {
+  background: var(--accent-hover) !important;
+  color: var(--text-on-accent-hover) !important;
+  filter: none;
+}
+.text-success { color: var(--success-text); }
+.text-warning { color: var(--warning-text); }
+.text-danger, .text-destructive { color: var(--danger-text); }
+.text-info { color: var(--info-text); }
+.bg-danger, .bg-destructive { color: var(--text-on-danger); }

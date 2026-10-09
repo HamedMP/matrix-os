@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CodeMirrorHost from "@desktop/renderer/src/features/editor/CodeMirrorHost";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import { useAppearance } from "@desktop/renderer/src/stores/appearance";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useEditorTabs } from "@desktop/renderer/src/features/editor/editor-tabs-store";
 
@@ -58,6 +59,7 @@ vi.mock("@codemirror/search", () => ({
   searchKeymap: [],
 }), { virtual: true });
 vi.mock("@codemirror/state", () => ({
+  Compartment: class { of(extension: unknown) { return extension; } reconfigure(extension: unknown) { return { extension }; } },
   EditorState: {
     create: vi.fn(({ doc, extensions }: { doc: string; extensions: unknown[] }) => ({
       doc: editorHarness.makeDoc(doc),
@@ -82,7 +84,8 @@ vi.mock("@codemirror/view", () => ({
       editorHarness.setView(this);
     }
 
-    dispatch({ changes }: { changes: { insert: string } }) {
+    dispatch({ changes }: { changes?: { insert: string }; effects?: unknown }) {
+      if (!changes) return;
       this.state = { ...this.state, doc: editorHarness.makeDoc(changes.insert) };
       for (const listener of editorHarness.listeners) listener({ docChanged: true, state: this.state });
     }
@@ -182,6 +185,19 @@ describe("CodeMirrorHost conflict actions", () => {
     expect(useEditorTabs.getState().dirtyPathsByTask["task-cache"]).toContain("projects/draft.md");
   });
 
+  it('keeps the same edited document and view when custom colors change', async () => {
+    const api = makeApi({ get: vi.fn().mockResolvedValue(wireStat(OLD_MODIFIED)) });
+    useConnection.setState({ api });
+    render(<CodeMirrorHost taskId="theme-change" path="projects/color.md" />);
+    await waitFor(() => expect(editorHarness.view).not.toBeNull());
+    const view = editorHarness.view;
+    act(() => { view?.dispatch({ changes: { insert: 'unsaved text' } }); });
+    const state = view?.state;
+    await act(async () => { useAppearance.setState({ customTheme: { baseThemeId: 'matrix', light: { accent: '#224466' }, dark: {} } }); });
+    expect(editorHarness.view).toBe(view);
+    expect(editorHarness.view?.state).toBe(state);
+    expect(api.getText).toHaveBeenCalledTimes(1);
+  });
   it("ignores a second overwrite click while the first overwrite is pending", async () => {
     const api = makeApi({
       get: vi.fn()

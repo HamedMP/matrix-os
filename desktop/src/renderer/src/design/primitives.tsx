@@ -13,7 +13,7 @@ const BUTTON_STYLES: Record<ButtonVariant, CSSProperties> = {
   primary: { background: "var(--accent)", color: "var(--text-on-accent)" },
   ghost: { background: "transparent", color: "var(--text-secondary)" },
   subtle: { background: "var(--bg-hover)", color: "var(--text-primary)" },
-  danger: { background: "var(--danger-muted)", color: "var(--danger)" },
+  danger: { background: "var(--danger-muted)", color: "var(--danger-text)" },
 };
 
 export function Button({
@@ -25,7 +25,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-105 disabled:opacity-50 ${className}`}
+      className={`matrix-control-${variant} no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-105 disabled:opacity-50 ${className}`}
       style={{ ...BUTTON_STYLES[variant], ...style }}
       {...props}
     />
