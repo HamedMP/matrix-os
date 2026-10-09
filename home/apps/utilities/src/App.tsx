@@ -44,6 +44,20 @@ export default function App() {
   }, [navigation.dirty]);
   const back = () => dispatch({ type: "open", slug: null });
   const cancel = () => { dispatch({ type: "cancel" }); backButton.current?.focus(); };
+  const captureEdit = (event: React.SyntheticEvent) => {
+    if (!(event.target instanceof Element)) return;
+    const control = event.target.closest("input,textarea,select,[contenteditable='true']");
+    if (!control) return;
+    if (control instanceof HTMLInputElement && (control.disabled || control.readOnly ||
+      ["button", "submit", "reset"].includes(control.type) || control.type === "file" && !control.files?.length)) return;
+    if (control instanceof HTMLTextAreaElement && (control.disabled || control.readOnly)) return;
+    if (control instanceof HTMLSelectElement && control.disabled) return;
+    dispatch({ type: "dirty" });
+  };
+  const captureAction = (event: React.MouseEvent) => {
+    const button = event.target instanceof Element ? event.target.closest('button[data-utilities-dirty="true"]') : null;
+    if (button instanceof HTMLButtonElement && !button.disabled) dispatch({ type: "dirty" });
+  };
 
   return <div className="utilities-app" style={theme}>
     <header className="utilities-topbar"><div className="utilities-brand"><UtilityIcon slug="utilities" small/><span>Utilities</span></div><span className="utilities-topbar-note">Your everyday toolkit</span></header>
@@ -51,7 +65,7 @@ export default function App() {
       <button ref={backButton} className="utilities-back" onClick={back}>← All utilities</button>
       <header className="utilities-workspace-heading"><span className="utilities-eyebrow">{active.category}</span><h1 ref={heading} tabIndex={-1}>{active.title}</h1><p>{active.description}</p></header>
       {toolAvailability(active).available && <p className="utilities-notice">{processingNotice(active)}</p>}
-      <div className="utilities-tool" onInputCapture={() => dispatch({ type: "dirty" })} onChangeCapture={() => dispatch({ type: "dirty" })} onClickCapture={() => dispatch({ type: "dirty" })} onDropCapture={(event) => { if (event.dataTransfer.files.length) dispatch({ type: "dirty" }); }}>
+      <div className="utilities-tool" onInputCapture={captureEdit} onChangeCapture={captureEdit} onClickCapture={captureAction} onDropCapture={(event) => { if (event.dataTransfer.files.length) dispatch({ type: "dirty" }); }}>
         <WorkspaceBoundary key={active.slug} onBack={back}><Suspense fallback={<p className="utilities-feedback" role="status">Opening {active.title}…</p>}><WorkspaceRouter tool={active}/></Suspense></WorkspaceBoundary>
       </div>
       <details className="utilities-help"><summary>How to use this tool and its limits</summary><p>{active.howTo}</p><p>{active.limitations}</p></details>

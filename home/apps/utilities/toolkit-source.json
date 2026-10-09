@@ -1,6 +1,6 @@
 {
   "repository": "FinnaAI/matrix-os-site",
-  "revision": "e6b41375a6817731495ca9238c5ef576889b8cbd",
+  "revision": "23dadc3a3fc50d21d84633fcae7aea6d8cd67d05",
   "dirty": false,
   "adaptations": [
     "relative imports and app assets",
@@ -41,20 +41,20 @@
     {
       "path": "src/vendor/lib/code-sandbox.mjs",
       "source": "src/lib/free-tools/code-sandbox.mjs",
-      "sourceSha256": "3d251611a08638f530ce703aace9076dcdd58f74a53dc892c8e215275536d808",
-      "sha256": "3d251611a08638f530ce703aace9076dcdd58f74a53dc892c8e215275536d808"
+      "sourceSha256": "f7a1f516e8c63b017581565920d9f6fcb43caf88ae17e05d75c690781a765178",
+      "sha256": "f7a1f516e8c63b017581565920d9f6fcb43caf88ae17e05d75c690781a765178"
     },
     {
       "path": "src/vendor/lib/collaboration.mjs",
       "source": "src/lib/free-tools/collaboration.mjs",
-      "sourceSha256": "85456c8fa14d28651bd188c86ac6517e35293b15189798ddda35425a9d94f447",
-      "sha256": "85456c8fa14d28651bd188c86ac6517e35293b15189798ddda35425a9d94f447"
+      "sourceSha256": "75727c91a34d3db21bc80091adbe2b98d43c0e2d152679a04d7e2f3fe0a376b7",
+      "sha256": "75727c91a34d3db21bc80091adbe2b98d43c0e2d152679a04d7e2f3fe0a376b7"
     },
     {
       "path": "src/vendor/lib/developer.mjs",
       "source": "src/lib/free-tools/developer.mjs",
-      "sourceSha256": "32845b2878cdc84f4a23aa1f05f8071f21a815135708f57aa938371e38c03e04",
-      "sha256": "32845b2878cdc84f4a23aa1f05f8071f21a815135708f57aa938371e38c03e04"
+      "sourceSha256": "094bdd5ea920a25e4e9b199ef1019f16964689de36f278f56d84024ad40cd59e",
+      "sha256": "094bdd5ea920a25e4e9b199ef1019f16964689de36f278f56d84024ad40cd59e"
     },
     {
       "path": "src/vendor/lib/diagnostics.mjs",
@@ -71,8 +71,8 @@
     {
       "path": "src/vendor/lib/engine.mjs",
       "source": "src/lib/free-tools/engine.mjs",
-      "sourceSha256": "c1d579dd3158466a71b63246030bdf0cb10f9a064f8850d64cf5599af3c5bccb",
-      "sha256": "c1d579dd3158466a71b63246030bdf0cb10f9a064f8850d64cf5599af3c5bccb"
+      "sourceSha256": "7a2992f8dbc028a62a94f89c168b27627c7c755ab4110cdb429753d394f75f4b",
+      "sha256": "7a2992f8dbc028a62a94f89c168b27627c7c755ab4110cdb429753d394f75f4b"
     },
     {
       "path": "src/vendor/lib/extra-tools.mjs",
@@ -197,8 +197,8 @@
     {
       "path": "src/vendor/lib/seo.mjs",
       "source": "src/lib/free-tools/seo.mjs",
-      "sourceSha256": "bfdb2fd9ce61ae12d1a138aae8a2075efae7e078aef7c6c141896392a3fcd466",
-      "sha256": "bfdb2fd9ce61ae12d1a138aae8a2075efae7e078aef7c6c141896392a3fcd466"
+      "sourceSha256": "9c4b1cc67d5a3e2052288465a069c192f89de8e1eed2444d0bb476ba439c5536",
+      "sha256": "9c4b1cc67d5a3e2052288465a069c192f89de8e1eed2444d0bb476ba439c5536"
     },
     {
       "path": "src/vendor/lib/shared.mjs",
@@ -239,50 +239,50 @@
     {
       "path": "src/vendor/lib/writing.mjs",
       "source": "src/lib/free-tools/writing.mjs",
-      "sourceSha256": "6b8d88ca63f820cd07b2559f91723c63f3a246e91be489ea18783c3be45f6428",
-      "sha256": "6b8d88ca63f820cd07b2559f91723c63f3a246e91be489ea18783c3be45f6428"
+      "sourceSha256": "9e220201c2d07ce97da3bdb0c1b4582ba29f160e4332ad2d57bd20e79d3348cf",
+      "sha256": "9e220201c2d07ce97da3bdb0c1b4582ba29f160e4332ad2d57bd20e79d3348cf"
     },
     {
       "path": "src/vendor/workspaces/AudioWorkspace.tsx",
       "source": "src/app/tools/AudioWorkspace.tsx",
-      "sourceSha256": "75919a3b5b2c9012c5e7bb3095a0b40b91f95c4771a73c332ed5e399f29a78bc",
-      "sha256": "6293f91a9c31ada9e25f47fc9797a201a27fdb9430c407c6c294784f4062989c"
+      "sourceSha256": "80df6f4c4b0199ac07b157b67f502355f2b77c1a751c7d5dcdd125742692014f",
+      "sha256": "f70ab2653f0b719cbb4df9476981cf99fdf0a89faaf9ae814d73a04ef6661d75"
     },
     {
       "path": "src/vendor/workspaces/CollaborationWorkspace.tsx",
       "source": "src/app/tools/CollaborationWorkspace.tsx",
-      "sourceSha256": "79718521c7772f8185f98a1d8e12f08bddb22ad66d82dbc581c35560bba449e8",
-      "sha256": "2affbaaadb3543022ef60c5155e8b02fa162e465df1caacd10d59707e193bf2a"
+      "sourceSha256": "8062ab64d79e09762e3b0d60669558fe75125fc4385c61ceb158619658800ca2",
+      "sha256": "1935040181c344bdef363c2f8e6ed4eaef88be412f30367b407dd1fc4f311363"
     },
     {
       "path": "src/vendor/workspaces/EditorWorkspace.tsx",
       "source": "src/app/tools/EditorWorkspace.tsx",
-      "sourceSha256": "00e5d58fd1db92f17a728f34445c8e4636fb5ff93aadcd4e8e15ebc63be82174",
-      "sha256": "fb0782c6f086500b544af4d80600e103ed1655237db67e6a144a8563545c41ca"
+      "sourceSha256": "e2185144f3436156f1534410d089851024f7399ccd54aac405ba236798d59c08",
+      "sha256": "bf1e3c497b3e4aea2853f9fdd33706561baf3d39e03987ee96db42a500010aae"
     },
     {
       "path": "src/vendor/workspaces/ExtraWorkspace.tsx",
       "source": "src/app/tools/ExtraWorkspace.tsx",
-      "sourceSha256": "2b87546e27d8e74ca0903dd109cac35089514b81069232d1d07369b806b091f9",
-      "sha256": "8402fc819ef5d350f3ce2e5732e8902eb1118fe4f0b63bc32f88d701de52b691"
+      "sourceSha256": "f482407c0cd944b0f1c97472b2050e96255c9f3ed99be2dc0cf6d3a8e9309238",
+      "sha256": "df88a6d70a02b1e09785e08fa9be5b604e905d5c68de937fd5a39ba574a114f9"
     },
     {
       "path": "src/vendor/workspaces/ImageWorkspace.tsx",
       "source": "src/app/tools/ImageWorkspace.tsx",
-      "sourceSha256": "f9bacb4bbe77bf2dd897859c0f46a0348c4eae637e18e5607028d3e57bff5635",
-      "sha256": "f1721500d3f0d4a4011c3aefcc8d343aa34179ecff82b4b48c27fb0ce580dd45"
+      "sourceSha256": "56caef74d21e532126529bc4e1343b2df3cf1729b88ebec4d0a7250b81f3324c",
+      "sha256": "0a6436ab9272abd014e5e36e470c5bc699cfee4e0b16a7b89039a21a248d9c9b"
     },
     {
       "path": "src/vendor/workspaces/LocalAiWorkspace.tsx",
       "source": "src/app/tools/LocalAiWorkspace.tsx",
-      "sourceSha256": "9e8d621f4ac412d48855e8228eb44343b25680f6f2e99282ec14c446324c95a2",
-      "sha256": "22ad7b6fcb82fb0f6be26bff665a892c804d6ba603cf0ddefdc5a37b164b0e02"
+      "sourceSha256": "db41ad876da5b51e41f5a3d5838b7415d036beff37a10b206ebf8a9b2a46f2f9",
+      "sha256": "5690b9d25a4947aea84854bef166faa54ec7aa7c661000f6ac3f16b338a9f681"
     },
     {
       "path": "src/vendor/workspaces/PdfPodcastWorkspace.tsx",
       "source": "src/app/tools/PdfPodcastWorkspace.tsx",
-      "sourceSha256": "0adcdbc0e717b4d2825cc575c68346bf352885e227a4902e45e9c9c4662123ec",
-      "sha256": "452c3b354ebc097ddca92173828cd9d95c9ea73b34c15d4ee57562e6cfcd896a"
+      "sourceSha256": "ccdb9094fbebd788a89004b85e033cda8abf7131394d897dd1e482d73a73c853",
+      "sha256": "6da88f7dd122dcfc5250177944eb102be0a220ec3412d1f7c4e40e9beeb8ee19"
     },
     {
       "path": "src/vendor/workspaces/PdfRedactionPreview.tsx",
@@ -293,26 +293,26 @@
     {
       "path": "src/vendor/workspaces/PdfSignatureWorkspace.tsx",
       "source": "src/app/tools/PdfSignatureWorkspace.tsx",
-      "sourceSha256": "5fd1a9577cd254f70236ccb09f1b1ba3eae3fb49d26de90e5ba572bb9d963cfd",
-      "sha256": "8d593d38dce664b65ba22e319fefe7522b1859f38bccb0db4838e8f8c4ef1ec4"
+      "sourceSha256": "a0bef4cddd85f555cd9011b78d10c027d5c7201d574a7d81bf44e7dbf5f7ba39",
+      "sha256": "76c9b7d6881196f5d0ee9f8d14319a0a3b21b956452c39b4dd713bf4c4f7c828"
     },
     {
       "path": "src/vendor/workspaces/PdfWorkspace.tsx",
       "source": "src/app/tools/PdfWorkspace.tsx",
-      "sourceSha256": "b7a1236b43ce97ebcd6837973d852113319661d02b13fd50f886f34ed6a2a16a",
-      "sha256": "8ed162b0d455e12be7a96a8589c78ca5037441429013f2dd58f2dae5e1000198"
+      "sourceSha256": "ca830787debe1cc758f7bdf1d63fec0413da45062b651c4b5ace8438e74d7e00",
+      "sha256": "b11ec45f3394105e6c3ef7e3249f0eb5f02c59b81ba0e3c3fff484f4e3aba09b"
     },
     {
       "path": "src/vendor/workspaces/ToolWorkspace.tsx",
       "source": "src/app/tools/ToolWorkspace.tsx",
-      "sourceSha256": "315e9bbfb24c81a2ecc73c0bb2eb73c2eef83cfaee85ab2abeba7c65b6ea2415",
-      "sha256": "dfca36451a0d962b4a17ea8fa66d09f684fcb7858608f692c03d6d33fab3c311"
+      "sourceSha256": "829faed1096c8f768bfa865d46845431830358ec790df17cae886696ade1765b",
+      "sha256": "6a0624471648d320e484e32d75e463a11c9f06fb445e779d0f292552eac021d1"
     },
     {
       "path": "src/vendor/workspaces/WorkflowWorkspace.tsx",
       "source": "src/app/tools/WorkflowWorkspace.tsx",
-      "sourceSha256": "cf0c77dbd0e57e24198349f1656963ef53b297b0e55081ab9a07d71f285d131a",
-      "sha256": "2ff6871cf825a0bf4f55961fa14dc4e097bca15d624636abde8ac14e1fe6bdc4"
+      "sourceSha256": "66adac86631b956412b6a24972e6397bccbb039b2c0c6b2309ff8c76126c219c",
+      "sha256": "9c6bfdb1e08c6a42fe1c52a34819757a8987f6509087559d03dcec7eac112515"
     },
     {
       "path": "src/vendor/runtime/telemetry.ts",
