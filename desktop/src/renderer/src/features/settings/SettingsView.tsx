@@ -1,3 +1,4 @@
+import MessagingSection from "./sections/MessagingSection";
 import {
   Blocks,
   Bot,
@@ -161,6 +162,7 @@ export default function SettingsView({
           {section === "runtime" ? <RuntimeSection /> : null}
           {section === "agents-providers" ? <AgentsProvidersAdapter automaticCreditRefreshEnabled={automaticCreditRefreshEnabled} /> : null}
           {section === "identity-personality" ? <IdentityPersonalitySection /> : null}
+          {section === "messaging" ? <MessagingSection /> : null}
           {section === "services" ? <IntegrationsSettingsSection active={active} /> : null}
           {section === "mcps" ? <McpServersSection /> : null}
           {section === "skills" ? <SkillsSection /> : null}
