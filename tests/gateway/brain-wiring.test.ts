@@ -9,7 +9,7 @@ import type { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBrainAgentReadTools } from "../../packages/gateway/src/brain/agent/index.js";
 import {
-  createBrainApiRoutes, startBrainServices, stopBrainServices,
+  createBrainApiRoutes, startBrainServices, stopBrainServices, type BrainServicesHandle,
 } from "../../packages/gateway/src/brain/api/index.js";
 import { BRAIN_API_ERRORS, type BrainProjectLookup } from "../../packages/gateway/src/brain/api/types.js";
 import {
@@ -21,6 +21,11 @@ import {
 } from "../../packages/gateway/src/brain/contracts.js";
 import { BRAIN_JOB_ERRORS, BRAIN_JOB_WORKER_NAME } from "../../packages/gateway/src/brain/jobs/index.js";
 import { BRAIN_READ_IPC_TOOL_NAMES, brainReadIpcToolNames } from "../../packages/kernel/src/tools/brain-read-tools.js";
+import {
+  createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart,
+} from "../../packages/gateway/src/server/brain-wiring.js";
+import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
+import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { createBrainHarness, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
 /** No model claims: start never builds a client from the environment in these tests. */
@@ -63,8 +68,7 @@ it("starts the brain with the owner database and hands it to the routes, the age
   const server = read("server.ts");
   const services = server.indexOf("const ownerDatabaseServices = ownerDatabaseStartup.services;");
   const dispatcher = server.indexOf("createDispatcher({", services);
-  const tools = server.indexOf("brainTools: createBrainAgentTools(ownerDatabaseServices?.brainService ?? null),", dispatcher);
-  const readTools = server.indexOf("brainReadTools: createBrainAgentReadTools({", dispatcher);
+  const tools = server.indexOf("...createBrainGatewayAgentTools(ownerDatabaseServices),", dispatcher);
   const dispatcherEnd = server.indexOf("\n  });", dispatcher);
   const auth = server.indexOf('app.use("*", authMiddleware(');
   const routes = server.indexOf('app.route("/api/brain", createBrainApiRoutes(ownerDatabaseServices?.brainServices ?? null, '
@@ -73,22 +77,55 @@ it("starts the brain with the owner database and hands it to the routes, the age
   const jobs = server.indexOf("for (const job of ownerDatabaseServices?.brainServices?.jobs ?? []) job.start();");
   const close = server.indexOf("async close() {");
   const stop = server.indexOf("await stopBrainServices(ownerDatabaseServices?.brainServices ?? null);", close);
-  const late = server.indexOf("const brainIntegrations = createBrainLateBoundIntegrations();");
+  const late = server.indexOf("const brainStart = createBrainGatewayStart(codingAgentOwnerIds);");
   const startOwner = server.indexOf("await initializeOwnerDatabaseServices({");
-  const passed = server.indexOf("    brainIntegrations,\n    brainOwnerIds,\n", startOwner);
+  const passed = server.indexOf(
+    "brainIntegrations: brainStart.integrations, brainOwnerIds: brainStart.ownerIds,", startOwner,
+  );
   const pipedream = server.indexOf("const pipedreamClient = platformIntegrations.client;");
-  const bind = server.indexOf("brainIntegrations.bind({\n    internalBaseUrl: internalIntegrationBaseUrl, "
-    + "machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,\n    env: process.env,\n  });");
+  const bind = server.indexOf("brainStart.bindIntegrations({\n    internalBaseUrl: internalIntegrationBaseUrl, "
+    + "machineToken: internalPlatformToken, db: platformDb, pipedream: pipedreamClient,\n  });");
   for (const position of [late, startOwner, passed, pipedream, bind]) expect(position).toBeGreaterThan(0);
   expect(late).toBeLessThan(startOwner);
   expect(passed - startOwner).toBeLessThan(120);
   expect(bind).toBeGreaterThan(pipedream);
-  for (const position of [services, dispatcher, tools, readTools, auth, serve, close]) expect(position).toBeGreaterThan(0);
-  expect(Math.max(tools, readTools)).toBeLessThan(dispatcherEnd);
+  for (const position of [services, dispatcher, tools, auth, serve, close]) expect(position).toBeGreaterThan(0);
+  expect(tools).toBeLessThan(dispatcherEnd);
   expect(routes).toBeGreaterThan(auth);
   expect(jobs).toBeGreaterThan(serve);
   // Jobs and hooks stop first, before anything closes the owner database.
   expect(stop - close).toBeLessThan(80);
+  // The seams live in server/brain-wiring.ts: server.ts only calls them.
+  for (const name of ["createBrainLateBoundIntegrations", "createBrainAgentReadTools", "createBrainProjectCleanup"]) {
+    expect(server, name).not.toContain(name);
+  }
+});
+
+describe("gateway seams (server/brain-wiring.ts)", () => {
+  it("lets only the configured owner spend the brain's credentials, and \"default\" outside production", () => {
+    expect(createBrainGatewayStart(["user_a"], { NODE_ENV: "production" }).ownerIds).toEqual(["user_a"]);
+    expect(createBrainGatewayStart([], { NODE_ENV: "production" }).ownerIds).toEqual([]);
+    expect(createBrainGatewayStart([], { NODE_ENV: "development" }).ownerIds).toEqual(["default"]);
+    const start = createBrainGatewayStart([], {});
+    start.bindIntegrations({});
+    expect(() => start.bindIntegrations({})).toThrow("Brain integrations are already bound");
+  });
+
+  it("offers no agent tools while the brain is off", () => {
+    expect(createBrainGatewayAgentTools(null)).toEqual({ brainTools: undefined, brainReadTools: undefined });
+  });
+
+  it("erases a deleted project through the brain, and fails the deletion when the database is down", async () => {
+    const eraseProject = vi.fn(async () => undefined);
+    const brainServices = { eraseProject } as unknown as BrainServicesHandle;
+    const project = { id: "proj_a" } as ProjectConfig;
+    const principal = { userId: "owner_a" } as RequestPrincipal;
+    const services = { brainServices, brainService: null, kyselyInstance: null };
+    await createBrainGatewayProjectErase(true, services)(project, principal);
+    expect(eraseProject).toHaveBeenCalledWith("owner_a", "proj_a");
+    await expect(createBrainGatewayProjectErase(true, null)(project, principal)).rejects.toThrow("cleanup unavailable");
+    await expect(createBrainGatewayProjectErase(false, null)(project, principal)).resolves.toBeUndefined();
+  });
 });
 
 describe("contract vocabularies", () => {
