@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { operator } from "../../packages/brand/src/themes/operator";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_THEME_ID,
@@ -55,7 +56,7 @@ describe("unified theme registry", () => {
     expect(chrome.destructive).toBe("#e06c75");
     expect(chrome.ring).toBe("#61afef");
 
-    const editor = getThemeEditorColors("operator", "dark");
+    const editor = operator.dark!.editor;
     expect(editor.keyword).toBe("#c678dd");
     expect(editor.string).toBe("#98c379");
     expect(editor.function).toBe("#61afef");

@@ -40,9 +40,9 @@ describe('designer review regressions', () => {
   });
   for (const theme of unifiedThemes) for (const mode of ['light', 'dark'] as const) {
     it(`${theme.id} ${mode}: text on every raised, selected and status surface passes AA`, () => {
-      const c = getThemeVariant(theme.id, mode).chrome;
+      const { chrome: c, editor: e, terminal } = getThemeVariant(theme.id, mode);
       const vars = chromeToSemanticVars(c);
-      for (const bg of [c.background, c.card, c.popover, c.surface3, c.accent, c.secondary, c.sidebar]) {
+      for (const bg of [c.background, c.card, c.popover, c.surface3, c.muted, c.accent, c.secondary, c.sidebar]) {
         expect(contrastRatio(c.mutedForeground, bg), `secondary on ${bg}`).toBeGreaterThanOrEqual(4.5);
       }
       for (const tone of ['success', 'warning', 'danger', 'info']) {
@@ -52,6 +52,8 @@ describe('designer review regressions', () => {
         expect(contrastRatio(text!, vars[`--${tone}-muted`]!)).toBeGreaterThanOrEqual(4.5);
         expect(contrastRatio(fillText!, vars[`--${tone}`]!)).toBeGreaterThanOrEqual(4.5);
       }
+      for (const key of ['keyword', 'string', 'comment', 'number', 'function', 'type', 'variable', 'property'] as const) for (const bg of [e.background, e.lineHighlight, e.selection]) expect(contrastRatio(e[key], bg), `${key} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      for (const key of ['red', 'green', 'yellow', 'blue'] as const) expect(contrastRatio(terminal[key], terminal.background), `ANSI ${key}`).toBeGreaterThanOrEqual(4.5);
       expect(c.popover).not.toBe(c.accent);
       expect(vars['--accent-hover']).not.toBe(vars['--accent']);
       expect(contrastRatio(vars['--text-on-accent-hover']!, vars['--accent-hover']!)).toBeGreaterThanOrEqual(4.5);

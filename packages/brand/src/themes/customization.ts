@@ -24,6 +24,12 @@ export function normalizeCustomTheme(value: unknown): CustomTheme | null {
     record(v) && typeof v[key] === 'string' && HEX.test(v[key]) ? [[key, v[key].toLowerCase()]] : []));
   return { baseThemeId: value.baseThemeId, light: colors(value.light), dark: colors(value.dark) };
 }
+/** Matches the existing Web renderer's legacy RGB mode inference. */
+export function legacyThemeMode(background: string): 'light' | 'dark' {
+  if (!HEX.test(background)) return 'light';
+  const [r, g, b] = [1, 3, 5].map(offset => parseInt(background.slice(offset, offset + 2), 16));
+  return (0.299 * r! + 0.587 * g! + 0.114 * b!) / 255 < 0.5 ? 'dark' : 'light';
+}
 export function luminance(hex: string): number {
   const channels = [1, 3, 5].map(offset => {
     const c = parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -68,7 +74,7 @@ export function polishVariant(source: UnifiedThemeVariant): UnifiedThemeVariant 
   c.sidebarPrimaryForeground = readable(c.sidebarPrimaryForeground, [c.sidebarPrimary]);
   c.sidebarAccentForeground = readable(c.sidebarAccentForeground, [c.sidebarAccent]);
   for (const key of ['foreground', 'cursor', 'keyword', 'string', 'comment', 'number', 'function', 'type', 'operator', 'variable', 'property', 'link', 'heading', 'gutterForeground'] as const) {
-    v.editor[key] = readable(v.editor[key], [v.editor.background]);
+    v.editor[key] = readable(v.editor[key], key === 'gutterForeground' ? [v.editor.gutterBackground] : [v.editor.background, v.editor.lineHighlight, v.editor.selection]);
   }
   v.terminal.foreground = readable(v.terminal.foreground, [v.terminal.background]);
   v.terminal.cursor = readable(v.terminal.cursor, [v.terminal.background]);
@@ -88,5 +94,6 @@ export function customizeVariant(base: UnifiedThemeVariant, colors: CustomColors
   if (colors.text) c.foreground = c.cardForeground = c.popoverForeground = c.sidebarForeground = c.secondaryForeground = c.accentForeground = c.sidebarAccentForeground = colors.text;
   if (colors.accent) c.primary = c.sidebarPrimary = colors.accent;
   if (colors.border) c.border = c.input = c.sidebarBorder = c.modalBorder = colors.border;
-  return polishVariant({ chrome: c, terminal: { ...base.terminal, background: c.background, foreground: c.foreground, cursor: c.foreground, cursorAccent: c.background }, editor: { ...base.editor, background: c.background, foreground: c.foreground, gutterBackground: c.background, lineHighlight: c.accent, cursor: c.foreground } });
+  const editorShade = luminance(c.background) < 0.3 ? '#ffffff' : '#000000';
+  return polishVariant({ chrome: c, terminal: { ...base.terminal, background: c.background, foreground: c.foreground, cursor: c.foreground, cursorAccent: c.background }, editor: { ...base.editor, background: c.background, foreground: c.foreground, gutterBackground: c.background, lineHighlight: mix(c.background, editorShade, 0.04), selection: mix(c.background, editorShade, 0.1), cursor: c.foreground } });
 }
