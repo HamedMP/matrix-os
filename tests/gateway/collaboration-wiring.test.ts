@@ -298,6 +298,44 @@ describe("gateway collaboration wiring", () => {
     await runtime.shutdown();
   });
 
+  it("mounts both terminal sockets even when the shared terminal never initialized", async () => {
+    // Issue #1829 / spec 535 FR-027: a missing dependency answers on the socket, never with a not-found.
+    const runtime = await createGatewayCollaboration({
+      organizationPrecondition: allowAllOrganizationPrecondition,
+      db: fixture.db,
+      chatRepository: new ChatRepository(fixture.db),
+      config: {
+        runtimeId: collaborationIds.runtime,
+        activeKeyId: "key-1",
+        proofKeys: { "key-1": "a".repeat(32) },
+        platformBaseUrl: "https://platform.internal",
+        serviceToken: "c".repeat(32),
+      },
+      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      outboxFetch: async () => new Response(null, { status: 204 }),
+      startTimers: false,
+    });
+    const app = new Hono();
+    let registeredSockets = 0;
+    const upgradeWebSocket = ((factory: (context: Context) => WSEvents<unknown>) => {
+      if (typeof factory === "function") registeredSockets += 1;
+      return (context: Context) => context.text("upgrade");
+    }) as unknown as UpgradeWebSocket;
+    runtime.register({ app, upgradeWebSocket });
+    expect(registeredSockets).toBe(4);
+    for (const path of [
+      `/ws/collaboration/scopes/${collaborationIds.scope}/terminal`,
+      `/ws/collaboration/direct/scopes/${collaborationIds.scope}/terminal`,
+    ]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toBe("upgrade");
+    }
+    await expect(app.request(`/api/collaboration/scopes/${collaborationIds.scope}/terminal`))
+      .resolves.toMatchObject({ status: 401 });
+    await runtime.shutdown();
+  });
+
   it("removes expired owner-local export artifacts during startup recovery", async () => {
     await bootstrapCollaborationDatabase(fixture.db);
     await fixture.db.insertInto("collaboration_scopes").values({

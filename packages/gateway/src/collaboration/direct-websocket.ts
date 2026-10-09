@@ -15,6 +15,7 @@ import {
   CollaborationIdSchema,
   CollaborationRevisionSchema,
   CollaborationTerminalActionSchema,
+  CollaborationTerminalFrameSchema,
   type CollaborationConnectionTicket,
 } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
@@ -27,13 +28,15 @@ import type { DirectSessionService } from "./direct-sessions.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 import type { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
-import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
+import { terminalUnavailableFrame, type CollaborationTerminalEventRegistry } from "./terminal-events.js";
 
-export const DIRECT_WS_PATH_PATTERN = /^\/ws\/collaboration\/direct\/scopes\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(?:events|terminal)$/;
 const MAX_FRAME_BYTES = COLLABORATION_DIRECT_LIMITS.wsFrameBytes;
 const WATCHDOG_MS = COLLABORATION_DIRECT_LIMITS.streamWatchdogSeconds * 1_000;
 const HANDSHAKE_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.streamWatchdogSeconds * 1_000;
 const MAX_TICKET_PARAM = 4_096;
+/** "Try Again Later": a missing server dependency is retryable, never a denial or a not-found. */
+const UNAVAILABLE_CLOSE_CODE = 1013;
+const ERROR_FRAME = JSON.stringify({ version: 1, type: "collaboration.error", code: "unavailable" });
 const QuerySchema = z.object({ ticket: z.string().min(1).max(MAX_TICKET_PARAM).regex(/^[A-Za-z0-9_-]+$/), after: CollaborationRevisionSchema.default("0") }).strict();
 
 interface SocketLike { send(value: string): void; close(code?: number, reason?: string): void; raw?: unknown }
@@ -67,7 +70,7 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
       let watchdog: ReturnType<typeof setInterval> | null = null;
       let unsubscribeEnded: (() => void) | null = null;
 
-      const shutdownStream = (ws: SocketLike, code: number, reason: string) => {
+      const shutdownStream = (ws: SocketLike, code: number, reason: string, frame = ERROR_FRAME) => {
         if (handshakeTimer) clearTimeout(handshakeTimer);
         if (watchdog) clearInterval(watchdog);
         handshakeTimer = null;
@@ -80,7 +83,7 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
         release = null;
         if (connectionId && purpose === "terminal") options.terminal?.control.markDisconnected(scopeId, connectionId);
         if (!socketClosed) {
-          sendError(ws);
+          sendFrame(ws, frame);
           ws.close(code, reason);
         }
       };
@@ -97,9 +100,14 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
         const socket = { send: (value: string) => { ws.send(value); }, close: (code?: number, reason?: string) => { ws.close(code, reason); }, get bufferedAmount() { return rawBufferedAmount(ws.raw); } };
         if (purpose === "events") {
           stream = await options.events.open({ connectionId: nextConnectionId, scopeId, actorId: opened.session.actorId, authorityGeneration: generation, afterSequence: Number(query.after), socket });
-        } else {
-          if (!options.terminal) throw new Error("terminal unavailable");
+        } else if (options.terminal) {
           stream = await options.terminal.registry.open({ connectionId: nextConnectionId, scopeId, actorId: opened.session.actorId, authorityGeneration: generation, afterSequence: Number(query.after), socket });
+        } else {
+          // Spec 535 FR-027: answered only after admission, as the HTTP terminal routes do.
+          console.warn("[collaboration-direct-ws:terminal] shared terminal dependency missing");
+          const frame = terminalUnavailableFrame({ scopeId, authorityGeneration: generation, code: "unavailable" });
+          shutdownStream(ws, UNAVAILABLE_CLOSE_CODE, "Unavailable", JSON.stringify(CollaborationTerminalFrameSchema.parse(frame)));
+          return;
         }
         connectionId = nextConnectionId;
         if (socketClosed) {
@@ -194,8 +202,10 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
     }));
   };
 
+  // Both sockets are always mounted: a home without the shared terminal answers a
+  // retryable unavailable on the socket instead of a not-found that reads as "not shared".
   register("events");
-  if (options.terminal) register("terminal");
+  register("terminal");
 }
 
 function parseQuery(context: Context): z.infer<typeof QuerySchema> {
@@ -226,9 +236,9 @@ function rawBufferedAmount(raw: unknown): number {
   return typeof amount === "number" ? amount : 0;
 }
 
-function sendError(ws: SocketLike): void {
+function sendFrame(ws: SocketLike, frame: string): void {
   try {
-    ws.send(JSON.stringify({ version: 1, type: "collaboration.error", code: "unavailable" }));
+    ws.send(frame);
   } catch (error: unknown) {
     console.warn("[collaboration-direct-ws] error send failed", error instanceof Error ? error.name : "UnknownError");
   }
