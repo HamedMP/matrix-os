@@ -1,3 +1,4 @@
+import { enqueueAtsHistory } from './ats-slack-threads.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
@@ -12,7 +13,7 @@ import { getAtsMailAttachment } from './ats-attachments.js';
 export function createAtsMailRoutes(options: { db: AtsDB; mailSecret: string; allowedRoleSlugs: readonly string[] }) {
   const app = new Hono();
   // This is a separate scoped bridge credential; it cannot read or mutate the hiring pipeline.
-  app.post('/api/ats/mail', bodyLimit({ maxSize: 8 * 1024 * 1024 }), async (c) => {
+  app.post('/api/ats/mail', bodyLimit({ maxSize: 32 * 1024 * 1024 }), async (c) => {
     if (!options.mailSecret) return c.json({ error: 'Email intake unavailable' }, 503);
     const token = c.req.header('authorization')?.replace(/^Bearer /, '');
     if (!timingSafeTokenEquals(token, options.mailSecret)) return c.json({ error: 'Unauthorized' }, 401);
@@ -29,7 +30,20 @@ export function createAtsMailRoutes(options: { db: AtsDB; mailSecret: string; al
     }
   });
   // Mounted beneath the existing admin-secret middleware.
-  app.post('/api/ats/admin/legacy-inbox', bodyLimit({ maxSize: 8 * 1024 * 1024 }), async (c) => {
+  app.post('/api/ats/admin/slack-backfill',bodyLimit({maxSize:4096}),async c=>{
+    try {
+      const input=z.object({kind:z.enum(['applications','emails']),after:z.union([z.uuid(),z.literal('')]).default(''),limit:z.number().int().min(1).max(200).default(100)}).safeParse(await c.req.json());
+      if(!input.success)return c.json({error:'Invalid history request'},422);
+      return c.json(await enqueueAtsHistory(options.db,input.data,new Date().toISOString()));
+    }catch(error){
+      if(error instanceof Error&&error.name==='BodyLimitError')throw error;
+      if(error instanceof SyntaxError)return c.json({error:'Invalid history request'},422);
+      console.error('[ats] Slack history queue failed:',error instanceof Error?error.name:typeof error);
+      return c.json({error:'History delivery unavailable'},503);
+    }
+  });
+
+  app.post('/api/ats/admin/legacy-inbox', bodyLimit({ maxSize: 32 * 1024 * 1024 }), async (c) => {
     try {
       const input = LegacyInboxSchema.safeParse(await c.req.json());
       if (!input.success) return c.json({ error: 'Invalid recruiting history' }, 422);
@@ -42,7 +56,7 @@ export function createAtsMailRoutes(options: { db: AtsDB; mailSecret: string; al
       return c.json({ error: 'History import unavailable' }, 503);
     }
   });
-  app.post('/api/ats/admin/legacy-import', bodyLimit({ maxSize: 8 * 1024 * 1024 }), async (c) => {
+  app.post('/api/ats/admin/legacy-import', bodyLimit({ maxSize: 32 * 1024 * 1024 }), async (c) => {
     try {
       const input = LegacyCandidateSchema.safeParse(await c.req.json());
       const actor = z.string().min(1).max(200).safeParse(c.req.header('x-ats-actor-id'));

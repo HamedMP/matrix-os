@@ -1,3 +1,4 @@
+import { migrateAtsSlack, type AtsSlackThreadTable, type AtsSlackPartTable, type AtsSlackUploadTable } from './ats-slack-schema.js';
 import { sql, type Kysely } from 'kysely';
 import { migrateAtsIntake, type AtsLegacyImportsTable, type AtsInboxTable, type AtsNotificationOutboxTable, type AtsMailAttachmentsTable } from './ats-intake-schema.js';
 
@@ -92,6 +93,9 @@ export interface AtsTasksTable {
 }
 
 export interface AtsDatabaseTables {
+  ats_slack_threads: AtsSlackThreadTable;
+  ats_slack_parts: AtsSlackPartTable;
+  ats_slack_uploads: AtsSlackUploadTable;
   ats_legacy_imports: AtsLegacyImportsTable;
   ats_inbox_messages: AtsInboxTable;
   ats_notification_outbox: AtsNotificationOutboxTable;
@@ -217,4 +221,5 @@ export async function migrateAts<T extends AtsDatabaseTables>(db: Kysely<T>): Pr
   `.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ats_tasks_application ON ats_tasks(application_id, status, due_at)`.execute(db);
   await migrateAtsIntake(db);
+  await migrateAtsSlack(db);
 }

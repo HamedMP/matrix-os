@@ -128,7 +128,7 @@ export async function createAtsApplication(
     });
     await enqueueAtsNotification(trx, `application:${id}`, {
       name: inserted.candidate_name, email: inserted.candidate_email, role: input.roleSlug,
-      path: `/admin/ats/${id}`, source: 'careers_page',
+      path: `/admin/ats/${id}`, source: 'careers_page', applicationId: id,
     }, now);
     return { application: mapApplication(inserted), created: true };
   });

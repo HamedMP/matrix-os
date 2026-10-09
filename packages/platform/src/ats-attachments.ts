@@ -24,3 +24,11 @@ export async function getAtsMailAttachment(db: AtsDB, id: string) {
       eb.exists(eb.selectFrom('ats_applications').select('id').whereRef('ats_applications.id', '=', 'ats_inbox_messages.application_id').where('deleted_at', 'is', null)),
     ])).executeTakeFirst();
 }
+
+// Email attachments are opaque downloads. CVs retain their signature validation.
+export const AtsEmailAttachmentSchema = z.object({
+ filename: z.string().min(1).max(180).transform(name=>name.replace(/[^a-zA-Z0-9._ -]/g,'_')),
+ contentType:z.string().regex(/^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/).max(120),
+ base64:z.string().min(1).max(28*1024*1024).regex(/^[A-Za-z0-9+/]*={0,2}$/),
+}).refine(file=>{const bytes=Buffer.from(file.base64,'base64');return bytes.length>0 && bytes.length<=20*1024*1024 && bytes.toString('base64')===file.base64;},'Invalid attachment')
+ .refine(file=>!['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.contentType)||AtsAttachmentSchema.safeParse(file).success,'Invalid CV');

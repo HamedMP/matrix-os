@@ -1,4 +1,4 @@
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Generated } from 'kysely';
 
 export interface AtsInboxTable {
   id: string;
@@ -6,6 +6,7 @@ export interface AtsInboxTable {
   thread_id: string;
   sender_name: string;
   sender_email: string;
+  applicant_email: Generated<string>;
   subject: string;
   body: string;
   received_at: string;
