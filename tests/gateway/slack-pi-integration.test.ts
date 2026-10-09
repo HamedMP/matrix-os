@@ -284,7 +284,10 @@ describe("Slack company Pi composition", () => {
     expect(s.specs).toHaveLength(2); expect(s.specs[1]!.turn).toMatchObject({ kind: "prompt", text: expect.stringContaining("The company launch is Monday") });
     expect(s.specs[1]!.capabilities).toEqual(["integration.inventory", "integration.call"]);
     expect(s.stream).toHaveBeenCalledTimes(2); expect(s.privateMemory).not.toHaveBeenCalled();
-    expect(s.readinessChecks).toContainEqual({ boundDriverKind: null, result: "ready" });
+    expect(s.readinessChecks).toEqual([
+      { boundDriverKind: "matrix_bot", result: "ready" },
+      { boundDriverKind: "matrix_bot", result: "ready" },
+    ]);
     expect(s.createRuntime.mock.calls.map(([input]) => input.sandbox.actorId)).toEqual([actors.owner, actors.editor]);
     expect(JSON.stringify(s.stream.mock.calls[1]![1])).not.toContain("Company thread initialized.");
     const tasks = await s.fixture.db.selectFrom("bot_tasks").select("status").execute();
