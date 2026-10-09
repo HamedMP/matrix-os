@@ -11,10 +11,16 @@ import {
   hasActiveWindowInteraction,
 } from "@/components/desktop/DesktopWindow";
 import { TrafficLights } from "@/components/desktop/DesktopDockControls";
-import type { AppWindow } from "@/hooks/useWindowManager";
+import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 
 vi.mock("@/components/AppViewer", () => ({
   AppViewer: () => <div data-testid="app-viewer" />,
+}));
+vi.mock("@/components/brain", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/brain")>()),
+  BrainApp: ({ active, visible }: { active?: boolean; visible?: boolean }) => (
+    <div data-testid="brain-app" data-active={String(active)} data-visible={String(visible)} />
+  ),
 }));
 
 describe("web desktop window controls", () => {
@@ -132,6 +138,31 @@ describe("web desktop window controls", () => {
 
     expect(onDragEnd).toHaveBeenCalledOnce();
     expect(onResizeEnd).toHaveBeenLastCalledWith(false);
+  });
+
+  it("gives the Brain window's focus and visibility to its chat, like the Chat window", () => {
+    const noop = vi.fn();
+    const brain = (minimized: boolean): AppWindow => ({
+      id: "brain-1", title: "Brain", path: "__brain__", x: 20, y: 20, width: 640, height: 480, minimized, zIndex: 10,
+    });
+    const view = (win: AppWindow) => (
+      <DesktopWindow win={win} dockPosition="bottom" fullscreenWindowId={null} interacting={false} minimizingIds={new Set()}
+        onAnimateMinimize={noop} onCloseWindow={noop} onDragEnd={noop} onDragMove={noop} onDragStart={noop}
+        onFocusWindow={noop} onOpenWindow={noop} onResizeInteractionChange={noop} onToggleFullscreen={noop} topInset={38} />
+    );
+    useWindowManager.setState({ focusedWindowId: "brain-1" });
+    try {
+      // A minimized Brain window stays mounted: its chat must not read answers or run the Bot panel.
+      const { rerender } = render(view(brain(true)));
+      expect(screen.getByTestId("brain-app").dataset).toMatchObject({ active: "false", visible: "false" });
+      rerender(view(brain(false)));
+      expect(screen.getByTestId("brain-app").dataset).toMatchObject({ active: "true", visible: "true" });
+      useWindowManager.setState({ focusedWindowId: "other" });
+      rerender(view(brain(false)));
+      expect(screen.getByTestId("brain-app").dataset).toMatchObject({ active: "false", visible: "true" });
+    } finally {
+      useWindowManager.setState({ focusedWindowId: null });
+    }
   });
 
   it("stays interactive until both overlapping pointer interactions finish", () => {
