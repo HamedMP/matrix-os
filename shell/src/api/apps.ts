@@ -67,6 +67,8 @@ export function hydrateAppIconUrls(
 ): ApiAppEntry[] | undefined {
   if (!apps) return undefined;
   return apps.map((app) => {
+    const selectedUrl = resolveCatalogIconUrl(app.iconUrl, resolveAssetUrl);
+    if (selectedUrl) return { ...app, iconUrl: selectedUrl };
     if (app.iconUrl) return app;
     const iconSlug = app.icon ?? app.slug;
     const versionedUrl = iconSlug ? icons?.[iconSlug]?.versionedUrl : undefined;

@@ -142,3 +142,10 @@ describe("bundled app artwork refresh", () => {
     }
   });
 });
+
+
+it("binds selected bootstrap artwork to the active computer before legacy snapshot fallback", () => {
+  const resolve = (path: string) => `https://app.test/vm/current${path}`;
+  const apps = [{ name: "Notes", path: "apps/notes/index.html", icon: "notes", iconUrl: "/system-app-icons/v2/notes.png" }];
+  expect(hydrateAppIconUrls(apps, { notes: { versionedUrl: "/icons/notes.png?v=old" } }, resolve)?.[0]?.iconUrl).toBe("https://app.test/vm/current/system-app-icons/v2/notes.png");
+});
