@@ -252,6 +252,13 @@ export function authMiddleware(
       return nextWithReady(c, next);
     }
 
+    // Public site submission is authenticated by its narrowly scoped HMAC verifier.
+    if (c.req.method === "POST" && /^\/api\/internal\/sites\/[a-f0-9-]{36}\/submit$/.test(normalizedPath)
+      && c.req.header("x-matrix-site-signature") && c.req.header("x-matrix-site-timestamp")) {
+      if (!webhookRateLimiter.check(getClientIp(c))) return tooManyRequests(c);
+      return nextWithReady(c, next);
+    }
+
     // Matrix bridge/appservice callbacks and Hermes reply delivery use scoped
     // internal tokens checked by their route handlers. Bypass bearer auth only
     // for those token-bearing paths, while still rate-limiting failed attempts.

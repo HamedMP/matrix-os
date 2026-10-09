@@ -1,0 +1,10 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSitePlatformClient, SitePlatformError } from '../../packages/gateway/src/sites/platform-client.js';
+import { randomUUID } from 'node:crypto';
+const client=()=>createSitePlatformClient({url:'https://platform.example',token:'machine-token',handle:'owner',runtimeSlot:'main'});
+afterEach(()=>vi.unstubAllGlobals());
+describe('bounded site management transport',()=>{
+ it('uses configured destination, machine proof and rejects redirects',async()=>{const missing=new Response('missing',{status:404});const fetch=vi.fn().mockResolvedValue(missing);vi.stubGlobal('fetch',fetch);expect(await client().request('event','GET')).toBeNull();expect(missing.bodyUsed).toBe(true);const [url,options]=fetch.mock.calls[0];expect(String(url)).toBe('https://platform.example/internal/containers/owner/sites/event?runtimeSlot=main');expect(options.headers.authorization).toBe('Bearer machine-token');expect(options.redirect).toBe('error');expect(options.signal).toBeInstanceOf(AbortSignal);});
+ it('returns coarse unavailable on network, oversize and malformed responses',async()=>{for(const response of [new Error('postgres://secret/path'),new Response('x'.repeat(600000)),new Response('{}')]){vi.stubGlobal('fetch',response instanceof Error?vi.fn().mockRejectedValue(response):vi.fn().mockResolvedValue(response));await expect(client().request('event','GET')).rejects.toMatchObject({status:503,message:'Publishing request failed'});}});
+ it('validates response and preserves conflict status',async()=>{const record={id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,url:'https://matrix.page/test',revision:1,status:'published',activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}};vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify(record))));expect(await client().request('event','GET')).toEqual(record);vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('{}',{status:409})));await expect(client().request('event','PATCH',{})).rejects.toEqual(new SitePlatformError(409));});
+});
