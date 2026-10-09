@@ -125,6 +125,7 @@ describe("github adapter", () => {
       status: "partial", pages: 1, written: 1, errorCode: "rate_limited", retryAfterSeconds: 30,
     });
     expect(client.calls.map((call) => call.kind)).toEqual(["issues", "pull"]);
+    expect((await harness.repository.listSyncReceipts(scopeA, sourceId))[0]).toMatchObject({ errorCode: "rate_limited", nextAction: "retry_later" });
     // The failure is returned once; the next run continues from the committed cursor.
     expect(await run(adapter)).toMatchObject({ status: "succeeded", caughtUp: true, written: 4 });
   });
