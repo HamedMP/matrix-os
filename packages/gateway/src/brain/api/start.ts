@@ -4,13 +4,14 @@
  * older table) leaves the whole brain off (null: routes answer 503 and the agent gets no brain tool), logged by error
  * name and SQLSTATE, and never fails owner startup. Each feature then bootstraps on its own: a feature whose bootstrap
  * fails for any reason is logged the same way and left off (its routes answer 503 and its agent tools are dropped),
- * never failing the others. The project service is wrapped so a sync that wrote or deleted documents emits
- * documents_changed and an extraction that changed claims emits claims_changed. Bootstraps run in
+ * never failing the others. The project service's git sync and extraction runners are wrapped so a run that wrote or
+ * deleted documents emits documents_changed and one that changed claims emits claims_changed, even when it failed after
+ * saving and its receipt (or run row) could not close. Bootstraps run in
  * BRAIN_BOOTSTRAP_ORDER: search, graph, the source kinds' tables (github, matrix, connectors, each on its own: a failed
  * group leaves only its kinds off), then brief. The /sources service gets one handler per kind whose tables exist,
- * syncs the git source through the wrapped project service and drops a removed source's derived rows before it
- * answers. Background runs (jobs/, spec 566) bootstrap brain_jobs last; their steps use the wrapped project service,
- * so a queued sync or extract emits the same change events as a request. The timers are the run worker (one per
+ * syncs the git source through the project service and drops a removed source's derived rows before it answers.
+ * Background runs (jobs/, spec 566) bootstrap brain_jobs last; their steps use the same project service, so a queued
+ * sync or extract emits the same change events as a request. The timers are the run worker (one per
  * gateway, for the schedule owner only, at most `concurrency` runs at once), the daily brief and a one-shot index
  * catch-up shortly after start (index-repair.ts); stopBrainServices stops the worker first.
  */
@@ -18,14 +19,16 @@ import type { Kysely } from "kysely";
 import {
   bootstrapBrainBriefDatabase, createBrainBrief, createBrainBriefScheduler, createBrainBriefScopeLister,
 } from "../brief/index.js";
+import { runBrainExtraction } from "../claims/index.js";
 import type {
-  BrainBackgroundJob, BrainChangeHooks, BrainChangeListener, BrainIntegrationCaller, BrainIntegrationService,
-  BrainProjectResolver, BrainServices, BrainSourceSyncLimits,
+  BrainBackgroundJob, BrainChangeEvent, BrainChangeHooks, BrainChangeListener, BrainIntegrationCaller,
+  BrainIntegrationService, BrainServices, BrainSourceSyncLimits,
 } from "../contracts.js";
+import { syncGitSource } from "../git/index.js";
 import { bootstrapBrainGraphDatabase, createBrainGraph } from "../graph/index.js";
 import { createBrainChangeHooks } from "../hooks.js";
 import { createBrainImpactService } from "../impact/index.js";
-import { BrainRepository, type BrainDatabase, type BrainScopeKey } from "../index.js";
+import { BrainRepository, type BrainDatabase } from "../index.js";
 import {
   BRAIN_JOB_WORKER_NAME, BrainJobStore, bootstrapBrainJobsDatabase, createBrainJobSteps, createBrainJobWorker,
   createBrainJobsService, type BrainJobKind, type BrainJobWorkerLimits,
@@ -46,6 +49,8 @@ import { startBrainProjectService } from "./service.js";
 import {
   BRAIN_PROJECT_ID_PATTERN, brainProjectScope, type BrainProjectService, type BrainProjectServiceDeps,
 } from "./types.js";
+
+type BrainRunners = Required<Pick<BrainProjectServiceDeps, "sync" | "extract">>;
 
 /** What the /sources kinds read through; every field is optional and a missing one turns its kinds off. */
 export interface BrainSourcesStartOptions {
@@ -113,42 +118,28 @@ async function startFeature<T>(feature: string, start: () => Promise<T>): Promis
   }
 }
 
-/** Emits only after the call succeeded and changed something; a failed scope lookup is logged, never thrown. */
-async function announce(
-  resolver: BrainProjectResolver, ownerId: string, projectRef: string,
-  emit: (scope: BrainScopeKey, at: string) => void,
-): Promise<void> {
-  try {
-    const { scope } = await resolver.resolve(ownerId, projectRef);
-    emit(scope, new Date().toISOString());
-  } catch (error: unknown) {
-    console.warn("[brain] change event skipped; the next refresh repairs it:", errorName(error));
-  }
-}
-
-/** The project service with change events: the sync and extract wrappers of the hooks contract. */
-export function withBrainChangeEvents(
-  project: BrainProjectService, resolver: BrainProjectResolver, hooks: BrainChangeHooks,
-): BrainProjectService {
+/**
+ * The git sync and extraction runners with change events, each for the run's own scope (ids null). A runner never
+ * rejects and its counts cover every committed write, so a run that failed after saving (its receipt or run row left
+ * unclosed, which the project service answers 503) is announced too.
+ */
+export function withBrainChangeEvents(runners: BrainRunners, emit: (event: BrainChangeEvent) => void): BrainRunners {
   return {
-    ...project,
-    async sync(ownerId, projectRef, run) {
-      const view = await project.sync(ownerId, projectRef, run);
-      if (view.counts.written > 0 || view.counts.deleted > 0) {
-        await announce(resolver, ownerId, projectRef, (scope, at) => hooks.emit({
-          type: "documents_changed", scope, sourceId: null, documentIds: null, at,
-        }));
+    async sync(options) {
+      const result = await runners.sync(options);
+      const { scope } = options;
+      if (result.counts.written > 0 || result.counts.deleted > 0) {
+        emit({ type: "documents_changed", scope, sourceId: null, documentIds: null, at: new Date().toISOString() });
       }
-      return view;
+      return result;
     },
-    async extract(ownerId, projectRef, input, signal) {
-      const view = await project.extract(ownerId, projectRef, input, signal);
-      if (view.counts.claimsWritten > 0 || view.counts.claimsRemoved > 0) {
-        await announce(resolver, ownerId, projectRef, (scope, at) => hooks.emit({
-          type: "claims_changed", scope, extractor: view.extractor, documentIds: null, at,
-        }));
+    async extract(options) {
+      const result = await runners.extract(options);
+      const { scope } = options, { extractor } = result;
+      if (result.counts.claimsWritten > 0 || result.counts.claimsRemoved > 0) {
+        emit({ type: "claims_changed", scope, extractor, documentIds: null, at: new Date().toISOString() });
       }
-      return view;
+      return result;
     },
   };
 }
@@ -160,7 +151,12 @@ export async function startBrainServices(
   const { scheduleOwnerId, sources: sourceOptions = {}, catchUpDelayMs, jobWorkerLimits, ownerIds: given, ...rest } = deps;
   const ownerId = scheduleOwnerId === undefined ? resolveBrainAgentOwnerId() : scheduleOwnerId;
   const ownerIds = given ?? (ownerId === null ? [] : [ownerId]);
-  const projectDeps = { ...rest, modelOwnerIds: ownerIds };
+  // The change bus, bound once its listeners exist; nothing runs a sync or an extraction before this returns.
+  let bus: BrainChangeHooks | null = null;
+  const runners = withBrainChangeEvents(
+    { sync: rest.sync ?? syncGitSource, extract: rest.extract ?? runBrainExtraction }, (event) => bus?.emit(event),
+  );
+  const projectDeps = { ...rest, ...runners, modelOwnerIds: ownerIds };
   let core: BrainProjectService | null;
   try {
     core = await startBrainProjectService(kysely, projectDeps);
@@ -169,6 +165,7 @@ export async function startBrainServices(
     return null;
   }
   if (core === null) return null;
+  const project = core;
   const repository = new BrainRepository(kysely);
   const resolver = createBrainProjectResolver({ projects: deps.projects, homePath: deps.homePath });
   const search = await startFeature("search", async () => createBrainSearch({
@@ -192,7 +189,7 @@ export async function startBrainServices(
     ...(brief === null ? [] : [brief.listener]),
   ];
   const hooks = createBrainChangeHooks({ listeners });
-  const project = withBrainChangeEvents(core, resolver, hooks);
+  bus = hooks;
   // The same account lookup pins an account at connect (service) and checks it at run time (handlers).
   const { integrations = UNAVAILABLE_INTEGRATIONS, notes = null, chats = null, limits, ...seams } = sourceOptions;
   const sources = await startFeature("sources", async () => createBrainSourcesService({
