@@ -1,9 +1,10 @@
 /**
  * Private bot admission (spec 536, research R4). A private bot run needs no
  * collaboration scope: the owner principal must own the bot's live direct
- * chat, the bot's workspace must resolve (no links, fingerprinted), and the
- * run is launched under the bot profile with a manifest whose scope handle
- * is derived from the owner and bot. The runtime is then bound in the bot
+ * chat or one of its threads (spec 567, with that thread's project), the
+ * bot's workspace must resolve (no links, fingerprinted), and the run is
+ * launched under the bot profile with a manifest whose scope handle is
+ * derived from the owner and bot. The runtime is then bound in the bot
  * registry, which the broker checks on every frame. Shared routes cannot
  * address a private handle: no collaboration scope uses this namespace.
  */
@@ -52,6 +53,8 @@ export interface PrivateBotRunRequest {
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
   expectedRootFingerprint?: string;
+  /** Set for a thread: the run is admitted only while the Chat is still that project's thread. */
+  brainProjectId?: string;
 }
 
 export interface AdmittedBotRuntime {
@@ -66,16 +69,20 @@ export function createPrivateBotAdmission(deps: {
   roots: Pick<ChatExecutionRootResolver, "resolve">;
   registry: BotRuntimeRegistry;
 }) {
-  async function ownsDirectChat(input: { ownerId: string; botId: string; chatId: string }): Promise<boolean> {
+  /** The owner's live direct Chat of the bot, or its thread of exactly the admitted project. */
+  async function ownsBoundChat(input: { ownerId: string; botId: string; chatId: string; brainProjectId?: string }): Promise<boolean> {
     const row = await deps.db.selectFrom("bot_chat_bindings as binding")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
-      .select("binding.chat_id")
+      .select(["binding.kind", "binding.project_id"])
       .where("binding.owner_id", "=", input.ownerId).where("binding.bot_id", "=", input.botId)
-      .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", "direct")
+      .where("binding.chat_id", "=", input.chatId).where("binding.kind", "in", ["direct", "thread"])
       .where("binding.removed_at", "is", null)
       .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", input.ownerId)
       .executeTakeFirst();
-    return row !== undefined;
+    if (!row) return false;
+    return row.kind === "thread"
+      ? input.brainProjectId !== undefined && row.project_id === input.brainProjectId
+      : input.brainProjectId === undefined;
   }
 
   /** Unbinds first so no frame is authorized, then stops the workload. */
@@ -97,7 +104,7 @@ export function createPrivateBotAdmission(deps: {
      */
     async admit(input: PrivateBotRunRequest): Promise<AdmittedBotRuntime> {
       if (!deps.host.available) throw new BotAdmissionError("unavailable");
-      if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
+      if (!await ownsBoundChat(input)) throw new BotAdmissionError("not_found");
       let root: Awaited<ReturnType<typeof deps.roots.resolve>>;
       try {
         root = await deps.roots.resolve({ type: "personal", ownerId: input.ownerId }, { kind: "bot_workspace", botId: input.botId });
@@ -148,6 +155,7 @@ export function createPrivateBotAdmission(deps: {
           ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
+          ...(input.brainProjectId ? { brainProjectId: input.brainProjectId } : {}),
         });
       } catch (error: unknown) {
         await release(runtime.runtimeHandle);
