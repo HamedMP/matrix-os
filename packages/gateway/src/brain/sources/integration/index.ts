@@ -1,7 +1,8 @@
 /** Company Brain integration caller: the one way brain source adapters reach the gateway's integration layer. */
 export {
   BRAIN_INTEGRATION_CALL_TIMEOUT_MS, BRAIN_INTEGRATION_LABEL_CACHE_MAX, BRAIN_INTEGRATION_LABEL_CACHE_TTL_MS,
-  createBrainIntegrationCaller, type BrainIntegrationCallerDeps, type BrainIntegrationRegistry,
+  BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES, createBrainIntegrationCaller, type BrainIntegrationCallerDeps,
+  type BrainIntegrationRegistry,
 } from "./caller.js";
 export {
   BRAIN_INTEGRATION_ACCOUNTS_TIMEOUT_MS, BrainIntegrationAccountsError, createBrainIntegrationAccounts,

@@ -30,7 +30,8 @@ gateway's integration layer for an owner. Spec: `specs/558-company-brain-github-
 
 `index.ts`: `createBrainIntegrationCaller(deps)` with `BrainIntegrationCallerDeps` (`internalBaseUrl`,
 `machineToken`, `db`, `pipedream`, and the test seams `fetch`, `timeoutMs`, `registry`, `now`); the constants
-`BRAIN_INTEGRATION_CALL_TIMEOUT_MS`, `BRAIN_INTEGRATION_LABEL_CACHE_MAX` and `BRAIN_INTEGRATION_LABEL_CACHE_TTL_MS`;
+`BRAIN_INTEGRATION_CALL_TIMEOUT_MS`, `BRAIN_INTEGRATION_LABEL_CACHE_MAX`, `BRAIN_INTEGRATION_LABEL_CACHE_TTL_MS` and
+`BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES`;
 and the body readers `readBoundedJson`, `readJsonField` and `discardBody`, which the GitHub REST client shares.
 `createBrainIntegrationAccounts(deps)` (`accounts.ts`): `configured` (whether either transport exists), `isConnected`
 and `accounts`, the labels of the owner's active connections of one service read from the platform over the same two
@@ -47,9 +48,11 @@ answer `unavailable` and "no account" until the gateway calls `bind(deps)` once 
   before use. Locally it is mapped to its platform user first; an owner with no platform user is `not_connected`.
   Account labels are 1..100 characters with no control characters. The machine token goes only into the
   Authorization header and the delegation proof.
-- Responses are read with a 4 MiB cap and a per-call timeout (15 s, bounded by the caller's signal) on both
-  transports; redirects are refused. Provider data is returned as untrusted JSON (a string for a `text/*` body) for
-  the adapter's own schema.
+- Provider data is capped at 4 MiB of raw bytes on both transports (remotely by the `/read-call` route, before it
+  JSON-encodes them); the remote reply may be up to `BRAIN_INTEGRATION_REMOTE_REPLY_MAX_BYTES` (six times that plus
+  64 KiB, for JSON escaping and the wrapper), so a read that works locally also works remotely. Every call has a
+  per-call timeout (15 s, bounded by the caller's signal); redirects are refused. Provider data is returned as
+  untrusted JSON (a string for a `text/*` body) for the adapter's own schema.
 - The platform's `/read-call` route runs the brain's registry reads (`isBrainReadAction` in
   `integrations/registry-brain.ts`) as byte-capped raw reads (`BRAIN_INTEGRATION_RESPONSE_MAX_BYTES`) that the
   calling gateway's disconnect cancels, so an oversized answer is refused there (502) instead of being buffered and

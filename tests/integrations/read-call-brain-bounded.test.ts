@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
 import { BRAIN_INTEGRATION_RESPONSE_MAX_BYTES } from "../../packages/gateway/src/brain/contracts.js";
+import { createBrainIntegrationCaller } from "../../packages/gateway/src/brain/sources/integration/index.js";
 import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import { BoundedPipedreamReadError } from "../../packages/gateway/src/integrations/pipedream-bounded-get.js";
@@ -27,7 +28,7 @@ describe("read-call for Company Brain reads", () => {
       clerkId: "owner_brain_read", handle: "brainread", displayName: "Brain Read", email: "brain@example.invalid",
       containerId: "container_brain_read", pipedreamExternalId: "pd_brain_read",
     });
-    for (const service of ["github", "gmail"]) {
+    for (const service of ["github", "gmail", "google_drive"]) {
       await db.connectService({ userId: owner.id, service, pipedreamAccountId: `pd_${service}`, accountLabel: "Work",
         scopes: ["read"] });
     }
@@ -79,5 +80,23 @@ describe("read-call for Company Brain reads", () => {
     expect(proxyGet).toHaveBeenCalledTimes(1);
     expect(boundedProxy).toHaveBeenCalledTimes(1);
     log.mockRestore();
+  });
+
+  it("hands a full-size export to a remote caller although JSON escaping makes the reply larger", async () => {
+    // Exactly the raw-byte cap, and the worst case for escaping: each byte is six in the JSON reply (\u0001).
+    const text = "\u0001".repeat(BRAIN_INTEGRATION_RESPONSE_MAX_BYTES);
+    boundedProxy.mockResolvedValueOnce(text);
+    const caller = createBrainIntegrationCaller({
+      internalBaseUrl: "https://platform.test/api/integrations", machineToken: "machine-token",
+      fetch: (async (url: string, init: RequestInit) => app.request(new URL(url).pathname, init)) as typeof fetch,
+    });
+    const exported = await caller.call("owner_brain_read", {
+      service: "google_drive", action: "brain_export_text", label: "Work", params: { fileId: "doc_1" },
+    }, new AbortController().signal);
+    expect(exported.status).toBe("ok");
+    expect(exported.status === "ok" && exported.data === text).toBe(true);
+    expect(boundedProxy.mock.calls[0]![0]).toMatchObject({
+      accountId: "pd_google_drive", maxBytes: BRAIN_INTEGRATION_RESPONSE_MAX_BYTES,
+    });
   });
 });
