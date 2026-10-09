@@ -80,8 +80,19 @@ export function deriveOnboardingRunView(
     status,
     steps: view,
     resultText,
-    resultSummary: firstLine.replace(/^#+\s*/, "").slice(0, RESULT_SUMMARY_MAX_CHARS),
+    resultSummary: plainSummaryLine(firstLine).slice(0, RESULT_SUMMARY_MAX_CHARS),
   };
+}
+
+function plainSummaryLine(line: string): string {
+  return line
+    .replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)+/, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/(\*\*|__|~~)(.+?)\1/g, "$2")
+    .replace(/(^|[^\w*])\*(?!\s)([^*]+?)\*(?![\w*])/g, "$1$2")
+    .replace(/(^|\W)_(?!\s)([^_]+?)_(?!\w)/g, "$1$2")
+    .trim();
 }
 
 export interface OnboardingBubbleView {

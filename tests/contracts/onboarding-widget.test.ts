@@ -249,6 +249,18 @@ describe("deriveOnboardingRunView", () => {
     expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.");
   });
 
+  it("strips markdown from the summary line", () => {
+    const summary = (text: string) => deriveOnboardingRunView(source({ status: "completed" }, [
+      { runId: "run_1", role: "assistant", parts: [{ type: "text", text }] },
+    ]), "run_1").resultSummary;
+    expect(summary("**I couldn't research Lisbon:** web search is _blocked_.")).toBe("I couldn't research Lisbon: web search is blocked.");
+    expect(summary("## Lisbon in `3 days`")).toBe("Lisbon in 3 days");
+    expect(summary("- See [Time Out](https://example.com/lisbon) for ~~old~~ picks")).toBe("See Time Out for old picks");
+    expect(summary("> **Top pick:** Alfama")).toBe("Top pick: Alfama");
+    expect(summary("1. Belém\n2. Sintra")).toBe("Belém");
+    expect(summary("snake_case_name stays")).toBe("snake_case_name stays");
+  });
+
   it("marks the failing step red and never fails silently", () => {
     const failedTool = deriveOnboardingRunView(source({ status: "failed" }, [
       { runId: "run_1", role: "assistant", parts: [{ type: "tool_request", toolCallId: "t1", name: "write", label: "Wrote the brief" }] },

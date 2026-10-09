@@ -552,6 +552,15 @@
   font-family: "JetBrains Mono", ui-monospace, monospace;
 }
 
+.mxo-search input:focus-visible,
+.mxo-composer input:focus-visible,
+.mxo-key__input:focus-visible { outline: none; }
+
+.mxo-key__input:focus-visible,
+.mxo-composer:focus-within { border-color: var(--mxo-muted); }
+
+.mxo-search:focus-within { box-shadow: inset 0 0 0 1px var(--mxo-border); }
+
 .mxo-footer {
   position: relative;
   display: flex;

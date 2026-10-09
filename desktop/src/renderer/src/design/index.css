@@ -115,7 +115,8 @@ textarea,
 }
 
 /* ── Focus visibility (keyboard-first, US6) ───────────────────── */
-:focus-visible {
+/* The onboarding widget (.mxo-root) ships its own focus treatment. */
+:focus-visible:where(:not(.mxo-root *)) {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
