@@ -2074,6 +2074,12 @@
           "kind": "url"
         },
         {
+          "key": "interview-packet",
+          "label": "Interview packet",
+          "kind": "longtext",
+          "required": false
+        },
+        {
           "key": "resume",
           "label": "Your resume notes",
           "kind": "longtext"
