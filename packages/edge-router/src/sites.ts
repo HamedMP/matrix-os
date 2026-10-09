@@ -23,7 +23,9 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
             console.warn('[sites] Worker request unavailable', error instanceof Error ? error.name : 'UnknownError');
             return new Response('Site unavailable', { status: 503 });
         }
-        if (url.search)
+        // Version/cache-busting queries in accepted build assets are harmless:
+        // read the immutable path and never forward visitor query values.
+        if (url.search && request.method !== 'GET')
             return new Response('Site unavailable', { status: 400 });
         const headers = new Headers({ 'x-matrix-sites-edge': env.SITES_EDGE_SECRET, 'x-matrix-sites-source': request.headers.get('cf-connecting-ip') ?? 'unknown' });
         if (request.method === 'POST')

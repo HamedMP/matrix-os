@@ -5,6 +5,7 @@ import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
 import { SiteError, type SiteOwner, type SitesTable } from './types.js';
 import { sql } from 'kysely';
 import { siteOwnerPrefix, withSiteOwnerAdmission, siteOwnerCanServe } from './account-lifecycle.js';
+import { assertCurrentPublishingRuntime, createPublishAdmission } from './publish-admission.js';
 type Storage = CustomerVpsObjectStore & {
     deleteObject?(key: string, options?: {
         signal?: AbortSignal;
@@ -36,6 +37,7 @@ export function createSitesService(options: {
 }) {
     const { db, storage } = options;
     const env = options.env ?? process.env;
+    const publishAdmission = createPublishAdmission();
     async function get(owner: SiteOwner) { await db.ready; const row = await ownership(db, owner).executeTakeFirst(); return row ? project(db, row) : null; }
     async function resolve(reference: string, scoped = db) {
         await scoped.ready;
@@ -45,6 +47,9 @@ export function createSitesService(options: {
         return row && await siteOwnerCanServe(scoped, row.owner_id, env) ? project(scoped, row) : null;
     }
     async function deploy(owner: SiteOwner, input: unknown) {
+        return publishAdmission(owner.ownerId, () => deployAdmitted(owner, input));
+    }
+    async function deployAdmitted(owner: SiteOwner, input: unknown) {
         if (!storage)
             throw new SiteError('unavailable');
         const parsed = SiteDeploymentSchema.safeParse(input);
@@ -59,6 +64,7 @@ export function createSitesService(options: {
             return await withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
                 await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
                 await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
+                await assertCurrentPublishingRuntime(trx, owner);
                 const freshId = randomUUID();
                 await trx.executor.insertInto('public_sites').values({ id: freshId, owner_id: owner.ownerId, machine_id: owner.machineId, app_slug: owner.appSlug,
                     title: request.title, description: request.description, slug: null, revision: 0, status: 'unpublished', active_version: null, created_at: new Date().toISOString(),
@@ -106,6 +112,7 @@ export function createSitesService(options: {
         return withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
             await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
             await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
+            await assertCurrentPublishingRuntime(trx, owner);
             const row = await ownership(trx, owner).forUpdate().executeTakeFirst();
             if (!row)
                 throw new SiteError('not_found');

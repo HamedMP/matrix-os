@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
@@ -9,7 +9,10 @@ let db: PlatformDB;
 const env = { ACCOUNT_DELETION_SECRET: 'site-account-deletion-secret-123456789' };
 const owner = { ownerId: 'user_deleting', machineId: 'lifecycle-machine', appSlug: 'launch' };
 const deployment = { title: 'Launch', slug: 'delete-launch', config: {}, files: [{ path: 'index.html', contentType: 'text/html', body: Buffer.from('<h1>Launch</h1>').toString('base64') }] };
-beforeAll(async () => { db = (await createTestPlatformDb()).db; });
+beforeAll(async () => { db = (await createTestPlatformDb()).db;
+    await insertUserMachine(db, { machineId: owner.machineId, clerkUserId: owner.ownerId, handle: 'lifecycle-owner', status: 'running', provisionedAt: new Date().toISOString() });
+    await insertUserMachine(db, { machineId: 'other-machine', clerkUserId: 'user_other', handle: 'other-lifecycle-owner', status: 'running', provisionedAt: new Date().toISOString() });
+});
 beforeEach(async () => { await db.executor.deleteFrom('account_deletion_jobs').execute(); await db.executor.deleteFrom('public_sites').execute(); await db.executor.deleteFrom('public_site_aliases').execute(); });
 afterAll(async () => { await destroyTestPlatformDb(db); });
 it('immediately hides pending deletion sites and rejects writes and public form admissions during grace', async () => {
@@ -62,6 +65,8 @@ it('wires site storage erasure and routing cleanup into the existing account del
         sitesObjectStore: { async listObjects(prefix) { return { keys: [...objects.keys()].filter(key => key.startsWith(prefix)), nextCursor: null }; }, async deleteObject(key) { objects.delete(key); }, async abortOwnerMultipartUploads() { } }, env,
     });
     const context = { clerkUserId: owner.ownerId, appleTokens: [] };
+    // Exercise storage/data steps after runtime revocation and sync-upload expiry.
+    await updateUserMachine(db, owner.machineId, { status: 'deleted', deletedAt: '2020-01-01T00:00:00.000Z' });
     await adapters.storage(context);
     expect(objects.size).toBe(0);
     expect(await service.resolve(site.id)).toBeNull();

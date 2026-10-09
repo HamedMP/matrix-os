@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
-import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/src/account-deletion/wiring.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
 const objects = vi.hoisted(() => new Map<string, Uint8Array>());
@@ -13,10 +13,13 @@ const configured = vi.hoisted(() => vi.fn((config: {
     bucket: string;
 }) => config.bucket === 'private-sites' ? sitesStore : syncStore));
 vi.mock('../../packages/platform/src/account-deletion/storage.js', async (original) => ({ ...await original<object>(), createAccountDeletionObjectStore: configured }));
+vi.mock('../../packages/platform/src/customer-vps-hetzner.js', () => ({ createHetznerClient: () => ({ async listServersByLabel() { return []; }, async getServer() { return null; } }) }));
 let db: PlatformDB;
 const env = { ACCOUNT_DELETION_ENABLED: 'true', ACCOUNT_DELETION_SECRET: 'sites-deletion-wiring-secret-123456', CLERK_SECRET_KEY: 'test', R2_ACCESS_KEY_ID: 'sync-key', R2_SECRET_ACCESS_KEY: 'sync-secret',
     R2_SITES_BUCKET: 'private-sites', R2_SITES_ACCESS_KEY_ID: 'sites-key', R2_SITES_SECRET_ACCESS_KEY: 'sites-secret', R2_SITES_ENDPOINT: 'https://private-sites.example.test' };
-beforeAll(async () => { db = (await createTestPlatformDb()).db; });
+beforeAll(async () => { db = (await createTestPlatformDb()).db;
+    await insertUserMachine(db, { machineId: 'test-machine', clerkUserId: 'user_sites_delete_wiring', handle: 'deletion-wiring', status: 'running', provisionedAt: new Date().toISOString() });
+});
 beforeEach(async () => { objects.clear(); vi.clearAllMocks(); await db.executor.deleteFrom('account_deletion_jobs').execute(); await db.executor.deleteFrom('public_sites').execute(); await db.executor.deleteFrom('public_site_aliases').execute(); });
 afterAll(async () => { vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
 it('configured deletion revokes site immediately and durably erases dedicated assets and routing', async () => {
@@ -31,7 +34,12 @@ it('configured deletion revokes site immediately and durably erases dedicated as
             return init?.method === 'DELETE' ? Response.json({ deleted: true }) : Response.json({ external_accounts: [] });
         throw Error('Unexpected outbound request');
     });
-    const runtime = await createConfiguredAccountDeletionRuntime({ db, env, backgroundWorkersEnabled: false });
+    const customerVpsService = { async delete(machineId: string) {
+        // Simulate completed runtime revocation whose sync-upload URLs expired.
+        await updateUserMachine(db, machineId, { status: 'deleted', deletedAt: '2020-01-01T00:00:00.000Z' });
+        return { machineId, status: 'deleted' as const };
+    } } as Parameters<typeof createConfiguredAccountDeletionRuntime>[0]['customerVpsService'];
+    const runtime = await createConfiguredAccountDeletionRuntime({ db, env, customerVpsService, backgroundWorkersEnabled: false });
     try {
         expect(configured).toHaveBeenCalledWith(expect.objectContaining({ bucket: 'private-sites', accessKeyId: 'sites-key', secretAccessKey: 'sites-secret' }));
         await runtime!.service.schedule(owner.ownerId);
