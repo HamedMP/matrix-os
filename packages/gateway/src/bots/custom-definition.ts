@@ -23,11 +23,18 @@ export async function composeManagedCustomDefinition(
   if (definition.recipe?.skills.includes("matrix-jev-email-triage")) throw new ManagedCustomDefinitionError("unsupported_skill");
   if (definition.recipe && !recipes) throw new Error("Custom recipe resolver unavailable");
   const recipe = definition.recipe ? await recipes!.resolve(definition.recipe) : undefined;
+  const integrationIntent = recipe?.integrations.length ? [
+    "Selected integration dependencies:",
+    ...recipe.integrations.map(({ service, accountLabel }) =>
+      `- ${service} (${accountLabel ? `account ${JSON.stringify(accountLabel)}` : "account not specified"})`),
+    "Account labels express the owner's intent and do not grant access. Use current account inventory and authorization; ask when the selected account is unavailable or ambiguous.",
+  ].join("\n") : undefined;
   const procedure: BotRecipe = {
     ...MANAGED_CUSTOM_BOT_RECIPE_REF,
     name: definition.name,
     description: definition.description,
-    instructions: [definition.instructions, ...(recipe?.skills.map(recipeSkillPrompt) ?? [])].join("\n\n"),
+    instructions: [definition.instructions, ...(recipe?.skills.map(recipeSkillPrompt) ?? []),
+      ...(integrationIntent ? [integrationIntent] : [])].join("\n\n"),
     capabilities: ["artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
       ...(recipe?.integrations.length ? ["integration.inventory", "integration.call"] as const : [])],
     // The current grants and exact-action approvals still authorize each effect.

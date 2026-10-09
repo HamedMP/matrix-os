@@ -17,6 +17,7 @@ const managed: ChatAgent = { ...saved, selection: { instanceId: "matrix_bot_defa
 async function editor(editing: ChatAgent | "new", initialRecipe = recipe) {
   const catalog = await clientFixture().catalog();
   const onSave = vi.fn<(draft: AgentDraft) => Promise<void>>().mockResolvedValue(undefined);
+  const onArchive = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   const change = vi.fn();
   function Harness() {
     const [draft, setDraft] = useState<AgentDraft>({ name: "Keep my name", description: "Keep my description",
@@ -27,10 +28,10 @@ async function editor(editing: ChatAgent | "new", initialRecipe = recipe) {
         { id: jev, name: "Jev Inbox Triage", description: "Legacy Hermes workflow" }] }}
       connections={[]} recipeLoading={false} recipeError="" connectionError=""
       change={next => { change(next); setDraft(current => ({ ...current, ...next })); }}
-      onSave={async () => { await onSave(draft); }} onArchive={async () => {}} onBack={() => {}} onRetryRecipe={() => {}} />;
+      onSave={async () => { await onSave(draft); }} onArchive={onArchive} onBack={() => {}} onRetryRecipe={() => {}} />;
   }
   const result = render(<Harness />);
-  return { ...result, onSave, change };
+  return { ...result, onSave, onArchive, change };
 }
 
 it("offers supported skills but excludes Hermes-only Jev from managed custom editing", async () => {
@@ -58,6 +59,10 @@ it("preserves an incompatible draft and blocks submission until the owner remove
   expect(screen.getByRole("alert")).toHaveTextContent("Remove the unavailable skill before saving this bot.");
   fireEvent.submit(x.container.querySelector("form")!);
   expect(x.onSave).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Archive Agent" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Archive Agent" }));
+  expect(x.onArchive).toHaveBeenCalledTimes(1);
+  expect(x.change).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("checkbox", { name: `${jev} · unavailable` }));
   expect(x.change).toHaveBeenLastCalledWith({ recipe: { ...retained, skills: ["matrix-personal-daily-brief"] } });
   expect(screen.queryByRole("checkbox", { name: "Jev Inbox Triage" })).toBeNull();

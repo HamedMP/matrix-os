@@ -216,3 +216,44 @@ it('preserves the supported Hermes executor when a new draft selects the legacy 
  await screen.findByRole('option',{name:'Hermes owner model · Hermes'});
  expect(screen.queryByRole('option',{name:/Owner model 2/})).toBeNull();
 });
+
+it('removes the committed recipe during retained new-Bot recovery and retries a failed update without another creation', async () => {
+ const x=fixture(); const createCustom=vi.fn(async ()=>created);
+ (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=createCustom;
+ render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+ fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ await waitFor(()=>expect(screen.getByRole('combobox',{name:'Connection'})).toBeEnabled());
+ fireEvent.change(screen.getByRole('combobox',{name:'Connection'}),{target:{value:planSelection.instanceId}});
+ fireEvent.change(screen.getByRole('combobox',{name:'Model'}),{target:{value:JSON.stringify([planSelection.instanceId,planSelection.model,options])}});
+ fireEvent.change(screen.getByRole('textbox',{name:'Name'}),{target:{value:'Created once'}});
+ fireEvent.change(screen.getByRole('textbox',{name:/Description/}),{target:{value:'Keep this description'}});
+ fireEvent.change(screen.getByRole('textbox',{name:'Instructions'}),{target:{value:'Only confirmed actions'}});
+ fireEvent.click(await screen.findByRole('button',{name:'Add recipe'}));
+ fireEvent.click(screen.getByRole('checkbox',{name:'Personal Daily Brief'}));
+ fireEvent.change(screen.getByRole('textbox',{name:'Expected output'}),{target:{value:'A verified brief'}});
+ x.client.list.mockRejectedValueOnce(new Error('readback unavailable'));
+ fireEvent.click(screen.getByRole('button',{name:'Create Agent'}));
+ await screen.findByRole('alert');
+ const committedRecipe={skills:['matrix-personal-daily-brief'],integrations:[],output:'A verified brief'};
+ expect(createCustom).toHaveBeenCalledWith(expect.objectContaining({recipe:committedRecipe,selection:planSelection}));
+ const recovered={...saved,id:created.agent.id,name:'Created once',description:'Keep this description',
+   instructions:'Only confirmed actions',selection:planSelection,recipeRef:{recipeId:'custom-coordinator',version:'1'},recipe:committedRecipe};
+ x.client.list.mockResolvedValue({enabled:true,agents:[recovered]});
+ x.client.update.mockRejectedValueOnce(new Error('update unavailable'));
+ fireEvent.click(screen.getByRole('button',{name:'Remove recipe'}));
+ fireEvent.click(screen.getByRole('button',{name:'Create Agent'}));
+ await waitFor(()=>expect(x.client.update).toHaveBeenCalledWith(created.agent.id,{
+   name:recovered.name,description:recovered.description,instructions:recovered.instructions,
+   baseRevision:recovered.revision,recipe:null}));
+ await screen.findByRole('alert');
+ expect(screen.getByRole('textbox',{name:'Instructions'})).toHaveValue(recovered.instructions);
+ expect(screen.getByRole('combobox',{name:'Model'})).toHaveValue(JSON.stringify([planSelection.instanceId,planSelection.model,options]));
+ expect(screen.queryByRole('textbox',{name:'Expected output'})).toBeNull();
+ x.client.update.mockResolvedValue({...saved,id:created.agent.id,name:recovered.name,description:recovered.description,
+   instructions:recovered.instructions,selection:planSelection,recipeRef:recovered.recipeRef,revision:2});
+ fireEvent.click(screen.getByRole('button',{name:'Create Agent'}));
+ await screen.findByText('Saved. Open this bot’s Chat from the sidebar to send a request.');
+ expect(createCustom).toHaveBeenCalledTimes(1);
+ expect(x.client.update).toHaveBeenCalledTimes(2);
+ expect(x.client.create).not.toHaveBeenCalled();
+});

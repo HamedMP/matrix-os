@@ -13,6 +13,7 @@ import { createChatAgentRecipeResolver } from "../../../packages/gateway/src/cha
 import { createBotInstantiation, ensureBotWorkspace } from "../../../packages/gateway/src/bots/instantiation.js";
 import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotProcedureResolver } from "../../../packages/gateway/src/bots/custom-procedure.js";
+import { resolveManagedCustomDefinition } from "../../../packages/gateway/src/bots/custom-definition.js";
 import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/task-orchestrator.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotStateTransactions } from "../../../packages/gateway/src/bots/events.js";
@@ -235,6 +236,29 @@ it("accepts the editor's unchanged executable payload for description recovery b
   expect(gmailLookup).not.toHaveBeenCalled();
 });
 
+it("permits minimal archival of a retained incompatible managed recipe without accepting Save or reactivation", async () => {
+  const created = await service.createCustom(OWNER, input);
+  const incompatible = { ...recipe, skills: ["matrix-jev-email-triage"] };
+  // Model a definition persisted before incompatible managed skills were refused.
+  const retained = await agents.update(owner, created.agent.id, { baseRevision: 1, recipe: incompatible });
+  const resolve = vi.spyOn(recipes, "resolve").mockRejectedValue(new Error("Synthetic filesystem outage"));
+  const operations = await state.db.selectFrom("bot_operations").selectAll().execute();
+  const chats = await state.db.selectFrom("chats").selectAll().execute();
+  expect((await patch(retained.id, { baseRevision: retained.revision, archived: true })).status).toBe(200);
+  const archived = (await agents.get(owner, retained.id))!;
+  expect(archived).toMatchObject({ revision: 3, archived: true, recipe: incompatible });
+  const files = await definitions();
+  expect((await patch(retained.id, { baseRevision: 3, name: retained.name, instructions: retained.instructions,
+    selection: retained.selection, recipe: incompatible, archived: true })).status).toBe(400);
+  expect((await patch(retained.id, { baseRevision: 3, archived: false })).status).toBe(400);
+  expect(resolve).not.toHaveBeenCalled();
+  expect(gmailLookup).not.toHaveBeenCalled();
+  expect((await agents.get(owner, retained.id))?.revision).toBe(3);
+  expect(await definitions()).toEqual(files);
+  expect(await state.db.selectFrom("bot_operations").selectAll().execute()).toEqual(operations);
+  expect(await state.db.selectFrom("chats").selectAll().execute()).toEqual(chats);
+});
+
 it("records policy_denied on a durable task when an installed skill grows beyond the saved prompt budget", async () => {
   const created = await service.createCustom(OWNER, { ...input, recipe });
   const files = await definitions();
@@ -256,4 +280,45 @@ it("records policy_denied on a durable task when an installed skill grows beyond
   expect(runBot).not.toHaveBeenCalled();
   expect(await definitions()).toEqual(files);
   expect((await agents.get(owner, created.agent.id))?.revision).toBe(1);
+});
+
+it.each(["Work", "Personal"])("retains the selected %s integration account as intent in both save and runtime prompts", async accountLabel => {
+  const selected = { ...recipe, integrations: [{ service: "gmail", accountLabel }] };
+  const created = await service.createCustom(OWNER, { ...input, recipe: selected });
+  const saved = (await agents.get(owner, created.agent.id))!;
+  const checked = await resolveManagedCustomDefinition(saved, recipes);
+  const runtime = await procedures.resolve(OWNER, saved);
+  expect(runtime).toEqual(checked);
+  const prompt = buildBotSystemPrompt({ botName: saved.name, instructions: runtime.instructions, recipe: runtime, now: new Date() });
+  expect(prompt).toContain(`- gmail (account ${JSON.stringify(accountLabel)})`);
+  expect(prompt).not.toContain(`account ${JSON.stringify(accountLabel === "Work" ? "Personal" : "Work")}`);
+  expect(prompt).toContain("Account labels express the owner's intent and do not grant access.");
+  expect(saved.recipe?.integrations).toEqual(selected.integrations);
+  expect(gmailLookup).not.toHaveBeenCalled();
+});
+
+it("counts integration account intent against the complete budget before create or edit writes", async () => {
+  const selected = { ...recipe, integrations: Array.from({ length: 8 }, (_, index) => ({ service: "gmail", accountLabel: `Work${index}` })) };
+  const base = await resolveManagedCustomDefinition({ ...input, description: "", instructions: "", recipe: selected }, recipes);
+  const now = new Date("2026-10-09T00:00:00.000Z");
+  const overhead = estimatePromptTokens(buildBotSystemPrompt({ botName: input.name, instructions: base.instructions, recipe: base, now }));
+  const request = { ...input, recipe: selected, instructions: "漢".repeat(BOT_SYSTEM_PROMPT_TOKEN_BUDGET - overhead) };
+  const created = await service.createCustom(OWNER, request);
+  const saved = (await agents.get(owner, created.agent.id))!;
+  const runtime = await procedures.resolve(OWNER, saved);
+  expect(estimatePromptTokens(buildBotSystemPrompt({ botName: saved.name, instructions: runtime.instructions, recipe: runtime, now })))
+    .toBe(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
+  const enlarged = { ...selected, integrations: selected.integrations.map((item, index) => ({ ...item, accountLabel: "漢".repeat(80) + index })) };
+  const rejected = { ...request, clientRequestId: "req_account_label_budget", recipe: enlarged };
+  expect(CreateManagedCustomBotRequestSchema.safeParse(rejected).success).toBe(true);
+  const files = await definitions();
+  const operations = await state.db.selectFrom("bot_operations").selectAll().execute();
+  const chats = await state.db.selectFrom("chats").selectAll().execute();
+  await expect(service.createCustom(OWNER, rejected)).rejects.toMatchObject({ code: "invalid_request" });
+  expect((await patch(saved.id, { baseRevision: 1, recipe: enlarged })).status).toBe(400);
+  expect((await agents.get(owner, saved.id))?.revision).toBe(1);
+  expect(await definitions()).toEqual(files);
+  expect(await state.db.selectFrom("bot_operations").selectAll().execute()).toEqual(operations);
+  expect(await state.db.selectFrom("chats").selectAll().execute()).toEqual(chats);
+  expect(gmailLookup).not.toHaveBeenCalled();
 });
