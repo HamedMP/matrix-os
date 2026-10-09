@@ -1,6 +1,6 @@
 {
   "repository": "FinnaAI/matrix-os-site",
-  "revision": "23dadc3a3fc50d21d84633fcae7aea6d8cd67d05",
+  "revision": "469a7d7a7dcec86f99b33e390c6a261735a2ab1a",
   "dirty": false,
   "adaptations": [
     "relative imports and app assets",
@@ -239,8 +239,8 @@
     {
       "path": "src/vendor/lib/writing.mjs",
       "source": "src/lib/free-tools/writing.mjs",
-      "sourceSha256": "9e220201c2d07ce97da3bdb0c1b4582ba29f160e4332ad2d57bd20e79d3348cf",
-      "sha256": "9e220201c2d07ce97da3bdb0c1b4582ba29f160e4332ad2d57bd20e79d3348cf"
+      "sourceSha256": "b782765b2a7addd4b7244fae82bcb38db954b2b06c007a96c763c3c46918dc34",
+      "sha256": "b782765b2a7addd4b7244fae82bcb38db954b2b06c007a96c763c3c46918dc34"
     },
     {
       "path": "src/vendor/workspaces/AudioWorkspace.tsx",
