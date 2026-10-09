@@ -86,6 +86,9 @@ export function useCanonicalChatRouteController({
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
   const onInvalidationRef = useRef(onInvalidation);
   onInvalidationRef.current = onInvalidation;
+  // The Chat a route or host opened by id: it stays selected when a list page leaves it out (older than 100 chats).
+  const openedChatIdRef = useRef(initialChatId);
+  openedChatIdRef.current = initialChatId;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
@@ -163,14 +166,14 @@ export function useCanonicalChatRouteController({
       }));
       if (!options.background) setError(null);
       setStatus("ready");
+      const kept = (chatId: string | null) => Boolean(chatId)
+        && (chatId === openedChatIdRef.current || page.items.some((record) => record.chat.id === chatId));
       setActiveChatId((current) => {
-        const next = current && page.items.some((record) => record.chat.id === current)
-          ? current
-          : autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
+        const next = kept(current) ? current : autoSelectFirst ? page.items[0]?.chat.id ?? null : null;
         activeChatIdRef.current = next;
         return next;
       });
-      if (page.items.length === 0) {
+      if (page.items.length === 0 && !kept(activeChatIdRef.current)) {
         detailRef.current = null;
         setDetail(null);
       }

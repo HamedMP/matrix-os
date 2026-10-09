@@ -10,7 +10,7 @@ import { useDesktopBrainChatHost } from "@desktop/renderer/src/features/brain/De
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import { WorkSurfaceRuntimeProvider } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type { CanonicalChatClient, CanonicalChatInvalidation } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { canonicalChatRecord, createCanonicalChatWorkspaceClient, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
@@ -185,6 +185,30 @@ describe("Company Brain chat in Electron Desktop", () => {
     await waitFor(() => expect(slot.onChatChanged).toHaveBeenCalledWith(canonicalChatRecord.chat.id, canonicalChatRecord.chat.title));
     expect(slot.onChatChanged).toHaveBeenCalledTimes(1);
     expect(useTabs.getState().tabs).toEqual([]);
+  });
+
+  it("keeps following a saved brain chat that is not on the first page of chats", async () => {
+    const client = brainClient();
+    let listPage!: (page: { items: [] }) => void;
+    // The list's first page leaves this thread out (older than its 100 chats), and answers after the thread loads.
+    vi.mocked(client.list).mockReturnValue(new Promise((resolve) => { listPage = resolve; }));
+    const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+    const eventSource = { subscribe: (listener: (event: CanonicalChatInvalidation) => void) => {
+      listeners.add(listener);
+      return { dispose: () => listeners.delete(listener) };
+    } };
+    const chatId = canonicalChatRecord.chat.id;
+    const loads = () => vi.mocked(client.getDetail).mock.calls.filter(([, options]) => options?.limit === 200).length;
+    render(<CanonicalChatWorkspace client={client} eventSource={eventSource} projectId={null} initialChatId={chatId}
+      initialView="conversation" active={false} live externalNavigation catalog={{ ...providerCatalog, instances: [] }}
+      createChat={vi.fn()} botId={BOT.id} />);
+    expect(await screen.findByText("Build the canonical Chat contract.")).toBeTruthy();
+    await act(async () => { listPage({ items: [] }); });
+    // The shown thread is neither dropped nor loaded again, and its events still refresh it.
+    expect(screen.getByText("Build the canonical Chat contract.")).toBeTruthy();
+    expect(loads()).toBe(1);
+    act(() => { for (const listener of [...listeners]) listener({ type: "chat.changed", chatId, cursor: 9, revision: 9, eventType: "run.message" }); });
+    await waitFor(() => expect(loads()).toBe(2));
   });
 
   it("keeps a refused first question in the composer with the reason, then sends it into the thread", async () => {
