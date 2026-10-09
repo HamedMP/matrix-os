@@ -131,6 +131,30 @@ describe("bot thread routes", () => {
     const second = CanonicalChatListResponseSchema.parse(await (await list(`projectId=${PROJECT}&limit=2&cursor=${first.nextCursor}`)).json());
     expect(second).toEqual({ items: [expect.objectContaining({ chat: expect.objectContaining({ id: ids[0] }) })] });
   });
+
+  it("reads a page of threads at most ten Chats at a time, in page order", async () => {
+    const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
+    let inFlight = 0;
+    let peak = 0;
+    const get: ChatRepository["get"] = async (owner, chatId) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      try { return await repository.get(owner, chatId); } finally { inFlight -= 1; }
+    };
+    const threads = createBotThreads({
+      chats: { kysely: repository.kysely, withTransaction: repository.withTransaction.bind(repository), get },
+      agents: { get: vi.fn(async () => AGENTS[BOT] as never) }, recipes: createBotRecipeCatalog(),
+    });
+    const id = (index: number) => `chat_page${String(index).padStart(3, "0")}`;
+    await sql`INSERT INTO chats (id, owner_type, owner_id, create_request_id, title, lifecycle, attention, activity_at)
+      SELECT 'chat_page' || lpad(i::text, 3, '0'), 'personal', ${OWNER}, 'req_page' || i, 'Seed', 'active', 'none',
+        ${NOW}::timestamptz + i * interval '1 second' FROM generate_series(1, 25) i`.execute(db);
+    await sql`INSERT INTO bot_chat_bindings (owner_id, bot_id, chat_id, kind, project_id, created_at)
+      SELECT ${OWNER}, ${BOT}, 'chat_page' || lpad(i::text, 3, '0'), 'thread', ${PROJECT}, now() FROM generate_series(1, 25) i`.execute(db);
+    const page = await threads.list(OWNER, BOT, { projectId: PROJECT, limit: 100 });
+    expect(page.items.map((item) => item.chat.id)).toEqual(Array.from({ length: 25 }, (_, index) => id(25 - index)));
+    expect(peak).toBe(10);
+  });
 });
 
 describe("bot thread list query", () => {
