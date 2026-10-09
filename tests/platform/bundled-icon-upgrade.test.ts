@@ -83,6 +83,34 @@ describe('bundled icon upgrades preserve selected owner artwork', () => {
     expectSelection(f, f.oldManifest);
     expect(readFileSync(join(f.home, 'system/icons/owner-game.svg'), 'utf8')).toBe(custom);
   });
+  it.each(['{}', '{broken tracking'])('preserves differing untracked nested game code with tracking %s', (tracking) => {
+    const f = fixture({ nestedGame: true, tracked: false });
+    const source = 'apps/games/chess/src/App.tsx';
+    f.write(f.template, source, 'new bundled source');
+    f.templateHashes[source] = hash('new bundled source');
+    f.saveTemplate();
+    f.write(f.home, source, 'owner edited game');
+    f.write(f.home, '.template-manifest.json', tracking);
+    f.sync();
+    expect(readFileSync(join(f.home, source), 'utf8')).toBe('owner edited game');
+    expect(JSON.parse(readFileSync(join(f.home, '.template-manifest.json'), 'utf8'))[source]).toBeUndefined();
+    f.sync();
+    expect(readFileSync(join(f.home, source), 'utf8')).toBe('owner edited game');
+  });
+  it('updates tracked nested game code while preserving owner modifications', () => {
+    const f = fixture({ nestedGame: true });
+    const source = 'apps/games/chess/src/App.tsx';
+    f.write(f.template, source, 'new bundled source');
+    f.templateHashes[source] = hash('new bundled source');
+    f.saveTemplate();
+    f.write(f.home, source, 'old bundled source');
+    f.write(f.home, '.template-manifest.json', JSON.stringify({ [source]: hash('old bundled source'), [f.relManifest]: hash(f.oldManifest) }));
+    f.sync();
+    expect(readFileSync(join(f.home, source), 'utf8')).toBe('new bundled source');
+    f.write(f.home, source, 'owner edited game');
+    f.sync();
+    expect(readFileSync(join(f.home, source), 'utf8')).toBe('owner edited game');
+  });
   it('never upgrades untracked game sources through a symlinked owner app directory', () => {
     const f = fixture({ nestedGame: true, tracked: false });
     const sourceRelPath = 'apps/games/chess/src/App.tsx';
