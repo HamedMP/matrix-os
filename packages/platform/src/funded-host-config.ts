@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { readUsageWaiverAudit, USAGE_WAIVER_MAX_RECORDS } from "./ai-funded-usage-waiver-audit.js";
 import { getAccountDeletionAdmission } from "./account-deletion/admission.js";
 import { sql } from "kysely";
 import { z } from "zod/v4";
@@ -145,14 +146,18 @@ export function createFundedHostConfigRoutes(options: {
         // clear holds or infer zero usage merely to permit a Gateway restart.
         // Machine obligations survive stale owner metadata; a settled label with
         // no established cost is corrupt financial evidence, not a closed hold.
-        const pending = await trx.selectFrom("ai_funded_usage_reservations").select("reservation_id")
+        const pending = await trx.selectFrom("ai_funded_usage_reservations").selectAll()
           .where("machine_id", "=", machine.machine_id).where("runtime_slot", "=", "primary")
           .where(eb => eb.or([
             eb("status", "not in", ["settled", "released"]),
             eb.and([eb("status", "=", "settled"), eb("actual_microusd", "is", null)]),
           ]))
-          .limit(1).executeTakeFirst();
-        if (pending) return { status: "deferred" as const };
+          .limit(USAGE_WAIVER_MAX_RECORDS + 1).execute();
+        if (pending.length > USAGE_WAIVER_MAX_RECORDS) return { status: "deferred" as const };
+        for (const row of pending) {
+          if (row.status !== "waived" || row.owner_id !== machine.clerk_user_id) return { status: "deferred" as const };
+          readUsageWaiverAudit(row);
+        }
         const expires = Math.min(checked.getTime() + 30_000, Date.parse(config.validThrough),
           policy.expires_at === null ? Infinity : Date.parse(policy.expires_at));
         if (expires <= checked.getTime()) return { status: "deferred" as const };

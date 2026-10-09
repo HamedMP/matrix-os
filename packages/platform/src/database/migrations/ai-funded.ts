@@ -1,5 +1,6 @@
 import { sql } from 'kysely';
 import { ensureFundedReservationIndexes } from '../../ai-funded-reservation-indexes.js';
+import { migrateUsageWaivers } from './ai-funded-usage-waivers.js';
 import type { PlatformMigrationExecutor } from '../migration-types.js';
 
 /** Core funded schema, ordered by migrate.ts. */
@@ -177,6 +178,7 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
     CHECK (finalization_mode IN ('exact', 'conservative'))
   `.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS execution_admission_release TEXT`.execute(db);
+  await migrateUsageWaivers(db);
   await ensureFundedReservationIndexes(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_funded_credit_ledger (

@@ -1,4 +1,5 @@
 import { sql } from "kysely";
+import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 import type { FundedAiPriorityReason, FundedAiRequestClass } from "@matrix-os/contracts";
 import type { PlatformDB } from "./db.js";
 
@@ -33,6 +34,7 @@ export async function findConflictingActiveReservation(
   ownerId: string,
   billingMode: FundedBillingMode,
 ): Promise<boolean> {
+  await readUnknownUsageWaivers(executor, ownerId);
   const active = await executor.selectFrom("ai_funded_usage_reservations")
     .select("reservation_id").where("owner_id", "=", ownerId)
     .where("status", "in", ["reserved", "starting", "in_flight", "settling"])
