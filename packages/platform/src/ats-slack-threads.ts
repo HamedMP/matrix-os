@@ -40,19 +40,24 @@ export function createAtsThreadSender(db:AtsDB,transport:AtsSlackTransport,chann
   }finally{await db.executor.updateTable('ats_slack_threads').set({lease_token:null,lease_until:null}).where('thread_key','=',threadKey).where('lease_token','=',leaseToken).execute();}
  };
 }
+async function enqueueHistoryRecord(db:AtsDB,key:string,payload:AtsNotification,at:string){
+ await enqueueAtsNotification(db,key,payload,at);
+ // Re-run old minimal notifications too. Durable part receipts make completed full deliveries a no-op.
+ await db.executor.updateTable('ats_notification_outbox').set({sent_at:null,available_at:at,payload:JSON.stringify(payload),attempts:0}).where('entity_key','=',key).where('sent_at','is not',null).execute();
+}
 export async function enqueueAtsHistory(db:AtsDB,input:{kind:'applications'|'emails';after:string;limit:number},at:string){
  await db.ready;
  return db.transaction(async trx=>{
   if(input.kind==='applications'){
    const rows=await trx.executor.selectFrom('ats_applications').select(['id','candidate_name','candidate_email','role_slug','source','created_at']).where('deleted_at','is',null).where('id','>',input.after).orderBy('id').limit(input.limit).execute();
-   for(const app of rows)await enqueueAtsNotification(trx,`application:${app.id}`,{name:app.candidate_name,email:app.candidate_email,role:app.role_slug,path:`/admin/ats/${app.id}`,source:app.source==='legacy'?'legacy':'careers_page',applicationId:app.id},app.created_at);
+   for(const app of rows)await enqueueHistoryRecord(trx,`application:${app.id}`,{name:app.candidate_name,email:app.candidate_email,role:app.role_slug,path:`/admin/ats/${app.id}`,source:app.source==='legacy'?'legacy':'careers_page',applicationId:app.id},app.created_at);
    return {enqueued:rows.length,next:rows.length===input.limit?rows.at(-1)!.id:null};
   }
   const rows=await trx.executor.selectFrom('ats_inbox_messages').selectAll().where('id','>',input.after)
    .where('message_id','not like','legacy-%')
    .where(eb=>eb.or([eb('application_id','is',null),eb.exists(eb.selectFrom('ats_applications').select('id').whereRef('ats_applications.id','=','ats_inbox_messages.application_id').where('deleted_at','is',null))]))
    .orderBy('id').limit(input.limit).execute();
-  for(const mail of rows)await enqueueAtsNotification(trx,`mail:${mail.message_id}`,{name:mail.sender_name,email:mail.sender_email,role:mail.subject.slice(0,100),path:mail.application_id?`/admin/ats/${mail.application_id}`:'/admin/ats/inbox',source:'group_email',messageId:mail.id},mail.received_at);
+  for(const mail of rows)await enqueueHistoryRecord(trx,`mail:${mail.message_id}`,{name:mail.sender_name,email:mail.sender_email,role:mail.subject.slice(0,100),path:mail.application_id?`/admin/ats/${mail.application_id}`:'/admin/ats/inbox',source:'group_email',messageId:mail.id},mail.received_at);
   return {enqueued:rows.length,next:rows.length===input.limit?rows.at(-1)!.id:null};
  });
 }

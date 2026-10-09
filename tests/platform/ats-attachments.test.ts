@@ -23,3 +23,8 @@ it('rejects disguised executable content before writing any email', async () => 
   await expect(importAtsMail(db, { ...mail, attachments: [{ filename: 'cv.pdf', contentType: 'application/pdf', base64: Buffer.from('<script>').toString('base64') }] }, mail.receivedAt)).rejects.toThrow();
   expect(await db.executor.selectFrom('ats_inbox_messages').selectAll().execute()).toHaveLength(0);
 });
+it('accepts valid email CVs above the previous five MiB limit',async()=>{
+ const bytes=Buffer.alloc(6*1024*1024);bytes.write('%PDF-1.7');
+ const {AtsEmailAttachmentSchema}=await import('../../packages/platform/src/ats-attachments.js');
+ expect(AtsEmailAttachmentSchema.safeParse({filename:'large.pdf',contentType:'application/pdf',base64:bytes.toString('base64')}).success).toBe(true);
+});

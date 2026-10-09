@@ -1,3 +1,4 @@
+import {resolveAtsMailIdentity} from './ats-mail-identity.js';
 import type { AtsDB } from './ats-db.js';
 import type { AtsNotification } from './ats-notifications.js';
 export interface AtsSlackFile {key:string;filename:string;bytes:Uint8Array}
@@ -14,8 +15,8 @@ export async function loadAtsSlackContent(db:AtsDB,payload:AtsNotification,entit
   const mail=await query.executeTakeFirst();if(!mail)return null;
   if(mail.application_id&&!await db.executor.selectFrom('ats_applications').select('id').where('id','=',mail.application_id).where('deleted_at','is',null).executeTakeFirst())return null;
   const attachments=await db.executor.selectFrom('ats_mail_attachments').selectAll().where('message_id','=',mail.id).orderBy('id').execute();
-  const email=mail.applicant_email||mail.sender_email;
-  return {identity:email||`unknown:${mail.id}`,name:payload.name,email,path:mail.application_id?`/admin/ats/${mail.application_id}`:'/admin/ats/inbox',
+  const identity=await resolveAtsMailIdentity(db,mail.id);const email=identity.startsWith('unknown:')?'':identity;
+  return {identity,name:payload.name,email,path:mail.application_id?`/admin/ats/${mail.application_id}`:'/admin/ats/inbox',
    text:`Email: ${mail.subject}\nFrom: ${mail.sender_name} <${mail.sender_email||'sender unavailable'}>\nReceived: ${mail.received_at}\nOriginal: ${mail.source_url}\n\n${mail.body}`,
    files:attachments.map(file=>({key:file.id,filename:file.filename,bytes:new Uint8Array(file.bytes)}))};
  }

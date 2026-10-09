@@ -3,7 +3,7 @@ import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
 import type { AtsDB } from '../../packages/platform/src/ats-db.js';
 import { importAtsMail } from '../../packages/platform/src/ats-mail.js';
 import { createAtsThreadSender, enqueueAtsHistory } from '../../packages/platform/src/ats-slack-threads.js';
-import { deliverAtsNotifications } from '../../packages/platform/src/ats-notifications.js';
+import { deliverAtsNotifications, AtsSlackRetryError } from '../../packages/platform/src/ats-notifications.js';
 import { importLegacyCandidate } from '../../packages/platform/src/ats-legacy.js';
 
 let db: AtsDB;
@@ -61,4 +61,21 @@ it('skips soft-deleted records even when notification was queued before deletion
  await enqueueAtsHistory(db,{kind:'applications',after:'',limit:100},at);
  await db.executor.updateTable('ats_applications').set({deleted_at:at}).where('id','=',app.id).execute();
  const {post,send}=setup();await deliverAtsNotifications(db,send,at);expect(post).not.toHaveBeenCalled();
+});
+it('backfills full content when an earlier minimal notification was already sent',async()=>{
+ const row=await importAtsMail(db,mail,at);await db.executor.updateTable('ats_notification_outbox').set({sent_at:at,slack_ts:'old.1'}).execute();
+ await enqueueAtsHistory(db,{kind:'emails',after:'',limit:100},at);const {post,send}=setup();await deliverAtsNotifications(db,send,at);expect(post.mock.calls.map(([p])=>p.text).join('')).toContain(mail.body);
+});
+it('defers a team reply until its applicant arrives, then uses the applicant thread',async()=>{
+ await importAtsMail(db,{...mail,messageId:'reply',threadId:'late-parent',senderEmail:'hamed@finna.ai',body:'Team reply'},at);const {post,send}=setup();await deliverAtsNotifications(db,send,at);expect(post).not.toHaveBeenCalled();
+ await importAtsMail(db,{...mail,messageId:'late-parent'},at);await deliverAtsNotifications(db,send,'2026-10-09T10:02:00.000Z');expect(post.mock.calls.filter(([p])=>!p.threadTs)).toHaveLength(1);expect(post.mock.calls.find(([p])=>!p.threadTs)?.[0].text).toContain('ada@example.com');
+});
+it('starts Slack Retry-After at the response time, after a slow delivery',async()=>{
+ await importAtsMail(db,mail,at);
+ const responseAt=Date.parse(at)+240_000;const clock=vi.spyOn(Date,'now').mockReturnValue(responseAt);
+ try{
+  await deliverAtsNotifications(db,async()=>{throw new AtsSlackRetryError(60_000);},at);
+  const job=await db.executor.selectFrom('ats_notification_outbox').selectAll().executeTakeFirstOrThrow();
+  expect(job.available_at).toBe(new Date(responseAt+60_000).toISOString());expect(job.sent_at).toBeNull();
+ }finally{clock.mockRestore();}
 });

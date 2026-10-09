@@ -42,7 +42,7 @@ export async function deliverAtsNotifications(
     } catch (error) {
       if (!(error instanceof AtsDeliveryPendingError)) console.error('[ats] Notification delivery failed:', error instanceof Error ? error.name : typeof error);
       const delay = error instanceof AtsDeliveryPendingError ? 60_000 : error instanceof AtsSlackRetryError ? error.delayMs : Math.min(60 * 60_000, 60_000 * 2 ** Math.min(job.attempts, 6));
-      await db.executor.updateTable('ats_notification_outbox').set({ attempts: job.attempts + (error instanceof AtsDeliveryPendingError ? 0 : 1), available_at: new Date(Date.parse(at) + delay).toISOString(), lease_token: null, lease_until: null })
+      await db.executor.updateTable('ats_notification_outbox').set({ attempts: job.attempts + (error instanceof AtsDeliveryPendingError ? 0 : 1), available_at: new Date((error instanceof AtsSlackRetryError ? Date.now() : Date.parse(at)) + delay).toISOString(), lease_token: null, lease_until: null })
         .where('id', '=', job.id).where('lease_token', '=', token).execute();
     }
   }

@@ -1,3 +1,4 @@
+import {isRecruitingTeam} from './ats-mail-identity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import type { AtsDB } from './ats-db.js';
@@ -19,8 +20,8 @@ export async function importAtsMail(db: AtsDB, input: AtsMailInput, at: string, 
     const candidate = candidates.length === 1 ? candidates[0] : undefined;
     const parent = mail.threadId ? await trx.executor.selectFrom('ats_inbox_messages').select(['applicant_email','sender_email','application_id'])
       .where('message_id','=',mail.threadId).executeTakeFirst() : undefined;
-    const linkedId = candidate?.id ?? (/@finna\.ai$/i.test(mail.senderEmail) ? parent?.application_id : null);
-    const applicantEmail = /@finna\.ai$/i.test(mail.senderEmail) && parent ? (parent.applicant_email || parent.sender_email) : mail.senderEmail;
+    const linkedId = candidate?.id ?? (isRecruitingTeam(mail.senderEmail) ? parent?.application_id : null);
+    const applicantEmail = isRecruitingTeam(mail.senderEmail) && parent ? (parent.applicant_email || parent.sender_email) : mail.senderEmail;
     const inserted = await trx.executor.insertInto('ats_inbox_messages').values({
       id: randomUUID(), message_id: mail.messageId, thread_id: mail.threadId, sender_name: mail.senderName,
       sender_email: mail.senderEmail, applicant_email: applicantEmail, subject: mail.subject, body: mail.body, received_at: mail.receivedAt,
