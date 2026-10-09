@@ -56,6 +56,14 @@ it('does not truncate long answers',async()=>{
  const mail=await normalizeGroupMail(new TextEncoder().encode(raw.replace('Hello hiring team','a'.repeat(70000))),receivedAt);
  expect(mail.body.trim()).toHaveLength(70000);
 });
+it('preserves the original and reports an attachment whose MIME part contains no bytes',async()=>{
+ const value=['From: Ada <ada@example.com>','To: careers@finna.ai','List-Id: <careers.finna.ai>','Message-Id: <empty-file@example.com>','Content-Type: multipart/mixed; boundary="part"','','--part','Content-Type: text/plain','','My CV is attached.','--part','Content-Type: application/pdf','Content-Disposition: attachment; filename="cv.pdf"','Content-Transfer-Encoding: base64','','--part--'].join('\r\n');
+ const bytes=new TextEncoder().encode(value);
+ const mail=await normalizeGroupMail(bytes,receivedAt);
+ expect(mail.body).toContain('My CV is attached.');
+ expect(mail.body).toContain('Attachment unavailable: cv.pdf (the original email contains no file bytes).');
+ expect(mail.attachments).toEqual([{filename:'original-message.eml',contentType:'message/rfc822',base64:Buffer.from(bytes).toString('base64')}]);
+});
 it('allows missing List-Id only for an explicitly captured careers archive URL',async()=>{
  const original=raw.replace('List-Id: <careers.finna.ai>\r\n','').replace('Subject: Engineer application','Date: Thu, 01 Oct 2026 12:00:00 +0000\r\nSubject: Engineer application');
  await expect(normalizeGroupMail(new TextEncoder().encode(original),receivedAt)).rejects.toThrow();
