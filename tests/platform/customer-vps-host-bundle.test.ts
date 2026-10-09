@@ -1574,7 +1574,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
 
   it('treats a clean explicit request for the installed immutable version as idempotent', () => {
     const root = process.cwd();
-    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8').replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-request-rejection'), 'utf8'));
 
     const sameVersionGuard = syncAgent.indexOf('requested_update_is_already_current()');
     const interruptedPhaseGuard = syncAgent.indexOf('[ ! -e "$UPDATE_PHASE_MARKER" ]', sameVersionGuard);
@@ -1597,7 +1597,7 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
 
   it('reapplies an exact-version bundle when its immutable terminal generation is incomplete', () => {
     const root = process.cwd();
-    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8').replace(/# BEGIN update request rejection library loader[\s\S]*?# END update request rejection library loader/, readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-update-request-rejection'), 'utf8'));
 
     const readinessGuard = syncAgent.indexOf('installed_terminal_runtime_is_ready()');
     const markerGuard = syncAgent.indexOf('[ -f "$marker" ] && [ ! -L "$marker" ]', readinessGuard);

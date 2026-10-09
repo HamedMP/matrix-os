@@ -10,6 +10,7 @@ import {
 import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
+import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 
 import { readFundedRecoveryAudit, readFundedUsageAuthorization } from "./ai-funded-recovery-audit.js";
 
@@ -25,6 +26,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       // serialize the bounded unknown set and cannot open two live execution slots.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`
         .execute(trx.executor);
+      await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines")
         .select(["clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at"])
         .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
@@ -40,6 +42,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       if (reservation.request_id !== request.expectedRequestId || reservation.started_at !== request.expectedStartedAt
         || reservation.expires_at !== request.expectedExpiresAt) throw new AiFundedPolicyError("idempotency_conflict");
       const captured = readFundedUsageAuthorization(reservation);
+      if (reservation.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
       if (captured.reservation.maxCostMicrousd !== request.maximumLiabilityMicrousd) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
@@ -60,6 +63,7 @@ export function createFundedExecutionRecovery(options: { db: PlatformDB; now: ()
       }
       const unknown = await trx.executor.selectFrom("ai_funded_usage_reservations").selectAll()
         .where("owner_id", "=", identity.ownerId).where("execution_admission_release", "is not", null)
+        .where("charge_waiver", "is", null)
         .where("actual_microusd", "is", null).limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
       let liability = request.maximumLiabilityMicrousd;
       const occupied: number[] = [];
