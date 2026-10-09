@@ -3,7 +3,7 @@ import { StyleSheet } from "react-native-unistyles";
 
 import { Button } from "@/components/ui";
 
-import { InteractionCard, InteractionNote } from "./InteractionCard";
+import { InteractionCard, RequestedAccessNotes, type RequestedAccess } from "./InteractionCard";
 
 export type ConnectAction = "start" | "decline";
 
@@ -14,7 +14,7 @@ export interface ConnectRequestCardProps {
   title: string;
   /** What connecting it lets the agent do, in the server's words. */
   benefit: string;
-  access: readonly string[];
+  access: RequestedAccess;
   /** The answer on its way to the server, while one is. */
   sending?: ConnectAction | null;
   error?: string | null;
@@ -38,7 +38,7 @@ export function ConnectRequestCard({
   return (
     <InteractionCard testID={testID} label={label} title={title} error={error}>
       <Text style={styles.benefit}>{benefit}</Text>
-      <InteractionNote>{`Requested access: ${access.join(", ")}`}</InteractionNote>
+      <RequestedAccessNotes access={access} />
       <Button
         size="large"
         fullWidth
@@ -62,15 +62,18 @@ export function ConnectRequestCard({
 export interface ConnectContinueCardProps {
   label: string;
   title: string;
+  /** What was asked for, still in view until the service's own page takes over. */
+  access?: RequestedAccess | null;
   error?: string | null;
   onContinue: () => void;
   testID?: string;
 }
 
 /** The server has a page where the connection is finished: this opens it. */
-export function ConnectContinueCard({ label, title, error, onContinue, testID }: ConnectContinueCardProps) {
+export function ConnectContinueCard({ label, title, access, error, onContinue, testID }: ConnectContinueCardProps) {
   return (
     <InteractionCard testID={testID} label={label} title={title} error={error}>
+      {access ? <RequestedAccessNotes access={access} /> : null}
       <Button size="large" fullWidth label="Continue connecting" onPress={onContinue} />
     </InteractionCard>
   );

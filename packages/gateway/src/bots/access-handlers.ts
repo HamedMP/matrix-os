@@ -16,7 +16,7 @@ import { BotStateError } from "./repositories/shared.js";
 
 const AUDIENCE = "direct";
 
-type AccountChoicePayload = { kind: "account_choice"; service: string; options: Array<{ connectionId: string; label: string }> };
+type AccountChoicePayload = { access?: import("@matrix-os/contracts").BotEffect[]; kind: "account_choice"; service: string; options: Array<{ connectionId: string; label: string }> };
 type ApprovalPayload = { kind: "approval"; preview: string };
 
 export function createBotAccessHandlers(deps: {
@@ -31,7 +31,10 @@ export function createBotAccessHandlers(deps: {
       const option = payload.options.find((candidate) => candidate.connectionId === connectionId);
       if (!option) throw new BotInteractionError("invalid_request");
       const effects = await deps.tools.declaredEffects(interaction.ownerId, interaction.botId, payload.service);
-      if (effects.length === 0) throw new BotInteractionError("invalid_request");
+      if (effects.length === 0 || (effects.includes("label") && !payload.access?.includes("label"))
+        || (payload.access && (payload.access.length !== effects.length || payload.access.some(effect => !effects.includes(effect))))) {
+        throw new BotInteractionError("invalid_request");
+      }
       let grant: BotGrantRecord;
       try {
         ({ grant } = await createBotGrantsRepository(tx.db).grant({

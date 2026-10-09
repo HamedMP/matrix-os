@@ -56,11 +56,29 @@ it("caps concurrent generations and releases slots after completion", async () =
 });
 
 it("returns on disconnect even if inference ignores abort, retaining the concurrency cap", async () => {
-  const generate = vi.fn(() => new Promise<{ text: string }>(() => {}));
+  let finish!: (result: { text: string }) => void;
+  const pending = new Promise<{ text: string }>(resolve => { finish = resolve; });
+  const generate = vi.fn(() => pending);
   const app = createAppAiRoutes({ authorize: async () => true, generate });
   const controller = new AbortController();
   const first = app.request("/", { method: "POST", signal: controller.signal, body: '{"app":"brain","prompt":"notes"}' });
-  await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
-  controller.abort();
-  expect((await first).status).toBe(503);
+  const second = app.request("/", { method: "POST", body: '{"app":"brain","prompt":"notes"}' });
+  await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+  try {
+    controller.abort(); expect((await first).status).toBe(503);
+    expect((await app.request("/", { method: "POST", body: '{"app":"brain","prompt":"notes"}' })).status).toBe(429);
+  } finally { finish({ text: "drained" }); }
+  expect((await second).status).toBe(200);
+  expect((await app.request("/", { method: "POST", body: '{"app":"brain","prompt":"notes"}' })).status).toBe(200);
+});
+it("bounds route discovery work and rejects duplicate app identity query values",async()=>{
+  let finish!:(value:{routes:[];defaultRoute:null})=>void;
+  const pending=new Promise<{routes:[];defaultRoute:null}>(resolve=>{finish=resolve;});
+  const discover=vi.fn(()=>pending);
+  const app=createAppAiRoutes({authorize:async()=>true,generate:async()=>({text:"ok"}),discover});
+  const first=app.request("/routes?app=brain");const second=app.request("/routes?app=brain");
+  await vi.waitFor(()=>expect(discover).toHaveBeenCalledTimes(2));
+  expect((await Promise.race([app.request("/routes?app=brain"),new Promise<Response>(resolve=>setTimeout(()=>resolve(new Response(null,{status:599})),100))])).status).toBe(429);
+  expect((await app.request("/routes?app=brain&app=other")).status).toBe(400);
+  finish({routes:[],defaultRoute:null});await first;await second;
 });

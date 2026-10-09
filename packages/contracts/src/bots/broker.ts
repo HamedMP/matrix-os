@@ -3,6 +3,7 @@ import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativ
 import { BotConnectionIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
 import { BotInteractionPayloadSchema } from "#bots/interactions";
 import { BotMemoryContentSchema, BotMemoryKindSchema, BotMemoryScopeSchema, BotMemorySourceSchema } from "#bots/memory";
+import { JevInboxInputSchema } from "#jev-inbox";
 
 /** Leaves room for the broker envelope inside the 256 KiB broker request cap. */
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
@@ -25,6 +26,7 @@ export const BotToolCapabilitySchema = z.enum([
   "integration.inventory",
   "integration.call",
   "integration.describe",
+  "jev.inbox",
   "mcp.inventory",
   "mcp.describe",
   "mcp.call",
@@ -43,6 +45,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
+  capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),
   capability("integration.describe", z.object({ service: BotIntegrationServiceSchema }).strict()),
   capability("mcp.inventory", z.object({}).strict()),

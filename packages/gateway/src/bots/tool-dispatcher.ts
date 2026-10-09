@@ -56,6 +56,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "agent.task": "write",
   "artifact.read": "read",
   "artifact.write": "write",
+  "jev.inbox": "write",
   "integration.inventory": "read",
   "integration.call": "write",
   "integration.describe": "read",
@@ -190,6 +191,7 @@ function textResult(text: string): BotToolResult {
 
 export function createBotToolDispatcher(deps: {
   homePath: string;
+  jev?: Pick<import("./jev-tools.js").BotJevTools, "call">;
   managedTools?: import("../chat/managed-pi-owner-tools.js").ManagedPiOwnerTools;
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
   /** Recheck live source after staging, immediately before artifact publication. */
@@ -309,7 +311,7 @@ export function createBotToolDispatcher(deps: {
   }
 
   return {
-    effectClass: (request) => request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
+    effectClass: (request) => request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
       if (request.capability === 'agent.task') {
         if (!deps.nativeTask || isManagedPiBinding(binding)) throw new BotBrokerActionError('not_granted');
@@ -335,6 +337,7 @@ export function createBotToolDispatcher(deps: {
         if (!deps.managedTools) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedTools.dispatch(binding, request, signal) };
       }
+      if (request.capability === "jev.inbox" && deps.jev) return { result: await deps.jev.call(binding, request.args, signal) };
       if (request.capability === "interaction.create" && deps.interactions) {
         return { result: await deps.interactions.createFromTool(binding, request.args) };
       }

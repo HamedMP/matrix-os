@@ -1,0 +1,18 @@
+[Unit]
+Description=Scoped funded Chat repair after explicit coordinated update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStartPre=/usr/bin/sleep 3
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/matrix-funded-host-config.py --maintenance
+ExecStopPost=/usr/bin/python3 -I /usr/local/libexec/matrix-funded-host-config.py --resume
+TimeoutStartSec=180
+# ExecStopPost must outlive the separate bounded1600s restoration window,
+# including Gateway/Terminal's existing720s startup contracts.
+TimeoutStopSec=1800
+UMask=0077
+# No Install section or timer: only the explicit updater admission schedules it.

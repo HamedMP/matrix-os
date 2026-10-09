@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { AtsApplicationNotFoundError, AtsRevisionConflictError } from './ats-errors.js';
+export { AtsApplicationNotFoundError, AtsRevisionConflictError } from './ats-errors.js';
+import { enqueueAtsNotification } from './ats-notifications.js';
+import { listAtsInbox } from './ats-mail.js';
 import type { AtsDB } from './ats-db.js';
 import {
   applicationColumns,
@@ -20,20 +24,6 @@ import type {
   AtsStage,
   AtsTask,
 } from './ats-types.js';
-
-export class AtsRevisionConflictError extends Error {
-  constructor() {
-    super('Application was updated by another reviewer');
-    this.name = 'AtsRevisionConflictError';
-  }
-}
-
-export class AtsApplicationNotFoundError extends Error {
-  constructor() {
-    super('Application not found');
-    this.name = 'AtsApplicationNotFoundError';
-  }
-}
 
 async function insertEvent(
   db: AtsDB,
@@ -136,6 +126,10 @@ export async function createAtsApplication(
       detail: { roleSlug: input.roleSlug, source: input.source },
       at: now,
     });
+    await enqueueAtsNotification(trx, `application:${id}`, {
+      name: inserted.candidate_name, email: inserted.candidate_email, role: input.roleSlug,
+      path: `/admin/ats/${id}`, source: 'careers_page',
+    }, now);
     return { application: mapApplication(inserted), created: true };
   });
 }
@@ -169,12 +163,13 @@ export async function getAtsApplication(db: AtsDB, id: string): Promise<AtsAppli
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
   if (!application) return undefined;
-  const [events, notes, scorecards, interviews, tasks] = await Promise.all([
+  const [events, notes, scorecards, interviews, tasks, emails] = await Promise.all([
     db.executor.selectFrom('ats_application_events').selectAll().where('application_id', '=', id).orderBy('created_at', 'desc').execute(),
     db.executor.selectFrom('ats_notes').selectAll().where('application_id', '=', id).orderBy('created_at', 'desc').execute(),
     db.executor.selectFrom('ats_scorecards').selectAll().where('application_id', '=', id).orderBy('updated_at', 'desc').execute(),
     db.executor.selectFrom('ats_interviews').selectAll().where('application_id', '=', id).orderBy('created_at', 'desc').execute(),
     db.executor.selectFrom('ats_tasks').selectAll().where('application_id', '=', id).orderBy('created_at', 'desc').execute(),
+    listAtsInbox(db, id),
   ]);
   return {
     ...mapApplication(application),
@@ -183,6 +178,7 @@ export async function getAtsApplication(db: AtsDB, id: string): Promise<AtsAppli
     scorecards: scorecards.map(mapScorecard),
     interviews: interviews.map(mapInterview),
     tasks: tasks.map(mapTask),
+    emails,
   };
 }
 
@@ -196,7 +192,7 @@ export async function getAtsApplicationResume(
     .where('id', '=', id)
     .where('deleted_at', 'is', null)
     .executeTakeFirst();
-  return row ? {
+  return row?.resume_filename ? {
     filename: row.resume_filename,
     contentType: row.resume_content_type,
     bytes: new Uint8Array(row.resume_bytes),

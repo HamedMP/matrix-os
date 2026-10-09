@@ -6,10 +6,18 @@ import { C2_CHATS } from "./side-panel-test-utils";
 // the layout's modules itself (jest.mock is per file) and points them here.
 
 /** What the layout gave the navigator, and the route the app is on. */
+export type DrawerState = {
+  history: ({ type: "drawer"; status: "open" | "closed" } | { type: "route"; key: string })[];
+  default?: "open" | "closed";
+};
+type DrawerListeners = Record<string, (event: { data: { state: DrawerState } }) => void>;
+
 export const drawer = {
   screens: [] as string[],
   options: undefined as Record<string, unknown> | undefined,
-  listeners: undefined as Record<string, () => void> | undefined,
+  listeners: undefined as DrawerListeners | undefined,
+  /** The navigator state the layout reads when it sets up its listeners. */
+  state: { history: [] } as DrawerState,
   segments: [] as string[],
   /** What `useDrawerStatus` reports. */
   status: "closed" as "open" | "closed",
@@ -32,7 +40,7 @@ export const mocks = {
 interface DrawerProps {
   children: ReactNode;
   screenOptions?: Record<string, unknown>;
-  screenListeners?: Record<string, () => void>;
+  screenListeners?: (props: { navigation: { getState: () => DrawerState } }) => DrawerListeners;
   drawerContent?: (props: unknown) => ReactNode;
 }
 
@@ -40,7 +48,7 @@ interface DrawerProps {
 export function drawerModule() {
   function Drawer({ children, screenOptions, screenListeners, drawerContent }: DrawerProps) {
     drawer.options = screenOptions;
-    drawer.listeners = screenListeners;
+    drawer.listeners = screenListeners?.({ navigation: { getState: () => drawer.state } });
     return createElement(
       Fragment,
       null,
@@ -56,7 +64,13 @@ export function drawerModule() {
     drawer.screens.push(name);
     return null;
   };
-  return { Drawer, useDrawerStatus: () => drawer.status };
+  return {
+    Drawer,
+    useDrawerStatus: () => drawer.status,
+    getDrawerStatusFromState: jest.requireActual(
+      "expo-router/build/react-navigation/drawer/utils/getDrawerStatusFromState",
+    ).getDrawerStatusFromState,
+  };
 }
 
 export const CHAT_SCREEN_SEGMENTS = ["(drawer)", "(tabs)", "(chats)"];
@@ -81,6 +95,7 @@ export function resetDrawerLayout() {
   drawer.screens.length = 0;
   drawer.options = undefined;
   drawer.listeners = undefined;
+  drawer.state = { history: [] };
   drawer.segments = CHAT_SCREEN_SEGMENTS;
   drawer.status = "closed";
   mocks.useCanonicalChatPages.mockReturnValue(chatPages());

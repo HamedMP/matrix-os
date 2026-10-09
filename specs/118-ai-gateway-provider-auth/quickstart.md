@@ -145,9 +145,10 @@ Preview activation order is deliberate:
    authenticated funding-summary read claims the bounded starter grant once;
 7. test Canvas, Web Desktop, and Electron before any production rollout.
 
-The relay workflow intentionally refuses production today. Removing that gate
-requires completed preview metering evidence and the general-availability gates
-below.
+The Relay workflow rejects production without exact-source Preview metering
+evidence and the general-availability gates below. See the
+[production release evidence contract](./production-release-evidence.md) for
+administrator-reviewed artifact pins and separate candidate deployment/promotion.
 
 ## 7. Add provider connections
 

@@ -82,7 +82,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Dependencies section showing story completion order
    - Parallel execution examples per story
    - Implementation strategy section (MVP first, incremental delivery)
-   - Graphite stack plan section mapping phases to reviewable stacked PRs when the feature is more than one small PR
+   - GitHub Stack Plan section mapping phases to reviewable native stacked PRs when the feature is more than one small PR
 
 5. **Report**: Output path to generated tasks.md and summary:
    - Total task count
@@ -90,7 +90,7 @@ You **MUST** consider the user input before proceeding (if not empty).
    - Parallel opportunities identified
    - Independent test criteria for each story
    - Suggested MVP scope (typically just User Story 1)
-   - Suggested Graphite stack split by phase/story, using `docs/dev/stacked-prs.md`
+   - Suggested GitHub native stack split by phase/story, using `docs/dev/stacked-prs.md`
    - Format validation: Confirm ALL tasks follow the checklist format (checkbox, ID, labels, file paths)
 
 6. **Check for extension hooks**: After tasks.md is generated, check if `.specify/extensions.yml` exists in the project root.
@@ -198,10 +198,10 @@ Every task MUST strictly follow this format:
   - Each phase should be a complete, independently testable increment
 - **Final Phase**: Polish & Cross-Cutting Concerns
 
-### Graphite Stack Plan
+### GitHub Stack Plan
 
 For Matrix OS repositories with `docs/dev/stacked-prs.md`, tasks.md MUST include
-a "Graphite Stack Plan" section for any feature expected to exceed one small PR:
+a "GitHub Stack Plan" section for any feature expected to exceed one small PR:
 
 - Setup/spec/docs gates can be the first stack layer.
 - Foundational shared infrastructure can be its own layer when it touches shared backend/platform code.

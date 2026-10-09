@@ -38,7 +38,7 @@ export interface AtsApplicationSummary {
   tags: string[];
   nextActionAt: string | null;
   dispositionReason: string | null;
-  consentAt: string;
+  consentAt: string | null;
   retentionUntil: string;
   resumeFilename: string;
   resumeContentType: string;
@@ -107,10 +107,10 @@ export interface AtsTask {
 }
 
 export interface AtsApplicationDetail extends AtsApplicationSummary {
+  emails: Array<import('./ats-intake-schema.js').AtsInboxTable & { attachments: Array<{ id: string; message_id: string; filename: string; content_type: string }> }>;
   events: AtsEvent[];
   notes: AtsNote[];
   scorecards: AtsScorecard[];
   interviews: AtsInterview[];
   tasks: AtsTask[];
 }
-

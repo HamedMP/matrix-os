@@ -36,7 +36,7 @@ beforeEach(async () => {
     accessSourceId: "matrix_included", capabilities: ["artifact.write", "artifact.read"], requestClass: "interactive",
   };
 });
-afterEach(async () => destroy());
+afterEach(async () => { vi.restoreAllMocks(); await destroy(); });
 
 function setup(overrides: {
   maxTrackedRuns?: number;
@@ -96,6 +96,32 @@ const tool = (overrides: Partial<BotToolRequest> = {}) => frame({
 });
 
 describe("bot broker actions", () => {
+  it("gives bounded Jev processing time beyond the ordinary tool deadline", async () => {
+    binding.capabilities = ["jev.inbox"];
+    const timeouts = vi.spyOn(AbortSignal, "timeout");
+    const { actions } = setup({ toolTimeoutMs: 1, tools: { dispatch: async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return { result: { ok: true, content: [{ type: "text", text: "confirmed" }] } };
+    } } });
+    await expect(actions.handleFrame(tool({ capability: "jev.inbox", args: { operation: "batch_next", jobId: "jev_batch_" + "a".repeat(32), revision: 1 } })))
+      .resolves.toMatchObject({ ok: true });
+    expect(timeouts).toHaveBeenCalledWith(600_000);
+  });
+
+  it("cancelled Jev processing remains effect unknown and is never replayed", async () => {
+    binding.capabilities = ["jev.inbox"];
+    const { actions, lifetime, tools } = setup({ tools: { dispatch: vi.fn(async () => {
+      lifetime.abort();
+      return new Promise(() => undefined);
+    }) } });
+    const request = tool({ capability: "jev.inbox", args: { operation: "evaluate", receipt: "f".repeat(64) } });
+    await expect(actions.handleFrame(request)).resolves.toMatchObject({ ok: false, code: "timeout" });
+    const checkpoint = await db.selectFrom("bot_tool_checkpoints").select("phase").where("run_id", "=", binding.runId).executeTakeFirst();
+    expect(checkpoint?.phase).toBe("effect_unknown");
+    await expect(actions.handleFrame(request)).resolves.toMatchObject({ ok: false });
+    expect(tools.dispatch).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses frames for another runtime, generation, or run as stale", async () => {
     const { actions } = setup();
     for (const stale of [

@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 concurrency:
@@ -42,6 +43,10 @@ jobs:
       MATRIX_JEV_PRICING_REVIEWED_AT: ${{ vars.MATRIX_JEV_PRICING_REVIEWED_AT }}
       MATRIX_JEV_PRICING_VALID_THROUGH: ${{ vars.MATRIX_JEV_PRICING_VALID_THROUGH }}
       DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+      PROMOTE: ${{ inputs.promote }}
+      GH_TOKEN: ${{ github.token }}
+      MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID: ${{ vars.MATRIX_FUNDED_AI_ACCEPTANCE_RUN_ID }}
+      MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256: ${{ vars.MATRIX_FUNDED_AI_ACCEPTANCE_RECEIPT_SHA256 }}
       MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION }}
       MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT }}
       MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH }}
@@ -52,13 +57,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Validate preview deployment configuration
+      - name: Validate deployment configuration
         run: |
           set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" != "staging" ]; then
-            echo "Production funded AI deployment remains blocked until preview metering is verified." >&2
-            exit 1
-          fi
+          python3 scripts/verify-funded-relay-evidence.py configuration
           required=(
             GCP_PROJECT_ID
             GCP_REGION
@@ -138,13 +140,15 @@ jobs:
         run: |
           set -euo pipefail
           required_secrets=(
-            cloudflare-ai-gateway-token
-            cloudflare-workers-ai-token-preview
-            ai-relay-control-token
-            ai-relay-metadata-secret
+            "${GATEWAY_TOKEN_SECRET}:${GATEWAY_TOKEN_VERSION}"
+            "${WORKERS_TOKEN_SECRET}:${WORKERS_TOKEN_VERSION}"
+            "${CONTROL_TOKEN_SECRET}:${CONTROL_TOKEN_VERSION}"
+            "${METADATA_SECRET_SECRET}:${METADATA_SECRET_VERSION}"
           )
-          for secret_name in "${required_secrets[@]}"; do
-            gcloud secrets versions describe latest \
+          for binding in "${required_secrets[@]}"; do
+            secret_name="${binding%:*}"
+            secret_version="${binding##*:}"
+            gcloud secrets versions describe "$secret_version" \
               --secret "$secret_name" \
               --project "$GCP_PROJECT_ID" >/dev/null
             accessor_member="$(
@@ -161,7 +165,12 @@ jobs:
             fi
           done
 
+      - name: Require existing safe production baseline
+        if: ${{ inputs.environment == 'production' && !inputs.promote }}
+        run: python3 scripts/verify-funded-relay-evidence.py deployment-preflight
+
       - name: Build relay image
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
         run: |
           set -euo pipefail
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-ai-relay:${GITHUB_SHA::12}"
@@ -182,16 +191,20 @@ jobs:
           echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
 
       - name: Deploy candidate revision
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
         run: |
           set -euo pipefail
-          # Keep the digest-pinned candidate off the default URL even when this
-          # creates the service. Only the explicit promotion step may route it.
+          # Deploy onto an existing service and keep the digest-pinned candidate
+          # off its default URL. Only explicit promotion may route it.
           traffic_flags=(--tag candidate --no-traffic)
           gcloud run deploy "$AI_RELAY_CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
+            --command "" \
+            --args "" \
             --service-account "$AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT" \
+            --labels "matrix-source-sha=${GITHUB_SHA}" \
             --platform managed \
             --port 8080 \
             --cpu 1 \
@@ -204,7 +217,7 @@ jobs:
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
             --set-env-vars "^|^MATRIX_FUNDED_AI_ENABLED=true|MATRIX_FUNDED_AI_RESERVATION_MODE=usage|MATRIX_FUNDED_AI_BETAS=claude-code-20250219,structured-outputs-2025-11-13,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24|PLATFORM_INTERNAL_URL=${PLATFORM_INTERNAL_URL}|CLOUDFLARE_AI_GATEWAY_URL=${CLOUDFLARE_AI_GATEWAY_URL}|MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION=${MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION}|MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT=${MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT}|MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH=${MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH}|MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION=${MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION}|MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT=${MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT}|MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH=${MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH}|MATRIX_JEV_PRICING_REVIEW_VERSION=${MATRIX_JEV_PRICING_REVIEW_VERSION}|MATRIX_JEV_PRICING_REVIEWED_AT=${MATRIX_JEV_PRICING_REVIEWED_AT}|MATRIX_JEV_PRICING_VALID_THROUGH=${MATRIX_JEV_PRICING_VALID_THROUGH}|MATRIX_FUNDED_AI_GLOBAL_CONCURRENCY=16|MATRIX_FUNDED_AI_RUNTIME_CONCURRENCY=2|MATRIX_FUNDED_AI_GLOBAL_RATE_LIMIT=60|MATRIX_FUNDED_AI_RATE_LIMIT=20" \
-            --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=cloudflare-ai-gateway-token:latest,CLOUDFLARE_WORKERS_AI_TOKEN=cloudflare-workers-ai-token-preview:latest,AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_RELAY_METADATA_SECRET=ai-relay-metadata-secret:latest" \
+            --set-secrets "CLOUDFLARE_AI_GATEWAY_TOKEN=${GATEWAY_TOKEN_SECRET}:${GATEWAY_TOKEN_VERSION},CLOUDFLARE_WORKERS_AI_TOKEN=${WORKERS_TOKEN_SECRET}:${WORKERS_TOKEN_VERSION},AI_RELAY_CONTROL_TOKEN=${CONTROL_TOKEN_SECRET}:${CONTROL_TOKEN_VERSION},AI_RELAY_METADATA_SECRET=${METADATA_SECRET_SECRET}:${METADATA_SECRET_VERSION}" \
             --quiet
           candidate_url=""
           candidate_revision=""
@@ -240,6 +253,14 @@ jobs:
           echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
           echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
 
+      - name: Verify deployed candidate has no default traffic
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
+        run: python3 scripts/verify-funded-relay-evidence.py candidate-isolation
+
+      - name: Verify existing production candidate against reviewed evidence
+        if: ${{ inputs.environment == 'production' && inputs.promote }}
+        run: python3 scripts/verify-funded-relay-evidence.py promotion
+
       - name: Smoke candidate relay
         run: |
           set -euo pipefail
@@ -254,6 +275,9 @@ jobs:
         if: ${{ inputs.promote }}
         run: |
           set -euo pipefail
+          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
+            python3 scripts/verify-funded-relay-evidence.py promotion
+          fi
           gcloud run services update-traffic "$AI_RELAY_CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \

@@ -34,6 +34,23 @@ export function InteractionNote({ children }: { children: string }) {
   return <Text style={styles.note}>{children}</Text>;
 }
 
+/** What an agent asks to do with a service, in the words every surface shares. */
+export interface RequestedAccess {
+  summary: string;
+  /** What stays untouched, when the access is narrow enough to say so. */
+  boundary: string | null;
+}
+
+/** The access an agent asks for, shown before the person agrees to it. */
+export function RequestedAccessNotes({ access }: { access: RequestedAccess }) {
+  return (
+    <>
+      <InteractionNote>{`Requested access: ${access.summary}`}</InteractionNote>
+      {access.boundary ? <InteractionNote>{access.boundary}</InteractionNote> : null}
+    </>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   card: {
     gap: theme.v2.space[12],

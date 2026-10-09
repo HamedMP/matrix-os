@@ -141,7 +141,7 @@ export function createBotIntegrationTools(deps: {
     const expiresAt = (lifetime: number) => new Date(at.getTime() + lifetime).toISOString();
     const options = connected.filter((connection) => connection.service === service).slice(0, MAX_ACCOUNT_OPTIONS);
     const payload = options.length >= 1
-      ? { kind: "account_choice" as const, service, options: options.map((option) => ({ connectionId: option.connectionId, label: option.label })) }
+      ? { kind: "account_choice" as const, service, access: [...effects], options: options.map((option) => ({ connectionId: option.connectionId, label: option.label })) }
       : {
         kind: "connect_request" as const, service, access: [...effects],
         benefit: `This bot needs ${effects.join(" and ")} access to ${serviceName(service)} to continue this task.`,
@@ -218,6 +218,21 @@ export function createBotIntegrationTools(deps: {
   }
 
   return {
+    /** Dedicated workflows ask for their exact declared effects without executing a phantom integration call. */
+    async ensureAccess(binding: BotRuntimeBinding, service: string, effects: readonly BotEffect[], signal?: AbortSignal): Promise<BotToolResult | null> {
+      const declared = await declaredEffects(binding.ownerId, binding.botId, service);
+      if (effects.some(effect => !declared.includes(effect))) throw new BotBrokerActionError("not_granted");
+      const connected = await inventory(binding.ownerId, signal);
+      const grants = await deps.transact(binding.ownerId, tx => createBotGrantsRepository(tx.db).listLive({
+        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+      }, tx.db));
+      const usable = grants.filter(grant => grant.service === service && effects.every(effect => grant.effects.includes(effect))
+        && connected.filter(account => account.service === service && account.label === grant.accountLabel).length === 1
+        && connected.some(account => account.service === service && account.connectionId === grant.connectionId && account.label === grant.accountLabel));
+      if (usable.length === 1) return null;
+      return text(await deps.transact(binding.ownerId, tx => requestAccess(tx, binding, service, effects, connected)));
+    },
+
     /** `integration.inventory`: what the bot may use, per declared service. */
     async inventory(binding: BotRuntimeBinding, args: InventoryArgs, signal?: AbortSignal): Promise<BotToolResult> {
       const agent = await deps.agents.get({ type: "personal", ownerId: binding.ownerId }, binding.botId);

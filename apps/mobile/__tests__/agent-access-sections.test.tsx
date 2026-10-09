@@ -101,6 +101,15 @@ describe("agent details: tasks, permissions, memory and model", () => {
       expect(flat(within(permissions).getByText("Read, send"))).toMatchObject({ fontSize: 13, lineHeight: 18, color: "#635F5F" });
     });
 
+    it("words narrow access the way every surface does, with what stays untouched", () => {
+      renderSections({ authority: { ...authority, grants: [{ ...authority.grants[0]!, effects: ["read", "label"] }] } } as never);
+
+      const permissions = section("permissions");
+      expect(within(permissions).getByText("Read Inbox, add Jev classification labels")).toBeTruthy();
+      expect(flat(within(permissions).getByText("Preserve existing labels; no archive, send, delete, or mark read.")))
+        .toMatchObject({ fontSize: 13, lineHeight: 18, color: "#635F5F" });
+    });
+
     it("revokes a grant, then has the agent's status read again", async () => {
       const { props } = renderSections();
 

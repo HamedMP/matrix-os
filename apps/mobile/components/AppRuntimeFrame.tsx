@@ -1,6 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
-import WebView from "react-native-webview";
+import WebView, { type WebViewMessageEvent } from "react-native-webview";
+
+import { buildMobileAppBridgeScript, createMobileAppCapabilityBroker, type MobileAppBridgeRequest } from "@/lib/app-capability-bridge";
 
 import { appRuntimeNavigation } from "@/lib/app-runtime-navigation";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
@@ -9,21 +11,40 @@ interface AppRuntimeFrameProps {
   url: string;
   title: string;
   headers?: Record<string, string>;
+  app?: string;
+  /** Verified against the authenticated owner catalog before creating this session. */
+  runtimeSlug?: string;
+  requestAppBridge?: MobileAppBridgeRequest;
   /** Host-reviewed web destinations only; this does not grant payment permission. */
   canOpenExternalUrl?: (url: string) => boolean;
 }
 
 export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
+  const launchId = useMemo(() => Math.random().toString(36).slice(2) + Date.now().toString(36), [props.url, props.app, props.runtimeSlug, props.requestAppBridge]);
   // Android does not consult onShouldStartLoadWithRequest for the first load.
   if (appRuntimeNavigation(props.url, props.url) !== "internal") {
     return <AppRuntimeUnavailable title={props.title} />;
   }
   // A new launch session starts with a fresh notice and native WebView state.
-  return <AppRuntimeFrameContent key={props.url} {...props} />;
+  return <AppRuntimeFrameContent key={launchId} {...props} launchId={launchId} />;
 }
 
-function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: AppRuntimeFrameProps) {
+function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, launchId }: AppRuntimeFrameProps & { launchId: string }) {
   const [linkBlocked, setLinkBlocked] = useState(false);
+  const webViewRef = useRef<WebView>(null);
+  const brokerRef = useRef<ReturnType<typeof createMobileAppCapabilityBroker> | null>(null);
+  const bootstrap = app && requestAppBridge ? buildMobileAppBridgeScript(app, launchId) : undefined;
+  useEffect(() => {
+    if (!app || !requestAppBridge) return;
+    try {
+      const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge,
+        reply: (script) => webViewRef.current?.injectJavaScript(script) });
+      brokerRef.current = broker;
+      return () => { broker.dispose(); brokerRef.current = null; };
+    } catch (error) {
+      console.warn("[mobile] app bridge unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  }, [app, runtimeSlug, requestAppBridge, url, launchId]);
 
   const shouldStartLoad = useCallback(
     (request: { url?: string; isTopFrame?: boolean }) => {
@@ -52,6 +73,13 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
   return (
     <View style={{ flex: 1 }}>
       <WebView
+        ref={webViewRef}
+        injectedJavaScriptBeforeContentLoaded={bootstrap}
+        injectedJavaScriptBeforeContentLoadedForMainFrameOnly
+        onLoadStart={() => brokerRef.current?.resetDocument()}
+        onMessage={(event: WebViewMessageEvent) => {
+          void brokerRef.current?.receive(event.nativeEvent.data, event.nativeEvent.url);
+        }}
         source={{ uri: url, headers }}
         // WebView opens non-whitelisted URLs through Linking before consulting
         // our callback. Route every scheme through the fail-closed policy instead.
@@ -71,6 +99,10 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl }: App
         renderError={() => <AppRuntimeUnavailable title={title} />}
         allowsBackForwardNavigationGestures
         allowsInlineMediaPlayback
+        // Left on, the WebView puts back the status bar style it found when it
+        // was created each time any window shows or hides, over the one the
+        // app has set since (a theme change, a screen with its own style).
+        autoManageStatusBarEnabled={false}
         javaScriptEnabled
         domStorageEnabled
         pullToRefreshEnabled

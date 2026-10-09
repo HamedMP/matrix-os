@@ -2,6 +2,8 @@
 
 Updated: 2026-09-22. [Governing spec](spec.md). The directory name is retained for PR continuity; personal Jev keys are not part of this release.
 
+Current native Bot implementation follows [the Matrix Pi migration spec](./pi-bot-migration-spec.md). The Hermes implementation below remains legacy compatibility and is not Pi acceptance evidence.
+
 ## Product decision / 产品决定
 
 首版把 Jev 做成 Matrix 的 built-in decision capability，但只交付一个完整场景：Gmail inbox triage。用户不需要 TypeSafe、Cloudflare 或 Vercel key，也不需要把主模型切到 Matrix AI。每次 Jev 调用都由当前 owner 的 Matrix runtime credential 鉴权并从 Matrix AI credit 结算。

@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -6,7 +7,7 @@ vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }))
 afterEach(() => vi.unstubAllGlobals());
 it("sends a concise title when Web Chat creates a conversation", async () => {
   let created: Record<string, unknown> | undefined;
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+  stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
     if (String(url).includes("/api/chats?") && init?.method !== "POST") return Response.json({ items: [] });
     if (String(url).endsWith("/api/chats?readStateVersion=1&fundingVersion=1") && init?.method === "POST") {
       created = JSON.parse(String(init.body));

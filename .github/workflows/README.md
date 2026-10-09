@@ -26,6 +26,7 @@ job fails or is cancelled. Internal jobs may still be inspected directly for
 logs and artifacts.
 
 Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
+Source-only jobs (including the unit-test matrix) are skipped before runner allocation for docs-only changes. Documentation and OS-view parity jobs run only when their respective path planners select them; `CI Results` accepts intentional skips and still fails on a selected check's failure.
 Expensive jobs remain path-aware.
 
 ### Main CI queue and coverage frontier

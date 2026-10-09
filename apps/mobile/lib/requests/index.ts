@@ -69,8 +69,9 @@ export {
   createTerminalSession,
   deleteTerminalSession,
   fetchTerminalSessions,
-  isValidEditableTerminalSessionName,
+  isValidTerminalSessionName,
   renameTerminalSession,
+  TERMINAL_SESSION_NAME_MAX_LENGTH,
   type TerminalSession,
 } from "./terminals";
 export {

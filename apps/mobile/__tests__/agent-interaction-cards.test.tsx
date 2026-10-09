@@ -43,6 +43,11 @@ const connect = {
     connectRequestId: "cr_abcdefgh" },
 };
 
+// Read and label only: the server's narrow mail-labelling authority.
+const labelAccess = ["read", "label"];
+const LABEL_ACCESS_SUMMARY = "Requested access: read Inbox, add Jev classification labels";
+const LABEL_ACCESS_BOUNDARY = "Preserve existing labels; no archive, send, delete, or mark read.";
+
 const resolved = { interaction: { interactionId: "in_abcdefgh", status: "resolved", revision: 2 } };
 
 function renderInteraction(interaction: unknown, overrides: Partial<PendingInteractionProps> = {}) {
@@ -289,7 +294,54 @@ describe("an agent's other requests", () => {
     });
   });
 
+  describe("account choice access", () => {
+    const labelChoice = {
+      ...accountChoice,
+      payload: { ...accountChoice.payload, service: "gmail", access: labelAccess },
+    };
+
+    it("says what the agent may do with the account, and what it may not, before one is chosen", () => {
+      renderInteraction(labelChoice);
+
+      expect(flat(screen.getByText(LABEL_ACCESS_SUMMARY))).toMatchObject({ fontSize: 13, lineHeight: 18, color: "#635F5F" });
+      expect(screen.getByText(LABEL_ACCESS_BOUNDARY)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Work" })).toBeTruthy();
+    });
+
+    it("says nothing about access for a request stored before the server disclosed it", () => {
+      renderInteraction(accountChoice);
+
+      expect(screen.queryByText(/Requested access/)).toBeNull();
+    });
+
+    it("keeps the access in view while the agent's status is out of date", () => {
+      renderInteraction(labelChoice, { actionsAvailable: false });
+
+      expect(screen.getByText(LABEL_ACCESS_SUMMARY)).toBeTruthy();
+      expect(screen.getByText(LABEL_ACCESS_BOUNDARY)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Work" })).toBeNull();
+    });
+  });
+
   describe("connect request", () => {
+    it("words narrow access the way every surface does, with what stays untouched", () => {
+      renderInteraction({ ...connect, payload: { ...connect.payload, access: labelAccess } });
+
+      expect(screen.getByText(LABEL_ACCESS_SUMMARY)).toBeTruthy();
+      expect(screen.getByText(LABEL_ACCESS_BOUNDARY)).toBeTruthy();
+    });
+
+    it("keeps the access in view on the way to the page where the service is connected", async () => {
+      const onResolve = jest.fn(async () => ({ ...resolved, connectUrl: "https://example.com/consent" }));
+      renderInteraction({ ...connect, payload: { ...connect.payload, access: labelAccess } }, { onResolve: onResolve as never });
+
+      fireEvent.press(screen.getByRole("button", { name: "Connect" }));
+
+      await screen.findByRole("button", { name: "Continue connecting" });
+      expect(screen.getByText(LABEL_ACCESS_SUMMARY)).toBeTruthy();
+      expect(screen.getByText(LABEL_ACCESS_BOUNDARY)).toBeTruthy();
+    });
+
     it("says what the agent wants and why, with Connect over Decline", () => {
       renderInteraction(connect);
 

@@ -7,7 +7,7 @@ jest.mock("expo-router", () => ({
 
 jest.mock("@/lib/queries/use-computer-apps", () => ({
   useComputerApps: () => mockUseComputerApps(),
-  installedAppSlug: (app: { slug: string }) => app.slug,
+  installedAppSlug: (app: { file: string; path: string; name: string; slug: string }) => jest.requireActual("../lib/apps").getAppIdentity(app),
 }));
 
 import React from "react";
@@ -62,7 +62,7 @@ describe("drawer apps screen", () => {
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/app-preview/[app]",
-      params: { app: "chess", name: "Chess" },
+      params: { app: "games/chess", runtimeSlug: "chess", name: "Chess" },
     });
   });
 
