@@ -61,33 +61,64 @@ export function useBrainLoad<T>(load: () => Promise<T>, key: string | null) {
 
 interface BrainPageView<T> { readonly items: readonly T[]; readonly nextCursor: string | null }
 interface BrainMore<T> {
-  readonly token: string; readonly items: readonly T[]; readonly nextCursor: string | null; readonly busy: boolean;
-  readonly error: BrainShellErrorState | null;
+  readonly token: string; readonly key: string; readonly items: readonly T[]; readonly nextCursor: string | null;
+  readonly busy: boolean; readonly error: BrainShellErrorState | null;
+  /** The ids of the first page these pages follow. */
+  readonly after: readonly string[];
 }
 
-/** A cursor-paged list: the first page through useBrainLoad, then "Load more" pages appended, capped in memory. */
+/**
+ * The appended pages that still belong to the list on screen: the same request, or with `idOf` the same key while the
+ * fresh first page still has every item of the one they follow. An item that left it (moved down, or gone) is in no
+ * page kept here, so they are dropped and "Load more" starts again from the fresh first page.
+ */
+function liveMore<T>(
+  more: BrainMore<T> | null, token: string | null, key: string | null, first: readonly T[] | null,
+  idOf: ((item: T) => string) | undefined,
+): BrainMore<T> | null {
+  if (more === null || more.token === token) return more;
+  if (idOf === undefined || first === null || more.key !== key) return null;
+  const fresh = new Set(first.map(idOf));
+  return more.after.every((id) => fresh.has(id)) ? more : null;
+}
+
+/** Appended items to show: all of them, or with `idOf` only those the fresh first page does not have again. */
+function keptItems<T>(extra: readonly T[], first: readonly T[], idOf: ((item: T) => string) | undefined): readonly T[] {
+  if (idOf === undefined || extra.length === 0) return extra;
+  const fresh = new Set(first.map(idOf));
+  return extra.filter((item) => !fresh.has(idOf(item)));
+}
+
+/**
+ * A cursor-paged list: the first page through useBrainLoad, then "Load more" pages appended, capped in memory. A
+ * reload drops the appended pages, unless `idOf` names each item: then they stay through a reload of the same key
+ * whose first page lost none of its items, and an item the fresh first page has again is shown once, from that page.
+ */
 export function useBrainPages<P extends BrainPageView<unknown>>(
   fetchPage: (cursor: string | undefined) => Promise<P>, key: string | null,
+  idOf?: (item: P["items"][number]) => string,
 ) {
   type T = P["items"][number];
   const first = useBrainLoad(() => fetchPage(undefined), key);
   const [more, setMore] = useState<BrainMore<T> | null>(null);
-  const extra = more !== null && more.token === first.token ? more : null;
   const firstPage = first.state.status === "ready" ? first.state.data : null;
-  const items: readonly T[] = firstPage === null ? [] : [...firstPage.items, ...(extra?.items ?? [])];
+  const extra = liveMore(more, first.token, key, firstPage?.items ?? null, idOf);
+  const items: readonly T[] = firstPage === null ? []
+    : [...firstPage.items, ...keptItems(extra?.items ?? [], firstPage.items, idOf)];
   const cursor = extra === null ? firstPage?.nextCursor ?? null : extra.nextCursor;
   const nextCursor = items.length >= BRAIN_LIST_MAX_ITEMS ? null : cursor;
   const loadMore = () => {
-    if (nextCursor === null || first.token === null || extra?.busy === true) return;
+    if (nextCursor === null || first.token === null || key === null || extra?.busy === true) return;
     const token = first.token;
-    const kept = extra?.items ?? [];
-    setMore({ token, items: kept, nextCursor, busy: true, error: null });
+    const loaded = extra?.items ?? [];
+    const after = idOf === undefined ? [] : (firstPage?.items ?? []).map(idOf);
+    setMore({ token, key, items: loaded, nextCursor, busy: true, error: null, after });
     fetchPage(nextCursor).then(
       (page) => setMore((previous) => previous?.token === token
-        ? { token, items: [...kept, ...page.items], nextCursor: page.nextCursor, busy: false, error: null }
+        ? { token, key, items: [...loaded, ...page.items], nextCursor: page.nextCursor, busy: false, error: null, after }
         : previous),
       (error: unknown) => setMore((previous) => previous?.token === token
-        ? { token, items: kept, nextCursor, busy: false, error: brainShellError(error) }
+        ? { token, key, items: loaded, nextCursor, busy: false, error: brainShellError(error), after }
         : previous),
     );
   };

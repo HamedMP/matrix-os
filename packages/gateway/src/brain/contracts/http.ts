@@ -163,7 +163,7 @@ export const BRAIN_SHELL_VIEW = {
   defaultWidth: 1100, defaultHeight: 720, minWidth: 360, minHeight: 420,
 } as const;
 export const BRAIN_SHELL_SCREENS = [
-  "ask", "today", "decisions", "commitments", "risks", "timeline", "sources",
+  "chat", "today", "decisions", "timeline", "search", "sources",
 ] as const;
 export type BrainShellScreen = (typeof BRAIN_SHELL_SCREENS)[number];
 

@@ -254,7 +254,7 @@ describe("Narrow screens (390 px)", () => {
     });
     const { container, unmount } = render(<BrainAsk {...props(api)} />);
     expect(container.firstElementChild).toHaveClass("grid-cols-[minmax(0,1fr)]");
-    fireEvent.change(screen.getByRole("searchbox", { name: "Ask the Company Brain" }), { target: { value: "postgres" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search the Company Brain" }), { target: { value: "postgres" } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     const results = await screen.findByRole("list", { name: "Results" });
     expect(results).toHaveClass("grid-cols-[minmax(0,1fr)]");
