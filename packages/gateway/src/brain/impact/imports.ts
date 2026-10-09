@@ -123,7 +123,7 @@ function exportTargets(pkg: WorkspacePackage, subpath: string): readonly string[
   }
   if (best === null) return [];
   const middle = subpath.slice(best.star, subpath.length - (best.key.length - best.star - 1));
-  return best.targets.map((target) => target.replaceAll("*", middle));
+  return best.targets.map((target) => target.replaceAll("*", () => middle));
 }
 
 function resolvePackage(
