@@ -52,7 +52,7 @@ export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
   let pool: pg.Pool | null = null;
 
   if (typeof opts === "string") {
-    pool = new pg.Pool({ connectionString: opts, max: 10 });
+    pool = new pg.Pool({ connectionString: opts, max: 10, connectionTimeoutMillis: 5000 });
     pool.on("error", (err) => {
       console.error("[app-db] Idle pool client error:", err.message);
     });

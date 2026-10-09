@@ -4,9 +4,23 @@ import { createSiteRoutes } from './routes.js';
 import { createSiteSubmitRoutes } from './submit-routes.js';
 import { SiteSubmissionRepository } from './submission-repository.js';
 import { createSitePlatformClient } from './platform-client.js';
+import { bootstrapSiteSubmissionDatabase } from './bootstrap.js';
 export async function registerSiteRuntime(app:Hono,options:{homePath:string;db:Kysely<any>|null;platformUrl?:string;handle?:string;env?:NodeJS.ProcessEnv}):Promise<void>{
  const env=options.env??process.env;let submissions:SiteSubmissionRepository|null=null;
- if(options.db){const repository=new SiteSubmissionRepository(options.db);try{await repository.bootstrap();submissions=repository;}catch(error){console.warn('[sites] Submission database unavailable',error instanceof Error?error.name:'UnknownError');}}
+ if(options.db){
+  const repository=new SiteSubmissionRepository(options.db);
+  try{
+   // Production ownerDatabase is created from this same DATABASE_URL in startup/owner-database.
+   // Keep optional DDL on an owned bounded connection, without changing shared query behavior.
+   if(env.DATABASE_URL)await bootstrapSiteSubmissionDatabase(env.DATABASE_URL);
+   else{
+    if(env.NODE_ENV==='production')throw new Error('Site setup database unavailable');
+    // Injected development/test dialects own acquisition/read deadlines and resource cleanup.
+    await repository.bootstrap();
+   }
+   submissions=repository;
+  }catch(error){console.warn('[sites] Submission database unavailable',error instanceof Error?error.name:'UnknownError');}
+ }
  // Already provisioned runtime credential binds machine, slot and rotation epoch.
  const token=env.MATRIX_SYNC_RUNTIME_TOKEN;
  const platform=options.platformUrl&&token&&options.handle?createSitePlatformClient({url:options.platformUrl,token,handle:options.handle,runtimeSlot:env.MATRIX_RUNTIME_SLOT}):null;

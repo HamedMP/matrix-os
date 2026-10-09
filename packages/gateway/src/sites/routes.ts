@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { SiteMetadataSchema, SitePublishRequestSchema, SiteSubmissionsQuerySchema, SiteRollbackSchema, SitePublishingSchema, type SiteRecord } from '@matrix-os/contracts';
 import { requireRequestPrincipal, isRequestPrincipalError } from '../request-principal.js';
 import { resolveAppBySlug } from '../app-runtime/app-index.js';
@@ -32,15 +33,15 @@ export function createSiteRoutes(options:SiteRouteOptions):Hono {
  app.get(base,c=>call(c,'GET'));
  app.post(base,bodyLimit({maxSize:80*1024,onError:c=>c.json({error:'Too many requests'},413)}),async c=>{
   const parsed=await body(c,SitePublishRequestSchema);if(!parsed.success)return c.json({error:'Invalid request'},400);
-  if(!options.submissions)return c.json({error:'Site unavailable'},503);
   if(activeBuilds>=4)return c.json({error:'Too many requests'},429);
   activeBuilds++;
   try{
    const resolved=await resolveAppBySlug(join(options.homePath,'apps'),c.req.param('slug'));if(!resolved.ok)return c.json({error:'App not found'},404);
    const {manifest,appDir}=resolved.entry;if(manifest.runtime!=='vite'||manifest.scope!=='personal'||!manifest.build)return c.json({error:'App needs a public build'},400);
    const config=SitePublishingSchema.parse(manifest.publishing??{});
+   if(config.forms.length&&!options.submissions)return c.json({error:'Site unavailable'},503);
    const {reviewedConfig,...metadata}=parsed.data as z.infer<typeof SitePublishRequestSchema>;
-   if(JSON.stringify(config)!==JSON.stringify(reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
+   if(!isDeepStrictEqual(config,reviewedConfig))return c.json({error:'Site changed; reload and try again'},409);
    const result=await build.build(manifest.slug,appDir,{timeoutMs:120000});if(!result.ok)return c.json({error:'App needs a public build'},400);
    let files;
    try{files=await collectSiteFiles(appDir,manifest.build.output);}catch(error){console.warn('[sites] Production artifact rejected',error instanceof Error?error.name:'UnknownError');return c.json({error:'App needs a public build'},400);}
