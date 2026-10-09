@@ -79,6 +79,14 @@ describe.skipIf(process.platform !== "linux")("Linux descriptor-anchored gallery
     await assert.rejects(service().install("folio"), { status: 409 }); assert.equal(await readFile(target("notes.txt"), "utf8"), "keep");
     assert.equal((await service().list())[0].installed, false);
   });
+  it("keeps the Gallery available when an owner file occupies an app path", async () => {
+    await mkdir(join(homePath, "apps")); await writeFile(join(homePath, "apps/folio"), "owner content");
+    await writeFile(catalogPath, JSON.stringify({ version: 1, apps: [definition, { ...definition, id: "focus", name: "Focus" }] }));
+    const response = await app().request("/api/app-gallery"); assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).apps.map((entry: { id: string; installed: boolean }) => ({ id: entry.id, installed: entry.installed })), [{ id: "folio", installed: false }, { id: "focus", installed: false }]);
+    assert.equal((await app().request("/api/app-gallery/folio/install", { method: "POST", body: "{}" })).status, 409);
+    assert.equal(await readFile(join(homePath, "apps/folio"), "utf8"), "owner content");
+  });
   it("rejects mismatched manifest slugs", async () => {
     await service().install("folio"); const manifest = JSON.parse(await readFile(target("matrix.json"), "utf8")); manifest.slug = "different";
     await writeFile(target("matrix.json"), JSON.stringify(manifest)); assert.equal((await service().list())[0].installed, false); await assert.rejects(service().install("folio"), { status: 409 });

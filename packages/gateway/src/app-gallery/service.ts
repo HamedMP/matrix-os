@@ -63,7 +63,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       if (!parsed.success || parsed.data.slug !== id) return null;
       return { status: "already_installed", slug: id, name: parsed.data.name, path: `apps/${id}` };
     } catch (error) {
-      if (isFsError(error, "ENOENT") || error instanceof SyntaxError) return null;
+      if (isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError) return null;
       throw error;
     } finally { await directory?.close(); }
   }
