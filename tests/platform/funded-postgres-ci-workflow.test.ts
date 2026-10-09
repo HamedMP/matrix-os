@@ -51,7 +51,7 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
     expect(job["timeout-minutes"]).toBe(10);
-    expect(job.services.postgres.image).toBe("postgres:16");
+    expect(job.services.postgres.image).toBe("public.ecr.aws/docker/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",
       POSTGRES_PASSWORD: "matrix_test", POSTGRES_DB: "matrix_test" });
     expect(job.env.MATRIX_TEST_POSTGRES_URL).toBe("postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test");
