@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema, CanonicalChatModelSelectionSchema } from "#canonical-chat";
+import { CanonicalChatApiCursorSchema } from "#canonical-chat-api";
 import { canonicalBoundedText, canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { BotIdSchema, BotRevisionSchema } from "#bots/ids";
 
@@ -42,7 +43,26 @@ export const InstantiateBotResponseSchema = z.object({
   operation: z.enum(["created", "replayed"]),
 }).strict();
 
+/** A thread is one more Chat of a Bot, fixed to one project when it is created (spec 567). */
+export const BotThreadProjectIdSchema = z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/);
+
+/** POST /api/chat-agents/:agentId/threads. The reply is the Chat record `POST /api/chats` returns. */
+export const CreateBotThreadRequestSchema = z.object({
+  clientRequestId: CanonicalChatRequestIdSchema,
+  projectId: BotThreadProjectIdSchema,
+  title: canonicalSafeLabel(120, 480).optional(),
+}).strict();
+
+/** GET /api/chat-agents/:agentId/threads. The reply is the list `GET /api/chats` returns, newest activity first. */
+export const BotThreadListQuerySchema = z.object({
+  projectId: BotThreadProjectIdSchema,
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: CanonicalChatApiCursorSchema.optional(),
+}).strict();
+
 export type BotRecipeRef = z.infer<typeof BotRecipeRefSchema>;
+export type CreateBotThreadRequest = z.infer<typeof CreateBotThreadRequestSchema>;
+export type BotThreadListQuery = z.infer<typeof BotThreadListQuerySchema>;
 export type BotRecipeSummary = z.infer<typeof BotRecipeSummarySchema>;
 export type InstantiateBotRequest = z.infer<typeof InstantiateBotRequestSchema>;
 export type BotSummary = z.infer<typeof BotSummarySchema>;
