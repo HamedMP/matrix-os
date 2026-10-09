@@ -13,6 +13,9 @@ import { type Kysely } from "kysely";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { createAppDb, type AppDb } from "../app-db.js";
 import { createAppRegistry, type AppRegistry } from "../app-db-registry.js";
+import { startBrainServices, type BrainProjectService, type BrainServicesHandle } from "../brain/api/index.js";
+import type { BrainLateBoundIntegrations } from "../brain/sources/integration/index.js";
+import { createBrainMatrixNotesReader } from "../brain/sources/matrix/index.js";
 import { createQueryEngine, type QueryEngine } from "../app-db-query.js";
 import { createKvStore, type KvStore } from "../app-db-kv.js";
 import { isSafeName, normalizeAppStorageSlug } from "../app-db-types.js";
@@ -86,11 +89,25 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   chatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null;
   collaboration: GatewayCollaborationRuntime | null;
   messagingRepository: MessagingKyselyRepository | null;
+  /**
+   * Every Company Brain feature plus eraseProject (project deletion); null when the owner database is unavailable or
+   * the brain bootstrap deferred.
+   */
+  brainServices: BrainServicesHandle | null;
+  /** brainServices?.project: the project service the existing routes and brain_why use. */
+  brainService: BrainProjectService | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {
   databaseUrl?: string;
   homePath: string;
+  /** Company Brain sources' read path to the owner's integrations, bound in server.ts once they exist. */
+  brainIntegrations?: Pick<BrainLateBoundIntegrations, "caller" | "configured" | "isConnected" | "accounts">;
+  /**
+   * The gateway owner's principals: only they may spend the owner's credentials in the Company Brain
+   * (MATRIX_BRAIN_GITHUB_TOKEN, the Anthropic key of model claims, the OpenAI key of meaning search).
+   */
+  brainOwnerIds?: readonly string[];
   collaborationConfig: GatewayCollaborationConfig | null;
   initialFailureReason: GatewayCollaborationConfigurationFailure | null;
   providerSnapshotReader: CanonicalProviderSnapshotReader;
@@ -120,6 +137,7 @@ export async function initializeOwnerDatabaseServices(
     canvasService: null, canvasSubscriptionHub: null, canvasCleanupTimer: null,
     chatRepository: null, chatEventStream: null, chatExecutionRoots: null,
     chatCollaborationGuard: null, collaboration: null, messagingRepository: null,
+    brainServices: null, brainService: null,
   };
   let failClosedReason = options.initialFailureReason;
   const result = await bootOwnerDatabaseWithFallback({
@@ -192,6 +210,20 @@ export async function initializeOwnerDatabaseServices(
       const messagingRepository = new MessagingKyselyRepository(kysely as Kysely<any>);
       services.messagingRepository = messagingRepository;
       await messagingRepository.bootstrap();
+      const brainIntegrations = options.brainIntegrations;
+      services.brainServices = await startBrainServices(kysely as Kysely<any>, {
+        projects: options.codingAgentProjectManager, homePath: options.homePath,
+        ...(options.brainOwnerIds ? { ownerIds: options.brainOwnerIds } : {}),
+        sources: {
+          notes: createBrainMatrixNotesReader(db), chats: chatRepository,
+          ...(brainIntegrations ? {
+            integrations: brainIntegrations.caller, isConfigured: () => brainIntegrations.configured(),
+            isConnected: brainIntegrations.isConnected, accounts: brainIntegrations.accounts,
+          } : {}),
+          ...(options.brainOwnerIds ? { githubTokenOwnerIds: options.brainOwnerIds } : {}),
+        },
+      });
+      services.brainService = services.brainServices?.project ?? null;
       services.canvasSubscriptionHub = new CanvasSubscriptionHub({
         authorize: async (subscriber) => Boolean(await canvasRepository.get(
           { ownerScope: "personal", ownerId: subscriber.userId }, subscriber.canvasId,

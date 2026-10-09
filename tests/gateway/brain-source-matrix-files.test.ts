@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 async function setup(rawConfig: unknown) {
-  const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home, now: harness.now });
+  const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home, ownerIds: ["owner_a"], now: harness.now });
   const config = handler.parseConfig(rawConfig);
   const { externalRef } = handler.identify(project, config);
   const sourceId = await createMatrixSource(harness, "matrix_files", externalRef);
@@ -240,7 +240,7 @@ describe("matrix files source", () => {
   });
 
   it("parses roots strictly and lists folders to pick", async () => {
-    const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home });
+    const handler = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home, ownerIds: ["owner_a"] });
     expect(handler.parseConfig({ roots: ["b", "a/x/"] })).toMatchObject({ roots: ["a/x", "b"], maxFileBytes: 262_144 });
     const bad = [
       ["/abs"], ["../x"], ["system/x"], [".ssh"], ["a//b"], ["data"], ["data/browser-profiles/x"], ["a", "a/b"], [""],
@@ -255,7 +255,7 @@ describe("matrix files source", () => {
     expect(handler.identify(project, { ...config, roots: ["r".repeat(200), "s".repeat(200)] }).label).toHaveLength(300);
     expect(handler.viewConfig(config)).toEqual({ roots: ["a"], extensions: ["md"], maxFileBytes: 262_144 });
     expect(await handler.availability("owner_a")).toEqual({ available: true });
-    expect(await createBrainMatrixFilesHandler({ kysely: harness.db, homePath: "" }).availability("owner_a"))
+    expect(await createBrainMatrixFilesHandler({ kysely: harness.db, homePath: "", ownerIds: ["owner_a"] }).availability("owner_a"))
       .toEqual({ available: false, reason: "not_configured" });
     const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:a");
     await handler.saveConfig(matrixScope, sourceId, config);
@@ -272,13 +272,22 @@ describe("matrix files source", () => {
     const second = await handler.listOptions!("owner_a", project, { q: "projects", cursor: first.nextCursor! }, signal);
     expect(second).toEqual({ kind: "matrix_files", items: [{ id: "projects/p100", label: "p100", detail: "projects/p100" }], nextCursor: null });
     expect(await handler.listOptions!("owner_a", project, { q: "missing" }, signal)).toMatchObject({ items: [] });
+    // The home is the gateway owner's: any other principal reads the kind as unavailable, sees no folder and gets no
+    // adapter; with no owner principals nobody does.
+    expect(await handler.availability("collaborator")).toEqual({ available: false, reason: "not_configured" });
+    expect(await handler.listOptions!("collaborator", project, {}, signal))
+      .toEqual({ kind: "matrix_files", items: [], nextCursor: null });
+    expect(await handler.createAdapter("collaborator", project, config)).toEqual({ ok: false, code: "not_connected" });
+    const unowned = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: home });
+    expect(await unowned.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
+    expect(await unowned.createAdapter("owner_a", project, config)).toEqual({ ok: false, code: "not_connected" });
     await expect(handler.listOptions!("owner_a", project, { q: "../x" }, signal)).rejects.toThrow(BrainFeatureError);
     await expect(handler.listOptions!("owner_a", project, { cursor: "bad" }, signal)).rejects.toThrow(BrainFeatureError);
 
     // A folder behind a symlink, a file or a missing home is bad input; an unreadable folder has no sub-folders.
     symlinkSync(outside, join(home, "escape"));
     put("plain", "file");
-    const homeless = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: join(home, "missing") });
+    const homeless = createBrainMatrixFilesHandler({ kysely: harness.db, homePath: join(home, "missing"), ownerIds: ["owner_a"] });
     for (const [owner, q] of [[handler, "escape"], [handler, "plain"], [homeless, ""]] as const) {
       await expect(owner.listOptions!("owner_a", project, { q }, signal)).rejects.toMatchObject({ code: "source_config_invalid" });
     }
