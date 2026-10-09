@@ -56,11 +56,11 @@ export function readable(color: string, backgrounds: string[], ratio = 4.5): str
 export function polishVariant(source: UnifiedThemeVariant): UnifiedThemeVariant {
   const v = { chrome: { ...source.chrome }, terminal: { ...source.terminal }, editor: { ...source.editor } };
   const c = v.chrome;
-  for (const key of ['chart1', 'chart2', 'chart3', 'chart4', 'chart5', 'destructive'] as const) c[key] = readable(c[key], [c.background, c.card]);
+  if (c.popover === c.accent) c.accent = c.muted !== c.popover ? c.muted : mix(c.popover, c.foreground, 0.1);
   c.foreground = readable(c.foreground, [c.background, c.card, c.popover, c.surface0, c.surface1, c.surface2, c.surface3, c.modal]);
   c.cardForeground = readable(c.cardForeground, [c.card]);
   c.popoverForeground = readable(c.popoverForeground, [c.popover]);
-  c.mutedForeground = readable(c.mutedForeground, [c.background, c.card, c.accent]);
+  c.mutedForeground = readable(c.mutedForeground, [c.background, c.card, c.popover, c.accent, c.secondary, c.surface3, c.sidebar]);
   c.primaryForeground = readable(c.primaryForeground, [c.primary]);
   c.secondaryForeground = readable(c.secondaryForeground, [c.secondary]);
   c.accentForeground = readable(c.accentForeground, [c.accent]);
