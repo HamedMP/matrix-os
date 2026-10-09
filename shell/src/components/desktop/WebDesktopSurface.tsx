@@ -371,7 +371,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <LayoutGrid className="size-11" aria-hidden="true" />
+          <LayoutGrid className="size-11 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]" aria-hidden="true" />
         </TaskbarButton>
 
         <TaskbarButton

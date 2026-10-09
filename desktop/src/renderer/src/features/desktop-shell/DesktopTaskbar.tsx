@@ -104,7 +104,7 @@ export default function DesktopTaskbar({
         <DockAppButton
           label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
           title="App Launcher"
-          icon={<LayoutGrid size={44} aria-hidden="true" />}
+          icon={<LayoutGrid size={44} className="text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]" aria-hidden="true" />}
           pressed={launcherOpen}
           onClick={onOpenApps}
         />

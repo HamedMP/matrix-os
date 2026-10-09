@@ -307,7 +307,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         color: "var(--bg-surface)",
         open: () => {
           trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
-          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
+          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, icon: appIconUrl(platformHost, app, runtimeSlot) ?? undefined, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
         },
       }];
     });

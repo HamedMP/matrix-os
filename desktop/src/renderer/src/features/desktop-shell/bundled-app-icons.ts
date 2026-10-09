@@ -44,11 +44,20 @@ export function desktopTabsWithLiveAppArtwork(
   return tabs.map((tab) => {
     const path = tab.kind === "notes" ? "apps/notes/index.html"
       : tab.kind === "app" && tab.slug === "whiteboard" ? "apps/whiteboard/index.html" : undefined;
-    const installed = path && installedApps.find((app) => app.path === path);
-    if (!path || !installed) return tab;
-    const icon = (installed.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path, iconUrl: installed.iconUrl })
-      ? appIconUrl(platformHost, installed, runtimeSlot) : null)
-      ?? bundledDesktopIconForPath(path);
+    const matches = path
+      ? installedApps.filter((app) => app.path === path)
+      : tab.kind === "app"
+        ? installedApps.filter((app) => tab.appIdentity
+          ? app.appIdentity === tab.appIdentity
+          : app.slug === tab.slug)
+        : [];
+    if (matches.length !== 1) return tab;
+    const installed = matches[0]!;
+    const useBundledIcon = path && (!installed.iconUrl
+      || osViewUsesBundledArtworkForLegacyIcon({ path, iconUrl: installed.iconUrl }));
+    const icon = useBundledIcon
+      ? bundledDesktopIconForPath(path)
+      : appIconUrl(platformHost, installed, runtimeSlot) ?? tab.icon;
     return icon === tab.icon ? tab : { ...tab, icon };
   });
 }
