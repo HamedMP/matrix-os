@@ -152,7 +152,8 @@ export function createMatrixFilesAdapter(homePath: string): BrainSourceAdapter<B
       if (cursor.phase === "scan") return scan(context, homePath, cursor);
       const draft = new MatrixPageDraft(context);
       const realHome = await realHomeDirectory(homePath);
-      // Folder size checks share the scan's per-page read budget; the step ends early once it is spent.
+      // Folder size checks share the scan's per-page read budget; the step ends once it is spent, before a document
+      // whose check it cut short.
       const reads: SweepReads = { left: BRAIN_MATRIX_LIMITS.dirReadsPerPage, fits: new Map() };
       const after = await sweepStep(context, draft, cursor.after, async ({ documentId, refs }) => {
         const path = firstRef(refs, "file");

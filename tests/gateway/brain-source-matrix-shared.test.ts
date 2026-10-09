@@ -12,7 +12,7 @@ import {
   bootstrapBrainMatrixDatabase, createBrainMatrixFilesHandler,
 } from "../../packages/gateway/src/brain/sources/matrix/index.js";
 import {
-  cutUtf8, decodeMatrixCursor, documentTitle, encodeMatrixCursor, guardRead, isoInstant, resumeIndex,
+  cutUtf8, decodeMatrixCursor, documentTitle, encodeMatrixCursor, guardRead, isoInstant, matrixDocumentId, resumeIndex,
 } from "../../packages/gateway/src/brain/sources/matrix/shared.js";
 import { parseChatConfig } from "../../packages/gateway/src/brain/sources/matrix/config.js";
 import { BRAIN_MATRIX_LIMITS } from "../../packages/gateway/src/brain/sources/matrix/types.js";
@@ -228,6 +228,51 @@ describe("matrix sources shared pieces", () => {
     expect(sweepPage).toMatchObject({ caughtUp: false, deleted: 0 });
     expect(read()).toBeLessThanOrEqual(dirReadsPerPage + max);
     expect(await runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config)).toMatchObject({ caughtUp: true, deleted: 0 });
+  });
+
+  it("stops a sweep page between the folder checks of a deep file and checks it again on the next page", async () => {
+    const { dirEntriesMax: max, dirReadsPerPage, fileDepthMax } = BRAIN_MATRIX_LIMITS;
+    // A whole page has room for the folder checks of one file, so the first file of a page always gets an answer.
+    expect(dirReadsPerPage).toBeGreaterThan(fileDepthMax * (max + 1));
+    const folders = Array.from({ length: fileDepthMax - 1 }, (_, index) => `d${index}`);
+    const deep = `docs/${folders.join("/")}/x.md`;
+    // 12 shallow files the sweep checks before the deep one (documents come in id order): 60,000 of the page's reads.
+    const id = (path: string) => matrixDocumentId("matrix_files", "matrix_files:x", [path]);
+    const shallow = Array.from({ length: 100 }, (_, index) => `w${index}`)
+      .filter((name) => id(`docs/${name}/x.md`) < id(deep));
+    const hidden = Array.from({ length: max - 1 }, (_, index) => ({ name: `.h${index}`, kind: "file" as const }));
+    const listings: FakeListing[] = [];
+    const fill = (folder: string, last: { name: string; kind: "file" | "directory" }) => {
+      listings.push({ entries: [...hidden, last], read: 0 });
+      faults.listings.set(join(home, folder), listings[listings.length - 1]!);
+    };
+    mkdirSync(join(home, deep, ".."), { recursive: true });
+    writeFileSync(join(home, deep), "deep");
+    folders.forEach((_, index) => fill(`docs/${folders.slice(0, index + 1).join("/")}`,
+      index + 1 < folders.length ? { name: folders[index + 1]!, kind: "directory" } : { name: "x.md", kind: "file" }));
+    for (const name of shallow.slice(0, 12)) {
+      mkdirSync(join(home, "docs", name));
+      writeFileSync(join(home, "docs", name, "x.md"), name);
+      fill(`docs/${name}`, { name: "x.md", kind: "file" });
+    }
+    expect(await fileStillPresent(home, "docs", deep, 1_000, { left: 0, fits: new Map() })).toBeNull();
+    const adapter = createMatrixFilesAdapter(home);
+    const config = { roots: ["docs"], extensions: ["md"], maxFileBytes: 1_000 };
+    const sourceId = await createMatrixSource(harness, "matrix_files", "matrix_files:x");
+    const run = (maxPages?: number) => runMatrixLoop(harness, sourceId, "matrix_files:x", adapter, config, { maxPages });
+    expect(await run()).toMatchObject({ caughtUp: true, written: 13 });
+    const cursor = (await harness.repository.getSyncCursor(matrixScope, sourceId))!.cursor;
+    const sweep = encodeMatrixCursor("mf1:", { v: 1, phase: "sweep", after: null });
+    await harness.repository.applySyncBatch(matrixScope, { sourceId, expectedCursor: cursor, nextCursor: sweep, upserts: [], deletions: [] });
+    const read = () => listings.reduce((sum, listing) => sum + listing.read, 0);
+    for (const listing of listings) listing.read = 0;
+    // The budget runs out after the deep file's first folder: the page ends there instead of reading 10 more.
+    expect(await run(1)).toMatchObject({ caughtUp: false, deleted: 0 });
+    expect(read()).toBeLessThanOrEqual(dirReadsPerPage + max);
+    for (const listing of listings) listing.read = 0;
+    // The next page starts at the deep file and finishes its check.
+    expect(await run(1)).toMatchObject({ caughtUp: true, deleted: 0 });
+    expect(read()).toBe(folders.length * max);
   });
 
   it("leaves out a folder over the entry bound whole and sweeps the documents of its files", async () => {

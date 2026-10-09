@@ -57,7 +57,8 @@ that did not change.
   `secret_skipped`. Every byte read counts against the page's 16 MiB read budget, binary files included; a file larger
   than what is left of it ends the page and is read first on the next one. The sweep keeps a document only while its
   file is a regular file inside a current root, of a selected extension, within the size bound, with no symlink,
-  secret-like name or folder over 5,000 entries on the way; a sweep page reads at most 65,000 entries for that.
+  secret-like name or folder over 5,000 entries on the way; a sweep page reads 65,000 entries for that (at most one
+  folder past it) and checks a file it could not finish again on the next page.
 - Chats: chats in id order, messages in seq order through `getMessages`; a whole day group always fits in one page.
   A chat that is missing or not the owner's is skipped; the sweep removes documents of chats no longer opted in or
   gone.

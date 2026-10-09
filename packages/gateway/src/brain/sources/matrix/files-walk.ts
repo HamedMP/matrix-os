@@ -193,10 +193,14 @@ export async function readTextFile(path: string, maxBytes: number, roomBytes = m
 /** One sweep page's folder checks: directory entries it may still read and the answers so far. */
 export interface SweepReads { left: number; readonly fits: Map<string, boolean> }
 
-/** Whether a folder holds at most dirEntriesMax entries (the walk leaves a larger one out); reads at most one more. */
-async function folderFits(directory: string, reads: SweepReads): Promise<boolean> {
+/**
+ * Whether a folder holds at most dirEntriesMax entries (the walk leaves a larger one out); reads at most one more.
+ * Null when it is not known and the page's reads are spent, so a page reads at most one folder past its budget.
+ */
+async function folderFits(directory: string, reads: SweepReads): Promise<boolean | null> {
   const known = reads.fits.get(directory);
   if (known !== undefined) return known;
+  if (reads.left <= 0) return null;
   let count = 0;
   for await (const _entry of await opendir(directory, { bufferSize: 64 })) {
     count += 1;
@@ -209,11 +213,13 @@ async function folderFits(directory: string, reads: SweepReads): Promise<boolean
 
 /**
  * Whether a stored file ref still names a readable regular file inside its root (the sweep check), with no folder
- * from the root down over dirEntriesMax entries, so the sweep drops what the walk no longer reaches.
+ * from the root down over dirEntriesMax entries, so the sweep drops what the walk no longer reaches. Null when the
+ * page's reads ran out before every folder was checked: the next page checks the file again. A whole page has room
+ * for one check (fileDepthMax folders of at most dirEntriesMax + 1 entries), so its first file always gets an answer.
  */
 export async function fileStillPresent(
   realHome: string, root: string, relativePath: string, maxBytes: number, reads: SweepReads,
-): Promise<boolean> {
+): Promise<boolean | null> {
   const segments = relativePath.split("/");
   const parent = join(realHome, ...segments.slice(0, -1));
   try {
@@ -221,7 +227,8 @@ export async function fileStillPresent(
     const stats = await lstat(join(parent, segments[segments.length - 1]!));
     if (!stats.isFile() || stats.size > maxBytes) return false;
     for (let depth = root.split("/").length; depth < segments.length; depth += 1) {
-      if (!(await folderFits(join(realHome, ...segments.slice(0, depth)), reads))) return false;
+      const fits = await folderFits(join(realHome, ...segments.slice(0, depth)), reads);
+      if (fits !== true) return fits;
     }
     return true;
   } catch (error: unknown) {
