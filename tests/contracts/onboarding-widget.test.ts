@@ -222,6 +222,16 @@ describe("reduceOnboardingWidget", () => {
     expect(onboardingAiLabel("codex")).toBe("ChatGPT");
   });
 
+  it("hands off to Settings only from an in-progress connect step", () => {
+    const method = run(fresh(), { type: "ai.menuToggled" }, { type: "ai.providerPicked", provider: "codex" });
+    const waiting = run(method, { type: "ai.methodPicked", method: "account" });
+    expect(run(waiting, { type: "ai.needsSettings" }).ai).toEqual({ step: "settings", provider: "codex" });
+    const key = run(method, { type: "ai.methodPicked", method: "api_key" }, { type: "ai.keySubmitted" });
+    expect(run(key, { type: "ai.needsSettings" }).ai).toEqual({ step: "settings", provider: "codex" });
+    expect(run(fresh(), { type: "ai.needsSettings" }).ai).toBeNull();
+    expect(run(waiting, { type: "ai.cancelled" }, { type: "ai.needsSettings" }).ai).toBeNull();
+  });
+
   it("counts results that finish while minimized and clears them on open", () => {
     const minimized = run(fresh(), { type: "freeform.submitted", text: "Summarize today" }, { type: "size.changed", size: "bubble" });
     const requestId = minimized.screen.kind === "run" ? minimized.screen.requestId : -1;

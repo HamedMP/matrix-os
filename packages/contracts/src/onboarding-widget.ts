@@ -45,7 +45,9 @@ export type OnboardingAiPanel =
   | { step: "menu" }
   | { step: "method"; provider: OnboardingAiProvider }
   | { step: "waiting"; provider: OnboardingAiProvider; status: "waiting" | "failed" }
-  | { step: "key"; provider: OnboardingAiProvider; status: "idle" | "saving" | "failed" };
+  | { step: "key"; provider: OnboardingAiProvider; status: "idle" | "saving" | "failed" }
+  /** The provider offers no sign-in the widget can finish (not installed, terminal-only, key-only). */
+  | { step: "settings"; provider: OnboardingAiProvider };
 
 export interface OnboardingWidgetState {
   screen: OnboardingScreen;
@@ -86,6 +88,7 @@ export type OnboardingWidgetEvent =
   | { type: "ai.methodPicked"; method: "account" | "api_key" }
   | { type: "ai.keySubmitted" }
   | { type: "ai.failed" }
+  | { type: "ai.needsSettings" }
   | { type: "ai.retried" }
   | { type: "ai.connected"; provider: OnboardingAiProvider }
   | { type: "ai.selected"; provider: OnboardingAiChoice }
@@ -264,6 +267,11 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     case "ai.failed":
       if (state.ai?.step === "waiting" || state.ai?.step === "key") {
         return { ...state, ai: { ...state.ai, status: "failed" } };
+      }
+      return state;
+    case "ai.needsSettings":
+      if (state.ai?.step === "waiting" || state.ai?.step === "key") {
+        return { ...state, ai: { step: "settings", provider: state.ai.provider } };
       }
       return state;
     case "ai.retried":

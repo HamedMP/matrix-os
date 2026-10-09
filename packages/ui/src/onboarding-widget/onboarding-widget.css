@@ -514,6 +514,14 @@
 .mxo-composer input::placeholder,
 .mxo-key__input::placeholder { color: var(--mxo-placeholder); }
 
+.mxo-code-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mxo-code-entry .mxo-btn { flex-shrink: 0; }
+
 .mxo-filters { display: flex; gap: 6px; padding: 0 4px; }
 
 .mxo-filter {

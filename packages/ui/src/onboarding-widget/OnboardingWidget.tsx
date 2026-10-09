@@ -4,6 +4,7 @@ import {
   onboardingRunInFlight,
   onboardingTask,
   parseOnboardingRepoUrl,
+  type OnboardingRunView,
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
@@ -15,11 +16,12 @@ import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
-function headerStatus(state: OnboardingWidgetState): { tone: "working" | "attention"; label: string } | null {
+function headerStatus(state: OnboardingWidgetState, runView: OnboardingRunView | null): { tone: "working" | "attention"; label: string } | null {
   const connecting = providerWaitingLabel(state.ai);
   if (connecting) return { tone: "attention", label: connecting };
   if (state.screen.kind !== "run") return null;
   if (state.screen.phase === "waiting_computer") return { tone: "attention", label: "Starting your computer…" };
+  if (state.screen.phase === "running" && runView?.status === "waiting") return { tone: "attention", label: "Needs your OK" };
   if (state.screen.phase === "starting" || state.screen.phase === "running") return { tone: "working", label: "Working…" };
   return null;
 }
@@ -125,7 +127,7 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   return (
     <div ref={rootRef} className={`mxo-root${sideClass}`} style={{ zIndex }} onKeyDown={onKeyDown}>
       <section className={`mxo-card mxo-widget${compact ? "" : " mxo-widget--tall"}`} aria-label="Matrix">
-        <WidgetHeader status={headerStatus(state)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
+        <WidgetHeader status={headerStatus(state, runView)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
 
         <WidgetBody props={props} appQuery={appQuery} onAppQuery={setAppQuery} runInFlight={runInFlight} />
 

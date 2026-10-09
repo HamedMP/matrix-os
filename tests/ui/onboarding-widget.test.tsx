@@ -31,16 +31,18 @@ function makeActions(): OnboardingWidgetActions {
     reopenAiSignIn: vi.fn(),
     cancelAiSignIn: vi.fn(),
     submitAiKey: vi.fn(),
+    submitAiCode: vi.fn(),
     changePrefs: vi.fn(),
   };
 }
 
-function Harness({ actions, initial, runView = null, creditsExhausted = false, events = [] }: {
+function Harness({ actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false }: {
   actions: OnboardingWidgetActions;
   initial?: OnboardingWidgetState;
   runView?: OnboardingRunView | null;
   creditsExhausted?: boolean;
   events?: OnboardingWidgetEvent[];
+  aiSignInNeedsCode?: boolean;
 }) {
   const [state, dispatch] = useReducer(
     reduceOnboardingWidget,
@@ -64,6 +66,7 @@ function Harness({ actions, initial, runView = null, creditsExhausted = false, e
       runView={runView}
       connectedProviders={[]}
       creditsExhausted={creditsExhausted}
+      aiSignInNeedsCode={aiSignInNeedsCode}
       prefs={{ keepInCorner: true, side: "right", showOnLogin: true }}
     />
   );
@@ -173,6 +176,49 @@ describe("OnboardingWidget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(actions.submitAiKey).toHaveBeenCalledWith("claude", "sk-ant-test");
     expect(input.value).toBe("");
+  });
+
+  const claudeAccount: OnboardingWidgetEvent[] = [
+    { type: "ai.menuToggled" },
+    { type: "ai.providerPicked", provider: "claude" },
+    { type: "ai.methodPicked", method: "account" },
+  ];
+
+  it("takes the code from Claude's sign-in page and finishes there", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} events={claudeAccount} aiSignInNeedsCode />);
+    const input = screen.getByLabelText("Paste the sign-in code") as HTMLInputElement;
+    expect(input).toHaveAttribute("type", "password");
+    fireEvent.change(input, { target: { value: "  code#123  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Finish connecting" }));
+    expect(actions.submitAiCode).toHaveBeenCalledWith("code#123");
+    expect(input.value).toBe("");
+    expect(screen.getByRole("button", { name: "Finishing sign-in…" })).toBeDisabled();
+  });
+
+  it("sends the user to Settings when the AI can't be connected from here", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} events={[...claudeAccount, { type: "ai.needsSettings" }]} />);
+    expect(screen.getByText("Finish connecting Claude in Settings.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    expect(actions.openSettings).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Keep Matrix AI" }));
+    expect(screen.queryByText("Finish connecting Claude in Settings.")).not.toBeInTheDocument();
+  });
+
+  it("asks for an OK in chat when the run is waiting on the user", () => {
+    const actions = makeActions();
+    const running: OnboardingWidgetEvent[] = [
+      { type: "task.selected", taskId: "research", connectedServices: [] },
+      { type: "answer.submitted", text: "Lisbon" },
+      { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" },
+    ];
+    render(<Harness actions={actions} events={running} runView={{ status: "waiting", steps: [{ id: "t1", label: "Searching the web", state: "running" }] }} />);
+    expect(screen.getByText("I need your OK to keep going.")).toBeInTheDocument();
+    expect(screen.getByText("Needs your OK")).toBeInTheDocument();
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open in chat" }));
+    expect(actions.openFullChat).toHaveBeenCalled();
   });
 
   it("shows the result, then exactly one follow-up", () => {

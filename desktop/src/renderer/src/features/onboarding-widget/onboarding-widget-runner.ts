@@ -76,36 +76,100 @@ export function relativeUpdatedLabel(iso: string | null | undefined, now = Date.
   return days === 1 ? "Yesterday" : `${days}d ago`;
 }
 
-export async function loadOnboardingRepos(api: Pick<ApiClient, "get">, signal: AbortSignal): Promise<OnboardingWidgetRepo[]> {
+const REPO_URL = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+
+function withUpdated(repo: OnboardingWidgetRepo, iso: string | null | undefined): OnboardingWidgetRepo {
+  const updatedLabel = relativeUpdatedLabel(iso);
+  return updatedLabel ? { ...repo, updatedLabel } : repo;
+}
+
+async function loadComputerRepos(api: Pick<ApiClient, "get">, signal: AbortSignal): Promise<OnboardingWidgetRepo[]> {
   const raw = await api.get<unknown>(`/api/github/repos?limit=${ONBOARDING_MAX_REPOS}`, { signal, timeoutMs: 10_000, maxBytes: 256 * 1024 });
   const parsed = GithubReposSchema.safeParse(raw);
   if (!parsed.success) return [];
   return parsed.data.repos
-    .filter((repo) => /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo.url))
+    .filter((repo) => REPO_URL.test(repo.url))
     .slice(0, ONBOARDING_MAX_REPOS)
-    .map((repo) => ({
-      name: repo.nameWithOwner.split("/").at(-1) ?? repo.nameWithOwner,
-      url: repo.url,
-      ...(relativeUpdatedLabel(repo.updatedAt) ? { updatedLabel: relativeUpdatedLabel(repo.updatedAt) } : {}),
-    }));
+    .map((repo) => withUpdated({ name: repo.nameWithOwner.split("/").at(-1) ?? repo.nameWithOwner, url: repo.url }, repo.updatedAt));
 }
+
+const GithubReadReposSchema = z.object({
+  data: z.array(z.object({
+    name: z.string().min(1).max(100),
+    html_url: z.string().max(400),
+    pushed_at: z.string().max(64).optional().nullable(),
+    updated_at: z.string().max(64).optional().nullable(),
+  }).loose()).max(200),
+}).loose();
+
+/** Repos come from the GitHub app the user just connected; the computer's own `gh` login is only a fallback. */
+export async function loadOnboardingRepos(
+  api: Pick<ApiClient, "get" | "post">,
+  github: { id: string; accountLabel: string } | null,
+  signal: AbortSignal,
+): Promise<OnboardingWidgetRepo[]> {
+  if (github) {
+    try {
+      const raw = await api.post<unknown>("/api/integrations/read-call", {
+        service: "github",
+        action: "list_repos",
+        label: github.accountLabel,
+        connectionId: github.id,
+        params: { sort: "updated", per_page: ONBOARDING_MAX_REPOS },
+      }, { signal, timeoutMs: 10_000, maxBytes: 512 * 1024 });
+      const parsed = GithubReadReposSchema.safeParse(raw);
+      if (parsed.success) {
+        return parsed.data.data
+          .filter((repo) => REPO_URL.test(repo.html_url))
+          .slice(0, ONBOARDING_MAX_REPOS)
+          .map((repo) => withUpdated({ name: repo.name, url: repo.html_url }, repo.pushed_at ?? repo.updated_at));
+      }
+      console.warn("[onboarding-widget] GitHub repo read returned an unexpected shape");
+    } catch (error: unknown) {
+      if (signal.aborted) throw error;
+      console.warn("[onboarding-widget] GitHub repo read failed:", error instanceof Error ? error.name : typeof error);
+    }
+  }
+  return loadComputerRepos(api, signal);
+}
+
+const VENDOR_FOR_PROVIDER: Record<OnboardingAiProvider, string> = { claude: "anthropic", codex: "openai" };
+/** Sign-ins the widget can finish by polling; `browser` also needs the pasted code. `terminal` needs a Terminal tab. */
+const WIDGET_SIGN_IN_METHODS = ["device_code", "existing_codex", "browser"] as const;
+type WidgetSignInMethod = typeof WIDGET_SIGN_IN_METHODS[number];
 
 interface CapabilityRow {
   harnessInstanceId: string;
   harness: string;
-  connectionOptions?: ReadonlyArray<{ id: string; authKind: "subscription" | "api_key"; availability: "available" | "unavailable" }>;
+  connectionOptions?: ReadonlyArray<{
+    id: string;
+    providerId?: string;
+    authKind: "subscription" | "api_key";
+    method?: string;
+    availability: "available" | "unavailable";
+  }>;
 }
 
 export function pickProviderConnectionOption(
   rows: readonly CapabilityRow[],
   provider: OnboardingAiProvider,
   method: "account" | "api_key",
-): { harnessInstanceId: string; optionId: string } | null {
-  const authKind = method === "account" ? "subscription" : "api_key";
+  { codeEntry = false }: { codeEntry?: boolean } = {},
+): { harnessInstanceId: string; optionId: string; method?: WidgetSignInMethod } | null {
+  const vendor = VENDOR_FOR_PROVIDER[provider];
   for (const row of rows) {
     if (row.harness !== provider) continue;
-    const option = row.connectionOptions?.find((candidate) => candidate.authKind === authKind && candidate.availability === "available");
-    if (option) return { harnessInstanceId: row.harnessInstanceId, optionId: option.id };
+    const options = (row.connectionOptions ?? []).filter((candidate) => candidate.availability === "available" && candidate.providerId === vendor);
+    if (method === "api_key") {
+      const key = options.find((candidate) => candidate.authKind === "api_key");
+      if (key) return { harnessInstanceId: row.harnessInstanceId, optionId: key.id };
+      continue;
+    }
+    for (const signIn of WIDGET_SIGN_IN_METHODS) {
+      if (signIn === "browser" && !codeEntry) continue;
+      const match = options.find((candidate) => candidate.authKind === "subscription" && candidate.method === signIn);
+      if (match) return { harnessInstanceId: row.harnessInstanceId, optionId: match.id, method: signIn };
+    }
   }
   return null;
 }

@@ -267,7 +267,17 @@ export function RunScreen(props: RunScreenProps) {
   if (run.phase === "failed") return <RunFailed steps={steps} failedStep={onboardingTask(run.taskId)?.failedStep ?? "Couldn't finish this"} actions={actions} />;
   if (run.phase === "done") return <RunDone {...props} />;
   const label = run.taskId === "custom" ? "Working on it" : onboardingWorkingLine(run.taskId, run.answer);
-  return <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-working", label, state: "running" }]} />;
+  const log = <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-working", label, state: "running" }]} />;
+  if (runView?.status !== "waiting") return log;
+  return (
+    <>
+      {log}
+      <p className="mxo-text">I need your OK to keep going.</p>
+      <ButtonRow>
+        <button type="button" className="mxo-btn mxo-btn--dark" onClick={actions.openFullChat}>Open in chat</button>
+      </ButtonRow>
+    </>
+  );
 }
 
 function RunDone({ run, state, runView, creditsExhausted, actions }: RunScreenProps) {

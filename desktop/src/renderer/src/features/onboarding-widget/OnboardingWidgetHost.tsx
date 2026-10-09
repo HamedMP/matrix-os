@@ -85,21 +85,24 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   const appConnect = useOnboardingAppConnect(api, dispatch);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
-  const githubConnected = connections.some((connection) => connection.service === "github");
+  const github = connections.find((connection) => connection.service === "github" && connection.status === "active")
+    ?? connections.find((connection) => connection.service === "github");
+  const githubId = github?.id ?? null;
+  const githubLabel = github?.accountLabel ?? null;
   const onRepoScreen = state.screen.kind === "repo";
   const [repos, setRepos] = useState<OnboardingWidgetRepo[] | null>(null);
   useEffect(() => {
     if (!onRepoScreen) return;
-    if (!githubConnected) { setRepos([]); return; }
+    if (!githubId || !githubLabel) { setRepos([]); return; }
     const controller = new AbortController();
     setRepos(null);
-    loadOnboardingRepos(api, controller.signal).then(setRepos, (error: unknown) => {
+    loadOnboardingRepos(api, { id: githubId, accountLabel: githubLabel }, controller.signal).then(setRepos, (error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[onboarding-widget] repo list failed:", error instanceof Error ? error.name : typeof error);
       setRepos([]);
     });
     return () => controller.abort();
-  }, [api, githubConnected, onRepoScreen]);
+  }, [api, githubId, githubLabel, onRepoScreen]);
 
   useEffect(() => {
     writeOnboardingPrefs(prefsKey, {
@@ -133,8 +136,9 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
     reopenAiSignIn: ai.reopenSignIn,
     cancelAiSignIn: ai.cancelSignIn,
     submitAiKey: ai.submitKey,
+    submitAiCode: ai.submitCode,
     changePrefs: setPrefs,
-  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitKey, appConnect.connectApp, openChat, openSettings]);
+  }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, openChat, openSettings]);
 
   return (
     <OnboardingWidget
@@ -147,6 +151,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
       connectedProviders={connectedProviders}
       creditsExhausted={creditsExhausted}
       aiSignInCode={ai.signInCode}
+      aiSignInNeedsCode={ai.signInNeedsCode}
       prefs={prefs}
       zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar}
     />

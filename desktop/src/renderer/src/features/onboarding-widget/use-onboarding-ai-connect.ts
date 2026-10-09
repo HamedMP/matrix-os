@@ -12,17 +12,26 @@ const MAX_WAIT_MS = 10 * 60 * 1000;
 const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "expired"]);
 
 interface ActiveSignIn {
-  operationId: string;
+  /** Null until the server has created the workflow, so Cancel can still abort the start request. */
+  operationId: string | null;
   authorizationUrl: string | null;
   controller: AbortController;
 }
 
 export interface OnboardingAiConnect {
   signInCode: string | null;
+  signInNeedsCode: boolean;
   startSignIn: (provider: OnboardingAiProvider) => void;
   reopenSignIn: () => void;
   cancelSignIn: () => void;
   submitKey: (provider: OnboardingAiProvider, key: string) => void;
+  submitCode: (code: string) => void;
+}
+
+function cancelOperation(client: Pick<ReturnType<typeof createDesktopProviderWorkflowClient>, "cancel">, operationId: string) {
+  void client.cancel(operationId, AbortSignal.timeout(10_000)).catch((error: unknown) => {
+    console.warn("[onboarding-widget] AI sign-in cancel failed:", error instanceof Error ? error.name : typeof error);
+  });
 }
 
 /** Drives the Claude / ChatGPT connection workflows behind the widget's Change AI panel. */
@@ -33,10 +42,16 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
   const client = useMemo(() => (api ? createDesktopProviderWorkflowClient(api, isIdentityCurrent) : null), [api, isIdentityCurrent]);
   const active = useRef<ActiveSignIn | null>(null);
   const [signInCode, setSignInCode] = useState<string | null>(null);
+  const [signInNeedsCode, setSignInNeedsCode] = useState(false);
 
-  const finish = useCallback((provider: OnboardingAiProvider, harnessInstanceId: string, succeeded: boolean) => {
+  const clearSignIn = useCallback(() => {
     active.current = null;
     setSignInCode(null);
+    setSignInNeedsCode(false);
+  }, []);
+
+  const finish = useCallback((provider: OnboardingAiProvider, harnessInstanceId: string, succeeded: boolean) => {
+    clearSignIn();
     if (!isIdentityCurrent()) return;
     if (succeeded) {
       invalidateProviderCatalog(identityKey, [harnessInstanceId]);
@@ -44,7 +59,7 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     } else {
       dispatch({ type: "ai.failed" });
     }
-  }, [dispatch, identityKey, invalidateProviderCatalog, isIdentityCurrent]);
+  }, [clearSignIn, dispatch, identityKey, invalidateProviderCatalog, isIdentityCurrent]);
 
   useEffect(() => () => active.current?.controller.abort(), []);
 
@@ -52,12 +67,27 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     if (!client) { dispatch({ type: "ai.failed" }); return; }
     active.current?.controller.abort();
     const controller = new AbortController();
+    const signIn: ActiveSignIn = { operationId: null, authorizationUrl: null, controller };
+    active.current = signIn;
     void (async () => {
-      const target = pickProviderConnectionOption(await client.capabilities(controller.signal), provider, "account");
-      if (!target || !client.startConnection) throw new Error("No sign-in option");
-      const operation = await client.startConnection({ ...target, idempotencyKey: canonicalChatRequestId() }, controller.signal);
-      active.current = { operationId: operation.id, authorizationUrl: operation.authorizationUrl, controller };
+      const rows = await client.capabilities(controller.signal);
+      const target = pickProviderConnectionOption(rows, provider, "account", { codeEntry: Boolean(client.submitCode) });
+      if (controller.signal.aborted) return;
+      if (!target || !client.startConnection) {
+        clearSignIn();
+        if (isIdentityCurrent()) dispatch({ type: "ai.needsSettings" });
+        return;
+      }
+      const { method, ...request } = target;
+      const operation = await client.startConnection({ ...request, idempotencyKey: canonicalChatRequestId() }, controller.signal);
+      if (controller.signal.aborted) {
+        cancelOperation(client, operation.id);
+        return;
+      }
+      signIn.operationId = operation.id;
+      signIn.authorizationUrl = operation.authorizationUrl;
       setSignInCode(operation.deviceCode);
+      setSignInNeedsCode(method === "browser");
       if (operation.authorizationUrl) await openDesktopProviderWorkflowAuthorization(operation.authorizationUrl);
       const deadline = Date.now() + MAX_WAIT_MS;
       let state = operation.state;
@@ -66,8 +96,8 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
         if (controller.signal.aborted) return;
         const next = await client.get(operation.id, controller.signal);
         state = next.state;
-        if (active.current?.operationId === operation.id) {
-          active.current.authorizationUrl = next.authorizationUrl;
+        if (active.current === signIn) {
+          signIn.authorizationUrl = next.authorizationUrl;
           setSignInCode(next.deviceCode);
         }
       }
@@ -76,11 +106,22 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     })().catch((error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[onboarding-widget] AI sign-in failed:", error instanceof Error ? error.name : typeof error);
-      active.current = null;
-      setSignInCode(null);
+      clearSignIn();
       if (isIdentityCurrent()) dispatch({ type: "ai.failed" });
     });
-  }, [client, dispatch, finish, isIdentityCurrent]);
+  }, [clearSignIn, client, dispatch, finish, isIdentityCurrent]);
+
+  const submitCode = useCallback((code: string) => {
+    const current = active.current;
+    if (!client?.submitCode || !current?.operationId) { dispatch({ type: "ai.failed" }); return; }
+    void client.submitCode(current.operationId, code, AbortSignal.timeout(30_000)).catch((error: unknown) => {
+      if (active.current !== current) return;
+      console.warn("[onboarding-widget] AI sign-in code failed:", error instanceof Error ? error.name : typeof error);
+      current.controller.abort();
+      clearSignIn();
+      if (isIdentityCurrent()) dispatch({ type: "ai.failed" });
+    });
+  }, [clearSignIn, client, dispatch, isIdentityCurrent]);
 
   const reopenSignIn = useCallback(() => {
     const url = active.current?.authorizationUrl;
@@ -89,22 +130,22 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
 
   const cancelSignIn = useCallback(() => {
     const current = active.current;
-    active.current = null;
-    setSignInCode(null);
+    clearSignIn();
     dispatch({ type: "ai.cancelled" });
-    if (!current || !client) return;
+    if (!current) return;
     current.controller.abort();
-    void client.cancel(current.operationId, AbortSignal.timeout(10_000)).catch((error: unknown) => {
-      console.warn("[onboarding-widget] AI sign-in cancel failed:", error instanceof Error ? error.name : typeof error);
-    });
-  }, [client, dispatch]);
+    if (client && current.operationId) cancelOperation(client, current.operationId);
+  }, [clearSignIn, client, dispatch]);
 
   const submitKey = useCallback((provider: OnboardingAiProvider, key: string) => {
     if (!client) { dispatch({ type: "ai.failed" }); return; }
     const signal = AbortSignal.timeout(30_000);
     void (async () => {
       const target = pickProviderConnectionOption(await client.capabilities(signal), provider, "api_key");
-      if (!target || !client.submitConnectionKey) throw new Error("No key option");
+      if (!target || !client.submitConnectionKey) {
+        if (isIdentityCurrent()) dispatch({ type: "ai.needsSettings" });
+        return;
+      }
       await client.submitConnectionKey({ ...target, apiKey: key }, signal);
       finish(provider, target.harnessInstanceId, true);
     })().catch((error: unknown) => {
@@ -113,5 +154,5 @@ export function useOnboardingAiConnect(api: ApiClient | null, dispatch: (event: 
     });
   }, [client, dispatch, finish, isIdentityCurrent]);
 
-  return { signInCode, startSignIn, reopenSignIn, cancelSignIn, submitKey };
+  return { signInCode, signInNeedsCode, startSignIn, reopenSignIn, cancelSignIn, submitKey, submitCode };
 }

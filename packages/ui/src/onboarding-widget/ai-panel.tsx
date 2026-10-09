@@ -1,6 +1,6 @@
 import type { OnboardingAiChoice, OnboardingAiPanel, OnboardingAiProvider } from "@matrix-os/contracts";
 import { Alert02Icon, CheckmarkCircle02Icon, Key01Icon, UserIcon } from "@hugeicons/core-free-icons";
-import { useEffect, useRef, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { codingAgentArtworkSrc } from "../coding-agent-artwork.js";
 import { ButtonRow, Icon, RabbitAvatar } from "./parts.js";
 import { AI_KEY_MAX_CHARS, PROVIDER_COPY } from "./helpers.js";
@@ -10,6 +10,7 @@ const PROVIDER_MARKS: Record<OnboardingAiProvider, string> = {
   claude: "/agents/settings/claude.svg",
   codex: "/agents/settings/openai.svg",
 };
+const SIGN_IN_CODE_MAX_CHARS = 4096;
 
 function ProviderLogo({ provider }: { provider: OnboardingAiChoice }) {
   if (provider === "matrix") return <span className="mxo-logo mxo-logo--matrix" aria-hidden><RabbitAvatar size={20} /></span>;
@@ -52,10 +53,87 @@ export function AiMenu({ choice, connected, actions }: { choice: OnboardingAiCho
   );
 }
 
-export function AiFlow({ panel, actions, signInCode }: {
+function SignInCodeForm({ actions }: { actions: OnboardingWidgetActions }) {
+  const [code, setCode] = useState("");
+  const [sent, setSent] = useState(false);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const value = code.trim();
+    if (!value || sent) return;
+    setCode("");
+    setSent(true);
+    actions.submitAiCode(value);
+  };
+  return (
+    <form className="mxo-code-entry" onSubmit={submit}>
+      <input
+        type="password"
+        className="mxo-key__input"
+        aria-label="Paste the sign-in code"
+        placeholder="Paste code"
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={SIGN_IN_CODE_MAX_CHARS}
+        value={code}
+        disabled={sent}
+        onChange={(event) => setCode(event.target.value)}
+      />
+      <button type="submit" className="mxo-btn mxo-btn--dark" disabled={sent || !code.trim()}>
+        {sent ? "Finishing sign-in…" : "Finish connecting"}
+      </button>
+    </form>
+  );
+}
+
+function WaitingStep({ panel, actions, signInCode, needsCode }: {
+  panel: Extract<OnboardingAiPanel, { step: "waiting" }>;
+  actions: OnboardingWidgetActions;
+  signInCode: string | null;
+  needsCode: boolean;
+}) {
+  const copy = PROVIDER_COPY[panel.provider];
+  const failed = panel.status === "failed";
+  const line = failed ? `I couldn't connect ${copy.name}.` : needsCode ? "Sign in on the tab I opened, then paste the code it shows." : "Finish signing in on the tab I opened.";
+  return (
+    <>
+      <p className="mxo-text">{line}</p>
+      <div className="mxo-card mxo-connect">
+        <div className="mxo-connect__row">
+          <ProviderLogo provider={panel.provider} />
+          <span className="mxo-result__text">
+            <span className="mxo-result__title">{copy.name}</span>
+            {failed
+              ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />Sign-in didn't finish</span>
+              : <span className="mxo-muted">{signInCode ? <>Code: <strong className="mxo-code">{signInCode}</strong></> : "Waiting for sign-in…"}</span>}
+          </span>
+        </div>
+        {!failed && needsCode ? <SignInCodeForm actions={actions} /> : null}
+        <ButtonRow>
+          {failed ? (
+            <>
+              <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => {
+                actions.dispatch({ type: "ai.retried" });
+                actions.startAiSignIn(panel.provider);
+              }}>Try again</button>
+              <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "ai.cancelled" })}>Skip</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="mxo-btn mxo-btn--outline" onClick={actions.reopenAiSignIn}>Reopen tab</button>
+              <button type="button" className="mxo-btn mxo-btn--ghost" onClick={actions.cancelAiSignIn}>Cancel</button>
+            </>
+          )}
+        </ButtonRow>
+      </div>
+    </>
+  );
+}
+
+export function AiFlow({ panel, actions, signInCode, needsCode = false }: {
   panel: Exclude<OnboardingAiPanel, { step: "menu" }>;
   actions: OnboardingWidgetActions;
   signInCode?: string | null;
+  needsCode?: boolean;
 }) {
   const copy = PROVIDER_COPY[panel.provider];
   const keyRef = useRef<HTMLInputElement>(null);
@@ -92,38 +170,15 @@ export function AiFlow({ panel, actions, signInCode }: {
     );
   }
 
-  if (panel.step === "waiting") {
-    const failed = panel.status === "failed";
+  if (panel.step === "waiting") return <WaitingStep panel={panel} actions={actions} signInCode={signInCode ?? null} needsCode={needsCode} />;
+  if (panel.step === "settings") {
     return (
       <>
-        <p className="mxo-text">{failed ? `I couldn't connect ${copy.name}.` : "Finish signing in on the tab I opened."}</p>
-        <div className="mxo-card mxo-connect">
-          <div className="mxo-connect__row">
-            <ProviderLogo provider={panel.provider} />
-            <span className="mxo-result__text">
-              <span className="mxo-result__title">{copy.name}</span>
-              {failed
-                ? <span className="mxo-failed-line"><Icon icon={Alert02Icon} size={12} />Sign-in didn't finish</span>
-                : <span className="mxo-muted">{signInCode ? <>Code: <strong className="mxo-code">{signInCode}</strong></> : "Waiting for sign-in…"}</span>}
-            </span>
-          </div>
-          <ButtonRow>
-            {failed ? (
-              <>
-                <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => {
-                  actions.dispatch({ type: "ai.retried" });
-                  actions.startAiSignIn(panel.provider);
-                }}>Try again</button>
-                <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "ai.cancelled" })}>Skip</button>
-              </>
-            ) : (
-              <>
-                <button type="button" className="mxo-btn mxo-btn--outline" onClick={actions.reopenAiSignIn}>Reopen tab</button>
-                <button type="button" className="mxo-btn mxo-btn--ghost" onClick={actions.cancelAiSignIn}>Cancel</button>
-              </>
-            )}
-          </ButtonRow>
-        </div>
+        <p className="mxo-text">Finish connecting {copy.name} in Settings.</p>
+        <ButtonRow>
+          <button type="button" className="mxo-btn mxo-btn--dark" onClick={actions.openSettings}>Open Settings</button>
+          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => actions.dispatch({ type: "ai.keepMatrix" })}>Keep Matrix AI</button>
+        </ButtonRow>
       </>
     );
   }

@@ -137,7 +137,7 @@ export function WidgetBody({ props, appQuery, onAppQuery, runInFlight }: {
     <div className="mxo-body" aria-live="polite">
       {state.echo ? <UserEcho text={state.echo} /> : null}
       {state.notice ? <DoneLine text={state.notice} /> : null}
-      {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} /> : (
+      {aiFlow ? <AiFlow panel={aiFlow} actions={actions} signInCode={props.aiSignInCode ?? null} needsCode={props.aiSignInNeedsCode ?? false} /> : (
         <>
           <ScreenView props={props} appQuery={appQuery} onAppQuery={onAppQuery} />
           {showAllTasks ? (

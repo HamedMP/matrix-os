@@ -38,6 +38,8 @@ export interface OnboardingWidgetActions {
   reopenAiSignIn(): void;
   cancelAiSignIn(): void;
   submitAiKey(provider: OnboardingAiProvider, key: string): void;
+  /** Code the provider's sign-in page shows after approval, for sign-ins that finish by pasting it back. */
+  submitAiCode(code: string): void;
   changePrefs(prefs: OnboardingWidgetPrefs): void;
 }
 
@@ -52,6 +54,8 @@ export interface OnboardingWidgetProps {
   creditsExhausted: boolean;
   /** Device code to type on the provider's sign-in page, when the provider uses one. */
   aiSignInCode?: string | null;
+  /** The sign-in finishes by pasting the code the provider's page shows. */
+  aiSignInNeedsCode?: boolean;
   prefs: OnboardingWidgetPrefs;
   zIndex?: number;
 }

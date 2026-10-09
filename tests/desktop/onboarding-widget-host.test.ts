@@ -85,17 +85,43 @@ describe("onboarding AI selection", () => {
     expect(onboardingCreditsExhausted(exhausted, null)).toBe(false);
   });
 
-  it("picks the available account or key option for the requested harness", () => {
+  const option = (id: string, providerId: "anthropic" | "openai" | "openrouter", authKind: "subscription" | "api_key", extra: Record<string, unknown> = {}) =>
+    ({ id, providerId, authKind, availability: "available" as const, ...extra });
+
+  it("picks the vendor's own key option, never another provider's", () => {
     const rows = [
       { harnessInstanceId: "h_claude", harness: "claude", connectionOptions: [
-        { id: "sub", authKind: "subscription" as const, availability: "available" as const },
-        { id: "key", authKind: "api_key" as const, availability: "unavailable" as const },
+        option("openrouter_api_key", "openrouter", "api_key"),
+        option("anthropic_api_key", "anthropic", "api_key"),
       ] },
-      { harnessInstanceId: "h_legacy", harness: "codex" },
+      { harnessInstanceId: "h_codex", harness: "codex", connectionOptions: [option("openai_api_key", "openai", "api_key")] },
     ];
-    expect(pickProviderConnectionOption(rows, "claude", "account")).toEqual({ harnessInstanceId: "h_claude", optionId: "sub" });
-    expect(pickProviderConnectionOption(rows, "claude", "api_key")).toBeNull();
-    expect(pickProviderConnectionOption(rows, "codex", "account")).toBeNull();
+    expect(pickProviderConnectionOption(rows, "claude", "api_key")).toEqual({ harnessInstanceId: "h_claude", optionId: "anthropic_api_key" });
+    expect(pickProviderConnectionOption(rows, "codex", "api_key")).toEqual({ harnessInstanceId: "h_codex", optionId: "openai_api_key" });
+  });
+
+  it("only picks account sign-ins the widget can finish", () => {
+    const claude = { harnessInstanceId: "h_claude", harness: "claude", connectionOptions: [
+      option("anthropic_terminal", "anthropic", "subscription", { method: "terminal" }),
+      option("anthropic_browser", "anthropic", "subscription", { method: "browser" }),
+    ] };
+    expect(pickProviderConnectionOption([claude], "claude", "account", { codeEntry: true }))
+      .toEqual({ harnessInstanceId: "h_claude", optionId: "anthropic_browser", method: "browser" });
+    expect(pickProviderConnectionOption([claude], "claude", "account", { codeEntry: false })).toBeNull();
+    const withDevice = { ...claude, connectionOptions: [...claude.connectionOptions, option("anthropic_device", "anthropic", "subscription", { method: "device_code" })] };
+    expect(pickProviderConnectionOption([withDevice], "claude", "account", { codeEntry: true })?.method).toBe("device_code");
+  });
+
+  it("has nothing to offer when the harness is missing, unavailable or key-only", () => {
+    const rows = [
+      { harnessInstanceId: "h_legacy", harness: "claude" },
+      { harnessInstanceId: "h_codex", harness: "codex", connectionOptions: [
+        option("openai_api_key", "openai", "api_key", { availability: "unavailable", unavailableReason: "not_installed" }),
+      ] },
+    ];
+    expect(pickProviderConnectionOption(rows, "claude", "account", { codeEntry: true })).toBeNull();
+    expect(pickProviderConnectionOption(rows, "codex", "account", { codeEntry: true })).toBeNull();
+    expect(pickProviderConnectionOption(rows, "codex", "api_key")).toBeNull();
   });
 });
 
@@ -128,15 +154,34 @@ describe("onboarding apps and repos", () => {
     expect(relativeUpdatedLabel(null, now)).toBeUndefined();
   });
 
-  it("loads only well-formed GitHub repos", async () => {
+  const github = { id: "conn_1", accountLabel: "sahar" };
+
+  it("lists repos through the connected GitHub app, most recent first", async () => {
+    const post = vi.fn().mockResolvedValue({ data: [
+      { name: "site", full_name: "sahar/site", html_url: "https://github.com/sahar/site", pushed_at: null, updated_at: null },
+      { name: "x", full_name: "evil/x", html_url: "javascript:alert(1)" },
+    ] });
+    const get = vi.fn();
+    const repos = await loadOnboardingRepos({ get, post } as never, github, new AbortController().signal);
+    expect(repos).toEqual([{ name: "site", url: "https://github.com/sahar/site" }]);
+    expect(post).toHaveBeenCalledWith("/api/integrations/read-call", {
+      service: "github", action: "list_repos", label: "sahar", connectionId: "conn_1", params: { sort: "updated", per_page: 20 },
+    }, expect.objectContaining({ timeoutMs: 10_000 }));
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the computer's GitHub CLI when the app read fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const post = vi.fn().mockRejectedValue(new AppError("server"));
     const get = vi.fn().mockResolvedValue({ repos: [
       { nameWithOwner: "sahar/site", url: "https://github.com/sahar/site", updatedAt: null },
       { nameWithOwner: "evil/x", url: "javascript:alert(1)" },
     ] });
-    const repos = await loadOnboardingRepos({ get } as never, new AbortController().signal);
-    expect(repos).toEqual([{ name: "site", url: "https://github.com/sahar/site" }]);
+    await expect(loadOnboardingRepos({ get, post } as never, github, new AbortController().signal))
+      .resolves.toEqual([{ name: "site", url: "https://github.com/sahar/site" }]);
     expect(get).toHaveBeenCalledWith("/api/github/repos?limit=20", expect.objectContaining({ timeoutMs: 10_000 }));
-    await expect(loadOnboardingRepos({ get: vi.fn().mockResolvedValue({ nope: true }) } as never, new AbortController().signal)).resolves.toEqual([]);
+    await expect(loadOnboardingRepos({ get: vi.fn().mockResolvedValue({ nope: true }), post } as never, null, new AbortController().signal)).resolves.toEqual([]);
+    warn.mockRestore();
   });
 });
 
