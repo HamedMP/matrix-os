@@ -54,8 +54,7 @@ export default function WorkspaceContent({
           Loading your saved records…
         </p>
       )}
-      {canUseRecords &&
-        (app.view === "focus" || records.length > 0 || !(loading || error)) && (
+      {canUseRecords && (
           <Views
             app={app}
             records={visible}
