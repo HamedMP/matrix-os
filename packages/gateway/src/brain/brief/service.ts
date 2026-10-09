@@ -89,10 +89,9 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
       const now = clock();
       const range = briefWindow(input.date, input.window, now);
       const stored = await readStoredBrief(db, scope, range.date, input.window);
-      // A tombstone removes content: a copy that cites a document deleted since is dropped and rebuilt.
-      if (stored !== null && await citesDeleted(db, scope, stored)) {
-        await deleteStoredBriefs(db, scope, { date: range.date, window: input.window });
-      } else if (stored !== null && !needsRebuild(stored, now)) return { ...stored, stored: true };
+      // A tombstone removes content: a copy citing a document deleted since is dropped (unless replaced) and rebuilt.
+      if (stored !== null && await citesDeleted(db, scope, stored)) await deleteStoredBriefs(db, scope, stored);
+      else if (stored !== null && !needsRebuild(stored, now)) return { ...stored, stored: true };
       return capped(() => build(scope, range.date, input.window, now, null));
     },
     async generateBrief(ownerId, projectRef, body) {
