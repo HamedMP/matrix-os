@@ -8,16 +8,18 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 
 - Owns `BrainApp`, its six tabs, the typed client `createBrainShellApi`, the controls in `brain-controls.tsx`,
   the tone classes in `brain-tone.ts`, and the view shapes in `brain-types.ts`.
-- Opens on Chat (spec 567): tabs Chat, Today, Decisions, Timeline, Search and Sources sit in one row next to the
-  project picker, Chat first and in bold. Older ids still open: `ask` is Search, `commitments` and `risks` open
-  Decisions on that kind; Decisions switches between decisions, commitments and risks.
+- Opens on Chat (spec 567) where the surface lends a chat view, else on Search: tabs Chat, Today, Decisions,
+  Timeline, Search and Sources sit in one row next to the project picker, Chat first and in bold. Older ids still
+  open: `ask` is Search, `commitments` and `risks` open Decisions on that kind; Decisions switches between decisions,
+  commitments and risks.
 - Chat (`BrainChat.tsx`) is an ordinary Matrix Chat run by the owner's Company Brain Bot, never a second chat system: no
   stream, request, transcript or composer of its own. It finds the Bot (`company-brain-bot.ts`; the library lists active
   Bots only. Bots off, no brain recipe (a gateway with no runtime host lists none), or a 503 from the recipe, Start or
   thread list calls, reads as not running; none shows a one-time Start card that creates it with no model, so the server
-  picks Automatic, and a request id fixed per recipe version; a Start whose Bot is not listed as active, a replay of one
-  archived since, says it was archived and cannot start here), lists the project's brain chats (`use-brain-threads.ts`,
-  50 a page, "Show more" pages kept through a reload; on open, on focus, when a thread is created and after every
+  picks Automatic, and a request id fixed per recipe version; when that replays a Bot the owner archived since, Start
+  asks again with a request id made from the archived Bot, so a new Bot is made once, at most 5 times in a row, then it
+  says it was archived), lists the project's brain chats (`use-brain-threads.ts`, 50 a page, "Show more" pages kept
+  through a reload whose first page lost none of its chats; on open, on focus, when a thread is created and after every
   admitted turn the view reports) and hands the surface's chat view a slot (`BrainChatHost.render`) with the empty
   chat's heading and line. Opening order: the chat this viewer had open last for the project if it is still listed, else
   the newest, else a draft; the chat it opens is remembered. A draft saves nothing until its first send, which makes one
@@ -97,7 +99,8 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - One action at a time per card, the model confirm included. Writes send the loaded source revision.
 - A chat list answer for a project the tab has left is dropped; a list that arrives late never moves the viewer off
   the chat they opened; a failed list opens a draft and offers "Try again". The open chat's title is kept apart from
-  the list, and a rename or delete made here stays over a reloaded list.
+  the list, and a rename or delete made here stays over a reloaded list until a reloaded list agrees (the title
+  matches, or the chat is not listed), at most 500 of them.
 - Proxies in front of the gateway end a request at 30 s, so repository runs and source syncs start a job (202) and
   poll it: 1 s, then doubling to 10 s, at most 90 polls; three failed polls in a row, or one refused poll, stop with
   "Try again", and the poll cap with "Check again". Stop asks the gateway to cancel. A gateway without the jobs route
