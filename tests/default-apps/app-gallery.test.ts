@@ -135,7 +135,7 @@ describe("app gallery", () => {
   it("rejects an installation result that points at another app", async () => {
     const bridge = {gatewayFetch: vi.fn().mockResolvedValue({status:'installed',slug:'folio',name:'Folio',path:'apps/other'})};
     await expect(installGalleryApp(bridge,'folio')).rejects.toThrow('Installation unavailable');
-    expect(() => parseListing({version:1,apps:[{...apps[0],installed:true,launchPath:'apps/other'}]})).toThrow('Gallery unavailable');
+    expect(() => parseListing({version:1,apps:[{...apps[0],installed:true,launchPath:'apps/../other'}]})).toThrow('Gallery unavailable');
   });
   it("failed installation remains retryable; unsafe ids never call bridge", async () => {
     const bridge = {
@@ -160,4 +160,27 @@ describe("app gallery", () => {
     );
     expect(bridge.gatewayFetch).toHaveBeenCalledTimes(2);
   });
+});
+
+const movedPaths = ["apps/renamed-ledger", "apps/finance/renamed-ledger", "apps/My Finance/Owner Ledger"];
+it.each(movedPaths)("accepts actual moved-path listing payload at %s", path => {
+  const listed = parseListing({ version: 1, apps: [{ ...apps[0], installed: true, installedName: "Owner ledger", launchPath: path }] });
+  expect(listed[0]).toMatchObject({ id: "folio", installed: true, launchPath: path });
+});
+it.each(movedPaths)("accepts the reconciled already-installed path at %s", async path => {
+  const result = { status: "already_installed", slug: "folio", name: "Owner ledger", path };
+  expect(await installGalleryApp({ gatewayFetch: vi.fn().mockResolvedValue(result) }, "folio")).toEqual(result);
+});
+it.each(movedPaths)("opens the bounded owner path at %s", async path => {
+  const openApp = vi.fn();
+  await openGalleryApp({ gatewayFetch: vi.fn(), openApp }, { ...apps[0], installed: true, installedName: "Owner ledger", launchPath: path } as never);
+  expect(openApp).toHaveBeenCalledWith("Owner ledger", path);
+});
+it.each(["apps/../secret", "apps/finance/../../secret", "apps//folio", "apps/finance/./folio", "apps/folio\\secret", "apps/folio\u0000secret", "system/folio", "apps/" + "a/".repeat(16) + "folio", "apps/" + "a".repeat(256)])("rejects an unsafe or over-budget moved path %s", async path => {
+  const gatewayFetch = vi.fn().mockResolvedValue({ status: "already_installed", slug: "folio", name: "Owner ledger", path });
+  expect(() => parseListing({ version: 1, apps: [{ ...apps[0], installed: true, launchPath: path }] })).toThrow("Gallery unavailable");
+  await expect(installGalleryApp({ gatewayFetch }, "folio")).rejects.toThrow("Installation unavailable");
+  const openApp = vi.fn();
+  await expect(openGalleryApp({ gatewayFetch, openApp }, { ...apps[0], installed: true, launchPath: path } as never)).rejects.toThrow("App unavailable");
+  expect(openApp).not.toHaveBeenCalled();
 });

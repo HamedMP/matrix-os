@@ -27,8 +27,13 @@ export interface GalleryFilters {
   readiness: GalleryReadinessStatus | "all" | "installed";
 }
 const safeId = /^[a-z][a-z0-9-]{0,47}$/;
-const safePath = (value: unknown): value is string =>
-  typeof value === "string" && /^apps\/[a-z][a-z0-9-]{0,47}$/.test(value);
+// Owner File API moves may change folder names without changing the manifest slug.
+// Keep the same bounded relative-app scope for listing, reconciliation and opening.
+const safePath = (value: unknown): value is string => {
+  if (typeof value !== "string" || !value.startsWith("apps/") || value.length > 4096 || /[\\\u0000-\u001f\u007f]/.test(value)) return false;
+  const segments = value.slice(5).split("/");
+  return segments.length <= 16 && segments.every(segment => !!segment && segment !== "." && segment !== ".." && segment.length <= 255);
+};
 export function parseListing(raw: unknown): GalleryAppListing[] {
   if (!raw || typeof raw !== "object") throw new Error("Gallery unavailable");
   const input = raw as { version?: unknown; apps?: unknown };
@@ -48,7 +53,7 @@ export function parseListing(raw: unknown): GalleryAppListing[] {
       throw new Error("Gallery unavailable");
     if (
       launchPath !== undefined &&
-      (!safePath(launchPath) || launchPath !== `apps/${app.data.id}`)
+      !safePath(launchPath)
     )
       throw new Error("Gallery unavailable");
     if (
@@ -123,7 +128,7 @@ export async function installGalleryApp(
       !["installed", "already_installed"].includes(result.status) ||
       result.slug !== id ||
       !safePath(result.path) ||
-      result.path !== `apps/${id}` ||
+      (result.status === "installed" && result.path !== `apps/${id}`) ||
       typeof result.name !== "string" ||
       !result.name.trim() ||
       result.name.length > 32768
