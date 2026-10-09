@@ -108,7 +108,7 @@ describe("matrix files source", () => {
   });
 
   it("resumes inside huge folders and leaves out deep and long paths", async () => {
-    for (let index = 0; index <= 5_000; index += 1) mkdirSync(join(home, "big/a", `d${index}`), { recursive: true });
+    for (let index = 0; index < 5_000; index += 1) mkdirSync(join(home, "big/a", `d${index}`), { recursive: true });
     put("big/b.md", "last");
     put(`big/deep/${Array.from({ length: 12 }, (_, i) => `l${i}`).join("/")}/x.md`, "too deep");
     put(`big/${"n".repeat(250)}/${"m".repeat(250)}/${"o".repeat(20)}.md`, "too long");
@@ -116,7 +116,8 @@ describe("matrix files source", () => {
     const result = await runMatrixLoop(harness, sourceId, externalRef, adapter, config);
     expect(result).toMatchObject({ caughtUp: true, written: 1, notices: ["items_truncated"] });
     expect(result.pages).toBeGreaterThan(2);
-    // The folder picker reads at most dirEntriesMax entries: the 5,001 folders end at offset 5,000.
+    // The folder picker reads at most dirEntriesMax entries: 5,001 folders end at offset 5,000.
+    mkdirSync(join(home, "big/a/d5000"));
     const cursor = encodeMatrixCursor("mo1:", { v: 1, offset: 4_900 });
     const last = await handler.listOptions!("owner_a", project, { q: "big/a", cursor }, new AbortController().signal);
     expect(last.items).toHaveLength(100);
@@ -179,9 +180,13 @@ describe("matrix files source", () => {
     expect(["tokenizer.ts", "keys.md", "secretary.md", "README.md"].some(isSecretLikeName)).toBe(false);
   });
 
-  it("says secret_skipped for a file skipped by its content alone, and not for a plain skip", async () => {
+  it("says secret_skipped for a file skipped by its content alone or a secret-like folder, not for a plain skip", async () => {
     put("keys/deploy.md", `-----BEGIN OPENSSH PRIVATE KEY-----\nabc`);
     put("plain/empty.md", " ");
+    put("vault/secrets/x.md", "x");
+    const vault = await setup({ roots: ["vault"], extensions: ["md"] });
+    expect(await runMatrixLoop(harness, vault.sourceId, vault.externalRef, vault.adapter, vault.config))
+      .toMatchObject({ written: 0, skipped: 0, notices: ["secret_skipped"] });
     const keys = await setup({ roots: ["keys"], extensions: ["md"] });
     expect(await runMatrixLoop(harness, keys.sourceId, keys.externalRef, keys.adapter, keys.config))
       .toMatchObject({ written: 0, skipped: 1, notices: ["secret_skipped"] });

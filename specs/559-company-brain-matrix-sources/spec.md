@@ -50,12 +50,14 @@ that did not change.
   A page ends before a note whose label refs would pass `maxRefs`; page limits below 20 refs or 1 upsert answer
   `invalid_options`, so the first note of a page always fits.
 - Files: each root walked depth first in name order, resumable after any path; hidden names, `node_modules`, folders
-  with a secret-like name (see Security), symlinks, depth over 12 and paths over 512 bytes are left out. Too large,
+  with a secret-like name (see Security), symlinks, depth over 12 and paths over 512 bytes are left out, and so is a
+  folder over 5,000 entries, whole (`items_truncated`). Too large,
   binary (NUL byte or invalid utf8), empty and secret-like files are skipped and an earlier document of them is
-  tombstoned; a file skipped by a secret-like name or content adds the notice `secret_skipped`. Every byte read counts against the page's 16 MiB read budget, binary files included; a file larger
+  tombstoned; a file skipped by a secret-like name or content, or a folder left out by its name, adds the notice
+  `secret_skipped`. Every byte read counts against the page's 16 MiB read budget, binary files included; a file larger
   than what is left of it ends the page and is read first on the next one. The sweep keeps a document only while its
-  file is a regular file inside a current root, of a selected extension, within the size bound, with no symlink or
-  secret-like name on the way.
+  file is a regular file inside a current root, of a selected extension, within the size bound, with no symlink,
+  secret-like name or folder over 5,000 entries on the way; a sweep page reads at most 65,000 entries for that.
 - Chats: chats in id order, messages in seq order through `getMessages`; a whole day group always fits in one page.
   A chat that is missing or not the owner's is skipped; the sweep removes documents of chats no longer opted in or
   gone.
