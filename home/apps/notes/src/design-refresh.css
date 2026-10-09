@@ -23,9 +23,9 @@ h1 { font-size: 28px; letter-spacing: -.045em; font-weight: 650; }
 .note-card__preview { line-height: 1.55; }
 .toolbar { background: var(--card); border-color: var(--border); backdrop-filter: none; }
 .editor-pane { background: var(--card); backdrop-filter: none; }
-.title-input { border: 0; max-width: 780px; margin: 24px auto 0; padding: 22px 36px 12px; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(30px, 4vw, 44px); font-weight: 500; line-height: 1.2; letter-spacing: -.025em; }
+.title-input { border: 0; max-width: 780px; margin: 24px auto 0; padding: 22px 36px 12px; font-family: var(--matrix-font-heading, "Bricolage Grotesque", sans-serif); font-size: clamp(30px, 4vw, 44px); font-weight: 500; line-height: 1.2; letter-spacing: -.025em; }
 .rich-editor, .content-input { width: 100%; max-width: 780px; margin: 0 auto; padding: 20px 36px 48px; }
-.rich-editor .ProseMirror { font-family: Georgia, 'Times New Roman', serif; font-size: 18px; line-height: 1.8; }
+.rich-editor .ProseMirror { font-family: var(--matrix-font-sans, Geist, sans-serif); font-size: 18px; line-height: 1.8; }
 .content-input { font-size: 16px; }
 .editor-footer { padding: 12px 24px max(12px, env(safe-area-inset-bottom)); }
 .format-toolbar { padding: 4px 16px; background: var(--card); }
@@ -47,3 +47,13 @@ h1 { font-size: 28px; letter-spacing: -.045em; font-weight: 650; }
  .rich-editor, .content-input { padding: 12px 20px 32px; }
  .slash-menu { left: 12px; width: min(280px, calc(100vw - 24px)); }
 }
+
+/* Notes uses gold stationery and the same artwork as its launcher entry. */
+.sidebar { background: color-mix(in srgb, var(--matrix-brand-gold) 9%, var(--card)); }
+.sidebar__header { gap: 12px; }
+.sidebar__title { flex: 1; min-width: 0; }
+.sidebar__header img { object-fit: contain; flex-shrink: 0; }
+.empty-state__icon { width: 88px; height: 88px; padding: 0; background: none; box-shadow: none; border: 0; border-radius: 0; }
+.empty-state__icon img { object-fit: contain; }
+.empty-state h2 { font-family: var(--matrix-font-heading, "Bricolage Grotesque", sans-serif); font-size: 28px; font-weight: 500; letter-spacing: -.035em; }
+.button--primary { background: var(--matrix-brand-teal); color: var(--matrix-brand-paper); }

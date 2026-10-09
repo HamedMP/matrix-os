@@ -1,3 +1,21 @@
+/* Native Notes shares Matrix typography and launcher artwork, while its
+   neutral surfaces follow the owner's selected light/dark theme. */
+.notes-workspace { --notes-ink-accent: color-mix(in srgb, var(--text-primary) 75%, var(--notes-brand-teal)); container: notes / inline-size; background: var(--bg-surface); }
+.notes-library { width: 270px; min-width: 0; background: color-mix(in srgb, var(--bg-surface) 93%, var(--notes-brand-gold)); }
+.notes-library header { min-height: 72px; gap: 8px; }
+.notes-tool { width: 40px; height: 44px; flex-shrink: 0; }
+.notes-primary { min-height: 44px; background: var(--notes-brand-teal); color: var(--notes-brand-paper); }
+.notes-primary:hover:not(:disabled) { filter: brightness(1.12); }
+.notes-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@container notes (max-width: 620px) {
+  .notes-library { width: 180px; }
+  .notes-library header { flex-wrap: wrap; }
+  .notes-library header > div:last-child { margin-left: auto; }
+}
+@container notes (max-width: 420px) {
+  .notes-library { width: 140px; }
+  .notes-library header { padding-inline: 10px; }
+}
 .notes-editor {
   min-height: 300px;
   outline: none;
@@ -5,7 +23,7 @@
   font-size: 16px;
   line-height: 1.75;
   overflow-wrap: anywhere;
-  caret-color: var(--surface-purple-emphasis);
+  caret-color: var(--notes-ink-accent);
 }
 .notes-editor:focus,
 .notes-editor:focus-visible {
@@ -72,7 +90,7 @@
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--surface-purple-emphasis);
+  accent-color: var(--notes-ink-accent);
   cursor: pointer;
 }
 .notes-editor li:has(> label > input[type="checkbox"]) > div {
@@ -85,6 +103,6 @@
 .notes-editor code { font-family: var(--font-mono); font-size: 0.85em; background: var(--bg-sunken); border-radius: 4px; padding: 0.1em 0.3em; }
 .notes-editor pre { background: var(--bg-sunken); padding: 1em; border-radius: 8px; overflow-x: auto; }
 .notes-editor pre code { padding: 0; background: none; }
-.notes-editor a { color: var(--surface-purple-emphasis); text-decoration: underline; }
+.notes-editor a { color: var(--notes-ink-accent); text-decoration: underline; }
 .notes-editor hr { border-color: var(--border-subtle); margin: 1.5em 0; }
-.notes-editor .ProseMirror-selectednode { outline: 1px solid var(--surface-purple-emphasis); }
+.notes-editor .ProseMirror-selectednode { outline: 1px solid var(--notes-ink-accent); }

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Notebook, Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { Plus, Search, Trash2, X } from "@renderer/lib/hugeicons";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration } from "../../stores/runtime-generation";
 import type { ApiClient } from "../../lib/api";
@@ -7,6 +7,18 @@ import { Dialog } from "../../design/primitives";
 import { OSWindowSafeView } from "../desktop-shell/OSWindow";
 import NoteEditor from "./NoteEditor";
 import { NotesController, registerActiveNotesController } from "./notes-controller";
+
+import { desktopPalette, fonts } from "@matrix-os/brand";
+import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
+import "./notes.css";
+
+const notesArtwork = bundledDesktopIconForPath("apps/notes/index.html");
+const brandStyle = {
+  "--notes-brand-teal": desktopPalette.forest,
+  "--notes-brand-gold": desktopPalette.gold,
+  "--notes-brand-paper": desktopPalette.paper,
+  fontFamily: fonts.ui,
+} as CSSProperties;
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" });
 function dateLabel(value: string) {
@@ -64,7 +76,7 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
   }, [active, controller]);
 
   return (
-    <div className="ph-no-capture relative flex min-h-0 flex-1" data-slot="notes-workspace"
+    <div className="notes-workspace ph-no-capture relative flex min-h-0 flex-1" data-slot="notes-workspace" style={brandStyle}
       onKeyDown={(event) => {
         if (!(event.metaKey || event.ctrlKey)) return;
         if (["b", "i", "n", "s"].includes(event.key.toLowerCase())) event.stopPropagation();
@@ -73,18 +85,18 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
       }}>
       <OSWindowSafeView
         area="sidebar"
-        className="h-full min-h-0 w-[280px] min-w-[200px] shrink-0 border-r"
+        className="notes-library h-full min-h-0 shrink-0 border-r"
         style={{ borderColor: "var(--border-default)" }}
       >
         <aside aria-label="Notes" className="flex h-full min-h-0 flex-col">
           <header className="flex shrink-0 items-center justify-between border-b px-4 py-2" style={{ borderColor: "var(--border-default)" }}>
             <div className="flex items-center gap-1">
-              <Notebook size={16} aria-hidden />
-              <h1 className="text-[16px] font-medium leading-[16px] tracking-[-0.4px]">Notes</h1>
+              <img data-notes-artwork src={notesArtwork} alt="" width={32} height={32} />
+              <h1 className="text-[20px] font-medium leading-6 tracking-[-0.4px]" style={{ fontFamily: fonts.heading }}>Notes</h1>
             </div>
             <div className="flex items-center gap-1">
-              <button type="button" aria-label="Search notes" className="flex size-6 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" onClick={() => setSearchOpen(!searchOpen)}><Search size={15} /></button>
-              <button type="button" aria-label="New note" title="New note" disabled={state.creating || state.loading} className="flex size-6 items-center justify-center rounded-md text-white disabled:opacity-40" style={{ background: "var(--surface-overlay)" }} onClick={() => { setQuery(""); void controller.create(); }}><Plus size={16} /></button>
+              <button type="button" aria-label="Search notes" className="notes-tool flex items-center justify-center rounded-md hover:bg-[var(--bg-hover)]" onClick={() => setSearchOpen(!searchOpen)}><Search size={15} /></button>
+              <button type="button" aria-label="New note" title="New note" disabled={state.creating || state.loading} className="notes-tool notes-primary flex items-center justify-center rounded-md disabled:opacity-40" onClick={() => { setQuery(""); void controller.create(); }}><Plus size={16} /></button>
             </div>
           </header>
           {searchOpen && <div className="mx-3 my-2 flex h-8 shrink-0 items-center gap-2 rounded-lg border px-2" style={{ borderColor: "var(--border-default)" }}>
@@ -120,11 +132,11 @@ function NotesSession({ api, active }: { api: ApiClient; active: boolean }) {
           <div className="min-h-0 flex-1 overflow-y-auto"><NoteEditor key={note.id} note={note} controller={controller} /></div>
           {state.error && <div role="alert" className="absolute bottom-4 left-4 right-4 rounded-lg bg-[var(--bg-sunken)] p-3 text-xs text-[var(--text-secondary)] shadow-[var(--shadow-2)]">{state.error} <button type="button" className="underline" onClick={() => void controller.flush()}>Retry</button></div>}
         </> : <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-          <Notebook size={36} strokeWidth={1.4} className="text-[var(--surface-purple-emphasis)]" />
-          <h2 className="text-xl font-medium">A little space for your thoughts</h2>
+          <img data-notes-artwork src={notesArtwork} alt="" width={88} height={88} className="mb-2 object-contain" />
+          <h2 className="text-[28px] font-medium leading-tight" style={{ fontFamily: fonts.heading }}>A little space for your thoughts</h2>
           <p className="max-w-64 text-sm text-[var(--text-tertiary)]">Ideas, lists, and everything in between.</p>
           {state.error && <p role="alert" className="text-sm text-[var(--text-secondary)]">{state.error}</p>}
-          <button type="button" disabled={state.loading || state.creating} className="mt-2 rounded-lg px-4 py-2 text-sm text-white disabled:opacity-40" style={{ background: "var(--surface-purple-emphasis)" }} onClick={() => state.error ? void controller.load() : void controller.create()}>{state.error ? "Try again" : state.creating ? "Creating…" : "Create a note"}</button>
+          <button type="button" disabled={state.loading || state.creating} className="notes-primary mt-2 rounded-lg px-5 py-3 text-sm disabled:opacity-40" onClick={() => state.error ? void controller.load() : void controller.create()}>{state.error ? "Try again" : state.creating ? "Creating…" : "Create a note"}</button>
         </div>}
         <Dialog open={deleteTarget !== null} onClose={() => { if (!deleting) setDeleteTarget(null); }} title="Delete note?" role="alertdialog" placement="center" width={360}>
           <div className="p-6 text-center">

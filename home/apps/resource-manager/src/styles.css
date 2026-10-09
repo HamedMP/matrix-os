@@ -25,7 +25,7 @@
   --bad: var(--matrix-destructive, #D74A3A);
   --bad-bg: color-mix(in srgb, var(--bad) 12%, var(--panel));
   --shadow: 0 12px 28px rgba(30, 35, 28, 0.08);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--matrix-font-sans, Geist, system-ui, sans-serif);
   background: var(--bg);
   color: var(--text);
 }
@@ -359,7 +359,9 @@ h2 {
   }
 }
 
-/* The monitor shares the gallery's soft surfaces, with a blue instrument accent. */
+
+/* A quiet, compact instrument desk. Colored metrics use the approved brand
+   accents; the owner's shell neutrals still control light/dark surfaces. */
 :root:root:root {
   --bg: var(--app-bg);
   --panel: var(--app-card);
@@ -367,51 +369,37 @@ h2 {
   --text: var(--app-fg);
   --muted: var(--app-muted-fg);
   --border: var(--app-border);
-  --accent: #4565a5;
-  --accent-fg: #ffffff;
-  --primary: var(--accent);
-  --primary-fg: var(--accent-fg);
-  --shadow: 0 4px 12px rgba(38, 35, 70, .05), 0 16px 36px rgba(38, 35, 70, .06);
-  font-family: var(--matrix-font-sans, Inter, ui-sans-serif, system-ui, sans-serif);
-  color-scheme: light dark;
+  --accent: var(--matrix-brand-teal);
+  --accent-fg: var(--matrix-brand-paper);
+  --shadow: none;
 }
 .resource-app {
-  height: 100dvh;
-  min-height: 100%;
-  gap: 16px;
-  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
-  background: radial-gradient(ellipse at 100% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 60%), var(--bg);
+  height: 100dvh; min-height: 100%; gap: 16px;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background: var(--bg);
 }
-.topbar, .machine-strip, .panel, .metric-card { border-radius: var(--matrix-radius, 24px); }
-.topbar, .machine-strip, .panel, .metric-card { padding: 18px; }
-.topbar { gap: 14px; }
-.mark { border-radius: 15px; box-shadow: inset 0 1px 1px #ffffff73, 0 4px 10px #2623461a; }
-h1 { font-size: 26px; font-weight: 650; letter-spacing: -.045em; }
-h2 { font-size: 17px; font-weight: 600; letter-spacing: -.025em; }
-.refresh-button {
-  min-height: 44px;
-  height: auto;
-  padding: 10px 18px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-weight: 600;
-  box-shadow: inset 0 1px 1px #ffffff59, 0 4px 10px #2623461a;
-}
-.machine-strip { gap: 16px; }
-.eyebrow { font-size: 12px; text-transform: none; font-weight: 500; }
-.metric-label { font-weight: 550; }
-.metric-value { font-size: clamp(24px, 3vw, 32px); font-weight: 600; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.metric-card { gap: 10px; }
-.content-grid, .metrics-grid { gap: 16px; }
-.service-row, .process-row, .suggestion-row, .notice { border-radius: 15px; padding: 12px; background: color-mix(in srgb, var(--panel-soft) 65%, var(--panel)); }
+.topbar { border: 0; box-shadow: none; background: transparent; padding: 0 0 8px; gap: 14px; }
+.mark { width: 52px; height: 52px; background: none; border: 0; border-radius: 0; object-fit: contain; }
+h1, h2, .metric-value { font-family: var(--matrix-font-heading, "Bricolage Grotesque", sans-serif); }
+h1 { font-size: 28px; font-weight: 500; letter-spacing: -.04em; }
+h2 { font-size: 18px; font-weight: 500; letter-spacing: -.025em; }
+.machine-strip, .panel, .metric-card { border-radius: 16px; padding: 18px; }
+.machine-strip { background: color-mix(in srgb, var(--matrix-brand-green) 12%, var(--panel)); }
+.metric-card { gap: 10px; box-shadow: none; }
+.metric-card:nth-child(1) { --metric-color: var(--matrix-brand-teal); }
+.metric-card:nth-child(2) { --metric-color: var(--matrix-brand-coral); }
+.metric-card:nth-child(3) { --metric-color: var(--matrix-brand-gold); }
+.metric-card:nth-child(4) { --metric-color: var(--matrix-brand-blue); }
+.metric-card { border-top: 3px solid var(--metric-color); }
+.metric-card .bar { background: var(--metric-color); }
+.metric-value { font-size: clamp(24px, 3vw, 32px); font-weight: 500; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.refresh-button { min-height: 44px; height: auto; padding: 10px 18px; border-radius: 10px; background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.eyebrow { text-transform: none; font-size: 12px; font-weight: 500; }
+.service-row, .process-row, .suggestion-row { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 12px 0; }
 .pill { border-radius: 999px; font-weight: 600; }
 .process-stats { font-variant-numeric: tabular-nums; }
-@media (prefers-color-scheme: dark) {
-  :root { --good: var(--matrix-success, #8fc69b); --warn: var(--matrix-warning, #efc36d); --bad: var(--matrix-destructive, #f3958d); }
-}
 @media (max-width: 760px) {
-  .resource-app { gap: 12px; grid-template-rows: auto auto auto auto auto; }
+  .resource-app { gap: 12px; grid-template-rows: auto auto auto auto auto; padding: 16px; }
   .topbar { flex-wrap: wrap; align-items: center; }
   .title-block { flex: 1 1 150px; }
   .refresh-button { min-height: 44px; height: auto; margin-left: auto; }
@@ -421,8 +409,8 @@ h2 { font-size: 17px; font-weight: 600; letter-spacing: -.025em; }
 }
 @media (max-width: 420px) {
   .resource-app { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .topbar, .machine-strip, .panel, .metric-card { padding: 14px; }
+  .machine-strip, .panel, .metric-card { padding: 14px; }
   .metrics-grid { grid-template-columns: minmax(0, 1fr); }
   .panel-heading { align-items: flex-start; flex-wrap: wrap; }
-  h1 { font-size: 23px; }
+  h1 { font-size: 24px; }
 }
