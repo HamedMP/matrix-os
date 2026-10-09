@@ -59,8 +59,8 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
     poll: (jobId) => api.job(projectId, jobId), cancel: (jobId) => api.cancelJob(projectId, jobId),
     onFinished: (name) => { git.reload(); if (name === "model") budget.reload(); },
   });
-  useBrainJobResume(job, active, REPOSITORY_SLOTS);
-  const busy = action.busy !== null || job.running;
+  const resuming = useBrainJobResume(job, active, REPOSITORY_SLOTS);
+  const busy = action.busy !== null || job.running || resuming;
   const budgetText = brainModelBudgetText(spend);
   const spendText = brainModelSpendText(spend);
   // Runs are polled background jobs; a gateway without the jobs route or that kind of job runs them directly.

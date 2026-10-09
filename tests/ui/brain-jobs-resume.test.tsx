@@ -52,6 +52,7 @@ describe("Resuming runs on open", () => {
         { jobId: "job_model", status: "running", steps: 0, request: { kind: "extract", extractor: "model" },
           result: { waiting: "extraction_in_progress" } },
         { jobId: "job_lin", status: "queued", steps: 0, request: { kind: "sync", sourceId: "src_lin" } },
+        { jobId: "job_git", status: "running", steps: 0, request: { kind: "sync" } },
       ] })),
       job: vi.fn(async (_project: string, jobId: string) => ({ jobId, status: "succeeded", steps: 1 })),
     });
@@ -68,7 +69,12 @@ describe("Resuming runs on open", () => {
     expect(within(row).getByRole("status")).toHaveTextContent("Sync: waiting to start.");
     expect(within(row).getByRole("button", { name: "Syncing..." })).toBeDisabled();
     await advance(1_000);
-    expect(within(repository).getByRole("status")).toHaveTextContent("Finding claims with the model: done, 1 step done.");
+    // The model run ended while an older sync still runs: the card follows that next, with Stop and buttons off.
+    expect(within(repository).getByRole("status")).toHaveTextContent("Sync: running, 0 steps done.");
+    expect(within(repository).getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(within(repository).getByRole("button", { name: "Find claims" })).toBeDisabled();
+    await advance(1_000);
+    expect(within(repository).getByRole("status")).toHaveTextContent("Sync: done, 1 step done.");
     expect(within(repository).getByRole("button", { name: "Find claims" })).toBeEnabled();
     expect(api.job).toHaveBeenCalledWith(PROJECT, "job_model");
     expect(api.job).toHaveBeenCalledWith(PROJECT, "job_lin");
