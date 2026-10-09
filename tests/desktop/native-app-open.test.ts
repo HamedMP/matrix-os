@@ -165,12 +165,12 @@ describe("manifest-backed moved owner app launch", () => {
     const openApp = vi.fn();
     const bridge = new NativeAppBridge({ authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", resolveApp: resolver, openApp });
     bridge.register(1, "gallery");
-    for (const entry of [path, `${path}/index.html`, `${path}/dist/index.html`]) {
+    for (const entry of [path, `${path}/index.html`, `${path}/dist/index.html`, "apps/folio"]) {
       await bridge.openApp(sender, { name: "Forged", path: entry });
     }
-    expect(openApp).toHaveBeenCalledTimes(3);
+    expect(openApp).toHaveBeenCalledTimes(4);
     expect(openApp).toHaveBeenLastCalledWith({ slug: "folio", name: "Owner Ledger", appIdentity: "folio" });
     await expect(bridge.openApp(sender, { name: "Other", path: "apps/not-installed" })).rejects.toThrow();
-    expect(openApp).toHaveBeenCalledTimes(3);
+    expect(openApp).toHaveBeenCalledTimes(4);
   });
 });

@@ -36,7 +36,8 @@ export function createNativeAppOpenResolver(options: NativeAppOpenResolverOption
       const target = NativeAppOpenTargetSchema.safeParse({ slug: row.slug, name: row.name, appIdentity });
       if (target.success) apps.push({ ...target.data, path });
     }
-    const app = resolveChatAppReference(request.path, apps, { allowRelative: true });
+    const app = resolveChatAppReference(request.path, apps, { allowRelative: true })
+      ?? resolveChatAppReference(request.path, apps.map(app => ({ ...app, path: `apps/${app.slug}/index.html` })), { allowRelative: true });
     if (!app) throw new Error("installed app unavailable");
     return { slug: app.slug, name: app.name, appIdentity: app.appIdentity };
   };
