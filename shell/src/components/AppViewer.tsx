@@ -1,6 +1,7 @@
 "use client";
 
 import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
+import { UtilitiesCloseGuard } from "./UtilitiesCloseGuard";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
 
 import { useState, useEffect, useRef } from "react";
@@ -20,7 +21,8 @@ import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
 import {
-  APP_IFRAME_SANDBOX,
+  appIframeSandbox,
+  appIframePermissions,
   extractSlug,
   appIdentityFromPath,
   appDataChangeMessageForIdentity,
@@ -35,6 +37,8 @@ const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
   path: string;
+  windowId?: string;
+  onConfirmClose?: (id: string, all: boolean) => void;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
 }
@@ -102,7 +106,7 @@ const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => 
 // waits behind those writes instead of racing an independent component queue.
 const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
 
-export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
+export function AppViewer({ path, sessionId, onOpenApp, windowId, onConfirmClose }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -371,13 +375,15 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return <div className="flex h-full w-full flex-col">
     {slug ? <FileResourceSharing kind="app" path={slug} containerClassName="flex justify-end border-b px-3 py-1.5" /> : null}
+    <UtilitiesCloseGuard iframeRef={iframeRef} path={path} windowId={windowId} onConfirmClose={onConfirmClose}/>
     <iframe
       ref={iframeRef}
       key={refreshKey}
       src={iframeSrc}
       srcDoc={slug && iframeHtml ? iframeHtml : undefined}
       className="min-h-0 w-full flex-1 border-0"
-      sandbox={APP_IFRAME_SANDBOX}
+      sandbox={appIframeSandbox(path)}
+      allow={appIframePermissions(path)}
       title={path}
     />
   </div>;

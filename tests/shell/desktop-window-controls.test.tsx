@@ -14,7 +14,7 @@ import { TrafficLights } from "@/components/desktop/DesktopDockControls";
 import type { AppWindow } from "@/hooks/useWindowManager";
 
 vi.mock("@/components/AppViewer", () => ({
-  AppViewer: () => <div data-testid="app-viewer" />,
+  AppViewer: ({ windowId }: { windowId?: string }) => <div data-testid="app-viewer" data-guard-window-id={windowId} />,
 }));
 
 describe("web desktop window controls", () => {
@@ -43,6 +43,7 @@ describe("web desktop window controls", () => {
         topInset={38}
       />,
     );
+    expect(screen.getByTestId("app-viewer").getAttribute("data-guard-window-id")).toBe(win.id);
     const frame = container.querySelector<HTMLElement>("[data-window-id]")!;
     expect(frame.style.top).toBe("38px");
     // Tailwind inset-0 supplies bottom:0 unless the maximized frame overrides it.

@@ -120,6 +120,12 @@ describe("CanvasWindow terminal interactivity", () => {
     vi.useRealTimers();
   });
 
+  it("binds the Utilities iframe close guard to the actual Web Canvas window", () => {
+    const win = { ...iframeWindow, id: "win-utilities", title: "Utilities", path: "apps/utilities/" };
+    render(<CanvasWindow win={win}/>);
+    expect(appViewerRender).toHaveBeenCalledWith(expect.objectContaining({ windowId: win.id, path: win.path }));
+  });
+
   it("does not render the iframe click shield over built-in terminal controls", () => {
     const { container } = render(<CanvasWindow win={terminalWindow} />);
 

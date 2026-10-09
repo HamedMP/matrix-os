@@ -247,7 +247,7 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : (
-          <AppViewer path={win.path} onOpenApp={onOpenWindow} />
+          <AppViewer windowId={win.id} path={win.path} onOpenApp={onOpenWindow} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />

@@ -1,3 +1,4 @@
+import { deferUtilitiesWindowClose } from "@/stores/utilities-close-guard";
 import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -453,6 +454,10 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     },
 
     closeWindow: (id) => {
+      if (deferUtilitiesWindowClose(get().windows.find((win) => win.id === id))) {
+        get().restoreAndFocusWindow(id);
+        return;
+      }
       markUserLayoutMutation();
       set((state) => {
         const win = state.windows.find((w) => w.id === id);

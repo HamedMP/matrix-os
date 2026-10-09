@@ -525,7 +525,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <AppViewer path={win.path} />
+        <AppViewer windowId={win.id} path={win.path} />
       )}
     </>
   );
