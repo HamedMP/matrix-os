@@ -74,7 +74,7 @@ function RemoteSurfaceIcon({
       alt=""
       width={size}
       height={size}
-      className="shrink-0 rounded-[22%] object-cover"
+      className="shrink-0 object-contain"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
     />

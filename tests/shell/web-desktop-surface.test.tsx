@@ -230,7 +230,7 @@ describe("WebDesktopSurface", () => {
     expect(onActivateWindow).toHaveBeenCalledWith("terminal-window");
   });
 
-  it("renders every canonical taskbar app as a full-size desktop tile", () => {
+  it("renders taskbar artwork at full size without a surrounding tile", () => {
     render(
       <WebDesktopSurface
         apps={apps}
@@ -255,9 +255,18 @@ describe("WebDesktopSurface", () => {
     for (const tile of [filesTile, terminalTile]) {
       expect(tile).toBeTruthy();
       expect(tile?.className).toContain("size-11");
-      expect(tile?.className).toContain("rounded-[13px]");
+      expect(tile?.className).not.toContain("rounded-[13px]");
+      expect(tile?.style.background).toBe("transparent");
+      expect(tile?.querySelector("img")?.className).toContain("size-full");
       expect(tile?.className).not.toContain("absolute");
     }
+
+    const launcher = screen.getByRole("button", { name: "Open App Launcher" });
+    expect(launcher.querySelector("span svg")).toBeNull();
+    expect(launcher.querySelector("svg")?.classList.contains("size-11")).toBe(true);
+    fireEvent.error(terminalTile!.querySelector("img")!);
+    expect(terminalTile?.style.background).toBe("transparent");
+    expect(terminalTile?.querySelector("svg")?.classList.contains("size-full")).toBe(true);
 
     expect(desktopAppearanceForApp(apps.find((app) => app.path === "__terminal__")!)).toMatchObject({
       color: "var(--surface-warning-emphasis, #E0AA52)",

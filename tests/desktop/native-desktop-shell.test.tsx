@@ -883,11 +883,11 @@ describe("native desktop shell", () => {
     const launcher = dock.querySelector<HTMLElement>("[aria-label='Open App Launcher']");
     expect(launcher?.style.background).toBe("");
     const launcherAppIcon = launcher?.querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(launcherAppIcon?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
-    expect(launcherAppIcon?.style.color).toBe("rgb(250, 250, 245)");
+    expect(launcherAppIcon?.style.background).toBe("");
+    expect(launcher?.querySelector("svg")?.getAttribute("width")).toBe("44");
     expect(launcherAppIcon?.className).toContain("group-hover:-translate-y-0.5");
-    expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeTruthy();
-    expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeTruthy();
+    expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeNull();
+    expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeNull();
     expect(dock.style.minWidth).toBe("");
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']"))
       .toBeNull();
@@ -928,7 +928,7 @@ describe("native desktop shell", () => {
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     const terminalTabId = useTabs.getState().activeTabId!;
     const dock = screen.getByRole("navigation", { name: "Running apps" });
-    expect(dock.querySelector("[title='Terminal'] [data-desktop-app-icon-shine]")).toBeTruthy();
+    expect(dock.querySelector("[title='Terminal'] [data-desktop-app-icon-shine]")).toBeNull();
     fireEvent.click(dock.querySelector<HTMLButtonElement>("[title='Terminal']")!);
     expect(useDesktopSurfaces.getState().surfaces[terminalTabId]?.mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(terminalTabId);

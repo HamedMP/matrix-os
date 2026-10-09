@@ -98,7 +98,7 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   return DEFAULT_APPEARANCE;
 }
 
-function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: string }) {
+function DesktopAppIcon({ app, className = "", unframed = false }: { app: AppEntry; className?: string; unframed?: boolean }) {
   const appearance = desktopAppearanceForApp(app);
   const Glyph = appearance.icon;
   const iconUrl = osViewIconUrlForApp(app, getGatewayUrl());
@@ -106,8 +106,8 @@ function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: st
   return (
     <span
       data-desktop-app-icon
-      className={`flex items-center justify-center overflow-hidden ${showImage ? "border-0 shadow-none" : "border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]"} ${className}`}
-      style={{ background: showImage ? "transparent" : appearance.color, color: appearance.iconColor }}
+      className={`flex items-center justify-center overflow-hidden ${showImage || unframed ? "border-0 shadow-none" : "border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]"} ${className}`}
+      style={{ background: showImage || unframed ? "transparent" : appearance.color, color: unframed ? "inherit" : appearance.iconColor }}
     >
       {showImage && iconUrl ? (
         // Gateway-owned app icons can change at runtime and are already
@@ -115,7 +115,7 @@ function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: st
         // eslint-disable-next-line @next/next/no-img-element
         <img src={iconUrl} alt="" className="size-full object-contain" draggable={false} onError={onError} />
       ) : (
-        <Glyph className="size-[48%]" aria-hidden="true" />
+        <Glyph className={unframed ? "size-full" : "size-[48%]"} aria-hidden="true" />
       )}
     </span>
   );
@@ -371,9 +371,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <span className="flex size-11 items-center justify-center rounded-[13px] bg-[#0D0C0C] text-[#FAFAF5]">
-            <LayoutGrid className="size-[21px]" aria-hidden="true" />
-          </span>
+          <LayoutGrid className="size-11" aria-hidden="true" />
         </TaskbarButton>
 
         <TaskbarButton
@@ -389,7 +387,8 @@ export function WebDesktopSurface({
         >
           <DesktopAppIcon
             app={filesApp ?? { name: "Files", path: "__file-browser__" }}
-            className="relative size-11 rounded-[13px]"
+            unframed
+            className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
           />
         </TaskbarButton>
 
@@ -409,7 +408,11 @@ export function WebDesktopSurface({
                     running
                     onClick={() => onActivateWindow(windowRecord.id)}
                   >
-                    <DesktopAppIcon app={app} className="relative size-11 rounded-[13px]" />
+                    <DesktopAppIcon
+                      app={app}
+                      unframed
+                      className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
+                    />
                   </TaskbarButton>
                 );
               })}

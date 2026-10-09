@@ -2,8 +2,6 @@ import { LayoutGrid } from "@renderer/lib/hugeicons";
 import type { ReactNode } from "react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
-import DesktopAppIcon from "./DesktopAppIcon";
-import { desktopAppAppearance } from "./desktop-apps";
 import SurfaceIcon from "./SurfaceIcon";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
@@ -11,8 +9,6 @@ function DockAppButton({
   label,
   title,
   icon,
-  color,
-  iconColor,
   active,
   minimized,
   running,
@@ -23,8 +19,6 @@ function DockAppButton({
   label: string;
   title: string;
   icon: ReactNode;
-  color?: string;
-  iconColor?: string;
   active?: boolean;
   minimized?: boolean;
   running?: boolean;
@@ -45,13 +39,12 @@ function DockAppButton({
         className="group relative flex size-11 items-center justify-center rounded-[13px] text-[var(--text-secondary)] data-[active]:text-[var(--accent)] data-[minimized]:opacity-70"
         onClick={onClick}
       >
-        <DesktopAppIcon
-          name={title}
-          icon={icon}
-          color={color}
-          iconColor={iconColor}
-          className="absolute inset-0 rounded-[13px] transition-transform group-hover:-translate-y-0.5"
-        />
+        <span
+          data-desktop-app-icon
+          className="absolute inset-0 flex items-center justify-center drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)] transition-transform group-hover:-translate-y-0.5"
+        >
+          {icon}
+        </span>
       </button>
       <span aria-hidden="true" className="flex h-1 items-center justify-center">
         {running ? <span data-taskbar-running-indicator className="size-1 rounded-full bg-[var(--accent)]" /> : null}
@@ -111,9 +104,7 @@ export default function DesktopTaskbar({
         <DockAppButton
           label={launcherOpen ? "Close App Launcher" : "Open App Launcher"}
           title="App Launcher"
-          icon={<LayoutGrid size={21} aria-hidden="true" />}
-          color="var(--surface-inverse, #0D0C0C)"
-          iconColor="#FAFAF5"
+          icon={<LayoutGrid size={44} aria-hidden="true" />}
           pressed={launcherOpen}
           onClick={onOpenApps}
         />
@@ -121,8 +112,7 @@ export default function DesktopTaskbar({
           testId="desktop-taskbar-files"
           label={filesLabel}
           title="Files"
-          icon={<SurfaceIcon tab={{ kind: "files", title: "Files" }} size={21} />}
-          {...desktopAppAppearance("files")}
+          icon={<SurfaceIcon tab={{ kind: "files", title: "Files" }} size={44} />}
           active={filesActive}
           minimized={filesSurface?.mode === "minimized"}
           running={Boolean(filesTab)}
@@ -149,8 +139,7 @@ export default function DesktopTaskbar({
               key={tab.id}
               label={label}
               title={tab.title}
-              icon={<SurfaceIcon tab={tab} size={21} />}
-              {...desktopAppAppearance(tab.kind)}
+              icon={<SurfaceIcon tab={tab} size={44} />}
               active={active}
               minimized={surface.mode === "minimized"}
               running
