@@ -41,21 +41,21 @@ done, one deferred. Stale: `claim_outdated`, `source_sync_old` (no success for 7
 
 ## Routes
 
-| Method, path | Input | Success | Errors |
-| --- | --- | --- | --- |
-| GET `/projects/:projectId/brief` | `date` (`YYYY-MM-DD`), `window` (`day`, `week`) | 200 `BrainBriefView` | 400 401 404 503 |
-| POST `/projects/:projectId/brief` | bodyLimit 1 KiB; empty or strict `{ date?, window?, summary? }` | 200 `BrainBriefView` | 400 401 404 409 413 503 |
-| GET `/projects/:projectId/conflicts` | `rules` (comma list), `limit` 1..50 (20), `cursor` | 200 `BrainConflictsView` | 400 401 404 503 |
-| GET `/projects/:projectId/stale` | `kinds` (comma list), `limit` 1..50 (20), `cursor` | 200 `BrainStaleView` | 400 401 404 503 |
+| Method, path | Auth | Input | Success | Errors |
+| --- | --- | --- | --- | --- |
+| GET `/projects/:projectId/brief` | principal, owned project | `date` (`YYYY-MM-DD`), `window` (`day`, `week`) | 200 `BrainBriefView` | 400 401 404 503 |
+| POST `/projects/:projectId/brief` | principal, owned project | bodyLimit 1 KiB; empty or strict `{ date?, window?, summary? }` | 200 `BrainBriefView` | 400 401 404 409 413 503 |
+| GET `/projects/:projectId/conflicts` | principal, owned project | `rules` (comma list), `limit` 1..50 (20), `cursor` | 200 `BrainConflictsView` | 400 401 404 503 |
+| GET `/projects/:projectId/stale` | principal, owned project | `kinds` (comma list), `limit` 1..50 (20), `cursor` | 200 `BrainStaleView` | 400 401 404 503 |
+| runner, scheduler, `scope_erased` listener | server code: the gateway owner's scopes with a live source, or the erased scope | none | none | logged by name |
 
 ## Security architecture
 
-Auth matrix: the four routes take `authMiddleware` and `requireRequestPrincipal`, then the resolver's lookup of a
-project the principal owns (scope `personal:project:<id>`); the runner, scheduler and `scope_erased` listener are server
-code over the gateway owner's scopes with a live source, or the erased scope. Spec 553 rules (principal first, 503 with
-no service, ref pattern, `exactQuery`, strict zod, `private, no-store`, one error mapper), bodyLimit, calendar dates,
-bounded lists, a 512-char offset cursor bound to its query, bound SQL. Errors: `{ error: { code, message } }`, fixed
-messages (409: `summary: true` with no model), else a logged name and 503; never document text, SQL or paths.
+Each route takes `authMiddleware` and `requireRequestPrincipal`, then the resolver's lookup of a project the principal
+owns (scope `personal:project:<id>`). Spec 553 rules (principal first, 503 with no service, ref pattern, `exactQuery`,
+strict zod, `private, no-store`, one error mapper), bodyLimit, calendar dates, bounded lists, a 512-char offset cursor
+bound to its query, bound SQL. Errors: `{ error: { code, message } }`, fixed messages (409: `summary: true` with no
+model), else a logged name and 503; never document text, SQL or paths.
 
 ## Integration wiring, failure modes and resource management
 
