@@ -22,6 +22,9 @@ const HAMED: BrainMergeSuggestionView = {
   ],
   counts: { entityLinks: 120, aliasLinks: 1, aliasEntities: 3 },
 };
+// hamedmp <- Dee: chained to HAMED (HamedMP <- hamedmp) through hamedmp.
+const DEE = person("ent_d", "email:d@x.co", "Dee");
+const CHAINED = { ...HAMED, suggestionId: "sug_2", entity: HAMED.alias, alias: DEE, aliasKey: "person:email:d@x.co" };
 
 function openPeople(overrides: Parameters<typeof fakeBrainApi>[0]) {
   const api = fakeBrainApi(overrides);
@@ -86,21 +89,25 @@ describe("Possible duplicates", () => {
     expect(within(card).getByText("Merged hamedmp into HamedMP.")).toBeTruthy();
   });
 
-  it("holds a card whose person was merged away until that merge is undone", async () => {
-    const dee = person("ent_d", "email:d@x.co", "Dee");
-    const chained = { ...HAMED, suggestionId: "sug_2", entity: HAMED.alias, alias: dee, aliasKey: "person:email:d@x.co" };
-    openPeople({
-      mergeSuggestions: vi.fn(async () => ({ items: [HAMED, chained], nextCursor: null, truncated: false })),
-      updateAlias: vi.fn(async () => ({})),
+  it("runs one change at a time, and holds a card whose person was merged away until its Undo", async () => {
+    let finish = (_: unknown) => undefined as void;
+    const api = openPeople({
+      mergeSuggestions: vi.fn(async () => ({ items: [HAMED, CHAINED], nextCursor: null, truncated: false })),
+      updateAlias: vi.fn(() => new Promise((resolve) => { finish = resolve; })),
     });
     const first = (await screen.findByRole("button", { name: "Merge into HamedMP" })).closest("li")!;
     const second = screen.getByRole("button", { name: "Merge into hamedmp" }).closest("li")!;
     fireEvent.click(within(first).getByRole("button", { name: "Merge into HamedMP" }));
+    // Both at once, the gateway would join Dee to hamedmp or to HamedMP, whichever it applied first.
+    fireEvent.click(within(second).getByRole("button", { name: "Merge into hamedmp" }));
+    expect(api.updateAlias).toHaveBeenCalledTimes(1);
+    finish({});
     await within(first).findByRole("button", { name: "Undo" });
     // hamedmp now resolves to HamedMP, so this Merge would join Dee to HamedMP and its Undo would fail.
     expect(within(second).getByRole("button", { name: "Merge into hamedmp" })).toBeDisabled();
     expect(within(second).getByText("Undo the merge of hamedmp first.")).toBeTruthy();
     fireEvent.click(within(first).getByRole("button", { name: "Undo" }));
+    finish({});
     await waitFor(() => expect(within(second).getByRole("button", { name: "Merge into hamedmp" })).toBeEnabled());
   });
 

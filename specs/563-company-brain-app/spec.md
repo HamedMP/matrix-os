@@ -115,8 +115,8 @@ shows the `search` image there. No environment variables and no new dependencies
   will appear. A failed job start, or an answer with a code (brain off included), is shown as that error: no run began.
 - Concurrent access: each request gets a new number per key change or reload and an answer for an older number is
   dropped, so a slow answer never overwrites a newer one; a brief built again also drops a still-running load of the
-  same request. One action at a time per card: its buttons, the model confirm included, are disabled while one runs.
-  Pause, resume and remove send the loaded revision (`revision_conflict`: "Reload and try again").
+  same request. One action at a time per card, and per duplicates list: its buttons (the model confirm too) are off
+  while one runs. Pause, resume and remove send the loaded revision (`revision_conflict`: "Reload and try again").
 - Polling: three failed polls in a row (offline, too slow, brain off), or one refused poll (no access, gone), stop
   with the error and "Try again". A new job, "Check again" or leaving the screen drops every answer meant for the
   older one; a job's end reloads the receipts once, whether a poll or the cancel answer brought it.
