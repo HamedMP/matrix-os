@@ -76,12 +76,8 @@ function expectJsonStdout(stdout: string): unknown {
 async function startInstanceServer(): Promise<{ server: Server; platformUrl: string }> {
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
-    if (req.url === "/api/instance/restart") {
-      res.end(JSON.stringify({ restarted: true }));
-      return;
-    }
-    if (req.url === "/api/instance/logs") {
-      res.end(JSON.stringify({ lines: ["ready"] }));
+    if (req.url === "/api/system/logs?service=gateway&lines=200") {
+      res.end(JSON.stringify({ service: "gateway", lines: ["ready"], truncated: false }));
       return;
     }
     if (req.url === "/api/system/info") {
@@ -133,8 +129,7 @@ describe("instance CLI command", () => {
     try {
       const commands = [
         ["instance", "info", "--gateway", platformUrl, "--token", "cloud-token", "--json"],
-        ["instance", "restart", "--platform", platformUrl, "--token", "cloud-token", "--json"],
-        ["instance", "logs", "--platform", platformUrl, "--token", "cloud-token", "--json"],
+        ["instance", "logs", "--gateway", platformUrl, "--token", "cloud-token", "--json"],
       ];
 
       const outputs = [];
@@ -147,9 +142,13 @@ describe("instance CLI command", () => {
 
       expect(outputs).toEqual([
         { v: 1, ok: true, data: { status: "ok", version: "v-test" } },
-        { v: 1, ok: true, data: { restarted: true } },
-        { v: 1, ok: true, data: { lines: ["ready"] } },
+        { v: 1, ok: true, data: { service: "gateway", lines: ["ready"], truncated: false } },
       ]);
+
+      const restart = await runMatrixCli(["instance", "restart", "--platform", platformUrl, "--token", "cloud-token", "--json"]);
+      expect(restart.status).toBe(1);
+      expect(restart.stdout).toBe("");
+      expect(JSON.parse(restart.stderr)).toMatchObject({ v: 1, error: { code: "instance_restart_unavailable" } });
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => {
@@ -160,14 +159,10 @@ describe("instance CLI command", () => {
     }
   });
 
-  it("calls profile-scoped instance endpoints with bounded fetches", async () => {
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.endsWith("/api/instance/restart")) {
-        expect(init?.method).toBe("POST");
-        return new Response(JSON.stringify({ restarted: true }));
-      }
-      if (url.endsWith("/api/instance/logs")) {
-        return new Response(JSON.stringify({ lines: ["ready"] }));
+  it("calls gateway instance endpoints with bounded fetches", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("/api/system/logs")) {
+        return new Response(JSON.stringify({ service: "shell", lines: ["ready"], truncated: false }));
       }
       return new Response(JSON.stringify({ status: "ok", version: "v-test" }));
     });
@@ -175,27 +170,136 @@ describe("instance CLI command", () => {
     const logs = captureLogs();
 
     await instanceCommand.subCommands!.info.run!({ args: { json: true } } as never);
-    await instanceCommand.subCommands!.restart.run!({ args: { json: true } } as never);
-    await instanceCommand.subCommands!.logs.run!({ args: { json: true } } as never);
+    await instanceCommand.subCommands!.logs.run!({
+      args: { json: true, service: "shell", lines: "50", since: "2h" },
+    } as never);
 
     expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/system/info", {
       headers: { Authorization: "Bearer cloud-token" },
       signal: expect.any(AbortSignal),
     });
-    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/instance/restart", {
-      method: "POST",
-      headers: { Authorization: "Bearer cloud-token" },
-      signal: expect.any(AbortSignal),
-    });
-    expect(fetchImpl).toHaveBeenCalledWith("https://app.matrix-os.com/api/instance/logs", {
-      headers: { Authorization: "Bearer cloud-token" },
-      signal: expect.any(AbortSignal),
-    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://app.matrix-os.com/api/system/logs?service=shell&lines=50&since=2h",
+      { headers: { Authorization: "Bearer cloud-token" }, signal: expect.any(AbortSignal) },
+    );
     expect(logs.map((line) => JSON.parse(line))).toEqual([
       { v: 1, ok: true, data: { status: "ok", version: "v-test" } },
-      { v: 1, ok: true, data: { restarted: true } },
-      { v: 1, ok: true, data: { lines: ["ready"] } },
+      { v: 1, ok: true, data: { service: "shell", lines: ["ready"], truncated: false } },
     ]);
+  });
+
+  it("prints log lines as plain text without --json", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      service: "gateway", lines: ["first", "second"], truncated: false,
+    }))));
+    const logs = captureLogs();
+
+    await instanceCommand.subCommands!.logs.run!({ args: {} } as never);
+
+    expect(process.exitCode).toBeUndefined();
+    expect(logs).toEqual(["first", "second"]);
+  });
+
+  it("says when there are no log entries", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      service: "gateway", lines: [], truncated: false,
+    }))));
+    const logs = captureLogs();
+
+    await instanceCommand.subCommands!.logs.run!({ args: {} } as never);
+
+    expect(logs).toEqual(["No log entries for gateway."]);
+  });
+
+  it("rejects invalid log arguments before making a request", async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    for (const args of [{ service: "postgres" }, { lines: "5000" }, { lines: "ten" }, { since: "1 hour" }, { since: "30d" }]) {
+      process.exitCode = undefined;
+      await instanceCommand.subCommands!.logs.run!({ args: { json: true, ...args } } as never);
+      expect(process.exitCode).toBe(1);
+    }
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(errors.map((line) => JSON.parse(line).error.code)).toEqual(Array(5).fill("invalid_arguments"));
+  });
+
+  it("explains that an older computer needs an update when the logs route is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not found", { status: 404 })));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    await instanceCommand.subCommands!.logs.run!({ args: { json: true } } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(errors[0])).toEqual({
+      v: 1,
+      error: {
+        code: "instance_logs_unsupported",
+        message: "This Matrix computer does not support logs yet.",
+        upstream: "gateway_system_logs_api",
+        cause: "http",
+        httpStatus: 404,
+        retryable: false,
+        nextStep: "Update your Matrix computer, then try again.",
+      },
+    });
+  });
+
+  it("emits sanitized JSON when the gateway logs request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("journal exploded", { status: 503 })));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    await instanceCommand.subCommands!.logs.run!({ args: { json: true } } as never);
+
+    expect(JSON.parse(errors[0])).toEqual({
+      v: 1,
+      error: {
+        code: "instance_request_failed",
+        message: "Instance logs request failed.",
+        upstream: "gateway_system_logs_api",
+        cause: "http",
+        httpStatus: 503,
+        retryable: true,
+      },
+    });
+    expect(errors[0]).not.toContain("journal exploded");
+  });
+
+  it("rejects malformed log responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ lines: [1, 2] }))));
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    await instanceCommand.subCommands!.logs.run!({ args: { json: true } } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(errors[0]).error).toMatchObject({ code: "instance_request_failed", cause: "invalid_response" });
+  });
+
+  it("fails restart fast without calling a nonexistent platform route", async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal("fetch", fetchImpl);
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line?: unknown) => errors.push(String(line)));
+
+    await instanceCommand.subCommands!.restart.run!({ args: { json: true } } as never);
+
+    expect(process.exitCode).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(JSON.parse(errors[0])).toEqual({
+      v: 1,
+      error: {
+        code: "instance_restart_unavailable",
+        message: "Instance restart is not available yet.",
+        retryable: false,
+        nextStep: "Run `matrix doctor` to check your Matrix computer.",
+      },
+    });
   });
 
   it("reads instance info directly from the real gateway system-info endpoint", async () => {

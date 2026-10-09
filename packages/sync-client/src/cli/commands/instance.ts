@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { z } from "zod/v4";
 import { formatCliError, formatCliSuccess, isFetchTimeoutError } from "../output.js";
 import { resolveCliProfile } from "../profiles.js";
 import { requireCliAuthToken } from "../auth-state.js";
@@ -7,6 +8,9 @@ const INSTANCE_USAGE = "Usage: matrix instance info|restart|logs";
 const INSTANCE_SUBCOMMANDS = new Set(["info", "restart", "logs"]);
 const INSTANCE_STRING_ARGS = {
   profile: { type: "string", required: false },
+  service: { type: "string", required: false },
+  lines: { type: "string", required: false },
+  since: { type: "string", required: false },
   platform: { type: "string", required: false },
   gateway: { type: "string", required: false },
   token: { type: "string", required: false },
@@ -15,13 +19,27 @@ const INSTANCE_VALUE_OPTIONS = new Set(
   Object.keys(INSTANCE_STRING_ARGS).map((name) => `--${name}`),
 );
 
-interface InstanceRequestOptions {
-  method?: "GET" | "POST";
-  target?: "gateway" | "platform";
-}
+const LOG_SERVICES = new Set(["gateway", "shell", "sync", "code"]);
+const MAX_LOG_LINES = 1000;
+const MAX_LOG_SINCE_SECONDS = 7 * 86_400;
+const SINCE_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86_400 };
+// Messages for these codes are authored by the CLI, never echoed from a server.
+const CLI_AUTHORED_MESSAGE_CODES = new Set([
+  "invalid_arguments",
+  "instance_logs_unsupported",
+  "instance_restart_unavailable",
+]);
+
+const InstanceLogsResponseSchema = z.object({
+  service: z.string().max(32),
+  lines: z.array(z.string().max(4096)).max(MAX_LOG_LINES),
+  truncated: z.boolean(),
+});
+
+type InstanceUpstream = "gateway_system_info_api" | "gateway_system_logs_api";
 
 interface InstanceFailureDetails extends Record<string, unknown> {
-  upstream: "gateway_system_info_api" | "platform_instance_api";
+  upstream: InstanceUpstream;
   cause: string;
   retryable: boolean;
   httpStatus?: number;
@@ -30,6 +48,11 @@ interface InstanceFailureDetails extends Record<string, unknown> {
 type InstanceError = Error & {
   code: string;
   details?: Record<string, unknown>;
+};
+
+const UPSTREAM_FAILURE_MESSAGES: Record<InstanceUpstream, string> = {
+  gateway_system_info_api: "Instance information request failed.",
+  gateway_system_logs_api: "Instance logs request failed.",
 };
 
 function codedInstanceError(
@@ -41,14 +64,11 @@ function codedInstanceError(
 }
 
 function requestFailure(
-  upstream: InstanceFailureDetails["upstream"],
+  upstream: InstanceUpstream,
   cause: InstanceFailureDetails["cause"],
   options: { httpStatus?: number; retryable?: boolean } = {},
 ): InstanceError {
-  const message = upstream === "gateway_system_info_api"
-    ? "Instance information request failed."
-    : "Instance management request failed.";
-  return codedInstanceError("instance_request_failed", message, {
+  return codedInstanceError("instance_request_failed", UPSTREAM_FAILURE_MESSAGES[upstream], {
     upstream,
     cause,
     ...(options.httpStatus === undefined ? {} : { httpStatus: options.httpStatus }),
@@ -93,13 +113,14 @@ function hasInstanceSubCommand(rawArgs: string[] | undefined): boolean {
 function writeError(err: unknown, json: boolean): void {
   const code = errorCode(err, "instance_request_failed");
   const details = safeDetails(err);
+  const upstream = details?.upstream as InstanceUpstream | undefined;
   const safeMessage =
-    (code === "not_authenticated" || code === "auth_expired") && err instanceof Error
+    (code === "not_authenticated" || code === "auth_expired" || CLI_AUTHORED_MESSAGE_CODES.has(code))
+      && err instanceof Error
       ? err.message
       : code === "instance_request_failed"
-        ? details?.upstream === "gateway_system_info_api"
-          ? "Instance information request failed."
-          : "Instance management request failed."
+        ? UPSTREAM_FAILURE_MESSAGES[upstream ?? "gateway_system_info_api"]
+          ?? UPSTREAM_FAILURE_MESSAGES.gateway_system_info_api
         : undefined;
   if (json) {
     console.error(formatCliError(code, safeMessage, details));
@@ -110,23 +131,17 @@ function writeError(err: unknown, json: boolean): void {
   console.error(`${safeMessage ?? `Error: Request failed (${code})`}${directStatus}${nextStep}`);
 }
 
-async function requestInstance(
+async function requestGateway(
   args: Record<string, unknown>,
   path: string,
-  options: InstanceRequestOptions = {},
+  upstream: InstanceUpstream,
 ): Promise<Record<string, unknown>> {
   const profile = await resolveCliProfile(args);
   const token = await requireCliAuthToken(profile);
-  const target = options.target ?? "platform";
-  const baseUrl = target === "gateway" ? profile.gatewayUrl : profile.platformUrl;
-  const upstream: InstanceFailureDetails["upstream"] = target === "gateway"
-    ? "gateway_system_info_api"
-    : "platform_instance_api";
 
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}${path}`, {
-      ...(options.method ? { method: options.method } : {}),
+    res = await fetch(`${profile.gatewayUrl}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(10_000),
     });
@@ -134,6 +149,15 @@ async function requestInstance(
     throw requestFailure(upstream, isFetchTimeoutError(err) ? "timeout" : "network");
   }
   if (!res.ok) {
+    if (upstream === "gateway_system_logs_api" && res.status === 404) {
+      throw codedInstanceError("instance_logs_unsupported", "This Matrix computer does not support logs yet.", {
+        upstream,
+        cause: "http",
+        httpStatus: 404,
+        retryable: false,
+        nextStep: "Update your Matrix computer, then try again.",
+      });
+    }
     throw requestFailure(upstream, "http", {
       httpStatus: res.status,
       retryable: res.status === 408 || res.status === 425 || res.status === 429 || res.status >= 500,
@@ -155,23 +179,78 @@ async function requestInstance(
   return data as Record<string, unknown>;
 }
 
-async function runInstanceInfo(args: Record<string, unknown>): Promise<void> {
-  await runInstanceCommand(args, "/api/system/info", { target: "gateway" });
+function invalidArguments(message: string): InstanceError {
+  return codedInstanceError("invalid_arguments", message, { retryable: false });
 }
 
-async function runInstanceCommand(
-  args: Record<string, unknown>,
-  path: string,
-  options: InstanceRequestOptions = {},
-): Promise<void> {
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** Validate locally so bad flags fail without a request; the gateway re-validates. */
+function buildLogsPath(args: Record<string, unknown>): string {
+  const service = optionalString(args.service) ?? "gateway";
+  if (!LOG_SERVICES.has(service)) {
+    throw invalidArguments("--service must be one of gateway, shell, sync, code.");
+  }
+  const lines = optionalString(args.lines) ?? "200";
+  if (!/^\d{1,4}$/.test(lines) || Number(lines) < 1 || Number(lines) > MAX_LOG_LINES) {
+    throw invalidArguments(`--lines must be a whole number from 1 to ${MAX_LOG_LINES}.`);
+  }
+  const since = optionalString(args.since);
+  if (since !== undefined) {
+    const match = /^(\d{1,6})([smhd])$/.exec(since);
+    const seconds = match ? Number(match[1]) * SINCE_UNIT_SECONDS[match[2]] : 0;
+    if (seconds < 1 || seconds > MAX_LOG_SINCE_SECONDS) {
+      throw invalidArguments("--since must look like 30m, 2h, or 1d, up to 7d.");
+    }
+  }
+  const query = new URLSearchParams({ service, lines, ...(since ? { since } : {}) });
+  return `/api/system/logs?${query.toString()}`;
+}
+
+async function runInstanceInfo(args: Record<string, unknown>): Promise<void> {
   const json = args.json === true;
   try {
-    const data = await requestInstance(args, path, options);
+    const data = await requestGateway(args, "/api/system/info", "gateway_system_info_api");
     console.log(json ? formatCliSuccess(data) : JSON.stringify(data, null, 2));
   } catch (err: unknown) {
     writeError(err, json);
     process.exitCode = 1;
   }
+}
+
+async function runInstanceLogs(args: Record<string, unknown>): Promise<void> {
+  const json = args.json === true;
+  try {
+    const path = buildLogsPath(args);
+    const data = await requestGateway(args, path, "gateway_system_logs_api");
+    const parsed = InstanceLogsResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw requestFailure("gateway_system_logs_api", "invalid_response", { retryable: false });
+    }
+    if (json) {
+      console.log(formatCliSuccess(parsed.data));
+      return;
+    }
+    if (parsed.data.lines.length === 0) {
+      console.log(`No log entries for ${parsed.data.service}.`);
+      return;
+    }
+    for (const line of parsed.data.lines) console.log(line);
+    if (parsed.data.truncated) console.error("Some long lines were shortened.");
+  } catch (err: unknown) {
+    writeError(err, json);
+    process.exitCode = 1;
+  }
+}
+
+function runInstanceRestart(args: Record<string, unknown>): void {
+  writeError(codedInstanceError("instance_restart_unavailable", "Instance restart is not available yet.", {
+    retryable: false,
+    nextStep: "Run `matrix doctor` to check your Matrix computer.",
+  }), args.json === true);
+  process.exitCode = 1;
 }
 
 const commonArgs = {
@@ -196,14 +275,19 @@ export const instanceCommand = defineCommand({
       run: async ({ args }) => runInstanceInfo(args),
     }),
     restart: defineCommand({
-      meta: { name: "restart", description: "Restart the active Matrix OS instance" },
+      meta: { name: "restart", description: "Restart the active Matrix OS instance (not available yet)" },
       args: commonArgs,
-      run: async ({ args }) => runInstanceCommand(args, "/api/instance/restart", { method: "POST" }),
+      run: async ({ args }) => runInstanceRestart(args),
     }),
     logs: defineCommand({
-      meta: { name: "logs", description: "Show active Matrix OS instance logs" },
-      args: commonArgs,
-      run: async ({ args }) => runInstanceCommand(args, "/api/instance/logs"),
+      meta: { name: "logs", description: "Show recent redacted logs from the active Matrix OS instance" },
+      args: {
+        ...commonArgs,
+        service: { type: "string", required: false, description: "gateway (default), shell, sync, or code" },
+        lines: { type: "string", required: false, description: "Number of lines, 1-1000 (default 200)" },
+        since: { type: "string", required: false, description: "Time window such as 30m, 2h, or 1d (max 7d)" },
+      },
+      run: async ({ args }) => runInstanceLogs(args),
     }),
   },
   run: ({ rawArgs }) => {
