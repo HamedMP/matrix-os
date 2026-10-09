@@ -36,7 +36,7 @@ it('renders simulated authoritative Claude identity and remaining allowance, ind
   expect(screen.getByText('Claude account')).toBeVisible();
   expect(screen.queryByText('Claude Max')).not.toBeInTheDocument();
   expect(screen.getByText('fixture@example.test')).toBeVisible();
-  expect(screen.getByText('42% used')).toBeVisible();
+  expect(screen.getByText('58% left')).toBeVisible();
   expect(screen.getByRole('progressbar')).toHaveAttribute('value', '5800');
   expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', '58% remaining');
   expect(screen.getByText(/Resets Oct 10, 2026/)).toBeVisible();
@@ -54,5 +54,5 @@ it('does not fabricate a Claude subscription, email, allowance or reset from aut
   expect(screen.queryByText('fixture@example.test')).not.toBeInTheDocument();
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   expect(screen.queryByText(/Resets/)).not.toBeInTheDocument();
-  expect(screen.queryByText('0% used')).not.toBeInTheDocument();
+  expect(screen.queryByText(/\d+% left/)).not.toBeInTheDocument();
 });
