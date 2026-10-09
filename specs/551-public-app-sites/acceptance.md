@@ -1,10 +1,10 @@
 # Implementation evidence
 
-Implementation branch: `codex/public-app-sites`, based on freshly fetched `main` commit `cac85957026fce49fd4f6f4aa404faf9e129644e`; refreshed again before PR preparation with no new main commits. Public origin: `https://matrix.page`.
+Implementation branch: `codex/public-app-sites`, initially based on freshly fetched `main` commit `cac85957026fce49fd4f6f4aa404faf9e129644e`. The native stack was subsequently rebased onto freshly fetched `main` `582f41fb87f83b1ca112305c2f65e9ff33c894e1`, preserving the shared main checkout. Public origin: `https://matrix.page`.
 
 ## Completed checks
 
-- 234 focused tests across 38 files passed on the final Node 24 source snapshot, including information-only deployment without a publishing declaration, homepage routing, safe outbound/fragment links, checked React/Vite launch deployment, anonymous RSVP acknowledgement and exact owner readback, durable deduplication, owner export/delete, update/rollback, ID/alias/version-asset/form revocation and cross-owner isolation.
+- The initial complete Node 24 source snapshot `73387826cbd2ab4f55ea4e19da9b77de20559e8e` passed 234 focused tests across 38 files, including information-only deployment without a publishing declaration, homepage routing, safe outbound/fragment links, checked React/Vite launch deployment, anonymous RSVP acknowledgement and exact owner readback, durable deduplication, owner export/delete, update/rollback, ID/alias/version-asset/form revocation and cross-owner isolation.
 - Independent real PostgreSQL sessions verified publication/revocation serialization and account-deletion admission ordering against a disposable local database.
 - The local browser submitted a name, email and guest count through the actual opaque public-frame bridge; the saved owner record matched exactly. Public fixture worked at 375 and 1280 px. Local origin substitution makes this browser proof, not production Cloudflare evidence.
 - A separate information-only React/Vite fixture rendered without forms. HTTPS links opened separately, the HTTP destination confirmed its opener was null, and repeated section links stayed within the app frame. Temporary servers, fixtures and agent-created guide tabs were cleaned up.
@@ -21,6 +21,8 @@ Implementation branch: `codex/public-app-sites`, based on freshly fetched `main`
 - Optional visitor storage startup has its own one-connection PostgreSQL setup pool: five-second acquisition/server statement limits, two-second DDL lock limit, and 7.5-second client read limit. Real PostgreSQL checks proved blocked DDL cancellation and destruction of a stopped-read socket. Information-only apps publish when this storage is unavailable; equivalent parsed object declarations ignore property insertion order.
 - Canonical typecheck and the full mandatory pattern scan passed after these fixes (zero violations; heuristic warnings reviewed). The production Web shell build passed on the final UI source; automated review and live release gates remain separate.
 - Public docs companion [matrix-os-site #218](https://github.com/FinnaAI/matrix-os-site/pull/218): 281 tests passed; rendered at 375, 768 and 1280 px without page overflow. Marked awaiting release.
+
+The latest tested source commit, updated full-stack counts and current-head review/CI status are recorded in the linked implementation PR stack and ENG-231. Post-build manifest revalidation and production-shaped Node/Web asset reads have additional test-first regressions; immutable source/config checks and absolute asset deadlines were independently reviewed.
 
 ## Explicit limits and release boundary
 
