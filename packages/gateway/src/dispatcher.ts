@@ -52,8 +52,10 @@ export interface DispatchOptions {
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
+  /** The gateway owner's brain tools: only a serial run whose callerId is one of brainOwnerIds gets them. */
   brainTools?: BrainAgentTools;
   brainReadTools?: BrainAgentReadTools;
+  brainOwnerIds?: readonly string[];
 }
 
 export interface DispatchContext {
@@ -76,6 +78,8 @@ export interface KernelDispatchOverrides {
   workingDirectory?: string;
   /** Per-client native approval bridge. Never accepted from request JSON. */
   requestApproval?: RequestApprovalFn;
+  /** The authenticated principal the run serves; server-set only. None: no brain tools. */
+  callerId?: string;
 }
 
 export interface BatchEntry {
@@ -233,6 +237,8 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         { requestClass: entry.kernelOverrides?.fundedRequestClass ?? "interactive" },
       );
       const deadline = fundedAbortController(entry.abortController, credentialLaunch.fundedRunTimeoutMs);
+      const callerId = entry.kernelOverrides?.callerId;
+      const brain = callerId !== undefined && opts.brainOwnerIds?.includes(callerId) === true;
       const config: KernelConfig = {
         db,
         homePath,
@@ -245,8 +251,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
-        brainTools: opts.brainTools,
-        brainReadTools: opts.brainReadTools,
+        ...(brain ? { brainTools: opts.brainTools, brainReadTools: opts.brainReadTools } : {}),
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {
@@ -399,8 +404,6 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
             env: credentialLaunch.env,
             osViewTools: opts.osViewTools,
             ownerAudioTranscriber: opts.ownerAudioTranscriber,
-            brainTools: opts.brainTools,
-            brainReadTools: opts.brainReadTools,
           };
 
           try {

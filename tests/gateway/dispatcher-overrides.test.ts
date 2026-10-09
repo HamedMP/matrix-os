@@ -163,7 +163,7 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs.every((config) => config.ownerAudioTranscriber === ownerAudioTranscriber)).toBe(true);
   });
 
-  it("injects the owner-bound brain tools into serial and batch kernels", async () => {
+  it("hands the owner-bound brain tools only to a run whose caller is a brain owner, never a batch", async () => {
     const configs: KernelConfig[] = [];
     const brainTools = { why: vi.fn(async () => ({ status: "not_found" as const })) };
     const brainReadTools = { search: vi.fn(async () => ({ status: "not_found" as const })) };
@@ -173,13 +173,17 @@ describe("dispatcher per-message kernel overrides", () => {
     });
     const dispatcher = createDispatcher({
       homePath: makeHomePath(), spawnFn: spawn, maxConcurrency: 1, brainTools, brainReadTools,
+      brainOwnerIds: ["owner_a"],
     });
-    await dispatcher.dispatch("serial", undefined, () => {});
+    for (const callerId of ["owner_a", "collaborator", undefined]) {
+      await dispatcher.dispatch("serial", undefined, () => {}, undefined, undefined, callerId ? { callerId } : {});
+    }
     await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }]);
+    await createDispatcher({ homePath: makeHomePath(), spawnFn: spawn, brainTools, brainReadTools })
+      .dispatch("no owners", undefined, () => {}, undefined, undefined, { callerId: "owner_a" });
 
-    expect(configs).toHaveLength(2);
-    expect(configs.every((config) => config.brainTools === brainTools)).toBe(true);
-    expect(configs.every((config) => config.brainReadTools === brainReadTools)).toBe(true);
+    expect(configs.map((config) => [config.brainTools === brainTools, config.brainReadTools === brainReadTools]))
+      .toEqual([[true, true], [false, false], [false, false], [false, false], [false, false]]);
     expect(brainTools.why).not.toHaveBeenCalled();
     expect(brainReadTools.search).not.toHaveBeenCalled();
   });

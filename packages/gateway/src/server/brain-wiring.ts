@@ -26,8 +26,12 @@ export function createBrainGatewayStart(configuredOwnerIds: readonly string[], e
   return { integrations, ownerIds, bindIntegrations };
 }
 
-/** brain_why and the read tools for the owner's agent; each is undefined while its service or the owner is missing. */
-export function createBrainGatewayAgentTools(services: BrainOwnerDatabase) {
+/**
+ * brain_why and the read tools, bound to the owner (each undefined while its service or the owner is missing). The
+ * dispatcher hands them only to a run whose server-set callerId is one of `ownerIds`: the owner's shell, canonical
+ * Chat and /api/message runs, never a collaborator's, a shared or organization chat's, a channel's or a background one.
+ */
+export function createBrainGatewayAgentTools(services: BrainOwnerDatabase, ownerIds: readonly string[]) {
   const brain = services?.brainServices ?? null;
   return {
     brainTools: createBrainAgentTools(services?.brainService ?? null),
@@ -35,6 +39,7 @@ export function createBrainGatewayAgentTools(services: BrainOwnerDatabase) {
       ownerId: resolveBrainAgentOwnerId(), project: brain?.project ?? null, search: brain?.search ?? null,
       graph: brain?.graph ?? null, brief: brain?.brief ?? null, impact: brain?.impact ?? null,
     }),
+    brainOwnerIds: ownerIds,
   };
 }
 
