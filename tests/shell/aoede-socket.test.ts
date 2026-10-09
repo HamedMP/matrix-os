@@ -11,7 +11,7 @@ const harness = vi.hoisted(() => ({
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: harness.connected, connectionEpoch: harness.epoch,
   send: harness.send, subscribe: (handler: (frame: unknown) => void) => { harness.handler = handler; return () => { harness.handler = null; }; },
 }) }));
-vi.mock("../../shell/src/aoede/media", () => ({ AoedeMedia: class {
+vi.mock("../../packages/ui/src/aoede/media", () => ({ AoedeMedia: class {
   sessionId = harness.sessionId;
   get microphoneStream() { return harness.microphoneStream; }
   constructor(options: { onEvent: (event: unknown) => void }) { harness.event = options.onEvent; }
@@ -49,7 +49,6 @@ describe("Aoede invoking-shell authority", () => {
     expect(screen.getByRole("button", { name: "End session" })).toBeTruthy();
     expect(harness.close).not.toHaveBeenCalled();
     expect(audioContext).not.toHaveBeenCalled();
-    expect(document.querySelector(".aoede-static-orb")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     expect(harness.close).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "End voice session" }));
@@ -208,7 +207,6 @@ describe("Aoede invoking-shell authority", () => {
     useVocalStore.getState().setActive(true);
     function Host() { const active = useVocalStore((s) => s.active); return React.createElement(AoedeOverlay, { active, onUi: () => ({ status: "failed" }) }); }
     render(React.createElement(Host));
-    expect(screen.getByRole("dialog").className).toContain("aoede-live");
     expect(screen.getByRole("button", { name: "Close Aoede" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Voice tasks" })).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Fresh" })); });

@@ -2,6 +2,7 @@ import { invoke } from "../../lib/operator";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import DesktopHeaderTabs from "../desktop-shell/DesktopHeaderTabs";
 import DesktopModeControls from "../desktop-shell/DesktopModeControls";
+import DesktopAoede from "../aoede/DesktopAoede";
 
 export default function NavigationHeader() {
   const handleTitlebarDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -26,6 +27,7 @@ export default function NavigationHeader() {
       <div />
       <div className="flex h-full min-w-0 items-center gap-1 px-2">
         <DesktopHeaderTabs />
+        <DesktopAoede />
         <DesktopModeControls />
       </div>
     </header>

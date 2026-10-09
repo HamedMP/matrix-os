@@ -12,6 +12,7 @@ import {
 import { CircleStop, Loader2Icon, MicIcon, XCircleIcon } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo } from "react";
 import { useConnection } from "../../stores/connection";
+import { useDesktopAoede } from "../aoede/microphone";
 
 export function DesktopSpeechInputControl({
   scopeKey,
@@ -117,13 +118,14 @@ export function ConnectedDesktopSpeechInput({
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const userId = useConnection((state) => state.userId);
   const authGeneration = useConnection((state) => state.authGeneration);
+  const aoedeOpen = useDesktopAoede((state) => state.open);
   const client = useMemo(() => connectionStatus === "signed-in" && platformHost
     ? createBrowserSpeechClient({ baseUrl: platformHost, runtimeSlot })
     : null, [connectionStatus, platformHost, runtimeSlot]);
   const captureAdapter = useMemo(() => createWebPcmSpeechCaptureAdapter({
     workletUrl: resolveSpeechWorkletUrl(),
   }), []);
-  if (!client || !userId) return null;
+  if (!client || !userId || aoedeOpen) return null;
   return (
     <DesktopSpeechInputControl
       scopeKey={`${userId}:${authGeneration}:${runtimeSlot}:${scopeKey}`}

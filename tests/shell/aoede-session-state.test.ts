@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({ sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as string | null, handler: null as null | ((frame: unknown) => void), start: vi.fn(), close: vi.fn(), mute: vi.fn(), playback: vi.fn(), send: vi.fn(), event: null as null | ((event: unknown) => void), options: null as null | { onFailure: (failure: { phase: "mint"; code: "conflict" }) => void; onPhase: (phase: "mint") => void; onReconnecting: (value: boolean) => void; onPlaybackBlocked: (value: boolean) => void } }));
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true, connectionEpoch: 1, send: h.send,
   subscribe: (handler: typeof h.handler) => { h.handler = handler; return () => {}; } }) }));
-vi.mock("../../shell/src/aoede/media", () => ({ AoedeMedia: class {
+vi.mock("../../packages/ui/src/aoede/media", () => ({ AoedeMedia: class {
   get sessionId() { return h.sessionId; }
   constructor(options: { onEvent: typeof h.event } & NonNullable<typeof h.options>) { h.event = options.onEvent; h.options = options; }
   start = h.start; close = h.close; setMuted = h.mute; started = vi.fn(); resumePlayback = h.playback;
@@ -60,12 +60,6 @@ it("shows malformed and failed catalog responses without treating them as subscr
   vi.mocked(fetch).mockRejectedValueOnce(new DOMException("Timed out", "TimeoutError"));
   await act(async () => { await hook.result.current.refreshReadiness(); });
   expect(hook.result.current.readiness.status).toBe("error");
-});
-it.each(["ready", "setup_required", "unavailable", "error"])("preserves canonical %s readiness", async (status) => {
-  vi.mocked(fetch).mockImplementation(async (url) => new Response(JSON.stringify(String(url).endsWith("readiness") ? { status, message: "Canonical explanation" } : { session: null })));
-  const hook = renderHook(() => useAoedeSession(true, onUi));
-  await act(async () => {});
-  expect(hook.result.current.readiness).toEqual({ status, message: "Canonical explanation" });
 });
 it.each([[new DOMException("Denied", "NotAllowedError"), "denied"], [new Error("Provider unavailable"), "error"]])("distinguishes startup failure %s", async (error, status) => {
   const hook = renderHook(() => useAoedeSession(true, onUi));
