@@ -315,6 +315,28 @@ async function migrateConnectRetryScheduleV3(trx: Transaction<OwnerBotDatabase>)
   await sql`CREATE INDEX idx_bot_connect_requests_due ON bot_connect_requests(retry_after, requested_at) WHERE status = 'pending'`.execute(trx);
 }
 
+/**
+ * v7: thread bindings (spec 567). A recipe Bot may have many thread Chats, each fixed to one project when it is
+ * created and never moved. Direct and group bindings carry no project.
+ */
+async function migrateBotChatThreadsV7(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`ALTER TABLE bot_chat_bindings DROP CONSTRAINT bot_chat_bindings_kind_check`.execute(trx);
+  await sql`
+    ALTER TABLE bot_chat_bindings ADD CONSTRAINT bot_chat_bindings_kind_check CHECK (kind IN ('direct', 'group', 'thread'))
+  `.execute(trx);
+  await sql`ALTER TABLE bot_chat_bindings ADD COLUMN project_id TEXT`.execute(trx);
+  await sql`
+    ALTER TABLE bot_chat_bindings ADD CONSTRAINT bot_chat_bindings_thread_project CHECK (
+      (kind = 'thread') = (project_id IS NOT NULL)
+      AND (project_id IS NULL OR project_id ~ '^proj_[A-Za-z0-9_-]{1,128}$')
+    )
+  `.execute(trx);
+  await sql`
+    CREATE INDEX idx_bot_chat_bindings_threads ON bot_chat_bindings(owner_id, bot_id, project_id)
+    WHERE kind = 'thread' AND removed_at IS NULL
+  `.execute(trx);
+}
+
 export interface BotMigration {
   readonly version: number;
   readonly name: string;
@@ -330,4 +352,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   // Already deployed by #2198; reserve its exact identity before other v5 features.
   { version: 5, name: "bot_provider_connections", up: migrateBotProviderConnections },
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
+  { version: 7, name: "bot_chat_threads", up: migrateBotChatThreadsV7 },
 ];

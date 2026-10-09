@@ -46,9 +46,11 @@ export interface BotRuntimeBinding {
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
+  /** A thread's project (spec 567): every brain read of the run is fixed to it. */
+  brainProjectId?: string;
 }
 
-export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
+export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId" | "brainProjectId"> {
   kind: "managed_chat";
   workspace: { kind: "chat_workspace" } | import("../chat/execution-root.js").ChatExecutionRootProvenance;
 }
@@ -81,9 +83,10 @@ const BindingSchema = z.object({
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
+  brainProjectId: z.string().regex(/^proj_[A-Za-z0-9_-]{1,128}$/).optional(),
 }).strict();
 
-const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
+const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true, brainProjectId: true }).extend({
   kind: z.literal("managed_chat"),
   workspace: z.union([
     z.object({ kind: z.literal("chat_workspace") }).strict(),

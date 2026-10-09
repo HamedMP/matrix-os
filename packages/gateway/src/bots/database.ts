@@ -32,7 +32,9 @@ export interface BotChatBindingsTable {
   owner_id: string;
   bot_id: string;
   chat_id: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "thread";
+  /** Set exactly on thread bindings (v7): the project the thread reads. */
+  project_id: ColumnType<string | null, string | null | undefined, never>;
   created_at: Timestamp;
   removed_at: NullableTimestamp;
 }
