@@ -122,8 +122,8 @@ shows the `search` image there. No environment variables and no new dependencies
   with the error and "Try again". A new job, "Check again" or leaving the screen drops every answer meant for the
   older one; a job's end reloads the receipts once, whether a poll or the cancel answer brought it.
 - Crash recovery: no durable state in the view; a job keeps running in the gateway when the window closes. When
-  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of its
-  slot (the repository's sync, rules and model runs; each source's sync), so after a reload the run shows and its
+  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of each
+  slot in turn (the repository's sync, rules and model runs; each source's sync), so after a reload each run shows and
   buttons stay off until it ends. A gateway without the jobs route resumes nothing. Inactive Electron Desktop tabs
   stay mounted, so a followed job keeps polling there, with the same cap.
 - Not connected: Electron Desktop without a gateway session shows "Connect to your Matrix computer to open the
