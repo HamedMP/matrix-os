@@ -271,6 +271,35 @@ describe("GatewayShell", () => {
     expect(fetchedPaths()).not.toContain(WS_TOKEN_PATH);
   });
 
+  it.each(["storage", "token"])("keeps an explicit main-computer switch when an earlier %s load completes", async (pendingStep) => {
+    signedInAuth();
+    let resolvePending!: (value: GatewayConnection | string) => void;
+    const pending = new Promise<GatewayConnection | string>((resolve) => { resolvePending = resolve; });
+    mockGetSelectedGatewayConnection.mockImplementation(() => pendingStep === "storage"
+      ? pending : Promise.resolve(SELF_HOSTED_GATEWAY_WITH_CREDENTIAL));
+    if (pendingStep === "token") {
+      mockUseAuth().getToken.mockImplementation(() => pending);
+    }
+    const RootLayout = loadRootLayout();
+    render(<RootLayout />);
+    await waitFor(() => expect(mockGatewayContext).not.toBeNull());
+    await settle();
+    const mainComputer: GatewayConnection = {
+      id: "matrix-os-hosted", url: "https://app.matrix-os.com", name: "Main computer", addedAt: 1,
+    };
+    act(() => { mockGatewayContext!.setGateway(mainComputer); });
+    await settle();
+    const selectedClient = mockGatewayContext!.client!;
+    await act(async () => {
+      resolvePending(pendingStep === "storage" ? SELF_HOSTED_GATEWAY_WITH_CREDENTIAL : "late-clerk-token");
+    });
+    await settle();
+    expect(mockGatewayContext!.gateway).toEqual(mainComputer);
+    expect(mockGatewayContext!.client).toBe(selectedClient);
+    expect(selectedClient.httpUrl).toBe(mainComputer.url);
+    expect(openedSocketUrls).toEqual([]);
+  });
+
   it("still mints a ws-token on demand for the terminal socket", async () => {
     signedInAuth();
     const client = await renderShell();

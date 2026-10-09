@@ -1,3 +1,6 @@
+jest.mock("expo-router",()=>({useLocalSearchParams:()=>mockHandoffParams}));
+let mockHandoffParams: Record<string,unknown>={};
+const mockSelectChat=jest.fn();
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: null, isError: false }) }));
 jest.mock("@/lib/queries/use-bot-recipes", () => ({ useBotRecipes: () => ({ recipes: [], isPending: false, isError: false }) }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ invalidate: jest.fn() }) }));
@@ -17,6 +20,7 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
+    selectChat: mockSelectChat,
     activeChatId: null,
     selectionOverride: null,
     setSelectionOverride: jest.fn(),

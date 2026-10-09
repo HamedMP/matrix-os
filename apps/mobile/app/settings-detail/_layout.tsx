@@ -49,6 +49,7 @@ export default function SettingsDetailLayout() {
     >
       {[
         ["system", "System"],
+        ["messaging", "Messaging"],
         ["account", "Account"],
         ["app-settings", "App settings"],
         ["billing", "Billing"],

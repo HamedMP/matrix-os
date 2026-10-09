@@ -1,5 +1,29 @@
+let mockIsSignedIn = true;
+const mockSignInScreen = jest.fn((_props?: unknown) => null);
+let mockSearchParams: Record<string, unknown> = {};
+const mockSetGateway = jest.fn();
+const mockSetQueryData = jest.fn();
+const mockCancelQueries = jest.fn(async () => undefined);
+const mockQueryClient = {
+  setQueryData: mockSetQueryData,
+  cancelQueries: mockCancelQueries,
+};
+const mockFetchComputers = jest.fn();
+const mockSavePrimary = jest.fn(async (computer) => ({
+  url: "https://example.test" + computer.gatewayPath,
+  runtimeSlot: "primary",
+}));
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => mockQueryClient,
+}));
+jest.mock("../app/_layout", () => ({
+  useGateway: () => ({ setGateway: mockSetGateway }),
+}));
+jest.mock("@/lib/requests/computers", () => ({
+  fetchComputers: (token: string) => mockFetchComputers(token),
+}));
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { act, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 
 const mockReplace = jest.fn();
 const mockFetchMobileJourney = jest.fn();
@@ -7,14 +31,28 @@ let mockHostedGateway = true;
 let mockGatewayUrl = "https://example.test";
 let mockSignedInUserId: string | null = "user_a";
 
-jest.mock("expo-router", () => ({ useRouter: () => ({ replace: mockReplace }) }));
+const mockRouter = { replace: mockReplace };
+jest.mock("expo-router", () => ({
+  useLocalSearchParams: () => mockSearchParams,
+  useRouter: () => mockRouter,
+}));
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isSignedIn: true, userId: "user_a", getToken: mockGetToken, signOut: jest.fn() }),
-  getClerkInstance: () => ({ user: mockSignedInUserId ? { id: mockSignedInUserId } : null }),
+  useAuth: () => ({
+    isSignedIn: mockIsSignedIn,
+    userId: "user_a",
+    getToken: mockGetToken,
+    signOut: jest.fn(),
+  }),
+  getClerkInstance: () => ({
+    user: mockSignedInUserId ? { id: mockSignedInUserId } : null,
+  }),
 }));
 jest.mock("@/lib/storage", () => ({
   HOSTED_GATEWAY_URL: "https://example.test",
-  getSelectedGatewayConnection: async () => ({ url: mockHostedGateway ? mockGatewayUrl : "http://10.0.0.2:4000" }),
+  saveSelectedHostedComputer: (computer: unknown) => mockSavePrimary(computer),
+  getSelectedGatewayConnection: async () => ({
+    url: mockHostedGateway ? mockGatewayUrl : "http://10.0.0.2:4000",
+  }),
   isHostedGatewayUrl: (url: string) => url.startsWith("https://example.test"),
   getMobileJourneyGatewayUrl: (url: string) => url,
 }));
@@ -22,25 +60,45 @@ jest.mock("@/lib/journey", () => ({
   ...jest.requireActual("@/lib/journey"),
   fetchMobileJourney: (...args: unknown[]) => mockFetchMobileJourney(...args),
 }));
-jest.mock("@/components/auth/SignInScreen", () => ({ SignInScreen: () => null }));
+jest.mock("@/components/auth/SignInScreen", () => ({
+  SignInScreen: (props: unknown) => mockSignInScreen(props),
+}));
 
 import Index from "../app/index";
-import { rememberJourneyConnectable, wasJourneyConnectable } from "../lib/journey-cache";
+import {
+  rememberJourneyConnectable,
+  wasJourneyConnectable,
+} from "../lib/journey-cache";
 
 const mockGetToken = jest.fn(async () => "session-token");
-const journey = (phase: string) => ({ status: "ok", journey: { phase, detail: "detail", nextAction: { kind: "wait" } } });
+const journey = (phase: string) => ({
+  status: "ok",
+  journey: { phase, detail: "detail", nextAction: { kind: "wait" } },
+});
 
 /** A journey request that stays in flight until the test settles it. */
 function pendingJourney() {
   let settle!: (value: unknown) => void;
-  mockFetchMobileJourney.mockReturnValue(new Promise((resolve) => { settle = resolve; }));
-  return (value: unknown) => act(async () => { settle(value); });
+  mockFetchMobileJourney.mockReturnValue(
+    new Promise((resolve) => {
+      settle = resolve;
+    }),
+  );
+  return (value: unknown) =>
+    act(async () => {
+      settle(value);
+    });
 }
 
-const flush = () => act(async () => { await new Promise((resolve) => setImmediate(resolve)); });
+const flush = () =>
+  act(async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+  });
 
 beforeEach(async () => {
   jest.clearAllMocks();
+  mockSearchParams = {};
+  mockIsSignedIn = true;
   mockHostedGateway = true;
   mockGatewayUrl = "https://example.test";
   mockSignedInUserId = "user_a";
@@ -183,4 +241,100 @@ it("enters a self-hosted computer without asking for a journey", async () => {
 
   expect(mockReplace).toHaveBeenCalledWith("/(drawer)");
   expect(mockFetchMobileJourney).not.toHaveBeenCalled();
+});
+
+it("selects the verified main computer before opening a WhatsApp Chat", async () => {
+  mockSearchParams = { chat: "chat_12345678" };
+  const main = {
+    handle: "main",
+    runtimeSlot: "primary",
+    kind: "customer",
+    availability: "available",
+    gatewayPath: "/vm/main",
+  };
+  mockFetchComputers.mockResolvedValue({
+    items: [{ ...main, runtimeSlot: "preview" }, main],
+  });
+  mockFetchMobileJourney.mockResolvedValue(journey("ready"));
+  render(<Index />);
+  await flush();
+  await flush();
+  expect(mockSavePrimary).toHaveBeenCalledWith(main);
+  expect(mockSetGateway).toHaveBeenCalledWith(
+    expect.objectContaining({ runtimeSlot: "primary" }),
+  );
+  expect(mockSetQueryData).toHaveBeenCalledWith(expect.any(Array), main);
+  expect(mockReplace).toHaveBeenCalledWith({
+    pathname: "/(drawer)",
+    params: { chat: "chat_12345678" },
+  });
+});
+it("keeps the handoff at a retryable gate when no main computer is available", async () => {
+  mockSearchParams = { chat: "chat_12345678" };
+  mockFetchComputers.mockResolvedValue({ items: [] });
+  mockFetchMobileJourney.mockResolvedValue(journey("ready"));
+  render(<Index />);
+  await flush();
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(mockSavePrimary).not.toHaveBeenCalled();
+  expect(screen.getByTestId("journey-retry")).toBeTruthy();
+});
+
+it.each(["plan_required", "provisioning", "provisioning_failed"])(
+  "keeps account recovery accessible for a Chat link during %s",
+  async (phase) => {
+    mockSearchParams = { chat: "chat_12345678" };
+    mockHostedGateway = false;
+    await rememberJourneyConnectable("user_a");
+    mockFetchComputers.mockResolvedValue({ items: [] });
+    mockFetchMobileJourney.mockResolvedValue(journey(phase));
+    render(<Index />);
+    await flush();
+
+    expect(mockFetchMobileJourney).toHaveBeenCalledWith(
+      "https://example.test", "session-token",
+    );
+    expect(mockFetchComputers).not.toHaveBeenCalled();
+    expect(mockSavePrimary).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Delete account")).toBeTruthy();
+    expect(screen.queryByText("Can’t reach Matrix")).toBeNull();
+    expect(screen.getByTestId(phase === "provisioning" ? "journey-loading" : "journey-refresh")).toBeTruthy();
+  },
+);
+
+it("preserves a pending Chat through account setup before selecting its main computer", async () => {
+  mockSearchParams = { chat: "chat_12345678" };
+  const main = {
+    handle: "main", runtimeSlot: "primary", kind: "customer",
+    availability: "available", gatewayPath: "/vm/main",
+  };
+  mockFetchComputers.mockResolvedValue({ items: [main] });
+  mockFetchMobileJourney.mockResolvedValueOnce(journey("plan_required"))
+    .mockResolvedValueOnce(journey("ready"));
+  render(<Index />);
+  await flush();
+  expect(mockSavePrimary).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByTestId("journey-refresh"));
+  await flush();
+  await flush();
+  expect(mockSavePrimary).toHaveBeenCalledWith(main);
+  expect(mockReplace).toHaveBeenCalledWith({
+    pathname: "/(drawer)", params: { chat: "chat_12345678" },
+  });
+  expect(mockFetchMobileJourney.mock.invocationCallOrder[1]).toBeLessThan(
+    mockFetchComputers.mock.invocationCallOrder[0],
+  );
+});
+
+it("requires Matrix account sign-in for a WhatsApp link instead of opening saved self-hosted credentials", async () => {
+  mockIsSignedIn = false;
+  mockHostedGateway = false;
+  mockSearchParams = { chat: "chat_12345678" };
+  render(<Index />);
+  await flush();
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(mockSignInScreen).toHaveBeenCalledWith(
+    expect.objectContaining({ requestedChat: "chat_12345678" }),
+  );
 });

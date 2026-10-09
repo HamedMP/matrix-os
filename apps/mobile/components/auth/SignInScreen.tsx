@@ -1,5 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -7,12 +15,20 @@ import { makeRedirectUri } from "expo-auth-session";
 import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
+import { messagingSignInTarget } from "@/lib/messaging-handoff";
 import { describeSignInFailure } from "@/lib/clerk-sign-in";
 import { completePendingSignUp } from "@/lib/clerk-sign-up";
 import { useAppleSignIn } from "@/lib/use-apple-sign-in";
-import { SignInStepError, useEmailCodeSignIn } from "@/lib/use-email-code-sign-in";
+import {
+  SignInStepError,
+  useEmailCodeSignIn,
+} from "@/lib/use-email-code-sign-in";
 import { HostedSignInPanel } from "@/components/auth/HostedSignInPanel";
-import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, openLegalLink } from "@/lib/legal-links";
+import {
+  PRIVACY_POLICY_URL,
+  TERMS_OF_SERVICE_URL,
+  openLegalLink,
+} from "@/lib/legal-links";
 import {
   HOSTED_GATEWAY_URL,
   getSelectedGatewayConnection,
@@ -33,13 +49,17 @@ type AuthProvider = "google" | "github";
 
 /** The MatrixOS sign-in surface -- rendered as the logged-out index route and
  * reused as-is at the standalone /sign-in route (e.g. post-sign-out redirects). */
-export function SignInScreen() {
+export function SignInScreen({
+  requestedChat,
+}: { requestedChat?: unknown } = {}) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isSignedIn } = useAuth();
   const { startSSOFlow } = useSSO();
 
-  const [loadingProvider, setLoadingProvider] = useState<AuthProvider | null>(null);
+  const [loadingProvider, setLoadingProvider] = useState<AuthProvider | null>(
+    null,
+  );
   // Not user-editable on this screen -- always the hosted cloud computer.
   // Restored from storage below only so Clerk calls persist whichever
   // gateway a "Sign in with computer URL" connection last selected.
@@ -54,7 +74,10 @@ export function SignInScreen() {
         if (!cancelled) setGatewayUrl(gateway.url);
       })
       .catch((err: unknown) => {
-        console.warn("[mobile] failed to load selected gateway", err instanceof Error ? err.message : String(err));
+        console.warn(
+          "[mobile] failed to load selected gateway",
+          err instanceof Error ? err.message : String(err),
+        );
       });
     return () => {
       cancelled = true;
@@ -64,46 +87,51 @@ export function SignInScreen() {
   useEffect(() => {
     if (isSignedIn && !redirectedRef.current) {
       redirectedRef.current = true;
-      router.replace("/(drawer)" as any);
+      router.replace(messagingSignInTarget(requestedChat) as never);
     }
-  }, [isSignedIn, router]);
+  }, [isSignedIn, router, requestedChat]);
 
-  const handleOAuthSignIn = useCallback(async (strategy: OAuthStrategy, provider: AuthProvider) => {
-    setLoadingProvider(provider);
-    try {
-      const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
-      await saveSelectedGatewayUrl(normalizedGatewayUrl);
-      setGatewayUrl(normalizedGatewayUrl);
-      setSignInError(null);
-      const { createdSessionId, setActive, signUp, authSessionResult } = await startSSOFlow({
-        strategy,
-        redirectUrl: clerkOAuthRedirectUrl,
-      });
-      // A first-time account comes back without a session until the sign-up's
-      // requirements are filled in. Only a finished browser round trip counts:
-      // a cancelled one may still hold an earlier attempt's pending sign-up.
-      const sessionId =
-        createdSessionId ??
-        (authSessionResult?.type === "success" && signUp?.status === "missing_requirements"
-          ? await completePendingSignUp(signUp)
-          : null);
-      if (sessionId && setActive) {
-        await setActive({ session: sessionId });
-        redirectedRef.current = true;
-        router.replace("/(drawer)" as any);
+  const handleOAuthSignIn = useCallback(
+    async (strategy: OAuthStrategy, provider: AuthProvider) => {
+      setLoadingProvider(provider);
+      try {
+        const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
+        await saveSelectedGatewayUrl(normalizedGatewayUrl);
+        setGatewayUrl(normalizedGatewayUrl);
+        setSignInError(null);
+        const { createdSessionId, setActive, signUp, authSessionResult } =
+          await startSSOFlow({
+            strategy,
+            redirectUrl: clerkOAuthRedirectUrl,
+          });
+        // A first-time account comes back without a session until the sign-up's
+        // requirements are filled in. Only a finished browser round trip counts:
+        // a cancelled one may still hold an earlier attempt's pending sign-up.
+        const sessionId =
+          createdSessionId ??
+          (authSessionResult?.type === "success" &&
+          signUp?.status === "missing_requirements"
+            ? await completePendingSignUp(signUp)
+            : null);
+        if (sessionId && setActive) {
+          await setActive({ session: sessionId });
+          redirectedRef.current = true;
+          router.replace(messagingSignInTarget(requestedChat) as never);
+        }
+      } catch (err: unknown) {
+        console.warn(`[mobile] ${provider} sign-in failed:`, err);
+        const message = describeSignInFailure(
+          err,
+          "Check the mobile OAuth redirect URL and try again.",
+        );
+        setSignInError(message);
+        Alert.alert("Sign in failed", message);
+      } finally {
+        setLoadingProvider(null);
       }
-    } catch (err: unknown) {
-      console.warn(`[mobile] ${provider} sign-in failed:`, err);
-      const message = describeSignInFailure(
-        err,
-        "Check the mobile OAuth redirect URL and try again.",
-      );
-      setSignInError(message);
-      Alert.alert("Sign in failed", message);
-    } finally {
-      setLoadingProvider(null);
-    }
-  }, [gatewayUrl, startSSOFlow, router]);
+    },
+    [gatewayUrl, startSSOFlow, router, requestedChat],
+  );
 
   const handleGoogleSignIn = useCallback(
     () => handleOAuthSignIn("oauth_google", "google"),
@@ -122,8 +150,8 @@ export function SignInScreen() {
   const goToApps = useCallback(() => {
     setSignInError(null);
     redirectedRef.current = true;
-    router.replace("/(drawer)" as any);
-  }, [router]);
+    router.replace(messagingSignInTarget(requestedChat) as never);
+  }, [router, requestedChat]);
 
   // Persist the chosen computer before Clerk is involved, so a bad URL reports
   // its own message instead of being normalised as a sign-in failure.
@@ -220,7 +248,9 @@ export function SignInScreen() {
             <Text style={styles.title}>Sign in to MatrixOS</Text>
           </View>
 
-          {signInError ? <Text style={styles.errorText}>{signInError}</Text> : null}
+          {signInError ? (
+            <Text style={styles.errorText}>{signInError}</Text>
+          ) : null}
 
           <HostedSignInPanel
             loadingProvider={appleSignIn.signingIn ? "apple" : loadingProvider}
@@ -246,7 +276,9 @@ export function SignInScreen() {
           />
 
           <View style={styles.terms}>
-            <Text style={styles.termsText}>By continuing, you agree to our</Text>
+            <Text style={styles.termsText}>
+              By continuing, you agree to our
+            </Text>
             <View style={styles.termsLinks} testID="sign-in-legal-links">
               <LegalLink label="Terms of Service" url={TERMS_OF_SERVICE_URL} />
               <Text style={styles.termsText}>and</Text>
@@ -271,7 +303,10 @@ function LegalLink({ label, url }: { label: string; url: string }) {
       accessibilityRole="link"
       accessibilityLabel={label}
       onPress={() => openLegalLink(url)}
-      style={({ pressed }) => [styles.termsLinkTarget, pressed ? styles.termsLinkPressed : null]}
+      style={({ pressed }) => [
+        styles.termsLinkTarget,
+        pressed ? styles.termsLinkPressed : null,
+      ]}
     >
       <Text style={styles.termsLink}>{label}</Text>
     </Pressable>

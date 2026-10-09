@@ -1,3 +1,6 @@
+jest.mock("expo-router",()=>({useLocalSearchParams:()=>mockHandoffParams}));
+let mockHandoffParams: Record<string,unknown>={};
+const mockSelectChat=jest.fn();
 jest.mock("@/lib/queries/use-bot-chat", () => ({ useBotChat: () => ({ snapshot: mockBotSnapshot, isError: false }) }));
 jest.mock("@/lib/queries/use-bot-recipes", () => ({ useBotRecipes: () => ({ recipes: [], isPending: false, isError: false }) }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ invalidate: jest.fn() }) }));
@@ -15,7 +18,7 @@ let mockSendPending = false;
 let mockCatalogLoading = false;
 
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isSignedIn: true }),
+  useAuth: () => ({ isSignedIn: true,userId:"user_a" }),
   useUser: () => ({
     isLoaded: true,
     user: { firstName: "Shubham", fullName: "Shubham Zanwar", username: "shubham" },
@@ -28,6 +31,7 @@ jest.mock("react-native-safe-area-context", () => ({
 
 jest.mock("@/lib/canonical-chat-session-context", () => ({
   useCanonicalChatSession: () => ({
+    selectChat: mockSelectChat,
     activeChatId: mockActiveChatId,
     selectionOverride: null,
     setSelectionOverride: jest.fn(),
@@ -69,7 +73,7 @@ import * as Clipboard from "expo-clipboard";
 
 import ChatScreen from "../app/(drawer)/index";
 
-beforeEach(() => jest.useFakeTimers());
+beforeEach(() => {jest.useFakeTimers();mockHandoffParams={};mockSelectChat.mockClear();});
 afterEach(() => { act(() => jest.runOnlyPendingTimers()); cleanup(); jest.useRealTimers(); });
 
 describe("drawer home screen", () => {
@@ -358,4 +362,11 @@ it("sends an owner-verified Native bot Chat with its private route while the gen
   fireEvent.press(screen.getByRole("button", { name: "Send message" }));
   expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_bot", baseRevision: 3,
     selection: { instanceId: "matrix_bot_default", model: "auto" }, interactionMode: "default", permissionMode: "default" }), expect.anything());
+});
+
+it('opens the requested owner Chat and rejects duplicate handoff references',()=>{
+ mockHandoffParams={chat:'chat_12345678'};
+ const view=render(<ChatScreen/>);expect(mockSelectChat).toHaveBeenCalledWith('chat_12345678');
+ view.unmount();mockSelectChat.mockClear();mockHandoffParams={chat:['chat_12345678','chat_second']};
+ render(<ChatScreen/>);expect(mockSelectChat).not.toHaveBeenCalled();
 });

@@ -3,6 +3,7 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useRouter } from "expo-router";
 import ComputerSettingsIcon from "@hugeicons/core-free-icons/ComputerSettingsIcon";
 import CreditCardIcon from "@hugeicons/core-free-icons/CreditCardIcon";
+import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
 import HelpCircleIcon from "@hugeicons/core-free-icons/HelpCircleIcon";
 import Logout01Icon from "@hugeicons/core-free-icons/Logout01Icon";
 import Settings02Icon from "@hugeicons/core-free-icons/Settings02Icon";
@@ -40,6 +41,13 @@ export default function SettingsScreen() {
   return (
     <Page title="Settings" subtitle="Manage Matrix OS and your account">
       <SettingsCardStack>
+        <SettingsRow
+          card
+          title="Messaging"
+          detail="Connect WhatsApp and Slack"
+          icon={Message01Icon}
+          onPress={() => router.push("/settings-detail/messaging" as never)}
+        />
         <SettingsRow
           card
           title="System"
