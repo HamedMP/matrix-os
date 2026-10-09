@@ -357,7 +357,7 @@ function SettingsFrame({
           </header>
 
           <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
-            <aside className="flex w-full shrink-0 flex-col border-b border-border/40 bg-card/50 p-2 sm:w-52 sm:border-b-0 sm:border-r">
+            <aside className="flex w-full shrink-0 flex-col border-b border-sidebar-border bg-sidebar text-sidebar-foreground p-2 sm:w-52 sm:border-b-0 sm:border-r">
               <nav
                 aria-label="Settings sections"
                 className="flex flex-wrap gap-1 overflow-x-auto pb-1 sm:min-h-0 sm:flex-1 sm:flex-col sm:flex-nowrap sm:gap-0.5 sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
@@ -387,7 +387,7 @@ function SettingsFrame({
                       aria-current={active ? "page" : undefined}
                       className={`flex shrink-0 items-center gap-2.5 rounded-md px-3 py-2.5 text-[13px] transition-colors sm:order-none sm:px-2.5 sm:py-1.5 ${
                         active
-                          ? "order-first bg-ember/12 text-deep font-semibold"
+                          ? "order-first bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                           : locked
                             ? "cursor-not-allowed text-muted-foreground/45"
                             : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
@@ -395,7 +395,7 @@ function SettingsFrame({
                     >
                       <Icon
                         className={`size-4 shrink-0 ${
-                          active ? "text-ember" : ""
+                          active ? "text-sidebar-accent-foreground" : ""
                         }`}
                       />
                       <span>{section.label}</span>

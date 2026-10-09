@@ -8,7 +8,7 @@ describe("appearance store", () => {
   let eventListeners: Map<string, (payload: unknown) => void>;
 
   beforeEach(() => {
-    useAppearance.setState({ mode: "system", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: false });
+    useAppearance.setState({ mode: "light", themeId: DEFAULT_THEME_ID, zoom: 1, hydrated: false, pending: false, error: null, fontId: "geist", monoFontId: "jetbrains", customTheme: null });
     eventListeners = new Map();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -16,7 +16,7 @@ describe("appearance store", () => {
     });
     window.operator = {
       invoke: vi.fn(async (channel: string) => {
-        if (channel === "state:get") return { value: { theme: "dark", themeId: "dracula" } };
+        if (channel === "state:get") return { value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula" } };
         return { ok: true };
       }),
       on: vi.fn((channel: string, callback: (payload: unknown) => void) => {
@@ -46,38 +46,38 @@ describe("appearance store", () => {
   });
 
   it("falls back to defaults for unknown persisted values", async () => {
-    window.operator.invoke = vi.fn(async () => ({ value: { theme: "neon", themeId: "not-a-theme" } }));
+    window.operator.invoke = vi.fn(async () => ({ value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "neon", themeId: "not-a-theme" } }));
 
     await useAppearance.getState().load();
 
-    expect(useAppearance.getState()).toMatchObject({ mode: "system", themeId: DEFAULT_THEME_ID, hydrated: true });
+    expect(useAppearance.getState()).toMatchObject({ mode: "light", themeId: DEFAULT_THEME_ID, hydrated: true });
   });
 
-  it("applies and persists theme changes", () => {
-    useAppearance.getState().setThemeId("nord");
+  it("applies and persists theme changes", async () => {
+    await useAppearance.getState().setThemeId("nord");
 
     expect(document.documentElement.getAttribute("data-theme-id")).toBe("nord");
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "system", themeId: "nord", zoom: 1 },
+      value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "light", themeId: "nord", zoom: 1 },
     });
   });
 
-  it("ignores unknown theme ids from callers", () => {
-    useAppearance.getState().setThemeId("garbage");
+  it("ignores unknown theme ids from callers", async () => {
+    await useAppearance.getState().setThemeId("garbage");
 
     expect(useAppearance.getState().themeId).toBe(DEFAULT_THEME_ID);
     expect(window.operator.invoke).not.toHaveBeenCalledWith("state:set", expect.anything());
   });
 
-  it("applies mode changes and keeps the theme", () => {
-    useAppearance.getState().setThemeId("dracula");
-    useAppearance.getState().setMode("dark");
+  it("applies mode changes and keeps the theme", async () => {
+    await useAppearance.getState().setThemeId("dracula");
+    await useAppearance.getState().setMode("dark");
 
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(window.operator.invoke).toHaveBeenLastCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "dark", themeId: "dracula", zoom: 1 },
+      value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula", zoom: 1 },
     });
   });
 
@@ -98,7 +98,7 @@ describe("appearance store", () => {
 
   it("defaults zoom to 1 and applies the persisted factor once after hydration", async () => {
     window.operator.invoke = vi.fn(async (channel: string) => {
-      if (channel === "state:get") return { value: { theme: "dark", themeId: "dracula", zoom: 1.4 } };
+      if (channel === "state:get") return { value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula", zoom: 1.4 } };
       return { ok: true };
     });
 
@@ -112,7 +112,7 @@ describe("appearance store", () => {
 
   it("clamps persisted zoom values into the supported range", async () => {
     window.operator.invoke = vi.fn(async (channel: string) => {
-      if (channel === "state:get") return { value: { theme: "dark", zoom: 9 } };
+      if (channel === "state:get") return { value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", zoom: 9 } };
       return { ok: true };
     });
 
@@ -129,7 +129,7 @@ describe("appearance store", () => {
     expect(window.operator.invoke).toHaveBeenCalledWith("app:set-zoom", { factor: 2 });
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "system", themeId: DEFAULT_THEME_ID, zoom: 2 },
+      value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "light", themeId: DEFAULT_THEME_ID, zoom: 2 },
     });
   });
 
@@ -150,10 +150,57 @@ describe("appearance store", () => {
     expect(useAppearance.getState().zoom).toBe(0.8);
     expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
       key: "appearance",
-      value: { theme: "dark", themeId: "dracula", zoom: 0.8 },
+      value: { fontId: "geist", monoFontId: "jetbrains", customTheme: null, theme: "dark", themeId: "dracula", zoom: 0.8 },
     });
     // Main already applied the factor for a menu step; the renderer must not
     // echo it back through app:set-zoom.
     expect(window.operator.invoke).not.toHaveBeenCalledWith("app:set-zoom", expect.anything());
+  });
+});
+
+describe('custom appearance persistence', () => {
+  beforeEach(() => {
+    useAppearance.setState({ mode: 'light', themeId: 'matrix', fontId: 'geist', monoFontId: 'jetbrains', customTheme: null, pending: false, error: null });
+    window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => {}) };
+  });
+  it('applies a custom theme and fonts only after the save succeeds', async () => {
+    let finish!: (value: { ok: true }) => void;
+    window.operator.invoke = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    const saving = useAppearance.getState().update({ themeId: 'custom', fontId: 'serif', customTheme: { baseThemeId: 'matrix', light: { accent: '#334455' }, dark: {} } });
+    await Promise.resolve();
+    expect(useAppearance.getState().themeId).toBe('matrix');
+    expect(useAppearance.getState().pending).toBe(true);
+    finish({ ok: true }); await saving;
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#334455');
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toContain('Georgia');
+    expect(useAppearance.getState().themeId).toBe('custom');
+  });
+  it('retains the previous appearance and exposes a safe error when saving fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    window.operator.invoke = vi.fn(async () => { throw new Error('/private/provider/failure'); });
+    await useAppearance.getState().update({ themeId: 'nord' });
+    expect(useAppearance.getState().themeId).toBe('matrix');
+    expect(useAppearance.getState().pending).toBe(false);
+    expect(useAppearance.getState().error).toBe('Could not save appearance. Please try again.');
+    warn.mockRestore();
+  });
+});
+
+describe('zoom coordination', () => {
+  it('persists menu zoom after an appearance write fails', async () => {
+    let zoomChanged!: (value: { factor: number }) => void;
+    let rejectSave!: (error: Error) => void;
+    useAppearance.setState({ ...useAppearance.getInitialState(), hydrated: false });
+    const invoke = vi.fn(async () => ({ ok: true }));
+    window.operator = { invoke, on: vi.fn((channel, callback) => { if (channel === 'app:zoom-changed') zoomChanged = callback; return () => {}; }) };
+    await useAppearance.getState().load();
+    invoke.mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
+    const saving = useAppearance.getState().update({ themeId: 'nord' });
+    await Promise.resolve();
+    zoomChanged({ factor: 1.4 });
+    rejectSave(new Error('write failed'));
+    await saving;
+    await Promise.resolve();
+    expect(invoke).toHaveBeenLastCalledWith('state:set', { key: 'appearance', value: expect.objectContaining({ zoom: 1.4, themeId: 'matrix' }) });
   });
 });

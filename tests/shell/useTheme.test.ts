@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
-import { DEFAULT_THEME, getThemeFallback, normalizeTheme, resetThemeRuntimeCacheForTests, saveTheme, useTheme, type Theme } from "../../shell/src/hooks/useTheme";
+import { DEFAULT_THEME, getThemeFallback, normalizeTheme, resetThemeRuntimeCacheForTests, saveTheme, useTheme, useThemeState, type Theme } from "../../shell/src/hooks/useTheme";
 import { createShellSnapshotScope, loadShellSnapshot, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache";
 
 vi.mock("../../shell/src/hooks/useFileWatcher", () => ({
@@ -71,6 +71,22 @@ describe("theme system", () => {
     "ring",
   ];
 
+  it('does not enable appearance writes before the initial read succeeds', async () => {
+    let finish!: (value: unknown) => void;
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(resolve => { finish = resolve; })));
+    const { result } = renderHook(() => useThemeState());
+    expect(result.current.loaded).toBe(false);
+    await act(async () => { finish({ ok: true, json: async () => ({ name: 'saved', colors: { background: '#112233' } }) }); });
+    expect(result.current.loaded).toBe(true);
+    expect(result.current.theme.name).toBe('saved');
+  });
+  it('keeps writes disabled when the initial read fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })));
+    const { result } = renderHook(() => useThemeState());
+    await waitFor(() => expect(result.current.loadError).toBe(true));
+    expect(result.current.loaded).toBe(false);
+  });
+
   it("default theme has all required color keys", () => {
     for (const key of REQUIRED_COLOR_KEYS) {
       expect(DEFAULT_THEME.colors[key]).toBeDefined();
@@ -86,14 +102,14 @@ describe("theme system", () => {
     const theme = getThemeFallback();
 
     expect(theme).toBe(DEFAULT_THEME);
-    expect(theme.colors.background).toBe("#FAFAF9");
+    expect(theme.colors.background).toBe("#fafafa");
   });
 
   it("normalizes empty first-run theme responses against the light shell fallback", () => {
     const fallback = getThemeFallback();
     const theme = normalizeTheme({}, fallback);
 
-    expect(theme.mode).toBeUndefined();
+    expect(theme.mode).toBe("light");
     expect(theme.colors.background).toBe(fallback.colors.background);
   });
 
@@ -150,9 +166,9 @@ describe("theme system", () => {
 
   it("converts theme to CSS variables", () => {
     const vars = themeToCssVars(DEFAULT_THEME);
-    expect(vars["--background"]).toBe("#FAFAF9");
-    expect(vars["--primary"]).toBe("#434E3F");
-    expect(vars["--font-mono"]).toBe("JetBrains Mono, monospace");
+    expect(vars["--background"]).toBe("#fafafa");
+    expect(vars["--primary"]).toBe("#242323");
+    expect(vars["--font-mono"]).toBe('"JetBrains Mono", ui-monospace, monospace');
     expect(vars["--radius"]).toBe("0.75rem");
   });
 
@@ -179,7 +195,7 @@ describe("theme system", () => {
     const vars = themeToCssVars(custom);
     expect(vars["--background"]).toBe("#001122");
     expect(vars["--primary"]).toBe("#00ccff");
-    expect(vars["--foreground"]).toBe("#32352E");
+    expect(vars["--foreground"]).toBe("#242323");
   });
 
   it("normalizes missing persisted theme fields to defaults", () => {
@@ -217,6 +233,13 @@ describe("theme system", () => {
     expect(theme.fonts.sans).toBe("system-ui, sans-serif");
     expect(theme.fonts.mono).toBe(fallback.fonts.mono);
     expect(theme.radius).toBe("1rem");
+  });
+
+  it("derives navigation colors for an older saved theme without sidebar tokens", () => {
+    const theme = normalizeTheme({ name: "legacy", mode: "dark", colors: { background: "#101010", secondary: "#202020", foreground: "#eeeeee", accent: "#303030" } });
+    expect(theme.colors.sidebar).toBe("#202020");
+    expect(theme.colors["sidebar-foreground"]).toBe("#eeeeee");
+    expect(theme.colors["sidebar-accent"]).toBe("#303030");
   });
 
   it("initializes from the scoped shell snapshot before revalidating from the server", async () => {
@@ -280,6 +303,19 @@ describe("theme system", () => {
     await saveTheme({ ...DEFAULT_THEME, name: "saved-theme" }, { cacheScope: scope });
 
     expect(loadShellSnapshot(scope)?.theme?.name).toBe("saved-theme");
+  });
+
+  it("does not let an earlier load overwrite a newly saved theme", async () => {
+    let resolveLoad!: (value: unknown) => void;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockReturnValueOnce(new Promise(resolve => { resolveLoad = resolve; }))
+      .mockResolvedValueOnce({ ok: true }));
+    const hook = renderHook(() => useTheme());
+    await act(async () => { await saveTheme({ ...DEFAULT_THEME, name: "saved-custom" }); });
+    expect(hook.result.current.name).toBe("saved-custom");
+    await act(async () => { resolveLoad({ ok: true, json: async () => DEFAULT_THEME }); });
+    expect(hook.result.current.name).toBe("saved-custom");
+    hook.unmount();
   });
 
   describe("theme style validation", () => {

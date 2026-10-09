@@ -403,13 +403,13 @@ function ChatAppContent({
       )}
       {/* Sidebar */}
       <ChatRailOrderContext.Provider value={{manual:!mobile,move:railOrder.move,scopeKey:railOrder.scopeKey}}><aside data-rail-order-root aria-busy={navigationFresh===false}
-        className={`z-20 flex flex-col border-r border-border/50 bg-muted/95 backdrop-blur transition-all duration-200 ease-out ${
+        className={`z-20 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-all duration-200 ease-out ${
           sidebarOpen
             ? mobile ? "absolute inset-y-0 left-0 w-[min(86vw,320px)] shadow-2xl" : "w-[260px]"
             : "w-0 overflow-hidden"
         }`}
       >
-        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-muted p-3 pb-2">
+        <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-sidebar p-3 pb-2">
           <Button
             variant="ghost"
             size="icon"

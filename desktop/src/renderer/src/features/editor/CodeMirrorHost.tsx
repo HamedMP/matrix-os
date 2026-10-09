@@ -82,7 +82,8 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
   // Recreate the editor when the unified theme changes; the document cache
   // preserves unsaved content across the remount.
   const themeId = useAppearance((s) => s.themeId);
-  const themeMode = useAppearance((s) => s.mode);
+  const themeMode = useAppearance((s) => s.resolvedMode);
+  const customTheme = useAppearance((s) => s.customTheme);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const fileRef = useRef<OpenedFile | null>(null);
@@ -101,7 +102,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
     let disposed = false;
     const resolvedThemeMode = resolveThemeMode(themeMode);
     const editorThemeExtensions = buildEditorTheme(
-      getThemeEditorColors(themeId, resolvedThemeMode),
+      getThemeEditorColors(themeId, resolvedThemeMode, customTheme),
       resolvedThemeMode === "dark",
     );
 
@@ -153,7 +154,7 @@ export default function CodeMirrorHost({ taskId, path }: { taskId: string; path:
       viewRef.current?.destroy();
       viewRef.current = null;
     };
-  }, [api, path, setDirty, taskId, themeId, themeMode]);
+  }, [api, path, setDirty, taskId, themeId, themeMode, customTheme]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
