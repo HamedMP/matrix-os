@@ -7,6 +7,7 @@ import { z } from 'zod/v4';
 import { isLocallyObservedNativeHarnessRoute, type AiProviderSnapshotV3, type ProviderAccessSource, type ProviderHarnessInstance } from '@matrix-os/contracts';
 import { hermesNativeModelId, projectHermesNativeCatalog } from '../ai-providers/hermes-native-catalog.js';
 import type { AgentRuntimeSource } from '../agent-config/service.js';
+import { proveHermesModel } from './hermes-model-proof.js';
 
 export const HERMES_APP_ENDPOINTS = {
   anthropic: { url: 'https://api.anthropic.com/v1/messages', base: 'https://api.anthropic.com', key: 'ANTHROPIC_API_KEY', mode: 'anthropic_messages' },
@@ -85,7 +86,7 @@ function observed(input: HermesAppSelection, now: number): { provider: HermesApp
   return { provider, model };
 }
 /** App authority is its exact native source, independent of Matrix Inbox defaults. */
-export async function proveHermesAppCredential(options: HermesAppSelection & { homePath: string; runtimeSource: AgentRuntimeSource; now?: () => number }) {
+export async function proveHermesAppCredential(options: HermesAppSelection & { homePath: string; runtimeSource: AgentRuntimeSource; now?: () => number; fetchImpl?: typeof fetch }) {
   const now = options.now ?? Date.now; const { provider, model } = observed(options, now());
   const directory = join(options.homePath, '.hermes'); const stat = await lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw denied();
@@ -119,5 +120,8 @@ export async function proveHermesAppCredential(options: HermesAppSelection & { h
     await unchanged();
   };
   await live();
-  return { provider, model, ...secret, unchanged, live };
+  const resolved = await proveHermesModel({ provider, model, key: secret.key, signal: options.signal, fetchImpl: options.fetchImpl });
+  // Metadata may outlive the five-second observation or a credential mutation.
+  await live();
+  return { provider, ...resolved, ...secret, unchanged, live };
 }

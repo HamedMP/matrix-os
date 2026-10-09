@@ -6,26 +6,43 @@ import type { AiProviderSnapshotV3, ProviderAccessSource, ProviderHarnessInstanc
 import { normalizeHermesRuntimeSnapshot } from '../../packages/gateway/src/agent-config/hermes-source.js';
 import { projectHermesNativeCatalog } from '../../packages/gateway/src/ai-providers/hermes-native-catalog.js';
 import { createGenericNativeWriter } from '../../packages/gateway/src/ai-providers/generic-native-writer.js';
-import { createHermesAppCompletion } from '../../packages/gateway/src/app-ai/hermes-completion.js';
+import { completeHermesHttp } from '../../packages/gateway/src/app-ai/hermes-http.js';
+import { createHermesAppCompletion as createRawHermesAppCompletion } from '../../packages/gateway/src/app-ai/hermes-completion.js';
 let home: string;
 const now = () => Date.now();
 const abort = () => new AbortController().signal;
-function fixture(provider = 'openai-api', model = 'fixture') {
+const OPENAI_MODEL = 'gpt-4o-mini-2024-07-18';
+const ALTERNATIVE_MODEL = 'gpt-4o-2024-08-06';
+const nativeModel = (provider: string) => provider === 'anthropic' ? 'claude-sonnet-4-6' : provider === 'openrouter' ? 'openai/gpt-4o-mini' : provider === 'openai-codex' ? 'fixture' : OPENAI_MODEL;
+// Existing transport/fence cases target paid POSTs; supply separate realistic
+// provider metadata GET responses so their cancellation fixtures retain that scope.
+function createHermesAppCompletion(options: Parameters<typeof createRawHermesAppCompletion>[0]) {
+  return createRawHermesAppCompletion({ ...options, fetchImpl: async (url, request) => {
+    if (request?.method === 'GET') {
+      const parsed = new URL(String(url)); const model = decodeURIComponent(parsed.pathname.split('/models/')[1] ?? parsed.pathname.split('/model/')[1]!);
+      return Response.json(parsed.hostname === 'api.anthropic.com' ? { type: 'model', id: model } : parsed.hostname === 'openrouter.ai' ? { data: { id: model, canonical_slug: model } } : { object: 'model', id: model, owned_by: 'openai' });
+    }
+    if (!options.fetchImpl) throw Error('Unexpected inference in transport fixture');
+    return options.fetchImpl(url, request);
+  } });
+}
+function fixture(provider = 'openai-api', model = nativeModel(provider)) {
+  if (model === 'alternative') model = ALTERNATIVE_MODEL;
   const modelId = `${provider}:${model}`;
   const harness = { id: 'hermes_work', harness: 'hermes', enabled: true, configuredEnabled: true, installState: 'installed', selectedAccountId: null, accessSourceId: `harness_hermes_${provider}`, route: { kind: 'configurable', providerId: provider, modelId } } as ProviderHarnessInstance;
-  const snapshot = () => normalizeHermesRuntimeSnapshot({ observedAt: now(), status: { gateway_running: true }, options: { provider, model: 'fixture', providers: [{ slug: provider, name: provider, authenticated: true, is_user_defined: false, auth_type: provider === 'openai-codex' ? 'oauth' : 'api_key', models: ['fixture', 'alternative'] }] } });
+  const snapshot = () => normalizeHermesRuntimeSnapshot({ observedAt: now(), status: { gateway_running: true }, options: { provider, model: nativeModel(provider), providers: [{ slug: provider, name: provider, authenticated: true, is_user_defined: false, auth_type: provider === 'openai-codex' ? 'oauth' : 'api_key', models: [nativeModel(provider), ALTERNATIVE_MODEL] }] } });
   const profile = projectHermesNativeCatalog(snapshot(), new Date()).profiles[0]!;
   const source = { id: harness.accessSourceId, kind: 'harness_profile', harness: 'hermes', fundingKind: 'harness_owned', readiness: { state: 'unknown', checkedAt: null, staleAfter: null }, accountId: null, providerId: provider, eligibleModelIds: profile.models.map(m => m.id), localObservation: profile.localObservation } as ProviderAccessSource;
   const canonical = { nativeHarnessCatalog: { profiles: [profile], failures: [] } } as AiProviderSnapshotV3;
   return { harness, source, canonical, signal: abort(), runtimeSource: vi.fn(async () => snapshot()) };
 }
 async function profile(provider = 'openai-api', auth?: unknown) {
-  await writeFile(join(home, '.hermes/config.yaml'), `model:\n  provider: ${provider}\n  default: fixture\n`);
+  await writeFile(join(home, '.hermes/config.yaml'), `model:\n  provider: ${provider}\n  default: ${nativeModel(provider)}\n`);
   await writeFile(join(home, '.hermes/.env'), 'OPENAI_API_KEY=fixture-key\nANTHROPIC_API_KEY=fixture-anthropic\nOPENROUTER_API_KEY=fixture-router\n');
   if (auth !== undefined) await writeFile(join(home, '.hermes/auth.json'), JSON.stringify(auth));
 }
 function token(exp = now() / 1000 + 1000, account = 'fixture-account') { return `${Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ exp, 'https://api.openai.com/auth': { chatgpt_account_id: account } })).toString('base64url')}.${Buffer.from('fixture signature').toString('base64url')}`; }
-const response = (model = 'fixture') => Response.json({ model, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'only text' }] }] });
+const response = (model = OPENAI_MODEL) => Response.json({ model: model === 'alternative' ? ALTERNATIVE_MODEL : model, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'only text' }] }] });
 beforeEach(async () => { home = await mkdtemp(join(tmpdir(), 'app-hermes-')); await mkdir(join(home, '.hermes')); await profile(); });
 afterEach(async () => { await rm(home, { recursive: true, force: true }); await rm(join(tmpdir(), '.matrix-private', basename(home)), { recursive: true, force: true }); });
 it('proves the exact app native route and executes fixed OpenAI Responses with no context/tools', async () => {
@@ -36,7 +53,7 @@ it('proves the exact app native route and executes fixed OpenAI Responses with n
   const [url, request] = fetchImpl.mock.calls[0]!;
   expect(url).toBe('https://api.openai.com/v1/responses');
   expect((request!.headers as Headers).get('authorization')).toBe('Bearer fixture-key');
-  expect(JSON.parse(String(request!.body))).toEqual({ model: 'fixture', stream: false, store: false, tools: [], tool_choice: 'none', max_output_tokens: 8192, instructions: expect.any(String), input: [{ role: 'user', content: 'only supplied text' }] });
+  expect(JSON.parse(String(request!.body))).toEqual({ model: OPENAI_MODEL, stream: false, store: false, tools: [], tool_choice: 'none', max_output_tokens: 8192, instructions: expect.any(String), input: [{ role: 'user', content: 'only supplied text' }] });
   expect(request!.redirect).toBe('error'); expect(request!.signal).toBeInstanceOf(AbortSignal);
   await completion.close();
 });
@@ -46,22 +63,21 @@ it('supports another exact eligible model without changing the Hermes default mo
 });
 it.each(['anthropic', 'openrouter'])('uses the exact static %s native key and no-tools protocol', async provider => {
   await profile(provider); const input = fixture(provider);
-  const fetchImpl = vi.fn(async () => provider === 'anthropic' ? Response.json({ model: 'fixture', stop_reason: 'end_turn', content: [{ type: 'text', text: 'only text' }] }) : Response.json({ model: 'fixture', choices: [{ finish_reason: 'stop', message: { content: 'only text' } }] }));
+  const fetchImpl = vi.fn(async () => provider === 'anthropic' ? Response.json({ model: nativeModel(provider), stop_reason: 'end_turn', content: [{ type: 'text', text: 'only text' }] }) : Response.json({ model: nativeModel(provider), choices: [{ finish_reason: 'stop', message: { content: 'only text' } }] }));
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl });
   expect(await completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).toEqual({ text: 'only text' });
   const [url, request] = fetchImpl.mock.calls[0]!; const body = JSON.parse(String(request!.body));
   expect(url).toBe(provider === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://openrouter.ai/api/v1/chat/completions');
-  expect(body.model).toBe('fixture'); expect(body.tools?.length ?? 0).toBe(0); expect(body.tool_choice ?? 'none').toBe('none');
+  expect(body.model).toBe(nativeModel(provider)); expect(body.tools?.length ?? 0).toBe(0); expect(body.tool_choice ?? 'none').toBe('none');
   expect(JSON.stringify(body)).not.toMatch(/fixture-key|fixture-anthropic|fixture-router/); await completion.close();
 });
-it('uses fresh singleton Hermes ChatGPT grant with exact account header and completed SSE', async () => {
+it('denies Hermes ChatGPT OAuth before inference until native alias identity is attested', async () => {
   const access = token(); await profile('openai-codex', { active_provider: 'openai-codex', providers: { 'openai-codex': { tokens: { access_token: access, refresh_token: 'NEVER_SEND_REFRESH' } } } });
-  const input = fixture('openai-codex'); const fetchImpl = vi.fn(async () => new Response(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response: { model: 'fixture', status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'only text' }] }] } })}\n\n`, { headers: { 'content-type': 'text/event-stream' } }));
+  const input = fixture('openai-codex'); const fetchImpl = vi.fn();
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl });
-  expect(await completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).toEqual({ text: 'only text' });
-  const [url, request] = fetchImpl.mock.calls[0]!;
-  expect(url).toBe('https://chatgpt.com/backend-api/codex/responses'); expect((request!.headers as Headers).get('chatgpt-account-id')).toBe('fixture-account'); expect((request!.headers as Headers).get('authorization')).toBe(`Bearer ${access}`);
-  expect(JSON.stringify(request)).not.toContain('NEVER_SEND_REFRESH'); expect(JSON.parse(String(request!.body))).toMatchObject({ model: 'fixture', store: false, stream: true }); await completion.close();
+  expect(await completion.probe(input)).toBe(false);
+  await expect(completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).rejects.toThrow();
+  expect(fetchImpl).not.toHaveBeenCalled(); await completion.close();
 });
 it.each(['missing canonical', 'stale canonical', 'wrong source', 'wrong account', 'disabled', 'unknown model', 'named profile', 'credential pool', 'custom endpoint', 'executable key', 'symlink secret', 'oversize secret', 'provider differs'])('fails closed for %s', async kind => {
   const input = fixture();
@@ -106,13 +122,13 @@ it.each(['before', 'after', 'key changed', 'config changed', 'active changed', '
   await expect(completion.generate({ ...input, prompt: 'text', revalidate })).rejects.toThrow(); expect(fetchImpl).toHaveBeenCalledTimes(kind === 'before' ? 0 : 1); await completion.close();
 });
 it.each(['model mismatch', 'tool output', 'incomplete', 'oversize', 'upstream failure'])('rejects %s response without fallback', async kind => {
-  const input = fixture(); const fetchImpl = vi.fn(async () => kind === 'model mismatch' ? response('other') : kind === 'tool output' ? Response.json({ model: 'fixture', status: 'completed', output: [{ type: 'function_call', name: 'read_file' }] }) : kind === 'incomplete' ? Response.json({ model: 'fixture', status: 'incomplete', output: [] }) : kind === 'oversize' ? new Response(' '.repeat(256001)) : new Response('', { status: 401 }));
+  const input = fixture(); const fetchImpl = vi.fn(async () => kind === 'model mismatch' ? response('other') : kind === 'tool output' ? Response.json({ model: OPENAI_MODEL, status: 'completed', output: [{ type: 'function_call', name: 'read_file' }] }) : kind === 'incomplete' ? Response.json({ model: OPENAI_MODEL, status: 'incomplete', output: [] }) : kind === 'oversize' ? new Response(' '.repeat(256001)) : new Response('', { status: 401 }));
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl });
   await expect(completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).rejects.toThrow(); expect(fetchImpl).toHaveBeenCalledOnce(); await completion.close();
 });
-it('accepts the current CLI exact-one manual device-code pool when no singleton exists', async () => {
+it('keeps an exact-one manual device-code profile unavailable without model attestation', async () => {
   const access = token(); await profile('openai-codex', { active_provider: 'openai-codex', credential_pool: { 'openai-codex': [{ access_token: access, refresh_token: 'never-transfer', auth_type: 'oauth', source: 'manual:device_code', base_url: 'https://chatgpt.com/backend-api/codex' }] } });
-  const input = fixture('openai-codex'); const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource }); expect(await completion.probe(input)).toBe(true); await completion.close();
+  const input = fixture('openai-codex'); const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource }); expect(await completion.probe(input)).toBe(false); await completion.close();
 });
 it.each(['ambiguous pool', 'singleton plus pool', 'wrong pool origin', 'wrong pool endpoint'])('rejects %s rather than selecting/rotating accounts', async kind => {
   const entry = { access_token: token(), refresh_token: 'never-transfer', auth_type: 'oauth', source: kind === 'wrong pool origin' ? 'imported' : 'manual:device_code', base_url: kind === 'wrong pool endpoint' ? 'https://custom.invalid' : 'https://chatgpt.com/backend-api/codex' };
@@ -152,7 +168,7 @@ it('bounds empty response chunks and cancels rather than growing a buffer or sta
 });
 it('denies a retired alternative model in the fresh post-response catalog', async () => {
   const input = fixture('openai-api', 'alternative'); const original = input.runtimeSource; let calls = 0;
-  const runtimeSource = vi.fn(async () => { const snapshot = await original(); if (++calls > 1) snapshot.providers[0]!.models = snapshot.providers[0]!.models.filter(model => model.id !== 'alternative'); return snapshot; });
+  const runtimeSource = vi.fn(async () => { const snapshot = await original(); if (++calls > 2) snapshot.providers[0]!.models = snapshot.providers[0]!.models.filter(model => model.id !== ALTERNATIVE_MODEL); return snapshot; });
   const completion = createHermesAppCompletion({ homePath: home, runtimeSource, fetchImpl: async () => response('alternative') }); await expect(completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).rejects.toThrow(); await completion.close();
 });
 it('accepts only the sanctioned Anthropic configured base URL', async () => {
@@ -183,19 +199,20 @@ it('retains the durable fence if transport body cancellation fails', async () =>
   const other = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource }); expect(await other.probe({ ...input, signal: abort() })).toBe(false); await completion.close(); await other.close();
 });
 it('rejects completed reasoning-only output rather than claiming a text completion', async () => {
-  const input = fixture(); const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl: async () => Response.json({ model: 'fixture', status: 'completed', output: [{ type: 'reasoning' }] }) }); await expect(completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).rejects.toThrow(); await completion.close();
+  const input = fixture(); const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl: async () => Response.json({ model: OPENAI_MODEL, status: 'completed', output: [{ type: 'reasoning' }] }) }); await expect(completion.generate({ ...input, prompt: 'text', revalidate: async () => true })).rejects.toThrow(); await completion.close();
 });
-it.each(['chunked success', 'partial only', 'wrong model', 'tool item', 'tool frame', 'late error', 'wire overflow'])('validates actual ChatGPT Codex SSE %s', async kind => {
+it.each(['chunked success', 'partial only', 'wrong model', 'tool item', 'tool frame', 'late error', 'wire overflow'])('validates low-level ChatGPT Codex SSE %s independently of unavailable Hermes routing', async kind => {
   await profile('openai-codex', { active_provider: 'openai-codex', providers: { 'openai-codex': { tokens: { access_token: token(), refresh_token: 'never-transfer' } } } });
   const completed = { type: 'response.completed', response: { model: kind === 'wrong model' ? 'other' : 'fixture', status: 'completed', output: kind === 'tool item' ? [{ type: 'function_call', name: 'read_file' }] : [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'text café ☕' }] }] } };
   const frame = (event: unknown) => `data: ${JSON.stringify(event)}\n\n`;
   const wire = kind === 'partial only' ? frame({ type: 'response.output_text.delta', delta: 'partial' }) : kind === 'wire overflow' ? ' '.repeat(256001) : (kind === 'tool frame' ? frame({ type: 'response.output_item.added', item: { type: 'function_call' } }) : '') + frame(completed) + (kind === 'late error' ? frame({ type: 'error', error: { message: 'late failure' } }) : '');
   const bytes = Buffer.from(wire); let position = 0; const cancel = vi.fn();
   const body = new ReadableStream<Uint8Array>({ pull(controller) { if (position === bytes.length) { controller.close(); return; } const end = Math.min(bytes.length, position + (kind === 'wire overflow' ? 64000 : 17)); controller.enqueue(bytes.subarray(position, end)); position = end; }, cancel }, { highWaterMark: 0 });
-  const input = fixture('openai-codex'); const completion = createHermesAppCompletion({ homePath: home, runtimeSource: input.runtimeSource, fetchImpl: async () => new Response(body, { headers: { 'content-type': 'text/event-stream; charset=utf-8' } }) });
-  const result = completion.generate({ ...input, prompt: 'text', revalidate: async () => true });
+  // This is a transport-only synthetic proof, never a native route authority.
+  const proof = { provider:'openai-codex' as const,model:'fixture',responseModels:['fixture'],key:'synthetic-access',accountId:'synthetic-account',unchanged:async()=>{},live:async()=>{} };
+  const result = completeHermesHttp({proof,prompt:'text',signal:abort(),fetchImpl:async()=>new Response(body,{headers:{'content-type':'text/event-stream; charset=utf-8'}})});
   if (kind === 'chunked success') expect(await result).toEqual({ text: 'text café ☕' }); else await expect(result).rejects.toThrow();
-  if (kind === 'wire overflow') expect(cancel).toHaveBeenCalledOnce(); await completion.close();
+  if (kind === 'wire overflow') expect(cancel).toHaveBeenCalledOnce();
 });
 it('cancels a late live body after headers arrive for an already aborted request', async () => {
   const input = fixture(); const controller = new AbortController(); input.signal = controller.signal;
