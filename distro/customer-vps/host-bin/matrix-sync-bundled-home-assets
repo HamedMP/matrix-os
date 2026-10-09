@@ -343,6 +343,8 @@ if (!existsSync(templateManifestPath)) {
     }
 
     if (preserveSelectedIcon(relPath, templatePath, homePath)) {
+      // Kernel startup sync must also treat this unchanged manifest as owner-selected.
+      delete installedManifest[relPath];
       logSkipped(relPath, "preserving selected owner artwork");
       continue;
     }

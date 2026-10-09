@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import {smartSyncTemplate} from '../../packages/kernel/src/boot';
 
 const root = process.cwd();
 const script = join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets');
@@ -257,4 +258,10 @@ fs.openSync = function(path, flags, ...args) {
       if (artwork === 'symlink') expect(lstatSync(join(f.home, relSvg)).isSymbolicLink()).toBe(true);
     }
   });
+});
+
+it('preserves selected owner artwork across host sync followed by kernel startup sync',()=>{
+ const f=fixture({nestedGame:true});f.write(f.home,'system/icons/game-center.png','owner customized art');
+ f.sync();smartSyncTemplate(f.home,f.template);
+ expect(readFileSync(join(f.home,f.relManifest),'utf8')).toBe(f.oldManifest);
 });
