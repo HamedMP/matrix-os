@@ -179,6 +179,9 @@ export function useBrainJob({ poll, cancel, onFinished }: {
   useLayoutEffect(() => { finished.current.onFinished = onFinished; });
   // Every start and every "Check again" gets a new round, so an answer meant for an earlier one is never applied.
   const rounds = useRef(0);
+  // A cancel still running when the screen closes must not report the job finished.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const watching = watch?.phase === "watching";
   const jobId = watching ? watch.view.jobId : null;
   const name = watch?.name ?? "";
@@ -195,10 +198,10 @@ export function useBrainJob({ poll, cancel, onFinished }: {
     const fail = (error: BrainShellErrorState) => {
       const stop = failures + 1 >= BRAIN_JOB_MAX_FAILURES || !TRANSIENT.includes(error.kind)
         || polls + 1 >= BRAIN_JOB_MAX_POLLS;
-      setWatch((previous) => ({
+      setWatch((previous) => previous!.phase !== "watching" ? previous : {
         ...previous!, polls: polls + 1, failures: failures + 1, phase: stop ? "stopped" : "watching",
         error: stop ? error : null,
-      }));
+      });
     };
     const timer = setTimeout(() => {
       pollJob(jobId).then((value) => {
@@ -211,10 +214,11 @@ export function useBrainJob({ poll, cancel, onFinished }: {
         }
         const ended = brainJobFinished(view.status);
         const capped = !ended && polls + 1 >= BRAIN_JOB_MAX_POLLS;
-        setWatch((previous) => ({
+        // A cancel that ended the job may land first, before this answer was dropped; a finished job stays finished.
+        setWatch((previous) => previous!.phase !== "watching" ? previous : {
           ...previous!, view, polls: polls + 1, failures: 0, error: null,
           phase: ended ? "finished" : capped ? "stopped" : "watching",
-        }));
+        });
         if (ended) finishOnce(finished.current, round, name, view);
       }, (error: unknown) => { if (current()) fail(brainShellError(error)); });
     }, brainJobPollDelay(polls));
@@ -244,14 +248,14 @@ export function useBrainJob({ poll, cancel, onFinished }: {
     const { view: { jobId: id }, round: at } = watch;
     setWatch({ ...watch, cancelling: true, cancelError: null });
     cancel(id).then((value) => {
-      if (rounds.current !== at) return;
+      if (!mounted.current || rounds.current !== at) return;
       const view = brainJobView(value);
       const ended = view !== null && view.jobId === id && brainJobFinished(view.status) ? view : null;
       setWatch((previous) => ended === null ? { ...previous!, cancelling: false }
         : { ...previous!, view: ended, phase: "finished", cancelling: false });
       if (ended !== null) finishOnce(finished.current, at, name, ended);
     }, (error: unknown) => {
-      if (rounds.current !== at) return;
+      if (!mounted.current || rounds.current !== at) return;
       const cancelError = brainShellError(error);
       setWatch((previous) => ({ ...previous!, cancelling: false, cancelError }));
     });

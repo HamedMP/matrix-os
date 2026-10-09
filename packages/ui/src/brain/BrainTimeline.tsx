@@ -9,7 +9,7 @@ import {
 import { brainTimelineRef } from "./brain-format.js";
 import { BrainPersonMerges } from "./BrainPersonMerges.js";
 import type { BrainTimelineItemView } from "./brain-types.js";
-import { useBrainLoad, useBrainPages } from "./use-brain-load.js";
+import { useBrainPages } from "./use-brain-load.js";
 
 type TimelineKind = "file" | "person" | "spec";
 const PAGE_SIZE = 20;
@@ -28,17 +28,22 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
   const [draft, setDraft] = useState("");
   const [entity, setEntity] = useState("");
   const [person, setPerson] = useState("");
-  const people = useBrainLoad(
-    () => api.entities(projectId, { kind: "person", q: person, limit: PEOPLE_LIMIT }), person === "" ? null : person,
+  // Counts the requests sent, so showing the same one again reads it again.
+  const [sent, setSent] = useState(0);
+  const people = useBrainPages(
+    (cursor) => api.entities(projectId, { kind: "person", q: person, limit: PEOPLE_LIMIT, cursor }),
+    person === "" ? null : `${sent}:${person}`,
   );
   const pages = useBrainPages(
-    (cursor) => api.timeline(projectId, { entity, limit: PAGE_SIZE, cursor }), entity === "" ? null : entity,
+    (cursor) => api.timeline(projectId, { entity, limit: PAGE_SIZE, cursor }),
+    entity === "" ? null : `${sent}:${entity}`,
   );
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = draft.trim();
     if (value === "") return;
+    setSent(sent + 1);
     if (kind === "person") {
       setEntity("");
       setPerson(value.slice(0, BRAIN_ENTITY_QUERY_MAX_CHARS));
@@ -64,10 +69,13 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
       {entity === "" && person === "" && (
         <BrainEmpty title="Pick a file, a person or a spec.">The timeline lists the pull requests, commits and specs that touched it.</BrainEmpty>
       )}
-      <BrainView state={people.state} label="Finding people..." onRetry={people.reload} onOpenSources={onOpenSources}>
-        {(view) => view.items.length === 0 ? <BrainEmpty title={`No one called "${person}" yet.`} /> : (
+      <BrainView state={people.first.state} label="Finding people..." onRetry={people.first.reload}
+        onOpenSources={onOpenSources}>
+        {() => people.items.length === 0 ? (
+          <BrainEmpty title={`No one called "${person}" yet.`}>Try part of the name, or an email.</BrainEmpty>
+        ) : (<>
           <ul aria-label="People" className="flex flex-wrap gap-2">
-            {view.items.map((match) => (
+            {people.items.map((match) => (
               <li key={match.entityId} className="min-w-0 max-w-full">
                 <BrainButton size="sm" variant="outline" wrap className="max-w-full break-all text-left"
                   onClick={() => { setPerson(""); setEntity(match.entityId); }}>
@@ -76,7 +84,9 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
               </li>
             ))}
           </ul>
-        )}
+          <BrainLoadMore nextCursor={people.nextCursor} loading={people.loadingMore} error={people.moreError}
+            onLoadMore={people.loadMore} />
+        </>)}
       </BrainView>
       <BrainView state={pages.first.state} label="Loading the timeline..." onRetry={pages.first.reload}
         onOpenSources={onOpenSources}>
@@ -84,7 +94,9 @@ export function BrainTimeline({ api, projectId, onOpenSources }: BrainScreenProp
           <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
             <h2 className="break-words text-base font-semibold">{view.entity.displayName}</h2>
             <BrainFreshness pending={view.freshness.pendingDocuments} capped={view.freshness.pendingCapped} />
-            {pages.items.length === 0 ? <BrainEmpty title="Nothing touches this yet." /> : (
+            {pages.items.length === 0 ? (
+              <BrainEmpty title="Nothing touches this yet.">Check the name, or sync its sources in Sources.</BrainEmpty>
+            ) : (
               <ol aria-label="Timeline" className={`grid gap-2 border-l pl-4 ${BRAIN_TONE.border}`}>
                 {pages.items.map((item) => <TimelineItem key={item.cite.documentId} item={item} />)}
               </ol>

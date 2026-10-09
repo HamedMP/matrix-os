@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrainTimeline } from "../../packages/ui/src/brain/BrainTimeline.js";
 import { brainMergeEvidenceText, brainScoreText } from "../../packages/ui/src/brain/brain-format.js";
 import type { BrainMergeSuggestionView } from "../../packages/ui/src/brain/brain-types.js";
-import { apiError, fakeBrainApi, PROJECT } from "./brain-fixtures.js";
+import { apiError, fakeBrainApi, FRESH, PROJECT } from "./brain-fixtures.js";
 
 afterEach(cleanup);
 
@@ -50,6 +50,8 @@ describe("Possible duplicates", () => {
     }
     expect(within(card).getByText(`Name matches the GitHub login "${"x".repeat(200)}"`)).toBeTruthy();
     expect(within(region).getByText(/Only part of the people were checked/)).toBeTruthy();
+    // A long name wraps inside the card instead of widening it.
+    expect(within(card).getByRole("button", { name: "Merge into HamedMP" })).toHaveClass("whitespace-normal", "max-w-full", "break-all");
     fireEvent.click(within(card).getByRole("button", { name: "Merge into HamedMP" }));
     expect(await within(card).findByText("Merged hamedmp into HamedMP.")).toBeTruthy();
     expect(api.updateAlias).toHaveBeenLastCalledWith(PROJECT, "ent_b", {
@@ -116,5 +118,35 @@ describe("Possible duplicates", () => {
     expect(reason("name_seen_with_email")).toBe('Name "ann" was seen with this email');
     expect(reason("shared_name")).toBe('Both go by "ann"');
     expect(reason("new_signal")).toBe('Also seen as "ann"');
+  });
+});
+
+describe("Finding people and following", () => {
+  it("pages the people found, reads the same request again, and says what to try next", async () => {
+    const api = openPeople({
+      mergeSuggestions: vi.fn(async () => ({ items: [], nextCursor: null, truncated: false })),
+      entities: vi.fn()
+        .mockResolvedValueOnce({ items: [person("ent_a", "email:a@x.co", "Ann")], nextCursor: "p2" })
+        .mockResolvedValueOnce({ items: [person("ent_b", "email:b@x.co", "Bo")], nextCursor: null })
+        .mockResolvedValueOnce({ items: [], nextCursor: null }),
+      timeline: vi.fn(async () => ({ entity: person("ent_f", "a.ts", "a.ts"), items: [], nextCursor: null, freshness: FRESH })),
+    });
+    const show = (value: string) => {
+      fireEvent.change(screen.getByRole("textbox", { name: "Name, path or spec" }), { target: { value } });
+      fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    };
+    show("a");
+    const people = await screen.findByRole("list", { name: "People" });
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => expect(within(people).getAllByRole("button")).toHaveLength(2));
+    expect(api.entities).toHaveBeenLastCalledWith(PROJECT, { kind: "person", q: "a", limit: 10, cursor: "p2" });
+    show("a");
+    const hint = await screen.findByText("Try part of the name, or an email.");
+    expect(hint.parentElement!.parentElement!.querySelector("svg")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "Timeline for" }), { target: { value: "file" } });
+    show("a.ts");
+    expect(await screen.findByText("Check the name, or sync its sources in Sources.")).toBeTruthy();
+    show("a.ts");
+    await waitFor(() => expect(api.timeline).toHaveBeenCalledTimes(2));
   });
 });

@@ -98,7 +98,8 @@ function MergeCard({ api, projectId, suggestion }: Pick<BrainScreenProps, "api" 
             </BrainButton>
           </>
         ) : (
-          <BrainButton size="sm" disabled={action.busy !== null} onClick={() => update("merge")}>
+          <BrainButton size="sm" wrap className="max-w-full break-all" disabled={action.busy !== null}
+            onClick={() => update("merge")}>
             {action.busy === "merge" ? "Merging..." : `Merge into ${entity.displayName}`}
           </BrainButton>
         )}
