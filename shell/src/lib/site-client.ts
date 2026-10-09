@@ -46,7 +46,11 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
   return {
     get: async (app, signal) => {
       try { const value = await transport.get<unknown>(sitePath(app), { signal }); return value === null ? null : parseSite(value, app); }
-      catch (error: unknown) { if (error instanceof SiteClientError && error.status === 404) return null; throw error; }
+      catch (error: unknown) {
+        console.warn("[site-client] publication load failed", error instanceof Error ? "Error" : "UnknownError");
+        if (error instanceof SiteClientError && error.status === 404) return null;
+        throw error;
+      }
     },
     deploy: async (app, metadata, signal) => parseSite(await transport.post(sitePath(app), SitePublishRequestSchema.parse(metadata), { signal, timeoutMs: 150_000 }), app),
     update: async (app, metadata, signal) => parseSite(await transport.patch(sitePath(app), SiteMetadataSchema.parse(metadata), { signal }), app),

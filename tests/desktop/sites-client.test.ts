@@ -17,6 +17,16 @@ const actions: { name: string; call: (client: SiteClient, signal: AbortSignal) =
   { name: "delete submission", call: (client, signal) => client.deleteSubmission("launch", "11111111-1111-4111-8111-111111111111", signal) },
 ];
 describe("Electron site transport error parity", () => {
+  it("logs only fixed categories when normalizing known and unknown transport failures", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const bound = { patch: vi.fn().mockRejectedValueOnce(new AppError("server", { status: 409 })).mockRejectedValueOnce({ private: "visitor fields" }) };
+    const api = { forRuntime: () => bound } as unknown as ReturnType<typeof createApiClient>;
+    const client = createDesktopSiteClient(api, "primary");
+    await expect(client.update("launch", metadata, new AbortController().signal)).rejects.toBeInstanceOf(SiteClientError);
+    await expect(client.update("launch", metadata, new AbortController().signal)).rejects.toEqual({ private: "visitor fields" });
+    expect(warning.mock.calls).toEqual([["[desktop-sites] request failed", "Error"], ["[desktop-sites] request failed", "UnknownError"]]);
+    warning.mockRestore();
+  });
   it.each(actions)("preserves conflicts and request limits for $name", async ({ call }) => {
     for (const status of [409, 429]) {
       const fetchFn = vi.fn(async () => new Response(JSON.stringify({ error: "postgres://private/credential" }), { status }));

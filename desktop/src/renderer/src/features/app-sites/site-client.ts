@@ -5,6 +5,7 @@ import type { ApiClient } from "../../lib/api";
 async function normalize<T>(work: () => Promise<T>): Promise<T> {
   try { return await work(); }
   catch (error: unknown) {
+    console.warn("[desktop-sites] request failed", error instanceof Error ? "Error" : "UnknownError");
     if (error instanceof AppError) {
       if (error.status !== undefined) throw new SiteClientError(error.status);
       if (error.category === "notFound") throw new SiteClientError(404);

@@ -13,7 +13,7 @@ export function AppSitePanel(props: { appSlug: string; client: SiteClient }) {
 }
 function AppSitePanelSession({ appSlug, client }: { appSlug: string; client: SiteClient }) {
   const state = useAppSite(appSlug, client);
-  const formKey = `${state.loading ? "loading" : "ready"}:${state.site?.id ?? "private"}:${state.site?.revision ?? 0}`;
+  const formKey = `${state.loading ? "loading" : "ready"}:${state.metadataEpoch}`;
   return <AppSiteForm key={formKey} appSlug={appSlug} client={client} state={state} />;
 }
 function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite> }) {
@@ -26,11 +26,9 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
   const [reviewed, setReviewed] = useState(false);
   const [config, setConfig] = useState<SitePublishing | null>(null);
   const [previewReady, setPreviewReady] = useState(false);
-  const [showSubmissions, setShowSubmissions] = useState(false);
   const invalidateReview = () => { setReviewed(false); setReviewOpen(false); setPreviewReady(false); setConfig(null); };
   const metadata = { title: title.trim(), description: description.trim(), slug: slug.trim() || null, ...(site ? { baseRevision: site.revision } : {}) };
   const invalid = !metadata.title || (metadata.slug !== null && !SiteSlugSchema.safeParse(metadata.slug).success);
-  const published = site?.status === "published";
   const disabled = pending || loading || loadFailed;
   async function review() {
     invalidateReview();
@@ -50,17 +48,12 @@ function AppSiteForm({ appSlug, client, state }: { appSlug: string; client: Site
       color: "var(--matrix-fg)",
     } as CSSProperties}>
     <p className="text-sm">Deploy this app to a public URL. Draft changes stay private until you publish an update.</p>
-    <SitePublicationStatus state={state} />
+    <SitePublicationStatus state={state} onRefreshPublication={() => { invalidateReview(); void state.reloadPublication(); }} />
     <SiteMetadataFields {...{ fieldId, disabled, title, description, slug, invalid, setTitle, setDescription, setSlug, invalidateReview }} />
     <SitePublicLinks {...{ site, disabled, action }} />
     <SiteDeploymentActions {...{ appSlug, client, state, disabled, invalid, reviewed, previewReady, config, metadata, review }} />
     {reviewOpen ? <SiteDeploymentReview {...{ config, reviewed, setReviewed }} /> : null}
-    {site ? <>
-      <SiteVersionHistory {...{ appSlug, client, state, disabled }} />
-      <Button variant="secondary" disabled={disabled} onClick={() => { setShowSubmissions(true); void state.loadSubmissions(); }}>Visitor submissions</Button>
-      {showSubmissions ? <SiteSubmissions appSlug={appSlug} client={client} state={state} /> : null}
-      {published ? <SiteUnpublish {...{ appSlug, client, state, disabled }} /> : null}
-    </> : null}
+    <SitePublicationManagement {...{ appSlug, client, state, disabled }} />
   </section>;
 }
 
@@ -84,26 +77,27 @@ function SiteDeploymentReview({ config, reviewed, setReviewed }: { config: SiteP
 }
 type SiteSectionProps = { appSlug: string; client: SiteClient; state: ReturnType<typeof useAppSite>; disabled: boolean };
 function SiteVersionHistory({ appSlug, client, state, disabled }: SiteSectionProps) {
-  const { site, action } = state;
+  const { site, mutate } = state;
   if (!site) return null;
   return <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Version history</summary><ul className="mt-3 space-y-2">
-        {site.versions.map(version => <li key={version.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{formatSiteDate(version.createdAt)} {version.id === site.activeVersion ? "· Current" : ""}</span>{version.id !== site.activeVersion ? <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void action(signal => client.rollback(appSlug, { versionId: version.id, baseRevision: site.revision }, signal), state.setSite, "Version restored.")}>Restore version {version.id.slice(0, 8)}</Button> : null}</li>)}
+        {site.versions.map(version => <li key={version.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{formatSiteDate(version.createdAt)} {version.id === site.activeVersion ? "· Current" : ""}</span>{version.id !== site.activeVersion ? <Button size="sm" variant="secondary" disabled={disabled} onClick={() => void mutate(signal => client.rollback(appSlug, { versionId: version.id, baseRevision: site.revision }, signal), state.setSite, "Version restored.")}>Restore version {version.id.slice(0, 8)}</Button> : null}</li>)}
         {!site.versions.length ? <li>No published versions yet.</li> : null}
       </ul></details>;
 }
 function SiteUnpublish({ appSlug, client, state, disabled }: SiteSectionProps) {
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
-  const { site, action } = state;
+  const { site, mutate } = state;
   if (!site) return null;
-  return <div className="space-y-2 border-t pt-3"><Button variant="destructive" disabled={disabled} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>{confirmUnpublish ? <><p className="text-sm">This removes public access to the app and its forms. Saved submissions remain available.</p><div className="flex gap-2"><Button variant="destructive" disabled={disabled} onClick={async () => { const success = await action(signal => client.unpublish(appSlug, site.revision, signal), state.setSite, "App unpublished."); if (success) setConfirmUnpublish(false); }}>Confirm unpublish</Button><Button variant="secondary" disabled={disabled} onClick={() => setConfirmUnpublish(false)}>Cancel</Button></div></> : null}</div>;
+  return <div className="space-y-2 border-t pt-3"><Button variant="destructive" disabled={disabled} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>{confirmUnpublish ? <><p className="text-sm">This removes public access to the app and its forms. Saved submissions remain available.</p><div className="flex gap-2"><Button variant="destructive" disabled={disabled} onClick={async () => { const success = await mutate(signal => client.unpublish(appSlug, site.revision, signal), state.setSite, "App unpublished."); if (success) setConfirmUnpublish(false); }}>Confirm unpublish</Button><Button variant="secondary" disabled={disabled} onClick={() => setConfirmUnpublish(false)}>Cancel</Button></div></> : null}</div>;
 }
 
-function SitePublicationStatus({ state }: { state: ReturnType<typeof useAppSite> }) {
+function SitePublicationStatus({ state, onRefreshPublication }: { state: ReturnType<typeof useAppSite>; onRefreshPublication: () => void }) {
   const { site, loading, loadFailed, error, message } = state;
   const published = site?.status === "published";
   return <>{loading ? <p role="status">Loading publication…</p> : loadFailed ? null : <p role="status">{published ? "Your app is public." : "This app is private."}</p>}
     {error ? <p role="alert" className="text-sm">{error}</p> : null}
     {loadFailed ? <Button variant="secondary" onClick={state.refresh}>Retry</Button> : null}
+    {state.conflict ? <Button variant="secondary" disabled={state.pending || loading} onClick={onRefreshPublication}>Refresh publication</Button> : null}
     {message ? <p role="status" className="text-sm">{message}</p> : null}</>;
 }
 function SitePublicLinks({ site, disabled, action }: { site: SiteRecord | null; disabled: boolean; action: ReturnType<typeof useAppSite>["action"] }) {
@@ -121,11 +115,24 @@ function SiteDeploymentActions({ appSlug, client, state, disabled, invalid, revi
   invalid: boolean; reviewed: boolean; previewReady: boolean; config: SitePublishing | null;
   metadata: { title: string; description: string; slug: string | null; baseRevision?: number }; review: () => Promise<void>;
 }) {
-  const { site, pending, action } = state;
+  const { site, pending, mutate } = state;
   const published = site?.status === "published";
+  const mutationDisabled = disabled || state.conflict;
   return <div className="flex flex-wrap gap-2">
       <Button variant="secondary" disabled={disabled || invalid} onClick={() => void review()}>Review deployment</Button>
-      <Button disabled={disabled || invalid || !reviewed || !previewReady} onClick={() => void action(signal => client.deploy(appSlug, { ...metadata, reviewedConfig: config! }, signal), state.setSite, "Published successfully.")}>{pending ? "Working…" : published ? "Publish update" : "Publish app"}</Button>
-      {site ? <Button variant="secondary" disabled={disabled || invalid} onClick={() => void action(signal => client.update(appSlug, metadata, signal), state.setSite, "Publication settings saved.")}>Save URL and details</Button> : null}
+      <Button disabled={mutationDisabled || invalid || !reviewed || !previewReady} onClick={() => void mutate(signal => client.deploy(appSlug, { ...metadata, reviewedConfig: config! }, signal), state.setSite, "Published successfully.")}>{pending ? "Working…" : published ? "Publish update" : "Publish app"}</Button>
+      {site ? <Button variant="secondary" disabled={mutationDisabled || invalid} onClick={() => void mutate(signal => client.update(appSlug, metadata, signal), state.setSite, "Publication settings saved.")}>Save URL and details</Button> : null}
     </div>;
+}
+
+function SitePublicationManagement({ appSlug, client, state, disabled }: SiteSectionProps) {
+  const [showSubmissions, setShowSubmissions] = useState(false);
+  if (!state.site) return null;
+  const published = state.site.status === "published";
+  return <>
+      <SiteVersionHistory {...{ appSlug, client, state }} disabled={disabled || state.conflict} />
+      <Button variant="secondary" disabled={disabled} onClick={() => { setShowSubmissions(true); void state.loadSubmissions(); }}>Visitor submissions</Button>
+      {showSubmissions ? <SiteSubmissions appSlug={appSlug} client={client} state={state} /> : null}
+      {published ? <SiteUnpublish {...{ appSlug, client, state }} disabled={disabled || state.conflict} /> : null}
+</>;
 }
