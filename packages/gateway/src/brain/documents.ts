@@ -282,14 +282,15 @@ export async function applyUpsert(
 
 /**
  * Sync batches only: an unchanged document still takes the source's newest stamp, so an adapter that compares stamps
- * does not rebuild it on every run. Content, revision, snapshots and updated_at stay as they are.
+ * does not rebuild it on every run. Content, revision, snapshots and updated_at stay as they are. Returns whether
+ * it wrote (derived indexes that carry the date must be told).
  */
 export async function recordSourceUpdatedAt(
   context: BrainWriteContext,
   document: BrainDocument,
   sourceUpdatedAt: string,
-): Promise<void> {
-  if (Date.parse(document.sourceUpdatedAt) === Date.parse(sourceUpdatedAt)) return;
+): Promise<boolean> {
+  if (Date.parse(document.sourceUpdatedAt) === Date.parse(sourceUpdatedAt)) return false;
   await context.db.updateTable("brain_documents").set({ source_updated_at: sourceUpdatedAt })
     .where("owner_id", "=", context.scope.ownerId)
     .where("scope_id", "=", context.scope.scopeId)
@@ -298,6 +299,7 @@ export async function recordSourceUpdatedAt(
     .where("deleted_at", "is", null)
     .returning("document_id")
     .executeTakeFirstOrThrow(conflict);
+  return true;
 }
 
 export async function applyRevise(context: BrainWriteContext, input: BrainApplyReviseInput): Promise<BrainDocument> {

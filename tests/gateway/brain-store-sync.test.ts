@@ -47,7 +47,7 @@ describe("brain store sync", () => {
     const first = await repository.applySyncBatch(scopeA, batch(sourceId, { upserts: [one, two] }));
     expect(first).toEqual({
       cursor: { scopeId: "scope_a", sourceId, cursor: "c1", updatedAt: harness.iso() },
-      created: 2, updated: 0, unchanged: 0, refsChanged: 0, deleted: 0, rejected: [],
+      created: 2, updated: 0, unchanged: 0, refsChanged: 0, restamped: 0, deleted: 0, rejected: [],
     });
     expect(await repository.getSyncCursor(scopeA, sourceId)).toEqual(first.cursor);
     expect(await repository.getDocument(scopeA, one.documentId)).toMatchObject({
@@ -130,7 +130,7 @@ describe("brain store sync", () => {
     const touched = await repository.applySyncBatch(scopeA, batch(source.sourceId, {
       expectedCursor: "c1", nextCursor: "c2", upserts: [{ ...one, sourceUpdatedAt: "2026-09-02T00:00:00.000Z" }],
     }));
-    expect(touched).toMatchObject({ created: 0, updated: 0, unchanged: 1 });
+    expect(touched).toMatchObject({ created: 0, updated: 0, unchanged: 1, restamped: 1 });
     expect(await repository.getDocument(scopeA, one.documentId))
       .toEqual({ ...before, sourceUpdatedAt: "2026-09-02T00:00:00.000Z" });
     expect(await repository.listRevisions(scopeA, one.documentId)).toEqual([]);

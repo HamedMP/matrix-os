@@ -382,7 +382,8 @@ or behind the documents it describes.
    announce it. `applySyncBatch` is the only writer of refs.
    Unlike `upsertDocument`, an `unchanged` upsert whose `sourceUpdatedAt` names
    another instant records it in place (no revision, snapshot or `updated_at`
-   change), so an adapter that compares stamps does not plan it again.
+   change) and counts in `restamped`, so an adapter that compares stamps does
+   not plan it again and a caller can announce the new date.
 4. Each deletion runs `deleteDocument` semantics without CAS, only when the live
    row's `source_id` equals the batch source. A missing, tombstoned, or
    foreign-source id is silently skipped so replays are idempotent. `deleted`

@@ -398,6 +398,8 @@ export interface BrainSyncBatchResult {
   readonly unchanged: number;
   /** Unchanged upserts whose stored refs were replaced (same content and revision, a different ref set). */
   readonly refsChanged: number;
+  /** Unchanged upserts whose sourceUpdatedAt named another instant, recorded in place (same content and revision). */
+  readonly restamped: number;
   readonly deleted: number;
   /** Document ids left untouched because a live row belongs to another source. */
   readonly rejected: readonly string[];
