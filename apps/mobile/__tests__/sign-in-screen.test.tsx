@@ -341,3 +341,12 @@ describe("SignInScreen email code flow", () => {
     expect(screen.queryByLabelText("Verification code")).toBeNull();
   });
 });
+
+it('preserves a WhatsApp Chat after email sign-in',async()=>{
+  mockCreate.mockResolvedValueOnce({status:'complete',createdSessionId:'sess_chat'});
+  render(<SignInScreen requestedChat="chat_12345678" />);
+  fireEvent.changeText(screen.getByLabelText('Email address'),'reader@example.com');
+  fireEvent.changeText(screen.getByLabelText('Password'),'local-test-password');
+  fireEvent.press(screen.getByText('Sign in'));
+  await waitFor(()=>expect(mockReplace).toHaveBeenCalledWith({pathname:'/',params:{chat:'chat_12345678'}}));
+});
