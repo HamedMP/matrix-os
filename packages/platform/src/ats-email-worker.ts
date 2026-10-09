@@ -60,7 +60,9 @@ export default {
         const body = await normalizeGroupMail(new Uint8Array(await raw.arrayBuffer()), raw.customMetadata?.receivedAt ?? new Date().toISOString());
         const response = await fetch(new URL('/api/ats/mail', origin.origin), {
           method: 'POST', headers: { authorization: `Bearer ${env.ATS_MAIL_INGEST_SECRET}`, 'content-type': 'application/json', 'user-agent': 'Matrix-Recruiting-Intake/1.0' },
-          body: JSON.stringify(body), signal: AbortSignal.timeout(10_000), redirect: 'error',
+          // Workers supports manual/follow only. Reject every redirect below;
+          // never forward the intake credential or applicant data to Location.
+          body: JSON.stringify(body), signal: AbortSignal.timeout(10_000), redirect: 'manual',
         });
         if (!response.ok) throw new Error('ATS intake unavailable');
         z.object({ receiptId: z.string().min(1).max(128) }).parse(await response.json());
