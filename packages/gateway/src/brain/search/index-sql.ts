@@ -243,6 +243,24 @@ export async function isLiveAt(
   return rows.rows.length > 0;
 }
 
+/**
+ * Whether a vector write for `built` goes ahead: a write of chunks only while the document is live at that
+ * (incarnation, revision) and, given a claims key, claims set (isLiveAt); a removal (no chunks) unless the document is
+ * live at another one. The sweep reads `built` as a tombstone, so by its removal the vectors may be those of the
+ * document restored and embedded since.
+ */
+export async function mayReplaceVectors(
+  trx: QueryExecutorProvider, scope: BrainScopeKey, built: BrainSearchOrphan & { readonly claimsKey?: string },
+  removal: boolean,
+): Promise<boolean> {
+  if (!removal) return isLiveAt(trx, scope, built);
+  const rows = await sql`SELECT 1 FROM brain_documents
+    WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId} AND document_id = ${built.documentId}
+      AND deleted_at IS NULL AND (incarnation <> ${built.incarnation}::uuid OR revision <> ${built.revision})`
+    .execute(trx);
+  return rows.rows.length === 0;
+}
+
 /** scope_erased: rows that survived the cascade (none are expected). */
 export async function deleteScopeRows(trx: Transaction<BrainDatabase>, scope: BrainScopeKey): Promise<void> {
   for (const table of DOCUMENT_TABLES) {
