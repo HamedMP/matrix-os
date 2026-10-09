@@ -117,7 +117,9 @@ export function createAoedeDelegation(options: {
       w.terminal = true; // Mark BEFORE I/O: uncertain delivery must never duplicate commentary.
       const text = detail.messages.filter(m => m.runId === run.id && m.role === "assistant" && m.state === "committed")
         .flatMap(m => m.parts.flatMap(p => p.type === "text" ? [p.text] : [])).join(" ");
-      await speak(w.ctx, run.status === "completed" ? text : run.status === "aborted" ? "The Chat run was cancelled." : "The Chat run failed. Check Chat for details.");
+      const failure = detail.activities.findLast(a => a.type === "run.error" && a.runId === run.id);
+      await speak(w.ctx, run.status === "completed" ? text : run.status === "aborted" ? "The Chat run was cancelled."
+        : failure?.type === "run.error" ? failure.error.safeMessage : "The Chat run failed. Check Chat for details.");
     } else if (approval && !w.decision && w.asked !== approval.approvalId) {
       // Explicit low risk only; never infer safety from wording. Reserve before uncertain delivery.
       w.asked = approval.approvalId; w.presented = undefined;
@@ -224,7 +226,7 @@ export function createAoedeDelegation(options: {
       const text = ctx.transcripts[requestIndex]?.text.trim();
       if (!text) return;
       if (await decision(ctx, text)) return;
-      if (/^(?:stop|cancel)(?: that)?$/i.test(text)) {
+      if (/^(?:please )?(?:stop|cancel)(?: (?:that|the)(?: task)?)?(?: if (?:it is|it's) still running)?(?:,? please)?[.!?]?$/i.test(text)) {
         const candidates = [...watches.values()].filter(w => w.ctx.sessionId === ctx.sessionId && active(w) && !w.terminal);
         if (candidates.length === 1) await cancel(candidates[0]);
         else await speak(ctx, "Choose the Chat task to cancel.");

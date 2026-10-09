@@ -38,6 +38,7 @@ let approvalTitle: string;
 let approved: "approve" | "decline" | undefined;
 let storage: ReturnType<typeof createAppDb>;
 let clock: number;
+let runFailure: ReturnType<typeof canonicalChatSafeError> | undefined;
 let composition: Parameters<typeof createAoedeDelegation>[0];
 
 beforeEach(async () => {
@@ -52,7 +53,7 @@ beforeEach(async () => {
   await repository.bootstrap(); sessions = createAoedeRepository(repository.kysely, { ownerId: "owner", runtimeId: "runtime" });
   await sessions.bootstrap();
   approvalRisk = undefined; secondApproval = false; approvalTitle = "Read file";
-  approved = undefined; catalogHook = undefined; clock = Date.now();
+  approved = undefined; catalogHook = undefined; runFailure = undefined; clock = Date.now();
   const done = new Promise<void>(resolve => { finish = resolve; });
   orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([{
     driverKind: "codex", stateSchemaVersion: 1, parseState: value => value, serializeState: value => value,
@@ -69,6 +70,7 @@ beforeEach(async () => {
       await Promise.race([done, new Promise<void>(resolve => input.signal.addEventListener("abort", () => resolve(), { once: true }))]);
       if (input.signal.aborted) return;
       if (approved) yield { type: "approval.resolved", approvalId: "appr_read", decision: approved };
+      if (runFailure) { yield { type: "run.completed", outcome: "failed", error: runFailure }; return; }
       yield { type: "assistant.delta", delta: "Built the real timer. " + "🙂".repeat(200) };
       yield { type: "run.completed", outcome: "completed" }; },
   }]) });
@@ -122,6 +124,9 @@ it("a busy voice turn queues canonically and cancellation removes that queue wit
   await delegate.dispatch(second);
   const bindings = await sessions.delegations(ctx.sessionId), queued = bindings.find(b => b.queued_turn_id)!;
   expect((await repository.listQueuedTurns(owner, queued.chat_id!)).map(q => q.id)).toEqual([queued.queued_turn_id]);
+  await delegate.dispatch(await utterance("Please cancel that task if it is still running."));
+  expect((await repository.listQueuedTurns(owner, queued.chat_id!)).map(q => q.id)).toEqual([queued.queued_turn_id]);
+  expect((await repository.exportChat(owner, queued.chat_id!))!.turns).toHaveLength(1);
   await delegate.onClientMessage(principal, "bound", { type: "aoede:cancel", sessionId: ctx.sessionId, cardId: claim.delegation_id });
   expect(await repository.listQueuedTurns(owner, queued.chat_id!)).toEqual([]);
   expect((await repository.exportChat(owner, queued.chat_id!))!.runs.find(r => r.id === bindings.find(b => b.run_id)!.run_id)!.status).toBe("running");
@@ -257,12 +262,23 @@ it("a long silent run survives subscription TTL through touch and a replay gap r
   expect(speech.filter(s => s.includes("Built the real timer"))).toHaveLength(1);
 });
 
-it("exact stop cancels the mapped canonical run, not merely speech playback", async () => {
+it.each(["stop", "Cancel that task if it is still running.", "Please cancel the task?", "Stop that task, please."])("%s cancels the mapped canonical run without admitting another turn", async (request) => {
   await delegate.dispatch(ctx);
-  await delegate.dispatch(await utterance("stop"));
+  await delegate.dispatch(await utterance(request));
   const binding = (await sessions.delegations(ctx.sessionId)).find(b => b.run_id)!;
-  expect((await repository.exportChat(owner, binding.chat_id!))!.runs[0].status).toBe("aborted");
+  const detail = (await repository.exportChat(owner, binding.chat_id!))!;
+  expect(detail.runs[0].status).toBe("aborted");
+  expect(detail.turns).toHaveLength(1);
+  expect((await repository.getDetailPage(owner, binding.chat_id!, { limit: 200 }))!.queuedTurns).toHaveLength(0);
   expect(frames.some(f => f.type === "aoede:card" && f.card.status === "cancelled")).toBe(true);
+});
+
+it("speaks the canonical safe failure reason for its own failed run", async () => {
+  runFailure = canonicalChatSafeError("provider_unavailable", "Sign-in required. Reconnect in Agents & providers on this computer.");
+  await delegate.dispatch(ctx);
+  finish();
+  await expect.poll(() => speech).toContain("Sign-in required. Reconnect in Agents & providers on this computer.");
+  expect(frames.some(f => f.type === "aoede:card" && f.card.status === "failed")).toBe(true);
 });
 
 it("explicit resume restores the actual terminal card without rerunning completed work", async () => {
