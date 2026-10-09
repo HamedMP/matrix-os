@@ -18,6 +18,8 @@ export interface BrainPlainText {
 const LINK_DEPTH_MAX = 4;
 /** Longest link destination read as one; a longer one leaves the brackets as written. */
 const LINK_DESTINATION_MAX = 2_048;
+/** Longest link label, as in CommonMark and LINK_DEFINITION. */
+const LINK_LABEL_MAX = 999;
 
 const QUOTE = /^(?:[ \t]*>[ \t]?)+/;
 const FENCE_OPEN = /^[ \t]*(`{3,}|~{3,})/;
@@ -28,7 +30,7 @@ const UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*$/;
 const TABLE_RULE = /^[|:\- \t]+$/;
 /** An optional link title, then the end of the text. */
 const TITLE_END = String.raw`(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?[ \t]*$`;
-const LINK_DEFINITION = new RegExp(String.raw`^ {0,3}\[(?!\^)([^\]\n]{1,999})\]:[ \t]*\S+` + TITLE_END);
+const LINK_DEFINITION = new RegExp(String.raw`^ {0,3}\[(?!\^)([^\]\n]{1,${LINK_LABEL_MAX}})\]:[ \t]*\S+` + TITLE_END);
 const LINK_DEFINITIONS = new RegExp(LINK_DEFINITION.source, "gm");
 const DESTINATION = new RegExp(String.raw`^[ \t]*(?:<[^<>\n]*>|[^\s<]*)` + TITLE_END);
 const HEADING = /^ {0,3}#{1,6}(?:[ \t]+|$)/;
@@ -164,8 +166,10 @@ function linkEnd(ctx: Context, open: number, to: number, pairs: ReadonlyMap<numb
     const destination = ctx.source.slice(close + 2, target);
     return destination.length <= LINK_DESTINATION_MAX && DESTINATION.test(destination) ? target + 1 : -1;
   }
-  const name = target === close + 2 ? ctx.source.slice(open + 1, close) : ctx.source.slice(close + 2, target);
-  return ctx.labels.has(label(name)) ? target + 1 : -1;
+  const [from, until] = target === close + 2 ? [open + 1, close] : [close + 2, target];
+  // A label is at most LINK_LABEL_MAX long, so a failed lookup never normalizes more than that.
+  if (ctx.labels.size === 0 || until - from > LINK_LABEL_MAX) return -1;
+  return ctx.labels.has(label(ctx.source.slice(from, until))) ? target + 1 : -1;
 }
 
 /** Emphasis rules of CommonMark: whether a run of `*`, `_` or `~` can open or close, from its neighbours. */

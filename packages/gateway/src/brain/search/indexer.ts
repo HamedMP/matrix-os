@@ -88,17 +88,21 @@ export function createBrainSearchIndex(deps: BrainSearchIndexDeps): BrainDerived
   /**
    * The provider's store drops its chunks first: when that fails, the rows stay and the next refresh finds the orphans
    * again. Then one transaction deletes every search row, array vector and pgvector chunk, so the chunks of a provider
-   * since turned off go too; selectOrphans finds a tombstoned document by any of those tables.
+   * since turned off go too; selectOrphans finds a tombstoned document by any of those tables. Once the refresh is
+   * halted no further orphan is taken; the rest wait for the next refresh.
    */
-  async function sweep(scope: BrainScopeKey, ids: readonly string[] | null, limit: number): Promise<number> {
-    const batch = await read((trx) => selectOrphans(trx, scope, ids, limit));
-    if (batch.length === 0) return 0;
-    if (meaning !== null) {
-      for (const orphan of batch) {
+  async function sweep(
+    scope: BrainScopeKey, ids: readonly string[] | null, limit: number, halted: () => boolean,
+  ): Promise<number> {
+    const swept: string[] = [];
+    for (const orphan of await read((trx) => selectOrphans(trx, scope, ids, limit))) {
+      if (halted()) break;
+      if (meaning !== null) {
         await meaning.vectors.replaceChunks(scope, { ...orphan, providerId: meaning.provider.providerId, chunks: [] });
       }
+      swept.push(orphan.documentId);
     }
-    return withSearchScopeWrite(db, scope, (trx) => deleteOrphans(trx, scope, batch.map((orphan) => orphan.documentId)));
+    return swept.length === 0 ? 0 : withSearchScopeWrite(db, scope, (trx) => deleteOrphans(trx, scope, swept));
   }
 
   async function run(
@@ -112,7 +116,7 @@ export function createBrainSearchIndex(deps: BrainSearchIndexDeps): BrainDerived
     const halted = () => signal.aborted || performance.now() >= deadline;
     const active = brainMeaningFor(meaning, deps.ownerIds, scope.ownerId);
     const embed = active === null ? null : await brainCurrentEmbedTarget(active);
-    const removed = await sweep(scope, ids, documents);
+    const removed = await sweep(scope, ids, documents, halted);
     const touched = new Set<string>();
     let stopped = false;
     const pending = await read((trx) => selectPendingIds(trx, scope, ids, documents));
