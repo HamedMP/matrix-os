@@ -19,16 +19,16 @@ describe("installed gallery app presentation", () => {
     const identities = JSON.parse(readFileSync("packages/brand/src/app-identities.json", "utf8")) as Record<string, { accent: string }>;
     const css = readFileSync("home/app-templates/connected-starter/src/styles/gallery-light.css", "utf8");
     expect(identities.subscriptions.accent).toBe("#176d56");
-    expect(css).toContain('.workbench[data-app="subscriptions"] { --brand: #176d56; }');
+    expect(css).toContain("var(--identity-accent, var(--matrix-brand-forest))");
   });
-  it("keeps the first-party app canvas light even when the host prefers dark colors", () => {
+  it("defaults to Matrix paper while allowing the owner theme bridge to supply every surface", () => {
     const main = readFileSync("home/app-templates/connected-starter/src/main.tsx", "utf8");
     const css = readFileSync("home/app-templates/connected-starter/src/styles/gallery-light.css", "utf8");
     expect(main).toContain('import "./styles/gallery-light.css"');
-    expect(css).toContain("color-scheme: light");
-    expect(css).toContain("--bg: #f7f8fb");
-    expect(css).toContain("--matrix-bg: #f7f8fb");
-    expect(css).toContain("--card: #ffffff");
+    expect(css).toContain("color-scheme: var(--matrix-color-scheme, light)");
+    expect(css).toContain("--bg: var(--matrix-bg, var(--matrix-brand-paper))");
+    expect(css).not.toMatch(/--matrix-bg\s*:/);
+    expect(css).toContain("--card: var(--matrix-card, var(--matrix-brand-paper))");
     const sidebar = readFileSync("home/app-templates/connected-starter/src/Sidebar.tsx", "utf8");
     expect(sidebar).toContain("app.iconDataUrl");
   });
@@ -39,7 +39,7 @@ describe("installed gallery app presentation", () => {
       limited={false} unavailable="" canUseRecords onEdit={vi.fn()} onEvidence={vi.fn()}
       onAdd={vi.fn()} onSave={vi.fn()} onImport={onImport} canImport />);
 
-    expect(screen.getByRole("heading", { name: "Know what renews next." })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "No subscriptions yet" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Find subscriptions in email" }));
     expect(onImport).toHaveBeenCalledOnce();
     expect(screen.queryByText("No active subscriptions with a known cost yet.")).toBeNull();

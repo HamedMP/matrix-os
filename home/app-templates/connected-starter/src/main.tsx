@@ -3,6 +3,7 @@ import App from "./App";
 import { readDefinition } from "./definition";
 import "./style.css";
 import "./styles/app-identities.css";
+import "./styles/brand-tokens.css";
 import "./styles/gallery-light.css";
 const root = createRoot(document.getElementById("root")!);
 try {

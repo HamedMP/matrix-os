@@ -56,8 +56,8 @@ export default function Sidebar({
           <strong>{app.name}</strong>
           <span>
             {app.collection === "business"
-              ? "Work collection"
-              : "Personal collection"}
+              ? "Work"
+              : "Personal"}
           </span>
         </div>
       </div>
@@ -122,19 +122,7 @@ export default function Sidebar({
         )}
       </section>
       <div className="connection-card">
-        <span className="orb" aria-hidden="true">
-          ↗
-        </span>
-        <h3>
-          {app.services.length
-            ? "Bring in your context."
-            : "Make this space yours."}
-        </h3>
-        <p>
-          {app.services.length
-            ? "Choose accounts and ask Matrix to gather supported records."
-            : "Add your own records. Every entry stays on your computer."}
-        </p>
+        {app.services.length > 0 && <p>{app.services.map(service => service.name).join(" · ")}</p>}
         <button
           disabled={app.services.length ? !canImport : !canUseRecords}
           onClick={() => (app.services.length ? onImport() : onAdd())}

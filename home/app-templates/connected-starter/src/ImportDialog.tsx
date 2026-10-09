@@ -1,6 +1,6 @@
 import { parseGalleryInventory } from "./generated-inventory";
 import { useEffect, useMemo, useState } from "react";
-import { importPrompt, uniqueConnection } from "./import";
+import { importContextLabel, importPrompt, uniqueConnection } from "./import";
 import Sheet from "./Sheet";
 import type { Connection, Definition } from "./types";
 export function ImportDialog({
@@ -24,6 +24,7 @@ export function ImportDialog({
     [error, setError] = useState(""),
     [sent, setSent] = useState(false);
   const selectedKeys = useMemo(() => new Set(chosen), [chosen]);
+  const contextLabel = importContextLabel(chosen.map(key => key.split(":")[0]));
   useEffect(() => {
     let alive = true;
     async function load() {
@@ -61,7 +62,7 @@ export function ImportDialog({
         }));
       const prompt = importPrompt(
         app,
-        { accounts, start, end, context, scope },
+        { accounts, start, end, context: contextLabel ? context : "", scope },
         inventory,
       );
       window.MatrixOS.generate(prompt);
@@ -93,10 +94,9 @@ export function ImportDialog({
           </button>
         </div>
       ) : (
-        <div className="editor">
+        <div className="editor import-editor">
           <p className="muted">
-            Choose exactly which accounts Matrix can read. It will keep the
-            original evidence and preserve your edits.
+            Select accounts and a date range to import. Your edits and source evidence are preserved.
           </p>
           {!loaded ? (
             <p>Checking connections…</p>
@@ -144,15 +144,13 @@ export function ImportDialog({
                               }
                             />
                             <span>
-                              {account.account_label}
-                              <small>
+                              <strong>{account.account_email ?? account.account_label}</strong>
+                              {account.account_email && <small>{account.account_label}</small>}
+                              {(!account.id || ambiguous) && <small>
                                 {!account.id
-                                  ? "This computer cannot verify the account identity. Update Matrix before importing."
-                                  : ambiguous
-                                    ? "This label matches multiple accounts. Give each account a unique label in Matrix Settings."
-                                    : (account.account_email ??
-                                      "Connected account")}
-                              </small>
+                                  ? "Account identity unavailable. Update Matrix before importing."
+                                  : "Account label is shared. Give each account a unique label in Matrix Settings."}
+                              </small>}
                             </span>
                           </label>
                         );
@@ -184,16 +182,16 @@ export function ImportDialog({
               />
             </label>
           </div>
-          <label>
-            <span>Repository, project, channel or source context</span>
+          {contextLabel && <label>
+            <span>{contextLabel}</span>
             <textarea
               value={context}
-              rows={3}
+              rows={2}
               maxLength={2000}
               onChange={(e) => setContext(e.target.value)}
               placeholder="Be specific about which sources to include"
             />
-          </label>
+          </label>}
           <label>
             <span>Imported record group</span>
             <select

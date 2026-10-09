@@ -38,8 +38,7 @@ export default function WorkspaceContent({
 }: Props) {
   return (
     <main>
-      {!(app.id === "subscriptions" && !records.length && !loading && !error) &&
-        <Heading {...{ app, records, visible, canUseRecords, loading, error }} />}
+      <Heading {...{ app, records, visible, canUseRecords, loading, error }} />
       {unavailable && (
         <p className="notice" role="status">
           {unavailable}
@@ -69,13 +68,8 @@ export default function WorkspaceContent({
             creationScope={creationScope}
           />
         )}
-      {!(app.id === "subscriptions" && !records.length) && <p className="workspace-foot">
-        {app.services.length
-          ? "Source-backed imports and your own notes, together."
-          : "A space built from your own entries."}{" "}
-        {limited
-          ? "Coverage is limited: showing up to 1,000 active records from the latest 5,000 saved rows. Charts and exports cover the displayed records only."
-          : ""}
+      {limited && <p className="workspace-foot">
+        Coverage is limited: showing up to 1,000 active records from the latest 5,000 saved rows. Charts and exports cover the displayed records only.
       </p>}
     </main>
   );
@@ -94,11 +88,7 @@ function Heading({
 >) {
   return (
     <section className="page-heading">
-      <div>
-
-        <h1>{headlines[app.id] || app.name}</h1>
-        <p>{app.description}</p>
-      </div>
+      <h1>{headlines[app.id] || app.name}</h1>
       <div className="record-count">
         <strong>
           {canUseRecords && !loading && !error
@@ -116,8 +106,8 @@ function Heading({
   );
 }
 
-const headlines: Record<string,string> = {
- folio: "Make room for a clearer money picture.", atlas: "Your next journey, all together.", agenda: "Your day, with room to think.",
- subscriptions: "Keep your commitments in view.", "meeting-briefs": "Good conversations. Clear next steps.", people: "A little closer to your people.",
- cashflow: "Keep the follow-up thoughtful.", projects: "Good work, moving forward.", revenue: "Money coming in.", focus: "Your attention, here."
+const headlines: Record<string, string> = {
+  folio: "Spending overview", atlas: "Journeys", agenda: "Agenda",
+  subscriptions: "All subscriptions", "meeting-briefs": "Meeting briefs", people: "People",
+  cashflow: "Outstanding invoices", projects: "Projects", revenue: "Revenue overview", focus: "Focus",
 };

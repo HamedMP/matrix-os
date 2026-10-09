@@ -8,6 +8,15 @@ export interface ImportSelection {
   context: string;
   scope?: "personal" | "work";
 }
+const contextLabels: Record<string, string> = {
+  github: "Repository", linear: "Project", slack: "Channel", notion: "Source",
+  google_drive: "Source", google_docs: "Source", jira: "Project", posthog: "Project",
+};
+/** Scope is requested only for selected sources that require it. */
+export function importContextLabel(services: string[]): string | null {
+  const labels = [...new Set(services.map(service => contextLabels[service]).filter(Boolean))];
+  return labels.length > 1 ? "Source scope" : labels[0] ?? null;
+}
 export function importPrompt(
   app: Definition,
   selection: ImportSelection,
@@ -50,22 +59,8 @@ export function importPrompt(
         "Choose an account with a unique label in Matrix Settings before importing.",
       );
   }
-  if (
-    app.services.some((s) => selection.accounts.some(a => a.service === s.id) &&
-      [
-        "github",
-        "linear",
-        "slack",
-        "notion",
-        "google_drive", "google_docs", "jira",
-        "posthog",
-      ].includes(s.id),
-    ) &&
-    !selection.context.trim()
-  )
-    throw new Error(
-      "Choose a repository, project, channel or source context before importing.",
-    );
+  if (importContextLabel(selection.accounts.map(account => account.service)) && !selection.context.trim())
+    throw new Error("Choose a source scope before importing.");
   const details = {
     app: app.id,
     table: "records",

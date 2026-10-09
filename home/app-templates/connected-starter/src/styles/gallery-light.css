@@ -1,94 +1,164 @@
-/* The first-party app is a complete light product surface in every Matrix theme. */
-:root { color-scheme: light; background: #f7f8fb; color: #202939; }
+/* Compact first-party app chrome. Matrix theme bridge values remain authoritative. */
+@font-face { font-family: 'Matrix App Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('../../public/fonts/geist-latin-wght-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Matrix App Bricolage'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('../../public/fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2'); }
+:root {
+  color-scheme: var(--matrix-color-scheme, light);
+  font-family: 'Matrix App Geist', Geist, system-ui, sans-serif;
+  background: var(--matrix-bg, var(--matrix-brand-paper));
+  color: var(--matrix-fg, var(--matrix-brand-forest));
+  --bg: var(--matrix-bg, var(--matrix-brand-paper));
+  --fg: var(--matrix-fg, var(--matrix-brand-forest));
+  --card: var(--matrix-card, var(--matrix-brand-paper));
+  --muted: var(--matrix-muted-fg, var(--matrix-brand-textMuted));
+  --border: var(--matrix-border, color-mix(in srgb, var(--matrix-brand-forest) 15%, var(--matrix-brand-paper)));
+}
 .workbench[data-app] {
-  color-scheme: light;
-  --matrix-bg: #f7f8fb;
-  --matrix-fg: #202939;
-  --matrix-card: #ffffff;
-  --matrix-muted-fg: #647184;
-  --matrix-border: #e2e7ef;
-  --bg: #f7f8fb;
-  --fg: #202939;
-  --card: #ffffff;
-  --muted: #647184;
-  --border: #e2e7ef;
-  --brand: color-mix(in srgb, var(--identity-accent, #596bc3) 55%, #182536);
-  --brand-fg: #ffffff;
-  --tint: color-mix(in srgb, var(--brand) 9%, #ffffff);
-  min-height: 100dvh;
-  background: radial-gradient(ellipse at 90% 8%, var(--identity-wash, #eef2fb), transparent 45%), var(--bg);
+  color-scheme: var(--matrix-color-scheme, light);
+  --bg: var(--matrix-bg, var(--matrix-brand-paper));
+  --fg: var(--matrix-fg, var(--matrix-brand-forest));
+  --card: var(--matrix-card, var(--matrix-brand-paper));
+  --muted: var(--matrix-muted-fg, var(--matrix-brand-textMuted));
+  --border: var(--matrix-border, color-mix(in srgb, var(--matrix-brand-forest) 15%, var(--matrix-brand-paper)));
+  --brand: color-mix(in srgb, var(--identity-accent, var(--matrix-brand-forest)) 85%, var(--matrix-brand-forest));
+  --brand-fg: var(--identity-on-accent, var(--matrix-brand-paper));
+  --tint: color-mix(in srgb, var(--brand) 8%, var(--card));
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
   color: var(--fg);
+  font-size: 13px;
+}
+.workbench[data-app] h1, .workbench[data-app] h2, .workbench[data-app] h3, .sheet h2 {
+  font-family: 'Matrix App Bricolage', 'Bricolage Grotesque', system-ui, sans-serif;
+  letter-spacing: -.025em;
 }
 .workbench[data-app] .sidebar {
-  margin: 0;
-  padding: 17px 34px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  background: rgba(255,255,255,.92);
-  box-shadow: none;
+  display: flex; flex-direction: column; align-items: stretch; flex-wrap: nowrap;
+  gap: 16px; margin: 0; padding: 16px 12px;
+  border: 0; border-right: 1px solid var(--border); border-radius: 0;
+  background: color-mix(in srgb, var(--card) 92%, var(--brand));
+  box-shadow: none; overflow-y: auto; min-height: 0;
 }
-.workbench[data-app] .brand-mark:not(.sculptural-mark) {
-  background: var(--identity-wash, #edf1fa);
-  box-shadow: none;
-}
-.workbench[data-app] .brand-mark.gallery-mark { background: transparent; box-shadow: none; }
+.workbench[data-app] .brand { margin: 0; gap: 9px; }
+.workbench[data-app] .brand strong { font-size: 16px; }
+.workbench[data-app] .brand-mark { width: 34px; height: 34px; flex-shrink: 0; border-radius: 8px; background: var(--tint); box-shadow: none; }
+.workbench[data-app] .brand-mark svg { width: 24px; height: 24px; }
+.workbench[data-app] .brand-mark.gallery-mark, .workbench[data-app] .brand-mark.sculptural-mark { background-color: transparent; box-shadow: none; }
 .workbench[data-app] .brand-mark.gallery-mark img { width: 100%; height: 100%; object-fit: contain; }
-.workbench[data-app] .nav-active { font-size: 12px; }
-.workbench[data-app] .workflow-panel,
-.workbench[data-app] .obligations,
-.workbench[data-app] .spending-desk,
-.workbench[data-app] .revenue-overview {
-  background: #ffffff;
-  color: var(--fg);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 34px rgba(28, 44, 67, .04);
+.workbench[data-app] .nav-active { font-size: 12px; padding: 9px; border-radius: 7px; margin: 0; }
+.workbench[data-app] .workspace-controls { margin: 0; flex-basis: auto; }
+.workbench[data-app] .workspace-controls > summary { min-height: 32px; padding: 5px 8px; border-radius: 6px; font-size: 11px; }
+.workbench[data-app] .workspace-controls .sidebar-filters { grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+.workbench[data-app] .workspace-controls .sidebar-filters > label:first-child { grid-column: auto; }
+.workbench[data-app] .workspace-controls .connection-card { padding: 12px 0 0; margin: 12px 0 0; border: 0; border-top: 1px solid var(--border); background: none; border-radius: 0; }
+.workbench[data-app] .connection-card button { width: 100%; min-height: 32px; margin-top: 6px; padding: 6px 8px; text-align: center; border: 1px solid var(--border); border-radius: 6px; }
+.workbench[data-app] .sidebar footer { margin-top: auto; line-height: 1.5; }
+.workbench[data-app] .main-column { min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.workbench[data-app] .topbar { min-height: 48px; height: auto; flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--card); gap: 8px; }
+.workbench[data-app] .topbar > span { font-size: 11px; }
+.workbench[data-app] .topbar > div { gap: 6px; }
+.workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .sheet button, .sheet input, .sheet select { min-height: 32px; font-size: 12px; border-radius: 6px; padding: 6px 9px; }
+.workbench[data-app] textarea { font-size: 13px; border-radius: 6px; }
+.workbench[data-app] button.primary { background: var(--brand); color: var(--brand-fg); box-shadow: none; }
+.workbench[data-app] main { flex: 1; min-height: 0; width: 100%; max-width: none; overflow: auto; margin: 0; padding: 18px 20px 24px; }
+.workbench[data-app] .page-heading { align-items: center; margin-bottom: 16px; gap: 12px; }
+.workbench[data-app] .page-heading h1 { font-size: 21px; margin: 0; max-width: none; line-height: 1.3; font-weight: 650; }
+.workbench[data-app] .record-count { flex-direction: row; align-items: baseline; gap: 5px; }
+.workbench[data-app] .record-count strong { font-size: 13px; letter-spacing: 0; }
+.workbench[data-app] .record-count span { font-size: 11px; }
+.workbench[data-app] .workflow-panel, .workbench[data-app] .obligations, .workbench[data-app] .spending-desk, .workbench[data-app] .revenue-overview { background: var(--card); color: var(--fg); border: 1px solid var(--border); box-shadow: none; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.workbench[data-app] .workflow-introduction { align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.workbench[data-app] .workflow-introduction > div { flex: 1; min-width: 0; }
+.workbench[data-app] .workflow-introduction h2 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 650; }
+.workbench[data-app] .workflow-object { width: 28px; height: 28px; border-radius: 7px; font-size: 19px; background: var(--tint); box-shadow: none; transform: none; }
+.workbench[data-app] .workflow-help { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.workbench[data-app] .workflow-help summary { cursor: pointer; width: fit-content; }
+.workbench[data-app] .workflow-help p { font-size: 12px; line-height: 1.6; margin-top: 8px; }
+.workbench[data-app] .workflow-clear { background: var(--bg); border-radius: 7px; padding: 12px; font-size: 12px; }
+.workbench[data-app] .renewal-row, .workbench[data-app] .workflow-review-row { padding: 12px 0; gap: 12px; }
+.workbench[data-app] .renewal-row h3, .workbench[data-app] .workflow-review-row h3 { font-size: 14px; margin-bottom: 4px; }
+.workbench[data-app] .renewal-row p { font-size: 12px; margin: 4px 0; }
+.workbench[data-app] .renewal-day { width: 68px; min-height: 58px; padding: 8px; border-radius: 8px; }
+.workbench[data-app] .renewal-day strong { font-size: 22px; }
+.workbench[data-app] .record-card, .workbench[data-app] .chart-card, .workbench[data-app] .commitments, .workbench[data-app] .ledger, .workbench[data-app] .board-column, .workbench[data-app] .person-panel, .workbench[data-app] .invoice-row, .workbench[data-app] .project-risk-grid article { border-radius: 10px; padding: 14px; }
+.workbench[data-app] .section-heading { margin-bottom: 12px; }
+.workbench[data-app] .section-heading h2 { font-size: 17px; margin-bottom: 4px; }
+.workbench[data-app] .record-card h3 { font-size: 16px; margin-bottom: 10px; }
+.workbench[data-app] .subscriptions-welcome { display: grid; place-items: center; min-height: 260px; padding: 28px 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); text-align: center; }
+.subscriptions-welcome-copy { max-width: 420px; }
+.subscriptions-welcome h2 { margin: 12px 0 8px; font-size: 21px; }
+.subscriptions-welcome p { font-size: 13px; line-height: 1.6; color: var(--muted); }
+.empty-symbol { color: var(--brand); font-size: 30px; }
+.subscriptions-welcome-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.subscriptions-welcome-note { display: block; margin-top: 16px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.backdrop { align-items: center; justify-content: center; padding: 24px; }
+.sheet { width: min(480px, 100%); height: auto; max-height: calc(100dvh - 48px); border-radius: 12px; padding: 20px; border: 1px solid var(--border); }
+.sheet > header { margin-bottom: 16px; gap: 12px; }
+.sheet > header h2 { font-size: 20px; }
+.sheet .editor { gap: 14px; }
+.sheet .check { padding: 8px; gap: 10px; border-radius: 6px; }
+.sheet .check input { min-height: 0; width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--brand); }
+.sheet .check span { overflow-wrap: anywhere; font-size: 12px; }
+.sheet .check small { font-size: 11px; color: var(--muted); }
+.sheet fieldset { margin: 0; padding: 10px; border-radius: 8px; }
+.sheet legend { font-size: 12px; padding: 0 4px; }
+@media (max-width: 700px) {
+  .workbench[data-app] { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .workbench[data-app] .sidebar { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 8px; border-right: 0; border-bottom: 1px solid var(--border); max-height: 45dvh; }
+  .workbench[data-app] .brand { margin: 0; }
+  .workbench[data-app] .brand strong { font-size: 15px; }
+  .workbench[data-app] .brand div > span, .workbench[data-app] .nav-active, .workbench[data-app] .sidebar footer { display: none; }
+  .workbench[data-app] .workspace-controls { margin-left: auto; }
+  .workbench[data-app] .workspace-controls[open] { flex-basis: 100%; }
+  .workbench[data-app] .workspace-controls .sidebar-filters { grid-template-columns: 1fr; }
+  .workbench[data-app] .topbar { padding: 8px 12px; flex-wrap: wrap; }
+  .workbench[data-app] .topbar > span { display: none; }
+  .workbench[data-app] .topbar > div { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .workbench[data-app] main { padding: 16px 12px calc(24px + env(safe-area-inset-bottom)); }
+  .workbench[data-app] .page-heading h1 { font-size: 20px; }
+  .workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] .workspace-controls > summary, .sheet button, .sheet input, .sheet select { min-height: 44px; }
+  .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] textarea, .sheet input, .sheet select, .sheet textarea { font-size: 16px; }
+  .workbench[data-app] .subscriptions-welcome { min-height: 240px; padding: 24px 14px; }
+  .backdrop { padding: 12px; }
+  .sheet { max-height: calc(100dvh - 24px); padding: 16px; }
+  .sheet .check input { min-height: 0; }
+  .sheet .check { min-height: 44px; }
 }
-.workbench[data-app] .workflow-object,
-.workbench[data-app] .person-object {
-  transform: none;
-  background: var(--identity-wash, #eef2fb);
-  box-shadow: none;
+@media (pointer: coarse) {
+  .workbench[data-app] button, .workbench[data-app] input, .workbench[data-app] select, .workbench[data-app] .workspace-controls > summary, .sheet button, .sheet input:not([type="checkbox"]), .sheet select, .sheet .check { min-height: 44px; }
 }
-.workbench[data-app] .workflow-clear { background: var(--identity-wash, #f3f5f9); }
-.workbench[data-app] .topbar { padding: 12px 34px 3px; }
-.workbench[data-app] main { padding: 20px 34px 42px; }
-.workbench[data-app] button.primary { box-shadow: 0 4px 12px color-mix(in srgb, var(--brand) 18%, transparent); }
-.workbench[data-app] .page-heading h1 { font-weight: 650; }
-.workbench[data-app="subscriptions"] { --brand: #176d56; }
-
-.subscriptions-welcome {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, .92fr);
-  overflow: hidden;
-  min-height: min(570px, calc(100dvh - 150px));
-  border: 1px solid #dcece2;
-  border-radius: 28px;
-  background: #fff;
-  box-shadow: 0 18px 58px rgba(63, 48, 93, .07);
-}
-.subscriptions-welcome-copy { padding: clamp(30px, 5vw, 76px); display: flex; flex-direction: column; justify-content: center; }
-.subscriptions-welcome-copy .eyebrow { color: #176d56; text-transform: uppercase; letter-spacing: .12em; font-size: 11px; }
-.subscriptions-welcome h2 { max-width: 510px; margin: 17px 0 22px; color: #18382b; font-size: clamp(42px, 5vw, 72px); line-height: .99; letter-spacing: -.07em; font-weight: 650; }
-.subscriptions-welcome-copy > p { max-width: 450px; font-size: 16px; line-height: 1.7; color: #5e6171; }
-.subscriptions-welcome-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 34px; }
-.subscriptions-welcome-actions button { min-height: 48px; padding: 0 20px; font-size: 13px; border-radius: 12px; }
-.subscriptions-welcome-actions button:not(.primary) { border: 1px solid #d2dfd5; background: #fff; }
-.subscriptions-welcome-note { margin-top: 24px; color: #808092; font-size: 12px; line-height: 1.5; }
-.subscriptions-welcome-visual { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 32px; background: radial-gradient(circle at 55% 50%, #e7f6ea 0%, #f7fbf8 60%, #edf7f0 100%); }
-.subscriptions-visual-source { display: flex; align-items: center; gap: 12px; width: min(300px, 90%); padding: 14px 18px; border-radius: 16px; border: 1px solid #d5e8da; background: rgba(255,255,255,.85); box-shadow: 0 8px 25px #176d560e; }
-.subscriptions-visual-source > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: #e0f3e5; color: #176d56; font-size: 21px; }
-.subscriptions-visual-source strong, .subscriptions-visual-source small { display: block; }.subscriptions-visual-source strong { color: #213a2b; font-size: 13px; }.subscriptions-visual-source small { margin-top: 3px; color: #888394; font-size: 11px; }
-.subscriptions-visual-flow { display: flex; flex-direction: column; gap: 7px; align-items: center; padding: 12px 0; }.subscriptions-visual-flow i { display: block; width: 4px; height: 4px; border-radius: 50%; background: #87b99a; }
-.subscriptions-visual-destination { width: min(360px, 100%); padding: 22px; border-radius: 21px; border: 1px solid #dcece0; background: #fff; box-shadow: 0 17px 42px #176d5618; }
-.subscriptions-visual-destination > div:first-child { display:flex; align-items:center; gap: 10px; padding-bottom: 18px; border-bottom: 1px solid #e8f0eb; color: #213a2b; font-size: 14px; }.subscriptions-visual-symbol { display:grid; place-items:center; width:31px; height:31px; border-radius:10px; background:#e3f2e7; color:#176d56; font-size: 20px; }
-.subscriptions-visual-line { display:flex; align-items:center; gap:8px; padding: 16px 0 0; }.subscriptions-visual-line span { min-width: 100px; color:#75877a; font-size: 11px; }.subscriptions-visual-line b { height: 7px; border-radius: 5px; background: #e4efe7; flex: 1; }.subscriptions-visual-line b:last-child { flex: .4; background:#bfdfc8; }
-@media (max-width: 780px) {
-  .workbench[data-app] .sidebar { padding: calc(12px + env(safe-area-inset-top)) 16px 12px; }
-  .workbench[data-app] .topbar { padding: 10px 16px 4px; }
-  .workbench[data-app] main { padding: 17px 16px calc(30px + env(safe-area-inset-bottom)); }
-  .subscriptions-welcome { grid-template-columns: 1fr; min-height: 0; }
-  .subscriptions-welcome-copy { padding: 34px 26px; }
-  .subscriptions-welcome h2 { font-size: clamp(40px, 10vw, 58px); }
-  .subscriptions-welcome-visual { min-height: 310px; padding: 28px; }
+/* Subject layouts retain their interaction models, with desktop-tool density. */
+.workbench[data-app] .spending-desk .balance, .workbench[data-app] .spending-desk .chart-card, .workbench[data-app] .revenue-overview .balance, .workbench[data-app] .revenue-overview .chart-card { padding: 16px; }
+.workbench[data-app] .balance h2 { font-size: 30px; margin: 10px 0; }
+.workbench[data-app] .balance select { min-height: 32px; margin-top: 10px; }
+.workbench[data-app] .segmented button { min-height: 30px; padding: 4px 8px; font-size: 11px; }
+.workbench[data-app] .commitments { margin-top: 16px; }
+.workbench[data-app] .commitment-list > li { padding: 12px 4px; gap: 12px; }
+.workbench[data-app] .commitment-name h3 { font-size: 14px; }
+.workbench[data-app] .commitment-cost strong { font-size: 18px; }
+.workbench[data-app] .provider-symbol { width: 32px; height: 32px; border-radius: 7px; font-size: 18px; }
+.workbench[data-app] .commitment-list .record-actions { gap: 10px; }
+.workbench[data-app] .briefs-desk { gap: 16px; }
+.workbench[data-app] .brief-index button { padding: 12px; border-radius: 7px; gap: 5px; }
+.workbench[data-app] .brief-index strong { font-size: 14px; }
+.workbench[data-app] .meeting-document { padding: 24px; min-height: 0; border-radius: 10px; }
+.workbench[data-app] .meeting-document h2 { font-size: 26px; }
+.workbench[data-app] .meeting-document section p { font-family: inherit; font-size: 14px; }
+.workbench[data-app] .meeting-document section { margin-top: 18px; }
+.workbench[data-app="agenda"] .agenda-event { padding: 14px; border-radius: 8px; }
+.workbench[data-app="agenda"] .agenda-event h3 { font-size: 16px; }
+.workbench[data-app="agenda"] .agenda-date > span { font-size: 36px; }
+.workbench[data-app] .destination-title { padding: 20px 24px 0; }
+.workbench[data-app] .destination-title h2 { font-size: 30px; }
+.workbench[data-app] .destination-canvas { min-height: 280px; border-radius: 10px; }
+.workbench[data-app] .atlas-canvas { border-radius: 10px; }
+.workbench[data-app] .journey-picker { padding: 16px; }
+.workbench[data-app] .journey-picker button { padding: 10px; }
+.workbench[data-app="focus"] .focus-stage { padding: 28px 16px; border-radius: 10px; gap: 20px; }
+.workbench[data-app="focus"] .timer { font-size: clamp(72px, 12vw, 140px); }
+@media (max-width: 700px), (pointer: coarse) {
+  .workbench[data-app] .segmented button, .workbench[data-app] .balance select { min-height: 44px; }
 }

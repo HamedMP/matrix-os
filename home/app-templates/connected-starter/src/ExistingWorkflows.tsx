@@ -22,12 +22,9 @@ function Introduction({ title, detail, symbol }: {
       <span className="workflow-object" aria-hidden="true">{symbol}
       </span>
       <div>
-        <span className="eyebrow">Your next useful step
-        </span>
         <h2>{title}
         </h2>
-        <p>{detail}
-        </p>
+        <details className="workflow-help"><summary>About this view</summary><p>{detail}</p></details>
       </div>
     </div>;
 }
@@ -112,7 +109,7 @@ function ReceiptInbox(props: ViewProps) {
     const review = receiptReview(props.records).filter(row => row.reasons.length);
     return <>
       <section className="workflow-panel" aria-label="Receipt review">
-        <Introduction symbol="▤" title="A clearer receipt inbox." detail="Check uncertain receipts before trusting the totals. Possible duplicates stay visible until you review their sources."/>
+        <Introduction symbol="▤" title="Receipts to review" detail="Check uncertain receipts before trusting the totals. Possible duplicates stay visible until you review their sources."/>
         <div className="workflow-section-title">
           <h3>Ready for your review
           </h3>
@@ -139,29 +136,19 @@ function SubscriptionGuardian(props: ViewProps) {
     const queue = renewalQueue(props.records, today());
     if (!props.records.length) return <section className="subscriptions-welcome" aria-label="Get started with subscriptions">
       <div className="subscriptions-welcome-copy">
-        <span className="eyebrow">Your subscriptions, together</span>
-        <h2>Know what renews next.</h2>
-        <p>Bring receipts from your connected email into one clear view of providers, recurring costs, and confirmed renewal dates.</p>
+        <span className="empty-symbol" aria-hidden="true">↻</span>
+        <h2>No subscriptions yet</h2>
+        <p>Import subscriptions from email or add one yourself.</p>
         <div className="subscriptions-welcome-actions">
           <button className="primary" onClick={props.onImport} disabled={!props.canImport}>Find subscriptions in email</button>
           <button onClick={props.onAdd}>Add one manually</button>
         </div>
-        <span className="subscriptions-welcome-note">Only dates stated in your records appear as renewal dates.</span>
-      </div>
-      <div className="subscriptions-welcome-visual" aria-hidden="true">
-        <div className="subscriptions-visual-source"><span>✉</span><div><strong>Connected inbox</strong><small>Receipts and plans</small></div></div>
-        <div className="subscriptions-visual-flow"><i/><i/><i/></div>
-        <div className="subscriptions-visual-destination">
-          <div><span className="subscriptions-visual-symbol">↻</span><strong>Everything in view</strong></div>
-          <div className="subscriptions-visual-line"><span>Providers</span><b/><b/></div>
-          <div className="subscriptions-visual-line"><span>Costs</span><b/><b/></div>
-          <div className="subscriptions-visual-line"><span>Renewal dates</span><b/><b/></div>
-        </div>
+        <span className="subscriptions-welcome-note">Renewal dates are shown only when confirmed in your records.</span>
       </div>
     </section>;
     return <>
       <section className="workflow-panel" aria-label="Renewal review">
-        <Introduction symbol="↻" title="Stay ahead of your commitments." detail="Confirmed renewal dates lead the queue. A receipt date alone never becomes a renewal or cancellation deadline."/>
+        <Introduction symbol="↻" title="Upcoming renewals" detail="Confirmed renewal dates lead the queue. A receipt date alone never becomes a renewal or cancellation deadline."/>
         <div className="renewal-queue">{queue.slice(0, 20).map(({ record, renewal, daysUntil, cancelBy, certainty }) => <article key={record.id} className="renewal-row">
             <div className="renewal-day">
               <strong>{daysUntil === null ? "?" : Math.abs(daysUntil)}
@@ -192,7 +179,7 @@ function TodayBrief(props: ViewProps) {
     const events = dailyEvents(props.records, day);
     return <>
       <section className="workflow-panel today-brief" aria-label="Today brief">
-        <Introduction symbol="◷" title="A little clarity for your day." detail="The first three scheduled events for your selected date, in their recorded time order. Missing times and time zones stay explicit."/>
+        <Introduction symbol="◷" title="Today" detail="The first three scheduled events for your selected date, in their recorded time order. Missing times and time zones stay explicit."/>
         <label className="brief-date">Brief date
           <input type="date" aria-label="Brief date" value={day} onChange={event => setDay(event.target.value)}/>
         </label>
@@ -225,7 +212,7 @@ function TripCompanion(props: ViewProps) {
     const record = active.find(item => item.id === selectedId) || active[0];
     return <>
       <section className="workflow-panel trip-preparation" aria-label="Trip preparation">
-        <Introduction symbol="✈" title="Arrive with a plan." detail="Review the details your selected bookings actually contain, then keep a personal preparation note. No live flight status is implied."/>{record ?
+        <Introduction symbol="✈" title="Travel checklist" detail="Review the details your selected bookings actually contain, then keep a personal preparation note. No live flight status is implied."/>{record ?
         <>
           <label>Preparation for
             <select disabled={draftLocked} aria-label="Preparation journey" value={record.id} onChange={event => setSelectedId(event.target.value)}>{active.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled journey"}
@@ -259,7 +246,7 @@ function MeetingFollowThrough(props: ViewProps) {
     const actions = record ? meetingActions(record.fields.actions) : [];
     return <>
       <section className="workflow-panel" aria-label="Meeting follow-through">
-        <Introduction symbol="☷" title="Turn the conversation into next steps." detail="Keep decisions and action ownership together. Missing owners and dates are questions to resolve, not guesses."/>{record ?
+        <Introduction symbol="☷" title="Decisions & next steps" detail="Keep decisions and action ownership together. Missing owners and dates are questions to resolve, not guesses."/>{record ?
         <>
           <label>Action list for
             <select disabled={draftLocked} aria-label="Action meeting" value={record.id} onChange={event => setSelectedId(event.target.value)}>{props.records.map(item => <option key={item.id} value={item.id}>{text(item, "title") || "Untitled meeting"}
@@ -297,7 +284,7 @@ function KeepInTouch(props: ViewProps) {
     const all = contactReview(props.records, today());
     const rows = reviewOnly ? all.filter(row => row.identityReview || row.daysSince === null) : all;
     return <section className="workflow-panel" aria-label="Relationship desk">
-      <Introduction symbol="◉" title="Keep the people, and the context." detail="Contacts stay separate by record and personal/work scope. A source gap means unknown history; matching names never silently merge."/>
+      <Introduction symbol="◉" title="Contact review" detail="Contacts stay separate by record and personal/work scope. A source gap means unknown history; matching names never silently merge."/>
       <label className="workflow-toggle">
         <input type="checkbox" checked={reviewOnly} onChange={event => setReviewOnly(event.target.checked)}/>Show identity or contact-date review
       </label>
@@ -349,7 +336,7 @@ function InvoiceDesk(props: ViewProps) {
     const overdue = all.filter(row => row.lane === "Overdue");
     const currencies = [...new Set(overdue.map(row => row.currency!))];
     return <section className="workflow-panel invoice-desk" aria-label="Invoice follow-up">
-      <Introduction symbol="▧" title="A thoughtful follow-up desk." detail="Overdue means a recorded due date has passed with a known outstanding amount. Disputes, external payments and unknown dates get their own treatment."/>
+      <Introduction symbol="▧" title="Invoice follow-ups" detail="Overdue means a recorded due date has passed with a known outstanding amount. Disputes, external payments and unknown dates get their own treatment."/>
       <div className="invoice-totals">{currencies.map(currency => <article key={currency}>
           <span>Recorded overdue · {currency}
           </span>
@@ -393,7 +380,7 @@ function ProjectRiskBrief(props: ViewProps) {
     const rows = props.records.map(record => ({ record, flags: projectRisks(record, today()) })).filter(row => row.flags.length);
     return <>
       <section className="workflow-panel" aria-label="Project risk brief">
-        <Introduction symbol="▥" title="See what needs a conversation." detail="Recorded blockers, owners and due dates create this brief. Source freshness is checked against an explicit 14-day threshold; merge status does not prove CI or deployment."/>
+        <Introduction symbol="▥" title="Projects to review" detail="Recorded blockers, owners and due dates create this brief. Source freshness is checked against an explicit 14-day threshold; merge status does not prove CI or deployment."/>
         <div className="project-risk-grid">{rows.slice(0, 20).map(({ record, flags }) => <article key={record.id}>
             <h3>{text(record, "title") || "Untitled task"}
             </h3>
