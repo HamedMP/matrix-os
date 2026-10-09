@@ -20,9 +20,10 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
 - Sources lists every kind with its availability ("Not set up on this server" for `not_configured`, which covers
   every server-side gap), connects with per-kind settings, and runs the repository's sync and claim reading, and
   every other source's sync, as background jobs it polls. On open it reads `GET .../jobs?limit=20` once and each card
-  follows the newest queued or running job of its slot, so a reload shows a run still going and keeps its buttons
-  off. The repository card shows the owner's model spend for the last 30 days across all projects, and the model
-  confirm the budget left (`modelSpend` of `GET .../claims`). A run that waits for another run of the project says so.
+  follows the newest queued or running job of each of its slots at once, so a reload shows every run still going
+  and keeps its buttons off until all end. The repository card shows the owner's model spend for the last 30 days
+  across all projects, and the model confirm the budget left (`modelSpend` of `GET .../claims`). A run that waits
+  for another run of the project says so.
 - Every screen is one shrinkable grid column, and long titles, keys and selects shrink or wrap, so nothing is wider
   than a 390 px screen.
 - Colors come from `BRAIN_TONE`: each class chains the Electron Desktop token first and the Web token second, with

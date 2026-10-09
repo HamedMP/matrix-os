@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { BrainButton } from "./brain-controls.js";
 import { BRAIN_TONE } from "./brain-tone.js";
 import { brainDay } from "./brain-format.js";
-import { BrainBadge, BrainCite, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
+import { BrainBadge, BrainCite, BrainEmpty, BrainError, BrainView, type BrainScreenProps } from "./brain-ui.js";
 import type { BrainBriefLine, BrainBriefView, BrainBriefWindow } from "./brain-types.js";
 import { useBrainAction, useBrainLoad } from "./use-brain-load.js";
 
@@ -34,14 +34,21 @@ export function BrainToday({ api, projectId, onOpenSources }: BrainScreenProps) 
       </div>
       {rebuild.error && <BrainError error={rebuild.error} onOpenSources={onOpenSources} />}
       <BrainView state={brief.state} label="Building the brief..." onRetry={brief.reload} onOpenSources={onOpenSources}>
-        {(view) => <BriefBody view={view} />}
+        {(view) => <BriefBody view={view} onOpenSources={onOpenSources} />}
       </BrainView>
     </div>
   );
 }
 
-function BriefBody({ view }: { readonly view: BrainBriefView }) {
+function BriefBody({ view, onOpenSources }: { readonly view: BrainBriefView; readonly onOpenSources: () => void }) {
   const { sections } = view;
+  // An empty section says how it fills.
+  const empty = (title: string) => (
+    <BrainEmpty title={title}>
+      Sync the sources and find claims in Sources, then rebuild the brief.{" "}
+      <BrainButton size="sm" variant="link" onClick={onOpenSources}>Open Sources</BrainButton>
+    </BrainEmpty>
+  );
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
       <p className="text-xs text-muted-foreground">
@@ -49,12 +56,12 @@ function BriefBody({ view }: { readonly view: BrainBriefView }) {
         {view.truncated ? ". Some sections were cut short." : "."}
       </p>
       {view.summary && <p className={`rounded-md p-3 text-sm ${BRAIN_TONE.panel}`}>{view.summary.text}</p>}
-      <BriefLines title="Needs attention" lines={sections.attention} empty="Nothing needs attention." />
-      <BriefLines title="Decisions" lines={sections.decisions} empty="No new decisions." />
-      <BriefLines title="Risks" lines={sections.risks} empty="No new risks." />
+      <BriefLines title="Needs attention" lines={sections.attention} empty={empty("Nothing needs attention.")} />
+      <BriefLines title="Decisions" lines={sections.decisions} empty={empty("No new decisions.")} />
+      <BriefLines title="Risks" lines={sections.risks} empty={empty("No new risks.")} />
       <section aria-label="Changes" className="grid gap-2">
         <h2 className="text-sm font-semibold">Changes</h2>
-        {sections.changes.length === 0 && <p className="text-sm text-muted-foreground">Nothing changed.</p>}
+        {sections.changes.length === 0 && empty("Nothing changed.")}
         {sections.changes.map((group) => (
           <div key={`${group.sourceId}:${group.label}`} className="grid gap-1">
             <h3 className="text-sm font-medium">
@@ -64,18 +71,18 @@ function BriefBody({ view }: { readonly view: BrainBriefView }) {
           </div>
         ))}
       </section>
-      <BriefLines title="Commitments" lines={sections.commitments} empty="No open commitments." />
+      <BriefLines title="Commitments" lines={sections.commitments} empty={empty("No open commitments.")} />
     </div>
   );
 }
 
 function BriefLines({ title, lines, empty }: {
-  readonly title: string; readonly lines: readonly BrainBriefLine[]; readonly empty: string;
+  readonly title: string; readonly lines: readonly BrainBriefLine[]; readonly empty: ReactNode;
 }) {
   return (
     <section aria-label={title} className="grid gap-2">
       <h2 className="text-sm font-semibold">{title}</h2>
-      {lines.length === 0 ? <p className="text-sm text-muted-foreground">{empty}</p> : <LineList lines={lines} />}
+      {lines.length === 0 ? empty : <LineList lines={lines} />}
     </section>
   );
 }

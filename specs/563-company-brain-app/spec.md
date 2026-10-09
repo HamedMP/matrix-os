@@ -40,7 +40,7 @@ leaves nothing behind, so the pair can be suggested and merged again); and
 the three runs are background jobs with progress, Stop and the result, and say when a run waits for another run of
 the project; the card shows the owner's model spend for the last 30 days across all projects, and the model confirm
 shows the budget left, which is per owner, not per project), every other source (last sync and what to do next, sync as a background job,
-pause or resume, recent syncs, disconnect after a second click) and a connect form. The form lists every
+pause or resume, recent syncs, disconnect after a confirm) and a connect form. The form lists every
 kind with its availability ("Ready", "Connect the account in Settings", or "Not set up on this server" for
 `not_configured`, which covers every server-side gap, not only a missing integration key), offers the first page of the kind's options, or a typed value when the kind lists none (GitHub
 `owner/name`, the Slack bridge's Company Brain scope id, Matrix note tags or none for every note, Linear team keys,
@@ -122,9 +122,9 @@ shows the `search` image there. No environment variables and no new dependencies
   with the error and "Try again". A new job, "Check again" or leaving the screen drops every answer meant for the
   older one; a job's end reloads the receipts once, whether a poll or the cancel answer brought it.
 - Crash recovery: no durable state in the view; a job keeps running in the gateway when the window closes. When
-  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of each
-  slot in turn (the repository's sync, rules and model runs; each source's sync), so after a reload each run shows and
-  buttons stay off until it ends. A gateway without the jobs route resumes nothing. Inactive Electron Desktop tabs
+  Sources opens it reads `GET .../jobs?limit=20` once, and each card follows the newest queued or running job of every
+  slot at once, with progress and Stop (the repository's sync, rules and model runs; each source's sync), so every run
+  shows and buttons stay off until all end. A gateway without the jobs route resumes nothing. Inactive Electron Desktop tabs
   stay mounted, so a followed job keeps polling there, with the same cap.
 - Not connected: Electron Desktop without a gateway session shows "Connect to your Matrix computer to open the
   Company Brain." instead of the view.
@@ -167,8 +167,8 @@ it, down to 360 px.
 
 A tab list with arrow keys (both axes, wrapping), Home and End, a roving tab stop and a labelled panel. Every control
 has a name; progress uses `role="status"`, errors `role="alert"`; the period buttons carry `aria-pressed`, the syncs
-toggle `aria-expanded`; the model confirm is a labelled dialog over the card that takes focus, and its button, Escape
-or a click outside closes it (Cancel and Escape refocus the button); an invalid typed value sets `aria-invalid`. A running
+toggle `aria-expanded`; the model and disconnect confirms are labelled dialogs over the card that take focus and close
+by their button, Escape or a click outside (Cancel, Keep, Escape refocus it); an invalid typed value sets `aria-invalid`. A running
 job shows a labelled `progress` element and its state in `role="status"`; the connect settings are a fieldset whose
 problem text describes it; the path history, kinds, people and reasons are labelled lists. Rows wrap down to 360 px.
 

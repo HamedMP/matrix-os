@@ -178,7 +178,12 @@ function OptionChoices({ state, onRetry, max, picked, onToggle }: {
   const full = max > 1 && picked.length >= max;
   return (
     <BrainView state={state} label="Loading choices..." onRetry={onRetry}>
-      {(view) => view.items.length === 0 ? <BrainEmpty title="Nothing to choose from yet." /> : (
+      {(view) => view.items.length === 0 ? (
+        <BrainEmpty title="Nothing to choose from yet.">
+          Add one first, then check again.{" "}
+          <BrainButton size="sm" variant="link" onClick={onRetry}>Check again</BrainButton>
+        </BrainEmpty>
+      ) : (
         <fieldset className="grid max-h-56 gap-1 overflow-auto">
           <legend className="mb-1 text-sm font-medium">
             {max === 1 ? "Choose one" : `Choose what to include (up to ${max})`}

@@ -81,7 +81,7 @@ export function BrainApp({
   };
 
   return (
-    <div className={`@container flex h-full min-h-0 flex-1 flex-col ${BRAIN_TONE.surface}`}>
+    <div className={`@container isolate flex h-full min-h-0 flex-1 flex-col ${BRAIN_TONE.surface}`}>
       {showHeading && (
         <header className={`flex flex-wrap items-center gap-3 border-b px-4 py-3 ${BRAIN_TONE.border}`}>
           <Brain className={`size-5 ${BRAIN_TONE.accentText}`} aria-hidden="true" />

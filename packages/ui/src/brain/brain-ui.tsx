@@ -54,9 +54,9 @@ export function BrainEmpty({ title, children }: { readonly title: string; readon
 }
 
 /**
- * A confirm spanning the nearest positioned ancestor just under it, over unpositioned content without a z-index, so
- * opening it moves nothing. The trigger toggles `open`; a click outside trigger and panel, or Escape, calls `onClose`.
- * Focus moves into the panel on open and back to the trigger when the panel closes with it (Cancel, Escape).
+ * A confirm just under the trigger, spanning the nearest positioned ancestor, above what follows (z-10 in the app's
+ * `isolate` root), so opening it moves nothing. The trigger toggles `open`; a click outside trigger and panel, or
+ * Escape, calls `onClose`. Focus moves into the panel on open, and back to the trigger when closing drops it.
  */
 export function BrainConfirm({ open, onClose, label, trigger, children }: {
   readonly open: boolean; readonly onClose: () => void; readonly label: string; readonly trigger: ReactNode;
@@ -86,7 +86,7 @@ export function BrainConfirm({ open, onClose, label, trigger, children }: {
       <span ref={anchor} className="contents">{trigger}</span>
       {open && (
         <div ref={panel} role="dialog" aria-label={label} tabIndex={-1}
-          className={`absolute inset-x-0 top-full mt-2 grid gap-2 rounded-md border p-3 text-sm outline-none ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
+          className={`absolute inset-x-0 top-full z-10 mt-2 grid gap-2 rounded-md border p-3 text-sm outline-none ${BRAIN_TONE.border} ${BRAIN_TONE.overlay}`}>
           {children}
         </div>
       )}

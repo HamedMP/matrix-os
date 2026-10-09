@@ -70,20 +70,25 @@ describe("Today", () => {
     fireEvent.click(screen.getByRole("button", { name: "This week" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("took too long");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByText("Nothing needs attention.")).toBeTruthy();
+    await screen.findByText("Nothing needs attention.");
     expect(screen.getByRole("button", { name: "This week" })).toHaveAttribute("aria-pressed", "true");
     expect(p.api.brief).toHaveBeenLastCalledWith(PROJECT, { window: "week" });
-    for (const text of ["No new decisions.", "No open commitments.", "No new risks.", "Nothing changed."]) {
-      expect(screen.getByText(text)).toBeTruthy();
+    // Every empty section is onboarding: an icon, the headline, how it fills and the way to Sources.
+    for (const text of ["Nothing needs attention.", "No new decisions.", "No open commitments.", "No new risks.", "Nothing changed."]) {
+      const empty = screen.getByText(text).closest(".border-dashed") as HTMLElement;
+      expect(empty.querySelector("svg[aria-hidden='true']")).not.toBeNull();
+      expect(empty).toHaveTextContent(/find claims in Sources, then rebuild the brief/);
+      fireEvent.click(within(empty).getByRole("button", { name: "Open Sources" }));
     }
+    expect(p.onOpenSources).toHaveBeenCalledTimes(5);
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
     expect(screen.getByRole("button", { name: "Rebuilding..." })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Today" })).toBeDisabled();
     expect(await screen.findByText(/Week ending 2026-10-04/)).toBeTruthy();
     expect(generate).toHaveBeenLastCalledWith(PROJECT, { window: "week" });
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Open Sources" }));
-    expect(p.onOpenSources).toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("alert")).getByRole("button", { name: "Open Sources" }));
+    expect(p.onOpenSources).toHaveBeenCalledTimes(6);
   });
 });
 

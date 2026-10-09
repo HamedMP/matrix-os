@@ -12,7 +12,7 @@ import type { BrainExtractView, BrainJobStartInput, BrainReceiptView } from "./b
 import {
   BrainBadge, BrainConfirm, BrainEmpty, BrainError, BrainJobProgress, BrainView, type BrainScreenProps,
 } from "./brain-ui.js";
-import { brainStartOrRun, useBrainJob, useBrainJobResume, type BrainActiveJobs } from "./use-brain-job.js";
+import { brainStartOrRun, useBrainSlotJob, type BrainActiveJobs } from "./use-brain-job.js";
 import { useBrainAction, useBrainLoad } from "./use-brain-load.js";
 
 const MODEL_RUN_NOTE = "Read with the model? This sends this project's pull requests, commits and specs to Anthropic "
@@ -38,10 +38,7 @@ const RUN_LABELS: Readonly<Record<RunName, string>> = {
 const RUN_JOBS: Readonly<Record<RunName, BrainJobStartInput>> = {
   sync: { kind: "sync" }, rules: { kind: "extract", extractor: "rules" }, model: { kind: "extract", extractor: "model" },
 };
-/** The repository card's job slots (brainJobKey) and the run name each is shown as. */
-const REPOSITORY_SLOTS: Readonly<Record<string, RunName>> = {
-  "sync:git": "sync", "extract:rules": "rules", "extract:model": "model",
-};
+const RUN_NAMES = Object.keys(RUN_LABELS) as RunName[];
 
 /** The project's repository: connect, sync, find claims (by rules or, after a confirm, the model) and recent syncs. */
 export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreenProps, "api" | "projectId"> & {
@@ -55,12 +52,14 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
   // The model budget (one claim page): read on open, again when a model run is confirmed and after it ends.
   const budget = useBrainLoad(() => api.claims(projectId, { limit: 1 }), "budget");
   const spend = budget.state.status === "ready" ? budget.state.data.modelSpend : null;
-  const job = useBrainJob({
-    poll: (jobId) => api.job(projectId, jobId), cancel: (jobId) => api.cancelJob(projectId, jobId),
-    onFinished: (name) => { git.reload(); if (name === "model") budget.reload(); },
-  });
-  const resuming = useBrainJobResume(job, active, REPOSITORY_SLOTS);
-  const busy = action.busy !== null || job.running || resuming;
+  const onFinished = (name: string) => { git.reload(); if (name === "model") budget.reload(); };
+  // One job per slot, so runs found on open show side by side; the buttons stay off until every one has ended.
+  const jobs = {
+    sync: useBrainSlotJob(api, projectId, active, "sync:git", "sync", onFinished),
+    rules: useBrainSlotJob(api, projectId, active, "extract:rules", "rules", onFinished),
+    model: useBrainSlotJob(api, projectId, active, "extract:model", "model", onFinished),
+  };
+  const busy = action.busy !== null || RUN_NAMES.some((name) => jobs[name].running);
   const budgetText = brainModelBudgetText(spend);
   const spendText = brainModelSpendText(spend);
   // Runs are polled background jobs; a gateway without the jobs route or that kind of job runs them directly.
@@ -68,7 +67,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
     () => brainStartOrRun(api, projectId, RUN_JOBS[name], direct), (outcome) => {
     if (!outcome.started) { done(outcome.text); return; }
     setMessage("");
-    job.start(name, outcome.view);
+    jobs[name].start(name, outcome.view);
   });
   return (
     <section aria-label="Repository" className="grid gap-3">
@@ -76,6 +75,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
       <BrainView state={git.state} label="Loading the repository..." onRetry={git.reload}>
         {(view) => view.source === null ? (
           <BrainEmpty title="This project's repository is not connected.">
+            <p className="mb-2">Connect it so the brain can read its commits, pull requests and specs.</p>
             <BrainButton size="sm" disabled={busy}
               onClick={() => action.run("connect", () => api.registerGitSource(projectId, {}), () => done("Repository connected. Sync it next."))}>
               Connect repository
@@ -122,7 +122,7 @@ export function BrainRepositoryCard({ api, projectId, active }: Pick<BrainScreen
               </BrainConfirm>
             </div>
             {spendText !== "" && <p className="text-xs text-muted-foreground">{spendText}</p>}
-            <BrainJobProgress job={job} labels={RUN_LABELS} />
+            {RUN_NAMES.map((name) => <BrainJobProgress key={name} job={jobs[name]} labels={RUN_LABELS} />)}
             <BrainReceipts receipts={view.receipts} />
           </div>
         )}
