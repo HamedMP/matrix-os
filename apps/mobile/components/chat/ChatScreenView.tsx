@@ -1,5 +1,4 @@
-import type { ReactNode } from "react";
-import { KeyboardAvoidingView, Platform, Text } from "react-native";
+import { KeyboardAvoidingView, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -17,10 +16,6 @@ export interface ChatScreenViewProps extends Pick<MessageListProps, "chatId" | "
   onOpenSidePanel: () => void;
   /** Starts a new chat. Offered only while a chat is open. */
   onNewChat?: () => void;
-  /** Sits under the top bar, such as an agent's controls. */
-  header?: ReactNode;
-  /** A problem to tell the person about, in plain words. */
-  notice?: string | null;
   /** Nothing has been said yet: the greeting and suggestions take the messages' place. */
   showHome: boolean;
   suggestions: readonly string[];
@@ -35,8 +30,6 @@ export function ChatScreenView({
   title,
   onOpenSidePanel,
   onNewChat,
-  header,
-  notice,
   showHome,
   suggestions,
   onSuggestionPress,
@@ -70,8 +63,6 @@ export function ChatScreenView({
           <TopBarButton icon={NewChatIcon} accessibilityLabel="New chat" onPress={onNewChat} />
         ) : null}
       />
-      {header}
-      {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
       {showHome ? (
         <ChatHome suggestions={suggestions} onSuggestionPress={onSuggestionPress} />
       ) : (
@@ -91,11 +82,5 @@ const styles = StyleSheet.create((theme) => ({
   screen: {
     flex: 1,
     backgroundColor: theme.v2.colors.background,
-  },
-  notice: {
-    ...theme.v2.text.caption,
-    color: theme.v2.colors.textSubtle,
-    textAlign: "center",
-    paddingHorizontal: theme.v2.space[20],
   },
 }));

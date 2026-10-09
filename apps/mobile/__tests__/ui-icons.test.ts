@@ -24,6 +24,7 @@ import SparklesIcon from "@hugeicons/core-free-icons/SparklesIcon";
 import SquareLock02Icon from "@hugeicons/core-free-icons/SquareLock02Icon";
 import StopIcon from "@hugeicons/core-free-icons/StopIcon";
 import Tick02Icon from "@hugeicons/core-free-icons/Tick02Icon";
+import UserMultiple02Icon from "@hugeicons/core-free-icons/UserMultiple02Icon";
 
 import * as icons from "../components/ui/icons";
 
@@ -52,6 +53,7 @@ describe("role icons", () => {
       LoadingIcon: Loading03Icon,
       ChatIcon: Message01Icon,
       FolderIcon: Folder01Icon,
+      SharedIcon: UserMultiple02Icon,
       DocumentIcon: File01Icon,
       LockIcon: SquareLock02Icon,
       EditIcon: PencilEdit02Icon,
@@ -61,8 +63,8 @@ describe("role icons", () => {
     });
   });
 
-  it("exports nothing but the 28 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(28);
+  it("exports nothing but the 29 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(29);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }

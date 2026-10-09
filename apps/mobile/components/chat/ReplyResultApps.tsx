@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 
+import { getAppSlug } from "@/lib/apps";
 import { installedAppSlug, useComputerApps } from "@/lib/queries/use-computer-apps";
 
 import { findReplyApps, replyAppCandidates } from "./chat-app-references";
@@ -31,6 +32,7 @@ function CatalogResultApps({ text, allowRelative, onOpen }: ReplyResultAppsProps
   const resolved = useMemo(() => {
     const catalog = apps.map((app) => ({
       slug: installedAppSlug(app),
+      runtimeSlug: getAppSlug(app),
       path: app.path,
       name: app.name,
       detail: resultAppDetail(app.category),
@@ -38,8 +40,8 @@ function CatalogResultApps({ text, allowRelative, onOpen }: ReplyResultAppsProps
     return findReplyApps(text, catalog, { allowRelative });
   }, [apps, text, allowRelative]);
 
-  return resolved.map(({ slug, name, detail }) => (
-    <ResultCard key={slug} app={{ slug, name, detail }} onOpen={onOpen} />
+  return resolved.map(({ slug, runtimeSlug, name, detail }) => (
+    <ResultCard key={slug} app={{ slug, runtimeSlug, name, detail }} onOpen={onOpen} />
   ));
 }
 

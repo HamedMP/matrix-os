@@ -44,7 +44,7 @@ const shareQuestion = reply({
 /** The message the result card belongs under, and the card. */
 export const SAMPLE_AGENT_RESULT: { messageId: string; app: ChatResultApp } = {
   messageId: briefReady.id,
-  app: { slug: "northwind-account-brief", name: "Northwind · account brief", detail: "6 sources" },
+  app: { slug: "northwind-account-brief", runtimeSlug: "northwind-account-brief", name: "Northwind · account brief", detail: "6 sources" },
 };
 
 // Newest first, as the message list takes them. Frame A3 hides the first turn.
