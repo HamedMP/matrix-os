@@ -57,20 +57,20 @@ export default function App() {
       if (galleryRef.current) galleryRef.current.scrollTop = browseScroll.current;
     }
   }, [selected]);
-  const request = useRef(0),
+  const inventoryRequest = useRef(0), catalogRequest = useRef(0),
     busy = useRef(false);
   const refresh = useCallback(async () => {
-    const version = ++request.current;
+    const version = ++inventoryRequest.current, catalogVersion = ++catalogRequest.current;
     setLoading(true);
     setLoadError("");
     try {
       if (!window.MatrixOS) throw new Error("Gallery unavailable");
       setConnections(null);
       const result = await loadGallery(window.MatrixOS, catalog => {
-        if (version !== request.current) return;
+        if (catalogVersion !== catalogRequest.current) return;
         setApps(catalog); setLoading(false);
       });
-      if (version === request.current) {
+      if (version === inventoryRequest.current) {
         setConnections(result.connections);
       }
     } catch (error) {
@@ -78,20 +78,21 @@ export default function App() {
         "App gallery could not load",
         error instanceof Error ? error.name : "Unknown error",
       );
-      if (version === request.current)
+      if (catalogVersion === catalogRequest.current)
         setLoadError(
           window.MatrixOS
             ? "The gallery could not load. Try again."
             : "Open App Gallery in Web Desktop, Web Canvas or Electron Desktop.",
         );
     } finally {
-      setLoading(current => version === request.current ? false : current);
+      setLoading(current => catalogVersion === catalogRequest.current ? false : current);
     }
   }, []);
   useEffect(() => {
     void refresh();
     return () => {
-      request.current++;
+      inventoryRequest.current++;
+      catalogRequest.current++;
     };
   }, [refresh]);
   const action = async (app: GalleryAppListing) => {
@@ -106,8 +107,8 @@ export default function App() {
       } else {
         setPending(app.id);
         const result = await installGalleryApp(window.MatrixOS, app.id);
-        // Discovery started before this install may still contain its old state.
-        request.current++;
+        // Invalidate stale catalog state while keeping pending connection inventory.
+        catalogRequest.current++;
         setLoading(false);
         setLoadError("");
         setApps((items) =>

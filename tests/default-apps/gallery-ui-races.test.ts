@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import Gallery from "../../home/apps/app-gallery/src/App";
 import Starter from "../../home/app-templates/connected-starter/src/App";
@@ -121,4 +121,42 @@ it("shows and installs the catalog while optional connections are still loading"
  await screen.findByRole('button',{name:'Open'});
  await act(async()=>inventory.resolve([]));
  expect(screen.getByRole('button',{name:'Open'})).toBeTruthy();
+});
+
+
+it("keeps pending connection inventory after a confirmed install", async () => {
+  const inventory = deferred<unknown[]>();
+  bridge({
+    gatewayFetch: vi.fn(async (url: string) => url.endsWith("/install")
+      ? { status: "installed", slug: "folio", name: "Folio", path: "apps/folio" }
+      : { version: 1, apps: [{ ...folio, installed: false }] }),
+    integrations: () => inventory.promise,
+  });
+  render(createElement(Gallery));
+  await screen.findByRole("button", { name: "Get" });
+  fireEvent.click(screen.getByRole("button", { name: "Get" }));
+  await screen.findByRole("button", { name: "Open" });
+  await act(async () => inventory.resolve([{ service: "gmail", account_label: "Personal", account_email: "owner@example.test", status: "active" }]));
+  expect(within(screen.getByRole("article", { name: "Folio" })).getByText("Connections ready")).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Connection readiness"), { target: { value: "ready" } });
+  expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
+});
+
+it("rejects connection results from a superseded refresh after install", async () => {
+  const first = deferred<unknown[]>(), second = deferred<unknown[]>();
+  bridge({
+    gatewayFetch: vi.fn(async (url: string) => url.endsWith("/install")
+      ? { status: "installed", slug: "folio", name: "Folio", path: "apps/folio" }
+      : { version: 1, apps: [{ ...folio, installed: false }] }),
+    integrations: vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise),
+  });
+  render(createElement(Gallery));
+  await screen.findByRole("button", { name: "Get" });
+  fireEvent.click(screen.getByRole("button", { name: "Refresh gallery and connections" }));
+  fireEvent.click(screen.getByRole("button", { name: "Get" }));
+  await screen.findByRole("button", { name: "Open" });
+  await act(async () => second.resolve([{ service: "gmail", account_label: "Personal", account_email: "owner@example.test", status: "active" }]));
+  await act(async () => first.resolve([]));
+  expect(within(screen.getByRole("article", { name: "Folio" })).getByText("Connections ready")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Open" })).toBeTruthy();
 });
