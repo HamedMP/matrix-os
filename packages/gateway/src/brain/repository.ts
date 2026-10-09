@@ -12,9 +12,12 @@ import {
   BrainOpenExtractionRunSchema, BrainPendingExtractionQuerySchema,
 } from "./claims/schemas.js";
 import { selectBrainModelSpend } from "./claims/spend.js";
-import { applyExtraction, closeRun, openRun, retireBilledRuns, selectPendingExtractions } from "./claims/store.js";
 import {
-  BRAIN_CLAIMS_PER_SCOPE_MAX, type BrainApplyDocumentExtractionInput, type BrainApplyDocumentExtractionResult,
+  applyExtraction, chargeRetiredRun, closeRun, openRun, retireBilledRuns, selectPendingExtractions,
+} from "./claims/store.js";
+import {
+  BRAIN_CLAIMS_PER_SCOPE_MAX, BRAIN_RETIRED_RUNS_SCOPE_ID, type BrainApplyDocumentExtractionInput,
+  type BrainApplyDocumentExtractionResult,
   type BrainClaimListQuery, type BrainClaimPage, type BrainClaimReader, type BrainCloseExtractionRunInput,
   type BrainExtractionRun, type BrainExtractionStore, type BrainModelSpendTotal, type BrainPendingExtractionPage,
   type BrainPendingExtractionQuery,
@@ -177,14 +180,20 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
 
   // Sources
 
-  /** `alongside` runs in the same transaction when the source is new (the sources service writes its config row). */
+  /**
+   * `alongside` runs in the same transaction when the source is new (the sources service writes its config row).
+   * `admit` runs under the scope lock before the insert and refuses by throwing (the services check the project is
+   * still live there): a scope erase takes the same lock, so a source is either refused or created before the erase.
+   */
   async createSource(
     scope: BrainScopeKey, input: BrainCreateSourceInput,
     alongside?: (trx: Transaction<BrainDatabase>, source: BrainSource) => Promise<void>,
+    admit?: () => Promise<unknown>,
   ): Promise<BrainCreateSourceResult> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const source = parseBrainInput(BrainCreateSourceSchema, input);
     return this.withScopeWrite(key, async (trx, now) => {
+      await admit?.();
       const result = await insertSource(trx, key, source, now);
       if (result.created) await alongside?.(trx, result.source);
       return result;
@@ -395,11 +404,19 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     return selectPendingExtractions(this.kysely, key, parseBrainInput(BrainPendingExtractionQuerySchema, query));
   }
 
-  /** Interrupts a running run past its lease; a younger running run is conflict. */
-  async openExtractionRun(scope: BrainScopeKey, input: { readonly extractor: string }): Promise<BrainExtractionRun> {
+  /**
+   * Interrupts a running run past its lease; a younger running run is conflict. `admit` runs under the scope lock
+   * before the open and refuses by throwing: a scope erase takes the same lock, so no run opens after the erase.
+   */
+  async openExtractionRun(
+    scope: BrainScopeKey, input: { readonly extractor: string }, admit?: () => Promise<unknown>,
+  ): Promise<BrainExtractionRun> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const target = parseBrainInput(BrainOpenExtractionRunSchema, input);
-    return this.withScopeWrite(key, (trx, now) => openRun(trx, key, target.extractor, now));
+    return this.withScopeWrite(key, async (trx, now) => {
+      await admit?.();
+      return openRun(trx, key, target.extractor, now);
+    });
   }
 
   /** Replaces one document's claims for the extractor and records its state, fenced by the running run. */
@@ -408,13 +425,31 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
   ): Promise<BrainApplyDocumentExtractionResult> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const apply = parseBrainInput(BrainApplyDocumentExtractionSchema, input);
-    return this.withScopeWrite(key, (trx, now) => applyExtraction(trx, key, apply, now, this.maxClaimsPerScope));
+    return this.keepingRetiredCost(key, apply.runId, apply.runCostMicroUsd,
+      () => this.withScopeWrite(key, (trx, now) => applyExtraction(trx, key, apply, now, this.maxClaimsPerScope)));
   }
 
   async closeExtractionRun(scope: BrainScopeKey, input: BrainCloseExtractionRunInput): Promise<BrainExtractionRun> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);
     const close = parseBrainInput(BrainCloseExtractionRunSchema, input);
-    return this.withScopeWrite(key, (trx, now) => closeRun(trx, key, close, now));
+    return this.keepingRetiredCost(key, close.runId, close.usage.costMicroUsd,
+      () => this.withScopeWrite(key, (trx, now) => closeRun(trx, key, close, now)));
+  }
+
+  /** A run write refused as gone or no longer running still saves the cost, should an erase have retired the run. */
+  private async keepingRetiredCost<T>(
+    scope: BrainScopeKey, runId: string, costMicroUsd: number, write: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await write();
+    } catch (error) {
+      if (costMicroUsd > 0 && error instanceof BrainStoreError
+        && (error.code === "conflict" || error.code === "not_found")) {
+        await this.withScopeWrite({ ownerId: scope.ownerId, scopeId: BRAIN_RETIRED_RUNS_SCOPE_ID },
+          (trx) => chargeRetiredRun(trx, scope.ownerId, runId, costMicroUsd));
+      }
+      throw error;
+    }
   }
 
   /** Model spend of the owner's runs (every scope) started in the last 30 days, by the repository clock; no lock. */
@@ -432,7 +467,8 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
 
   /**
    * Physically removes every row of the scope; frees capacity and incarnations. The scope's billed extraction runs
-   * of the last 30 days are kept apart first (retireBilledRuns), so the owner's model spend cap still counts them.
+   * of the last 30 days and its running model run are kept apart first (retireBilledRuns), so the owner's model spend
+   * cap still counts them, a call in flight included.
    */
   async eraseScope(scope: BrainScopeKey): Promise<void> {
     const key = parseBrainInput(BrainScopeKeySchema, scope);

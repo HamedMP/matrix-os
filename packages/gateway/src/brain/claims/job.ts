@@ -72,6 +72,7 @@ interface Extraction {
   readonly kinds: readonly BrainClaimKind[]; readonly model: BrainClaimModel | undefined;
   readonly provenances: readonly string[] | undefined;
   readonly limits: BrainExtractionLimits; readonly signal: AbortSignal | undefined; readonly now: () => number;
+  readonly admit: (() => Promise<unknown>) | undefined;
   runId: string; startedAt: number; bytesRead: number; stopAfter: BrainModelError | null;
   spend: BrainModelSpendTotal | null;
   readonly counts: Record<keyof BrainExtractionCounts, number>;
@@ -119,7 +120,8 @@ function parseOptions(options: BrainExtractionOptions): Extraction | BrainExtrac
   return {
     store: options.repository, scope, extractor: id, model, limits: resolved, provenances,
     kinds: (choice.kind === "model" ? choice.kinds : undefined) ?? BRAIN_CLAIM_KINDS, signal: options.signal,
-    now: options.now ?? Date.now, runId: "", startedAt: 0, bytesRead: 0, stopAfter: null, spend: null, ...zero(),
+    now: options.now ?? Date.now, admit: options.admit,
+    runId: "", startedAt: 0, bytesRead: 0, stopAfter: null, spend: null, ...zero(),
   };
 }
 
@@ -348,7 +350,8 @@ export async function runBrainExtraction(options: BrainExtractionOptions): Promi
   if (paid) runningModelOwners.add(extraction.scope.ownerId);
   try {
     try {
-      const opened = await extraction.store.openExtractionRun(extraction.scope, { extractor: extraction.extractor });
+      const { store, scope, extractor, admit } = extraction;
+      const opened = await store.openExtractionRun(scope, { extractor }, admit);
       extraction.runId = opened.runId;
     } catch (error) {
       const conflict = error instanceof BrainStoreError && error.code === "conflict";

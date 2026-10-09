@@ -32,7 +32,7 @@ describe("brain jobs service", () => {
     const store = fakeStore();
     const service = createBrainJobsService({ store, resolver, kinds: ["sync", "brief"], wake });
     expect(await service.enqueue("owner_s", "s", { kind: "sync" })).toEqual({ job, deduped: false });
-    expect(store.enqueue).toHaveBeenCalledWith(scope, "proj_s", { kind: "sync" });
+    expect(store.enqueue).toHaveBeenCalledWith(scope, "proj_s", { kind: "sync" }, expect.any(Function));
     expect(wake).toHaveBeenCalledTimes(1);
     vi.mocked(store.enqueue).mockResolvedValueOnce({ job, created: false });
     expect(await service.enqueue("owner_s", "s", { kind: "sync" })).toEqual({ job, deduped: true });

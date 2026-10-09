@@ -17,13 +17,15 @@ contract: `../contracts/brief.ts`; tests: `tests/gateway/brain-brief-*.test.ts` 
 - Briefs, conflicts and stale items are derived from current claims and documents at read time; a past brief reads
   them as they were at its window's end (`reads.ts` `documentsAsOf`). A stored brief is a snapshot for `(scope, date,
   window)`: at most 60 per scope, newest date first, each at most 256 KiB of JSON. `stored: true` only when the row
-  holds it after the write. No in-memory state but the scheduler's one timer, abort controller and running pass.
+  holds it after the write and the scope still holds a source or document row; a scope with neither gets its empty
+  brief rebuilt on each read. No in-memory state but the scheduler's one timer, abort controller and running pass.
 
 ## Concurrency And Recovery
 
 - Writes take `pg_advisory_xact_lock(hashtext(owner), hashtext('brain-brief:' || scope))` with `lock_timeout 5s` and
   `statement_timeout 15s`, never the core `brain:` lock; the upsert keeps the copy generated last and prunes in the
-  same transaction, after checking that every cited document is live and every named source has a row.
+  same transaction, after checking that the scope still holds a source or document row, every cited document is live
+  and every named source has a row, so a build that outlives an erase stores nothing, even one that cites nothing.
 - Reads take no lock; a line whose document goes away mid-read is dropped. A GET deletes a copy citing a deleted
   document only while the row still holds it; `scope_erased` deletes a scope's briefs; passes and `documents_changed`
   events delete tombstone citers. A pass is bounded by `BRAIN_BRIEF_SCHEDULE.passBudgetMs` and an abort signal

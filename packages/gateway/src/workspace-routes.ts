@@ -1,6 +1,8 @@
 import { createProjectFilesLocationService, createProjectMetadataService } from "./project-metadata.js";
 import { registerProjectMetadataRoutes } from "./project-metadata-routes.js";
-import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
+import {
+  createProjectDeletionCleanup, type ProjectBrainCleanup, type ProjectChatCleanup,
+} from "./project-deletion-cleanup.js";
 import type { BackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -252,6 +254,7 @@ export function createWorkspaceRoutes(options: {
   projectLifecycleService?: ProjectLifecycleService;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
   deleteProjectChats?: ProjectChatCleanup;
+  eraseProjectBrain?: ProjectBrainCleanup;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
   listChatBoundSessionIds?: (
@@ -329,6 +332,7 @@ export function createWorkspaceRoutes(options: {
     cleanupRelatedState: createProjectDeletionCleanup({
       sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,
       terminal: terminalRuntime, deleteChats: options.deleteProjectChats, worktrees: worktreeManager,
+      eraseBrain: options.eraseProjectBrain,
     }),
   });
 

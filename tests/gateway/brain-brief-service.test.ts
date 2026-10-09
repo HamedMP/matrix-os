@@ -1,5 +1,6 @@
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eraseBrainScopeRows } from "../../packages/gateway/src/brain/api/erase.js";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { BrainFeatureError, type BrainBriefSummaryModel } from "../../packages/gateway/src/brain/contracts.js";
 import { readStoredBrief, writeStoredBrief } from "../../packages/gateway/src/brain/brief/database.js";
@@ -282,6 +283,7 @@ describe("brief", () => {
 
 describe("stored briefs", () => {
   it("keeps the newest copy, prunes past the per-scope cap and rebuilds unreadable rows", async () => {
+    await fx.source();
     const base = await brief();
     expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, { ...base, generatedAt: "2026-10-01T09:00:00.000Z" })).toBe(false);
     expect((await readStoredBrief(fx.harness.db, BRIEF_SCOPE, base.date, "day"))!.generatedAt).toBe(base.generatedAt);
@@ -351,6 +353,7 @@ describe("stored briefs", () => {
   });
 
   it("deletes a scope's briefs on scope_erased and ignores other events", async () => {
+    await fx.source();
     await brief();
     const { listener } = fx.feature;
     const signal = new AbortController().signal;
@@ -373,17 +376,30 @@ describe("stored briefs", () => {
     expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, groupOnly)).toBe(false);
     expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-10-01", "day")).toBeNull();
   });
+
+  it("stores no brief that cites nothing once the project erase ran, nor one of a scope that holds no row", async () => {
+    expect((await brief()).stored).toBe(false);
+    await fx.source();
+    const quiet = await brief();
+    expect(quiet.stored).toBe(true);
+    expect(JSON.stringify(quiet.sections)).not.toMatch(/documentId|sourceId/);
+    await eraseBrainScopeRows(fx.harness.db, BRIEF_SCOPE);
+    expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, quiet)).toBe(false);
+    expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, quiet.date, "day")).toBeNull();
+  });
 });
 
 describe("runner", () => {
   it("builds today's brief per scope, completes past unfinished copies and counts skips and failures", async () => {
     const other = { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_b" };
-    const broken = { ownerId: "o".repeat(300), scopeId: "s" };
+    const broken = { ownerId: "o\u0000", scopeId: "s" };
     const throwing = { ownerId: "o", get scopeId(): string { throw "boom"; } };
     const gone = { ownerId: BRIEF_OWNER, scopeId: "personal:project:proj_gone" };
     const scopes = { listActiveScopes: vi.fn(async () => [BRIEF_SCOPE, other, broken, throwing, gone]) };
     const signal = new AbortController().signal;
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await fx.source();
+    await fx.source("git", "matrix-os", other);
     await writeStoredBrief(fx.harness.db, other, { ...(await brief()), date: "2026-09-29",
       generatedAt: "2026-09-29T06:00:00.000Z", from: "2026-09-29T00:00:00.000Z", to: "2026-09-30T00:00:00.000Z" });
     const run = (now = fx.harness.now()) => fx.feature.runner({ ownerId: BRIEF_OWNER, now, scopes, signal });
