@@ -31,7 +31,7 @@ export interface BriefFixture {
   source(kind?: string, label?: string, scope?: BrainScopeKey): Promise<string>;
   sync(sourceId: string, docs: readonly DocSpec[], scope?: BrainScopeKey): Promise<void>;
   extract(seed: string, claims: readonly ClaimSpec[], scope?: BrainScopeKey, extractor?: string): Promise<void>;
-  receipt(sourceId: string, status: "succeeded" | "failed", errorCode?: string): Promise<void>;
+  receipt(sourceId: string, status: "succeeded" | "failed", errorCode?: string, runMs?: number): Promise<void>;
   rebuild(summaries?: BrainBriefSummaryProvider): BrainBriefFeature;
   destroy(): Promise<void>;
 }
@@ -108,8 +108,9 @@ export async function createBriefFixture(): Promise<BriefFixture> {
         usage: { inputTokens: 0, outputTokens: 0, costMicroUsd: 0 },
       });
     },
-    async receipt(sourceId, status, errorCode) {
+    async receipt(sourceId, status, errorCode, runMs = 0) {
       const receipt = await harness.repository.openSyncReceipt(BRIEF_SCOPE, { sourceId });
+      harness.tick(runMs);
       await harness.repository.closeSyncReceipt(BRIEF_SCOPE, {
         sourceId, receiptId: receipt.receiptId, status, errorCode: errorCode ?? null,
         counts: { read: 0, written: 0, unchanged: 0, deleted: 0, failed: 0 },

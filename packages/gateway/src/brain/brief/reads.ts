@@ -74,22 +74,28 @@ export interface SourceState {
   readonly newest_document: string | null;
 }
 
-/** Active live sources with their newest receipt, newest successful finish and newest live document. */
-export async function sourceStates(db: Kysely<BrainDatabase>, scope: BrainScopeKey): Promise<SourceState[]> {
+/** Active live sources with their newest receipt, newest success and newest live document; `before` (a past brief):
+ * only sources, receipts and documents from before it, and a receipt still running then has no finish. */
+export async function sourceStates(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, before: Date | null,
+): Promise<SourceState[]> {
+  const cut = (column: string) => (before === null ? sql`` : sql`AND ${sql.ref(column)} < ${before}`);
+  const finished = before === null ? sql`r.finished_at`
+    : sql`CASE WHEN r.finished_at < ${before} THEN r.finished_at END`;
   const { rows } = await sql<SourceState>`
     SELECT s.source_id, s.kind, s.label, s.created_at,
       (SELECT max(r.finished_at) FROM brain_sync_receipts r WHERE r.owner_id = s.owner_id AND r.scope_id = s.scope_id
-        AND r.source_id = s.source_id AND r.status IN ('succeeded', 'partial')) AS last_success,
+        AND r.source_id = s.source_id AND r.status IN ('succeeded', 'partial') ${cut("r.finished_at")}) AS last_success,
       n.status AS last_status, n.finished_at AS last_finished, n.error_code AS last_error,
       (SELECT d.document_id FROM brain_documents d WHERE d.owner_id = s.owner_id AND d.scope_id = s.scope_id
-        AND d.source_id = s.source_id AND d.deleted_at IS NULL
+        AND d.source_id = s.source_id AND d.deleted_at IS NULL ${cut("d.source_updated_at")}
         ORDER BY d.source_updated_at DESC, d.document_id DESC LIMIT 1) AS newest_document
     FROM brain_sources s
-    LEFT JOIN LATERAL (SELECT r.status, r.finished_at, r.error_code FROM brain_sync_receipts r
-      WHERE r.owner_id = s.owner_id AND r.scope_id = s.scope_id AND r.source_id = s.source_id
+    LEFT JOIN LATERAL (SELECT r.status, ${finished} AS finished_at, r.error_code FROM brain_sync_receipts r
+      WHERE r.owner_id = s.owner_id AND r.scope_id = s.scope_id AND r.source_id = s.source_id ${cut("r.started_at")}
       ORDER BY r.started_at DESC, r.receipt_id DESC LIMIT 1) n ON TRUE
     WHERE s.owner_id = ${scope.ownerId} AND s.scope_id = ${scope.scopeId} AND s.deleted_at IS NULL
-      AND s.status = 'active'
+      AND s.status = 'active' ${cut("s.created_at")}
     ORDER BY s.created_at, s.source_id
     LIMIT ${BRIEF_SCANS.sources}`.execute(db);
   return rows;

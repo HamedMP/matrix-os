@@ -102,9 +102,11 @@ async function overdueCommitments(
   });
 }
 
-async function staleSources(db: Kysely<BrainDatabase>, scope: BrainScopeKey, now: Date): Promise<StaleItem[]> {
+async function staleSources(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { now, before = null }: StaleOptions,
+): Promise<StaleItem[]> {
   const items: StaleItem[] = [];
-  for (const source of await sourceStates(db, scope)) {
+  for (const source of await sourceStates(db, scope, before)) {
     const base = {
       cite: null, sourceId: source.source_id, claimId: null, key: source.source_id,
       anchor: source.newest_document, claimKind: null, due: null, assignee: null,
@@ -116,7 +118,7 @@ async function staleSources(db: Kysely<BrainDatabase>, scope: BrainScopeKey, now
     }
     const last = new Date(source.last_success ?? source.created_at);
     const staleAt = last.getTime() + BRAIN_STALE_SOURCE_DAYS * DAY_MS;
-    if (staleAt <= now.getTime()) {
+    if (staleAt <= (before ?? now).getTime()) {
       const what = source.last_success === null ? "since it was connected on" : "since";
       items.push({ ...base, kind: "source_sync_old", since: iso(new Date(staleAt)),
         text: lineText(`Source "${source.label}" has not synced successfully ${what} ${utcDate(last)}`) });
@@ -127,7 +129,7 @@ async function staleSources(db: Kysely<BrainDatabase>, scope: BrainScopeKey, now
 
 export interface StaleOptions {
   readonly kinds: readonly BrainStaleKind[]; readonly now: Date;
-  /** commitment_overdue: due before this YYYY-MM-DD, of documents dated before `before` when set (a past brief). */
+  /** commitment_overdue: due before this YYYY-MM-DD. `before` (a past brief): the brain as it was then. */
   readonly overdueBefore: string; readonly before?: Date | null;
   /** claim_outdated: only claims that became outdated in this range. */
   readonly outdatedIn?: { readonly from: Date; readonly to: Date };
@@ -144,7 +146,7 @@ export async function computeStale(
   if (kinds.includes("claim_outdated")) items.push(...await outdatedClaims(db, scope, options.outdatedIn ?? null));
   if (kinds.includes("commitment_overdue")) items.push(...await overdueCommitments(db, scope, options));
   if (kinds.some((kind) => kind === "source_sync_old" || kind === "source_failing")) {
-    items.push(...(await staleSources(db, scope, options.now)).filter((item) => kinds.includes(item.kind)));
+    items.push(...(await staleSources(db, scope, options)).filter((item) => kinds.includes(item.kind)));
   }
   const claimItems = items.filter((item) => item.claimId !== null);
   const cites = await loadCites(db, scope, claimItems.map((item) => item.anchor!));
