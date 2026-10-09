@@ -18,7 +18,7 @@ export function ImportChatRow({ item, busy, single, onTitle, onRemove, onOpen }:
                 <div className="matrix-import-meta"><span>{preview.harness === "codex" ? "Codex" : "Claude Code"}</span><span>{preview.counts.humanInputs} human inputs · {preview.counts.assistantResponses} assistant responses</span><span>{importBytes(preview.rawBytes)}</span></div>
             </div>
             <span className="matrix-import-state">{statusText}</span>
-            {!result ? <button type="button" className="matrix-import-icon-button" aria-label={`Remove ${item.title}`} disabled={busy} onClick={onRemove}><X size={16}/></button> : null}
+            {!result ? <button type="button" className="matrix-import-icon-button" aria-label={`Remove ${item.catalogKey ? "preview for " : ""}${item.title}`} disabled={busy} onClick={onRemove}><X size={16}/></button> : null}
         </div>
         {preview.firstVisibleText ? <p className="matrix-import-snippet" data-selectable>{preview.firstVisibleText}</p> : null}
         {status === "importing" ? <ImportTransfer item={item}/> : null}
@@ -36,6 +36,7 @@ function importStatus(item: ImportItem) {
     switch (item.status) {
         case "imported": return "In Matrix";
         case "failed": return "Needs retry";
+        case "reading": return "Reading transcript…";
         case "importing": return item.progress?.phase === "verifying" ? "Building chat…" : `Uploading ${percentUploaded(item)}%`;
         default: return "Ready to import";
     }

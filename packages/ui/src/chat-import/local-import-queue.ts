@@ -11,7 +11,7 @@ export async function runLocalImportQueue(sources: LocalChatCandidate[], native:
         const source = sources[index]!;
         const update = (patch: Omit<LocalImportUpdate, "sourceKey" | "title" | "processed" | "total">) => {
             if (!signal.aborted) onUpdate({ sourceKey: source.sourceKey, title: titles[source.sourceKey] ?? source.title,
-                processed: index, total: sources.length, ...patch });
+                processed: index + Number(patch.status === "imported" || patch.status === "failed"), total: sources.length, ...patch });
         };
         let ids: string[] = [];
         try {

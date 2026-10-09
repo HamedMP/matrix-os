@@ -3,11 +3,32 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatImportPanel } from "../../packages/ui/src/chat-import/ChatImportPanel";
+import type { NativeChatImportAdapter } from "../../packages/ui/src/chat-import/import-state";
 const counts={humanInputs:1,assistantResponses:1,agentInputs:0,toolCalls:0,toolResults:0,attachments:0,externalReferences:0,thinkingRecords:0,contextRecords:0,unknownRecords:0,sourceIssues:0};
 const sources=[{sourceKey:"a",harness:"codex" as const,title:"Fix import progress",rawBytes:1000,updatedAt:"2026-10-01T12:00:00Z",recordedDirectory:"/work/app"},{sourceKey:"b",harness:"claude" as const,title:"Plan the launch",rawBytes:2000,updatedAt:"2026-10-01T12:00:00Z"}];
-function adapter(){return {discover:vi.fn(async()=>({sources,limited:false})),prepare:vi.fn(async(keys:string[])=>({selections:keys.map(key=>({selectionId:key,preview:{harness:"codex" as const,sourceId:key,sourceHash:"a".repeat(64),rawBytes:1000,title:"Fix import progress",firstVisibleText:"Synthetic preview",parserVersion:1 as const,counts}})),errors:[]})),apply:vi.fn(async()=>({chatId:"chat_a",jobId:"a",messageCount:2})),pause:vi.fn()};}
+function adapter(){return {discover:vi.fn(async()=>({sources,limited:false})),prepare:vi.fn(async(keys:string[])=>({selections:keys.map(key=>({selectionId:key,preview:{harness:"codex" as const,sourceId:key,sourceHash:"a".repeat(64),rawBytes:1000,title:"Fix import progress",firstVisibleText:"Synthetic preview",parserVersion:1 as const,counts}})),errors:[]})),apply:vi.fn<NativeChatImportAdapter["apply"]>(async()=>({chatId:"chat_a",jobId:"a",messageCount:2})),pause:vi.fn()};}
 afterEach(cleanup);
 describe("automatic local chat library",()=>{
+    it("honors deselection after preview and offers one selection-based import action",async()=>{
+        const native=adapter();render(<ChatImportPanel native={native}/>);
+        fireEvent.click(await screen.findByRole("button",{name:"Preview Fix import progress"}));await screen.findByText("Synthetic preview");
+        fireEvent.click(screen.getByRole("checkbox",{name:"Select Fix import progress"}));
+        expect(screen.queryByRole("button",{name:"Import private Chat"})).toBeNull();
+        fireEvent.click(screen.getByRole("button",{name:"Import 1 selected chat"}));await screen.findByText("1 chat ready in Matrix.");
+        expect(native.apply).toHaveBeenCalledTimes(1);expect(native.apply.mock.calls[0]?.[0]).toBe("b");
+    });
+    it("shows preview upload progress and a retry outcome after Stop, ignoring late completion",async()=>{
+        const native=adapter();let settle:(value:{chatId:string;jobId:string;messageCount:number})=>void=()=>{};
+        native.apply.mockImplementationOnce((_id,_title,_signal,progress)=>{progress({phase:"uploading",uploadedBytes:500,totalBytes:1000});return new Promise(resolve=>{settle=resolve;});});
+        render(<ChatImportPanel native={native}/>);
+        fireEvent.click(await screen.findByRole("button",{name:"Preview Fix import progress"}));await screen.findByText("Synthetic preview");
+        fireEvent.click(screen.getByRole("button",{name:"Import 2 selected chats"}));
+        await screen.findByText("Uploading 50%");expect(screen.getByRole("progressbar",{name:"Upload progress for Fix import progress"}).getAttribute("value")).toBe("50");
+        fireEvent.click(screen.getByRole("button",{name:"Stop waiting"}));await screen.findByText("Needs retry");
+        expect(screen.getAllByRole("alert").some(node=>node.textContent?.includes("Retry"))).toBe(true);
+        await act(async()=>{settle({chatId:"late",jobId:"late",messageCount:2});});
+        expect(screen.queryByText("Imported 2 history entries into Matrix Chat.")).toBeNull();expect(native.apply).toHaveBeenCalledTimes(1);
+    });
     it("selects every discovered conversation by default and imports more than32 sequentially after deselection",async()=>{
         const native=adapter();const many=Array.from({length:45},(_,i)=>({...sources[i%2]!,sourceKey:`source-${i}`,title:`Conversation ${i}`}));
         native.discover.mockResolvedValue({sources:many,limited:false});
@@ -45,18 +66,19 @@ describe("automatic local chat library",()=>{
         await screen.findByRole("checkbox",{name:"Select Fix import progress"});
         expect(screen.queryByText("Choose transcripts")).toBeNull();expect(document.querySelector('input[type="file"]')).toBeNull();
         expect(native.apply).not.toHaveBeenCalled();expect(native.prepare).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("checkbox",{name:"Select Plan the launch"}));
         fireEvent.change(screen.getByRole("searchbox",{name:"Search local conversations"}),{target:{value:"import"}});
         expect(screen.queryByRole("checkbox",{name:"Select Plan the launch"})).toBeNull();
         fireEvent.click(screen.getByRole("button",{name:"Preview Fix import progress"}));
         await screen.findByText("Synthetic preview");expect(native.prepare).toHaveBeenCalledWith(["a"],expect.any(AbortSignal));expect(native.apply).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByRole("button",{name:"Import private Chat"}));await screen.findByText("Imported 2 history entries into Matrix Chat.");
+        fireEvent.click(screen.getByRole("button",{name:"Import 1 selected chat"}));await screen.findByText("Imported 2 history entries into Matrix Chat.");
     });
     it("rediscovers opaque source keys before starting another batch",async()=>{
         const native=adapter();render(<ChatImportPanel native={native}/>);
         await screen.findByRole("checkbox",{name:"Select Fix import progress"});
         fireEvent.click(screen.getByRole("button",{name:"Preview Fix import progress"}));
         await screen.findByText("Synthetic preview");
-        fireEvent.click(screen.getByRole("button",{name:"Import private Chat"}));
+        fireEvent.click(screen.getByRole("checkbox",{name:"Select Plan the launch"})); fireEvent.click(screen.getByRole("button",{name:"Import 1 selected chat"}));
         fireEvent.click(await screen.findByRole("button",{name:"Start another batch"}));
         await waitFor(()=>expect(native.discover).toHaveBeenCalledTimes(2));
         expect(native.pause).toHaveBeenCalledWith(true);
@@ -87,7 +109,7 @@ describe("automatic local chat library",()=>{
         await waitFor(()=>expect(native.discover).toHaveBeenCalledTimes(2));
         expect(screen.queryByRole("button",{name:"Import private Chat"})).toBeNull();
         fireEvent.click(await screen.findByRole("button",{name:"Preview Fix import progress"}));await screen.findByText("Synthetic preview");
-        fireEvent.click(screen.getByRole("button",{name:"Import private Chat"}));await screen.findByText("Imported 2 history entries into Matrix Chat.");
+        fireEvent.click(screen.getByRole("checkbox",{name:"Select Plan the launch"})); fireEvent.click(screen.getByRole("button",{name:"Import 1 selected chat"}));await screen.findByText("Imported 2 history entries into Matrix Chat.");
         expect(native.prepare).toHaveBeenLastCalledWith(["fresh-a"],expect.any(AbortSignal));
     });
     it("filters by app and shows a recoverable empty state when roots are missing",async()=>{
