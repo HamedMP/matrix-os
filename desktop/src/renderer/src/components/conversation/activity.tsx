@@ -62,6 +62,7 @@ export function ConversationActivity({
       </div>
     );
   }
+  const isPhase = activity.kind === "phase";
   const Icon = ACTIVITY_ICON[activity.kind];
   const accessibleLabel = activity.preview ? `${activity.label}: ${activity.preview}` : activity.label;
 
@@ -74,12 +75,14 @@ export function ConversationActivity({
             onClick={() => activity.detail && setOpen((value) => !value)}
             aria-expanded={open}
             aria-label={accessibleLabel}
-            className="w-fit max-w-full min-w-0 rounded-md px-1 py-0.5 hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
+            className={`w-fit max-w-full min-w-0 hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] ${isPhase
+              ? "gap-2.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-2.5 py-1.5"
+              : "rounded-md px-1 py-0.5"}`}
           >
             <MarkerIcon>
               <Icon className="size-3.5" style={{ color: "var(--text-tertiary)" }} />
             </MarkerIcon>
-            <MarkerContent className="flex min-w-0 items-baseline gap-1.5">
+            <MarkerContent className={`flex min-w-0 items-baseline ${isPhase ? "gap-2" : "gap-1.5"}`}>
               <span className={`shrink-0 font-medium text-[var(--text-primary)] ${activity.kind === "reasoning" && activity.state === "running" ? "shimmer" : ""}`}>
                 {activity.label}
               </span>
@@ -90,7 +93,9 @@ export function ConversationActivity({
                     ? "truncate rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]"
                     : activity.previewKind === "path"
                       ? "truncate rounded-md border border-[var(--border-subtle)] bg-[var(--bg-sunken)] px-1.5 py-0.5 font-mono text-xs text-[var(--text-secondary)]"
-                      : "truncate font-mono text-xs text-[var(--text-tertiary)]"}
+                      : isPhase
+                        ? "truncate font-mono text-xs text-[var(--text-secondary)]"
+                        : "truncate font-mono text-xs text-[var(--text-tertiary)]"}
                 >
                   {activity.preview}
                 </span>
