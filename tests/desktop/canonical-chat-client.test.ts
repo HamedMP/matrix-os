@@ -649,3 +649,14 @@ it("opts navigation into immutable import source projection", async () => {
   await createCanonicalChatClient(api({ get })).navigation!();
   expect(get).toHaveBeenCalledWith("/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
+
+it("forwards navigation provenance opt-in through the actual Electron API transport",async()=>{
+  const {createApiClient}=await import("@desktop/renderer/src/lib/api");
+  const requests:RequestInit[]=[];
+  const transport=createApiClient({baseUrl:"http://localhost:4000",getRuntimeSlot:()=>"primary",fetchFn:async(_input,init)=>{
+    requests.push(init!);return new Response(JSON.stringify({version:1,items:[],truncated:false}),{headers:{"content-type":"application/json"}});
+  }});
+  await createCanonicalChatClient(transport).navigation!();
+  expect(new Headers(requests[0]?.headers).get("X-Matrix-Chat-Import-Source")).toBe("1");
+  expect(requests[0]?.signal).toBeInstanceOf(AbortSignal);
+});
