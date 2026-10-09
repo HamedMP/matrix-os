@@ -1,3 +1,19 @@
+@import "../../_shared/app-foundation.css";
+@import "../../_shared/gallery-family.css";
+
+:root:root:root[data-app="whiteboard"] {
+  --identity-accent: #a35c27;
+  --identity-on-accent: #ffffff;
+  --identity-wash: #faf0e3;
+  --identity-glow: #efdabf;
+}
+@media (prefers-color-scheme: dark) {
+  :root:root:root[data-app="whiteboard"] {
+    --identity-accent: #edb78b;
+    --identity-on-accent: #202338;
+  }
+}
+
 :root {
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
@@ -704,4 +720,41 @@ body {
 .wb-app--reduced * {
   transition: none !important;
   animation: none !important;
+}
+
+/* A drawing studio: sculpted chrome, untouched artwork and color swatches. */
+:root:root { color-scheme: light dark; }
+:root .wb-app { height: 100dvh; background: transparent; }
+.wb-app .wb-toolbar { flex-shrink: 0; padding: max(12px, env(safe-area-inset-top)) 16px 12px; gap: 12px; background: var(--family-surface); box-shadow: var(--shadow); scrollbar-width: thin; }
+.wb-app .wb-toolbar > * { flex-shrink: 0; }
+.wb-app .wb-toolgroup { border-radius: 16px; padding: 4px; background: color-mix(in srgb, var(--app-muted) 65%, transparent); }
+.wb-app :is(.wb-tool, .wb-stroke, .wb-action, .wb-boarditem__action, .wb-zoom button) { min-width: 44px; min-height: 44px; border-radius: 14px; }
+.wb-app .wb-tool--active { background: var(--app-accent); color: var(--app-primary-fg); box-shadow: var(--family-lift); }
+.wb-app :is(.wb-action:not(.wb-action--ghost), .wb-newboard, .wb-empty__cta) { color: var(--app-primary-fg); box-shadow: 0 4px 10px color-mix(in srgb, var(--app-accent) 16%, transparent); }
+.wb-app .wb-palette { padding: 8px; gap: 10px; }
+.wb-app .wb-swatch { width: 32px; height: 32px; }
+.wb-app .wb-sidebar { background: color-mix(in srgb, var(--app-card) 75%, transparent); }
+.wb-app .wb-sidebar__title { text-transform: none; letter-spacing: 0; }
+.wb-app .wb-newboard { min-height: 44px; border-radius: 14px; }
+.wb-app .wb-boarditem { border: 1px solid transparent; border-radius: 18px; margin-top: 8px; }
+.wb-app .wb-boarditem--active { border-color: var(--app-border); background: var(--family-surface); box-shadow: var(--shadow); }
+.wb-app .wb-boarditem__open { min-height: 60px; }
+.wb-app .wb-boarditem__actions { opacity: 1; }
+.wb-app .wb-rename-input { min-height: 44px; font-size: 16px; }
+.wb-app .wb-zoom { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); border-radius: 18px; background: var(--family-surface); box-shadow: var(--family-lift); }
+.wb-app .wb-empty { width: min(360px, 100%); }
+.wb-app .wb-text-editor { color: var(--app-fg); font-size: 16px; }
+:root .wb-modal__card { border: 1px solid var(--app-border); border-radius: var(--family-radius); background: var(--family-surface); max-height: calc(100dvh - 24px); overflow-y: auto; }
+:root .wb-modal__actions { flex-wrap: wrap; }
+:root :is(.wb-btn-ghost, .wb-btn-danger) { min-height: 44px; border-radius: 14px; }
+@media (max-width: 720px) {
+ .wb-app .wb-body { flex-direction: column; }
+ .wb-app .wb-sidebar { width: 100%; max-height: 32dvh; border-right: 0; border-bottom: 1px solid var(--app-border); }
+ .wb-app .wb-sidebar__head { padding: 10px 16px 4px; flex-shrink: 0; }
+ .wb-app .wb-boardlist { display: flex; gap: 8px; padding: 8px 12px 12px; overflow-x: auto; }
+ .wb-app .wb-boarditem { flex: 0 0 240px; margin: 0; }
+ .wb-app .wb-palette { gap: 12px; }
+ .wb-app .wb-swatch { width: 44px; height: 44px; }
+ .wb-app .wb-toolbar { padding-left: 12px; padding-right: 12px; }
+ .wb-app .wb-toast { max-width: calc(100% - 24px); overflow-wrap: anywhere; bottom: 80px; }
 }

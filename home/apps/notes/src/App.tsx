@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BookOpenText,
   Check,
   Clock3,
   FilePlus2,
@@ -21,6 +20,8 @@ import {
   type Note,
   type TiptapDoc,
 } from "./notes-model";
+
+const notesArtwork = new URL("../../_shared/app-artwork/notes.png", import.meta.url).href;
 
 const APP_ID = "notes";
 const KV_KEY = "notes";
@@ -118,7 +119,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="empty-state">
       <div className="empty-state__icon">
-        <BookOpenText size={34} />
+        <img data-notes-artwork src={notesArtwork} alt="" width={80} height={80} />
       </div>
       <h2>No notes yet</h2>
       <p>Capture a thought, draft a plan, or save a reference. Press Cmd/Ctrl+N to begin.</p>
@@ -420,7 +421,8 @@ function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="sidebar__header">
-          <div>
+          <img data-notes-artwork src={notesArtwork} alt="" width={44} height={44} />
+          <div className="sidebar__title">
             <span className="eyebrow">Workspace</span>
             <h1>Notes</h1>
           </div>
