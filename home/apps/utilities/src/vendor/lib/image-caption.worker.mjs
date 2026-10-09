@@ -1,4 +1,5 @@
 import { CAPTION_MODEL_ID, CAPTION_MODEL_REVISION, captionDownloadProgress, normalizeCaptionOutput, validateCaptionRequest } from "./image-caption-config.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 // A fresh worker per run keeps model loading and inference off the page thread.
 // Terminating it cancels downloads/inference and releases its model memory.
@@ -22,7 +23,10 @@ self.addEventListener("message", async ({ data }) => {
     const output = await model(image, { max_new_tokens: 48 });
     self.postMessage({ type: "result", caption: normalizeCaptionOutput(output) });
   } catch (error) {
-    console.error("Local image caption model failed", error);
+    reportToolFailure(error);
     self.postMessage({ type: "error" });
-  } finally { await model?.dispose?.(); }
+  } finally {
+    try { await model?.dispose?.(); }
+    catch (error) { reportToolFailure(error); }
+  }
 });

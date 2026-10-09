@@ -18,6 +18,7 @@ async function load(bytes) {
     if (pdf.getPageCount() < 1 || pdf.getPageCount() > MAX_PAGES) throw new Error("PDFs must have 1 to 200 pages.");
     return pdf;
   } catch (error) {
+    reportToolFailure(error);
     if (error instanceof Error && /1 to 200/.test(error.message)) throw error;
     throw new Error("Could not open this PDF. It may be damaged or password protected.");
   }
@@ -104,6 +105,7 @@ export async function runPdfTool(slug, files, options = {}) {
         const bytes = await toolkit.unlock(files[0], { password });
         return { bytes: new Uint8Array(bytes), mime: "application/pdf", filename: "unlocked.pdf" };
       } catch (error) {
+        reportToolFailure(error);
         if (error instanceof PdfPasswordError) throw new Error("Incorrect PDF password.");
         throw new Error("Could not unlock this PDF. Check that it is encrypted and the password is correct.");
       }

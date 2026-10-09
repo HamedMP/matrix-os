@@ -5,6 +5,7 @@ import {
   validateSuperResolutionPixels,
   validateSuperResolutionRequest,
 } from "./image-super-resolution-config.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 // The worker owns the model for one run. Termination cancels inference and
 // releases the model's memory instead of retaining it in a browser tab.
@@ -30,10 +31,10 @@ self.addEventListener("message", async ({ data }) => {
     const copy = new Uint8Array(pixels);
     self.postMessage({ type: "result", width: output.width, height: output.height, channels: output.channels, data: copy }, [copy.buffer]);
   } catch (error) {
-    console.error("Local image enhancement failed", error);
+    reportToolFailure(error);
     self.postMessage({ type: "error" });
   } finally {
     try { await model?.dispose?.(); }
-    catch (error) { console.error("Could not release local image model", error); }
+    catch (error) { reportToolFailure(error); }
   }
 });

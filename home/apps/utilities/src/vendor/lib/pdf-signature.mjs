@@ -66,6 +66,7 @@ async function verifyCms(payload) {
     const valid = await withTimeout(signed.verify({ signer: 0, data: data.buffer, checkChain: false }), VERIFY_TIMEOUT_MS);
     return valid ? "valid" : "invalid";
   } catch (error) {
+    reportToolFailure(error);
     if (error instanceof Error && error.message === "Signature verification timed out.") return "unsupported";
     return "invalid";
   }
@@ -112,6 +113,7 @@ export async function inspectPdfSignatures(bytes, { signal } = {}) {
     }
     return { pageCount: document.numPages, signatures, notice: NOTICE };
   } catch (error) {
+    reportToolFailure(error);
     if (error instanceof Error && (/1 to 200 pages|four signatures/.test(error.message) || error.name === "AbortError")) throw error;
     throw new Error("Could not inspect this PDF. It may be damaged or password protected.");
   } finally {

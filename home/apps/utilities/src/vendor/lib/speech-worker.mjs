@@ -28,7 +28,7 @@ export function createBoundedModelFetch(fetchImpl, { maxFileBytes = MAX_SINGLE_M
         flush() { cleanup(); },
       }));
       return new Response(boundedBody, { status: response.status, statusText: response.statusText, headers: response.headers });
-    } catch (error) { cleanup(); throw error; }
+    } catch (error) { cleanup(); reportToolFailure(error); throw error; }
   };
 }
 

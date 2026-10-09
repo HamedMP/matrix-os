@@ -134,10 +134,11 @@ async function decodedImage(file, alreadyChecked = false) {
   try {
     const image = await createImageBitmap(file);
     try { validateImageDimensions(image.width, image.height); }
-    catch (cause) { image.close(); throw cause; }
+    catch (cause) { reportToolFailure(cause); image.close(); throw cause; }
     return { image, mime };
   } catch (error) {
     if (error instanceof Error && /8,192|32 million/.test(error.message)) throw error;
+    reportToolFailure(error);
     throw new Error("Could not decode this image in your browser.");
   }
 }

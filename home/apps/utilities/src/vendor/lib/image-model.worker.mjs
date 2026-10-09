@@ -1,4 +1,5 @@
 import { TAG_MODEL_ID, validateTagModelRequest } from "./image-model-config.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 // A dedicated worker keeps model inference off the page thread.
 // It is terminated after each request, releasing model memory on cancellation.
@@ -34,7 +35,10 @@ self.addEventListener("message", async ({ data }) => {
     const bytes = await png.arrayBuffer();
     self.postMessage({ type: "result", bytes, mime: "image/png", width: image.width, height: image.height }, [bytes]);
   } catch (error) {
-    console.error("Local image model failed", error);
+    reportToolFailure(error);
     self.postMessage({ type: "error" });
-  } finally { await model?.dispose?.(); }
+  } finally {
+    try { await model?.dispose?.(); }
+    catch (error) { reportToolFailure(error); }
+  }
 });

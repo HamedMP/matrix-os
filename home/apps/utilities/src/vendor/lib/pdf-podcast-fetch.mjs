@@ -1,3 +1,5 @@
+import { reportToolFailure } from "./diagnostics.mjs";
+
 const MAX_SINGLE_FILE_BYTES = 110 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 140 * 1024 * 1024;
 
@@ -34,6 +36,6 @@ export function createBoundedNarrationFetch(fetchImpl, { maxFileBytes = MAX_SING
         flush() { cleanup(); },
       }));
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
-    } catch (error) { cleanup(); throw error; }
+    } catch (error) { cleanup(); reportToolFailure(error); throw error; }
   };
 }

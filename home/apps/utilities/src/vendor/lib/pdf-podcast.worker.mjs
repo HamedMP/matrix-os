@@ -1,5 +1,6 @@
 import { buildPdfNarration, joinNarrationAudio, PDF_NARRATION_MODEL_ID, PDF_NARRATION_VOICES, wavFromNarration } from "./pdf-podcast.mjs";
 import { createBoundedNarrationFetch } from "./pdf-podcast-fetch.mjs";
+import { reportToolFailure } from "./diagnostics.mjs";
 
 self.onmessage = async ({ data }) => {
   const nativeFetch = self.fetch.bind(self);
@@ -31,7 +32,8 @@ self.onmessage = async ({ data }) => {
     const wav = wavFromNarration(result);
     self.postMessage({ type: "done", bytes: wav, durationSeconds: result.durationSeconds }, [wav.buffer]);
   } catch (error) {
-    self.postMessage({ type: "error", message: error instanceof Error && /limit|supported|speed|selectable|long/i.test(error.message) ? error.message : "The local voice model could not finish. Check network access, browser storage, and available device memory." });
+    reportToolFailure(error);
+    self.postMessage({ type: "error", message: "The local voice model could not finish. Check network access, browser storage, and available device memory." });
   } finally {
     self.fetch = nativeFetch;
   }
