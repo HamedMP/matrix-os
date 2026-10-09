@@ -3,6 +3,7 @@ import {
   ONBOARDING_TASKS,
   onboardingFollowUpPrompt,
   onboardingRunTitle,
+  onboardingWorkingLine,
   onboardingTask,
   type OnboardingAiChoice,
   type OnboardingRequiredService,
@@ -219,7 +220,10 @@ export function RunScreen({ run, state, runView, creditsExhausted, actions }: { 
       </>
     );
   }
-  if (run.phase !== "done") return <WorkLog steps={steps} />;
+  if (run.phase !== "done") {
+    const label = run.taskId === "custom" ? "Working on it" : onboardingWorkingLine(run.taskId, run.answer);
+    return <WorkLog steps={steps.length > 0 ? steps : [{ id: "run-working", label, state: "running" }]} />;
+  }
   const followUp = task?.followUp;
   return (
     <>

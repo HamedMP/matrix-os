@@ -70,6 +70,19 @@ function Harness({ actions, initial, runView = null, creditsExhausted = false, e
 }
 
 describe("OnboardingWidget", () => {
+  it("shows a working step before the agent reports any tool activity", () => {
+    const research: OnboardingWidgetEvent[] = [
+      { type: "task.selected", taskId: "research", connectedServices: [] },
+      { type: "answer.submitted", text: "Trip ideas for Lisbon" },
+    ];
+    const { unmount } = render(<Harness actions={makeActions()} events={research} runView={{ status: "running", steps: [] }} />);
+    expect(within(screen.getByRole("list", { name: "Work log" })).getByText("Researching Trip ideas for Lisbon")).toBeInTheDocument();
+    unmount();
+
+    render(<Harness actions={makeActions()} events={[{ type: "freeform.submitted", text: "Yes" }]} runView={null} />);
+    expect(within(screen.getByRole("list", { name: "Work log" })).getByText("Working on it")).toBeInTheDocument();
+  });
+
   it("renders the first-run greeting, four tasks, app tags and the AI line", () => {
     render(<Harness actions={makeActions()} />);
     expect(screen.getByText("Hey Sahar 👋")).toBeInTheDocument();

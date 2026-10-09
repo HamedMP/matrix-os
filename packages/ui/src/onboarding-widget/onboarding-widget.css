@@ -58,7 +58,7 @@
   flex-direction: column;
   width: 392px;
   max-width: calc(100vw - 48px);
-  max-height: min(624px, calc(100vh - 48px));
+  height: min(624px, calc(100vh - 48px));
   background: var(--mxo-bg);
   border-radius: 16px;
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22);
@@ -163,6 +163,9 @@
   padding: 16px;
   overscroll-behavior: contain;
 }
+
+/* Conversation sits at the bottom, like a chat; auto margins collapse once it overflows. */
+.mxo-body > :first-child { margin-top: auto; }
 
 .mxo-greeting {
   margin: 0;
