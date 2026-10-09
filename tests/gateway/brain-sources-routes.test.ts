@@ -85,10 +85,13 @@ describe("sources routes", () => {
     expect(service.receipts).toHaveBeenCalledWith(OWNER, "proj_a", SOURCE, 10);
     await call(root, `${BASE}/${SOURCE}/receipts?limit=50`);
     expect(service.receipts).toHaveBeenLastCalledWith(OWNER, "proj_a", SOURCE, 50);
-    // Path ids that are not source ids reach the service as "", after its project check.
-    for (const bad of ["x".repeat(80), "src_bad", `src_${"A".repeat(32)}`]) {
+    // Path ids that fail BRAIN_SOURCE_ID_PATTERN reach the service as "" on every source route, after its project check.
+    for (const bad of ["x".repeat(80), "src_bad", `src_${"A".repeat(32)}`, `src_${"a".repeat(33)}`, `${SOURCE}%20`]) {
+      await call(root, `${BASE}/${bad}`, json("PATCH", { expectedRevision: 1, label: "x" }));
+      await call(root, `${BASE}/${bad}?expectedRevision=1`, { method: "DELETE" });
       await call(root, `${BASE}/${bad}/sync`, { method: "POST" });
-      expect(service.sync).toHaveBeenLastCalledWith(OWNER, "proj_a", "");
+      await call(root, `${BASE}/${bad}/receipts`);
+      for (const method of ["update", "remove", "sync", "receipts"] as const) expect(vi.mocked(service[method]).mock.lastCall?.[2]).toBe("");
     }
   });
 
@@ -195,6 +198,7 @@ describe("sources routes", () => {
       expect(await call(root, `${BASE}/${sourceId}?expectedRevision=2`, { method: "DELETE" })).toMatchObject({ status: 200 });
       expect(await call(root, `${BASE}/${sourceId}/receipts`)).toEqual(errorOf(404, "source_not_found"));
       expect(await call(root, `${BASE}/src_bad/sync`, { method: "POST" })).toEqual(errorOf(404, "source_not_found"));
+      expect(await call(root, `${BASE}/src_bad`, json("PATCH", { expectedRevision: 1, label: "x" }))).toEqual(errorOf(404, "source_not_found"));
       expect(await call(root, `/api/brain/projects/proj_zz/sources/src_bad/sync`, { method: "POST" })).toEqual(errorOf(404, "project_not_found"));
       expect(await call(app(service, () => ({ userId: "owner_b", source: "dev-default" })), BASE)).toEqual(errorOf(404, "project_not_found"));
       expect(await call(root, BASE, json("POST", { kind: "linear", config: { items: ["BAD"] } }))).toEqual(errorOf(400, "source_config_invalid"));
