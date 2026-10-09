@@ -848,8 +848,12 @@ export class EmbedService {
   private rememberPendingApp(embedId: string, pending: PendingAppEmbed, active: boolean): void {
     this.pendingApps.set(embedId, pending);
     this.pendingActive.set(embedId, active);
+    // The singleton Utilities tab still needs its never-mounted launch record
+    // to close safely. Protect one exact reserved identity, including when
+    // duplicate low-level launches occur, without relaxing the registry cap.
+    const utilitiesId = [...this.pendingApps.entries()].find(([, app]) => app.appIdentity === "utilities" && app.slug === "utilities")?.[0];
     while (this.pendingApps.size > MAX_PENDING_APPS) {
-      const oldest = this.pendingApps.keys().next().value as string | undefined;
+      const oldest = [...this.pendingApps.keys()].find(id => id !== utilitiesId);
       if (!oldest) break;
       this.pendingApps.delete(oldest);
       this.pendingActive.delete(oldest);
