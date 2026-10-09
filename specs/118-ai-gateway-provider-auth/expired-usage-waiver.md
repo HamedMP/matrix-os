@@ -43,11 +43,16 @@ provider liability. Reviewed released and liability totals must equal the
 individual captures. These are independent operator-risk bounds, not changes
 to normal model, spending or two-slot admission-recovery limits. The owner's
 previously waived, still-unknown Matrix liabilities count toward the same
-ten-record and 50,000,000 microusd inventory, validated in bounded reads.
+ten-record and 50,000,000 microusd inventory, validated in bounded reads. A partial
+owner index matches `status = 'waived' OR (charge_waiver IS NOT NULL AND
+actual_microusd IS NULL)`, keeping the lookup independent of ordinary settled
+history while retaining malformed waived-status rows for fail-closed validation.
 
-Lock order is the disabled-mode deletion-job table or configured deletion owner,
-then funded owner, runtime/machine, sorted
-reservation rows and balance. Exact settlement takes the funded-owner lock
+Waiver lock order is the disabled-mode deletion-job table or configured deletion owner,
+then funded owner, machine, runtime policy, sorted reservation rows and balance.
+The machine precedes the policy to serialize with existing machine-first policy
+updates, which retain their existing authority and optimistic revision guard.
+This does not change unrelated authorization or policy-update locks. Exact settlement takes the funded-owner lock
 before its reservation lock, preventing a machine-FK lock inversion. Validate
 the whole batch before any write. Conflicting snapshots, incomplete/mixed
 replays, identity changes and unknown outcomes fail closed. Apply subtracts only
@@ -92,7 +97,8 @@ in the accounting tombstone while erasing account and request locators.
 ## Migration, delivery and validation
 
 Schema generation 18 adds nullable bounded audit text and the distinct status
-constraint, and transactionally updates the existing recovery index. Existing
+constraint, transactionally updates the existing recovery index, and adds the
+partial owner unknown-waiver inventory index. Existing
 rows stay unchanged. Startup audit validation paginates 100 rows; unrelated
 predecessor columns/indexes survive. Older instances skip the newer migration.
 Their settlement refuses the distinct status, but their dispatch replay fences
@@ -108,7 +114,9 @@ expiry/month isolation, other-live deferral, dispatch fences, host admission,
 late expense/no owner debit, account-deletion deferral/anonymization, additive
 generation17 upgrades (including exact predecessor Preview grant columns, indexes
 and retained rows) and older revision skips. Disposable PostgreSQL independent
-pools must exercise concurrent waiver/replay and exact-settlement races; PGlite
+pools must exercise concurrent waiver/replay, exact-settlement and actual
+runtime-policy update races in both machine-lock directions. Verify the inventory
+index catalog predicate and actual lookup plan against substantial settled history; PGlite
 is not concurrency evidence. Run the existing funded usage/recovery, route,
 priority, source, deletion, migration and schema-fingerprint suites plus canonical
 types/pattern checks. A separate public docs-site PR explains conditional support

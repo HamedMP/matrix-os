@@ -17,6 +17,11 @@ export async function migrateUsageWaivers(db: PlatformMigrationExecutor): Promis
           AND settlement_response IS NULL AND settled_at IS NULL)));
     EXCEPTION WHEN duplicate_object THEN NULL; END;
   END $$`.execute(db);
+  // Match the entire admission predicate, including malformed waived status.
+  // LIMIT bounds returned audit bytes; this index bounds lookup by owner inventory.
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_unknown_waiver_owner
+    ON ai_funded_usage_reservations(owner_id)
+    WHERE status = 'waived' OR (charge_waiver IS NOT NULL AND actual_microusd IS NULL)`.execute(db);
   let cursor = "";
   for (;;) {
     const rows = await db.selectFrom("ai_funded_usage_reservations").selectAll()

@@ -30,12 +30,13 @@ export function createExpiredUsageWaiver(options: { db: PlatformDB; now: () => D
       await assertWaiverDeletionMode(transaction, request.accountDeletionMode, apply, deletionEnv);
       return withAccountDeletionOwnerLock(transaction, request.identity.ownerId, async (trx, deletion) => {
         if (!deletion.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
-        // Admission lock order: account deletion -> funded owner -> runtime -> machine -> rows -> balance.
+        // Waiver lock order: account deletion -> funded owner -> machine -> runtime -> rows -> balance.
+        // Policy updates lock the machine before writing the runtime policy.
         await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${request.identity.ownerId}`}, 0))`.execute(trx.executor);
         const lock = <T extends { forUpdate(): T }>(query: T): T => apply ? query.forUpdate() : query;
-        const runtime = await lock(trx.executor.selectFrom("ai_funded_runtime_policies").selectAll()
-          .where("machine_id", "=", request.identity.machineId)).executeTakeFirst();
         const machine = await lock(trx.executor.selectFrom("user_machines").selectAll()
+          .where("machine_id", "=", request.identity.machineId)).executeTakeFirst();
+        const runtime = await lock(trx.executor.selectFrom("ai_funded_runtime_policies").selectAll()
           .where("machine_id", "=", request.identity.machineId)).executeTakeFirst();
         if (!machine || !runtime || machine.clerk_user_id !== request.identity.ownerId
           || machine.runtime_slot !== "primary" || machine.status !== "running"

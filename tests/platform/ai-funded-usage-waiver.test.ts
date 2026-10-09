@@ -8,7 +8,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createExpiredUsageWaiver } from "../../packages/platform/src/ai-funded-usage-waiver.js";
-import { createPlatformDb, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
+import { createPlatformDb, insertUserMachine, type PlatformDB, type PlatformDatabase } from "../../packages/platform/src/db.js";
 import { migrateAiFunded } from "../../packages/platform/src/database/migrations/ai-funded.js";
 import { runPlatformMigration } from "../../packages/platform/src/migration-runner.js";
 import { migratePlatformSchema } from "../../packages/platform/src/database/migrate.js";
@@ -375,6 +375,15 @@ for (const postgres of [false, true]) describe.skipIf(postgres && !databaseUrl)(
       expect((await snapshot()).rows).toEqual([]);
     });
     it("upgrades generation17 without destroying unrelated columns and older revisions skip", async () => {
+      // Reconstruct only the undeployed waiver delta, retaining the exact predecessor's
+      // status vocabulary and recovery index before running the real upgrade.
+      await sql`ALTER TABLE ai_funded_usage_reservations DROP COLUMN charge_waiver CASCADE`.execute(db.executor);
+      await sql`ALTER TABLE ai_funded_usage_reservations DROP CONSTRAINT ai_funded_usage_reservations_status_check`.execute(db.executor);
+      await sql`ALTER TABLE ai_funded_usage_reservations ADD CONSTRAINT ai_funded_usage_reservations_status_check
+        CHECK (status IN ('reserved','starting','in_flight','settling','releasing','settled','released','expired'))`.execute(db.executor);
+      await sql`CREATE UNIQUE INDEX idx_ai_funded_unknown_admission_owner
+        ON ai_funded_usage_reservations(owner_id, execution_recovery_slot)
+        WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL`.execute(db.executor);
       await migrateGenerationSeventeenPreviewDrive(db.executor);
       await sql`INSERT INTO preview_drive_grants(token_hash,kind,proof_nonce_hash,handle,actor_id,chat_id,
         turn_id,run_id,client_request_id,body_digest,expires_at,connection_id,provider_account_id)
@@ -385,14 +394,28 @@ for (const postgres of [false, true]) describe.skipIf(postgres && !databaseUrl)(
         WHERE schemaname=current_schema() AND tablename='preview_drive_grants' ORDER BY indexname`.execute(db.executor)).rows;
       await sql`ALTER TABLE user_machines ADD COLUMN preserved_predecessor_fixture TEXT DEFAULT 'retained'`.execute(db.executor);
       await sql`UPDATE platform_schema_revisions SET generation=17, fingerprint='9feab435402c8f98165baa5e66d1b4173d5cf9c7a205f525696a74eaf6a97b06' WHERE scope='core'`.execute(db.executor);
+      const waiverShape = () => sql<{ waiver_column: boolean; waiver_index: boolean }>`
+        SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema()
+          AND table_name='ai_funded_usage_reservations' AND column_name='charge_waiver') AS waiver_column,
+          to_regclass('idx_ai_funded_unknown_waiver_owner') IS NOT NULL AS waiver_index
+      `.execute(db.executor);
+      expect((await waiverShape()).rows).toEqual([{ waiver_column: false, waiver_index: false }]);
+      const predecessorRecoveryIndex = (await sql<{ indexdef: string }>`SELECT indexdef FROM pg_indexes
+        WHERE schemaname=current_schema() AND indexname='idx_ai_funded_unknown_admission_owner'`.execute(db.executor)).rows;
+      expect(predecessorRecoveryIndex).toHaveLength(1);
+      expect(predecessorRecoveryIndex[0].indexdef).toMatch(/WHERE .*execution_admission_release IS NOT NULL.*actual_microusd IS NULL/);
+      expect(predecessorRecoveryIndex[0].indexdef).not.toContain('charge_waiver');
       await runPlatformMigration(db.executor, migratePlatformSchema, { revision: PLATFORM_SCHEMA_REVISION });
+      expect((await waiverShape()).rows).toEqual([{ waiver_column: true, waiver_index: true }]);
+      expect((await sql`SELECT generation,fingerprint FROM platform_schema_revisions WHERE scope='core'`.execute(db.executor)).rows)
+        .toEqual([PLATFORM_SCHEMA_REVISION]);
       expect((await sql`SELECT * FROM preview_drive_grants`.execute(db.executor)).rows).toEqual(predecessorGrant);
       expect((await sql`SELECT indexname,indexdef FROM pg_indexes
         WHERE schemaname=current_schema() AND tablename='preview_drive_grants' ORDER BY indexname`.execute(db.executor)).rows).toEqual(predecessorIndexes);
       expect((await sql`SELECT preserved_predecessor_fixture FROM user_machines`.execute(db.executor)).rows)
         .toEqual([{ preserved_predecessor_fixture: "retained" }]);
       let called = false;
-      await runPlatformMigration(db.executor, async () => { called = true; }, { revision: { generation: 17, fingerprint: "predecessor17" } });
+      await runPlatformMigration<PlatformDatabase>(db.executor, async () => { called = true; }, { revision: { generation: 17, fingerprint: "predecessor17" } });
       expect(called).toBe(false);
     });
     it.skipIf(!postgres)("serializes exact settlement versus waiver without a double-release or owner re-debit", async () => {
