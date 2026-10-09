@@ -6,7 +6,6 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 ## Scope
 
 - `BrainApp.tsx`: the shared `BrainApp` bound to `shellApi`; `ShellBrainAppProps` omit `api` and `loadProjects`.
-- `index.ts`: the one entry point for shell code.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
   (no heading, the title bar names the app), `mobile/MobileShell.tsx`, `ShellHome.tsx`, the taskbar, the palette in
   `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`.
@@ -17,8 +16,8 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 
 ## Public API
 
-- `@/components/brain`: `BrainApp`, `ShellBrainAppProps`, `BRAIN_SHELL_VIEW`, `BRAIN_SHELL_SCREENS`,
-  `BRAIN_APP_KEYWORDS`, `brainShellError`, `createBrainShellApi`, `listBrainProjects` and the client types.
+- `@/components/brain` (`index.ts`, the only entry point): `BrainApp`, `ShellBrainAppProps`, `BRAIN_SHELL_VIEW`,
+  `BRAIN_SHELL_SCREENS`, `BRAIN_APP_KEYWORDS`, `brainShellError`, `createBrainShellApi`, `listBrainProjects`, types.
 
 ## Auth And Trust Boundaries
 
