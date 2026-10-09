@@ -16,6 +16,9 @@ export type { OsViewAgentTools } from "./ipc-server.js";
 export type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
 export type { BrainAgentTools, BrainWhyAgentResult } from "./tools/brain-why.js";
 export type { BrainAgentReadTools, BrainAgentResult } from "./tools/brain-read-tools.js";
+// Bots (gateway bots/brain-read.ts) answer with the same text as the kernel tools.
+export { BRAIN_WHY_INPUT_SHAPE, createBrainWhyToolHandler } from "./tools/brain-why.js";
+export { brainReadToolDefinitions } from "./tools/brain-read-tools.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
 export { ensureHome, generateTemplateManifest, smartSyncTemplate } from "./boot.js";
