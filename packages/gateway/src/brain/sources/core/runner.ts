@@ -3,9 +3,10 @@
  * bounded run: parse options, require the live active source of the adapter's kind, take the capped in-process
  * guard, open a receipt, then read pages until the adapter is caught up, the page cap or the run budget is reached.
  * The budget is checked only between pages, so a started page finishes; its signal aborts only when the caller
- * aborts or at the per-page ceiling (BRAIN_SOURCE_SYNC_LIMIT_CEILINGS.runBudgetMs, then provider_timeout). Each page
- * is one applySyncBatch that moves the cursor from the value it was read with (compare-and-set), followed by a
- * documents_changed hook. It never rejects; failures are stable codes on the result and the receipt.
+ * aborts or at the per-page ceiling (BRAIN_SOURCE_SYNC_LIMIT_CEILINGS.runBudgetMs, then provider_timeout), and the
+ * runner stops waiting then even if the adapter ignores it. Each page is one applySyncBatch that moves the cursor
+ * from the value it was read with (compare-and-set), followed by a documents_changed hook. It never rejects; failures
+ * are stable codes on the result and the receipt.
  */
 import { z } from "zod/v4";
 import {
@@ -113,6 +114,20 @@ function checkPage<TConfig>(options: BrainSourceSyncOptions<TConfig>, page: Brai
   }
 }
 
+/** Settles with `work`, or rejects with the signal's reason once it aborts (the abandoned work is left to settle). */
+async function untilAborted<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  const settled = new AbortController();
+  const aborted = new Promise<never>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true, signal: settled.signal });
+  });
+  try {
+    signal.throwIfAborted();
+    return await Promise.race([work(), aborted]);
+  } finally {
+    settled.abort();
+  }
+}
+
 interface RunClock { readonly started: number; readonly now: () => number }
 
 async function readPages<TConfig>(
@@ -128,11 +143,11 @@ async function readPages<TConfig>(
     }
     const ceiling = AbortSignal.timeout(BRAIN_SOURCE_SYNC_LIMIT_CEILINGS.runBudgetMs);
     const signal = options.signal === undefined ? ceiling : AbortSignal.any([ceiling, options.signal]);
-    const result = await options.adapter.readPage({
+    const result = await untilAborted(signal, () => options.adapter.readPage({
       scope: options.scope, sourceId: options.sourceId, externalRef, config: options.config,
       cursor: progress.cursor, signal, documents: repository, now: () => new Date(now()),
       limits: { maxUpserts: limits.upsertsPerPage, maxDeletions: BRAIN_SYNC_BATCH_MAX_ITEMS, maxRefs: limits.refsPerPage },
-    }).catch((error: unknown) => {
+    })).catch((error: unknown) => {
       if (options.signal?.aborted === true) return null;
       if (ceiling.aborted) throw new SyncFailure("provider_timeout");
       throw error;

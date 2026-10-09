@@ -59,7 +59,9 @@ registry action code, scheduled syncs and UI (see Deferred). No routes; OS-view 
   every item when the render fingerprint (config and render version) changed, resuming at the last re-rendered item;
   deletions for stored documents missing from a complete listing (Drive, Slack; Calendar during a config change, kept
   open by `m` in the cursor until a listing is complete) or reported cancelled (Calendar). Otherwise a calendar source
-  keeps at most 2,000 events (oldest deleted first). A build that fails after the page built items ends the page.
+  keeps at most 2,000 events (oldest deleted first). Work runs oldest first, starting after `r`, the last item the
+  previous run handled, so skipped items wait behind newer ones. A build that fails after the page built items ends
+  the page.
 
 ## Security architecture
 
@@ -93,14 +95,16 @@ registry action code, scheduled syncs and UI (see Deferred). No routes; OS-view 
 - Timeouts: each provider call and each capture read races `AbortSignal.any([page signal,
   AbortSignal.timeout(providerTimeoutMs)])`, so a callee that ignores the signal is still cut off; the timeout alone is
   `provider_timeout`. The run budget never aborts a page: the page signal aborts only when the caller aborts
-  (`run_budget_exhausted`) or at the 120 s page ceiling (`provider_timeout`).
+  (`run_budget_exhausted`) or at the 120 s page ceiling (`provider_timeout`), and the runner then stops waiting even
+  for an adapter that ignores it (a store read with no timeout).
 - Provider outcomes: `not_connected`, `auth_failed`, `rate_limited` (retry hint clamped to 1 s to 1 h),
   `remote_not_found`, `config_invalid`, `provider_unavailable`, `provider_output_invalid`. A Drive export answering
   not found is a skipped item; one answering `auth_failed` (a 403 for that file after the listing worked),
   `config_invalid`, `provider_output_invalid` or `provider_unavailable` is a skipped item (`too_large_skipped`) that
   the next run tries again. Slack: documents of other provenances and threads of other channels are left out; only an
   unreadable `slack_thread` makes the read incomplete (no sweep). A capture read answering forbidden or not found
-  (the owner lost the company scope) sweeps every copied thread, then the run fails `auth_failed` / `remote_not_found`.
+  (the owner lost the company scope) sweeps every copied thread (past 5,000 stored, one bounded read at a time), then
+  the run fails `auth_failed` / `remote_not_found`.
 - Concurrency: one run per source per process; across processes the cursor compare-and-set fails the loser
   (`cursor_conflict`, or `source_inactive` when the source was paused or removed). Config saves serialize under the
   feature lock; a save for a source of another kind or a missing source is refused.
@@ -155,7 +159,7 @@ codes and error names; an account outage is never read as `not_connected`; no `c
 
 ## Delivery and evidence
 
-- [ ] One PR (2,949 added lines; `runner.ts` and its suite, 519 of them, can move to the sources service PR), checks green, Invariants and the OS-view matrix (N/A) in the body.
+- [ ] One PR (2,938 added lines; `runner.ts`, 273 of them, can move to the sources service PR), checks green, Invariants and the OS-view matrix (N/A) in the body.
 - [ ] Site docs PR (`FinnaAI/matrix-os-site`): connector sources and their privacy rules.
 
 ## Deferred
