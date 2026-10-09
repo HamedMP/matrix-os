@@ -1,6 +1,13 @@
 import { prepareAppAiRequest } from "./app-ai-request";
 import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
 
+/** Connections belong to the signed-in owner on the platform, not to a VPS. */
+export function resolveBridgeFetchUrl(gatewayUrl: string, url: string): string {
+  return url === "/api/integrations"
+    ? new URL(url, gatewayUrl).toString()
+    : `${gatewayUrl}${url}`;
+}
+
 /** Authorize the same method that the trusted parent will dispatch. */
 export function prepareBridgeFetchRequest(appName: string, payload: unknown): { url: string; init: RequestInit } {
   if (!payload || typeof payload !== "object") throw new Error("Invalid bridge fetch payload");

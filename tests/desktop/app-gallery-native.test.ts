@@ -26,13 +26,13 @@ describe("Electron Desktop gallery", () => {
     const fetchFn = vi.fn<typeof fetch>(async (url) => {
       const path = new URL(String(url)).pathname;
       const value = path === "/api/app-gallery" ? { version: 1, apps: catalog.apps.map((app) => ({ ...app, installed: false })) }
-        : path === "/api/bridge/service" ? { services: [{ service: "gmail", account_label: "personal", status: "active" }] }
+        : path === "/api/integrations" ? [{ service: "gmail", account_label: "personal", status: "active" }]
         : { status: "installed", slug: "folio", name: "Folio", path: "apps/folio" };
       return new Response(JSON.stringify(value));
     });
     const { bridge } = fixture(fetchFn);
     const gatewayFetch = createNativeAppGatewayFetch((request) => bridge.gatewayFetch(sender, request));
-    const integrations = async () => ((await gatewayFetch<{ services: unknown[] }>("/api/bridge/service")).services);
+    const integrations = async () => (await gatewayFetch<unknown[]>("/api/integrations"));
     const loaded = await loadGallery({ gatewayFetch, integrations });
     expect(loaded.apps).toHaveLength(31);
     expect(loaded.connections?.[0]?.account_label).toBe("personal");
@@ -45,7 +45,7 @@ describe("Electron Desktop gallery", () => {
   it("allows starter inventory only, while denying forged senders, wrong apps and retired owner registrations", async () => {
     const { bridge, fetchFn, changeOwner } = fixture();
     bridge.register(72, "folio");
-    await bridge.gatewayFetch({ id: 72, url: `${origin}/apps/folio/` }, { url: "/api/bridge/service" });
+    await bridge.gatewayFetch({ id: 72, url: `${origin}/apps/folio/` }, { url: "/api/integrations" });
     await expect(bridge.gatewayFetch({ id: 72, url: `${origin}/apps/folio/` }, { url: "/api/app-gallery" })).rejects.toThrow();
     bridge.register(73, "notes-other");
     bridge.register(74, "custom/app-gallery", "app-gallery");
@@ -58,7 +58,7 @@ describe("Electron Desktop gallery", () => {
 
   it.each([
     { url: "/api/app-gallery?x=1" }, { url: "/api/../api/app-gallery" }, { url: "/api/app-gallery/%66olio/install", init: { method: "POST", body: "{}" } },
-    { url: "/api/bridge/service", init: { method: "POST", body: "{}" } }, { url: "/api/app-gallery/folio/install" },
+    { url: "/api/integrations", init: { method: "POST", body: "{}" } }, { url: "/api/app-gallery/folio/install" },
     { url: "/api/app-gallery/folio/install", init: { method: "POST", body: '{"code":"forged"}' } },
     { url: "/api/app-gallery/folio/install", init: { method: "POST", body: "{}", headers: { authorization: "forged" } } },
     { url: "https://evil.test/api/app-gallery" }, { url: "/api/bridge/ai" }, { url: "/api/apps" },

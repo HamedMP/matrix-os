@@ -413,9 +413,12 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     },
 
     integrations: function() {
-	      return parentFetch("/api/bridge/service", {}, 10000)
+	      return parentFetch("/api/integrations", {}, 10000)
 	        .then(function(r) { return r.json(); })
-	        .then(function(d) { return d.services || []; });
+	        .then(function(d) {
+          if (!Array.isArray(d) || d.length > 2000) throw new Error("Connection inventory unavailable");
+          return d;
+        });
 	    },
 
     service: function(service, action, params, label) {

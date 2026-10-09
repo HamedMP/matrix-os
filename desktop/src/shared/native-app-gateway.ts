@@ -51,7 +51,7 @@ export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug:
   const method = request.init?.method ?? "GET";
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
   if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
-  return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/bridge/service" && method === "GET";
+  return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/integrations" && method === "GET";
 }
 export function nativeAppGatewayTimeout(request: NativeAppGatewayRequest): number {
   return request.init?.method === "POST" ? NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS : NATIVE_APP_GATEWAY_TIMEOUT_MS;
@@ -75,8 +75,7 @@ export function createNativeAppGatewayFetch(invoke: (request: NativeAppGatewayRe
 }
 export function createNativeAppIntegrations(invoke: (request: NativeAppGatewayRequest) => Promise<unknown>) {
   return async () => {
-    const value = await createNativeAppGatewayFetch(invoke)<unknown>("/api/bridge/service");
-    if (!value || typeof value !== "object" || !("services" in value)) throw new Error("Connection inventory unavailable");
-    return parseGalleryInventory(value.services);
+    const value = await createNativeAppGatewayFetch(invoke)<unknown>("/api/integrations");
+    return parseGalleryInventory(value);
   };
 }

@@ -76,12 +76,12 @@ it("exposes the one-way installed-app launch request in native app views", async
 
 it("advertises gallery discovery and owner integration inventory only when explicitly opted in", async () => {
   vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge", "--matrix-app-gallery-bridge", "--matrix-app-integrations-bridge"]);
-  electron.ipcRenderer.invoke.mockResolvedValue({ services: [{ service: "gmail", account_label: "personal", status: "active" }] });
+  electron.ipcRenderer.invoke.mockResolvedValue([{ service: "gmail", account_label: "personal", status: "active" }]);
   await import("../../desktop/src/preload/index.js");
   const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
   expect(bridge.db.compareAndSwap).toBeTypeOf("function");
   await expect(bridge.integrations()).resolves.toEqual([{ service: "gmail", account_label: "personal", status: "active" }]);
-  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:gateway-fetch", { url: "/api/bridge/service" });
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:gateway-fetch", { url: "/api/integrations" });
   expect(bridge.gatewayFetch).toBeTypeOf("function");
 });
 

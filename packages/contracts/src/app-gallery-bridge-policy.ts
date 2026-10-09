@@ -1,6 +1,6 @@
 /** Shared exact-path capability policy for the Web and Electron app bridges. */
 export function isAllowedAppGalleryBridgeRequest(url: string, method = "GET"): boolean {
-  if (url === "/api/app-gallery" || url === "/api/bridge/service") return method === "GET";
+  if (url === "/api/app-gallery" || url === "/api/integrations") return method === "GET";
   return method === "POST" && /^\/api\/app-gallery\/[a-z][a-z0-9-]{0,47}\/install$/.test(url);
 }
 

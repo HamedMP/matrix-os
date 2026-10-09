@@ -13,9 +13,9 @@ describe("gallery requests through the shared app viewer", () => {
   });
   it("blocks a service execution POST even when inventory GET is allowed", () => {
     expect(() => prepareBridgeFetchRequest("app-gallery", {
-      url: "/api/bridge/service", init: { method: "POST", body: "{}" },
+      url: "/api/integrations", init: { method: "POST", body: "{}" },
     })).toThrow("Blocked bridge fetch URL");
-    expect(prepareBridgeFetchRequest("app-gallery", { url: "/api/bridge/service" }).init.method).toBe("GET");
+    expect(prepareBridgeFetchRequest("app-gallery", { url: "/api/integrations" }).init.method).toBe("GET");
   });
   it("blocks unsupported and malformed methods before dispatch", () => {
     for (const method of ["DELETE", 7, null, {}]) {

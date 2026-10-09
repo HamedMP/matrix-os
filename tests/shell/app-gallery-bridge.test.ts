@@ -45,13 +45,13 @@ describe("gallery bridge permission", () => {
   });
   it("retains inventory GET but blocks service execution for gallery", () => {
     expect(
-      isAllowedBridgeFetchUrl("app-gallery", "/api/bridge/service", "GET"),
+      isAllowedBridgeFetchUrl("app-gallery", "/api/integrations", "GET"),
     ).toBe(true);
     expect(
-      isAllowedBridgeFetchUrl("app-gallery", "/api/bridge/service", "POST"),
+      isAllowedBridgeFetchUrl("app-gallery", "/api/integrations", "POST"),
     ).toBe(false);
     expect(
-      isAllowedBridgeFetchUrl("app-gallery", "/api/bridge/service?x=1", "GET"),
+      isAllowedBridgeFetchUrl("app-gallery", "/api/integrations?x=1", "GET"),
     ).toBe(false);
   });
 });

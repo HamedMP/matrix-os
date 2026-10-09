@@ -1,6 +1,6 @@
 "use client";
 
-import { prepareBridgeFetchRequest } from "./app-viewer-bridge-request";
+import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { APP_AI_TIMEOUT_MS } from "@matrix-os/contracts";
 
 import { useState, useEffect, useRef } from "react";
@@ -57,7 +57,7 @@ async function handleBridgeFetch(appName: string, payload: unknown, port: Messag
   try {
     const { url, init: requestInit } = prepareBridgeFetchRequest(appName, payload);
     const isAi = url === "/api/bridge/ai";
-    const response = await fetch(`${getGatewayUrl()}${url}`, {
+    const response = await fetch(resolveBridgeFetchUrl(getGatewayUrl(), url), {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
