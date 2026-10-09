@@ -16,6 +16,8 @@ import { createAppRegistry, type AppRegistry } from "../app-db-registry.js";
 import { startBrainServices, type BrainProjectService, type BrainServicesHandle } from "../brain/api/index.js";
 import type { BrainLateBoundIntegrations } from "../brain/sources/integration/index.js";
 import { createBrainMatrixNotesReader } from "../brain/sources/matrix/index.js";
+import { ownerBotExecutor } from "../bots/instantiation.js";
+import { createBotChatIdsLookup } from "../bots/repositories/bindings.js";
 import { createQueryEngine, type QueryEngine } from "../app-db-query.js";
 import { createKvStore, type KvStore } from "../app-db-kv.js";
 import { isSafeName, normalizeAppStorageSlug } from "../app-db-types.js";
@@ -216,6 +218,7 @@ export async function initializeOwnerDatabaseServices(
         ...(options.brainOwnerIds ? { ownerIds: options.brainOwnerIds } : {}),
         sources: {
           notes: createBrainMatrixNotesReader(db), chats: chatRepository,
+          botChats: createBotChatIdsLookup(ownerBotExecutor(chatRepository.kysely)),
           ...(brainIntegrations ? {
             integrations: brainIntegrations.caller, isConfigured: () => brainIntegrations.configured(),
             isConnected: brainIntegrations.isConnected, accounts: brainIntegrations.accounts,

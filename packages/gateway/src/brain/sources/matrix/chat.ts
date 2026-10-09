@@ -17,7 +17,8 @@ import {
   matrixDocumentId, resumeIndex, sweepStep, readThrough,
 } from "./shared.js";
 import {
-  BRAIN_MATRIX_LIMITS, type BrainMatrixChatHandlerDeps, type BrainMatrixChatOwner, type BrainMatrixChatReader,
+  BRAIN_MATRIX_LIMITS, type BrainMatrixBotChats, type BrainMatrixChatHandlerDeps, type BrainMatrixChatOwner,
+  type BrainMatrixChatReader,
 } from "./types.js";
 
 const KIND = "matrix_chat" as const;
@@ -127,6 +128,26 @@ export function createMatrixChatAdapter(
   };
 }
 
+/**
+ * The owner's chats without Bot chats: get reads a Bot chat as missing, so a scan skips it and the sweep tombstones its
+ * documents, and list leaves it out of a page (the page's cursor stays as it was).
+ */
+function withoutBotChats(reader: BrainMatrixChatReader, botChats: BrainMatrixBotChats | undefined): BrainMatrixChatReader {
+  if (botChats === undefined) return reader;
+  return {
+    async get(owner, chatId) {
+      const record = await reader.get(owner, chatId);
+      return record !== null && (await botChats(owner.ownerId, [chatId])).has(chatId) ? null : record;
+    },
+    getMessages: (owner, chatId, input) => reader.getMessages(owner, chatId, input),
+    async list(owner, input) {
+      const page = await reader.list(owner, input);
+      const bots = await botChats(owner.ownerId, page.items.map(({ chat }) => chat.id));
+      return bots.size === 0 ? page : { ...page, items: page.items.filter(({ chat }) => !bots.has(chat.id)) };
+    },
+  };
+}
+
 /** The owner's active chats, newest activity first, for opting chats in; q filters titles within each page. */
 async function chatOptions(reader: BrainMatrixChatReader, owner: BrainMatrixChatOwner, q: string | undefined, cursor: string | undefined) {
   const position = cursor === undefined ? undefined : decodeMatrixCursor(OPTIONS_PREFIX, OptionsCursorSchema, cursor);
@@ -150,6 +171,7 @@ export function createBrainMatrixChatHandler(
   deps: BrainMatrixChatHandlerDeps,
 ): BrainSourceKindHandler<BrainMatrixChatSourceConfig> {
   const now = deps.now ?? (() => new Date());
+  const chats = deps.chats === null ? null : withoutBotChats(deps.chats, deps.botChats);
   return {
     kind: KIND,
     parseConfig: parseChatConfig,
@@ -161,8 +183,8 @@ export function createBrainMatrixChatHandler(
     },
     async createAdapter(ownerId) {
       const owner = chatOwner(ownerId);
-      if (deps.chats === null || owner === null) return { ok: false, code: "not_connected" };
-      return { ok: true, adapter: createMatrixChatAdapter(deps.chats, owner) };
+      if (chats === null || owner === null) return { ok: false, code: "not_connected" };
+      return { ok: true, adapter: createMatrixChatAdapter(chats, owner) };
     },
     viewConfig: (config) => ({ chatIds: [...config.chatIds] }),
     async availability(ownerId) {
@@ -171,8 +193,8 @@ export function createBrainMatrixChatHandler(
     },
     async listOptions(ownerId, _project, query) {
       const owner = chatOwner(ownerId);
-      if (deps.chats === null || owner === null) return { kind: KIND, items: [], nextCursor: null };
-      return { kind: KIND, ...(await chatOptions(deps.chats, owner, query.q, query.cursor)) };
+      if (chats === null || owner === null) return { kind: KIND, items: [], nextCursor: null };
+      return { kind: KIND, ...(await chatOptions(chats, owner, query.q, query.cursor)) };
     },
   };
 }

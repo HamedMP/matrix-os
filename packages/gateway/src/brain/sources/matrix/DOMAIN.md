@@ -20,7 +20,7 @@ The owner's own Matrix content as Company Brain sources: Notes (`matrix_notes`),
 
 `index.ts`: `bootstrapBrainMatrixDatabase`, `createBrainMatrixNotesHandler({ kysely, notes, ownerIds })`,
 `createBrainMatrixNotesReader(appDb)`, `createBrainMatrixFilesHandler({ kysely, homePath, ownerIds })`,
-`createBrainMatrixChatHandler({ kysely, chats })`, the reader seams and `BRAIN_MATRIX_LIMITS`.
+`createBrainMatrixChatHandler({ kysely, chats, botChats })`, the reader seams and `BRAIN_MATRIX_LIMITS`.
 
 ## Documents
 
@@ -41,6 +41,9 @@ Ids are `sha256(JSON.stringify([version, externalRef, ...tail]))`, never of cont
   source is `source_not_connected`. Chats are read only for ids in `chatIds`, only through
   `ChatRepository.get` / `getMessages` with the owner `{ type: "personal", ownerId }`; a chat that is not the owner's
   reads as missing and its documents are swept.
+- Bot Chats (a live direct or thread binding, the Company Brain's included; `botChats`, read from the Bot bindings)
+  are never offered or read: a Bot answers from text other people wrote, so the brain never reads those answers
+  back. An opted-in id that is or later becomes a Bot Chat reads as missing and its documents are swept (spec 567).
 - Roots: home-relative, no `..`, no hidden segment, never `system`, `agents` or anything holding
   `data/browser-profiles`, never nested in each other. At run time a root must resolve to exactly
   `<real home>/<root>`; a symlink on the way or a root that is a file is `path_unsafe`.

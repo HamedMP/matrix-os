@@ -8,6 +8,8 @@ import type { BotChatBindingsTable } from "../database.js";
 import { BotStateError, isChatOwnerViolation, isUniqueViolation, isoTimestamp, optionalIsoTimestamp, type BotExecutor } from "./shared.js";
 
 const MAX_BINDINGS_PER_CHAT = 16;
+/** Chat ids one Bot chat lookup may ask about (a page of the brain chat picker is 100). */
+const MAX_BOT_CHAT_LOOKUP = 200;
 
 export interface BotChatBinding {
   ownerId: string;
@@ -121,6 +123,16 @@ export function createBotBindingsRepository(db: BotExecutor) {
       if (!row || (row.kind !== "direct" && row.kind !== "thread")) return null;
       return { botId: row.bot_id, kind: row.kind, projectId: row.project_id ?? null };
     },
+    /** The Chats among `chatIds` with a live direct or thread binding: a Bot's own Chats. */
+    async botChatIds(input: { ownerId: string; chatIds: readonly string[] }, executor: BotExecutor = db): Promise<Set<string>> {
+      if (input.chatIds.length === 0) return new Set();
+      if (input.chatIds.length > MAX_BOT_CHAT_LOOKUP) throw new RangeError("Too many chat ids");
+      const rows = await executor.selectFrom("bot_chat_bindings").select("chat_id")
+        .where("owner_id", "=", input.ownerId).where("chat_id", "in", [...input.chatIds])
+        .where("kind", "in", ["direct", "thread"]).where("removed_at", "is", null)
+        .execute();
+      return new Set(rows.map((row) => row.chat_id));
+    },
     async liveThreadCount(input: { ownerId: string; botId: string }, executor: BotExecutor = db): Promise<number> {
       const row = await executor.selectFrom("bot_chat_bindings").select(sql<string>`count(*)`.as("count"))
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)
@@ -183,3 +195,19 @@ export function createBotBindingsRepository(db: BotExecutor) {
 }
 
 export type BotBindingsRepository = ReturnType<typeof createBotBindingsRepository>;
+
+/**
+ * The owner's Bot Chats among `chatIds`, for the Company Brain chat source (spec 567). Before the Bot tables exist (no
+ * Bot has started on this database) no Chat is a Bot's; any other failure is thrown.
+ */
+export function createBotChatIdsLookup(db: BotExecutor) {
+  const bindings = createBotBindingsRepository(db);
+  return async (ownerId: string, chatIds: readonly string[]): Promise<ReadonlySet<string>> => {
+    try {
+      return await bindings.botChatIds({ ownerId, chatIds });
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "42P01") return new Set();
+      throw error;
+    }
+  };
+}
