@@ -14,11 +14,9 @@ with revisions, tombstones, sync cursors and sync receipts.
   claim extraction lives in `claims/`; each feature folder has its own `DOMAIN.md` (all below).
 - Out of scope permanently: authorization (the caller resolves the scope), `onboarding/company-brain-readiness.ts` (an
   unrelated in-memory readiness service), and PR #2078's `company_brain_*` tables under `company-brain/`.
-- Name clash to keep in mind: `company-brain/` exports `BrainSourceIdSchema`, `BrainCitation` and `BrainEvidenceProof`
-  under the same names with opposite meanings. Its `BrainSourceIdSchema` (`^[a-f0-9]{64}$`) and `sourceId` fields
-  correspond to this store's `document_id` / `BrainDocumentIdSchema`; this store's `BrainSourceIdSchema`
-  (`^src_[a-f0-9]{32}$`) names a connected source and has no counterpart there. Import from one folder per module and
-  alias on import if both are needed.
+- Name clash: `company-brain/` exports `BrainSourceIdSchema`, `BrainCitation` and `BrainEvidenceProof` with opposite
+  meanings. Its `BrainSourceIdSchema` (`^[a-f0-9]{64}$`) is this store's `BrainDocumentIdSchema`; this store's
+  (`^src_[a-f0-9]{32}$`) names a connected source. Import from one folder per module, aliasing if both are needed.
 
 ## Source Of Truth
 
@@ -92,51 +90,43 @@ with revisions, tombstones, sync cursors and sync receipts.
 `pnpm exec vitest run tests/gateway/brain-store.test.ts tests/gateway/brain-store-capacity.test.ts tests/gateway/brain-store-sync.test.ts tests/gateway/brain-store-refs.test.ts`
 (PGlite-backed; fixtures live in `tests/gateway/helpers/brain-store-helpers.ts`).
 
-`MATRIX_TEST_POSTGRES_URL=<disposable server> pnpm exec vitest run tests/gateway/brain-store-postgres.test.ts`
-proves the cross-connection behaviour PGlite cannot (concurrent bootstrap,
-concurrent `createSource`, two concurrent `applySyncBatch` calls where exactly
-one wins); it is skipped when the variable is unset.
+`MATRIX_TEST_POSTGRES_URL=<disposable server> pnpm exec vitest run tests/gateway/brain-store-postgres.test.ts` proves
+what PGlite cannot (concurrent bootstrap and `createSource`, one of two concurrent `applySyncBatch` calls wins).
 
 ## Git source adapter (`git/`)
 
 Spec: `specs/552-company-brain-git-source/spec.md`.
 
-- `git/index.ts` exports `syncGitSource`, `defaultGitRunner`, `openGitRepository`,
-  `deriveWebBase`, `parseWebBase`, `resolveGitWebBase` and the types and limits in
-  `git/types.ts`. `brain/index.ts` does not re-export it; import `brain/git/index.js`.
-- Source of truth: the repository's git history on its default branch, read-only.
-  The adapter writes only through `BrainRepository` (`applySyncBatch`, receipts).
-- One document per first-parent commit (a pull request document when the commit is a
-  GitHub squash or merge of `#N`, or a GitLab merge of `!N`; otherwise a commit document)
-  and one document per spec file part (by default `specs/*/` `spec.md`, `plan.md`,
-  `research.md`, `data-model.md`, `quickstart.md`, and top-level `specs/*.md`). Ids are sha256 of
-  `["brain_git_v1", externalRef, kind, ...]`, never of content. Changed paths, PR numbers
-  and spec directories are refs. A spec file is written only in a window whose end already
-  holds its content at the run's tip, so a first sync or a rescan never rolls it back.
-- Each `applySyncBatch` call commits its documents, refs and cursor write in one
-  transaction; only a window's final batch moves the cursor to the window end, so a crash
-  replays the window as no-ops. The cursor (`git/cursor.ts`) is the last fully applied
-  first-parent sha, plus the run's tip when the run stopped short of it, or an in-progress
-  token naming the run that holds the window. A cursor that is no longer on the way to the
-  branch tip (force-push, garbage-collected object, read-ahead commits gone) triggers a
-  bounded rescan from the root.
-- The caller authorizes the scope and resolves `repoPath` and `homePath`;
-  `openGitRepository` refuses anything whose realpath is not strictly inside
-  `realpath(homePath)`, is not the repository top level, or whose git directory, common
-  directory or object alternates leave home or enter home's own `.git`. One run per source
-  per process; across processes the cursor compare-and-set decides (`cursor_conflict`),
-  and a window's first batch takes the cursor, so a competing run fails before it writes.
-- Git runs through an injectable runner: execFile with an argv array, an environment built
-  from scratch (absolute `PATH` entries only, `GIT_ALLOW_PROTOCOL=none`), pinned `-c`
-  overrides, a timeout and a maxBuffer on every call. Only local git objects are read; no
-  network, no working tree, never `HEAD`.
-- Errors are stable codes in `GitSyncResult`, and on the receipt once one is open
-  (`invalid_options`, `sync_in_progress` and the `source_*` codes come before it and are
-  only returned). `history_rewritten` and `documents_rejected` are info codes on
-  successful runs. stderr and paths go to server logs only.
-- Tests: `tests/gateway/brain-git-*.test.ts` (fixture repos are built with git plumbing in
-  a temp directory by `tests/gateway/helpers/brain-git-fixture.ts`; the sync suites share
-  `helpers/brain-git-harness.ts`, the pure suites `helpers/brain-git-pure.ts`).
+- `git/index.ts` exports `syncGitSource`, `defaultGitRunner`, `openGitRepository`, `deriveWebBase`, `parseWebBase`,
+  `resolveGitWebBase` and the types and limits in `git/types.ts`. `brain/index.ts` does not re-export it; import
+  `brain/git/index.js`.
+- Source of truth: the repository's git history on its default branch, read-only. The adapter writes only through
+  `BrainRepository` (`applySyncBatch`, receipts).
+- One document per first-parent commit (a pull request document when the commit is a GitHub squash or merge of `#N`, or
+  a GitLab merge of `!N`; otherwise a commit document) and one document per spec file part (by default `specs/*/`
+  `spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, and top-level `specs/*.md`). Ids are sha256 of
+  `["brain_git_v1", externalRef, kind, ...]`, never of content. Changed paths, PR numbers and spec directories are refs.
+  A spec file is written only in a window whose end already holds its content at the run's tip, so a first sync or a
+  rescan never rolls it back.
+- Each `applySyncBatch` call commits its documents, refs and cursor write in one transaction; only a window's final
+  batch moves the cursor to the window end, so a crash replays the window as no-ops. The cursor (`git/cursor.ts`) is the
+  last fully applied first-parent sha, plus the run's tip when the run stopped short of it, or an in-progress token
+  naming the run that holds the window. A cursor that is no longer on the way to the branch tip (force-push,
+  garbage-collected object, read-ahead commits gone) triggers a bounded rescan from the root.
+- The caller authorizes the scope and resolves `repoPath` and `homePath`; `openGitRepository` refuses anything whose
+  realpath is not strictly inside `realpath(homePath)`, is not the repository top level, or whose git directory, common
+  directory or object alternates leave home or enter home's own `.git`. One run per source per process; across processes
+  the cursor compare-and-set decides (`cursor_conflict`), and a window's first batch takes the cursor, so a competing
+  run fails before it writes.
+- Git runs through an injectable runner: execFile with an argv array, an environment built from scratch (absolute `PATH`
+  entries only, `GIT_ALLOW_PROTOCOL=none`), pinned `-c` overrides, a timeout and a maxBuffer on every call. Only local
+  git objects are read; no network, no working tree, never `HEAD`.
+- Errors are stable codes in `GitSyncResult`, and on the receipt once one is open (`invalid_options`, `sync_in_progress`
+  and the `source_*` codes come before it and are only returned). `history_rewritten` and `documents_rejected` are info
+  codes on successful runs. stderr and paths go to server logs only.
+- Tests: `tests/gateway/brain-git-*.test.ts` (fixture repos are built with git plumbing in a temp directory by
+  `tests/gateway/helpers/brain-git-fixture.ts`; the sync suites share `helpers/brain-git-harness.ts`, the pure suites
+  `helpers/brain-git-pure.ts`).
 
 ## Project API and brain_why (`why.ts`, `api/`)
 
@@ -202,9 +192,9 @@ SDK, so `job.ts` and `claims/index.ts` never load `@anthropic-ai/sdk`.
   `config.ts`, and `claims/index.ts` re-exports `model/types.ts` alone.
 - Credentials, read per request and never cached, logged or stored: the owner's `kernel.anthropicApiKey` in
   `system/config.json`, else a direct `ANTHROPIC_API_KEY` with no `ANTHROPIC_BASE_URL`, else 409. OAuth tokens, proxy
-  keys and Matrix-funded leases are refused. Only the gateway owner's principals (`modelOwnerIds`, from
-  `startBrainServices` `ownerIds`) may use the key; any other principal gets 409 and `modelSpend` null. Settings are `MATRIX_BRAIN_MODEL_*` (model id, effort, documents and cost
-  per run, body byte cap, spend per 30 days); an invalid one disables the extractor and logs only its name.
+  keys and Matrix-funded leases are refused. Only the owner's principals (`modelOwnerIds`) may use the key; others get
+  409 and `modelSpend` null. Settings are `MATRIX_BRAIN_MODEL_*` (model id, effort, documents and cost per run, body
+  byte cap, spend per 30 days); an invalid one disables the extractor and logs only its name.
 - Spend cap (`claims/spend.ts`): model spend per owner, across all the owner's projects, over the last 30 days,
   default 5 USD, summed from the cost of the owner's runs in every scope (`readModelSpend`; the run prune keeps those
   runs while they are in the window, at most 1,000; a project erase moves them to `BRAIN_RETIRED_RUNS_SCOPE_ID`
@@ -213,8 +203,7 @@ SDK, so `job.ts` and `claims/index.ts` never load `@anthropic-ai/sdk`.
   afford the next call stops `spend_cap_reached` with `raise_budget`. Each document's write also saves the run's cost
   so far on its row (never lowered), so a run that crashes or is interrupted still counts. A call that timed out or
   was aborted after it was sent is charged at its worst case; only the call in flight when a run is lost goes
-  uncounted. Model results
-  carry `spend`, and `GET .../claims` carries the same window as `modelSpend` (null when the gateway has no valid
+  uncounted. Model results carry `spend`, and `GET .../claims` carries the same window as `modelSpend` (null when the gateway has no valid
   model settings), so the app can show the budget before a run.
 - Data leaving the gateway: per document its title and footer-stripped body, plus the fixed prompt and schema, to
   `api.anthropic.com` only (redirects refused), on an explicit model extract request; never ids, refs, permalinks or
@@ -282,14 +271,9 @@ indexes or triggers them; core writes go through `BrainRepository`. Each owns ta
 - Wiring: `api/project-resolver.ts` (the one project lookup every service uses), `hooks.ts` (the change bus:
   per-scope queues capped at `BRAIN_HOOK_QUEUE_MAX_SCOPES`, coalesced events, listeners after the request, each bounded
   by `BRAIN_HOOK_LISTENER_BUDGET_MS`, a drain with a deadline on close; `eraseBrainScope`), `api/start.ts`
-  (`startBrainServices`: the core store through `startBrainProjectService`, whose failure of any kind leaves the whole
-  brain off, then each feature bootstrap on its own in `BRAIN_BOOTSTRAP_ORDER`, so a failing feature (or source table
-  group) is logged by error name and SQLSTATE and only that feature is off; the project service wrapped to emit
-  `documents_changed` after a sync that wrote or deleted and `claims_changed` after an extraction that changed claims;
-  `eraseProject`; the run service and the jobs: the run worker, the daily brief and the index catch-up;
-  `stopBrainServices` stops the run worker first, then the other jobs, and drains the hooks before the owner database
-  closes), `api/erase.ts` (`eraseBrainProject`: the core scope through
-  `BrainRepository.eraseScope`, then the scope rows of every feature table that exists, whether or not that feature
+  (`startBrainServices`, whose header gives the start order, what a failed start leaves off, the change events and
+  the jobs; `stopBrainServices` stops the run worker, the other jobs, then drains the hooks before the owner database
+  closes), `api/erase.ts` (`eraseBrainProject`: the core scope through `BrainRepository.eraseScope`, then the scope rows of every feature table that exists, whether or not that feature
   started, each under its own lock, and `brain_jobs` through its store; `createBrainProjectCleanup`, the project
   deletion step: the brain's `eraseProject` when it is on, the same erase straight on the owner database when the
   brain is off or deferred, and a throw, so the deletion is retried, when the owner database is configured but down),
@@ -304,9 +288,7 @@ indexes or triggers them; core writes go through `BrainRepository`. Each owns ta
 - Shared by the features: `cite.ts` (the one cite label rule and loader), `bounded.ts` (reads in a READ ONLY
   transaction with a 10 s statement deadline; at most two brief builds and two refreshes of each index at once) and
   `api/feature-route-kit.ts` (the route guard, error mapper and body limit of every feature router).
-- Tests: `tests/gateway/brain-hooks.test.ts`, `brain-start.test.ts` (a run queued through the mounted routes and
-  finished by the worker the services start; stop order), `brain-start-repair.test.ts` (not_configured without a
-  transport, erase of features that did not start, removal purge, catch-up after a dropped event),
-  `brain-wiring.test.ts` (composition, gateway seams, contract export names, every `BRAIN_ROUTES` entry answered by a
-  mounted handler and every mounted route listed in `BRAIN_ROUTES`), `brain-cite.test.ts`, and
+- Tests: `tests/gateway/brain-hooks.test.ts`, `brain-start.test.ts` (services, a queued run, stop order),
+  `brain-start-repair.test.ts` (features that did not start, removal purge, catch-up), `brain-wiring.test.ts`
+  (composition, gateway seams, export names, `BRAIN_ROUTES` against the mounted routes), `brain-cite.test.ts` and
   `tests/integrations/read-call-brain-bounded.test.ts`.
