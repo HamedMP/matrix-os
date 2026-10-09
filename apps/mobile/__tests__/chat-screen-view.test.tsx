@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
-import { KeyboardAvoidingView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Text } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { ChatScreenView, type ChatScreenViewProps } from "../components/chat/ChatScreenView";
@@ -117,19 +117,6 @@ describe("ChatScreenView", () => {
     render(<ChatScreenView {...props()} />);
 
     expect(flat(screen.getByTestId("composer")).paddingBottom).toBe(8);
-  });
-
-  it("shows what the screen puts under the top bar, and a problem as an alert in plain words", () => {
-    render(
-      <ChatScreenView
-        {...props({ header: <View testID="agent-controls" />, notice: "Bot status could not be loaded. Try again." })}
-      />,
-    );
-
-    expect(screen.getByTestId("agent-controls")).toBeTruthy();
-    const notice = screen.getByRole("alert");
-    expect(notice.props.children).toBe("Bot status could not be loaded. Try again.");
-    expect(flat(notice)).toMatchObject({ fontSize: 13, color: "#635F5F", textAlign: "center" });
   });
 
   it("passes the model control and the composer's state through", () => {

@@ -26,6 +26,7 @@ export { default as CheckIcon } from "@hugeicons/core-free-icons/Tick02Icon";
 export { default as LoadingIcon } from "@hugeicons/core-free-icons/Loading03Icon";
 export { default as ChatIcon } from "@hugeicons/core-free-icons/Message01Icon";
 export { default as FolderIcon } from "@hugeicons/core-free-icons/Folder01Icon";
+export { default as SharedIcon } from "@hugeicons/core-free-icons/UserMultiple02Icon";
 export { default as DocumentIcon } from "@hugeicons/core-free-icons/File01Icon";
 export { default as LockIcon } from "@hugeicons/core-free-icons/SquareLock02Icon";
 

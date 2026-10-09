@@ -6,24 +6,13 @@ import {
   type CanonicalProviderCatalog,
   type ChatAgent,
 } from "@matrix-os/contracts";
-import { useCallback, useMemo } from "react";
+import { useCallback } from "react";
 import { Linking } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
-import { useRouter } from "expo-router";
 
-import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
-import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
-import { activeChatRun, allowsHomeRelativeAppPaths } from "@/components/chat/chat-screen-state";
-import { ReplyResultApps } from "@/components/chat/ReplyResultApps";
-import type { ChatResultApp } from "@/components/chat/types";
+import { useChatThread } from "@/components/chat/use-chat-thread";
 import { defaultTurnModes } from "@/lib/canonical-chat-selection";
-import {
-  buildTranscript,
-  optimisticTranscriptMessage,
-  type TranscriptMessage,
-} from "@/lib/canonical-chat-transcript";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
-import { useCancelRun } from "@/lib/queries/use-cancel-run";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -65,14 +54,12 @@ export function agentTurnSetup({ agent, fromTemplate, detail, catalog }: {
  */
 export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; chatId: string | null }) {
   const { isSignedIn, userId } = useAuth();
-  const router = useRouter();
   const warmSessionToken = useSessionTokenWarmup();
   const { detail, computer, refresh } = useCanonicalChatDetail(chatId);
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   // Only an agent made from a template has a status to read.
   const botChat = useBotChat(agent && !agent.recipeRef ? null : chatId, gatewayUrl);
   const { catalog } = useChatProviderCatalog();
-  const { mutate: requestCancel, isPending: cancelPending } = useCancelRun();
   useAgentChatSync(chatId);
 
   const { selection, turnModes } = agentTurnSetup({ agent, fromTemplate: Boolean(botChat.snapshot), detail, catalog });
@@ -87,68 +74,20 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     disabled: chatId === null,
   });
 
-  const messages = useMemo(() => {
-    const transcript = buildTranscript(detail);
-    if (optimisticMessages.length === 0) return transcript;
-    // Newest first, as the message list takes them.
-    return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
-  }, [detail, optimisticMessages]);
-
-  const activeRunId = activeChatRun(detail)?.id;
-  const busy = isSending || activeRunId !== undefined;
+  const { messages, running, onStop, renderRequest, renderResults } = useChatThread({
+    chatId,
+    detail,
+    gatewayUrl,
+    refresh,
+    optimisticMessages,
+  });
+  const busy = isSending || running;
   const signedIn = Boolean(isSignedIn);
 
   const handleDraftChange = useCallback((text: string) => {
     setDraft(text);
     warmSessionToken();
   }, [setDraft, warmSessionToken]);
-
-  // A failed request changes nothing here: the run is still listed as active,
-  // so the button is simply there to be pressed again.
-  const handleStop = useMemo(() => (
-    chatId && activeRunId && !cancelPending
-      ? () => requestCancel({ chatId, runId: activeRunId })
-      : undefined
-  ), [chatId, activeRunId, cancelPending, requestCancel]);
-
-  const renderRequest = useCallback((item: TranscriptMessage) => {
-    if (!chatId || !gatewayUrl) return null;
-    if (item.input) {
-      return (
-        <CanonicalInputMessage
-          key={`${chatId}:${item.input.runId}:${item.input.requestId}`}
-          request={item.input}
-          chatId={chatId}
-          gatewayUrl={gatewayUrl}
-          onSettled={refresh}
-        />
-      );
-    }
-    if (item.approval) {
-      return (
-        <CanonicalApprovalMessage
-          key={`${chatId}:${item.approval.runId}:${item.approval.approvalId}`}
-          approval={item.approval}
-          chatId={chatId}
-          gatewayUrl={gatewayUrl}
-          onSettled={refresh}
-        />
-      );
-    }
-    return null;
-  }, [chatId, gatewayUrl, refresh]);
-
-  const openApp = useCallback((app: ChatResultApp) => {
-    router.push({ pathname: "/app-preview/[app]", params: { app: app.slug, name: app.name } } as never);
-  }, [router]);
-
-  const renderResults = useCallback((item: TranscriptMessage) => (
-    <ReplyResultApps
-      text={item.text}
-      allowRelative={allowsHomeRelativeAppPaths(detail, item.id)}
-      onOpen={openApp}
-    />
-  ), [detail, openApp]);
 
   const interactions = botChat.snapshot?.interactions ?? NO_INTERACTIONS;
 
@@ -177,7 +116,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
       canSend: draft.trim().length > 0 && signedIn && Boolean(selection) && Boolean(turnModes) && !busy,
       onSend: send,
       running: busy,
-      onStop: handleStop,
+      onStop,
     },
   };
 }

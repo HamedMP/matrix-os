@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 import { TextInput } from "react-native";
@@ -69,11 +68,6 @@ jest.mock("@/lib/queries/use-computer-apps", () => ({
   useComputerApps: () => ({ apps: mockApps }),
   installedAppSlug: (app: { slug: string }) => app.slug,
 }));
-jest.mock("@expo/ui/community/menu", () => {
-  const React = jest.requireActual("react") as typeof import("react");
-  const { View } = jest.requireActual("react-native") as typeof import("react-native");
-  return { MenuView: (props: { children?: ReactNode }) => React.createElement(View, props, props.children) };
-});
 
 const mockCatalog = {
   instances: [{
@@ -331,7 +325,7 @@ describe("chat screen: open chat", () => {
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/app-preview/[app]",
-      params: { app: "habit-tracker", name: "Habit tracker" },
+      params: { app: "habit-tracker", runtimeSlug: "habit-tracker", name: "Habit tracker" },
     });
   });
 

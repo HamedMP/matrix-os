@@ -44,7 +44,7 @@ const working = message({
 /** The message the result card belongs under, and the card. */
 export const SAMPLE_RESULT: { messageId: string; app: ChatResultApp } = {
   messageId: answer.id,
-  app: { slug: "habit-tracker", name: "Habit tracker", detail: "App · My apps" },
+  app: { slug: "habit-tracker", runtimeSlug: "habit-tracker", name: "Habit tracker", detail: "App · My apps" },
 };
 
 // Newest first, as the message list takes them.

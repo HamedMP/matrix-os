@@ -6,7 +6,7 @@ import { AppsTabIcon } from "../components/ui/icons";
 
 import { flat } from "./ui-test-utils";
 
-const app = { slug: "habit-tracker", name: "Habit tracker", detail: "App · Productivity" };
+const app = { slug: "habit-tracker", runtimeSlug: "habit-tracker", name: "Habit tracker", detail: "App · Productivity" };
 
 describe("ResultCard", () => {
   afterEach(cleanup);

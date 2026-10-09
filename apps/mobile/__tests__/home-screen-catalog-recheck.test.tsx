@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 
@@ -47,11 +46,6 @@ jest.mock("@/lib/queries/use-canonical-chats", () => ({
   useCanonicalChats: () => ({ chats: [] }),
 }));
 jest.mock("expo-router", () => ({ useRouter: () => ({ push: jest.fn() }) }));
-jest.mock("@expo/ui/community/menu", () => {
-  const React = jest.requireActual("react") as typeof import("react");
-  const { View } = jest.requireActual("react-native") as typeof import("react-native");
-  return { MenuView: (props: { children?: ReactNode }) => React.createElement(View, props, props.children) };
-});
 const catalog = { instances: [{
   id: "codex_default", driverKind: "codex", availability: "available", options: [],
   defaultSelection: { instanceId: "codex_default", model: "gpt-test" },

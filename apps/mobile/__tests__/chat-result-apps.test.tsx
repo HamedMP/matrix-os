@@ -13,7 +13,9 @@ jest.mock("@/lib/queries/use-computer-apps", () => ({
     mockReadCatalog();
     return { apps: mockApps };
   },
-  installedAppSlug: (app: { slug?: string; name: string }) => app.slug ?? app.name.toLowerCase(),
+  installedAppSlug: (app: { file?: string; slug?: string; name: string }) => (
+    app.file?.split("/")[1] ?? app.slug ?? app.name.toLowerCase()
+  ),
 }));
 
 const habitTracker = {
@@ -47,6 +49,19 @@ describe("ReplyResultApps", () => {
     expect(screen.getByText("App")).toBeTruthy();
   });
 
+  it("opens the app by its identity, naming the installed copy as the Apps screen does", () => {
+    // A migrated app keeps its file identity while the catalog lists it under another slug.
+    mockApps = [{ ...habitTracker, slug: "habits" }];
+    const onOpen = jest.fn();
+    render(<ReplyResultApps text="Saved it to `~/apps/habit-tracker`." allowRelative onOpen={onOpen} />);
+
+    fireEvent.press(screen.getByRole("button", { name: "Open Habit tracker" }));
+
+    expect(onOpen).toHaveBeenCalledWith({
+      slug: "habit-tracker", runtimeSlug: "habits", name: "Habit tracker", detail: "App · Productivity",
+    });
+  });
+
   it("shows no card when the reference is not an app the catalog knows", () => {
     render(<ReplyResultApps text="Saved it to `~/apps/unknown-app`." allowRelative onOpen={jest.fn()} />);
 
@@ -72,6 +87,8 @@ describe("ReplyResultApps", () => {
 
     fireEvent.press(screen.getByRole("button", { name: "Open Habit tracker" }));
 
-    expect(onOpen).toHaveBeenCalledWith({ slug: "habit-tracker", name: "Habit tracker", detail: "App · Productivity" });
+    expect(onOpen).toHaveBeenCalledWith({
+      slug: "habit-tracker", runtimeSlug: "habit-tracker", name: "Habit tracker", detail: "App · Productivity",
+    });
   });
 });

@@ -1,6 +1,6 @@
 # Mobile OS Views
 
-Native Mobile is the Expo application and the behavioral reference for Web Mobile. Both phone experiences are launcher-first. Canvas remains an explicit Web Mobile action rather than the phone home.
+Native Mobile is the Expo application and the behavioral reference for Web Mobile. Native Mobile opens on Chats and reaches everything else through five bottom tabs. Web Mobile is still launcher-first until it follows that navigation. Canvas remains an explicit Web Mobile action rather than the phone home.
 
 ## Mobile Parity Rule
 
@@ -13,7 +13,9 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
 ## Runtime Shape
 
 - Web Mobile: `Desktop.tsx` switches to the mobile launcher after client-side viewport detection.
-- Native Expo app: `apps/mobile/app/(tabs)/apps.tsx` is the primary launcher.
+- Native Mobile: five bottom tabs (Chats, Agents, Apps, Terminal, Settings) under
+  `apps/mobile/app/(drawer)/(tabs)/`. The app opens on Chats. See
+  [Native Mobile Navigation](#native-mobile-navigation).
 - Apps open full screen through `MobileAppSurface` in Web Mobile and native runtime routes in Expo.
 - Canvas is reachable through an explicit launcher action, not as the default phone home.
 - Terminal uses Matrix-authenticated gateway sessions and WebSockets; users do not need SSH keys.
@@ -34,6 +36,88 @@ Native Mobile is the Expo application and the behavioral reference for Web Mobil
   the computer reports (`attached`, `snapshot`, `canonical-size`) and never
   refits itself: a grid another client keeps wider is scaled down to a 10px
   text floor and then panned sideways.
+
+## Native Mobile Navigation
+
+Five tabs sit inside a side panel. Every URL the app had before the tabs is
+unchanged (`/`, `/files`, `/terminal`, `/settings`, and so on).
+
+```
+app/(drawer)/_layout.tsx                        the side panel: a drawer with one screen
+app/(drawer)/(tabs)/_layout.tsx                 the tabs and the custom tab bar
+app/(drawer)/(tabs)/(chats)/index.tsx           /              the chat screen
+app/(drawer)/(tabs)/(chats)/shared.tsx          /shared
+app/(drawer)/(tabs)/(chats)/projects/index.tsx  /projects
+app/(drawer)/(tabs)/(chats)/projects/[projectId].tsx
+app/(drawer)/(tabs)/agents/index.tsx            /agents
+app/(drawer)/(tabs)/agents/new.tsx              /agents/new
+app/(drawer)/(tabs)/agents/[agentId].tsx        /agents/<agentId>   the agent's own chat
+app/(drawer)/(tabs)/(apps)/apps.tsx             /apps          Files and Connect Apps are entries here
+app/(drawer)/(tabs)/(apps)/files.tsx            /files
+app/(drawer)/(tabs)/(apps)/integrations.tsx     /integrations
+app/(drawer)/(tabs)/terminal.tsx                /terminal
+app/(drawer)/(tabs)/settings.tsx                /settings
+```
+
+- **The side panel belongs to the chat screen.** It lists chats under "Needs
+  you" and "Recent", searches them, and opens Projects and Shared with me. It
+  opens by swipe only while `/` is focused (`isChatScreen` in
+  `lib/shell-routes.ts`); every other screen keeps the swipe for its own lists
+  and for going back. An agent's own conversation is listed in the Agents tab
+  and left out of the panel.
+- **The group is still named `(drawer)`.** Sign-in, the journey gate and
+  notification routing call `router.replace("/(drawer)")` and must keep landing
+  on the chat screen.
+- **`(chats)` names its first screen with the `Stack`'s `initialRouteName`
+  prop, not `unstable_settings`.** With `unstable_settings`, opening `/` skips
+  the sign-in gate. `__tests__/route-tree.test.ts` pins this.
+- **The tab bar is hidden on screens that take the whole display.** Add the
+  route to `TAB_BAR_HIDDEN_ROUTES` in `lib/tab-bar-visibility.ts` (today: the
+  new-agent screen and an agent's chat). On Android it also hides while the
+  keyboard is open; on iOS the keyboard covers it.
+- **Moving between tabs from code** goes through the helpers in
+  `lib/shell-routes.ts`. They build new params on every call because the
+  navigator ignores params it has already used.
+- **The Agents tab badge** counts agents waiting on the person
+  (`components/agents/use-agents-waiting-count.ts`). The status of an agent is
+  derived in the app from its chat and tasks; the server has no status field.
+
+### Tokens and shared components
+
+- Colors, text styles, spacing, radii, sizes, border widths and shadows come
+  from `theme.v2` in `apps/mobile/lib/theme-v2.ts`. `DESIGN.md` is the written
+  source for the values. Screens do not use literal colors, font sizes, radii or
+  spacing.
+- Shared pieces live in `apps/mobile/components/ui/` (`Button`, `Chip`,
+  `TextField`, `TopBar`, `ItemRow`, `IconTile`, `SheetChrome`, `StatusDot`,
+  `CountBadge`, `SectionLabel`, `AgentMascot`, `ProviderLogo`). Icons are
+  imported by role from `components/ui/icons.ts`, so the icon set can be swapped
+  in that one file.
+- A redesigned screen is split in two: the route file holds the data hooks and
+  handlers, and a presentational component draws the screen from props
+  (`components/chat/ChatScreenView.tsx`, `components/agents/AgentChatScreen.tsx`,
+  `components/projects/ProjectScreen.tsx`). The Chats tab and an agent's chat
+  read their chat through the same hook, `components/chat/use-chat-thread.tsx`.
+
+### Design preview gallery (development only)
+
+`matrixos://design-preview/<frame>` draws a presentational screen with sample
+content, inside real safe-area insets. Frames: `components`, `C1`, `C1b`,
+`C1c`, `C2`, `C3`, `P1`, `P1b`, `P2`, `P3`, `P4`, `A1`, `A2`, `A3`, `A4`, `A5`,
+`A5b`. Any other name shows the list of frames.
+
+The gallery and its sample content live in `apps/mobile/dev/design-preview/`
+and are required only under `__DEV__`, so a production bundle drops them. Use
+the gallery for screenshot evidence: it shows the screen without account
+details or real chat titles.
+
+### Left out on purpose
+
+- The model sheet shows the Matrix credit balance and no control to buy
+  credit. See [Store Purchase Policy](#store-purchase-policy).
+- Agents have no schedule, pause, "always allow" or edit controls, because the
+  server has nothing behind them.
+- Projects and agents can be archived, not deleted.
 
 ## Local Dev Build
 
@@ -628,7 +712,7 @@ bun run test tests/shell/terminal-app-component.test.tsx
 
 Manual terminal checks on a phone:
 
-1. Open Terminal from the drawer and confirm the computer's sessions are listed.
+1. Open the Terminal tab and confirm the computer's sessions are listed.
 2. Create a new session and confirm the prompt is visible as soon as it opens.
 3. Run `pwd`, then `tput cols; tput lines`, and confirm a long command wraps at
    the edge of the screen instead of running off it.

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import UserMultiple02Icon from "@hugeicons/core-free-icons/UserMultiple02Icon";
 import { FlatList, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -12,7 +11,7 @@ import {
   SidePanelNavRow,
   SidePanelSkeletonRows,
 } from "@/components/shell/SidePanelRows";
-import { Button, CountBadge, FolderIcon, NewChatIcon, SectionLabel, TopBarButton } from "@/components/ui";
+import { Button, CountBadge, FolderIcon, NewChatIcon, SectionLabel, SharedIcon, TopBarButton } from "@/components/ui";
 import { groupSidePanelChats, searchSidePanelChats } from "@/lib/side-panel-chats";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -160,7 +159,7 @@ export function SidePanel({
           {collaborationEnabled ? (
             <SidePanelNavRow
               testID="side-panel-shared"
-              icon={UserMultiple02Icon}
+              icon={SharedIcon}
               label="Shared with me"
               accessibilityLabel={sharedLabel}
               detail={<CountBadge testID="side-panel-shared-badge" count={pendingInvitationCount} />}

@@ -1,34 +1,19 @@
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import "@/lib/hermes-polyfills";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { TextInput } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
-import { useRouter } from "expo-router";
 
 import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agents/chat-draft-request";
-import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage";
-import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
-import {
-  activeChatRun,
-  allowsHomeRelativeAppPaths,
-  chatScreenTitle,
-  composerPlaceholder,
-} from "@/components/chat/chat-screen-state";
+import { chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
 import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
 import { ModelTrigger } from "@/components/chat/ModelTrigger";
-import { ReplyResultApps } from "@/components/chat/ReplyResultApps";
-import type { ChatResultApp } from "@/components/chat/types";
+import { useChatThread } from "@/components/chat/use-chat-thread";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
-import {
-  buildTranscript,
-  optimisticTranscriptMessage,
-  type TranscriptMessage,
-} from "@/lib/canonical-chat-transcript";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
-import { useCancelRun } from "@/lib/queries/use-cancel-run";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
@@ -39,7 +24,6 @@ import { useOpenSidePanel } from "@/lib/use-shell-navigation";
 
 export default function ChatScreen() {
   const { isSignedIn, userId } = useAuth();
-  const router = useRouter();
   const warmSessionToken = useSessionTokenWarmup();
   const openSidePanel = useOpenSidePanel();
   const {
@@ -56,7 +40,6 @@ export default function ChatScreen() {
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const botChat = useBotChat(activeChatId, gatewayUrl);
   const { catalog, isPending: catalogPending, isFetching: catalogFetching } = useChatProviderCatalog();
-  const cancelRun = useCancelRun();
 
   // An agent's chat is read and answered in the Agents tab. One opened here
   // all the same keeps its fixed model, so a message can still be sent.
@@ -83,16 +66,14 @@ export default function ChatScreen() {
     disabled: providerCatalogLoading,
   });
 
-  const messages = useMemo(() => {
-    const transcript = buildTranscript(detail);
-    if (optimisticMessages.length === 0) return transcript;
-    // Newest-first, matching the inverted transcript FlatList.
-    return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
-  }, [detail, optimisticMessages]);
-
-  const activeRun = activeChatRun(detail);
-  const activeRunId = activeRun?.id;
-  const busy = isSending || Boolean(activeRun);
+  const { messages, running, onStop, renderRequest, renderResults } = useChatThread({
+    chatId: activeChatId,
+    detail,
+    gatewayUrl,
+    refresh,
+    optimisticMessages,
+  });
+  const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
   const canSend = !providerCatalogLoading && draft.trim().length > 0 && isConnected
     && Boolean(selection) && Boolean(turnModes) && !busy;
@@ -135,54 +116,6 @@ export default function ChatScreen() {
 
   const handleNewChat = useCallback(() => startDraftChat(), [startDraftChat]);
 
-  const { mutate: requestCancel, isPending: cancelPending } = cancelRun;
-  // A failed request changes nothing here: the run is still listed as active,
-  // so the button is simply there to be pressed again.
-  const handleStop = useMemo(() => (
-    activeChatId && activeRunId && !cancelPending
-      ? () => requestCancel({ chatId: activeChatId, runId: activeRunId })
-      : undefined
-  ), [activeChatId, activeRunId, cancelPending, requestCancel]);
-
-  const renderRequest = useCallback((item: TranscriptMessage) => {
-    if (!activeChatId || !gatewayUrl) return null;
-    if (item.input) {
-      return (
-        <CanonicalInputMessage
-          key={`${activeChatId}:${item.input.runId}:${item.input.requestId}`}
-          request={item.input}
-          chatId={activeChatId}
-          gatewayUrl={gatewayUrl}
-          onSettled={refresh}
-        />
-      );
-    }
-    if (item.approval) {
-      return (
-        <CanonicalApprovalMessage
-          key={`${activeChatId}:${item.approval.runId}:${item.approval.approvalId}`}
-          approval={item.approval}
-          chatId={activeChatId}
-          gatewayUrl={gatewayUrl}
-          onSettled={refresh}
-        />
-      );
-    }
-    return null;
-  }, [activeChatId, gatewayUrl, refresh]);
-
-  const openApp = useCallback((app: ChatResultApp) => {
-    router.push({ pathname: "/app-preview/[app]", params: { app: app.slug, name: app.name } } as never);
-  }, [router]);
-
-  const renderResults = useCallback((item: TranscriptMessage) => (
-    <ReplyResultApps
-      text={item.text}
-      allowRelative={allowsHomeRelativeAppPaths(detail, item.id)}
-      onOpen={openApp}
-    />
-  ), [detail, openApp]);
-
   return (
     <ChatScreenView
       title={chatScreenTitle(activeChatId, detail, chats)}
@@ -205,7 +138,7 @@ export default function ChatScreen() {
         canSend,
         onSend: send,
         running: busy,
-        onStop: handleStop,
+        onStop,
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker
             catalog={catalog}
