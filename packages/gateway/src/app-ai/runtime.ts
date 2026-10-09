@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { generateAppText } from "@matrix-os/kernel";
 import type { AiProviderSnapshotV3, ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { AppAiRequestSchema, AppAiRouteSelectionSchema, type AppAiRequest, type AppAiRoutes, type AppAiRouteSelection } from "@matrix-os/contracts";
+import { AppAiRequestSchema, AppAiRouteSelectionSchema, type AppAiRequest, type AppAiRoutes, type AppAiRoute, type AppAiRouteSelection } from "@matrix-os/contracts";
 import { buildKernelCredentialLaunch, resolveKernelCredentialSources } from "../kernel-credentials.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
@@ -66,14 +66,43 @@ interface RuntimeOptions {
 }
 /** Owner app grant + exact live V3-derived route, rechecked after credentials/queue waits. */
 export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
-    async function catalog(app: string, signal: AbortSignal) {
+    function selectedRoute(settings: ProviderSettingsSnapshot | undefined, canonical: AiProviderSnapshotV3 | undefined, policyRoute: AppAiRouteSelection | undefined, routes: AppAiRoute[]) {
+        // A default is selected only by explicit owner policy or their exact V3
+        // active route. There is no first-ready/cheapest/provider fallback.
+        let selected: AppAiRouteSelection | undefined = policyRoute;
+        if (!selected && canonical?.active?.providerInstanceId) {
+            const instance = canonical.instances?.find(entry => entry.id === canonical.active.providerInstanceId);
+            // V3 instance IDs and saved Settings IDs are independent. The active
+            // driver is the binding; account/source/model alone can match other
+            // harnesses, and array order conveys no owner intent.
+            const activeHarness = instance?.driverId === "claude_code" || instance?.driverId === "kernel"
+                ? "claude" : instance?.driverId;
+            const candidates = settings?.harnesses.filter(entry => entry.harness === activeHarness
+                && entry.accessSourceId === canonical.active.accessSourceId
+                && entry.route.modelId === canonical.active.modelId
+                && entry.selectedAccountId === instance?.accountId) ?? [];
+            const available = candidates.filter(entry => routes.some(route => route.availability === "available"
+                && sameAppAiRoute(route, {harnessId:entry.id,accountId:entry.selectedAccountId,accessSourceId:entry.accessSourceId!,modelId:entry.route.modelId})));
+            // Multiple saved instances of one driver have no exact V3-to-Settings
+            // identity mapping. Require explicit app policy rather than guess.
+            const harness = available.length === 1 ? available[0] : undefined;
+            if (harness)
+                selected = { harnessId: harness.id, accountId: harness.selectedAccountId, accessSourceId: harness.accessSourceId!, modelId: harness.route.modelId };
+            else if (canonical.active.accessSourceId === CHATGPT_PLAN_SOURCE && instance?.id === CHATGPT_PLAN_SOURCE)
+                selected = { harnessId: CHATGPT_PLAN_SOURCE, accountId: instance.accountId, accessSourceId: CHATGPT_PLAN_SOURCE, modelId: canonical.active.modelId! };
+            else if (instance?.driverId === "kernel" && candidates.length === 0 && canonical.active.accessSourceId?.startsWith("matrix_"))
+                selected = { harnessId: "matrix_ai", accountId: null, accessSourceId: canonical.active.accessSourceId, modelId: canonical.active.modelId! };
+        }
+        return selected;
+    }
+    async function catalog(app: string, signal: AbortSignal, intent?: { route?: AppAiRouteSelection; verify?: boolean }) {
         signal.throwIfAborted();
         const policy = await readPolicy(options.homePath);
         if (!policy?.apps.includes(app))
             throw new Error("App AI access denied");
         if (policy.model && !policy.route) return {settings:undefined,canonical:undefined,policy,routes:{routes:[],defaultRoute:null},allRoutes:[],sdkRoutes:[] as AppAiRouteSelection[]};
         let [settings, canonical] = await Promise.all([
-            options.providerSettingsReader?.getSnapshot({includeNativeAccountMetadata:true,includeNativeAccountUsage:false,signal}), options.providerSnapshotReader?.getSnapshot({signal}),
+            options.providerSettingsReader?.getSnapshot({includeNativeAccountMetadata:intent?.verify!==false,includeNativeAccountUsage:false,signal}), options.providerSnapshotReader?.getSnapshot(intent?.verify === false ? {includeNativeAccountMetadata:false,includeNativeAccountUsage:false,signal} : {signal}),
         ]);
         signal.throwIfAborted();
         const routes = projectAppAiAuthorizationRoutes(settings, canonical);
@@ -81,6 +110,13 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         if (canonical?.instances?.some(instance=>instance.id===CHATGPT_PLAN_SOURCE)) routes.routes.push(...projectChatGptPlanAppRoutes(canonical, Boolean(planSource && options.ownerIds.includes(planSource.ownerId))));
         const managedReadiness=routes.routes.filter(entry=>entry.harnessId==="matrix_ai");
         if (policy.route) routes.routes = routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!));
+        // Preserve default ambiguity checks against the complete authority projection.
+        const projectedDefault = selectedRoute(settings, canonical, policy.route, routes.routes);
+        // Generation has one exact route. Discovery alone checks every model.
+        if (intent) {
+            const selected = intent.route ?? projectedDefault;
+            routes.routes = selected ? routes.routes.filter(entry => sameAppAiRoute(entry, selected)) : [];
+        }
         const hermesChecks: Array<{providerId:string;accessSourceId:string;modelId:string;available:boolean}> = [];
         const sdkRoutes: AppAiRouteSelection[] = [];
         const sdkChecks: Array<{providerId:string;models:string[]}> = [];
@@ -106,6 +142,12 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 continue;
             }
             if (harness?.harness === "hermes") {
+                if (intent) {
+                    // generate() proves the selected credential and physical model
+                    // under its lease. Do not spend the request deadline probing it twice.
+                    if (!options.hermesCompletion) { route.availability="unavailable";route.readiness="unavailable";route.reason="completion_unavailable"; }
+                    continue;
+                }
                 const hermesProviderId=harness.route.providerId;
                 let check=hermesChecks.find(entry=>entry.providerId===hermesProviderId && entry.accessSourceId===route.accessSourceId && entry.modelId===route.modelId);
                 if(!check){
@@ -132,6 +174,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 continue;
             }
             if (harness?.harness === "pi" && options.piSdkCompletion) {
+                if (intent?.verify === false) continue;
                 const piProviderId=harness.route.providerId;const piSettings=settings;
                 let check = sdkChecks.find(entry=>entry.providerId===harness.route.providerId);
                 if (!check) {
@@ -155,32 +198,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 route.availability="unavailable";route.readiness="unavailable";route.reason="completion_unavailable";
             }
         }
-        // A default is selected only by explicit owner policy or their exact V3
-        // active route. There is no first-ready/cheapest/provider fallback.
-        let selected: AppAiRouteSelection | undefined = policy.route;
-        if (!selected && canonical?.active?.providerInstanceId) {
-            const instance = canonical.instances?.find(entry => entry.id === canonical.active.providerInstanceId);
-            // V3 instance IDs and saved Settings IDs are independent. The active
-            // driver is the binding; account/source/model alone can match other
-            // harnesses, and array order conveys no owner intent.
-            const activeHarness = instance?.driverId === "claude_code" || instance?.driverId === "kernel"
-                ? "claude" : instance?.driverId;
-            const candidates = settings?.harnesses.filter(entry => entry.harness === activeHarness
-                && entry.accessSourceId === canonical.active.accessSourceId
-                && entry.route.modelId === canonical.active.modelId
-                && entry.selectedAccountId === instance?.accountId) ?? [];
-            const available = candidates.filter(entry => routes.routes.some(route => route.availability === "available"
-                && sameAppAiRoute(route, {harnessId:entry.id,accountId:entry.selectedAccountId,accessSourceId:entry.accessSourceId!,modelId:entry.route.modelId})));
-            // Multiple saved instances of one driver have no exact V3-to-Settings
-            // identity mapping. Require explicit app policy rather than guess.
-            const harness = available.length === 1 ? available[0] : undefined;
-            if (harness)
-                selected = { harnessId: harness.id, accountId: harness.selectedAccountId, accessSourceId: harness.accessSourceId!, modelId: harness.route.modelId };
-            else if (canonical.active.accessSourceId === CHATGPT_PLAN_SOURCE && instance?.id === CHATGPT_PLAN_SOURCE)
-                selected = { harnessId: CHATGPT_PLAN_SOURCE, accountId: instance.accountId, accessSourceId: CHATGPT_PLAN_SOURCE, modelId: canonical.active.modelId! };
-            else if (instance?.driverId === "kernel" && candidates.length === 0 && canonical.active.accessSourceId?.startsWith("matrix_"))
-                selected = { harnessId: "matrix_ai", accountId: null, accessSourceId: canonical.active.accessSourceId, modelId: canonical.active.modelId! };
-        }
+        const selected = intent ? projectedDefault : selectedRoute(settings, canonical, policy.route, routes.routes);
         const exact = selected && routes.routes.find(entry => entry.availability === "available" && sameAppAiRoute(entry, selected));
         const authorizedRoutes=policy.route ? routes.routes.filter(entry=>sameAppAiRoute(entry,policy.route!)) : routes.routes;
         const publicRoutes = authorizedRoutes.slice(0,128);
@@ -188,12 +206,12 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
         return { settings, canonical, policy, sdkRoutes, allRoutes:authorizedRoutes, routes: { routes:publicRoutes, defaultRoute: exact ? routeSelection(exact) : null } satisfies AppAiRoutes };
     }
     async function connected(request: AppAiRequest, signal: AbortSignal) {
-        const initial = await catalog(request.app, signal);
+        const initial = await catalog(request.app, signal, { route: request.route });
         const route = request.route ?? initial.routes.defaultRoute;
         if (!route || !initial.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route)))
             throw new Error("App AI route is unavailable");
         const revalidate = async () => {
-            const current = await catalog(request.app, signal);
+            const current = await catalog(request.app, signal, { route, verify: false });
             return (!current.policy.model || current.policy.route!==undefined) && (!current.policy.route || sameAppAiRoute(current.policy.route,route)) && current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
                 && (request.route !== undefined || current.routes.defaultRoute !== null && sameAppAiRoute(current.routes.defaultRoute, route));
         };
@@ -229,8 +247,16 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
             return generateClaudeProfileAppText({ homePath: options.homePath, route, prompt: request.prompt, accountEmail: email, signal, profileGuard: options.nativeProfileGuard, revalidate: guardedRevalidate });
         }
         if (harness.harness === "hermes") {
-            const source=initial.settings.accessSources.find(entry=>entry.id===route.accessSourceId);
-            if(!options.hermesCompletion || !initial.canonical || !source) throw new Error("App AI source unavailable");
+            // Read both authoritative receipts immediately before credential proof;
+            // earlier route projection can outlive the native five-second window.
+            const current = await catalog(request.app, signal, { route, verify: false });
+            if (!current.settings || !current.canonical || current.policy.model !== initial.policy.model
+                || JSON.stringify(current.policy.route) !== JSON.stringify(initial.policy.route)
+                || !current.allRoutes.some(entry => entry.availability === "available" && sameAppAiRoute(entry, route))
+                || !request.route && (!current.routes.defaultRoute || !sameAppAiRoute(current.routes.defaultRoute, route))) throw new Error("App AI source unavailable");
+            const refreshedHarness = appAiHarness(current.settings, route);
+            const source=current.settings.accessSources.find(entry=>entry.id===route.accessSourceId);
+            if(!options.hermesCompletion || !source) throw new Error("App AI source unavailable");
             const guardedRevalidate = async () => {
                 signal.throwIfAborted();
                 const policy=await readPolicy(options.homePath);
@@ -244,7 +270,7 @@ export function createRuntimeAppAiRoutes(options: RuntimeOptions) {
                 }
                 return true;
             };
-            return options.hermesCompletion.generate({harness,source,canonical:initial.canonical,prompt:request.prompt,signal,revalidate:guardedRevalidate});
+            return options.hermesCompletion.generate({harness:refreshedHarness,source,canonical:current.canonical,prompt:request.prompt,signal,revalidate:guardedRevalidate});
         }
         if (harness.harness === "pi" && options.piSdkCompletion && initial.sdkRoutes.some(entry=>sameAppAiRoute(entry,route))) {
             // A writer lease makes public discovery refuse competing work. Under

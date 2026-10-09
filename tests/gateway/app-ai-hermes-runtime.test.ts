@@ -94,3 +94,66 @@ it('preserves unrelated managed route readiness when Hermes model proof fails', 
   expect(discovery.routes.filter((entry:{harnessId:string})=>entry.harnessId.startsWith('hermes')).every((entry:{availability:string})=>entry.availability==='unavailable')).toBe(true);
   expect(discovery.routes).toContainEqual(expect.objectContaining({harnessId:'matrix_ai',modelId:'managed-text',availability:'available',reason:null}));
 });
+
+it.each(['explicit', 'active default', 'fixed policy'])('generates the %s Hermes model with six-second metadata and no unrelated probe', async selection => {
+  let current = Date.now(); const clock = vi.spyOn(Date, 'now').mockImplementation(() => current);
+  try {
+    if (selection === 'fixed policy') await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: ['notes'], route }));
+    const fetchImpl = vi.fn(async (url, request) => {
+      if (request?.method === 'GET') { current += 6000; return modelMetadata(url); }
+      return Response.json({ model: MODEL, status: 'completed', output: [{ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'slow model text' }] }] });
+    });
+    const completion = createHermesAppCompletion({ homePath: home, runtimeSource, fetchImpl });
+    const probe = vi.spyOn(completion, 'probe');
+    const api = mounted(completion, value => {
+      value.canonical.instances = [{ id: 'active-hermes', driverId: 'hermes', accountId: null }] as never;
+      value.canonical.active = { providerInstanceId: 'active-hermes', accessSourceId: route.accessSourceId, modelId: route.modelId };
+    });
+    const result = await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', ...(selection === 'explicit' ? { route } : {}) }) });
+    expect(result.status).toBe(200); expect(await result.json()).toEqual({ text: 'slow model text' });
+    expect(probe).not.toHaveBeenCalled(); expect(fetchImpl.mock.calls.map(([, request]) => request?.method)).toEqual(['GET', 'POST']);
+    await completion.close();
+  } finally { clock.mockRestore(); }
+});
+
+it.each(['managed', 'anthropic', 'pi'])('executes an explicit %s route without unrelated Hermes metadata during selection or revalidation', async kind => {
+  const hermesProbe = vi.fn(async () => { throw Error('Unrelated slow Hermes metadata'); });
+  const value = await snapshots(); const selected = kind === 'managed'
+    ? { harnessId: 'matrix_ai', accountId: null, accessSourceId: 'matrix_cloudflare', modelId: 'managed-text' }
+    : { harnessId: kind === 'pi' ? 'pi_work' : 'claude_work', accountId: null, accessSourceId: kind === 'pi' ? 'pi_openai' : 'owner_anthropic_key', modelId: kind === 'pi' ? 'openai:fixture' : 'claude-sonnet-4-6' };
+  if (kind === 'managed') {
+    value.canonical.accessSources = [{ id: selected.accessSourceId, state: 'ready', checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 30000).toISOString(), eligibleModelIds: [selected.modelId] }] as never;
+    value.canonical.models = [{ id: selected.modelId, status: 'ready', eligibleAccessSourceIds: [selected.accessSourceId] }] as never;
+  } else {
+    const providerId = kind === 'pi' ? 'openai' : 'anthropic';
+    value.settings.harnesses.push({ id: selected.harnessId, harness: kind === 'pi' ? 'pi' : 'claude', displayName: kind, enabled: true, installState: 'installed', authState: 'authenticated', connectivity: 'online', selectedAccountId: null, accessSourceId: selected.accessSourceId, route: { kind: 'configurable', providerId, modelId: selected.modelId } } as never);
+    value.settings.accessSources.push({ id: selected.accessSourceId, kind: 'harness_profile', harness: kind === 'pi' ? 'pi' : 'claude', providerId, accountId: null, eligibleModelIds: [selected.modelId], readiness: { state: 'ready', staleAfter: null } } as never);
+    value.settings.modelProviders.push({ id: providerId, models: [{ id: selected.modelId, enabled: true }] } as never);
+    if (kind === 'anthropic') await writeFile(join(home, 'system/config.json'), JSON.stringify({ kernel: { anthropicApiKey: 'synthetic-owner-key' } }));
+  }
+  const piProbe = vi.fn(async () => [selected.modelId]);
+  const piGenerate = vi.fn(async (input: { revalidate: () => Promise<boolean> }) => { expect(await input.revalidate()).toBe(true); return { text: 'selected text' }; });
+  const fetchImpl = vi.fn(async () => Response.json(kind === 'managed' ? { choices: [{ finish_reason: 'stop', message: { content: 'selected text' } }] } : { stop_reason: 'end_turn', content: [{ type: 'text', text: 'selected text' }] }));
+  const api = createRuntimeAppAiRoutes({ homePath: home, ownerIds: ['owner'], providerSettingsReader: { getSnapshot: async () => value.settings }, providerSnapshotReader: { getSnapshot: async () => value.canonical }, hermesCompletion: { probe: hermesProbe, generate: vi.fn(), close: vi.fn() } as never, piSdkCompletion: { probe: piProbe, generate: piGenerate, close: vi.fn() } as never, fundedCredentialProvider: { enabled: true, getCredential: async () => ({ token: 'synthetic', relayBaseUrl: 'https://relay.example.test' }) } as never, fetchImpl });
+  const response = await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', route: selected }) });
+  expect(response.status).toBe(200); expect(await response.json()).toEqual({ text: 'selected text' }); expect(hermesProbe).not.toHaveBeenCalled();
+  expect(piProbe).toHaveBeenCalledTimes(kind === 'pi' ? 1 : 0);
+});
+
+it.each(['grant revoked', 'native credential changed', 'fixed policy changed', 'active route changed'])('denies selected Hermes execution when %s during metadata and never starts paid inference', async change => {
+  let activeChanged = false;
+  const fetchImpl = vi.fn(async url => {
+    if (change === 'grant revoked') await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: [] }));
+    else if (change === 'native credential changed') await writeFile(join(home, '.hermes/.env'), 'OPENAI_API_KEY=replaced-owner-key');
+    else if (change === 'fixed policy changed') await writeFile(join(home, 'system/app-ai.json'), JSON.stringify({ apps: ['notes'], route: { ...route, modelId: 'openai-api:other' } }));
+    else activeChanged = true;
+    return modelMetadata(url);
+  });
+  const completion = createHermesAppCompletion({ homePath: home, runtimeSource, fetchImpl });
+  const api = mounted(completion, value => {
+    value.canonical.instances = [{ id: 'active-hermes', driverId: 'hermes', accountId: null }] as never;
+    value.canonical.active = { providerInstanceId: 'active-hermes', accessSourceId: route.accessSourceId, modelId: activeChanged ? 'openai-api:other' : route.modelId };
+  });
+  const response = await api.request('/', { method: 'POST', body: JSON.stringify({ app: 'notes', prompt: 'text', ...(change === 'active route changed' ? {} : { route }) }) });
+  expect(response.status).toBe(503); expect(fetchImpl).toHaveBeenCalledOnce(); await completion.close();
+});
