@@ -1,7 +1,7 @@
 "use client";
 
-import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
-import { FileResourceSharing } from "./file-browser/FileResourceSharing";
+import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
+import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -27,7 +27,6 @@ import {
   shouldRenderAppIframe,
   injectBridgeIntoAppHtml,
 } from "./app-viewer-helpers";
-import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -52,16 +51,9 @@ function readCurrentDesign(): string {
 
 async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort, signal: AbortSignal): Promise<void> {
   try {
-    if (!payload || typeof payload !== "object") {
-      throw new Error("Invalid bridge fetch payload");
-    }
-    const { url, init } = payload as { url?: unknown; init?: unknown };
-    if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
-      throw new Error("Blocked bridge fetch URL");
-    }
-    const bound = prepareAppBridgeFetch(appName, url, init && typeof init === "object" ? init as RequestInit : {});
+    const bound = prepareBridgeFetchRequest(appName, payload);
     const requestInit = bound.init;
-    const response = await fetch(`${getGatewayUrl()}${bound.url}`, {
+    const response = await fetch(resolveBridgeFetchUrl(getGatewayUrl(), bound.url), {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
@@ -369,16 +361,17 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return null;
   }
 
-  return <div className="flex h-full w-full flex-col">
-    {slug ? <FileResourceSharing kind="app" path={slug} containerClassName="flex justify-end border-b px-3 py-1.5" /> : null}
-    <iframe
-      ref={iframeRef}
-      key={refreshKey}
-      src={iframeSrc}
-      srcDoc={slug && iframeHtml ? iframeHtml : undefined}
-      className="min-h-0 w-full flex-1 border-0"
-      sandbox={APP_IFRAME_SANDBOX}
-      title={path}
-    />
-  </div>;
+  return (
+    <div className="flex h-full w-full flex-col">
+      <iframe
+        ref={iframeRef}
+        key={refreshKey}
+        src={iframeSrc}
+        srcDoc={slug && iframeHtml ? iframeHtml : undefined}
+        className="min-h-0 w-full flex-1 border-0"
+        sandbox={APP_IFRAME_SANDBOX}
+        title={path}
+      />
+    </div>
+  );
 }

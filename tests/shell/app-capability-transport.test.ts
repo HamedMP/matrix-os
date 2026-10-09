@@ -137,12 +137,12 @@ describe("app capability transport", () => {
       document: { documentElement: { dataset: {} }, createElement: () => ({}), head: { appendChild() {} } },
       window: { addEventListener() {}, parent: { postMessage(message: any, _target: any, ports: any[]) {
         sent.push(message);
-        const bound = prepareAppBridgeFetch("notes", message.payload.url, message.payload.init);
-        expect(JSON.parse(bound.init.body as string).app).toBe("notes");
+        const bound = prepareAppBridgeFetch("tools/drive-chat", message.payload.url, message.payload.init);
+        expect(JSON.parse(bound.init.body as string).app).toBe("tools/drive-chat");
         ports[0].reply({ ok: true, body: message.payload.init.body.includes("integrations.list") ? { services: [{ service: "google-drive" }] } : { version: 1, integrations: true, ai: true } });
       } } },
     });
-    runInContext(buildBridgeScript("notes"), context);
+    runInContext(buildBridgeScript("tools/drive-chat"), context);
     expect(await runInContext("window.MatrixOS.integrations()", context)).toEqual([{ service: "google-drive" }]);
     expect(await runInContext("window.MatrixOS.capabilities()", context)).toEqual({ version: 1, integrations: true, ai: true });
     expect(sent.every((entry) => entry.payload.url === "/api/bridge/capabilities")).toBe(true);

@@ -1,3 +1,4 @@
+import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
 
 export type BridgeMessage =
@@ -130,6 +131,9 @@ export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
   for (const [sourceVar, aliasVar] of Object.entries(THEME_VAR_ALIASES)) {
     vars[aliasVar] = vars[sourceVar] ?? "";
   }
+  if (style.colorScheme === "light" || style.colorScheme === "dark") {
+    vars["--matrix-color-scheme"] = style.colorScheme;
+  }
   return vars;
 }
 
@@ -228,6 +232,8 @@ function sanitizeDesignId(design: string | undefined): string {
 }
 
 export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string): string {
+  const inventoryIdentity = appName.replace(/^apps\//, "");
+  const useOwnerInventory = isAppGalleryInventoryIdentity(inventoryIdentity);
   const designId = sanitizeDesignId(design);
   const themeJson = JSON.stringify(themeVars ?? {});
   const initialCss = themeVars
@@ -440,6 +446,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     },
 
     integrations: function() {
+      if (${useOwnerInventory}) {
+	      return parentFetch("/api/integrations", {}, 10000)
+	        .then(function(r) { return r.json(); })
+	        .then(function(d) {
+          if (!Array.isArray(d) || d.length > 2000) throw new Error("Connection inventory unavailable");
+          return d;
+        });
+      }
       return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) }, 35000)
         .then(function(r) { return r.json(); }).then(function(d) { return d.services || []; });
     },
@@ -520,6 +534,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
 	        }, 10000).then(function(r) { return r.json(); });
 	      },
+
+      compareAndSwap: function(table, id, expectedPayload, data) {
+        return parentFetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "compareAndSwap", table: table, id: id, expectedPayload: expectedPayload, data: data })
+        }, 10000).then(function(r) { return r.json(); });
+      },
 
 	      bulkUpdate: function(table, updates) {
 	        return parentFetch("/api/bridge/query", {
