@@ -1,125 +1,60 @@
-import React, { useEffect, useRef, useState } from "react";
-import { uploadLocalChatArchive, localChatImportErrorText, type ImportHarness, type LocalChatImportProgress, type LocalChatSourcePreview, type LocalChatUploadSource } from "@matrix-os/contracts/local-chat-import";
-import { createBrowserChatSource } from "./local-source.js";
-type Result = {
-    chatId: string;
-    jobId: string;
-    messageCount: number;
-};
-type Transport = Parameters<typeof uploadLocalChatArchive>[2];
-export interface NativeChatImportAdapter {
-    select(harness: ImportHarness, signal: AbortSignal): Promise<{
-        selectionId: string;
-        preview: LocalChatSourcePreview;
-    } | null>;
-    apply(selectionId: string, title: string, signal: AbortSignal, progress: (value: LocalChatImportProgress) => void): Promise<Result | null>;
-    pause(): void;
-}
-type Selection = {
-    preview: LocalChatSourcePreview;
-    source?: LocalChatUploadSource;
-    selectionId?: string;
-};
+import React, { useId, useState } from "react";
+import { CheckCircle2, FolderOpen, LockKeyhole, MessageSquare, Upload } from "lucide-react";
+import { LocalChatLibrary } from "./LocalChatLibrary.js";
+import { ChatImportSourceIcon } from "../chat/ChatImportSource.js";
+import { ImportChatRow } from "./ImportChatRow.js";
+import { importBytes, MAX_IMPORT_SELECTIONS, validImportTitle, type ImportTransport, type NativeChatImportAdapter } from "./import-state.js";
+import { useChatImport } from "./use-chat-import.js";
+export type { NativeChatImportAdapter } from "./import-state.js";
 export function ChatImportPanel({ transport, native, onOpenChat }: {
-    transport?: Transport;
-    native?: NativeChatImportAdapter;
-    onOpenChat?: (chatId: string, title: string) => void;
+    transport?: ImportTransport; native?: NativeChatImportAdapter; onOpenChat?: (chatId: string, title: string) => void;
 }) {
-    const [harness, setHarness] = useState<ImportHarness>("codex");
-    const [selection, setSelection] = useState<Selection | null>(null);
-    const [title, setTitle] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [progress, setProgress] = useState<string | null>(null);
-    const [result, setResult] = useState<Result | null>(null);
-    const generation = useRef(0);
-    const operation = useRef<AbortController | null>(null);
-    useEffect(() => () => { generation.current++; operation.current?.abort(); native?.pause(); }, [native, transport]);
-    function begin() { operation.current?.abort(); const controller = new AbortController(); operation.current = controller; const current = ++generation.current; setBusy(true); setError(null); setProgress(null); return { controller, current }; }
-    async function selectFile(file?: File) {
-        const { controller, current } = begin();
-        setSelection(null);
-        setResult(null);
-        try {
-            let next: Selection | null = null;
-            if (native) {
-                const selected = await native.select(harness, controller.signal);
-                if (selected)
-                    next = selected;
-            }
-            else if (file) {
-                const source = createBrowserChatSource(file);
-                next = { preview: await source.preview(harness, controller.signal), source };
-            }
-            if (generation.current !== current || controller.signal.aborted)
-                return;
-            setSelection(next);
-            if (next)
-                setTitle(next.preview.title);
-        }
-        catch (cause: unknown) {
-            if (generation.current === current)
-                setError(localChatImportErrorText(cause));
-        }
-        finally {
-            if (generation.current === current) {
-                setBusy(false);
-                operation.current = null;
-            }
-        }
-    }
-    async function importChat() {
-        if (!selection || busy || result)
-            return;
-        const { controller, current } = begin();
-        const preview = selection.preview;
-        const onProgress = (value: LocalChatImportProgress) => { if (generation.current === current && !controller.signal.aborted)
-            setProgress(value.phase === "verifying" ? "Verifying original bytes and building private Chat history…" : `${Math.round(value.uploadedBytes / value.totalBytes * 100)}% of the original transcript uploaded`); };
-        try {
-            const next = native && selection.selectionId ? await native.apply(selection.selectionId, title.trim() || preview.title, controller.signal, onProgress)
-                : transport && selection.source ? await uploadLocalChatArchive({ harness: preview.harness, sourceId: preview.sourceId, ...(preview.sourceAgentId ? { sourceAgentId: preview.sourceAgentId } : {}), sourceHash: preview.sourceHash, rawSize: preview.rawBytes, title: title.trim() || preview.title }, selection.source, transport, { signal: controller.signal, onProgress }) : null;
-            if (generation.current === current && !controller.signal.aborted) {
-                if (next) {
-                    setResult(next);
-                    setProgress(null);
-                }
-                else
-                    setError("Stopped waiting. Retry the same file to check its import status.");
-            }
-        }
-        catch (cause: unknown) {
-            if (generation.current === current)
-                setError(localChatImportErrorText(cause));
-        }
-        finally {
-            if (generation.current === current) {
-                setBusy(false);
-                operation.current = null;
-            }
-        }
-    }
-    function pause() { operation.current?.abort(); native?.pause(); setProgress(null); setError("Stopped waiting. Retry the same file to check its import status."); }
-    const preview = selection?.preview;
-    return <section className="mx-auto max-w-2xl space-y-4 text-sm">
-  <div><h2 className="text-xl font-semibold">Import chats</h2><p className="mt-1 text-[var(--text-secondary,var(--muted-foreground))]">Bring a local Codex or Claude Code transcript into Matrix. Preview it before uploading readable history and a private original archive.</p></div>
-  <label className="block space-y-1"><span>Chat tool</span><select value={harness} disabled={busy} onChange={event => { setHarness(event.target.value as ImportHarness); setSelection(null); setResult(null); setError(null); setProgress(null); }}><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
-  {native ? <button type="button" disabled={busy} onClick={() => void selectFile()} className="rounded border border-[var(--border-default,var(--border))] px-3 py-2">Choose transcript</button> : <label className="block space-y-1"><span>Choose a {harness === "codex" ? "Codex" : "Claude Code"} transcript</span><input type="file" accept=".jsonl,application/jsonl" disabled={busy} onChange={event => void selectFile(event.currentTarget.files?.[0])}/></label>}
-  {preview ? <div className="space-y-3 rounded-lg border border-[var(--border-default,var(--border))] p-4">
-   <p>{preview.counts.humanInputs} human inputs · {preview.counts.assistantResponses} assistant responses</p>
-   <p>{preview.counts.toolCalls} tool {preview.counts.toolCalls === 1 ? "call" : "calls"} · {preview.counts.toolResults} tool results · {preview.counts.attachments} embedded attachments</p>
-   <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Session: {preview.sourceId}</p>
-   {preview.recordedDirectory ? <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Recorded directory: {preview.recordedDirectory}</p> : null}
-   {preview.repositoryUrl ? <p className="break-all text-[var(--text-secondary,var(--muted-foreground))]">Recorded repository: {preview.repositoryUrl}</p> : null}
-   {preview.counts.externalReferences ? <p>{preview.counts.externalReferences} external {preview.counts.externalReferences === 1 ? "reference" : "references"} cannot be recovered from this file. Referenced local files are not automatically uploaded.</p> : null}
-   {preview.counts.sourceIssues ? <p>{preview.counts.sourceIssues} source {preview.counts.sourceIssues === 1 ? "issue" : "issues"} recorded. Original bytes are preserved; incomplete or damaged content may not be readable.</p> : null}
-   {preview.firstVisibleText ? <div className="rounded border border-[var(--border-default,var(--border))] p-3"><p className="font-medium">First visible message</p><p className="mt-1 whitespace-pre-wrap break-words">{preview.firstVisibleText}</p></div> : null}
-   <label className="block space-y-1"><span>Chat title</span><input type="text" maxLength={160} disabled={busy || Boolean(result)} value={title} onChange={event => setTitle(event.target.value)} className="w-full rounded border border-[var(--border-default,var(--border))] bg-transparent px-2 py-1"/></label>
-   <p className="text-[var(--text-secondary,var(--muted-foreground))]">History includes saved messages, tools, and supported embedded attachments. Internal context and thinking stay in the private original archive. Transcripts may contain pasted secrets. This Chat stays private until you explicitly share it; sharing a Chat does not share its original archive.</p>
-   <button type="button" disabled={busy || Boolean(result) || !title.trim()} onClick={() => void importChat()} className="rounded bg-[var(--accent)] px-3 py-2 text-white disabled:opacity-50">Import private Chat</button>
-  </div> : null}
-  {busy && !preview ? <p role="status">Reading transcript…</p> : null}{progress ? <p role="status">{progress}</p> : null}
-  {busy ? <button type="button" onClick={pause}>Stop waiting</button> : null}
-  {error ? <p role="alert">{error}</p> : null}
-  {result ? <div role="status" className="space-y-2"><p>Imported {result.messageCount} history {result.messageCount === 1 ? "entry" : "entries"} into Matrix Chat.</p>{onOpenChat ? <button type="button" onClick={() => onOpenChat(result.chatId, title || preview?.title || "Imported Chat")}>Open Chat</button> : null}</div> : null}
- </section>;
+    const state = useChatImport({ native, transport });
+    const inputId = useId();
+    const [showAll, setShowAll] = useState(true);
+    const discovers = Boolean(native?.discover && native.prepare);
+    const { harness, items, busy, error } = state;
+    const ready = items.filter(item => item.status === "ready");
+    const failed = items.filter(item => item.status === "failed");
+    const imported = items.filter(item => item.status === "imported").length;
+    const canImport = (list: typeof items) => !busy && !state.library.loading && !state.library.error && list.length > 0 && list.every(item => validImportTitle(item.title));
+    const full = items.length >= MAX_IMPORT_SELECTIONS;
+    return <section className="matrix-chat-import" aria-label="Import chats">
+        <header className="matrix-import-header"><h2>Import chats</h2><p>Bring your Claude Code and Codex conversations together in Matrix. Each conversation becomes its own private chat.</p></header>
+        <div className="matrix-import-sources" role="group" aria-label="Chat tool">
+            {(["codex", "claude"] as const).map(value => <button key={value} type="button" aria-label={value === "codex" ? "Codex" : "Claude Code"} aria-pressed={harness === value && (!discovers || !showAll)} disabled={Boolean(busy)} onClick={() => { state.setHarness(value); setShowAll(false); }} className="matrix-import-source">
+                <span className="matrix-import-source-mark" aria-hidden="true"><ChatImportSourceIcon harness={value} size={24} imported={false}/></span>
+                <span><strong>{value === "codex" ? "Codex" : "Claude Code"}</strong><small>{value === "codex" ? "Local sessions" : "Project conversations"}</small></span>
+                <span className="matrix-import-source-check" aria-hidden="true">{harness === value && (!discovers || !showAll) ? <CheckCircle2 size={17}/> : null}</span>
+            </button>)}
+        </div>
+        {discovers && native ? <><button type="button" className="matrix-import-text-button" aria-pressed={showAll} disabled={Boolean(busy)} onClick={()=>setShowAll(true)}>Show both apps</button><LocalChatLibrary key={state.batchRevision} library={state.library} harness={showAll ? "all" : harness} busy={Boolean(busy)} results={state.localResults} active={state.localActive} onPrepare={keys=>state.selectFiles(undefined,keys)} onImport={state.importLocal} onOpen={onOpenChat}/></> : <>
+        <div className="matrix-import-picker">
+            <FolderOpen size={25} aria-hidden="true"/><div><strong>Choose conversations from this computer</strong><p>Select up to {MAX_IMPORT_SELECTIONS} transcript files. Review them before anything is uploaded.</p></div>
+            {native ? <button type="button" className="matrix-import-button" disabled={Boolean(busy) || full} onClick={() => void state.selectFiles()}>{native.selectMany ? "Choose transcripts" : "Choose transcript"}</button> : <label className="matrix-import-button matrix-import-file-picker" htmlFor={inputId} aria-disabled={Boolean(busy) || full}>
+                Choose transcripts<input id={inputId} type="file" multiple accept=".jsonl,application/jsonl" aria-label={`Choose a ${harness === "codex" ? "Codex" : "Claude Code"} transcript`} disabled={Boolean(busy) || full} onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; if (files.length) void state.selectFiles(files); }}/>
+            </label>}
+        </div></>}
+
+        {discovers ? <p className="matrix-import-note">Imported history is private. Transcripts may contain pasted secrets. Sharing a chat does not share its original archive.</p> : null}
+        {busy && discovers && !items.length ? <button type="button" className="matrix-import-button" onClick={state.pause}>Stop waiting</button> : null}
+        {busy === "reading" ? <div className="matrix-import-library-actions"><p className="matrix-import-reading" role="status">Reading transcripts on this computer…</p>{!discovers && !items.length ? <button type="button" className="matrix-import-button" onClick={state.pause}>Stop waiting</button> : null}</div> : null}
+        {error ? <p className="matrix-import-error" role="alert">{error}</p> : null}
+        {items.length ? <div className="matrix-import-review">
+            <div className="matrix-import-review-head"><div><h3>{imported === items.length ? "Your chats are in Matrix" : "Review conversations"}</h3><p>{items.length} {items.length === 1 ? "conversation" : "conversations"} · {importBytes(items.reduce((sum, item) => sum + item.preview.rawBytes, 0))} of original history</p></div>
+                {imported === items.length ? <button type="button" className="matrix-import-text-button" onClick={state.reset}>Start another batch</button> : <span className="matrix-import-private"><LockKeyhole size={14} aria-hidden="true"/>Private</span>}
+            </div>
+            <ul className="matrix-import-list">{items.map(item => <ImportChatRow key={item.key} item={item} single={items.length === 1} busy={Boolean(busy)} onTitle={title => state.changeTitle(item.key, title)} onRemove={() => state.remove(item.key)} onOpen={onOpenChat}/>)}</ul>
+            {imported > 0 && items.length > 1 ? <p className="matrix-import-completion" role="status"><CheckCircle2 size={17} aria-hidden="true"/>{imported === 1 ? "1 chat is ready in Matrix." : `${imported} chats are ready in Matrix.`}</p> : null}
+            <footer className="matrix-import-footer">
+                <div className="matrix-import-privacy"><LockKeyhole size={16} aria-hidden="true"/><p>Saved messages, tools, and supported embedded attachments become readable history. Internal context and thinking stay in the private original archive. Transcripts may contain pasted secrets. Sharing a chat does not share its original archive.</p></div>
+                <div className="matrix-import-actions"><p>{busy === "importing" ? `Importing chats one at a time. ${imported} of ${items.length} ready.` : "Original files stay unchanged. Retrying the same transcript won’t create a duplicate import."}</p>
+                    <div>{failed.length ? <button type="button" className="matrix-import-button" disabled={!canImport(failed)} onClick={() => void state.importChats("failed")}>Retry {failed.length} {failed.length === 1 ? "chat" : "chats"}</button> : null}
+                        {ready.length ? <button type="button" className="matrix-import-button matrix-import-primary" disabled={!canImport(ready)} onClick={() => void state.importChats()}><Upload size={15} aria-hidden="true"/>{ready.length === 1 ? "Import private Chat" : `Import ${ready.length} private chats`}</button> : null}
+                        {busy ? <button type="button" className="matrix-import-button" onClick={state.pause}>Stop waiting</button> : null}
+                    </div>
+                </div>
+            </footer>
+        </div> : discovers ? null : <div className="matrix-import-empty"><MessageSquare size={22} aria-hidden="true"/><div><strong>Your history, in one place</strong><p>Keep working from your imported chats, with their original history preserved. Add conversations from either tool to the same batch.</p></div></div>}
+    </section>;
 }

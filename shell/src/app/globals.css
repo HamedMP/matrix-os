@@ -9,6 +9,7 @@
 @import "@clerk/ui/themes/shadcn.css";
 @import "@matrix-os/ui/agents-providers.css";
 @import "@matrix-os/ui/chat-agents.css";
+@import "@matrix-os/ui/chat-import.css";
 
 /* Opt-in command-list motion: immediate entry, delayed fade on exit. */
 [data-instant-list-hover] {
