@@ -152,8 +152,10 @@ import { createCompanyBrainReadinessService } from "./onboarding/company-brain-r
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
 import { createBrainAgentReadTools } from "./brain/agent/index.js";
 import {
-  createBrainAgentTools, createBrainApiRoutes, createBrainProjectCleanup, resolveBrainAgentOwnerId, stopBrainServices,
+  createBrainAgentTools, createBrainApiRoutes, createBrainProjectCleanup, createBrainProjectResolver, resolveBrainAgentOwnerId,
+  stopBrainServices,
 } from "./brain/api/index.js";
+import { createBotBrainProjects } from "./bots/brain-projects.js";
 import { createBrainLateBoundIntegrations } from "./brain/sources/integration/index.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
@@ -1588,6 +1590,12 @@ export async function createGateway(config: GatewayConfig) {
       ...(scopeRuntimeHost ? { host: scopeRuntimeHost } : {}),
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
+      brain: {
+        services: ownerDatabaseServices?.brainServices ?? null,
+        projects: createBotBrainProjects({
+          resolver: createBrainProjectResolver({ projects: codingAgentProjectManager, homePath }), projects: codingAgentProjectManager,
+        }),
+      },
     });
     const sourceCatalog = matrixAnthropicRuntime.service
       ? withMatrixAnthropicProviderInstances(baseCanonicalChatProviderCatalog, aiProviderService,
