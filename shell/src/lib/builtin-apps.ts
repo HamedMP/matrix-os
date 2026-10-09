@@ -29,8 +29,6 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["/files/apps/terminal/index.html", "__terminal__"],
   ["files", "__file-browser__"],
   ["file-browser", "__file-browser__"],
-  ["apps/files/index.html", "__file-browser__"],
-  ["/files/apps/files/index.html", "__file-browser__"],
   ["chat", "__chat__"],
   ["apps/chat/index.html", "__chat__"],
   ["/files/apps/chat/index.html", "__chat__"],

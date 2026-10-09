@@ -154,3 +154,12 @@ for (const surface of ["canvas", "desktop"] as const) {
     });
   });
 }
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it.each(["apps/files", "/files/apps/files/index.html"])(`opens the installed Files app on ${surface} rather than the built-in file browser for %s`, async (path) => {
+    const frame = await mountedGalleryFrame(surface);
+    requestOpen(frame, path);
+    expect(useWindowManager.getState().windows.find(win => win.path === "apps/files/index.html")).toMatchObject({ minimized: false });
+    expect(useWindowManager.getState().windows.some(win => win.path === "__file-browser__")).toBe(false);
+  });
+}

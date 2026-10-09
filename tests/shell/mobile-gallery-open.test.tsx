@@ -17,6 +17,7 @@ vi.mock("@/components/AppViewer", () => ({ AppViewer: ({ path, onOpenApp }: { pa
   <div data-testid={`viewer:${path}`}>
     <button onClick={() => onOpenApp("Focus", "/files/apps/focus")}>Open installed Focus</button>
     <button onClick={() => onOpenApp("App Gallery", "apps/app-gallery")}>Return to Gallery</button>
+    <button onClick={() => onOpenApp("Files", "apps/files")}>Open installed Files</button>
   </div>
 ) }));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -47,4 +48,14 @@ it("preserves the owner-selected catalog artwork in the mobile launcher", async 
   render(<MobileShell />);
   const button = await screen.findByRole("button", { name: "Folio" });
   expect(button.querySelector("img")?.getAttribute("src")).toBe("http://localhost:3000/icons/gallery-folio.png?v=owner");
+});
+
+it("opens the installed Files app on Web Mobile without substituting the built-in file browser", async () => {
+  setPhoneViewport();
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [{ name: "App Gallery", path: "apps/app-gallery/index.html" }] })));
+  render(<MobileShell />);
+  fireEvent.click(await screen.findByRole("button", { name: "App Gallery" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open installed Files" }));
+  await waitFor(() => expect(screen.getByTestId("viewer:apps/files/index.html")).toBeTruthy());
+  expect(screen.getByText("Files", { selector: "header span" })).toBeTruthy();
 });

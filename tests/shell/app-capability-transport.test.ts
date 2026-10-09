@@ -336,3 +336,13 @@ it.each(["/api/bridge/capabilities?x=1", "/api/bridge/capabilities/", "/api/brid
   const { isAllowedBridgeFetchUrl } = await import("../../shell/src/components/app-viewer-bridge-policy.js");
   expect(isAllowedBridgeFetchUrl("notes", url)).toBe(false);
 });
+
+it("uses the shared install budget only for exact validated gallery install endpoints", async () => {
+  const { appBridgeTimeoutMs } = await import("../../shell/src/components/app-capability-request.js");
+  for (const id of ["files", "reading-library", "a" + "b".repeat(47)]) {
+    expect(appBridgeTimeoutMs(`/api/app-gallery/${id}/install`)).toBe(35000);
+  }
+  for (const url of ["/api/app-gallery", "/api/app-gallery/files", "/api/app-gallery/files/install?x=1", "/api/app-gallery/files/install/", "/api/app-gallery/Files/install", "/api/app-gallery/../install", "/api/app-gallery/" + "a".repeat(49) + "/install"]) {
+    expect(appBridgeTimeoutMs(url)).toBe(10000);
+  }
+});
