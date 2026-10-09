@@ -64,11 +64,11 @@ export function resolveBrainJobWorkerLimits(limits: Partial<BrainJobWorkerLimits
 type SummaryValue = string | number | boolean | null;
 const SUMMARY_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 
-/** `text` cut to `max` UTF-16 units without splitting a pair; lone surrogates (jsonb refuses them) become U+FFFD. */
+/** `text` cut to `max` UTF-16 units without splitting a pair; NUL and lone surrogates (jsonb refuses) become U+FFFD. */
 function clipSummaryText(text: string, max: number): string {
   const last = text.charCodeAt(max - 1);
   const end = text.length > max && last >= 0xd800 && last <= 0xdbff ? max - 1 : max;
-  return text.slice(0, end).toWellFormed();
+  return text.slice(0, end).replaceAll("\u0000", "\ufffd").toWellFormed();
 }
 
 /**

@@ -458,6 +458,7 @@ describe("brain job worker helpers", () => {
     })).toEqual({ ok: "x".repeat(200), flag: true, none: null });
     expect(clipBrainJobSummary({ cut: `${"x".repeat(199)}\u{1F600}`, lone: "a\ud800b", list: [1] as never }))
       .toEqual({ cut: "x".repeat(199), lone: "a\ufffdb" });
+    expect(clipBrainJobSummary({ nul: "a\u0000b\u0000" })).toEqual({ nul: "a\ufffdb\ufffd" });
     const wide = clipBrainJobSummary(Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${i}`, "\u754c".repeat(300)])));
     expect(Object.values(wide).every((value) => value === "\u754c".repeat(200))).toBe(true);
     expect(Object.keys(wide).length).toBeLessThan(16);
