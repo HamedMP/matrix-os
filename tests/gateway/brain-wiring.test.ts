@@ -3,9 +3,11 @@
  * every route and hands the agent its tools, each feature folder exports its contract names, and every route of
  * BRAIN_ROUTES answers from a mounted handler, the /sources and /jobs routes included.
  */
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Hono } from "hono";
+import { Hono } from "hono";
+import type { KernelConfig } from "@matrix-os/kernel";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createBrainAgentReadTools } from "../../packages/gateway/src/brain/agent/index.js";
 import {
@@ -24,10 +26,13 @@ import { BRAIN_READ_IPC_TOOL_NAMES, brainReadIpcToolNames } from "../../packages
 import {
   createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart,
 } from "../../packages/gateway/src/server/brain-wiring.js";
+import { createDispatcher } from "../../packages/gateway/src/dispatcher.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
 import {
-  getOptionalRequestPrincipal, readPrincipalRuntimeConfig, type RequestPrincipal,
+  JWT_CLAIMS_CONTEXT_KEY, getOptionalRequestPrincipal, markAuthContextReady, readPrincipalRuntimeConfig,
+  type RequestPrincipal,
 } from "../../packages/gateway/src/request-principal.js";
+import { registerMessageLayoutRoutes } from "../../packages/gateway/src/server/message-layout-routes.js";
 import { createBrainHarness, type BrainHarness } from "./helpers/brain-store-helpers.js";
 
 /** No model claims: start never builds a client from the environment in these tests. */
@@ -70,7 +75,7 @@ it("starts the brain with the owner database and hands it to the routes, the age
   const server = read("server.ts");
   const services = server.indexOf("const ownerDatabaseServices = ownerDatabaseStartup.services;");
   const dispatcher = server.indexOf("createDispatcher({", services);
-  const tools = server.indexOf("...createBrainGatewayAgentTools(ownerDatabaseServices),", dispatcher);
+  const tools = server.indexOf("...createBrainGatewayAgentTools(ownerDatabaseServices, brainStart.ownerIds),", dispatcher);
   const dispatcherEnd = server.indexOf("\n  });", dispatcher);
   const auth = server.indexOf('app.use("*", authMiddleware(');
   const routes = server.indexOf('app.route("/api/brain", createBrainApiRoutes(ownerDatabaseServices?.brainServices ?? null, '
@@ -97,6 +102,8 @@ it("starts the brain with the owner database and hands it to the routes, the age
   expect(jobs).toBeGreaterThan(serve);
   // Jobs and hooks stop first, before anything closes the owner database.
   expect(stop - close).toBeLessThan(80);
+  // The shell's and canonical Chat's runs name their caller: only an owner's run gets the brain tools.
+  expect(read("server/main-ws-routes.ts")).toContain("callerId: connectionOwnerId,");
   // The seams live in server/brain-wiring.ts: server.ts only calls them.
   for (const name of ["createBrainLateBoundIntegrations", "createBrainAgentReadTools", "createBrainProjectCleanup"]) {
     expect(server, name).not.toContain(name);
@@ -126,7 +133,38 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
   });
 
   it("offers no agent tools while the brain is off", () => {
-    expect(createBrainGatewayAgentTools(null)).toEqual({ brainTools: undefined, brainReadTools: undefined });
+    expect(createBrainGatewayAgentTools(null, ["owner_a"])).toEqual({
+      brainTools: undefined, brainReadTools: undefined, brainOwnerIds: ["owner_a"],
+    });
+  });
+
+  it("hands the brain tools to an /api/message run of an owner only, never a collaborator's", async () => {
+    const home = mkdtempSync(join(tmpdir(), "brain-message-"));
+    mkdirSync(join(home, "system"));
+    writeFileSync(join(home, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
+    try {
+      const configs: KernelConfig[] = [];
+      const dispatcher = createDispatcher({
+        homePath: home, brainTools: { why: vi.fn() }, brainOwnerIds: ["owner_a"],
+        spawnFn: async function* (_message: string, config: KernelConfig) { configs.push(config); } as never,
+      });
+      const app = new Hono();
+      app.use("*", async (c, next) => {
+        if (c.req.header("x-user")) c.set(JWT_CLAIMS_CONTEXT_KEY as never, { sub: c.req.header("x-user") } as never);
+        markAuthContextReady(c);
+        await next();
+      });
+      registerMessageLayoutRoutes({
+        app, homePath: home, dispatcher, logBestEffortFailure: vi.fn(), logUnexpectedJsonParseFailure: vi.fn(),
+      });
+      for (const user of ["owner_a", "collaborator", ""]) {
+        expect((await app.request("/api/message", { method: "POST", body: JSON.stringify({ text: "Why?" }),
+          headers: { "content-type": "application/json", "x-user": user } })).status).toBe(200);
+      }
+      expect(configs.map((config) => config.brainTools !== undefined)).toEqual([true, false, false]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("erases a deleted project through the brain, and fails the deletion when the database is down", async () => {

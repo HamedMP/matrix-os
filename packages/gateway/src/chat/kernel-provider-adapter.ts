@@ -154,6 +154,8 @@ export function createKernelChatProviderAdapter(options: {
         accessSourceId,
         ...(effort ? { effort } : {}),
         ...(input.executionRoot ? { workingDirectory: input.executionRoot } : {}),
+        // A personal chat's owner is its caller; a shared run's requester is not (no brain tools).
+        ...(input.owner.type === "personal" && !input.sharedScopeId ? { callerId: input.owner.ownerId } : {}),
       },
     ).then(() => {
       if (!terminal) {

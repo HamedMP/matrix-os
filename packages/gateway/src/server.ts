@@ -882,7 +882,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedCredentialProvider,
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
-    ...createBrainGatewayAgentTools(ownerDatabaseServices),
+    ...createBrainGatewayAgentTools(ownerDatabaseServices, brainStart.ownerIds),
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
