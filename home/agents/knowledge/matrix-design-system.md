@@ -138,7 +138,7 @@ border-radius: 22px;
 
 Use inline SVG or bundled local icon assets only. Do not load icon scripts, CDNs, remote fonts, or third-party JavaScript from generated apps.
 
-Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present, otherwise the Matrix OS style: light premium iOS/macOS skeuomorphic artwork, warm off-white or pale pastel background, forest/cream/ember/deep accents, one large tactile object, no text/logos/watermarks, no transparent or black dock backgrounds, no empty padding. The Matrix shell owns the final corner radius, so do not bake a visible frame into the artwork.
+Generated launcher icons use the gateway/kernel icon style. The default comes from `system/desktop.json` when present; preserve an owner's chosen style. The Matrix desktop family uses mixed silhouettes on transparent backgrounds with app-specific pictograms, rich distinct colors, controlled highlights and soft depth. Take inspiration from Ubuntu/Yaru's variety without copying third-party artwork. Avoid repeated beige square tiles, generic controllers, text, logos and watermarks. Check the silhouette at 64, 48 and 20px.
 
 Usage: inline an accessible SVG with `aria-hidden="true"` for decorative icons, or pair the icon button with an `aria-label`.
 
