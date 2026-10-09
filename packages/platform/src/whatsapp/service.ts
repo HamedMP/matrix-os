@@ -49,7 +49,7 @@ export function createWhatsAppService(deps: {
     for (const message of messages) {
       if (message.type === 'reaction') continue;
       const connection = await repo.getConnectionBySender(message.sender);
-      const admitted = canAdmitWhatsAppMessage(config, message, now()) || (message.sender.includes('.') && connection !== null
+      const admitted = canAdmitWhatsAppMessage(config, message, now()) || (connection?.consentVersion === 'whatsapp-general-agent-v1'
         && isWhatsAppSenderEligible(message.sender) && isWhatsAppReplyWindowOpen(message.timestamp, now()));
       if (!admitted) continue;
       // Only signed phone/account pairs admitted by the configured policy may route replies.

@@ -61,6 +61,27 @@ beforeEach(() => {
 afterEach(async () => { await service.shutdown(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('WhatsApp delivery boundaries', () => {
+  it.each(['Hello', 'STOP'])('retains verified phone access after enrollment rollback: %s', async (text) => {
+    compose({ config: { ...config, admissionMode: 'allowlist', allowedSenders: ['46709999999'] } });
+    await service.ingest([{ id: 'rollback-phone', sender, type: 'text', timestamp: now / 1000, text }]);
+    if (text === 'STOP') {
+      expect(repo.stop).toHaveBeenCalledWith(sender, 'rollback-phone', now + 86_400_000, now);
+      expect(repo.enqueue).not.toHaveBeenCalled();
+    } else {
+      expect(repo.enqueue).toHaveBeenCalledWith(expect.objectContaining({ sender,
+        payload: expect.objectContaining({ owner, connectionId: connection.id }) }));
+    }
+  });
+  it.each([
+    [null, sender, 0], [{ ...connection, consentVersion: 'old' }, sender, 0],
+    [connection, sender, 86_401], [connection, '12025550123', 0],
+  ])('keeps rollback admission restricted to current verified EEA connections: %j', async (current, identity, age) => {
+    compose({ config: { ...config, admissionMode: 'allowlist', allowedSenders: ['46709999999'] } });
+    repo.getConnectionBySender.mockResolvedValue(current);
+    await service.ingest([{ id: 'denied-rollback', sender: identity as string, type: 'text',
+      timestamp: now / 1000 - (age as number), text: 'Hello' }]);
+    expect(repo.enqueue).not.toHaveBeenCalled(); expect(repo.stop).not.toHaveBeenCalled();
+  });
   it('rejects ineligible or stale identities and snapshots admitted association', async () => {
     await service.ingest([
       { id: 'bad-market', sender: '12025550123', type: 'text', timestamp: now / 1000 },
