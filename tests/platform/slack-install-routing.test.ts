@@ -37,4 +37,24 @@ describe('platform-owned Slack setup', () => {
     expect(fetcher.mock.calls[0]?.[0]).toBe(`http://127.0.0.1:3200${path}`);
     expect(fetcher.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
+
+  it('forwards sign-in refresh for an authenticated installer without a computer', async () => {
+    await deleteContainer(db, 'alice');
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('next-action-result'));
+    const app = createApp({ db, orchestrator: stubOrchestrator(), platformSecret: 'platform-secret-123',
+      clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: 'user_alice' }) }) });
+    const response = await app.request('/slack/install', {
+      method: 'POST',
+      headers: { host: 'app.matrix-os.com', authorization: 'Bearer clerk-session', 'next-action': 'refresh-fixture', 'content-type': 'text/plain' },
+      body: '["invalidate-clerk-cache"]',
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('next-action-result');
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]?.[0]).toBe('http://127.0.0.1:3200/slack/install');
+    const init = fetcher.mock.calls[0]?.[1];
+    expect(init?.method).toBe('POST');
+    expect(new Headers(init?.headers).get('next-action')).toBe('refresh-fixture');
+    expect(await new Response(init?.body).text()).toBe('["invalidate-clerk-cache"]');
+  });
 });

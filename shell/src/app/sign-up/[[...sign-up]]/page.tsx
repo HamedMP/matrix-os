@@ -1,3 +1,4 @@
+import { slackLinkReturnTarget } from "../../../../../packages/platform/src/slack/link-return";
 import type { Metadata } from "next";
 import { SignUp } from "@clerk/nextjs";
 import { shellAuthAppearance } from "@/components/auth/auth-brand";
@@ -10,7 +11,9 @@ export const metadata: Metadata = {
   description: "Sign up for Matrix OS. No card required until you provision a hosted Matrix computer.",
 };
 
-export default function SignUpPage() {
+export default async function SignUpPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const params = await searchParams;
+  const returnTarget = slackLinkReturnTarget(params.redirect_url) ?? "/";
   return (
     <ShellAuthLayout
       eyebrow="Matrix OS"
@@ -18,8 +21,9 @@ export default function SignUpPage() {
       body="Bring your tools together, build useful apps, and make space for what matters. Start with your Matrix account."
     >
       <SignUp
-        forceRedirectUrl="/"
-        fallbackRedirectUrl="/"
+        forceRedirectUrl={returnTarget}
+        fallbackRedirectUrl={returnTarget}
+        signInUrl={returnTarget === "/" ? "/sign-in" : `/sign-in?redirect_url=${encodeURIComponent(returnTarget)}`}
         appearance={shellAuthAppearance}
       />
     </ShellAuthLayout>

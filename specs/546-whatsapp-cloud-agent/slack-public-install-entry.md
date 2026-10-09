@@ -4,6 +4,8 @@ Slack public distribution is enabled, but its share button does not create Matri
 
 All installation CTAs point to https://app.matrix-os.com/slack/install. The entry allows sign-in without provisioning a computer, selects a Clerk organization, refreshes the user's session, and calls the existing authenticated POST installation endpoint. Only the server creates OAuth state. Before redirecting, the client validates Slack's exact consent origin/path, nonce and same-origin callback. Invalid browser callbacks drop their code and redirect to a new installation. API authorization remains unchanged.
 
+Signed-out visitors retain the exact local `/slack/install` destination through sign-in, sign-up and toggling between those pages; the same allowlist preserves existing tokenized employee links. Other, external, malformed or repeated return targets fall back to the app home and grant no installation authority.
+
 The platform owns the exact `/slack/install` and `/slack/oauth/complete` shell pages, alongside runtime setup. They bypass customer-computer selection for human browser sessions so a provisioning or older customer computer cannot replace them with its boot page or a missing route. Other Slack paths and API authentication retain their existing routing. The focused platform-shell path module owns this classification; the session-routing composition imports it.
 
 | Route | Authentication | Public |
