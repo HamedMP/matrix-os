@@ -1,3 +1,4 @@
+import { createAppCapabilityRoutes } from "./app-capabilities/routes.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
 import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
@@ -44,7 +45,7 @@ import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
 import { createAllowedOriginController } from "./allowed-origins.js";
-import { createRuntimeAppAiRoutes } from "./app-ai/runtime.js";
+import { createRuntimeAppAiRoutes, isAppAiAllowed } from "./app-ai/runtime.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -178,7 +179,7 @@ import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
-import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
+import { createBotIntegrationClient, createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
@@ -1364,6 +1365,17 @@ export async function createGateway(config: GatewayConfig) {
     broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
     logUnexpectedJsonParseFailure,
   });
+
+  const appIntegrationTransport = internalIntegrationBaseUrl && internalPlatformToken
+    ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
+    : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null;
+  app.route("/api/bridge/capabilities", createAppCapabilityRoutes({
+    homePath,
+    ownerIds: codingAgentOwnerIds,
+    resolveOwner: c => requireRequestPrincipal(c).userId,
+    integrations: appIntegrationTransport ? createBotIntegrationClient(appIntegrationTransport) : null,
+    aiAllowed: appIdentity => isAppAiAllowed(homePath, appIdentity),
+  }));
 
   app.route("/api/bridge/ai", createRuntimeAppAiRoutes({
     homePath,

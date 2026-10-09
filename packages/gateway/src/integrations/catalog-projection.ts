@@ -1,11 +1,11 @@
 import type { Context } from "hono";
 import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../chat/matrix-mcp-launch.js";
 import type { ServiceDefinition } from "./types.js";
-import { INTEGRATION_READ_SCOPE_HEADER } from "./scope-provenance.js";
+import { INTEGRATION_READ_SCOPE_HEADER, hasIntegrationReadScope } from "./scope-provenance.js";
 
 export function isScopedReadCatalogRequest(c: Context): boolean {
-  const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as { scope?: string } | undefined;
-  return runContext?.scope === "integration_read"
+  const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as { scope?: string; integrationRead?: boolean } | undefined;
+  return hasIntegrationReadScope(runContext)
     || c.req.header(INTEGRATION_READ_SCOPE_HEADER) === "read";
 }
 
@@ -40,7 +40,7 @@ export async function projectIntegrationCatalog(options: {
         const availableActions = capabilities ? Object.keys(capabilities) : await presetBroker.listAvailableActions(uid, service.id);
         if (availableActions) {
           actions = Object.fromEntries(
-            Object.entries(service.actions).filter(([actionId]) => availableActions.includes(actionId)),
+            Object.entries(actions).filter(([actionId]) => availableActions.includes(actionId)),
           );
           if (presetBroker.listAvailableActionParams) {
             const supported = capabilities ?? await presetBroker.listAvailableActionParams(uid, service.id);

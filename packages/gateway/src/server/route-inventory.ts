@@ -52,7 +52,7 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
   {
     id: "bridge",
     label: "App bridge query, data, proxy, and integration service calls",
-    paths: ["/api/bridge/query", "/api/bridge/proxy", "/api/bridge/data", "/api/bridge/service"],
+    paths: ["/api/bridge/query", "/api/bridge/proxy", "/api/bridge/data", "/api/bridge/service", "/api/bridge/capabilities", "/api/bridge/ai", "/api/bridge/ai/routes"],
     plannedModule: "server/routes/bridge.ts",
   },
   {
