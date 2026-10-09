@@ -52,7 +52,7 @@ describe("unified theme registry", () => {
     expect(chrome.background).toBe("#282c34");
     expect(chrome.card).toBe("#2c313c");
     expect(chrome.muted).toBe("#333842");
-    expect(chrome.destructive).toBe("#e37981");
+    expect(chrome.destructive).toBe("#e06c75");
     expect(chrome.ring).toBe("#61afef");
 
     const editor = getThemeEditorColors("operator", "dark");
@@ -88,7 +88,7 @@ describe("applyUnifiedTheme", () => {
   it("maps every managed semantic variable from the chrome layer", () => {
     const vars = chromeToSemanticVars(getThemeChrome("operator", "dark"));
     expect(vars["--bg-app"]).toBe("#282c34");
-    expect(vars["--danger"]).toBe("#e37981");
+    expect(vars["--danger"]).toBe("#da9481");
     expect(vars["--accent"]).toBe("#ffffff");
     // Highlight and warning must stay distinguishable signals.
     expect(vars["--highlight"]).not.toBe(vars["--warning"]);

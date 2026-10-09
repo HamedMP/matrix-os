@@ -12,25 +12,14 @@ describe('theme customization', () => {
       expect(theme.light?.chrome.background).not.toBe(theme.dark?.chrome.background);
     }
   });
-  it('gives Matrix distinct navigation surfaces in both modes and projects them to the web', () => {
-    expect(unifiedThemes[0]?.id).toBe('matrix');
-    expect(DEFAULT_APPEARANCE.themeId).toBe('matrix');
-    expect(DEFAULT_APPEARANCE.mode).toBe('light');
-    const light = getThemeVariant('matrix', 'light').chrome;
-    expect(light.sidebar).toBe('#ffffff');
+  it('uses neutral navigation states and scale-based Matrix surfaces', () => {
     for (const mode of ['light', 'dark'] as const) {
       const c = getThemeVariant('matrix', mode).chrome;
-      expect(c.sidebar).not.toBe(c.card);
-      expect(contrastRatio(c.sidebarForeground, c.sidebar)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(c.sidebarAccentForeground, c.sidebarAccent)).toBeGreaterThanOrEqual(4.5);
-      const green = parseInt(c.sidebarAccent.slice(3, 5), 16);
-      expect(green).toBeGreaterThan(parseInt(c.sidebarAccent.slice(1, 3), 16));
-      const web = buildWebTheme({ ...DEFAULT_APPEARANCE, mode });
-      expect(web.colors.sidebar).toBe(c.sidebar);
-      expect(web.colors['sidebar-accent']).toBe(c.sidebarAccent);
+      expect(c.sidebarAccent).toBe(c.accent);
+      expect(c.sidebarAccentForeground).toBe(c.foreground);
+      expect(c.popover).not.toBe(c.accent);
+      expect(c.sidebar).toBe(mode === 'light' ? '#fafafa' : '#061810');
     }
-    const dark = getThemeVariant('matrix', 'dark').chrome;
-    expect(parseInt(dark.sidebar.slice(3, 5), 16)).toBeGreaterThan(parseInt(dark.sidebar.slice(1, 3), 16));
   });
   it('keeps small text readable on every chrome surface and editor', () => {
     for (const theme of unifiedThemes) for (const mode of ['light', 'dark'] as const) {

@@ -15,10 +15,7 @@ import { oneDark } from "./one-dark.js";
 import { dracula } from "./dracula.js";
 import { nord } from "./nord.js";
 import { gruvbox } from "./gruvbox.js";
-import { catppuccin } from "./catppuccin.js";
-import { tokyoNight } from "./tokyo-night.js";
 import { rosePine } from "./rose-pine.js";
-import { solarized } from "./solarized.js";
 import { kanagawa } from "./kanagawa.js";
 import { vscode } from "./vscode.js";
 
@@ -31,6 +28,8 @@ export type {
 } from "./theme-types.js";
 
 export const DEFAULT_THEME_ID = "matrix";
+export const RETIRED_THEME_IDS = ["tokyo-night", "solarized", "catppuccin"] as const;
+export { themeSemantics } from "./semantics.js";
 export { FONT_OPTIONS, MONO_FONT_OPTIONS, COLOR_FIELDS, normalizeCustomTheme, contrastRatio } from "./customization.js";
 export type { CustomTheme, CustomColors, FontId, MonoFontId } from "./customization.js";
 
@@ -43,15 +42,12 @@ export const unifiedThemes: UnifiedThemeDefinition[] = [
   dracula,
   nord,
   gruvbox,
-  catppuccin,
-  tokyoNight,
   rosePine,
-  solarized,
   kanagawa,
   vscode,
 ].map((theme) => {
   const companions: Record<string, [string, string]> = {
-    "matrix-neon": ["#f3fbf4", "#14391f"], "one-dark": ["#fafafa", "#383a42"],
+    "one-dark": ["#fafafa", "#383a42"],
     dracula: ["#f8f6fc", "#383347"], nord: ["#eceff4", "#2e3440"],
     gruvbox: ["#fbf1c7", "#3c3836"], kanagawa: ["#f2ecdf", "#43436c"],
   };
