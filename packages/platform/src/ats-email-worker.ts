@@ -39,7 +39,7 @@ export default {
   async email(message: EmailMessage, env: Env) {
     if (!env.ATS_INTAKE_ADDRESS || message.to.toLowerCase() !== env.ATS_INTAKE_ADDRESS.toLowerCase()
       || message.rawSize > MAX_RAW_MAIL_BYTES || !isCareersGroup(message.headers.get('list-id'))) {
-      message.setReject('This intake accepts careers group mail up to 8 MB.');
+      message.setReject('This intake accepts careers group mail up to 32 MB.');
       return;
     }
     const raw = await boundedRaw(message.raw);
@@ -59,7 +59,7 @@ export default {
         if (!raw) { job.ack(); continue; }
         const body = await normalizeGroupMail(new Uint8Array(await raw.arrayBuffer()), raw.customMetadata?.receivedAt ?? new Date().toISOString());
         const response = await fetch(new URL('/api/ats/mail', origin.origin), {
-          method: 'POST', headers: { authorization: `Bearer ${env.ATS_MAIL_INGEST_SECRET}`, 'content-type': 'application/json' },
+          method: 'POST', headers: { authorization: `Bearer ${env.ATS_MAIL_INGEST_SECRET}`, 'content-type': 'application/json', 'user-agent': 'Matrix-Recruiting-Intake/1.0' },
           body: JSON.stringify(body), signal: AbortSignal.timeout(10_000), redirect: 'error',
         });
         if (!response.ok) throw new Error('ATS intake unavailable');

@@ -42,6 +42,7 @@ it('retries when platform intake fails and deletes raw mail only after durable a
     expect(job.ack).toHaveBeenCalledOnce();
     expect(env.ATS_RAW_MAIL.delete).toHaveBeenCalledWith(job.body.key);
     expect(fetcher.mock.calls[0][1].signal).toBeDefined();
+    expect(fetcher.mock.calls[0][1].headers['user-agent']).toBe('Matrix-Recruiting-Intake/1.0');
   } finally { vi.unstubAllGlobals(); }
 });
 
@@ -78,4 +79,10 @@ it('allows missing List-Id only for an explicitly captured careers archive URL',
  await expect(normalizeGroupMail(new TextEncoder().encode(original),receivedAt)).rejects.toThrow();
  const archived=await normalizeGroupMail(new TextEncoder().encode(original),receivedAt,'https://groups.google.com/a/finna.ai/g/careers/c/thread1');expect(archived.receivedAt).toBe('2026-10-01T12:00:00.000Z');
  await expect(normalizeGroupMail(new TextEncoder().encode(original),receivedAt,'https://groups.google.com/a/other/g/careers/c/thread1')).rejects.toThrow('Unexpected');
+});
+
+it('routes same-zone intake requests through the public edge authentication layer',async()=>{
+ const {readFile}=await import('node:fs/promises');
+ const config=await readFile('packages/platform/wrangler.ats.toml','utf8');
+ expect(config).toMatch(/compatibility_flags\s*=\s*\[[^\]]*"global_fetch_strictly_public"/);
 });
