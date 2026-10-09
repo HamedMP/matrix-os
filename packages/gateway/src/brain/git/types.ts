@@ -419,6 +419,8 @@ export interface GitSyncOptions {
   readonly limits?: Partial<GitSyncLimits>;
   /** Milliseconds clock for the run budget. Default Date.now. */
   readonly now?: () => number;
+  /** The caller's stop; like the run budget it is checked between windows, so a started window finishes. */
+  readonly signal?: AbortSignal;
 }
 
 export type GitSyncStatus = "succeeded" | "partial" | "failed";

@@ -284,11 +284,12 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
 
   /**
    * gitSync runs the project's git source: the oldest live one, as the project service picks it. Another git source (a
-   * registration race left two) is source_conflict, never synced under the wrong id. A paused one answers like the
-   * runner; one paused or removed while the run started answers the same way.
+   * registration race left two) is source_conflict, never synced under the wrong id (the project service checks the id
+   * again as the run starts). A paused one answers like the runner; one paused or removed while the run started
+   * answers the same way. The caller's signal stops the run between windows.
    */
   async function gitSyncView(
-    ownerId: string, projectRef: string, scope: BrainScopeKey, source: KnownSource,
+    ownerId: string, projectRef: string, scope: BrainScopeKey, source: KnownSource, signal: AbortSignal | undefined,
   ): Promise<BrainSourceSyncView> {
     const gitSync = deps.gitSync;
     if (gitSync === undefined) throw new BrainFeatureError("source_kind_unsupported");
@@ -297,8 +298,12 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
     if (projectGit.sourceId !== source.sourceId) throw new BrainFeatureError("source_conflict");
     if (projectGit.status !== "active") return syncView(source.sourceId, INACTIVE);
     try {
-      return { ...(await gitSync(ownerId, projectRef)), sourceId: source.sourceId };
+      const run = { sourceId: source.sourceId, ...(signal === undefined ? {} : { signal }) };
+      return { ...(await gitSync(ownerId, projectRef, run)), sourceId: source.sourceId };
     } catch (error: unknown) {
+      if (error instanceof BrainApiError && error.code === "git_source_conflict") {
+        throw new BrainFeatureError("source_conflict", { cause: error });
+      }
       if (!(error instanceof BrainApiError)
         || (error.code !== "git_source_unavailable" && error.code !== "git_source_missing")) throw error;
       const current = await repository.getSource(scope, source.sourceId);
@@ -409,7 +414,7 @@ export function createBrainSourcesService(deps: BrainSourcesCoreDeps): BrainSour
       const project = await deps.resolver.resolve(ownerId, projectRef);
       const scope = project.scope;
       const source = await liveSource(scope, sourceId);
-      if (source.kind === "git") return gitSyncView(ownerId, projectRef, scope, source);
+      if (source.kind === "git") return gitSyncView(ownerId, projectRef, scope, source, signal);
       // Before the config and the account are read, so neither can turn the paused answer into an error.
       if (source.status !== "active") return syncView(sourceId, INACTIVE);
       const handler = handlerOf(source.kind);

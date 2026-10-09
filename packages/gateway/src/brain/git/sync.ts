@@ -80,6 +80,7 @@ interface SyncRun {
   readonly runner: GitRunner;
   readonly limits: GitSyncLimits;
   readonly now: () => number;
+  readonly signal: AbortSignal | undefined;
 }
 
 class RunProgress {
@@ -196,7 +197,7 @@ function parseOptions(options: GitSyncOptions): SyncRun | null {
     repository: options.repository, scope: parsed.data.scope, sourceId: parsed.data.sourceId,
     repoPath: parsed.data.repoPath, homePath: parsed.data.homePath, branch: parsed.data.config?.branch ?? null,
     matcher, runner: options.runner ?? defaultGitRunner, limits: resolveLimits(parsed.data.limits),
-    now: options.now ?? Date.now,
+    now: options.now ?? Date.now, signal: options.signal,
   };
 }
 
@@ -306,7 +307,7 @@ async function runWindows(run: SyncRun, opened: OpenedRun, progress: RunProgress
   let rechecked = false;
   progress.remaining = await repo.countFirstParent({ from, to: tip.sha });
   while (progress.remaining > 0 && progress.processed < run.limits.commitsPerRun) {
-    if (progress.processed > 0 && run.now() - start >= run.limits.runBudgetMs) {
+    if (progress.processed > 0 && (run.now() - start >= run.limits.runBudgetMs || run.signal?.aborted === true)) {
       progress.notice("run_budget_exhausted");
       break;
     }
@@ -401,8 +402,8 @@ async function syncWithReceipt(run: SyncRun): Promise<GitSyncResult> {
 
 /**
  * Syncs one git source (brain_sources.kind "git") from the checkout at
- * repoPath into the store. Bounded per run by limits.commitsPerRun and
- * limits.runBudgetMs; a result with nextAction "run_again" has more history
+ * repoPath into the store. Bounded per run by limits.commitsPerRun,
+ * limits.runBudgetMs and the signal; a result with nextAction "run_again" has more history
  * to apply. Never rejects.
  */
 export async function syncGitSource(options: GitSyncOptions): Promise<GitSyncResult> {
