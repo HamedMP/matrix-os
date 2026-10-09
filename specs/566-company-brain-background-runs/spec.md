@@ -52,10 +52,10 @@ syncs and claim reading as runs and polls them (spec 563).
 - Each step is raced against the run's abort signal, so the time cap, a cancel and shutdown end the run at once even
   when the step ignores the signal. The step's service call then ends on its own budget, and the heartbeat timer
   stops renewing the lease once the run is aborted.
-- Leases: a claim sets `lease_owner` and `lease_expires_at` (`leaseMs`) and adds one attempt; heartbeats every
-  `heartbeatMs` (at most a third of `leaseMs`; a longer setting is shortened) and after every step renew it. Every
-  worker write is fenced by its claim, `status = 'running' AND lease_owner = <worker> AND attempts = <the claim's
-  attempts>`, so a run that lost its lease writes nothing, even after the same worker claimed the job again; that
+- Leases: a claim sets `lease_owner` (worker id and a random tag) and `lease_expires_at` (`leaseMs`) and adds one
+  attempt; heartbeats every `heartbeatMs` (at most a third of `leaseMs`, one in flight) and after every step renew
+  it. Every worker write is fenced by its claim, `status = 'running' AND lease_owner = <the claim's lease>`, so a run
+  that lost or handed back its lease writes nothing, even after the same worker claimed the job again; that
   worker also stops its old run of the job before it starts the new one. Each poll first recovers expired leases:
   queued again, or `failed` with `attempts_exhausted` after `maxAttempts` claims, or `cancelled` when a cancel was
   asked. A paid run (a model extract) is never queued again: it ends `failed` with `interrupted`, and the owner runs
@@ -126,8 +126,8 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
   and waits at most `stopWaitMs`; what is not handed back in time is recovered by lease expiry.
 - Step error: the run fails with the step's code; busy codes wait and retry until the time cap instead.
 - Concurrency: one active run per `(scope, kind, target)` by a unique partial index; claims use
-  `FOR UPDATE SKIP LOCKED`; every worker write is fenced by its claim (`status = 'running' AND lease_owner = <worker>
-  AND attempts = <the claim's attempts>`).
+  `FOR UPDATE SKIP LOCKED`; every worker write is fenced by its claim (`status = 'running' AND
+  lease_owner = <the claim's lease>`).
 - A run whose row was erased mid-step finds its lease gone and writes nothing.
 
 ## Resource management
@@ -150,9 +150,8 @@ Errors: the shared brain codes, plus `job_not_found` (404, also for a malformed 
 - **Lock/transaction scope**: enqueue and erase take `pg_advisory_xact_lock(hashtext(ownerId),
   hashtext('brain-jobs'))`, and the insert is `ON CONFLICT DO NOTHING` on `brain_jobs_active_slot`; cancel is one
   statement fenced by status; every worker write is one statement fenced by the claim (`status = 'running' AND
-  lease_owner = <worker> AND attempts = <the claim's attempts>`), so a run that lost its lease can never overwrite
-  the run of a later claim. Attempts only grows while a claim lives (release, the one write that lowers it, is that
-  claim's last), so no two claims of a job share it.
+  lease_owner = <the claim's lease>`), so a run that lost its lease can never overwrite the run of a later claim.
+  The lease's random tag keeps it unique: release does not count a claim, so attempts alone can repeat.
 - **Acceptable orphan states**: a `running` row of a dead gateway until its lease expires; finished runs beyond the
   newest 50 per scope until the next enqueue prunes them; runs of an erased project never (the erase deletes them).
 - **Auth source of truth**: the request principal resolved to its own project scope; the worker acts only as the
