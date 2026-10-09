@@ -6,7 +6,9 @@ import { SiteError, type SiteOwner, type SitesTable } from './types.js';
 import { sql } from 'kysely';
 import { siteOwnerPrefix, withSiteOwnerAdmission, siteOwnerCanServe } from './account-lifecycle.js';
 import { assertCurrentPublishingRuntime, createPublishAdmission } from './publish-admission.js';
-type Storage = CustomerVpsObjectStore & {
+import { loadSiteAsset } from './asset-stream.js';
+type Storage = Omit<CustomerVpsObjectStore, 'getObject'> & {
+    getObject(key: string, options?: { signal?: AbortSignal }): Promise<{ body: unknown; etag?: string; contentLength?: number }>;
     deleteObject?(key: string, options?: {
         signal?: AbortSignal;
     }): Promise<void>;
@@ -154,31 +156,8 @@ export function createSitesService(options: {
         const ownerRow = await db.executor.selectFrom('public_sites').select('owner_id').where('id', '=', site.id).executeTakeFirst();
         if (!ownerRow)
             throw new SiteError('not_found');
-        const object = await storage.getObject(key(ownerRow.owner_id, site.id, version, path), { signal: AbortSignal.timeout(30000) });
-        if (!object.body)
-            throw new SiteError('not_found');
-        const reader = object.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        try {
-            while (true) {
-                const part = await reader.read();
-                if (part.done)
-                    break;
-                size += part.value.byteLength;
-                if (size > file.bytes || size > 10 * 1024 * 1024) {
-                    await reader.cancel();
-                    throw new SiteError('unavailable');
-                }
-                chunks.push(part.value);
-            }
-        }
-        finally {
-            reader.releaseLock();
-        }
-        if (size !== file.bytes)
-            throw new SiteError('unavailable');
-        return { body: Buffer.concat(chunks), contentType: file.contentType };
+        const body = await loadSiteAsset(signal => storage.getObject(key(ownerRow.owner_id, site.id, version, path), { signal }), file.bytes);
+        return { body, contentType: file.contentType };
     }
     async function admitted<T>(reference: string, work: (site: SiteRecord, trx: PlatformDB) => Promise<T>) {
         const initial = await resolve(reference);
