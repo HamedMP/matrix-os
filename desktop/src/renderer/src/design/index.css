@@ -14,6 +14,7 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "@matrix-os/ui/onboarding-widget.css";
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 
@@ -114,7 +115,8 @@ textarea,
 }
 
 /* ── Focus visibility (keyboard-first, US6) ───────────────────── */
-:focus-visible {
+/* The onboarding widget (.mxo-root) ships its own focus treatment. */
+:focus-visible:where(:not(.mxo-root *)) {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
