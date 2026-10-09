@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { RecordConflictError } from "./persistence";
 import Sheet from "./Sheet";
 export { ImportDialog } from "./ImportDialog";
@@ -11,6 +11,7 @@ export function Editor({
   onSave,
   onArchive,
   onClose,
+  onLoadLatest,
 }: {
   app: Definition;
   record?: OwnerRecord;
@@ -18,7 +19,10 @@ export function Editor({
   onSave: (r: OwnerRecord) => Promise<unknown>;
   onArchive: (r: OwnerRecord) => Promise<unknown>;
   onClose: () => void;
+  onLoadLatest?: () => Promise<OwnerRecord | null>;
 }) {
+  const baseline = useRef(record);
+  const [conflict, setConflict] = useState(false), [latest, setLatest] = useState<OwnerRecord | null>(null);
   const [draftId] = useState(() => record?.id ?? crypto.randomUUID());
   const [fields, setFields] = useState<OwnerRecord["fields"]>(
       record?.fields ?? {},
@@ -30,7 +34,7 @@ export function Editor({
     [busy, setBusy] = useState(false);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || conflict) return;
     const errors = validateFields(app, fields);
     if (errors.length) {
       setError(errors.join(". "));
@@ -40,17 +44,17 @@ export function Editor({
     setError("");
     try {
       await onSave({
-        ...record,
+        ...baseline.current,
         id: draftId,
         fields,
         scope,
-        accounts: record?.accounts ?? [],
-        sources: record?.sources ?? [],
+        accounts: baseline.current?.accounts ?? [],
+        sources: baseline.current?.sources ?? [],
         manualFields: Array.from(
           new Set([
-            ...(record?.manualFields ?? []),
+            ...(baseline.current?.manualFields ?? []),
             ...app.fields
-              .filter((f) => fields[f.key] !== record?.fields[f.key])
+              .filter((f) => fields[f.key] !== baseline.current?.fields[f.key])
               .map((f) => f.key),
           ]),
         ),
@@ -59,6 +63,7 @@ export function Editor({
       onClose();
     } catch (cause) {
       console.error("Editor save failed", cause);
+      if (cause instanceof RecordConflictError) { setConflict(true); setLatest(null); }
       setError(
         cause instanceof RecordConflictError
           ? cause.message
@@ -69,13 +74,14 @@ export function Editor({
     }
   }
   async function archive() {
-    if (!record || busy) return;
+    if (!baseline.current || busy || conflict) return;
     setBusy(true);
     try {
-      await onArchive(record);
+      await onArchive(baseline.current);
       onClose();
     } catch (cause) {
       console.error("Editor archive failed", cause);
+      if (cause instanceof RecordConflictError) { setConflict(true); setLatest(null); }
       setError(
         cause instanceof RecordConflictError
           ? cause.message
@@ -84,6 +90,27 @@ export function Editor({
     } finally {
       setBusy(false);
     }
+  }
+  async function reviewLatest() {
+    if (busy || !onLoadLatest) return;
+    setBusy(true); setLatest(null);
+    try {
+      const current = await onLoadLatest();
+      if (!current || current.id !== draftId || current.archivedAt || !current.rowId || !current.basePayload)
+        throw new Error("Current record unavailable");
+      setLatest(current);
+    } catch (cause) {
+      console.error("Editor conflict review failed", cause);
+      setError("The latest record is unavailable. Your draft is still here. Try again.");
+    } finally { setBusy(false); }
+  }
+  function reapply() {
+    if (!latest || busy) return;
+    const changed = Object.fromEntries(app.fields.filter(field => fields[field.key] !== baseline.current?.fields[field.key])
+      .map(field => [field.key, fields[field.key]]));
+    setFields({ ...latest.fields, ...changed });
+    if (scope === baseline.current?.scope) setScope(latest.scope);
+    baseline.current = latest; setLatest(null); setConflict(false); setError("");
   }
   return (
     <Sheet
@@ -184,17 +211,28 @@ export function Editor({
             {error}
           </p>
         )}
+        {conflict && <section aria-label="Review latest record">
+          <p>Your draft is kept here. Review the current record before reapplying your changes.</p>
+          <button type="button" onClick={() => void reviewLatest()} disabled={busy || !onLoadLatest}>Review latest record</button>
+          {latest && <>
+            <h3>Latest saved values</h3>
+            <dl>{app.fields.map(field => <div key={field.key}><dt>{field.label}</dt><dd>{String(latest.fields[field.key] ?? "Not set")}</dd></div>)}
+              <div><dt>Record group</dt><dd>{latest.scope === "work" ? "Work" : "Personal"}</dd></div>
+            </dl>
+            <button type="button" onClick={reapply} disabled={busy}>Reapply my changes to this version</button>
+          </>}
+        </section>}
         <div className="sheet-actions">
           {record && (
             <button
               type="button"
               onClick={() => void archive()}
-              disabled={busy}
+              disabled={busy || conflict}
             >
               Archive record
             </button>
           )}
-          <button type="submit" className="primary" disabled={busy}>
+          <button type="submit" className="primary" disabled={busy || conflict}>
             {busy ? "Saving…" : "Save record"}
           </button>
         </div>

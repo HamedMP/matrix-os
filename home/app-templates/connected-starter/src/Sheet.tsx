@@ -11,8 +11,21 @@ export default function Sheet({
 }) {
   const opener = useRef(document.activeElement), dialog = useRef<HTMLElement>(null);
   useEffect(() => {
-    dialog.current?.querySelector<HTMLElement>("button")?.focus();
+    const element = dialog.current;
+    function retainFocus() {
+      if (!element || !element.isConnected) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && element.contains(active) && !active.matches(":disabled") && !active.closest("[hidden],[inert],[aria-hidden=true]")) return;
+      const target = Array.from(element.querySelectorAll<HTMLElement>(focusable))
+        .find(item => !item.closest("[hidden],[inert],[aria-hidden=true]"));
+      (target ?? element).focus();
+    }
+    retainFocus();
+    document.addEventListener("focusin", retainFocus);
+    const observer = new MutationObserver(retainFocus);
+    if (element) observer.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "hidden", "inert", "aria-hidden"] });
     return () => {
+      observer.disconnect(); document.removeEventListener("focusin", retainFocus);
       const candidates = [opener.current, ...document.querySelectorAll<HTMLElement>(focusable)];
       for (const target of candidates) {
         if (!(target instanceof HTMLElement) || !target.isConnected || target.matches(":disabled") || dialog.current?.contains(target) || target.closest("[hidden],[inert],[aria-hidden=true]")) continue;
@@ -27,6 +40,7 @@ export default function Sheet({
         ref={dialog}
         className="sheet"
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-label={title}
         onClick={(e) => e.stopPropagation()}

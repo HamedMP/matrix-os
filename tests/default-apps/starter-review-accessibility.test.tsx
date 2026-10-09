@@ -69,3 +69,20 @@ it('journal entries beyond the first100 remain editable',()=>{
  fireEvent.click(screen.getByRole('button',{name:'Edit Entry 124'}));
  expect(p.onEdit.mock.calls[0][0].id).toBe('124');
 });
+it('Sheet recovers focus when the focused import control disappears and rejects outside focus',async()=>{
+ const outside=document.createElement('button');document.body.append(outside);
+ const view=render(<Sheet title="Import" onClose={()=>{}}><button>Ask Matrix to import</button></Sheet>);
+ screen.getByRole('button',{name:'Ask Matrix to import'}).focus();
+ view.rerender(<Sheet title="Import" onClose={()=>{}}><button>Back to records</button></Sheet>);
+ await waitFor(()=>expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true));
+ outside.focus();expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+ fireEvent.keyDown(document.activeElement!,{key:'Tab',shiftKey:true});
+ expect(document.activeElement).toBe(screen.getByRole('button',{name:'Back to records'}));
+ view.unmount();outside.remove();
+});
+it('Sheet moves focus from a newly disabled input to an available control',async()=>{
+ const view=render(<Sheet title="Import" onClose={()=>{}}><input aria-label="Account"/></Sheet>);
+ screen.getByLabelText('Account').focus();
+ view.rerender(<Sheet title="Import" onClose={()=>{}}><input aria-label="Account" disabled/></Sheet>);
+ await waitFor(()=>expect(document.activeElement).toBe(screen.getByRole('button',{name:'Close dialog'})));
+});

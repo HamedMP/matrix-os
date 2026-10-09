@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Editor, EvidenceDrawer, ImportDialog } from "./Dialogs";
-import { exportRecords, filterRecords } from "./model";
+import { exportRecords, filterRecords, readRecords } from "./model";
 import { useRecords } from "./useRecords";
 import Sidebar from "./Sidebar";
 import WorkspaceContent from "./WorkspaceContent";
@@ -125,6 +125,12 @@ export default function App({ app }: { app: Definition }) {
           record={editor ?? undefined}
           creationScope={scope === "all" ? (app.collection === "business" ? "work" : "personal") : scope}
           onSave={save}
+          onLoadLatest={async () => {
+            const db = window.MatrixOS?.db;
+            if (!editor?.rowId || !db?.findOne) throw new Error("Current record unavailable");
+            const row = await db.findOne("records", editor.rowId);
+            return readRecords(row ? [row] : []).find(record => record.id === editor.id && !record.archivedAt) ?? null;
+          }}
           onArchive={archive}
           onClose={() => setEditor(undefined)}
         />

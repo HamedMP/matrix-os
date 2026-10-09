@@ -12,6 +12,15 @@ const subscriptions = catalog.apps.find(app => app.id === "subscriptions") as De
 const email = { id: "email_account", service: "gmail", account_label: "Personal", account_email: "reader@example.test", status: "active" };
 afterEach(() => { cleanup(); delete window.MatrixOS; });
 describe("compact installed app workflows", () => {
+  it("gives expanded controls and records nonshrinking rows in short phone windows", () => {
+    const css = readFileSync("home/app-templates/connected-starter/src/styles/gallery-light.css", "utf8");
+    const compact = css.split("@media (max-width: 700px) and (max-height: 420px)")[1];
+    expect(compact).toMatch(/\.workbench\[data-app\]\s*\{[^}]*grid-template-rows:\s*max-content max-content;[^}]*overflow-y:\s*auto/);
+    expect(compact).toMatch(/\.sidebar\s*\{[^}]*max-height:\s*none;[^}]*overflow:\s*visible/);
+    expect(compact).toMatch(/main\s*\{[^}]*flex:\s*none;[^}]*overflow:\s*visible/);
+    const subjects = readFileSync("home/app-templates/connected-starter/src/styles/subject-views.css", "utf8");
+    expect(subjects).toMatch(/\.revenue-overview \.balance p[^}]*\{\s*color:\s*var\(--muted\)/);
+  });
   it("ships the shared Matrix palette and local fonts inside the installable template", () => {
     const css = readFileSync("home/app-templates/connected-starter/src/styles/brand-tokens.css", "utf8");
     for (const [key, value] of Object.entries(desktopPalette)) expect(css).toContain(`--matrix-brand-${key}: ${value}`);
