@@ -14,7 +14,8 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
   transcript, content deltas and snapshot refresh, calls the slot's `createChat` on a draft's first send, never
   changes the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the
   slot (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own
-  model). When a new thread's first turn is refused, the question goes back into its composer. Open in Chat switches
+  model). When a new thread's first turn is refused, the question goes back into its composer. A question with a
+  reference sent while an answer runs is queued, as in the Chat app, and a retry keeps its queue. Open in Chat switches
   the Chat app to the same Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans
   to it). Rows rename and delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
