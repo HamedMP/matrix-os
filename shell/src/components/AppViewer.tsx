@@ -6,6 +6,7 @@ import { BrowserLabView } from "./BrowserLabView";
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
+import { AppSiteButton } from "./app-sites/AppSiteButton";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -393,6 +394,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
+      {slug ? <div className="flex items-center justify-end border-b px-3 py-1.5"><AppSiteButton key={slug} appSlug={slug} /></div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}
