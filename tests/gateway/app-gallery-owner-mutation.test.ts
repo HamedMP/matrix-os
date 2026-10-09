@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, open, opendir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants, existsSync } from "node:fs";
+import { mkdir, mkdtemp, open, opendir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -12,6 +12,7 @@ import { registerFileRoutes } from "../../packages/gateway/src/server/file-route
 import { invalidateAppIndexCache, listUniqueAppManifests, resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
 import { registerAppGalleryRoutes } from "../../packages/gateway/src/app-gallery/routes.js";
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { loadGallery, installGalleryApp, openGalleryApp } from "../../home/apps/app-gallery/src/model.js";
 import { withOwnerFileMutation } from "../../packages/gateway/src/owner-file-mutations.js";
 
 vi.mock("../../packages/gateway/src/app-gallery/filesystem.js", async original => ({
@@ -39,7 +40,7 @@ async function fixture(window: "mkdir-open" | "manifest" | "cleanup", fail = fal
     async ensureChild(name: string): Promise<Directory> { try { return await this.createChild(name); } catch (error) { if (!filesystem.isFsError(error, "EEXIST")) throw error; return this.child(name); } }
     async entries() { return opendir(this.path); }
     async readFile(name: string, maxBytes: number) {
-      const directory = { openFile: async (_name: string, flags: number) => open(join(this.path, name), flags) };
+      const directory = { openFile: async (_name: string, flags: number) => open(join(this.path, name), flags | constants.O_NOFOLLOW) };
       return PinnedDirectory.prototype.readFile.call(directory as PinnedDirectory, name, maxBytes);
     }
   }
@@ -59,6 +60,19 @@ async function fixture(window: "mkdir-open" | "manifest" | "cleanup", fail = fal
   vi.mocked(filesystem.createPrivateStage).mockResolvedValue(stage as unknown as Awaited<ReturnType<typeof filesystem.createPrivateStage>>);
   const app = new Hono(); registerFileRoutes(app, { homePath });
   return { homePath, app, service: createAppGalleryService({ homePath, catalogPath: "/catalog.json" }), entered, released, stage };
+}
+function galleryBridge(homePath: string) {
+  const app = new Hono();
+  app.use("*", async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, "owner"); await next(); });
+  registerAppGalleryRoutes(app, { homePath, catalogPath: "/catalog.json", ownerIds: ["owner"] });
+  return {
+    async gatewayFetch(url: string, init?: RequestInit) {
+      const response = await app.request(url, init);
+      if (!response.ok) throw new Error("Request failed");
+      return response.json();
+    },
+    integrations: async () => [], openApp: vi.fn(),
+  };
 }
 function json(body: unknown): RequestInit { return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }; }
 it.each(["mkdir-open", "manifest", "cleanup"] as const)("owner rename/replacement waits through gallery %s window", async window => {
@@ -188,6 +202,12 @@ it.each(["apps/renamed-ledger", "apps/finance/renamed-ledger"])("keeps a moved G
   const listing = await f.service.list();
   await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed", path: moved });
   expect(listing).toMatchObject([{ id: "folio", installed: true, launchPath: moved }]);
+  const bridge = galleryBridge(f.homePath);
+  const client = await loadGallery(bridge);
+  expect(client.apps[0].launchPath).toBe(moved);
+  expect(await installGalleryApp(bridge, "folio")).toMatchObject({ status: "already_installed", path: moved });
+  await openGalleryApp(bridge, client.apps[0]);
+  expect(bridge.openApp).toHaveBeenCalledWith("Folio", moved);
   expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
   expect(await readFile(join(f.homePath, moved, "owner.txt"), "utf8")).toBe("keep owner edit");
   invalidateAppIndexCache();
@@ -219,4 +239,19 @@ it("preserves duplicate owner slugs and reports a conflict instead of selecting 
   await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
   expect(await readFile(join(f.homePath,"apps/folio/matrix.json"))).toEqual(original);
   expect(await readFile(join(f.homePath,"apps/another-folio/matrix.json"))).toEqual(original);
+});
+
+it("an unrelated symlink manifest leaves the authenticated Gallery usable and new installation closed", async () => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  await mkdir(join(f.homePath, "apps/custom"));
+  const outside = join(f.homePath, "private-manifest.json");
+  await writeFile(outside, "keep private owner content");
+  await symlink(outside, join(f.homePath, "apps/custom/matrix.json"));
+  vi.mocked(filesystem.readLimited).mockImplementation(async source => Buffer.from(source.endsWith("catalog.json") ? JSON.stringify({ version: 1, apps: [definition, { ...definition, id: "focus", name: "Focus" }] }) : "icon"));
+  const bridge = galleryBridge(f.homePath);
+  const listed = await loadGallery(bridge);
+  expect(listed.apps).toMatchObject([{ id: "folio", installed: true }, { id: "focus", installed: false }]);
+  await expect(f.service.install("focus")).rejects.toMatchObject({ status: 409 });
+  expect(existsSync(join(f.homePath, "apps/focus"))).toBe(false);
+  expect(await readFile(outside, "utf8")).toBe("keep private owner content");
 });

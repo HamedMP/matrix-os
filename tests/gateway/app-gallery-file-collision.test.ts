@@ -64,3 +64,33 @@ it("isolates only typed bounded-file rejection while retaining unexpected failur
   readFile.mockRejectedValue(new filesystem.GalleryError(503,"Unexpected directory failure"));
   await expect(readOwnerManifest({readFile} as unknown as PinnedDirectory)).rejects.toThrow("Unexpected directory failure");
 });
+
+it.each(["ELOOP", "EACCES", "EPERM"])("an inaccessible owner manifest (%s) is unavailable rather than fatal", async code => {
+  const readFile = vi.fn().mockRejectedValue(error(code));
+  await expect(readOwnerManifest({ readFile } as unknown as PinnedDirectory)).resolves.toEqual({ manifest: null, unavailable: true });
+});
+it.each(["ELOOP", "EACCES", "EPERM"])("an inaccessible child folder (%s) keeps listing usable and installation closed", async code => {
+  const { apps, service, stage } = setup();
+  apps.entries = async function* () { yield { name: "custom", isDirectory: () => true } as never; };
+  apps.child.mockImplementation(async name => { throw error(name === "custom" ? code : "ENOENT"); });
+  await expect(service.list()).resolves.toMatchObject([{ id: "folio", installed: false }, { id: "focus", installed: false }]);
+  await expect(service.install("folio")).rejects.toMatchObject({ status: 409 });
+  expect(stage.publish).not.toHaveBeenCalled();
+});
+it.each(["EACCES", "EPERM"])("unreadable enumeration (%s) closes admitted handles and keeps identity unavailable", async code => {
+  const close = vi.fn();
+  const apps = {
+    async *entries() { yield { name: "custom", isDirectory: () => true }; },
+    async child() { return { readFile: async () => { throw error("ENOENT"); }, async *entries() { throw error(code); }, close }; },
+  };
+  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).resolves.toMatchObject({ unavailable: true });
+  expect(close).toHaveBeenCalledOnce();
+});
+it.each(["ELOOP", "EACCES", "EPERM"])("an inaccessible catalog destination (%s) does not hide other entries", async code => {
+  await expect(setup(code).service.list()).resolves.toMatchObject([{ id: "folio", installed: false }, { id: "focus", installed: false }]);
+});
+it("unexpected manifest and child-folder I/O failures remain errors", async () => {
+  await expect(readOwnerManifest({ readFile: async () => { throw error("EIO"); } } as unknown as PinnedDirectory)).rejects.toMatchObject({ code: "EIO" });
+  const apps = { async *entries() { yield { name: "custom", isDirectory: () => true }; }, async child() { throw error("EIO"); } };
+  await expect(indexOwnerApps(apps as unknown as PinnedDirectory)).rejects.toMatchObject({ code: "EIO" });
+});

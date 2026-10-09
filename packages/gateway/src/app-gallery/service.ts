@@ -5,7 +5,7 @@ import { AppGalleryCatalogSchema, type GalleryApp, type GalleryAppListing, type 
 import { AppManifestSchema } from "../app-runtime/manifest-schema.js";
 import { createPrivateStage, DEFAULT_LIMITS, GalleryError, isFsError, pinDirectory, readLimited, readTemplate, type GalleryLimits } from "./filesystem.js";
 import type { PinnedDirectory } from "./pinned-directory.js";
-import { indexOwnerApps, readOwnerManifest } from "./owner-index.js";
+import { indexOwnerApps, isOwnerFileUnavailable, readOwnerManifest } from "./owner-index.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
 
 const IdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,47}$/);
@@ -65,7 +65,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       if (!manifest || manifest.slug !== id) return null;
       return { status: "already_installed", slug: id, name: manifest.name, path: `apps/${id}` };
     } catch (error) {
-      if (isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError) return null;
+      if (isOwnerFileUnavailable(error) || isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError) return null;
       throw error;
     } finally { await directory?.close(); }
   }
