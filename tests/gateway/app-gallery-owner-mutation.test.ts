@@ -279,3 +279,19 @@ it("keeps authenticated Gallery listing usable when an owner manifest triggers a
   await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed" });
   expect(await readFile(join(f.homePath, "apps/custom/matrix.json"), "utf8")).toBe(bytes);
 });
+
+
+it.each(["\n", "\t", "\r", "\u007f"])("keeps authenticated Gallery usable after File API renames an installed app with control %j", async control => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  const unsupported = `apps/folio${control}backup`;
+  expect((await f.app.request("/api/files/rename", json({ from: "apps/folio", to: unsupported }))).status).toBe(200);
+  const bytes = await readFile(join(f.homePath, unsupported, "matrix.json"), "utf8");
+  vi.mocked(filesystem.readLimited).mockImplementation(async source => Buffer.from(source.endsWith("catalog.json")
+    ? JSON.stringify({ version: 1, apps: [definition, { ...definition, id: "focus", name: "Focus" }] }) : "icon"));
+  await expect(loadGallery(galleryBridge(f.homePath))).resolves.toMatchObject({ apps: [{ id: "folio", installed: false }, { id: "focus", installed: false }] });
+  await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
+  await expect(f.service.install("focus")).rejects.toMatchObject({ status: 409 });
+  expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
+  expect(existsSync(join(f.homePath, "apps/focus"))).toBe(false);
+  expect(await readFile(join(f.homePath, unsupported, "matrix.json"), "utf8")).toBe(bytes);
+});

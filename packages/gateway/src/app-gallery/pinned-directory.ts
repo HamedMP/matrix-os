@@ -13,7 +13,7 @@ export function isFsError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 export function isSupportedGalleryComponent(name: string): boolean {
-  return name.length > 0 && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\\") && !name.includes("\0") && Buffer.byteLength(name) <= 255;
+  return name.length > 0 && name !== "." && name !== ".." && !name.includes("/") && !name.includes("\\") && !/[\u0000-\u001f\u007f]/.test(name) && Buffer.byteLength(name) <= 255;
 }
 function leaf(name: string): string {
   if (!isSupportedGalleryComponent(name)) throw new GalleryError(503, "Invalid filesystem component");
