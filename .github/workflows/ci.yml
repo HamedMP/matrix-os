@@ -142,6 +142,7 @@ jobs:
   typecheck:
     name: Type Check
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # TODO: remove continue-on-error once baseline type errors in kernel are fixed
@@ -176,6 +177,7 @@ jobs:
   shell-production-build:
     name: Shell Production Build
     needs: [changes, typecheck]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -217,6 +219,7 @@ jobs:
   patterns:
     name: Pattern Scan
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -269,6 +272,7 @@ jobs:
   react-doctor:
     name: React Doctor
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # Include observed 5m15s checkout, audit and cleanup/transfer variance.
     timeout-minutes: 10
@@ -341,6 +345,7 @@ jobs:
   sync-client:
     name: Sync Client Package
     needs: [changes, patterns]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -379,6 +384,7 @@ jobs:
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
     needs: changes
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -416,6 +422,7 @@ jobs:
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: [changes, patterns, sync-client]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
@@ -510,6 +517,7 @@ jobs:
   docs-contract:
     name: Docs Contract Tests
     needs: changes
+    if: needs.changes.outputs.docs_contract_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -539,6 +547,7 @@ jobs:
   os-view-parity:
     name: OS View Parity
     needs: changes
+    if: needs.changes.outputs.os_view_parity_tests == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -579,6 +588,7 @@ jobs:
   e2e:
     name: E2E Tests
     needs: [changes, sync-client, unit]
+    if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
