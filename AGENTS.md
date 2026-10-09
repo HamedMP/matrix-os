@@ -35,6 +35,39 @@ Applies to every LLM model, agent harness, and project chat, including new or re
 Links: <spec or PR, when available>
 ```
 
+## Project Work Tracking and Review
+
+**Goal:** Make project work easy to track and review. These rules apply to every
+project chat, model, harness, and delegated agent. Read this root `AGENTS.md` at
+the start of project work and after compaction; `CLAUDE.md` points to the same
+file so the rules have one source of truth.
+
+- **Use requester-assigned ENG tickets.** Follow the Linear Ticket Check above
+  to verify and reuse the task or stack ticket before implementation, PR
+  creation, and merge. Keep it in the requested project. Split independent
+  deliverables only when that helps planning; a stack may share one ticket.
+- **Link substantial changes to specs.** Keep the spec or plan in `specs/` and
+  link it from the ENG ticket and PR. Keep tickets brief: goal, essential
+  actions, completion check, and links; detailed context belongs in the spec.
+- **Suggest stakeholder approval.** Recommend review of substantial scope or
+  behavior changes by the affected product, design, engineering, or integration
+  owners. Record the recommendation and any existing approval in the ticket or
+  PR; a recommendation is not an additional approval gate when the requester
+  has already authorized the work or merge.
+- **Require live visual evidence for every affected surface.** Follow the
+  Live visual evidence gate below, including its runtime, screenshot,
+  recording, parity, and surface requirements. One surface cannot stand in for
+  another, and `N/A` needs architectural rationale and reviewer approval.
+- **Put the evidence in both the PR and Slack `#tech`.** Include the actual
+  captures or accessible capture links in the PR, post the same evidence with
+  the ENG ticket and PR links in the tech channel, and link its Slack permalink
+  back to the PR. State the exact commit/build, scenario, and any test bypass or
+  fixture limitations; redact credentials and private customer content.
+- **Do not claim visual qualification without evidence.** Mockups, automated
+  test results, or another surface's capture do not prove the affected running
+  surface. Missing runtime/device access is an explicit blocker to review and
+  merge readiness; continue unaffected work and obtain the missing evidence.
+
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
@@ -357,7 +390,7 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 - Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
 - Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
-- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
+- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
 - If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
