@@ -1320,8 +1320,10 @@ describe("WorkRail", () => {
     fireEvent.click(recentChat, { detail: 2 });
     fireEvent.doubleClick(recentChat, { detail: 2 });
     const input = await screen.findByRole("textbox", { name: "Rename Recent global" });
-    expect((input as HTMLInputElement).selectionStart).toBe(0);
-    expect((input as HTMLInputElement).selectionEnd).toBe("Recent global".length);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).selectionStart).toBe(0);
+      expect((input as HTMLInputElement).selectionEnd).toBe("Recent global".length);
+    });
     fireEvent.change(input, { target: { value: "  Release plan  " } });
     fireEvent.keyDown(input, { key: "Enter" });
 
