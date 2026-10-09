@@ -65,6 +65,10 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
   const managedCustom = editing === "new" ? false : isManagedCustomBot(editing);
   const editableRecipe = !recipeBot || managedCustom;
   const hermesOnly = draft.recipe?.skills.includes("matrix-jev-email-triage") === true;
+  const unsupportedRecipe = managedCustom && hermesOnly;
+  const editableRecipeCatalog = managedCustom && recipeCatalog
+    ? { ...recipeCatalog, skills: recipeCatalog.skills.filter(skill => skill.id !== "matrix-jev-email-triage") }
+    : recipeCatalog;
   const subscriptionNew = editing === "new" && !hermesOnly && Boolean(botClient?.createCustom);
   const managedAgent = recipeBot || (editing === "new" && !hermesOnly);
   const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot || subscriptionNew) : customAgentModelChoices(models);
@@ -72,7 +76,7 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
   const modelAvailable = eligibleModels.some((choice) => botModelChoiceMatchesSelection(choice, draft.selection));
   const recipeValid = !editableRecipe || draft.recipe === undefined || draft.recipe === null || (ChatAgentRecipeSchema.safeParse(draft.recipe).success
     && recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? []));
-  const saveDisabled = pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid
+  const saveDisabled = pending || (catalogLoading && selectionChanged) || !draft.name.trim() || !draft.instructions.trim() || !recipeValid || unsupportedRecipe
     || (selectionChanged && !modelAvailable && !(recipeBot && isAutomaticBotSelection(draft.selection)));
   return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); if (!saveDisabled) void onSave(); }}>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
@@ -83,7 +87,8 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
         <MatrixBotModelField botClient={botClient} id={`${ids}-model`} selection={draft.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} allowAutomatic={recipeBot} allowSubscription={recipeBot || subscriptionNew} onRefreshCatalog={onRefreshCatalog} preservedSelection={editing !== "new" && !recipeBot ? editing.selection : undefined} onSetup={onSetup} pending={pending} onChange={(selection) => change({ selection })} />
         <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : isChatgptPlanBotRoute({instanceId: draft.selection?.instanceId ?? "", driverKind: "matrix_bot"}) ? "This bot uses its selected subscription in its own Chat. Creating it does not run it." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
-      {editableRecipe ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={recipeCatalog}
+      {unsupportedRecipe ? <p role="alert" className="text-sm">Remove the unavailable skill before saving this bot.</p> : null}
+      {editableRecipe ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={editableRecipeCatalog}
         connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
         onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} /> : null}
       {!recipeBot && draft.selection?.instanceId !== "matrix_chatgpt_plan" ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}

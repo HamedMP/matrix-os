@@ -1,7 +1,7 @@
-import { isManagedCustomBot, isAutomaticBotSelection, chatgptPlanSelectionBinding, matrixAnthropicSelectionBinding, type ChatAgent, type BotEffect, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { isManagedCustomBot, isAutomaticBotSelection, chatgptPlanSelectionBinding, matrixAnthropicSelectionBinding, type ChatAgent, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
-import { recipeSkillPrompt } from "../chat/recipe-skill-context.js";
+import { resolveManagedCustomDefinition } from "./custom-definition.js";
 import { BotRouteError } from "./route-resolver.js";
 import type { BotRecipeCatalog, BotRecipe } from "./recipe-catalog.js";
 import type { BotExecutor } from "./repositories/shared.js";
@@ -35,14 +35,7 @@ export function createBotProcedureResolver(deps: {
         return deps.recipes.resolve(agent.recipeRef);
       }
       await assert(ownerId, agent);
-      const recipe = agent.recipe ? await deps.customRecipes.resolve(agent.recipe) : undefined;
-      return { ...agent.recipeRef!, name: agent.name, description: agent.description,
-        instructions: [agent.instructions, ...(recipe?.skills.map(recipeSkillPrompt) ?? [])].join("\n\n"),
-        capabilities: ["artifact.read", "artifact.write", "interaction.create", "memory.propose", "memory.search",
-          ...(recipe?.integrations.length ? ["integration.inventory", "integration.call"] as const : [])],
-        // A declaration is only a ceiling. Existing grants and exact-action approvals still authorize every effect.
-        integrations: (recipe?.integrations ?? []).map(item => ({ service: item.service, effects: ["read", "write", "send"] as readonly BotEffect[], required: false })),
-        output: recipe?.output ?? "Answer the owner's request and distinguish confirmed work from unavailable actions." };
+      return resolveManagedCustomDefinition(agent, deps.customRecipes);
     },
     async revalidate(binding: BotRuntimeBinding): Promise<void> {
       if (binding.managedDefinitionRevision === undefined) return;

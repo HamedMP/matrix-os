@@ -189,7 +189,7 @@ export async function startBots(options: {
     recipes,
     validateSelection: createBotCreationSelectionValidator({ available: () => Boolean(options.host?.available), providers: options.providers,
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}) }),
-    validateCustomRecipe: async recipe => { await customRecipes.resolve(recipe); },
+    customRecipes,
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
   });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });

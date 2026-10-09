@@ -1,4 +1,4 @@
-import { isChatAgentDriver, jevHermesRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
+import { isChatAgentDriver, isManagedCustomBot, jevHermesRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
 import {
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
   ChatAgentRecipeCatalogSchema,
@@ -16,6 +16,7 @@ import { bindJevInboxRecipe, isJevInboxRecipe, JevRecipeBindingError, type Gmail
 import { revokeHermesJevCapabilitiesForAgent } from "./hermes-integration-capability.js";
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
+import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "../bots/custom-definition.js";
 
 const SearchSchema = z.object({
   query: z.string().trim().max(200).default(""),
@@ -43,6 +44,8 @@ export function createChatAgentRoutes(options: {
     }
     if (error instanceof Error && error.name === "BodyLimitError") return context.json({ error: "Request too large" }, 413);
     if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: "Invalid request" }, 400);
+    if (error instanceof ManagedCustomDefinitionError) return context.json({ error: error.code === "unsupported_skill"
+      ? "Choose a supported Bot skill." : "Shorten the Bot instructions or remove some skills." }, 400);
     if (error instanceof ChatAgentStoreError && error.code === "agent_not_found"
       || error instanceof ChatAgentContextError && error.code === "context_unavailable") {
       return context.json({ error: "Agent or Chat not found" }, 404);
@@ -124,6 +127,13 @@ export function createChatAgentRoutes(options: {
     const input = UpdateChatAgentRequestSchema.parse(await c.req.json());
     const current = await agents.get({ type: "personal", ownerId: principal.userId }, id);
     if (!current) return c.json({ error: "Agent or Chat not found" }, 404);
+    // Description and withdrawal cannot change the executable prompt. Preserve
+    // those actions when an installed skill is temporarily unreadable.
+    if (isManagedCustomBot(current) && (input.name !== undefined || input.instructions !== undefined
+      || input.recipe !== undefined || input.selection !== undefined || input.archived === false)) {
+      await resolveManagedCustomDefinition({ ...current, ...input,
+        recipe: input.recipe === null ? undefined : input.recipe ?? current.recipe }, options.recipes);
+    }
     if (input.selection && [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);
     if (input.selection && ["matrix_chatgpt_plan", MATRIX_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId) && !current.recipeRef) return c.json({ error: "Choose a Matrix Bot for this connection." }, 400);
     const automatic = input.selection?.instanceId === "matrix_bot_default" && input.selection.model === "auto"

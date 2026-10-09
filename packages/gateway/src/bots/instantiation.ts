@@ -36,6 +36,8 @@ import { createBotOperationsRepository, type BotOperation } from "./repositories
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
 import { isManagedCustomOperationRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
+import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
+import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
 
 export type BotInstantiationErrorCode = "invalid_request" | "conflict" | "rate_limited" | "unavailable";
 
@@ -119,7 +121,7 @@ export function createBotInstantiation(deps: {
   agents: Pick<ChatAgentStore, "createRecipeBot" | "get" | "count">;
   recipes: BotRecipeCatalog;
   validateSelection?: (ownerId: string, selection: import("@matrix-os/contracts").CanonicalChatModelSelection) => Promise<void>;
-  validateCustomRecipe?: (recipe: import("@matrix-os/contracts").ChatAgentRecipe) => Promise<void>;
+  customRecipes?: Pick<ChatAgentRecipeResolver, "resolve">;
   ensureWorkspace(botId: string): Promise<void>;
   now?: () => Date;
 }) {
@@ -256,9 +258,13 @@ export function createBotInstantiation(deps: {
         if (!deps.validateSelection) throw new BotInstantiationError("invalid_request");
         await deps.validateSelection(ownerId, request.selection);
       }
-      if (custom?.recipe) {
-        if (!deps.validateCustomRecipe) throw new BotInstantiationError("invalid_request");
-        await deps.validateCustomRecipe(custom.recipe);
+      if (custom) {
+        try {
+          await resolveManagedCustomDefinition(custom, deps.customRecipes);
+        } catch (error) {
+          if (error instanceof ManagedCustomDefinitionError) throw new BotInstantiationError("invalid_request");
+          throw error;
+        }
       }
       // Checked before reserving so a full owner is refused without leaving an operation behind.
       if (!existing && await deps.agents.count(scope) >= 100) throw new BotInstantiationError("rate_limited");
