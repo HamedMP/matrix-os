@@ -1,3 +1,4 @@
+import { ZodError } from "zod/v4";
 import { AppManifestSchema, type AppManifest } from "../app-runtime/manifest-schema.js";
 import { APP_INDEX_SKIP_DIRS } from "../app-runtime/app-index.js";
 import type { GalleryInstallResult } from "@matrix-os/contracts/app-gallery";
@@ -14,7 +15,7 @@ export async function readOwnerManifest(directory: PinnedDirectory): Promise<{ m
     return { manifest: parsed.success ? parsed.data : null, unavailable: false };
   } catch (error) {
     if (isOwnerFileUnavailable(error)) return { manifest: null, unavailable: true };
-    if (isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError) return { manifest: null, unavailable: false };
+    if (isFsError(error, "ENOENT") || isFsError(error, "ENOTDIR") || error instanceof SyntaxError || error instanceof ZodError) return { manifest: null, unavailable: false };
     throw error;
   }
 }

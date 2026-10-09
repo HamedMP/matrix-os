@@ -268,3 +268,14 @@ it("keeps Gallery usable after the actual File API creates an unsupported owner 
   expect(existsSync(join(f.homePath, unsupported))).toBe(true);
   expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
 });
+
+
+it("keeps authenticated Gallery listing usable when an owner manifest triggers a schema transform rejection", async () => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  await mkdir(join(f.homePath, "apps/custom"));
+  const bytes = JSON.stringify({ slug: "custom", name: "Custom", distributionStatus: "owner-authored" });
+  expect((await f.app.request("/files/apps/custom/matrix.json", { method: "PUT", body: bytes })).status).toBe(200);
+  await expect(loadGallery(galleryBridge(f.homePath))).resolves.toMatchObject({ apps: [{ id: "folio", installed: true }] });
+  await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed" });
+  expect(await readFile(join(f.homePath, "apps/custom/matrix.json"), "utf8")).toBe(bytes);
+});
