@@ -120,6 +120,9 @@ describe("Resource Manager app", () => {
     await waitFor(() => expect(screen.getByText("hamedmp")).toBeTruthy());
 
     expect(screen.getByText("Resource Manager")).toBeTruthy();
+    const icon = document.querySelector<HTMLImageElement>("[data-resource-artwork]");
+    expect(icon?.getAttribute("src")).toMatch(/v3-resource-manager/);
+    expect(document.querySelector(".mark")?.textContent).not.toBe("RM");
     expect(screen.getByText("healthy")).toBeTruthy();
     expect(screen.getByText("Release 267")).toBeTruthy();
     expect(screen.getByText("4 cores")).toBeTruthy();
