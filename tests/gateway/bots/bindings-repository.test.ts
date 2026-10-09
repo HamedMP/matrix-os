@@ -54,3 +54,16 @@ describe("bot chat bindings repository", () => {
       .rejects.toEqual(new BotStateError("not_found"));
   });
 });
+
+
+describe("explicit group bindings", () => {
+  it("binds group chats idempotently without changing the private direct binding", async () => {
+    const repo = createBotBindingsRepository(db);
+    await repo.bindDirect({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: NOW });
+    const group = await repo.bindGroup({ ownerId: OWNER, botId: BOT, chatId: "chat_direct2", now: NOW });
+    expect(group.kind).toBe("group");
+    await expect(repo.bindGroup({ ownerId: OWNER, botId: BOT, chatId: "chat_direct2", now: at(1) })).resolves.toEqual(group);
+    await expect(repo.directChatId({ ownerId: OWNER, botId: BOT })).resolves.toBe("chat_direct1");
+    await expect(repo.bindGroup({ ownerId: OWNER, botId: BOT, chatId: "chat_direct1", now: NOW })).rejects.toMatchObject({ code: "conflict" });
+  });
+});

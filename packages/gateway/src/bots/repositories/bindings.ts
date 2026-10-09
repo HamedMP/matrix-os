@@ -62,6 +62,33 @@ export function createBotBindingsRepository(db: BotExecutor) {
       if (!existing || existing.kind !== "direct" || existing.removed_at !== null) throw new BotStateError("conflict");
       return fromRow(existing);
     },
+    /** Caller must authorize group membership and bot consent before binding; never converts a direct chat. */
+    async bindGroup(input: { ownerId: string; botId: string; chatId: string; now: string }, executor: BotExecutor = db): Promise<BotChatBinding> {
+      try {
+        const written = await executor.insertInto("bot_chat_bindings").values({
+          owner_id: input.ownerId,
+          bot_id: input.botId,
+          chat_id: input.chatId,
+          kind: "group",
+          created_at: input.now,
+          removed_at: null,
+        }).onConflict((conflict) => conflict.columns(["owner_id", "bot_id", "chat_id"])
+          .doUpdateSet({ removed_at: null, created_at: input.now })
+          .where("bot_chat_bindings.kind", "=", "group")
+          .where("bot_chat_bindings.removed_at", "is not", null))
+          .returningAll()
+          .executeTakeFirst();
+        if (written) return fromRow(written);
+      } catch (error: unknown) {
+        if (isChatOwnerViolation(error)) throw new BotStateError("not_found");
+        throw error;
+      }
+      const existing = await executor.selectFrom("bot_chat_bindings").selectAll()
+        .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId).where("chat_id", "=", input.chatId)
+        .executeTakeFirst();
+      if (!existing || existing.kind !== "group" || existing.removed_at !== null) throw new BotStateError("conflict");
+      return fromRow(existing);
+    },
     async directChatId(input: { ownerId: string; botId: string }, executor: BotExecutor = db): Promise<string | undefined> {
       const row = await executor.selectFrom("bot_chat_bindings").select("chat_id")
         .where("owner_id", "=", input.ownerId).where("bot_id", "=", input.botId)

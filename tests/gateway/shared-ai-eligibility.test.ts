@@ -2,6 +2,7 @@ import {
   SCOPE_RUNTIME_CODEX_VERSION,
   SCOPE_RUNTIME_HARNESS_VERSION,
 } from "@matrix-os/scope-runtime/profile";
+import { SCOPE_RUNTIME_BOT_PROFILE_ID, SCOPE_RUNTIME_BOT_PROFILE_VERSION, SCOPE_RUNTIME_BOT_PROFILE_DIGEST, SCOPE_RUNTIME_BOT_ADAPTER_ID, SCOPE_RUNTIME_BOT_HARNESS_VERSION } from "@matrix-os/scope-runtime/bot-profile";
 import { describe, expect, it } from "vitest";
 import {
   parseCollaborationAiEligibility,
@@ -76,5 +77,21 @@ describe("shared AI execution eligibility", () => {
       adapterId: "codex",
       harnessVersion: SCOPE_RUNTIME_CODEX_VERSION,
     })).toThrow();
+  });
+});
+
+
+describe("separate matrix bot shared eligibility", () => {
+  const standard = collaborationExecutionEligibility();
+  const matrixBot = { profileId: SCOPE_RUNTIME_BOT_PROFILE_ID, profileVersion: SCOPE_RUNTIME_BOT_PROFILE_VERSION,
+    profileDigest: SCOPE_RUNTIME_BOT_PROFILE_DIGEST, adapterId: SCOPE_RUNTIME_BOT_ADAPTER_ID,
+    harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION, workload: "bot_agent" };
+  it("requires the separately pinned bot profile and exact Matrix bot instance", () => {
+    expect(sharedAiEligibilitySupportsDriver(standard, "matrix_bot", "matrix_bot_default")).toBe(false);
+    expect(sharedAiEligibilitySupportsDriver({ ...standard, matrixBot }, "matrix_bot", "matrix_bot_default")).toBe(true);
+    expect(sharedAiEligibilitySupportsDriver({ ...standard, matrixBot }, "matrix_bot", "other_bot")).toBe(false);
+    expect(sharedAiEligibilitySupportsDriver({ ...standard, matrixBot: { ...matrixBot, profileDigest: "a".repeat(64) } }, "matrix_bot", "matrix_bot_default")).toBe(false);
+    expect(sharedAiEligibilitySupportsDriver({ ...standard, matrixBot: { ...matrixBot, workload: "chat_ai" } }, "matrix_bot", "matrix_bot_default")).toBe(false);
+    expect(sharedAiEligibilitySupportsDriver({ ...standard, adapters: [{ adapterId: "matrix-bot", harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION }] }, "matrix_bot", "matrix_bot_default")).toBe(false);
   });
 });
