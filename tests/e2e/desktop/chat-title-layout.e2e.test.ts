@@ -20,9 +20,13 @@ suite("long Chat titles in the built Electron header", () => {
   let gateway: Awaited<ReturnType<typeof startChatTitleGateway>>;
   let profile: string;
   const resizeWindow = async (width: number) => {
-    await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 850), width);
-    // Native setSize returns before Chromium applies its viewport resize.
-    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+    const contentWidth = await app.evaluate(({ BrowserWindow }, width) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setSize(width, 850);
+      return window.getContentSize()[0];
+    }, width);
+    // Match the actual content area, excluding native window decorations.
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(contentWidth);
   };
   const hoverRow = async (row: Locator) => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus());
