@@ -44,10 +44,7 @@ export function createWhatsAppSettingsRoutes(deps: {
         }),
       );
     } catch (error) {
-      console.error(
-        "[whatsapp/settings] Read failed",
-        error instanceof Error ? error.name : "UnknownError",
-      );
+      console.error("[whatsapp/settings] Read failed", error);
       return c.json({ error: "Connection unavailable. Try again." }, 503);
     }
   });

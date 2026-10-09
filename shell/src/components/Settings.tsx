@@ -208,7 +208,6 @@ function SettingsFrame({
 }: SettingsFrameProps) {
   const onboardingMode = onboardingDefaultInstalls !== undefined;
   const mobile=useMobileViewport();
-  const [mobileDetail,setMobileDetail]=useState(defaultSection!=='appearance' || Boolean(lockedSection) || onboardingMode);
   const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
   const canonicalLockedSection = lockedSection === undefined
     ? undefined
@@ -221,6 +220,10 @@ function SettingsFrame({
   const resolvedLockedSection = !showBillingSection && canonicalLockedSection === "billing"
     ? undefined
     : canonicalLockedSection;
+  const openingSection = resolvedLockedSection ?? (showBillingSection && billingActive === false
+    ? "billing"
+    : resolvedDefaultSection);
+  const [mobileDetail, setMobileDetail] = useState(openingSection !== "appearance");
   const standardFrameSections: SettingsSection[] = showBillingSection
     ? visibleSections
     : visibleSections.filter((section) => section.id !== "billing" && section.id !== "organization");
@@ -233,7 +236,7 @@ function SettingsFrame({
         return result;
       }, [])
     : standardFrameSections;
-  const [activeSection, setActiveSection] = useState<SectionId>(resolvedDefaultSection);
+  const [activeSection, setActiveSection] = useState<SectionId>(openingSection);
   // Tracks the prior `open` value so the render-time section adjustment below
   // can detect the open transition. Uses the React-documented "store previous
   // prop in state" pattern (state, not a ref): reading/writing a ref during
@@ -286,12 +289,10 @@ function SettingsFrame({
   if (open !== prevOpen) setPrevOpen(open);
   if (open && resolvedLockedSection) {
     if (activeSection !== resolvedLockedSection) setActiveSection(resolvedLockedSection);
+    if (!mobileDetail) setMobileDetail(true);
   } else if (justOpened) {
-    setMobileDetail(defaultSection!=='appearance' || Boolean(lockedSection) || onboardingMode);
-    const openSection = showBillingSection && billingActive === false
-      ? "billing"
-      : resolvedDefaultSection;
-    if (activeSection !== openSection) setActiveSection(openSection);
+    setMobileDetail(openingSection !== "appearance");
+    if (activeSection !== openingSection) setActiveSection(openingSection);
   } else if (!open) {
     if (activeSection !== resolvedDefaultSection) setActiveSection(resolvedDefaultSection);
   }

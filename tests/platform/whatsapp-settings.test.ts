@@ -60,12 +60,14 @@ describe("owner WhatsApp settings", () => {
   });
   it("does not treat a DB outage or expired consent as an active connection", async () => {
     const { app, getConnection } = setup();
-    getConnection.mockRejectedValueOnce(
-      new Error("private database diagnostic"),
-    );
+    const diagnostic = new Error("private database diagnostic");
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    getConnection.mockRejectedValueOnce(diagnostic);
     const res = await app.request("/api/whatsapp/settings");
     expect(res.status).toBe(503);
     expect(await res.text()).not.toContain("diagnostic");
+    expect(log).toHaveBeenCalledWith("[whatsapp/settings] Read failed", diagnostic);
+    log.mockRestore();
     getConnection.mockResolvedValueOnce({
       ...connection,
       consentVersion: "old",

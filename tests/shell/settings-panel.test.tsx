@@ -7,6 +7,11 @@ import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 
 const billingState = vi.hoisted(() => ({
   active: true as boolean | null,
+  mobile: false,
+}));
+
+vi.mock("@/hooks/useMobileViewport", () => ({
+  useMobileViewport: () => billingState.mobile,
 }));
 
 vi.mock("@/hooks/useMatrixBillingAccess", () => ({
@@ -65,6 +70,21 @@ describe("Settings panel", () => {
   beforeEach(() => {
     vi.resetModules();
     billingState.active = true;
+    billingState.mobile = false;
+  });
+
+  it("opens the resolved Billing detail on Web Mobile when inactive billing overrides Appearance", async () => {
+    billingState.mobile = true;
+    billingState.active = false;
+    const { Settings } = await import("../../shell/src/components/Settings.js");
+    const { rerender } = render(<Settings open={false} onOpenChange={() => {}} />);
+    rerender(<Settings open onOpenChange={() => {}} />);
+    const billing = screen.getByText("Billing settings settings");
+    expect(billing.closest("main")?.hidden).toBe(false);
+    expect(screen.getByRole("button", { name: "Back to settings" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to settings" }));
+    expect(billing.closest("main")?.hidden).toBe(true);
+    expect(screen.getByRole("button", { name: "Billing" })).toBeTruthy();
   });
 
   it("renders the Clerk account button in the settings navigation footer", async () => {
