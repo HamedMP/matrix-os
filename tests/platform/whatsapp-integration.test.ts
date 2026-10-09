@@ -65,8 +65,9 @@ function call(path: string, payload: unknown, token = 'owner-token', requestOrig
 }
 
 describe('WhatsApp account linking and delivery', () => {
-  it.each([false, true])('preserves verified queued replies after enrollment rollback unless revoked: %s', async (revoked) => {
-    const account = 'SE.rollback';
+  it.each(['SE.rollback', sender].flatMap((account) => [false, true].flatMap((revoked) =>
+    [false, true].map((afterRollback) => ({ account, revoked, afterRollback })))))(
+    'preserves verified access after enrollment rollback: $account, revoked=$revoked, new=$afterRollback', async ({ account, revoked, afterRollback }) => {
     const production = { ...config, admissionMode: 'eea_selfserve' as const, allowedSenders: ['46709999999'] };
     const { token } = await repo.startLink(account, 'rollback-link', now + 60_000, sender);
     await repo.claim(token, owner);
@@ -80,22 +81,33 @@ describe('WhatsApp account linking and delivery', () => {
     });
     service = compose(production);
     await service.tick(); // Finish connection acknowledgment before the test request.
-    await service.ingest([{ id: 'wamid.rollback', sender: account, phone: sender, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
-    await service.tick(); // Persist the admitted agent checkpoint with its proven phone.
+    if (!afterRollback) {
+      await service.ingest([{ id: 'wamid.rollback', sender: account, phone: sender, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
+      await service.tick(); // Persist the admitted agent checkpoint with its proven phone.
+    }
     sends = []; reactions = [];
     await service.shutdown();
     if (revoked) await repo.disconnect(owner);
     service = compose({ ...production, admissionMode: 'allowlist' });
+    if (afterRollback) {
+      await service.ingest([{ id: 'wamid.rollback', sender: account, type: 'text', text: 'Who are you?', timestamp: now / 1000 }]);
+      await service.tick(); // New verified requests remain admitted after rollback.
+    }
     await service.tick();
     if (revoked) {
       expect(sends).toEqual([]); expect(reactions).toEqual([]);
     } else {
       expect(sends).toEqual([{ to: account, text: 'Your Matrix agent is here.' }]);
-      expect(reactions).toEqual([{ to: account, messageId: 'wamid.rollback', emoji: '✅' }]);
+      expect(reactions).toEqual([
+        ...(afterRollback ? [{ to: account, messageId: 'wamid.rollback', emoji: '👀' }] : []),
+        { to: account, messageId: 'wamid.rollback', emoji: '✅' },
+      ]);
       const previous = sends.length;
       await service.ingest([{ id: 'wamid.rollback-new', sender: 'SE.unlinked', phone: sender, type: 'text', text: 'Hello', timestamp: now / 1000 }]);
       await service.tick();
       expect(sends).toHaveLength(previous);
+      await service.ingest([{ id: 'wamid.rollback-stop', sender: account, type: 'text', text: 'STOP', timestamp: now / 1000 }]);
+      expect(await repo.getConnectionBySender(account)).toBeNull();
     }
   });
   it('waits for lease recovery after a prepared snapshot commits but its response is lost', async () => {
