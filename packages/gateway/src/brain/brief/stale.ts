@@ -1,7 +1,6 @@
 /**
- * Stale data, computed on demand with bounded scans: claims read from an older revision, sources with no successful
- * sync for BRAIN_STALE_SOURCE_DAYS, sources whose newest receipt failed, and open commitments past their due date.
- * Also the open-commitments scan the brief's commitments section shares.
+ * Stale data on demand, with bounded scans: claims of an older revision, sources with no success for
+ * BRAIN_STALE_SOURCE_DAYS or a failed newest receipt, commitments past due; plus the brief's open-commitments scan.
  */
 import { sql, type Kysely } from "kysely";
 import type { BrainClaimKind } from "../claims/types.js";

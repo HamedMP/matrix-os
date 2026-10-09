@@ -1,8 +1,7 @@
 /**
- * Conflicts, computed on demand from current claims and documents with bounded scans (BRIEF_SCANS):
- * label_disagreement (same label, statements that contradict by negation or by values), draft_spec_shipped (a Draft
- * spec with later merged work) and commitment_reversed (done versus deferred). Scans run newest first, so in every
- * pair the earlier row is the newer side and comes first.
+ * Conflicts on demand from current claims and documents, with bounded scans (BRIEF_SCANS): label_disagreement (same
+ * label, statements contradicting by negation or values), draft_spec_shipped (a Draft spec with later merged work) and
+ * commitment_reversed (done versus deferred). Scans run newest first, so each pair's earlier row is the newer side.
  */
 import { createHash } from "node:crypto";
 import { sql, type Kysely } from "kysely";

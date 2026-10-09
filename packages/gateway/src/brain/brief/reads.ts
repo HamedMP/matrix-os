@@ -1,7 +1,6 @@
 /**
- * Read-only queries over the core tables that several brief parts share: current claims (the claim was read from the
- * live revision of a live document) with the document's status, due and assignee refs, and the active sources with
- * their receipts. No locks; every query is bounded by its caller's limit.
+ * Read-only core-table queries the brief parts share: current claims (read from the live revision of a live document)
+ * with the document's status, due and assignee refs, and active sources. No locks; callers bound every query.
  */
 import { sql, type Kysely } from "kysely";
 import { BrainClaimFieldsSchema, type BrainClaimFields } from "../claims/types.js";
