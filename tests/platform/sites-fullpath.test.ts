@@ -5,6 +5,7 @@ import { Kysely } from 'kysely';
 import { KyselyPGlite } from 'kysely-pglite';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createSitesService } from '../../packages/platform/src/sites/service.js';
+import { insertUserMachine } from '../../packages/platform/src/db.js';
 import { createSitePublicRoutes } from '../../packages/platform/src/sites/public-routes.js';
 import { createSiteSubmitRoutes } from '../../packages/gateway/src/sites/submit-routes.js';
 import { createSiteRoutes } from '../../packages/gateway/src/sites/routes.js';
@@ -31,6 +32,7 @@ it('builds a React launch app, deploys it, saves an anonymous RSVP in owner Post
             async deleteObject(key) { objects.delete(key); },
         } });
     const owner = { ownerId: 'launch-owner', machineId: 'launch-runtime', appSlug: 'launch' };
+    await insertUserMachine(db, { machineId: owner.machineId, clerkUserId: owner.ownerId, handle: 'launch-owner', status: 'running', provisionedAt: new Date().toISOString() });
     const first = await service.deploy(owner, { ...bundle.deployment, slug: 'matrix-launch' });
     const gateway = createSiteSubmitRoutes({ serviceSecret: 'fixture-service-secret', submissions });
     const publicApp = createSitePublicRoutes({ service, edgeSecret: 'verified-edge-proof-secret-1234567890', submit: async (site, _trx, formId, input) => {
