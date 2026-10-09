@@ -17,7 +17,8 @@ product rules, the client and the screens are documented in `packages/ui/src/bra
   `draftWelcome` (the slot's heading and line) replaces the starter cards and the harness setup. With `createChat` or
   `botId` the workspace shows no project picker and no Share, as on Web. It passes on every report the workspace makes
   (after each admitted turn, the first one in a reopened chat included). The Chat it shows follows those reports, not
-  the slot, so a refused first question stays in the draft's composer with the error. Each project's brain draft has
+  the slot, so a refused first question stays in the draft's composer with the error. An opened thread stays selected
+  when the chat list's first page leaves it out, so its events and polling keep it live. Each project's brain draft has
   its own key (`newDraftScope`), never the Chat tab's new-chat draft. Open in Chat opens the Chat tab on the same Chat;
   rows rename and delete over the tab's chat client.
 - Registration: tab kind `brain` (`stores/tabs.ts`, one tab like Notes), the fixed app `__brain__` after Whiteboard
