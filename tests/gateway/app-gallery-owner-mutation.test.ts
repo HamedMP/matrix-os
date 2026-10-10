@@ -323,7 +323,7 @@ it.each([256, 257])("keeps the %i-character owner name boundary aligned with act
     if (length === 256) {
       await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed", name, path });
       await openGalleryApp(bridge, row);
-      expect(bridge.openApp).toHaveBeenCalledWith(name, "matrix-app:folio");
+      expect(bridge.openApp).toHaveBeenCalledWith(name.slice(0, 200), "matrix-app:folio");
     } else {
       await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
       expect(row.launchPath).toBeUndefined(); expect(row.installedName).toBeUndefined();
