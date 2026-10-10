@@ -97,3 +97,27 @@ it('recovers a new draft by its stable ID after an unacknowledged committed inse
   expect(insert).toHaveBeenCalledTimes(2);
   expect(compareAndSwap).toHaveBeenCalledWith('records', insert.mock.calls[0][1].id, insert.mock.calls[0][1].payload, { payload: expect.objectContaining({ fields: expect.objectContaining({ title: 'Revised draft' }) }) });
 });
+
+it('retains owner markers when an import matches the draft across repeated conflicts', async () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const same = { ...latest, fields: { ...latest.fields, amount: 20 }, manualFields: ['currency'] };
+  const later = { ...same, fields: { ...same.fields, title: 'Later imported title' }, basePayload: { revision: 3 } };
+  const save = vi.fn().mockRejectedValueOnce(new RecordConflictError()).mockRejectedValueOnce(new RecordConflictError()).mockResolvedValueOnce(undefined);
+  const load = vi.fn().mockResolvedValueOnce(same).mockResolvedValueOnce(later), close = vi.fn();
+  render(<Editor app={app} record={original} onSave={save} onArchive={vi.fn()} onClose={close} onLoadLatest={load} />);
+  fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '20' } });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save record' })).toHaveProperty('disabled', true));
+    fireEvent.click(screen.getByRole('button', { name: 'Review latest record' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reapply my changes to this version' }));
+    expect(screen.getByLabelText('Amount')).toHaveProperty('value', '20');
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+  expect(save.mock.calls[1][0].manualFields).toEqual(expect.arrayContaining(['amount', 'currency']));
+  expect(save.mock.calls[2][0].manualFields).toEqual(expect.arrayContaining(['amount', 'currency']));
+  expect(save.mock.calls[2][0].manualFields).not.toContain('title');
+  expect(save.mock.calls[2][0].fields.title).toBe('Later imported title');
+  expect(save.mock.calls[2][0].basePayload).toEqual({ revision: 3 });
+});

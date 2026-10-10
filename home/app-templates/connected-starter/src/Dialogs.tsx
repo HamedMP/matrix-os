@@ -110,7 +110,10 @@ export function Editor({
       .map(field => [field.key, fields[field.key]]));
     setFields({ ...latest.fields, ...changed });
     if (scope === baseline.current?.scope) setScope(latest.scope);
-    baseline.current = latest; setLatest(null); setConflict(false); setError("");
+    baseline.current = { ...latest, manualFields: Array.from(new Set([
+      ...latest.manualFields, ...(baseline.current?.manualFields ?? []), ...Object.keys(changed),
+    ])) };
+    setLatest(null); setConflict(false); setError("");
   }
   return (
     <Sheet
