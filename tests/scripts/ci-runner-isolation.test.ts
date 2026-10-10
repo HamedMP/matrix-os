@@ -65,9 +65,9 @@ describe("disposable manual CI benchmark admission and isolation", () => {
   it("pins toolchain downloads, verifies checksums, and drops root in the image", () => {
     const image = readFileSync(resolve(root, "Dockerfile"), "utf8");
     expect(image).toMatch(/FROM ubuntu:24\.04@sha256:[a-f0-9]{64}/);
-    expect(image).toContain("node-v24.14.1-linux-x64.tar.xz");
+    expect(image).toContain("node-v24.21.0-linux-x64.tar.xz");
     expect(image).toContain("pnpm-10.33.4.tgz");
-    expect(image).toContain("bun-v1.3.10");
+    expect(image).toContain("bun-v1.4.3");
     expect(image.match(/sha256sum -c/g)).toHaveLength(3);
     expect(image).toContain("USER 10001:10001");
   });

@@ -35,7 +35,7 @@ An exclusive lock admits one benchmark at a time, with a bounded 30-minute
 wait if another benchmark is active. Service-container and root
 fixture validation remains on GitHub-hosted runners.
 
-The image pins Ubuntu by digest and Node 24.14.1, pnpm 10.33.4, and Bun 1.3.10
+The image pins Ubuntu by digest and Node 24.21.0, pnpm 10.33.4, and Bun 1.4.3
 by version and SHA-256. OS libraries use Ubuntu's authenticated package indexes;
 they are updated when rebuilding the image. Chromium is installed from the
 reviewed lockfile's Playwright version without root-only dependency installation.
