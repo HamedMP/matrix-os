@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startDownloadGateway } from "./fixtures/download-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const desktopMain = resolve(__dirname, "../../../desktop/out/main/index.js");
 const desktopRequire = createRequire(resolve(__dirname, "../../../desktop/package.json"));
@@ -45,9 +46,7 @@ suite("OM-243 built Electron download", () => {
     app = await launch();
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.addLocatorHandler(page.getByRole("dialog", { name: "Getting started", exact: true }), async () => {
-      await page.getByRole("button", { name: /^Getting started —/ }).click();
-    });
+    await dismissGettingStartedOnInteraction(page);
     await page.getByTestId("desktop-taskbar-files").click({ timeout: 20_000 });
     await page.getByRole("button", { name: `Open ${gateway.filename}` }).waitFor();
   }, 60_000);

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startAgentsProvidersWorkflowGateway } from "./fixtures/agents-providers-workflows";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
@@ -32,11 +33,11 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     });
     await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
-    const checklist = page.getByRole("button", { name: /^Getting started —/ });
-    if (await checklist.getAttribute("aria-expanded") === "true") await checklist.click();
+
     await page.getByRole("button", { name: "Open account menu", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();

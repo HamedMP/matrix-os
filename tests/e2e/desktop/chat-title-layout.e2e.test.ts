@@ -52,16 +52,13 @@ suite("long Chat titles in the built Electron header", () => {
     app = await _electron.launch({ executablePath: requireDesktop("electron") as string,
       args: [resolve(__dirname, "fixtures/canonical-input-electron.mjs")],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
-    page = await app.firstWindow(); page.setDefaultTimeout(8000);
+    page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page); page.setDefaultTimeout(8000);
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
     const done = page.getByRole("button", { name: "Done", exact: true });
     if (await done.getAttribute("aria-expanded") === "false") await done.click();
     await page.getByRole("button", { name: LONG_CHAT_TITLE, exact: true }).click();
     await page.getByRole("button", { name: `Rename ${LONG_CHAT_TITLE}`, exact: true }).waitFor();
-    if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) {
-      await page.getByRole("button", { name: /Getting started/ }).click();
-      await page.getByRole("dialog", { name: "Getting started", exact: true }).waitFor({ state: "hidden" });
-    }
     await page.getByRole("button", { name: "Maximize", exact: true }).click();
     mkdirSync(evidence, { recursive: true });
   }, 60000);
@@ -194,5 +191,6 @@ suite("long Chat titles in the built Electron header", () => {
       current = title;
     }
   });
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 });
