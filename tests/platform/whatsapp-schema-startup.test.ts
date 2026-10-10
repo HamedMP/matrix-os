@@ -7,6 +7,7 @@ import { runPlatformMigration } from '../../packages/platform/src/migration-runn
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -62,6 +63,7 @@ describe('WhatsApp schema startup', () => {
       `.execute(db);
       expect(revisions.rows).toEqual([
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
+        { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);
