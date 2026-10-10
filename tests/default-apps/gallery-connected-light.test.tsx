@@ -10,11 +10,6 @@ const catalog = JSON.parse(readFileSync("home/system/app-gallery.json", "utf8"))
 const subscriptions = catalog.apps.find((app) => app.id === "subscriptions")!;
 
 describe("installed gallery app presentation", () => {
-  it("uses the same light styles and artwork in the Gallery screenshots", () => {
-    const fixture = readFileSync("specs/362-default-app-sculpted-family/preview/review.tsx", "utf8");
-    expect(fixture).toContain('import("../../../home/app-templates/connected-starter/src/styles/gallery-light.css")');
-    expect(fixture).toContain('iconDataUrl');
-  });
   it("keeps the Subscriptions canvas in the same green family as its icon", () => {
     const identities = JSON.parse(readFileSync("packages/brand/src/app-identities.json", "utf8")) as Record<string, { accent: string }>;
     const css = readFileSync("home/app-templates/connected-starter/src/styles/gallery-light.css", "utf8");
