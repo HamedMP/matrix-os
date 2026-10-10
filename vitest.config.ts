@@ -1,6 +1,5 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
-import { DurationSequencer, testWorkers } from "./scripts/ci/test-sequencer";
 
 export default defineConfig({
   plugins: [
@@ -113,8 +112,7 @@ export default defineConfig({
     // PGlite-backed suites are memory- and CPU-heavy during database startup.
     // Keep file-level parallelism bounded so full-suite runs do not starve
     // KyselyPGlite.create() hooks under shared CI or agent-machine load.
-    maxWorkers: testWorkers(),
-    sequence: { sequencer: DurationSequencer },
+    maxWorkers: 2,
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     // tests/e2e is owned by vitest.e2e.config.ts (bun run test:e2e); the
     // desktop suites there launch Electron, which fails on headless unit
