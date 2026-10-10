@@ -9,14 +9,14 @@ that admission boundary. [GitHub runner access documentation](https://docs.githu
 
 ## Host setup and benchmark
 
-Use a dedicated Ubuntu 24.04 x86-64 host with 16 vCPUs and 64 GB RAM. Keep the
+Use a dedicated Ubuntu 24.04 x86-64 host with 8 vCPUs/32 GB RAM or 16 vCPUs/64 GB RAM. Keep the
 Hetzner API key and operator GitHub credentials on the operator's computer.
 Upload only this reviewed directory, never `.env`, SSH private keys, or a home
 directory. Root manages Docker. The benchmark runs as UID 10001 in a fresh
 container with no mounts, host credentials, Docker socket, capabilities, or
-host networking. The image filesystem is read-only. Writable `/work` (32 GB),
+host networking. The image filesystem is read-only. Writable `/work` (16 GB on eight CPUs; 32 GB on sixteen),
 `/tmp` (2 GB), and runner home (1 GB) are bounded tmpfs mounts charged against
-the 56-GB container memory limit, so repository code cannot fill host disk.
+the 28-GB/56-GB container memory limit, so repository code cannot fill host disk.
 Package stores, Electron caches, and browsers stay under `/work`. The work
 and temporary mounts explicitly allow execution for native modules and browser
 binaries, while retaining `nosuid,nodev`. The firewall rejects new container access to the host and
@@ -38,7 +38,7 @@ trusted image benchmark through `docker exec` and copies its reports. The
 Docker exec exit status determines success, never a writable result marker
 or a caller-supplied command. Every benchmark has
 a 30-minute execution deadline; a timed-out container is killed immediately,
-discarding its tmpfs evidence while retaining the bounded host log. It has 16-CPU/56-GB cap, no extra swap, and a 4096-process cap.
+discarding its tmpfs evidence while retaining the bounded host log. It has an 8-CPU/28-GB or 16-CPU/56-GB cap, no extra swap, and a 4096-process cap.
 An exclusive lock admits one benchmark at a time, with a bounded 30-minute
 wait if another benchmark is active. Service-container and root
 fixture validation remains on GitHub-hosted runners.
@@ -64,7 +64,7 @@ then runs the environment-gated regressions explicitly listed in `ci.yml`.
 and shell production build. Typecheck is diagnostic, matching existing CI's
 nonblocking baseline. Pattern Scan stays hosted because it needs the trusted
 PR base/main coverage frontier; database/root suites also stay hosted.
-`full` runs unit (12 workers), checks (2 workers), and E2E (2 workers) concurrently
+`full` runs unit (4 workers on eight CPUs; 12 on sixteen), checks (2 workers), and E2E (2 workers) concurrently
 after one dependency/prerequisite build, awaiting every group. It is a full
 **dedicated-host subset benchmark**, not proof that all required CI checks pass.
 
@@ -103,7 +103,7 @@ bash install-dispatch.sh < dedicated-ci-ed25519.pub
 
 From the trusted controller, dispatch exactly `run <40-character-sha> <suite>`
 to SSH user `matrixci`. No other command, shell, SCP, PTY, agent, TCP, or tunnel
-forwarding is accepted. Unit/full use 12 workers; other suites use 2. Pin the
+forwarding is accepted. Unit/full admission uses 8 workers on eight CPUs or 12 on sixteen; full reserves four workers for checks/E2E. Other suites use 2. Pin the
 host key in the controller's known-hosts file from the operator's independently
 verified host fingerprint. Keep workflow environment restrictions and the
 dedicated opt-in flag disabled until this setup and the workflow are reviewed.

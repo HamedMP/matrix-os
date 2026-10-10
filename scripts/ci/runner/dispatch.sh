@@ -10,5 +10,5 @@ fi
 sha=${BASH_REMATCH[1]}
 suite=${BASH_REMATCH[2]}
 workers=2
-case "$suite" in unit|unit-shard-*|full) workers=12 ;; esac
+case "$suite" in unit|unit-shard-*|full) workers=8; if (( $(nproc) >= 16 )); then workers=12; fi ;; esac
 exec sudo --non-interactive -- /usr/local/libexec/matrix-ci/start-ephemeral.sh "$sha" "$suite" "$workers"

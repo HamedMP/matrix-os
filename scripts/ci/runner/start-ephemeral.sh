@@ -10,9 +10,18 @@ case "$2" in unit|unit-shard-[1-4]|typecheck|shell|checks|e2e|e2e-general|e2e-el
 iptables -C DOCKER-USER -i matrix-ci0 -j MATRIX-CI-EGRESS >/dev/null
 iptables -C INPUT -i matrix-ci0 -j REJECT >/dev/null
 
+host_cpus=$(nproc)
+if (( host_cpus >= 16 )); then
+  cpu_limit=16 memory_limit=56g work_limit=32g
+elif (( host_cpus >= 8 )); then
+  cpu_limit=8 memory_limit=28g work_limit=16g
+else
+  echo 'Requires at least eight host CPUs' >&2
+  exit 64
+fi
 state_dir=${MATRIX_CI_STATE_DIR:-/var/lib/matrix-ci}
 mkdir -p "$state_dir/results"
-# One 16-core/56-GB benchmark at a time; leave memory for the host.
+# One benchmark at a time; keep memory available for the host.
 exec 9>"$state_dir/benchmark.lock"
 flock -w 1800 9 || { echo 'A benchmark is already running' >&2; exit 75; }
 result_dir=$(mktemp -d "$state_dir/results/run.XXXXXXXX")
@@ -30,9 +39,9 @@ trap 'exit 143' TERM
 container=$(docker create --name "matrix-ci-$(basename "$result_dir")" \
   --label matrix-ci.disposable=true \
   --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
-  --cpus 16 --memory 56g --memory-swap 56g --pids-limit 4096 --shm-size 2g \
+  --cpus "$cpu_limit" --memory "$memory_limit" --memory-swap "$memory_limit" --pids-limit 4096 --shm-size 2g \
   --read-only \
-  --tmpfs /work:rw,exec,nosuid,nodev,size=32g,uid=10001,gid=10001,mode=0755 \
+  --tmpfs /work:rw,exec,nosuid,nodev,size="$work_limit",uid=10001,gid=10001,mode=0755 \
   --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777 \
   --tmpfs /home/runner:rw,nosuid,nodev,size=1g,uid=10001,gid=10001,mode=0755 \
   --network matrix-ci --dns 1.1.1.1 --dns 1.0.0.1 \

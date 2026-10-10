@@ -19,9 +19,11 @@ function readOptionalEvidence(read: () => string): string {
   }
 }
 
-function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false) {
+function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false, hostCores = 16) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
+  writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${hostCores}\n`);
+  chmodSync(resolve(dir, "nproc"), 0o755);
   writeFileSync(resolve(dir, "docker"), `#!/bin/bash
 [[ "$FAIL_READ" != 1 ]] || mkdir -p "$CALLS"
 printf '%s\\n' "$*" >> "$CALLS"
@@ -83,6 +85,18 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(create).not.toMatch(/--privileged|--volume|--mount|--network host|docker\.sock/);
     expect(calls).toContain(`exec --user 10001:10001 test-container /opt/matrix-ci/benchmark.sh ${sha} unit 8`);
     expect(calls).toContain("rm --force test-container");
+  });
+  it("fits an eight-core host with a bounded 28-GB container", () => {
+    const { result, calls } = invoke([sha, "unit", "8"], false, 8);
+    expect(result.status).toBe(0);
+    const create = calls.split("\n").find((line) => line.startsWith("create "))!;
+    expect(create).toContain("--cpus 8 --memory 28g --memory-swap 28g");
+    expect(create).toContain("/work:rw,exec,nosuid,nodev,size=16g");
+  });
+  it("rejects undersized hosts before container allocation", () => {
+    const { result, calls } = invoke([sha, "unit", "8"], false, 4);
+    expect(result.status).not.toBe(0);
+    expect(calls).not.toContain("create ");
   });
   it("bounds every writable container path without using host disk", () => {
     const { result, calls } = invoke([sha, "unit", "8"]);
@@ -158,14 +172,16 @@ describe("disposable manual CI benchmark admission and isolation", () => {
       expect(result.status).toBe(64);
     },
   );
-  it("forced SSH dispatch uses argument boundaries and fixed paths", () => {
+  it.each([[8, "8"], [16, "12"]])("forced SSH dispatch fits %s cores with fixed arguments", (cores, workers) => {
     const dir = mkdtempSync(resolve(tmpdir(), "matrix-dispatch-test-"));
+    writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${cores}\n`);
+    chmodSync(resolve(dir, "nproc"), 0o755);
     writeFileSync(resolve(dir, "sudo"), '#!/bin/bash\nprintf "%s\\n" "$@"\n');
     chmodSync(resolve(dir, "sudo"), 0o755);
     try {
       const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SSH_ORIGINAL_COMMAND: `run ${sha} unit` } });
       expect(result.status).toBe(0);
-      expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/start-ephemeral.sh", sha, "unit", "12", ""]);
+      expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/start-ephemeral.sh", sha, "unit", workers, ""]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it("requires the private-egress firewall before a container is created", () => {
@@ -190,7 +206,7 @@ describe("disposable manual CI benchmark admission and isolation", () => {
   });
   it("full benchmarks run bounded independent groups and wait for every result", () => {
     const script = readFileSync(resolve(root, "benchmark.sh"), "utf8");
-    expect(script).toContain('suite=unit workers=12 run_suite "$pass" &');
+    expect(script).toContain('suite=unit workers=$unit_workers run_suite "$pass" &');
     expect(script).toContain('suite=checks workers=2 run_suite "$pass" &');
     expect(script).toContain('wait "$pid" || failed=1');
     expect(script).toContain('--maxWorkers=2');

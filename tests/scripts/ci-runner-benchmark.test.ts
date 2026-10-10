@@ -22,7 +22,7 @@ const electronSuites = [
   "tests/e2e/desktop/chat-title-layout.e2e.test.ts",
 ];
 
-function invoke(suite: string, failLane = "", historical = false) {
+function invoke(suite: string, failLane = "", historical = false, workers = "12") {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-"));
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
@@ -105,7 +105,7 @@ if [[ "$*" == *"exec vitest run"* ]]; then
   fi
 fi`);
   try {
-    const result = spawnSync("bash", [script, sha, suite, "12"], {
+    const result = spawnSync("bash", [script, sha, suite, workers], {
       encoding: "utf8", timeout: 10_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
@@ -201,5 +201,14 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(result.status, result.stderr).toBe(0);
     for (const pass of ["cold", "warm"])
       expect(timings).toContainEqual([`typecheck-${pass}`, expect.any(String), "42"]);
+  });
+});
+
+describe("eight-core full benchmark budget", () => {
+  it("uses four unit workers alongside checks and browser lanes", () => {
+    const { result, calls } = invoke("full", "", false, "8");
+    expect(result.status).toBe(0);
+    expect(calls.some((call) => call.includes("--maxWorkers=4 --reporter=default"))).toBe(true);
+    expect(calls.some((call) => call.includes("--maxWorkers=12"))).toBe(false);
   });
 });

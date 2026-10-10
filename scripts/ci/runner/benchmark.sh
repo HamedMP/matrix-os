@@ -105,11 +105,13 @@ run_suite() {
 }
 # Cold/warm passes belong to one admitted benchmark. Continue on suite failures
 # so both measurements are recorded, then propagate the failed result.
+unit_workers=12
+if (( workers <= 8 )); then unit_workers=4; fi
 failed=0
 for pass in cold warm; do
   if [[ $suite == full ]]; then
     pids=()
-    suite=unit workers=12 run_suite "$pass" & pids+=("$!")
+    suite=unit workers=$unit_workers run_suite "$pass" & pids+=("$!")
     suite=checks workers=2 run_suite "$pass" & pids+=("$!")
     (
       desktop_status=0 general_status=0 electron_status=0
