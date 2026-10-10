@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { usePanelChoice } from "./usePanelChoice";
 import type { Account, Definition } from "./types";
 const workflowMarks = ["workout-coach","paycheck-runway","meal-planner","job-search","study-notes","journal-memory","chess-coach","people","cashflow"];
 const workflowArtwork = new URL("../public/matrix-workflow-objects-v1.webp",import.meta.url).href;
@@ -45,7 +45,7 @@ export default function Sidebar({
   const markIndex = workflowMarks.indexOf(app.id);
   const iconDataUrl = app.iconDataUrl && /^data:image\/png;base64,[A-Za-z0-9+/=]{1,200000}$/.test(app.iconDataUrl)
     ? app.iconDataUrl : null;
-  const [controlsOpen, setControlsOpen] = useState(() => !!(query || scope !== "all" || account));
+  const panel = usePanelChoice(app.id, !!(query || scope !== "all" || account));
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -67,7 +67,7 @@ export default function Sidebar({
         {labels[app.view] || "Your workspace"}
         <span>{count}</span>
       </div>
-      <details className="workspace-controls" open={controlsOpen} onToggle={(event) => setControlsOpen(event.currentTarget.open)}><summary>Filters &amp; connections</summary><section className="sidebar-filters">
+      <details className="workspace-controls" open={panel.open} onToggle={(event) => panel.choose(event.currentTarget.open)}><summary>Filters &amp; connections</summary><section className="sidebar-filters">
         <label>
           <span>Search records</span>
           <input
@@ -131,6 +131,7 @@ export default function Sidebar({
         </button>
       </div>
       </details>
+      {panel.error && <p role="status">Panel choice could not be restored or saved. Your current choice is still available. <button onClick={panel.retry}>Retry saving panel choice</button></p>}
       <footer>
         <span className="tiny-dot" />
         Owner-controlled data<p>Private to this Matrix computer</p>

@@ -51,7 +51,7 @@ it('the running workspace reads the exact row for review and guards the reapplie
  vi.spyOn(console,'error').mockImplementation(()=>{});
  const payload = (record:OwnerRecord) => {const {rowId,basePayload,...data}=record;return data;};
  const first=payload(original),current=payload(latest);
- const find=vi.fn().mockResolvedValue([{id:'row',payload:first}]),findOne=vi.fn().mockResolvedValue({id:'row',payload:current});
+ const find=vi.fn().mockResolvedValue([{id:'row',payload:first}]),findOne=vi.fn(async (_table: string, id: string) => id === 'row' ? {id:'row',payload:current} : null);
  const compareAndSwap=vi.fn().mockResolvedValueOnce({ok:false}).mockResolvedValueOnce({ok:true});
  window.MatrixOS={db:{find,findOne,compareAndSwap} as unknown as Database};
  render(<App app={app}/>);
@@ -74,7 +74,12 @@ it('recovers a new draft by its stable ID after an unacknowledged committed inse
     if (!stored) stored = { id: row.id, payload: row.payload };
     throw new Error('Write acknowledgement unavailable');
   });
-  const findOne = vi.fn().mockRejectedValueOnce(new Error('Read unavailable')).mockImplementation(async (_table: string, id: string) => stored?.id === id ? stored : null);
+  let firstRecoveryRead = true;
+  const findOne = vi.fn(async (_table: string, id: string) => {
+    if (id === 'f954d542-8bfe-4a50-bac8-10ba5fbe9f25') return null;
+    if (firstRecoveryRead) { firstRecoveryRead = false; throw new Error('Read unavailable'); }
+    return stored?.id === id ? stored : null;
+  });
   const compareAndSwap = vi.fn().mockResolvedValue({ ok: true });
   window.MatrixOS = { db: { find: vi.fn().mockResolvedValue([]), findOne, insert, compareAndSwap } as unknown as Database };
   render(<App app={app} />);

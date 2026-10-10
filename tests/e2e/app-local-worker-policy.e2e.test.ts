@@ -6,7 +6,7 @@ const require = createRequire(new URL("../../shell/package.json", import.meta.ur
 
 it("runs local analysis under the real opaque app policy without external workers or network access", async () => {
   const { chromium } = require("@playwright/test");
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE, headless: true });
   try {
     const page = await browser.newPage();
     const externalRequests: string[] = [];
