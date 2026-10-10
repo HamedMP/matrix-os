@@ -250,7 +250,7 @@ h2 {
 
 .chip:hover {
   border-color: var(--app-accent);
-  color: var(--app-accent);
+  color: var(--app-text-accent);
 }
 
 .banner {
@@ -754,7 +754,7 @@ h2 {
 }
 
 .timer-ring-core em {
-  color: var(--app-accent);
+  color: var(--app-text-accent);
   font-style: normal;
   font-weight: 800;
   font-size: 12px;
