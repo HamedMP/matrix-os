@@ -3,7 +3,7 @@
   "description": "World clock, alarms, timers, and stopwatch.",
   "runtime": "vite",
   "category": "utility",
-  "icon": "v3-clock",
+  "icon": "clock",
   "author": "system",
   "version": "1.1.0",
   "slug": "clock",
@@ -47,8 +47,7 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts",
-      "../../system/icons/v3-*.png"
+      "vite.config.ts"
     ]
   }
 }
