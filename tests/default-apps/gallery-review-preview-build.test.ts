@@ -72,3 +72,33 @@ it.each(["capture.mjs", "verify-responsive.mjs"])("resolves %s browser tooling t
   expect(result.stderr).toContain("shell-owned-browser-probe");
   expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
 });
+
+
+it("builds the auth entry from tracked brand source without any brand dist output", async () => {
+  const { temporary, preview } = await isolatedPreview();
+  const source = resolve("specs/362-default-app-sculpted-family/preview");
+  for (const file of ["vite.config.ts", "auth.html", "auth-review.tsx", "auth-review.css"]) {
+    await cp(join(source, file), join(preview, file));
+  }
+  const brand = join(temporary, "packages/brand");
+  await mkdir(brand, { recursive: true });
+  await cp(resolve("packages/brand/package.json"), join(brand, "package.json"));
+  await cp(resolve("packages/brand/src"), join(brand, "src"), { recursive: true });
+  const auth = join(temporary, "shell/src/components/auth");
+  await mkdir(auth, { recursive: true });
+  await cp(resolve("shell/src/components/auth/ShellAuthLayout.tsx"), join(auth, "ShellAuthLayout.tsx"));
+  await mkdir(join(temporary, "shell/src/app"), { recursive: true });
+  await cp(resolve("shell/src/app/fonts.css"), join(temporary, "shell/src/app/fonts.css"));
+  for (const scope of ["@fontsource", "@fontsource-variable"]) {
+    await symlink(resolve("shell/node_modules", scope), join(temporary, "shell/node_modules", scope));
+  }
+  const modules = join(temporary, "node_modules");
+  await mkdir(join(modules, "@matrix-os"), { recursive: true });
+  await symlink(brand, join(modules, "@matrix-os/brand"));
+  for (const dependency of ["react", "react-dom", "vite"]) {
+    await symlink(resolve("node_modules", dependency), join(modules, dependency));
+  }
+  const output = join(temporary, "output");
+  await build({ configFile: join(preview, "vite.config.ts"), logLevel: "error", build: { target: "esnext", outDir: output, rollupOptions: { input: join(preview, "auth.html") } } });
+  expect(await readFile(join(output, "auth.html"), "utf8")).toContain("<html");
+}, 60_000);
