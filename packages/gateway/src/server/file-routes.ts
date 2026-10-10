@@ -13,6 +13,7 @@ import {
   resolveWithinHome,
   resolveWritableFileApiPath,
 } from "../path-security.js";
+import { writeOwnerSoulAtomic } from "../bots/owner-personality-write.js";
 import { listDirectory } from "../files-tree.js";
 import { getMissingFileFallback } from "../file-fallbacks.js";
 import { fileStat, fileMkdir, fileTouch, fileRename, fileCopy, fileDuplicate } from "../file-ops.js";
@@ -303,9 +304,17 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
     if (!fullPath) return c.text("Invalid path", 403);
     return withProjectFileAdmission(c, [filePath], async () => {
       const content = await c.req.text();
-      const dir = dirname(fullPath);
-      await mkdirAsync(dir, { recursive: true });
-      await writeFileAsync(fullPath, content, "utf-8");
+      if (fullPath === resolveWithinHome(homePath, "system/soul.md")) {
+        try { await writeOwnerSoulAtomic(homePath, content); }
+        catch (error: unknown) {
+          console.warn("[files] SOUL save failed:", error instanceof Error ? error.name : "UnknownError");
+          return c.json({ error: "Unable to save personality" }, 500);
+        }
+      } else {
+        const dir = dirname(fullPath);
+        await mkdirAsync(dir, { recursive: true });
+        await writeFileAsync(fullPath, content, "utf-8");
+      }
       return c.json({ ok: true });
     });
   });
