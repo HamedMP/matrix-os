@@ -7,10 +7,23 @@ import { describe, expect, it } from "vitest";
 const root = resolve("scripts/ci/runner");
 const sha = "a".repeat(40);
 
-function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" = false) {
+function readOptionalEvidence(read: () => string): string {
+  try { return read(); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      console.debug("Expected benchmark evidence was not created");
+      return "";
+    }
+    console.error("Unexpected benchmark evidence read failure", error);
+    throw error;
+  }
+}
+
+function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
   writeFileSync(resolve(dir, "docker"), `#!/bin/bash
+[[ "$FAIL_READ" != 1 ]] || mkdir -p "$CALLS"
 printf '%s\\n' "$*" >> "$CALLS"
 if [[ "$1" == create ]]; then echo test-container; fi
 if [[ "$1" == exec && "$FAIL_TIMEOUT" == 1 ]]; then exit 124; fi
@@ -36,14 +49,11 @@ fi
     const result = spawnSync("bash", [resolve(root, "start-ephemeral.sh"), ...args], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: log,
-        FAIL_TIMEOUT: failure === "timeout" ? "1" : "0", FAIL_START: failure === true ? "1" : "0", FAIL_ARTIFACT: failure === "artifact" ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
+        FAIL_READ: failure === "read" ? "1" : "0", FAIL_TIMEOUT: failure === "timeout" ? "1" : "0", FAIL_START: failure === true ? "1" : "0", FAIL_ARTIFACT: failure === "artifact" ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
     });
     const resultsDir = resolve(dir, "results");
-    const persistedStatus = (() => {
-      try { return readFileSync(resolve(resultsDir, readdirSync(resultsDir)[0], "exit-code"), "utf8").trim(); }
-      catch { return ""; }
-    })();
-    return { result, persistedStatus, calls: (() => { try { return readFileSync(log, "utf8"); } catch { return ""; } })() };
+    const persistedStatus = readOptionalEvidence(() => readFileSync(resolve(resultsDir, readdirSync(resultsDir)[0], "exit-code"), "utf8").trim());
+    return { result, persistedStatus, calls: readOptionalEvidence(() => readFileSync(log, "utf8")) };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -55,6 +65,9 @@ describe("disposable manual CI benchmark admission and isolation", () => {
       expect(calls).toBe("");
     },
   );
+  it("surfaces unexpected test evidence read failures", () => {
+    expect(() => invoke([sha, "unit", "8"], "read")).toThrow();
+  });
   it("runs a reviewed immutable SHA as nonroot with bounded resources and no host mounts", () => {
     const { result, calls } = invoke([sha, "unit", "8"]);
     expect(result.status).toBe(0);
