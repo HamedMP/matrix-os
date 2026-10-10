@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, truncate, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, symlink, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,11 +98,18 @@ describe("streamed attachment downloads", () => {
   it("rejects same-size source changes before sending the final chunk", async () => {
     const path = join(home, "archive.bin");
     await writeFile(path, Buffer.alloc(128 * 1024, 1));
+    const before = await stat(path, { bigint: true });
     const app = createFileBlobRoutes({ homePath: home });
     const response = await app.request("/media?path=archive.bin&download=true");
     const reader = response.body!.getReader();
     expect((await reader.read()).value!.length).toBe(64 * 1024);
     await writeFile(path, Buffer.alloc(128 * 1024, 2));
+    // Linux writes can share a timestamp tick; exercise the metadata-version
+    // guard with a deterministically changed version, without delaying the test.
+    await utimes(path, before.atime, new Date(Number(before.mtimeMs) + 1000));
+    const after = await stat(path, { bigint: true });
+    expect(after.size).toBe(before.size);
+    expect(after.mtimeNs).not.toBe(before.mtimeNs);
     await expect(reader.read()).rejects.toThrow();
   });
   it("keeps denied paths and symlink escapes out of download and HEAD responses", async () => {
