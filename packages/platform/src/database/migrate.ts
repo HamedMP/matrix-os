@@ -13,6 +13,7 @@ import { migrateHostBundles } from './migrations/host-bundles.js';
 import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
 import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js';
+import { migratePreviewDrive } from './migrations/preview-drive.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -39,6 +40,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'golden-snapshots', run: migrateGoldenSnapshots },
   { name: 'provider-deletion', run: migrateProviderDeletion },
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
+  { name: 'preview-drive', run: migratePreviewDrive },
   { name: 'account-deletion', run: migrateAccountDeletion },
 ];
 

@@ -289,6 +289,7 @@ export function createComputerRoutes(opts: {
         handle: machine.handle,
         gatewayUrl: opts.getGatewayUrlForHandle(machine.handle),
         runtimeSlot: machine.runtimeSlot,
+        sessionProvenance: identity.sessionProvenance,
         expiresInSec: remainingLifetime,
         now,
       });

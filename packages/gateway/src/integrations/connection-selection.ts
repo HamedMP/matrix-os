@@ -20,3 +20,21 @@ export function resolveIntegrationConnection<T extends { service: string; accoun
   }
   return connection ? { kind: "found", connection } : { kind: "missing" };
 }
+
+/** Resolve the approved account on the authenticated owner's active inventory.
+ * An unlabeled legacy call retains the broker's default selection behavior.
+ */
+export async function resolveManagedIntegrationCall(options: {
+  service: string; label?: string; connectionId?: string;
+  listConnections(): Promise<readonly { id: string; service: string; account_label: string; status: string }[]>;
+}): Promise<{ kind: "legacy" } | { kind: "found"; connectionId: string } | { kind: "denied" } | { kind: "ambiguous" }> {
+  if (!options.label && !options.connectionId) return { kind: "legacy" };
+  const active = (await options.listConnections()).filter(row => row.status === "active"
+    && (!options.connectionId || !!options.label || row.id === options.connectionId));
+  const selected = resolveIntegrationConnection(active, options.service, options.label);
+  if (selected.kind === "ambiguous") return selected;
+  if (selected.kind !== "found" || (options.connectionId && selected.connection.id !== options.connectionId)) {
+    return { kind: "denied" };
+  }
+  return { kind: "found", connectionId: selected.connection.id };
+}

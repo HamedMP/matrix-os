@@ -13,6 +13,7 @@ import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -42,6 +43,9 @@ import {
 } from './runtime-mode.js';
 import { resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
+import { createPreviewDriveIntegration } from './preview-drive-integration.js';
+import { createPreviewDriveStore } from './preview-drive-store.js';
+import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
 import { listActivePrivatePreviewsForOwner } from './database/private-previews.js';
 import { createPrivatePreviewAccess } from './private-preview-wiring.js';
@@ -96,6 +100,16 @@ interface GatewayPlatformUser {
   id: string;
   clerk_id: string;
   handle: string;
+  pipedream_external_id?: string | null;
+}
+
+interface GatewayConnectedService {
+  id: string;
+  service: string;
+  account_label: string;
+  account_email: string | null;
+  status: string;
+  pipedream_account_id: string;
 }
 
 export function parseGoldenSnapshotReconciliationInterval(raw: string | undefined): number | undefined {
@@ -110,6 +124,8 @@ interface GatewayPlatformDb extends BokioCredentialStore {
   sweepCustomMcpApprovals(now: Date): Promise<number>;
   getUserByClerkId(clerkId: string): Promise<GatewayPlatformUser | null>;
   getUserById(id: string): Promise<GatewayPlatformUser | null>;
+  listConnectedServices(userId: string): Promise<GatewayConnectedService[]>;
+  touchServiceUsage(connectionId: string): Promise<void>;
   ensureUser(input: {
     clerkId: string;
     handle: string;
@@ -177,6 +193,17 @@ interface GatewayIntegrationRoutesModule {
     mcpPresetBroker?: unknown;
     verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
   }): Hono;
+  executeIntegrationAction(opts: {
+    pipedream: unknown; externalUserId: string;
+    connection: { pipedream_account_id: string };
+    def: any; actionDef: any; serviceId: string; actionId: string;
+    params: Record<string, unknown>;
+  }): Promise<{ data: unknown; summary?: string }>;
+}
+
+interface GatewayIntegrationRegistryModule {
+  getService(serviceId: string): any;
+  getAction(serviceId: string, actionId: string): any;
 }
 
 type GatewayR2Client = import("./r2-client.js").R2Client;
@@ -203,6 +230,7 @@ type CreatePlatformApp = (deps: {
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -455,6 +483,8 @@ async function startPlatformServerWithCleanup(
   let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
+  let previewDriveIntegration: PreviewDriveIntegration | undefined;
+  let previewDriveSweepInterval: NodeJS.Timeout | undefined;
   let customMcpRoutes: Hono | undefined;
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
@@ -480,13 +510,15 @@ async function startPlatformServerWithCleanup(
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
   if (integrationConfig) {
     const [
-      { createIntegrationRoutes, authorizeInternalJevLabels },
+      { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
+      { getService, getAction },
     ] = await Promise.all([
       importRuntimeModule<GatewayIntegrationRoutesModule>('../../gateway/dist/integrations/routes.js'),
       importRuntimeModule<GatewayPipedreamModule>('../../gateway/dist/integrations/pipedream.js'),
       importRuntimeModule<GatewayPlatformDbModule>('../../gateway/dist/platform-db.js'),
+      importRuntimeModule<GatewayIntegrationRegistryModule>('../../gateway/dist/integrations/registry.js'),
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
@@ -549,7 +581,22 @@ async function startPlatformServerWithCleanup(
       },
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
+    previewDriveIntegration = createPreviewDriveIntegration({
+      db: trustedPlatformDb, pipedream,
+      resolveUserId: actorId => resolveIntegrationUserId(actorId, undefined),
+      getService, getAction, executeAction: executeIntegrationAction,
+    });
   }
+
+  // Authorizations are durable across Cloud Run instances; recurring cleanup
+  // keeps the control-plane table bounded even after a Preview disappears.
+  const previewDriveStore = createPreviewDriveStore(db);
+  previewDriveSweepInterval = setInterval(() => {
+    void previewDriveStore.sweep().catch(error => {
+      console.warn('[preview-drive] Grant cleanup failed', error instanceof Error ? error.name : typeof error);
+    });
+  }, 5 * 60_000);
+  previewDriveSweepInterval.unref();
 
   if (process.env.CUSTOM_MCP_ENABLED === 'true') {
     const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
@@ -990,6 +1037,7 @@ async function startPlatformServerWithCleanup(
     matrixProvisioner,
     integrationRoutes,
     internalIntegrationRoutes,
+    previewDriveIntegration,
     customMcpRoutes,
     internalCustomMcpRoutes,
     internalCustomMcpApprovalRoutes,
@@ -1035,6 +1083,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
+    if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
     const shutdownTimer = setTimeout(() => {
       console.error('[platform] Graceful shutdown timed out');
       process.exit(1);
@@ -1101,20 +1150,6 @@ async function startPlatformServerWithCleanup(
 }
 
 export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
-  let customMcpStartupCleanup: (() => Promise<void>) | undefined;
-  try {
-    await startPlatformServerWithCleanup(opts, (cleanup) => {
-      customMcpStartupCleanup = cleanup;
-    });
-  } catch (startupError: unknown) {
-    try {
-      await customMcpStartupCleanup?.();
-    } catch (cleanupError: unknown) {
-      console.error(
-        '[platform] Custom MCP startup cleanup failed:',
-        cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-      );
-    }
-    throw startupError;
-  }
+  await runPlatformStartupWithCleanup(registerCleanup =>
+    startPlatformServerWithCleanup(opts, registerCleanup));
 }

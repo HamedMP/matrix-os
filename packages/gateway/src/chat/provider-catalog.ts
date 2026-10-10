@@ -37,7 +37,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedPiChatInstances } from "./managed-chat-catalog.js";
+import { managedChatInstances, managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
@@ -137,8 +137,8 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: [],
-    approvals: isCodex,
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
@@ -622,11 +622,16 @@ export function createChatProviderCatalogService(options: {
       ? aiProviderResult.value
       : undefined;
     const executableDriverKinds = options.executableDriverKinds;
+    const fundedClaudeExecutable = coding.some((provider) =>
+      codingDriverKind(provider) === "claude_code" && provider.installStatus === "installed")
+      && (executableDriverKinds === undefined || executableDriverKinds.includes("claude_code"));
     const instances = applyHarnessSettings({
       systemRepairAction,
       now: options.now?.() ?? new Date(),
       instances: [
       ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
+      ...managedChatInstances(aiSnapshot, skills, options.now?.().getTime() ?? Date.now(), fundedClaudeExecutable)
+        .filter(instance => instance.id === "claude_code_matrix_included"),
       ...systemInstances,
       ...completeCodingInstances,
       ],

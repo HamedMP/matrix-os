@@ -1,4 +1,5 @@
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
+import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -260,6 +261,7 @@ export function createApp(deps: {
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -705,6 +707,9 @@ export function createApp(deps: {
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
     || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
+    db, platformSecret, integration: deps.previewDriveIntegration, env: appEnv,
+  }));
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,
@@ -719,6 +724,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
   }

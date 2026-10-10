@@ -17,6 +17,7 @@ import { JevLabelPermission } from "./JevLabelPermission.js";
 import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "./theme.js";
 import type { BotRecipeRef, BotRecipeSummary } from "@matrix-os/contracts";
 import { useRef } from "react";
+import { Plus } from "lucide-react";
 
 
 const jevRecipe = {
@@ -28,8 +29,9 @@ export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false, onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
   botRecipes = EMPTY_BOT_RECIPES, botRecipeStatus, onRetryBotRecipes, matrixModels = [], catalog, catalogLoading = false, onInstantiateBot, onOpenBotChat }: {
+  onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean;
   onRefreshCatalog?:()=>void; onSetup?:()=>void; botClient?: BotClient; onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
   botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
@@ -113,8 +115,9 @@ export function AgentRecipesPanel({ onRefreshCatalog, onSetup, botClient, onStar
       fitsCategory(recipe) && (!botMode || !isLaunchBotRecipeId(recipe.id)) && !Object.hasOwn(launchIds, recipe.id)), [normalized, launchIds, botMode, fitsCategory]);
 
   const featured = !showAll && !normalized && category === "All";
-  const shownBots = featured ? visibleBotRecipes.slice(0, 6) : visibleBotRecipes;
-  const shownIdeas = featured ? matches.slice(0, Math.max(0, 6 - shownBots.length - (showJev ? 1 : 0))) : matches;
+  const featuredSlots = onStartFromScratch ? 5 : 6;
+  const shownBots = featured ? visibleBotRecipes.slice(0, featuredSlots) : visibleBotRecipes;
+  const shownIdeas = featured ? matches.slice(0, Math.max(0, featuredSlots - shownBots.length - (showJev ? 1 : 0))) : matches;
   const total = visibleBotRecipes.length + matches.length + (showJev ? 1 : 0);
   return <div className="matrix-chat-agent-recipes mx-auto grid w-full">
     <div className="matrix-chat-agent-recipes__intro grid gap-2">
@@ -133,7 +136,14 @@ export function AgentRecipesPanel({ onRefreshCatalog, onSetup, botClient, onStar
     <div className="matrix-template-categories flex flex-wrap" role="group" aria-label="Template categories">{categories.map(value => <button type="button" key={value} aria-pressed={category === value} className="matrix-chat-agent-category rounded-full border px-3 py-1 text-xs" onClick={() => setCategory(value)}>{value}</button>)}</div>
     {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
-    {showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
+    {onStartFromScratch || showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
+      {onStartFromScratch ? <button type="button" aria-label="Start from scratch" disabled={scratchDisabled || !!botPending || jevPending || !!setupRecipe}
+        className={`${chatAgentButtonClass} matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col rounded-xl border p-3 text-left`}
+        onClick={event => onStartFromScratch(event.currentTarget)}>
+        <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]"><Plus size={18} strokeWidth={1.5}/></span>
+        <span className="text-sm font-medium">Start from scratch</span>
+        <span className="matrix-template-description text-xs leading-5" style={chatAgentMutedStyle}>Describe it in your own words</span>
+      </button> : null}
       {shownBots.map((recipe) => <article key={`${recipe.recipeId}@${recipe.version}`} data-matrix-recipe={recipe.recipeId}
         className="matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col gap-3 rounded-xl border p-3">
         <div className="matrix-template-card-heading flex min-w-0 items-start gap-2"><RecipeRabbit id={recipe.recipeId} name={recipe.name} category="Matrix" size="small" />
@@ -191,7 +201,8 @@ export function AgentRecipesPanel({ onRefreshCatalog, onSetup, botClient, onStar
           <button type="button" aria-label={`Use ${recipe.name}`} disabled={!onStartChat} className={`${chatAgentButtonClass} matrix-template-action self-start`} onClick={() => onStartChat?.(buildAgentRecipePrompt(recipe))}>Build in Chat</button></div>
         </article>;
       })}
-    </div> : nativeCatalogBlocked ? null : <div className="rounded-2xl border border-dashed px-5 py-10 text-center"><p className="text-sm font-medium">No recipes match that search.</p><p className="mt-1 text-xs" style={chatAgentMutedStyle}>Try a role, skill, or integration name.</p></div>}
-    {!normalized && category === "All" && total > 6 ? <button type="button" className="justify-self-start text-xs underline underline-offset-2" onClick={() => setShowAll(value => !value)}>{showAll ? "Show featured templates" : `See all ${total} templates`}</button> : null}
+    </div> : null}
+    {!showJev && !matches.length && !visibleBotRecipes.length && !nativeCatalogBlocked ? <div className="rounded-2xl border border-dashed px-5 py-10 text-center"><p className="text-sm font-medium">No recipes match that search.</p><p className="mt-1 text-xs" style={chatAgentMutedStyle}>Try a role, skill, or integration name.</p></div> : null}
+    {!normalized && category === "All" && total > featuredSlots ? <button type="button" className="justify-self-start text-xs underline underline-offset-2" onClick={() => setShowAll(value => !value)}>{showAll ? "Show featured templates" : `See all ${total} templates`}</button> : null}
   </div>;
 }

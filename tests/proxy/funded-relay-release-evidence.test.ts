@@ -67,10 +67,13 @@ try:
         os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null"})
         os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
         os.environ.update(config["pricing"])
-        entries = [{"name": key, "value": value} for key, value in {
+        # A supplied emitted environment is the complete candidate input; never
+        # mask missing or drifted workflow values with receipt fixture defaults.
+        emitted = data["workflowEnvironment"] if "workflowEnvironment" in data else {
           **gate.FIXED_ENV,
           "PLATFORM_INTERNAL_URL": config["platformOrigin"], "CLOUDFLARE_AI_GATEWAY_URL": config["cloudflareGatewayUrl"],
-          **config["pricing"]}.items()]
+          **config["pricing"]}
+        entries = [{"name": key, "value": value} for key, value in emitted.items()]
         names = {"gatewayToken":"CLOUDFLARE_AI_GATEWAY_TOKEN", "workersToken":"CLOUDFLARE_WORKERS_AI_TOKEN",
           "controlToken":"AI_RELAY_CONTROL_TOKEN", "metadataSecret":"AI_RELAY_METADATA_SECRET"}
         entries += [{"name": names[key], "valueFrom": {"secretKeyRef": {"name": secret, "key": config["secretVersions"][key]}}}
@@ -158,6 +161,49 @@ describe("reviewed funded Relay release evidence", () => {
   });
   it("verifies actual candidate configuration before promotion", () => {
     expect(verify(productionFixture(), { promotion: true, exercisePromotion: true }).status).toBe(0);
+  });
+  it("promotes the exact environment emitted by the reviewed deployment workflow", () => {
+    const receipt = productionFixture();
+    const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+    const block = workflow.split("- name: Deploy candidate revision")[1]!
+      .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
+    const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+    const config = receipt.configuration;
+    const result = spawnSync("bash", ["-c", `
+gcloud() { for arg in "$@"; do printf '%s\\n' "$arg"; done; exit 0; }
+${script}
+`], { encoding: "utf8", timeout: 10_000, env: {
+      ...process.env, GITHUB_SHA: sha, IMAGE_DIGEST: receipt.candidate.image,
+      GCP_PROJECT_ID: config.projectId, GCP_REGION: config.region,
+      AI_RELAY_CLOUD_RUN_SERVICE: config.relayService,
+      AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: config.relayServiceAccount,
+      PLATFORM_INTERNAL_URL: config.platformOrigin,
+      CLOUDFLARE_AI_GATEWAY_URL: config.cloudflareGatewayUrl,
+      GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token-production", GATEWAY_TOKEN_VERSION: "1",
+      WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-production", WORKERS_TOKEN_VERSION: "2",
+      CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "3",
+      METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "4",
+      ...config.pricing,
+    } });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    const values = result.stdout.split("\n").filter(line => line.startsWith("^|^"));
+    expect(values).toHaveLength(1);
+    const workflowEnvironment = Object.fromEntries(values[0]!.slice(3).split("|").map(entry => {
+      const index = entry.indexOf("=");
+      return [entry.slice(0, index), entry.slice(index + 1)];
+    }));
+    expect(workflowEnvironment.MATRIX_FUNDED_AI_BETAS).toContain("advisor-tool-2026-03-01");
+    expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment }).status).toBe(0);
+    const changed = { ...workflowEnvironment, MATRIX_FUNDED_AI_BETAS: `${workflowEnvironment.MATRIX_FUNDED_AI_BETAS},unreviewed-beta` };
+    expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment: changed }).status).toBe(1);
+    for (const emitted of [
+      { ...workflowEnvironment, PLATFORM_INTERNAL_URL: "https://wrong-platform.example.com" },
+      { ...workflowEnvironment, MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: "unreviewed-pricing" },
+      {},
+    ]) {
+      expect(verify(receipt, { promotion: true, exercisePromotion: true, workflowEnvironment: emitted }).status).toBe(1);
+    }
   });
   it.each(["secret", "source", "account", "pricing", "duplicate", "notReady", "environment",
     "unboundedRate", "unreviewedEnv", "maxInstances", "cloudConcurrency", "memory", "entrypoint", "mount"])(
