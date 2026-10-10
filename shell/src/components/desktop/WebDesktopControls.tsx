@@ -39,7 +39,7 @@ export function WebDesktopControls({ onOpenSettings, onOpenCommandPalette, onOpe
 const ComputerContextSchema = z.object({ runtime: z.object({ runtimeSlot: MatrixComputerRuntimeSlotSchema }).passthrough() }).passthrough();
 async function loadWebComputers(gateway: string, signal: AbortSignal) {
   async function read(url: string): Promise<unknown> {
-    const response = await fetch(url, { signal, headers: { Accept: "application/json" } });
+    const response = await fetch(url, { signal: signal, headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error("Computer inventory unavailable");
     return response.json();
   }
