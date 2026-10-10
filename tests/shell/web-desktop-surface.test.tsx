@@ -74,7 +74,7 @@ describe("WebDesktopSurface", () => {
     expect(screen.getByRole("banner")).toBeTruthy();
     expect(screen.getByRole("tablist", { name: "Workspace tabs" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Open app previews" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Show desktop" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Desktop" })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Terminal" })).toBeNull();
     expect(screen.queryByText("File")).toBeNull();
     expect(screen.queryByText("Edit")).toBeNull();
@@ -354,7 +354,8 @@ describe("WebDesktopSurface", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Show desktop" }));
+    fireEvent.pointerDown(screen.getByRole("tab", { name: "Desktop" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show desktop" }));
     expect(onShowDesktop).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("tab", { name: "Open app previews" }));

@@ -1,4 +1,4 @@
-import launcherIcon from "../../../../../../shell/public/system-app-icons/v2/launcher.png";
+import launcherIcon from "../../../../../../home/system/icons/v3-app-gallery.png";
 import type { ReactNode } from "react";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";

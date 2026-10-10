@@ -29,3 +29,5 @@ verify screenshot identity and its Example data / Empty workspace label. Check
 checks validate presentation; they do not prove hosted installation works.
 
 Preview build and capture tooling resolves Tailwind CSS/PostCSS and Playwright through `shell/package.json`, where those dependencies are declared. It does not require root dependency hoisting.
+
+Shared launcher artwork and top-bar checks use the current source components, including the distinct Desktop/Canvas mode icons and the app/task Inbox. Offline screenshots and browser geometry checks do not qualify live authentication or an installed preview artifact. For this review, local preview servers remain stopped; collect live evidence only after the disposable PR preview deploys the exact reviewed head.

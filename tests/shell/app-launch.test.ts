@@ -81,3 +81,8 @@ describe("app launch helpers", () => {
     expect(terminalContextLaunchPath("../matrix")).toBe("__terminal__");
   });
 });
+
+
+it.each(["folio", "atlas", "agenda", "subscriptions", "focus", "projects", "app-gallery"])("asks for owner PNG before shipped SVG for %s", (slug) => {
+  expect(iconUrlForSlug(slug)).toBe(`/icons/${slug}.png`);
+});
