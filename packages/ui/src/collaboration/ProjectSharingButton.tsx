@@ -3,7 +3,7 @@ import { PROJECT_SHARING_UNAVAILABLE_MESSAGE, useProjectSharing } from "./usePro
 import { Users } from "lucide-react";
 const buttonClass = "inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 
-export function ProjectSharingButton({ api, runtimeId, organizationId, organizationName, projectId, projectName }: {
+export function ProjectSharingButton({ api, runtimeId, organizationId, organizationName, projectId, projectName, layers }: {
   api: CollaborationApi;
   runtimeId: string | null;
   /** The Clerk organization this share is scoped to; without one there is nothing to share with. */
@@ -11,8 +11,9 @@ export function ProjectSharingButton({ api, runtimeId, organizationId, organizat
   organizationName?: string | null;
   projectId: string;
   projectName: string;
+  layers?: { popover: number };
 }) {
-  const sharing = useProjectSharing({ api, runtimeId, organizationId, organizationName, projectId, projectName });
+  const sharing = useProjectSharing({ api, runtimeId, organizationId, organizationName, projectId, projectName, layers });
   return <div className="relative inline-flex shrink-0 items-center">
     <button type="button" className={buttonClass} aria-label="Share project" disabled={sharing.pending || !runtimeId || !organizationId}
       aria-expanded={sharing.open} onClick={() => sharing.open ? sharing.close() : sharing.start()}>

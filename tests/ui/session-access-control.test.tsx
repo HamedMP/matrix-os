@@ -110,7 +110,7 @@ describe("SessionAccessControl", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("keeps legacy standalone management read-only for new grants while preserving revocation", async () => {
+  it("keeps legacy standalone management read-only for new grants while preserving AI maintenance and revocation", async () => {
     const currentScope = { ...scope, revision: "3" };
     const directGrant = {
       id: "20000000-0000-4000-8000-000000000001", scopeId: scope.id,
@@ -119,8 +119,13 @@ describe("SessionAccessControl", () => {
       createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
     };
     const collaborationApi = api();
-    collaborationApi.get.mockImplementation(async (path: string) => path.endsWith("/grants")
-      ? [directGrant] : path.endsWith("/members") ? { members } : currentScope);
+    collaborationApi.get.mockImplementation(async (path: string) => path.endsWith("/execution-policy/options")
+      ? { organizationAiSubmission: "members", policy: null, options: [{
+        source: { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" },
+        sourceLabel: "Owner Claude account", sourceKind: "owner_account", available: true,
+        modelIds: ["claude-sonnet-5"], defaultModelId: "claude-sonnet-5",
+      }] }
+      : path.endsWith("/grants") ? [directGrant] : path.endsWith("/members") ? { members } : currentScope);
     render(<SessionAccessControl api={collaborationApi} scope={scope} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
@@ -128,7 +133,8 @@ describe("SessionAccessControl", () => {
     expect(await screen.findByText("Existing live access")).toBeVisible();
     expect(screen.queryByLabelText("Share with")).toBeNull();
     expect(screen.queryByRole("button", { name: "Grant access" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Editor AI" })).toBeNull();
+    expect(await screen.findByRole("region", { name: "Editor AI" })).toBeVisible();
+    expect(screen.getByLabelText("Owner AI source")).toHaveValue(JSON.stringify(["owner_anthropic", "claude_owner"]));
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
     await waitFor(() => expect(collaborationApi.delete).toHaveBeenCalledWith(

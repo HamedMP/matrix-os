@@ -19,17 +19,18 @@ const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 const MAX_LOADED_ORGANIZATION_MEMBERS = 2_000;
 const buttonClass = "inline-flex h-7 items-center justify-center rounded-lg border px-2.5 text-xs font-medium transition-colors hover:enabled:bg-[var(--bg-hover)] disabled:opacity-50";
 const roleTriggerClass = "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50";
-const roleMenuClass = "z-[100] min-w-[188px] rounded-[10px] border p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)]";
+const roleMenuClass = "min-w-[188px] rounded-[10px] border p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)]";
 const roleItemClass = "relative flex cursor-default select-none items-start gap-2 rounded-md px-2 py-1.5 text-xs outline-none data-[disabled]:opacity-40 data-[highlighted]:bg-[var(--bg-hover)]";
 
 function editorLabel(preset: CollaborationPreset): "Editor" | "Viewer" {
   return preset === "contributor" ? "Editor" : "Viewer";
 }
 
-function AccessRoleMenu({ ariaLabel, value, disabled, allowRestricted = false, onSelect, onRemove }: {
+function AccessRoleMenu({ ariaLabel, value, disabled, popoverZIndex, allowRestricted = false, onSelect, onRemove }: {
   ariaLabel: string;
   value: CollaborationPreset | "restricted";
   disabled: boolean;
+  popoverZIndex?: number;
   allowRestricted?: boolean;
   onSelect: (value: CollaborationPreset | "restricted") => void;
   onRemove?: () => void;
@@ -42,7 +43,8 @@ function AccessRoleMenu({ ariaLabel, value, disabled, allowRestricted = false, o
       </button>
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="end" sideOffset={4} className={roleMenuClass}
-      style={{ background: "var(--bg-overlay, var(--popover, #fffefc))", color: "var(--text-primary)", borderColor: "var(--border-default)" }}>
+      style={{ background: "var(--bg-overlay, var(--popover, #fffefc))", color: "var(--text-primary)",
+        borderColor: "var(--border-default)", ...(popoverZIndex === undefined ? {} : { zIndex: popoverZIndex }) }}>
       <RoleMenuItem label="Editor" description="Change files and request AI" selected={value === "contributor"}
         onSelect={() => onSelect("contributor")} />
       <RoleMenuItem label="Viewer" description="View project activity only" selected={value === "viewer"}
@@ -105,10 +107,11 @@ function privatePresentation(scope: CollaborationScope, grants: CollaborationGra
   });
 }
 
-export function ProjectAccessManager({ api, scope, organizationName, onChanged }: {
+export function ProjectAccessManager({ api, scope, organizationName, popoverZIndex, onChanged }: {
   api: CollaborationApi;
   scope: CollaborationScope;
   organizationName?: string | null;
+  popoverZIndex?: number;
   onChanged?: () => Promise<unknown>;
 }) {
   const [access, setAccess] = useState<CollaborationProjectAccessPresentation | null>(null);
@@ -309,6 +312,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
             ariaLabel={`Access for ${person.actor.displayName}`}
             value={directGrant.preset}
             disabled={pending || membersPending}
+            popoverZIndex={popoverZIndex}
             onSelect={(preset) => void mutate(async (current) => {
               if (preset === "restricted") return;
               if (!api.patch) throw new Error("Access editing unavailable");
@@ -362,7 +366,7 @@ export function ProjectAccessManager({ api, scope, organizationName, onChanged }
           <span className="block text-[10px] leading-4" style={{ color: "var(--text-secondary)" }}>Members can find and open it</span>
         </span>
         <AccessRoleMenu ariaLabel="General access" value={access.generalAccess?.preset ?? "restricted"}
-          disabled={pending || membersPending} allowRestricted onSelect={setGeneralAccess} />
+          disabled={pending || membersPending} popoverZIndex={popoverZIndex} allowRestricted onSelect={setGeneralAccess} />
       </div>
     </> : null}
   </section>;

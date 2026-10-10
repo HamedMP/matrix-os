@@ -27,6 +27,7 @@ export function ProjectSharingDialog({
   scope,
   projectName,
   organizationName,
+  popoverZIndex,
   inventory,
   refreshInventory,
   onAccessChanged,
@@ -40,6 +41,7 @@ export function ProjectSharingDialog({
   scope: CollaborationScope;
   projectName: string;
   organizationName?: string;
+  popoverZIndex?: number;
   inventory?: CollaborationProjectInventory;
   refreshInventory: () => Promise<CollaborationProjectInventory>;
   onAccessChanged?: () => Promise<unknown>;
@@ -174,6 +176,7 @@ export function ProjectSharingDialog({
     <div className="min-h-0 flex-1 overflow-y-auto">
       {scope.organizationId ? <ProjectAccessManager api={api} scope={scope}
         organizationName={organizationName}
+        popoverZIndex={popoverZIndex}
         onChanged={refreshAfterAccessChange} /> : null}
 
       {!published ? <section className="border-t px-4 py-3" style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>

@@ -125,7 +125,7 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
     {readiness ? <ReadinessSummary readiness={readiness} /> : null}
-    {allowNewGrants && !projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope}
+    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope}
       onPolicyUpdated={() => setReadinessVersion((version) => version + 1)} /> : null}
     <ScopeAccess api={api} scope={scope} onRefresh={refresh} allowNewGrants={allowNewGrants} />
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>

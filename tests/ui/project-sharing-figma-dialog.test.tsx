@@ -112,7 +112,7 @@ describe("Figma-aligned project access dialog", () => {
       delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" popoverZIndex={11_000} />);
 
     expect(await screen.findByText("Alex Rivera (you)")).toBeVisible();
     expect(screen.getByText("Created this · lives on Alex Rivera’s computer")).toBeVisible();
@@ -120,10 +120,11 @@ describe("Figma-aligned project access dialog", () => {
     expect(screen.getByLabelText("Acme Research organization")).toHaveTextContent("A");
     const role = screen.getByRole("button", { name: "Access for Maya Chen: Viewer" });
     fireEvent.pointerDown(role, { button: 0, ctrlKey: false });
-    expect(await screen.findByRole("menuitem", { name: /Editor Change files and request AI/ })).toBeVisible();
+    const editorItem = await screen.findByRole("menuitem", { name: /Editor Change files and request AI/ });
+    expect(editorItem.closest('[role="menu"]')).toHaveStyle({ zIndex: "11000" });
     expect(screen.getByRole("menuitem", { name: /Viewer View project activity only/ })).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "Remove access" })).toBeVisible();
-    fireEvent.click(screen.getByRole("menuitem", { name: /Editor Change files and request AI/ }));
+    fireEvent.click(editorItem);
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scope.id}/grants/40000000-0000-4000-8000-000000000611`,
       expect.objectContaining({ expectedRevision: "7", expectedGrantRevision: "2", preset: "contributor" }),
