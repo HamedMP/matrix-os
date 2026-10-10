@@ -79,13 +79,11 @@ describe("Desktop navigation header", () => {
     expect(desktopTab.textContent).toBe("");
     expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
-    expect(screen.getByRole("group", { name: "Workspace mode" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Web Desktop" }).getAttribute("aria-pressed")).toBe("true");
-
-    fireEvent.click(screen.getByRole("button", { name: "Web Canvas" }));
-
+    expect(screen.queryByRole("group", { name: "Workspace mode" })).toBeNull();
+    fireEvent.pointerDown(screen.getByRole("tab", { name: "Desktop" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitemradio", { name: "Canvas view" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Canvas view" }));
     expect(useNativeDesktopMode.getState().mode).toBe("canvas");
-    expect(screen.getByRole("button", { name: "Web Canvas" }).getAttribute("aria-pressed")).toBe("true");
     await waitFor(() => {
       expect(window.operator.invoke).toHaveBeenCalledWith("state:set", {
         key: "desktopShell",

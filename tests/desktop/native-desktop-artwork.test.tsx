@@ -45,6 +45,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("Electron Desktop selected artwork", () => {
+  it.each(["desktop", "canvas"])("uses the new transparent %s presentation artwork", mode => {
+    expect(bundledDesktopIconForPath(`__os-view-${mode}__`)).toContain(`/system-app-icons/v3/${mode}.png`);
+  });
   it.each([['notes', 'Notes'], ['whiteboard', 'Whiteboard']])("updates the maximized %s global header artwork as owner selection arrives and changes without reopening", async (slug, name) => {
     useConnection.setState({ platformHost: "https://runtime.example.com", runtimeSlot: "secondary" });
     seedDesktopApps([]);

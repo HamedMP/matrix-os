@@ -45,21 +45,17 @@ describe("Desktop mode controls", () => {
       button.getAttribute("aria-label") ?? button.textContent
     ));
     expect(labels).toEqual([
-      "Web Desktop",
-      "Web Canvas",
       "Search",
-      "Support",
-      "Join Discord",
+      "Inbox",
+      "Help",
       "Main computer",
-      "Getting started — 0 of 5",
       "Update Matrix OS to 1.2.3",
       "Open account menu",
     ]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Join Discord" }));
-    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
-      url: "https://discord.gg/WHbvTG33w",
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(useUi.getState().rendererOverlayCount).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Join Discord" }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
 
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
     const avatar = screen.getByRole("button", { name: "Open account menu" }).querySelector("span");

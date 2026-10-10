@@ -1,77 +1,34 @@
+import { useCallback } from "react";
+import { DesktopTopBarActions, DesktopActivityInbox } from "@matrix-os/ui";
 import AccountMenu from "../mission-control/AccountMenu";
 import RuntimeComputerMenu from "../runtime/RuntimeComputerMenu";
-import DesktopDiscordButton from "../support/DesktopDiscordButton";
-import DesktopSupportButton from "../support/DesktopSupportButton";
 import DesktopUpdateButton from "../updates/DesktopUpdateButton";
 import GettingStartedPopover from "../onboarding/GettingStartedPopover";
-import OrganizationSwitcher from "../organization/OrganizationSwitcher";
-import { LayoutGrid, Monitor, Search } from "../../lib/hugeicons";
+import { openDesktopSupport } from "../support/DesktopSupportWidget";
+import discordIconUrl from "../../../../../../shell/public/system-app-icons/v3/discord.svg";
+import { invoke } from "../../lib/operator";
+import { openCodingAgentThread } from "../../lib/project-chat";
+import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import { useNativeDesktopMode, type NativeDesktopMode } from "../../stores/native-desktop-mode";
 
-const MODES: Array<{
-  id: NativeDesktopMode;
-  label: string;
-  icon: typeof Monitor;
-}> = [
-  { id: "desktop", label: "Web Desktop", icon: Monitor },
-  { id: "canvas", label: "Web Canvas", icon: LayoutGrid },
-];
+const menuOverlay = {
+  acquire: () => useUi.getState().acquireRendererOverlay(),
+  release: () => useUi.getState().releaseRendererOverlay(),
+};
 
 export default function DesktopModeControls() {
   const setPaletteOpen = useUi((state) => state.setPaletteOpen);
-  const mode = useNativeDesktopMode((state) => state.mode);
-  const setMode = useNativeDesktopMode((state) => state.setMode);
-  return (
-    <div className="no-drag ml-auto flex h-full shrink-0 items-center gap-2 border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
-      <div
-        role="group"
-        aria-label="Workspace mode"
-        className="flex h-7 shrink-0 items-center overflow-hidden rounded-md border p-0.5"
-        style={{ borderColor: "var(--border-subtle)", background: "var(--bg-sunken)" }}
-      >
-        {MODES.map((item) => {
-          const selected = mode === item.id;
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              aria-label={item.label}
-              aria-pressed={selected}
-              title={item.label}
-              className="flex size-6 shrink-0 items-center justify-center rounded outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              style={{
-                background: selected ? "var(--bg-surface)" : "transparent",
-                color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
-                boxShadow: selected ? "var(--shadow-1)" : "none",
-              }}
-              onClick={() => setMode(item.id)}
-            >
-              <Icon aria-hidden="true" size={14} />
-            </button>
-          );
-        })}
-      </div>
-      <OrganizationSwitcher />
-      <button
-        type="button"
-        aria-label="Search"
-        title="Search (Cmd+K)"
-        className="flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
-        style={{ color: "var(--text-secondary)" }}
-        onClick={() => setPaletteOpen(true)}
-      >
-        <Search aria-hidden="true" size={16} />
-      </button>
-      <DesktopSupportButton />
-      <DesktopDiscordButton />
-      <div className="relative w-[156px]">
-        <RuntimeComputerMenu collapsed={false} />
-      </div>
-      <GettingStartedPopover />
-      <DesktopUpdateButton />
-      <AccountMenu collapsed compact />
-    </div>
-  );
+  const generation = useConnection(state => state.authGeneration);
+  const runtimeSlot = useConnection(state => state.runtimeSlot);
+  const loadActivity = useCallback(() => {
+    // Capture the exact authenticated computer generation used by this request.
+    if (useConnection.getState().authGeneration !== generation || useConnection.getState().runtimeSlot !== runtimeSlot) return Promise.reject(new Error("Runtime changed"));
+    return invoke("runtime:get-summary", {});
+  }, [generation, runtimeSlot]);
+  return <div className="no-drag ml-auto flex h-full shrink-0 items-center border-l pl-3" style={{ borderColor: "var(--border-subtle)" }}>
+    <DesktopTopBarActions onSearch={() => setPaletteOpen(true)}
+      inbox={<DesktopActivityInbox overlay={menuOverlay} scope={`${generation}:${runtimeSlot}`} load={loadActivity} onOpenTask={id => { void openCodingAgentThread(id); }} />}
+      help={<GettingStartedPopover helpMenu={{ onSupport: () => { void openDesktopSupport(); }, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${discordIconUrl}) center/contain no-repeat` }} /> }} />}
+      computer={<RuntimeComputerMenu collapsed={false} />} update={<DesktopUpdateButton />} account={<AccountMenu collapsed compact />} />
+  </div>;
 }

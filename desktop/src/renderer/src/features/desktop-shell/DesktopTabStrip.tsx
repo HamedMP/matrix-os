@@ -1,9 +1,17 @@
-import { Monitor, PanelLeft } from "@renderer/lib/hugeicons";
+import { useUi } from "../../stores/ui";
+import { DesktopViewMenu } from "@matrix-os/ui";
+import { useNativeDesktopMode } from "../../stores/native-desktop-mode";
+import { PanelLeft } from "@renderer/lib/hugeicons";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import DesktopTab from "./DesktopTab";
 import DesktopTabGroup from "./DesktopTabGroup";
 import SurfaceIcon from "./SurfaceIcon";
+
+const menuOverlay = {
+  acquire: () => useUi.getState().acquireRendererOverlay(),
+  release: () => useUi.getState().releaseRendererOverlay(),
+};
 
 export default function DesktopTabStrip({
   tabs,
@@ -28,6 +36,8 @@ export default function DesktopTabStrip({
   onToggleSidebar: () => void;
   sidebarOpen: boolean;
 }) {
+  const mode = useNativeDesktopMode(state => state.mode);
+  const setMode = useNativeDesktopMode(state => state.setMode);
   const tabbed = tabs.filter((tab) => surfaces[tab.id]?.mode === "tab");
   return (
     <DesktopTabGroup>
@@ -38,13 +48,7 @@ export default function DesktopTabStrip({
         selected={sidebarOpen}
         onClick={onToggleSidebar}
       />
-      <DesktopTab
-        mode="iconOnly"
-        label="Desktop"
-        icon={<Monitor />}
-        selected={workspaceView === "desktop"}
-        onClick={onShowDesktop}
-      />
+      <DesktopViewMenu overlay={menuOverlay} tab mode={mode} selected={workspaceView === "desktop"} onShowDesktop={onShowDesktop} onModeChange={setMode} />
       {tabbed.map((tab) => {
         const active = workspaceView === "tabs" && tab.id === activeTabId;
         return (

@@ -10,8 +10,8 @@ import icon5 from "../../../../../../shell/public/system-app-icons/v2/plugins.pn
 import icon6 from "../../../../../../shell/public/system-app-icons/v2/browser.png";
 import icon7 from "../../../../../../shell/public/system-app-icons/v2/notes.png";
 import icon8 from "../../../../../../shell/public/system-app-icons/v2/whiteboard.png";
-import icon9 from "../../../../../../shell/public/system-app-icons/v2/canvas.png";
-import icon10 from "../../../../../../shell/public/system-app-icons/v2/desktop.png";
+import icon9 from "../../../../../../shell/public/system-app-icons/v3/canvas.png";
+import icon10 from "../../../../../../shell/public/system-app-icons/v3/desktop.png";
 import icon11 from "../../../../../../shell/public/system-app-icons/v2/create-app.png";
 
 const icons: Readonly<Record<string,string>> = {
