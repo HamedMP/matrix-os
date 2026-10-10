@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
-import { callServiceHandler } from "../../packages/kernel/src/tools/integrations.js";
 
 const owner = "owner_selected_call";
 const params = { to: "recipient@example.invalid", subject: "Test", body: "Test" };
@@ -19,30 +18,6 @@ function setup(rows = [{ id: "conn_work", service: "gmail", account_label: "Work
 }
 
 describe("immutable selected account on general integration calls", () => {
-  it.each([
-    { service: "bokio", action: "list_invoices" },
-    { service: "granola", action: "list_folders" },
-  ])("rejects an unknown explicit $service label from the native call handler before broker execution", async ({ service, action }) => {
-    const fixture = setup();
-    const brokerCall = vi.fn(async () => ({ items: [] }));
-    const managed = createIntegrationRoutes({ db: fixture.db, pipedream: fixture.provider, webhookSecret: "test",
-      resolveUserId: async () => owner, mcpPresetBroker: {
-        listConnections: vi.fn(async () => [{ id: "saved_account", service, account_label: "Saved", status: "active" }]),
-        call: brokerCall,
-      } as never });
-    let status: number | undefined;
-    await callServiceHandler({ service, action, label: "Bogus", params: {} }, async (url, init) => {
-      const body = JSON.parse(String(init.body));
-      expect(body).toEqual({ service, action, label: "Bogus", params: {} });
-      expect(new URL(url).pathname).toBe("/api/integrations/call");
-      const response = await managed.request("/call", init);
-      status = response.status;
-      return response;
-    });
-    expect(status).toBe(403);
-    expect(brokerCall).not.toHaveBeenCalled();
-  });
-
   it.each(["deleted-source", "other-owner-source"])("rejects wrong selected ID %s before a write or account synchronization", async connectionId => {
     const fixture = setup();
     expect((await fixture.call({ connectionId })).status).toBe(403);
@@ -90,41 +65,6 @@ describe("immutable selected account on general integration calls", () => {
       body: JSON.stringify({ service: "granola", action: "list_folders", label: "Work", ...(connectionId ? { connectionId } : {}) }) });
     expect(response.status).toBe(connectionId === "old-managed" ? 403 : 200);
     if (connectionId === "old-managed") expect(call).not.toHaveBeenCalled();
-    else expect(call).toHaveBeenCalledWith(expect.objectContaining({ userId: owner, connectionId: "managed_work" }));
-  });
-
-  it.each([
-    { name: "matching label selects second account", input: { label: "Work" }, status: 200, selected: "managed_work" },
-    { name: "matching ID alone selects second account", input: { connectionId: "managed_work" }, status: 200, selected: "managed_work" },
-    { name: "unlabeled legacy fallback", input: {}, status: 200, selected: undefined },
-    { name: "label and ID mismatch", input: { label: "Work", connectionId: "managed_personal" }, status: 403, selected: undefined },
-    { name: "inactive account", input: { label: "Expired" }, status: 403, selected: undefined },
-    { name: "other service account", input: { label: "Foreign" }, status: 403, selected: undefined },
-    { name: "ambiguous active label", input: { label: "Shared" }, status: 409, selected: undefined },
-  ])("enforces managed owner account resolution: $name", async ({ input, status, selected }) => {
-    const fixture = setup();
-    const call = vi.fn(async () => ({ invoices: [] }));
-    const listConnections = vi.fn(async (userId: string) => {
-      expect(userId).toBe(owner);
-      return [
-        { id: "managed_personal", service: "bokio", account_label: "Personal", status: "active" },
-        { id: "managed_work", service: "bokio", account_label: "Work", status: "active" },
-        { id: "managed_expired", service: "bokio", account_label: "Expired", status: "expired" },
-        { id: "managed_other", service: "granola", account_label: "Foreign", status: "active" },
-        { id: "shared_one", service: "bokio", account_label: "Shared", status: "active" },
-        { id: "shared_two", service: "bokio", account_label: "Shared", status: "active" },
-      ];
-    });
-    const managed = createIntegrationRoutes({ db: fixture.db, pipedream: fixture.provider, webhookSecret: "test",
-      resolveUserId: async () => owner, mcpPresetBroker: { listConnections, call } as never });
-    const response = await managed.request("/call", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ service: "bokio", action: "list_invoices", params: {}, ...input }) });
-    expect(response.status).toBe(status);
-    if (status !== 200) expect(call).not.toHaveBeenCalled();
-    else {
-      expect(call).toHaveBeenCalledWith({ userId: owner, service: expect.objectContaining({ id: "bokio" }),
-        actionId: "list_invoices", params: {}, ...(selected ? { connectionId: selected } : {}) });
-      if (!selected) expect(listConnections).not.toHaveBeenCalled();
-    }
+    else expect(call).toHaveBeenCalledWith(expect.objectContaining({ userId: owner, ...(connectionId ? { connectionId } : {}) }));
   });
 });

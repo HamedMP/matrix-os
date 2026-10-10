@@ -67,6 +67,19 @@ boundary, body limits and default preview denial. The new route handler is extra
 a focused module rather than adding behavior to the large startup composition.
 Gateway approval projection is likewise extracted from the large Claude adapter.
 
+## Published provider compatibility
+
+The latest Codex provider gate qualifies published 0.162.1 against its tagged
+exec source and package-generated experimental app-server schema. Both inputs
+are byte-identical to the reviewed 0.162.0 fixtures; all eleven consumed request
+and notification digests are unchanged. Reusing those fixtures preserves their
+0.162.0 provenance and the earlier payload-change assertions.
+
+Both exec and app-server manifests advance together. Historical versions remain
+verified; unknown newer versions still fail closed. The installer pin, parsers,
+fixtures, strict checker and workflow stay unchanged. Real Linux and macOS
+published-package CI checks must pass for the current commit before merge.
+
 ## Validation and delivery
 
 Owner tests cover native approve/decline/cancel, exact one-use receipts, replay,
