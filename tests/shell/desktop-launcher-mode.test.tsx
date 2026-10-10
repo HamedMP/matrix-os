@@ -609,6 +609,27 @@ describe("Desktop launcher dock button by mode", () => {
     )).toBe(false);
   });
 
+  it.each(["terminal", "chat", "activity-monitor"])("launches moved owner %s from the real Desktop catalog without replacing the shell tool", async slug => {
+    const owner = { name: `Owner ${slug}`, slug, path: `/files/apps/tools/my-${slug}/index.html` };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return jsonResponse([owner]);
+      if (url.includes("/api/shell/bootstrap")) return jsonResponse({ layout: { windows: [] }, apps: [owner], modules: [] });
+      return jsonResponse({});
+    }));
+    resetShellMode("desktop", true);
+    renderDesktop();
+    await waitFor(() => expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: `matrix-app:${slug}` }),
+    ])));
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    const launcher = await screen.findByTestId("launcher-destinations");
+    fireEvent.click(within(launcher).getByRole("button", { name: owner.name }));
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter(win => win.path === `matrix-app:${slug}`)).toHaveLength(1));
+    expect(windowManagerStore.getState().windows.find(win => win.path === `matrix-app:${slug}`)?.title).toBe(owner.name);
+  });
+
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();

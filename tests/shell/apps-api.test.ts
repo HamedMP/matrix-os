@@ -1,3 +1,6 @@
+import { appIdentityFromPath, extractSlug } from "../../shell/src/components/app-viewer-helpers";
+import { normalizeBuiltInAppPath } from "../../shell/src/lib/builtin-apps";
+import { mobileAppsFromBootstrap } from "../../shell/src/components/mobile/mobile-app";
 import { catalogAppLaunchPath, createCatalogAppPathResolver } from "../../shell/src/lib/app-catalog-launch";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
@@ -183,6 +186,28 @@ it("retains the physical alias needed to reconcile saved shortcuts after current
     for (const catalog of [current, cached]) {
       expect(createCatalogAppPathResolver(catalog)("apps/finance/ledger/index.html")).toBe("apps/folio/index.html");
       expect(catalog[0]?.path).toBe("apps/folio/index.html");
+    }
+  } finally { fetch.mockRestore(); }
+});
+
+
+it.each(["terminal", "chat", "activity-monitor", "workspace"])("keeps owner manifest %s distinct from legacy shell aliases through current and cached catalogs", async slug => {
+  const ownerPath = `apps/tools/my-${slug}/index.html`;
+  const raw = [{ name: `Owner ${slug}`, slug, path: `/files/${ownerPath}` }];
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(raw));
+  try {
+    const identity = `matrix-app:${slug}`;
+    const current = await listApps();
+    const cached = hydrateAppIconUrls(raw, undefined, path => path)!;
+    for (const catalog of [current, cached, hydrateAppIconUrls(current, undefined, path => path)!]) {
+      expect(catalog[0]).toMatchObject({ path: identity, ownerPath });
+      expect(normalizeBuiltInAppPath(catalog[0]!.path)).toBe(identity);
+      expect(extractSlug(identity)).toBe(slug);
+      expect(appIdentityFromPath(identity)).toBe(slug);
+      expect(createCatalogAppPathResolver(catalog)(ownerPath)).toBe(identity);
+      expect(mobileAppsFromBootstrap(catalog)[0]?.path).toBe(identity);
+      // Existing explicit shell aliases stay distinct from the owner's runtime.
+      expect(normalizeBuiltInAppPath(`apps/${slug}/index.html`)).toBe(`__${slug}__`);
     }
   } finally { fetch.mockRestore(); }
 });

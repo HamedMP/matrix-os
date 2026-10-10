@@ -287,3 +287,28 @@ for (const surface of ["canvas", "desktop"] as const) {
     await waitFor(() => expect(screen.getByTitle(existing.path).getAttribute("srcdoc")).toContain("window.MatrixOS"));
   });
 }
+
+
+for (const surface of ["canvas", "desktop"] as const) {
+  it.each(["terminal", "chat", "activity-monitor"])(`launches owner %s through its authenticated runtime without shell alias collision on Web ${surface}`, async slug => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = String(input); calls.push(url);
+      return url.endsWith("/api/apps") ? Response.json([{ slug, name: `Owner ${slug}`, path: `/files/apps/tools/my-${slug}/index.html` }])
+        : url.endsWith("/session") ? Response.json({ expiresAt: Date.now() + 60_000 })
+        : new Response("<html><head></head><body>Owner runtime</body></html>");
+    }));
+    const [app] = await listApps();
+    const frame = await mountedGalleryFrame(surface);
+    await requestOpen(frame, `matrix-app:${slug}`);
+    const existing = useWindowManager.getState().windows.find(win => win.path === `matrix-app:${slug}`)!;
+    expect(existing).toMatchObject({ title: `Owner ${slug}` });
+    act(() => useWindowManager.getState().openWindow(app!.name, app!.path, 0));
+    expect(useWindowManager.getState().windows).toHaveLength(2);
+    expect(useWindowManager.getState().windows.some(win => win.path.startsWith("__"))).toBe(false);
+    render(<CanvasWindow win={existing} />);
+    await waitFor(() => expect(screen.getByTitle(existing.path).getAttribute("srcdoc")).toContain("window.MatrixOS"));
+    expect(calls.some(url => url.endsWith(`/apps/${slug}/session`))).toBe(true);
+    expect(calls.some(url => url.endsWith(`/apps/${slug}/`))).toBe(true);
+  });
+}

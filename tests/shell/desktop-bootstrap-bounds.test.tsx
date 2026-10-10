@@ -253,3 +253,19 @@ it("keeps a concurrent client pin when one Unpin removes every saved manifest al
     expect(useDesktopConfigStore.getState().desktopIcons).toEqual([placement]);
   } finally { act(() => useDesktopConfigStore.setState(previous)); }
 });
+
+
+for (const savedIdentity of [false, true]) {
+  it.each(["terminal", "chat", "activity-monitor"])(`restores owner %s without a shell tool collision (saved identity=${savedIdentity})`, async slug => {
+    const physical = `apps/tools/my-${slug}/index.html`;
+    const identity = `matrix-app:${slug}`;
+    const bootstrap = bootstrapWithWindows(1);
+    bootstrap.layout.windows[0] = { ...bootstrap.layout.windows[0]!, path: savedIdentity ? identity : physical, title: `Owner ${slug}`, x: 321 };
+    bootstrap.apps = [{ name: `Owner ${slug}`, path: `/files/${savedIdentity ? `apps/second-move/${slug}/index.html` : physical}`, slug }] as typeof bootstrap.apps;
+    serveBootstrap(bootstrap);
+    const { result } = renderHook(() => useDesktopBootstrap({ entryKey: `reserved-${slug}-${savedIdentity}`, openWindow: vi.fn() }));
+    await waitFor(() => expect(result.current.settled).toBe(true));
+    expect(useWindowManager.getState().windows).toHaveLength(1);
+    expect(useWindowManager.getState().windows[0]).toMatchObject({ path: identity, title: `Owner ${slug}`, x: 321 });
+  });
+}

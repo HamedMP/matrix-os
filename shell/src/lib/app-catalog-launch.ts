@@ -1,4 +1,5 @@
 import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { normalizeBuiltInAppPath } from "./builtin-apps";
 import { extractSlug } from "@/components/app-viewer-helpers";
 
 type CatalogApp = { path?: unknown; file?: unknown; slug?: unknown; ownerPath?: unknown };
@@ -6,9 +7,14 @@ const SAFE_MANIFEST_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Physical owner folders are catalog references, not runtime/grant identities. */
 export function catalogAppLaunchPath(app: CatalogApp): string | null {
-  const path = canonicalOsViewCatalogPath(app);
+  const path = canonicalOsViewCatalogPath(app) ?? canonicalOsViewCatalogPath({ path: app.ownerPath });
   if (!path) return null;
   const slug = typeof app.slug === "string" && SAFE_MANIFEST_SLUG.test(app.slug) ? app.slug : null;
+  // Catalog-backed owners use explicit runtime identity when the canonical
+  // file spelling would be intercepted by a legacy shell-tool alias.
+  if (slug && normalizeBuiltInAppPath(`apps/${slug}/index.html`) !== `apps/${slug}/index.html`) {
+    return `matrix-app:${slug}`;
+  }
   // Preserve legacy files and the explicitly supported bundled game migrations.
   return !slug || !path.startsWith("apps/") || extractSlug(path) === slug
     ? path : `apps/${slug}/index.html`;
