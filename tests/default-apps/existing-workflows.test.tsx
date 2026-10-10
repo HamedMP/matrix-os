@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ExistingWorkflows from "../../home/app-templates/connected-starter/src/ExistingWorkflows";
+import Finance from "../../home/app-templates/connected-starter/src/views/Finance";
 import { invoiceQueue, renewalQueue, receiptReview, contactReview, meetingActions, projectRisks, dailyEvents, tripChecks } from "../../home/app-templates/connected-starter/src/existing-workflow-model";
 import type { Definition, OwnerRecord } from "../../home/app-templates/connected-starter/src/types";
 import catalog from "../../home/system/app-gallery.json";
@@ -12,6 +13,16 @@ const day = "2026-10-07";
 function record(id: string, fields: OwnerRecord["fields"]): OwnerRecord { return { id, rowId: id, basePayload: { revision: 2 }, fields, accounts: [], sources: [], manualFields: ["title"], scope: "personal", updatedAt: "2026-10-06" }; }
 function props(id: string, records: OwnerRecord[]) { return { app: catalog.apps.find(app => app.id === id) as Definition, records, onEdit: vi.fn(), onEvidence: vi.fn(), onAdd: vi.fn(), onSave: vi.fn(async () => { }) }; }
 describe("grounded existing workflows", () => {
+    it("shows a partial-only cashflow receivable and removes it after full payment", () => {
+        const partial = record("partial", { status: "Partial", amount: 100, "paid-amount": 40, currency: "EUR" });
+        const view = render(createElement(Finance, props("cashflow", [partial])));
+        const section = screen.getByRole("heading", { name: "Open receivables" }).closest("section")!;
+        expect(within(section).getByText("Partial")).toBeTruthy();
+        expect(within(section).getByText(/60[.,]00/)).toBeTruthy();
+        expect(within(section).queryByText(/No open invoices/)).toBeNull();
+        view.rerender(createElement(Finance, props("cashflow", [{ ...partial, fields: { ...partial.fields, "paid-amount": 100 } }])));
+        expect(within(section).getByText(/No open invoices/)).toBeTruthy();
+    });
     it("calculates outstanding invoices without chasing disputed, settled or unknown due dates", () => {
         const rows = invoiceQueue([record("partial", { amount: 100, "paid-amount": 40, currency: "EUR", status: "Partial", "due-date": "2026-10-01" }), record("dispute", { amount: 200, currency: "USD", status: "Disputed", "due-date": "2026-09-01" }), record("external", { amount: 100, status: "Externally paid" }), record("unknown", { amount: 40, currency: "EUR", status: "Sent", date: "2026-09-01" })], day);
         expect(rows.find(r => r.record.id === "partial")).toMatchObject({ outstanding: 60, daysLate: 6, lane: "Overdue" });

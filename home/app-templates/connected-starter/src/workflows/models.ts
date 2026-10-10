@@ -106,7 +106,7 @@ export function mealGroceries(records: OwnerRecord[]) {
 export function interviewPacket(record: OwnerRecord) {
   const f = record.fields, confirmed = f.certainty === "Confirmed";
   let zoneValid = false;
-  try { if (text(f.timezone, 100)) { new Intl.DateTimeFormat("en", { timeZone: String(f.timezone) }).format(); zoneValid = true; } } catch (error) { if (!(error instanceof RangeError)) throw error; }
+  try { if (text(f.timezone, 100)) { new Intl.DateTimeFormat("en", { timeZone: String(f.timezone) }).format(); zoneValid = true; } } catch (error) { console.warn("Interview timezone failed validation", error instanceof RangeError ? "RangeError" : "UnknownError"); if (!(error instanceof RangeError)) throw error; }
   const calendarReady = confirmed && f.stage === "Interview" && validDate(f["interview-date"]) && /^([01]\d|2[0-3]):[0-5]\d$/.test(text(f["interview-time"], 10)) && zoneValid;
   const packet = f["interview-packet"];
   if (typeof packet === "string" && packet.length <= 12000) return { confirmed, calendarReady, text: packet };

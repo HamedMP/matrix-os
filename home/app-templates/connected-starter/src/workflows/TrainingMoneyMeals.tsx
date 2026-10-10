@@ -31,8 +31,8 @@ export function Runway(props: ViewProps) {
   const result = useMemo(() => {
     try { return { plan: planRunway(props.records, { today, payday }), error: "" }; }
     catch (error) {
-      if (error instanceof RunwayDateError) return { plan: [], error: "Choose valid dates with payday on or after today." };
-      console.error("[runway] cash plan calculation failed", error instanceof Error ? error : new Error("Unknown calculation failure"));
+      if (error instanceof RunwayDateError) { console.warn("Runway plan failed validation", "RunwayDateError"); return { plan: [], error: "Choose valid dates with payday on or after today." }; }
+      console.error("[runway] cash plan calculation failed", error instanceof Error ? "Error" : "UnknownError");
       return { plan: [], error: "Your cash plan could not be calculated. Try again." };
     }
   }, [props.records, today, payday]);

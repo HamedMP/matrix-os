@@ -45,6 +45,14 @@ describe("completed-game local chess analysis", () => {
     expect(result.positions.every(position => isLegalVariation(position.before.fen, position.before.variation))).toBe(true);
     expect(result.engine).toContain("Local");
   });
+  it("logs invalid variations without exposing owner input", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(isLegalVariation("PRIVATE_FEN", [])).toBe(false);
+    expect(isLegalVariation(completedGame(mate, "Completed").positions[0].before, ["PRIVATE_MOVE"])).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith("Chess variation failed legal validation", "Error");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE_");
+  });
 });
 
 // Exercise the real production transform: dev/test worker constructors can hide
@@ -58,6 +66,7 @@ afterEach(async () => {
     testDom.window.close(); testDom = undefined;
   }
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 describe("installed chess worker loading", () => {
   it("bundles the engine into a local Blob, completes actual bounded search, and terminates it", async () => {
@@ -111,11 +120,14 @@ describe("installed chess worker loading", () => {
     const Component = (context as typeof context & { BuiltChessCoach: React.ComponentType<ViewProps> }).BuiltChessCoach;
     const onSave = vi.fn(async (_record: ViewProps["records"][number]) => undefined);
     const pgn = "1. e4 1-0";
-    render(React.createElement(Component, {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const props: ViewProps = {
       app: { id: "chess-coach", fields: [] } as unknown as ViewProps["app"],
-      records: [{ id: "finished", scope: "personal", fields: { title: "Finished", pgn, status: "Completed" }, sources: [], accounts: [], manualFields: [], updatedAt: "2026-10-07" }],
+      records: [{ id: "finished", scope: "personal", fields: { title: "Finished", pgn, status: "Completed", analysis: "{PRIVATE_REVIEW" }, sources: [], accounts: [], manualFields: [], updatedAt: "2026-10-07" }],
       onSave, onEdit: vi.fn(), onAdd: vi.fn(), onEvidence: vi.fn(),
-    }));
+    };
+    const view = render(React.createElement(Component, props));
+    expect(warn).toHaveBeenCalledWith("Saved chess review failed validation", "SyntaxError");
     fireEvent.click(screen.getByRole("button", { name: "Analyze completed game" }));
     expect(workers).toHaveLength(1);
     expect(workers[0].terminate).toHaveBeenCalledOnce();
@@ -128,5 +140,9 @@ describe("installed chess worker loading", () => {
     expect(review.positions[0].before.nodes).toBeLessThanOrEqual(20000);
     expect(isLegalVariation(review.positions[0].before.fen, review.positions[0].before.variation)).toBe(true);
     expect(review.sourceSignature).toBeTruthy();
+    view.rerender(React.createElement(Component, { ...props, records: [{ ...props.records[0],
+      fields: { ...props.records[0].fields, pgn: "PRIVATE_INVALID_GAME" } }] }));
+    expect(warn).toHaveBeenCalledWith("Completed chess game failed validation", "Error");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE_");
   });
 });

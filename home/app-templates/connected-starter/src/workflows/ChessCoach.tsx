@@ -23,7 +23,7 @@ function savedAnalysis(record: OwnerRecord): GameAnalysis | null {
   try {
     const value = JSON.parse(record.fields.analysis);
     return value?.sourceSignature === sourceSignature(record.fields.pgn) && validAnalysis(value, record.fields.pgn) ? value : null;
-  } catch (error) { if (!(error instanceof Error)) throw error; return null; }
+  } catch (error) { console.warn("Saved chess review failed validation", error instanceof SyntaxError ? "SyntaxError" : error instanceof Error ? "Error" : "UnknownError"); if (!(error instanceof Error)) throw error; return null; }
 }
 const pieces: Record<string, string> = { wk: "♔", wq: "♕", wr: "♖", wb: "♗", wn: "♘", wp: "♙", bk: "♚", bq: "♛", br: "♜", bb: "♝", bn: "♞", bp: "♟" };
 const pieceNames: Record<string, string> = { k: "king", q: "queen", r: "rook", b: "bishop", n: "knight", p: "pawn" };
@@ -33,7 +33,7 @@ export default function ChessCoach(props: ViewProps) {
   const active = useRef<{ worker: Worker; timer: ReturnType<typeof setTimeout> } | null>(null), saved = useSavedAction(props.onSave);
   const record = props.records.find(item => item.id === selectedId) ?? props.records[0];
   const pgn = typeof record?.fields.pgn === "string" ? record.fields.pgn : "";
-  const parsed = useMemo(() => { if (!record) return { game: null, error: "" }; try { return { game: completedGame(pgn, record.fields.status), error: "" }; } catch (cause) { return { game: null, error: cause instanceof Error && cause.message.length < 200 ? cause.message : "Review a valid completed PGN." }; } }, [record?.id, pgn, record?.fields.status]);
+  const parsed = useMemo(() => { if (!record) return { game: null, error: "" }; try { return { game: completedGame(pgn, record.fields.status), error: "" }; } catch (cause) { console.warn("Completed chess game failed validation", cause instanceof Error ? "Error" : "UnknownError"); return { game: null, error: cause instanceof Error && cause.message.length < 200 ? cause.message : "Review a valid completed PGN." }; } }, [record?.id, pgn, record?.fields.status]);
   function cancel() { if (active.current) { clearTimeout(active.current.timer); active.current.worker.terminate(); active.current = null; } }
   useEffect(() => { cancel(); setBusy(false); setError(""); setPly(0); setReveal(false); setIdea(""); setFeedback(""); return cancel; }, [record?.id, pgn]);
   const currentAnalysis = record && analysis?.id === record.id && analysis.signature === sourceSignature(pgn) ? analysis.value : record ? savedAnalysis(record) : null;

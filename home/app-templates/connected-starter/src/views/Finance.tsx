@@ -28,7 +28,7 @@ function Obligations({
         <span>
           {recurring
             ? "Separate by currency and billing cadence"
-            : "Sent and overdue invoices, separate from payments"}
+            : "Sent, overdue and partial invoices, separate from payments"}
         </span>
       </div>
       {Object.keys(grouped).length ? (
@@ -51,7 +51,7 @@ function Obligations({
         <p className="muted">
           {recurring
             ? "No active subscriptions with a known cost yet."
-            : "No sent or overdue invoices with a known amount yet."}
+            : "No open invoices with a known remaining balance yet."}
         </p>
       )}
       <p className="fine-print">

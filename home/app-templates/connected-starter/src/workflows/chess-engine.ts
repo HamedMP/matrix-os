@@ -84,7 +84,7 @@ function moveOrder(move: Move) { return (move.captured ? value[move.captured] * 
 export function isLegalVariation(fen: string, variation: string[]): boolean {
   if (!Array.isArray(variation) || variation.length > 3) return false;
   try { const chess = new Chess(fen); for (const move of variation) chess.move(move, { strict: true }); return true; }
-  catch (error) { if (!(error instanceof Error)) throw error; return false; }
+  catch (error) { console.warn("Chess variation failed legal validation", error instanceof Error ? "Error" : "UnknownError"); if (!(error instanceof Error)) throw error; return false; }
 }
 
 export interface GameAnalysis { engine: string; result: string; positions: Array<{ position: GamePosition; before: SearchResult; after: SearchResult; loss: number | null }> }

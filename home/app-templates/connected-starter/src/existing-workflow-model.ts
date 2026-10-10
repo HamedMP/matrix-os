@@ -1,4 +1,4 @@
-import { validCurrency, validDate } from "./model";
+import { invoiceOutstandingAmount, validCurrency, validDate } from "./model";
 import type { OwnerRecord } from "./types";
 const LIMIT = 1000;
 export const text = (record: OwnerRecord, key: string) => String(record.fields[key] ?? "").trim();
@@ -7,9 +7,9 @@ const amount = (value: unknown): number | null => typeof value === "number" && N
 const days = (from: string, to: string) => Math.floor((Date.parse(to + "T00:00:00Z") - Date.parse(from + "T00:00:00Z")) / 86400000);
 export function invoiceQueue(records: OwnerRecord[], today: string) {
     return records.slice(0, LIMIT).map(record => {
-        const status = text(record, "status"), total = amount(record.fields.amount), paid = amount(record.fields["paid-amount"]);
+        const status = text(record, "status");
         const due = date(record.fields["due-date"]), currency = validCurrency(record.fields.currency) ? text(record, "currency") : null;
-        const outstanding = ["Paid", "Externally paid"].includes(status) ? 0 : total !== null && (status !== "Partial" || (paid !== null && paid <= total)) ? Math.max(0, total - (status === "Partial" ? paid! : 0)) : null;
+        const outstanding = invoiceOutstandingAmount({ ...record.fields, status });
         const daysLate = due && validDate(today) ? days(due, today) : null;
         const lane = ["Paid", "Externally paid"].includes(status) ? "Settled" : status === "Disputed" ? "On hold" : !["Sent", "Overdue", "Partial"].includes(status) ? "Review status" : outstanding === null || currency === null ? "Review amount" : !due ? "Review dates" : outstanding === 0 ? "Settled" : daysLate !== null && daysLate > 0 ? "Overdue" : "Upcoming";
         return { record, outstanding, currency, due, daysLate, lane };
