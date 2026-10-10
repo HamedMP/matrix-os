@@ -9,7 +9,7 @@ script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 apt-get install -y sudo
 id matrixci >/dev/null 2>&1 || useradd --create-home --shell /bin/bash matrixci
 install -d -o root -g root -m 0755 /usr/local/libexec/matrix-ci
-for script in start-ephemeral.sh dispatch.sh cleanup-host.sh; do
+for script in start-ephemeral.sh dispatch.sh cleanup-host.sh copy-artifact.py; do
   install -o root -g root -m 0755 "$script_dir/$script" "/usr/local/libexec/matrix-ci/$script"
 done
 install -d -o root -g root -m 0755 /etc/ssh/matrix-ci

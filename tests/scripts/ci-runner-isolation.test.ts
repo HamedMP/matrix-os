@@ -125,4 +125,27 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(script).toContain('wait "$pid" || failed=1');
     expect(script).toContain('--maxWorkers=2');
   });
+  it("artifact extraction rejects symlinks, directories, and excess file sizes", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "matrix-artifact-test-"));
+    try {
+      const result = spawnSync("python3", ["-c", `
+import io,tarfile,subprocess,sys
+for kind in ['symlink','directory','oversize','valid']:
+    buf=io.BytesIO()
+    with tarfile.open(fileobj=buf,mode='w') as archive:
+        entry=tarfile.TarInfo('timing.tsv')
+        if kind=='symlink': entry.type=tarfile.SYMTYPE; entry.linkname='/etc/passwd'
+        elif kind=='directory': entry.type=tarfile.DIRTYPE
+        elif kind=='oversize': entry.size=51*1024*1024
+        else: entry.size=4
+        if kind=='valid': archive.addfile(entry,io.BytesIO(b'unit'))
+        elif kind=='oversize': archive.fileobj.write(entry.tobuf())
+        else: archive.addfile(entry)
+    result=subprocess.run([sys.executable,sys.argv[1],sys.argv[2]+'/'+kind,'timing.tsv'],input=buf.getvalue(),capture_output=True)
+    assert (result.returncode==0)==(kind=='valid'),(kind,result.stderr)
+`, resolve(root, "copy-artifact.py"), dir], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(resolve(dir, "valid"), "utf8")).toBe("unit");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });

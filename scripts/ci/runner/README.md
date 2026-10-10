@@ -61,8 +61,9 @@ after one dependency/prerequisite build, awaiting every group. It is a full
 **dedicated-host subset benchmark**, not proof that all required CI checks pass.
 
 Host evidence is under `/var/lib/matrix-ci/results/run.*`: bounded recent logs,
-`timing.tsv`, and unit cold/warm JSON reports. The host copies only fixed
-artifact paths, without following symlinks, with a 50-MB per-file bound. Treat
+`timing.tsv`, and unit cold/warm JSON reports. The host streams only fixed
+artifact names, rejects links/directories, and writes regular files exclusively
+with a 50-MB per-file bound and a 30-second transfer deadline. Treat
 all test output as untrusted data. Do not execute or source copied files.
 Retrieve evidence over the operator SSH connection. Remove old evidence after
 comparison; the host cleanup timer removes results older than seven days.

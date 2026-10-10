@@ -16,6 +16,7 @@ mkdir -p "$state_dir/results"
 exec 9>"$state_dir/benchmark.lock"
 flock -w 1800 9 || { echo 'A benchmark is already running' >&2; exit 75; }
 result_dir=$(mktemp -d "$state_dir/results/run.XXXXXXXX")
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
 container=''
 cleanup() {
   if [[ -n "$container" ]]; then docker rm --force "$container" >/dev/null; fi
@@ -43,9 +44,10 @@ if [[ $status == 0 ]]; then
 fi
 (ulimit -f 20480; docker logs --tail 10000 "$container") >"$result_dir/output.log" 2>&1 || true
 cat "$result_dir/output.log"
-# Copy only bounded, named benchmark evidence, without following symlinks.
+# Stream only bounded, named regular files; never extract container paths/links.
 for file in unit-cold.json unit-warm.json timing.tsv; do
-  (ulimit -f 51200; docker cp "$container:/work/results/$file" "$result_dir/$file") 2>/dev/null || rm -f "$result_dir/$file"
+  timeout --signal=TERM --kill-after=5s 30s docker cp "$container:/work/results/$file" - 2>/dev/null \
+    | python3 "$script_dir/copy-artifact.py" "$result_dir/$file" "$file" 2>/dev/null || true
 done
 printf 'Benchmark exit: %s; host evidence: %s\n' "$status" "$result_dir"
 exit "$status"
