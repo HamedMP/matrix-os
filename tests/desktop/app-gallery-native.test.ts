@@ -68,6 +68,29 @@ describe("Electron Desktop gallery", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("logs malformed installation JSON without owner bytes and makes no request", async () => {
+    const { bridge, fetchFn } = fixture();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(bridge.gatewayFetch(sender, { url: "/api/app-gallery/folio/install", init: { method: "POST", body: '{"owner-only-secret":' } })).rejects.toThrow();
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("[native-app-bridge] invalid installation body", "SyntaxError");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("owner-only-secret");
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each([[Object.assign(new Error("owner-only-secret"), { name: "owner-only-secret" }), "Error"], ["owner-only-secret", "non-error"]])("logs only a coarse parser failure class", async (failure, kind) => {
+    const { bridge, fetchFn } = fixture();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const parse = vi.spyOn(JSON, "parse").mockImplementationOnce(() => { throw failure; });
+    try {
+      await expect(bridge.gatewayFetch(sender, { url: "/api/app-gallery/folio/install", init: { method: "POST", body: "{}" } })).rejects.toThrow();
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith("[native-app-bridge] invalid installation body", kind);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("owner-only-secret");
+    } finally { parse.mockRestore(); warn.mockRestore(); }
+  });
+
   it("checks the actual main-frame sender at gallery and CAS IPC boundaries", async () => {
     const { bridge, fetchFn } = fixture();
     const handle = vi.fn(); bridge.registerIpc({ handle });

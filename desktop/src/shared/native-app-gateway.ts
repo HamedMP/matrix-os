@@ -27,7 +27,7 @@ function emptyJsonBody(body: string): boolean {
     const value: unknown = JSON.parse(body);
     return !!value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0;
   } catch (error) {
-    if (!(error instanceof SyntaxError)) console.warn("[native-app-bridge] invalid installation body");
+    console.warn("[native-app-bridge] invalid installation body", error instanceof SyntaxError ? "SyntaxError" : error instanceof Error ? "Error" : "non-error");
     return false;
   }
 }
