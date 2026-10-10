@@ -30,7 +30,7 @@ const host = vi.hoisted(() => {
     once(name: string, fn: (...args: any[]) => void) { this.events.set(name, fn); }
     on(name: string, fn: (...args: any[]) => void) { this.events.set(name, fn); }
     async loadFile(path: string) { this.url = `file://${path}`; }
-    async loadURL(url: string) { this.url = url; }
+    async loadURL(url: string) { this.url = new URL(url).toString(); }
     isDestroyed() { return false; }
     show() {} focus() {} isMinimized() { return false; }
   }
@@ -142,7 +142,10 @@ describe("actual trusted main diagnostic composition", () => {
     expect(await request("app:get-startup-mode")).toEqual({ mode: "normal" });
     expect(host.ipc.has("chatgpt-plan:status")).toBe(true);
     expect(host.ipc.has("runtime:create-turn")).toBe(true);
-    expect(host.windows[0].url).toBe("https://renderer.invalid");
+    expect(host.windows[0].url).toBe("https://renderer.invalid/");
+    const modeHandler = host.ipc.get("app:get-startup-mode")!;
+    await expect(modeHandler({ ...event(), sender: {} }, {})).rejects.toThrow("invalid request");
+    await expect(modeHandler({ ...event(), senderFrame: {} }, {})).rejects.toThrow("invalid request");
     expect(vi.getTimerCount()).toBeGreaterThan(0);
   });
 });
