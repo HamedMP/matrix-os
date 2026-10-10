@@ -2,10 +2,13 @@ import * as fs from "node:fs/promises";
 import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { registerFileRoutes } from "../../../packages/gateway/src/server/file-routes.js";
 import { readOwnerSoul } from "../../../packages/gateway/src/bots/owner-personality.js";
+import { writeOwnerSoulAtomic } from "../../../packages/gateway/src/bots/owner-personality-write.js";
+import { withOwnerFileMutation } from "../../../packages/gateway/src/owner-file-mutations.js";
 
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -34,6 +37,72 @@ beforeEach(async () => {
   registerFileRoutes(app, { homePath: home });
 });
 afterEach(async () => { vi.restoreAllMocks(); await fs.rm(home, { recursive: true, force: true }); });
+
+it("File API queues same-home SOUL saves while readers retain complete committed identity", async () => {
+  const soul = join(home, "system", "soul.md");
+  await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });
+  const before = await fs.stat(soul);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const pause = new Promise<void>(resolve => { release = resolve; });
+  const stages: string[] = [];
+  stageWrite = async (_path, bytes, write) => {
+    stages.push(bytes.toString("utf8"));
+    if (stages.length === 1) {
+      await write(bytes.subarray(0, 5)); entered(); await pause;
+      await write(bytes.subarray(5));
+    } else await write(bytes);
+  };
+  const first = app.request("/files/system/soul.md", { method: "PUT", body: "Complete first Rick profile" });
+  await started;
+  const second = app.request("/files/system/soul.md", { method: "PUT", body: "Complete second Rick profile" });
+  try {
+    await setImmediate(); await setImmediate();
+    expect(stages).toEqual(["Complete first Rick profile"]);
+    expect(await readOwnerSoul(home)).toBe("Complete original identity");
+  } finally { release(); await Promise.allSettled([first, second]); }
+  expect((await first).status).toBe(200); expect((await second).status).toBe(200);
+  expect(stages).toEqual(["Complete first Rick profile", "Complete second Rick profile"]);
+  expect(await readOwnerSoul(home)).toBe("Complete second Rick profile");
+  const after = await fs.stat(soul);
+  expect([after.mode & 0o777, after.uid, after.gid]).toEqual([0o640, before.uid, before.gid]);
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+});
+
+it("SOUL queue exhaustion returns coarse 503 without staging and drains for the next save", async () => {
+  await actual.writeFile(join(home, "system", "soul.md"), "Complete old identity");
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const pause = new Promise<void>(resolve => { release = resolve; });
+  const holding = withOwnerFileMutation(home, async () => { entered(); await pause; });
+  await started;
+  const pending = Array.from({ length: 32 }, () => withOwnerFileMutation(home, async () => {}));
+  try {
+    const response = await app.request("/files/system/soul.md", { method: "PUT", body: "Uncommitted Rick" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "File service unavailable" });
+    expect(await readOwnerSoul(home)).toBe("Complete old identity");
+    expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+  } finally { release(); await Promise.all([holding, ...pending]); }
+  expect((await app.request("/files/system/soul.md", { method: "PUT", body: "Complete Rick" })).status).toBe(200);
+  expect(await readOwnerSoul(home)).toBe("Complete Rick");
+});
+
+it("failed and denied File API saves release the shared owner queue before a valid SOUL save", async () => {
+  await actual.writeFile(join(home, "system", "soul.md"), "Complete old identity");
+  stageWrite = async () => { throw Object.assign(new Error("private failure"), { code: "ENOSPC" }); };
+  const failed = await app.request("/files/system/soul.md", { method: "PUT", body: "Failed Rick" });
+  expect(failed.status).toBe(500);
+  expect(await failed.json()).toEqual({ error: "Unable to save personality" });
+  expect(await readOwnerSoul(home)).toBe("Complete old identity");
+  stageWrite = undefined;
+  const denied = await app.request("/files/data/app-gallery-staging/private.md", { method: "PUT", body: "denied" });
+  expect(denied.status).toBe(403);
+  expect(await fs.readdir(home)).toEqual(["system"]);
+  expect((await app.request("/files/system/soul.md", { method: "PUT", body: "Complete Rick" })).status).toBe(200);
+  expect(await readOwnerSoul(home)).toBe("Complete Rick");
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+});
 
 it.each(["empty", "prefix"])("a real SOUL read during a paused %s Settings write sees only the complete saved version", async stage => {
   const old = "Your name is Juniper. Keep the complete old preferences.";
@@ -164,7 +233,9 @@ it("repeated Settings saves each publish a complete UTF-8 SOUL and preserve meta
   expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
 });
 
-it("concurrent paused Settings saves expose only complete previously committed versions", async () => {
+// These writer-level races cover non-File-API writers. File API saves are
+// serialized by the owner/home middleware and are exercised below.
+it("concurrent paused atomic writer saves expose only complete previously committed versions", async () => {
   const old = "Complete original identity";
   await actual.writeFile(join(home, "system", "soul.md"), old, { mode: 0o640 });
   const releases: Array<() => void> = [];
@@ -181,7 +252,7 @@ it("concurrent paused Settings saves expose only complete previously committed v
     await write(bytes.subarray(half));
   };
   const versions = Array.from({ length: 8 }, (_, index) => `Rick complete concurrent profile ${index}. 中文性格。\n`.repeat(32).trim());
-  const saving = versions.map(body => app.request("/files/system/soul.md", { method: "PUT", body }));
+  const saving = versions.map(body => writeOwnerSoulAtomic(home, body));
   try {
     await started;
     expect(await readOwnerSoul(home)).toBe(old);
@@ -193,17 +264,17 @@ it("concurrent paused Settings saves expose only complete previously committed v
       expect([old, ...versions]).toContain(await readOwnerSoul(home));
     }
   } finally { releases.forEach(release => release()); await Promise.all(saving); }
-  expect((await Promise.all(saving)).map(response => response.status)).toEqual(Array(8).fill(200));
+  await Promise.all(saving);
   expect(versions).toContain(await readOwnerSoul(home));
   expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
   stageWrite = undefined;
-  const simultaneous = await Promise.all(versions.map(body => app.request("/files/system/soul.md", { method: "PUT", body })));
-  expect(simultaneous.map(response => response.status)).toEqual(Array(8).fill(200));
+  const simultaneous = await Promise.all(versions.map(body => writeOwnerSoulAtomic(home, body)));
+  expect(simultaneous).toHaveLength(8);
   expect(versions).toContain(await readOwnerSoul(home));
   expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
 });
 
-it("a committed concurrent save between target inspection and open does not reject another valid save", async () => {
+it("an atomic writer commit between target inspection and open does not reject another valid save", async () => {
   const soul = join(home, "system", "soul.md");
   await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });
   const delegate = vi.mocked(fs.open).getMockImplementation()!;
@@ -220,14 +291,13 @@ it("a committed concurrent save between target inspection and open does not reje
     }
     return delegate(path, flags, mode);
   });
-  const older = app.request("/files/system/soul.md", { method: "PUT", body: "Complete first Rick profile" });
+  const older = writeOwnerSoulAtomic(home, "Complete first Rick profile");
   try {
     await started;
-    const newer = await app.request("/files/system/soul.md", { method: "PUT", body: "Complete second Rick profile" });
-    expect(newer.status).toBe(200);
+    await writeOwnerSoulAtomic(home, "Complete second Rick profile");
     expect(await readOwnerSoul(home)).toBe("Complete second Rick profile");
   } finally { resume(); await older; }
-  expect((await older).status).toBe(200);
+  await older;
   expect(await readOwnerSoul(home)).toBe("Complete first Rick profile");
   expect((await fs.stat(soul)).mode & 0o777).toBe(0o640);
   expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
