@@ -202,6 +202,32 @@ session before minting an actor proof. All other routes continue to the default
 production Platform revision. The operator must verify the selected response
 marker, wrong-Chat default routing, and removal or expiry of the selector.
 
+#### Candidate expiry at dispatch
+
+1. **Scope / trigger:** temporary Edge routing for exact Preview Chat turn and
+   approval POSTs; upload time must not extend the operator's routing window.
+2. **Signatures:** `handleEdgeRouterRequest(request: Request, env: EdgeRouterEnv):
+   Promise<Response>` selects via `previewChatCandidateOrigin(...): string | null`.
+3. **Contracts:** use `PREVIEW_CHAT_CANDIDATE_{HANDLE,CHAT_ID,ORIGIN,EXPIRES_AT}`;
+   match the exact `/vm/<handle>/[~runtime/<handle>/]api/chats/<chatId>/turns` or
+   `runs/<runId>/approvals/<approvalId>` route and all runtime query selectors.
+   After bounded body consumption succeeds, require `0 < expiresAt - Date.now()
+   <= 2 hours` immediately before building and dispatching the upstream request.
+4. **Validation / error matrix:** wrong route/runtime selector, malformed config,
+   expired window, or a window beyond two hours selects canonical Platform with
+   no candidate marker. Existing body-limit/read failures return their existing
+   error response before forwarding; auth and resource limits stay unchanged.
+5. **Good / base / bad:** a held body released 1 ms before expiry still selects
+   candidate; absent selector uses canonical; release at expiry or 1 ms after
+   expiry uses canonical. These boundaries apply to both turns and approvals.
+6. **Required tests:** synchronize `ReadableStream` read-start (`highWaterMark: 0`)
+   and a fixed `Date.now()` clock, without sleeps. Assert no fetch before release,
+   exact upstream URL/query, preserved body and trusted headers, and no candidate
+   marker after expiry even if the upstream forges that marker.
+7. **Wrong / correct:** choosing the candidate before `await readRequestBody(...)`
+   freezes a stale routing selection; choosing it after successful body consumption checks
+   the current routing window at dispatch. Platform still verifies actor authority.
+
 The gateway contract is shared by Electron Desktop, Web Desktop and Web Canvas.
 No shell business logic is duplicated. Record live surface coverage separately.
 Public support guidance and the harness support matrix live in this repository;

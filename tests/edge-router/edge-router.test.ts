@@ -52,6 +52,56 @@ describe("edge router worker", () => {
   });
 
   it.each([
+    ["turn", "/turns", "at expiry", 60_000],
+    ["turn", "/turns", "past expiry", 60_001],
+    ["approval", "/runs/run_one/approvals/approval_one", "at expiry", 60_000],
+    ["approval", "/runs/run_one/approvals/approval_one", "past expiry", 60_001],
+    ["turn", "/turns", "still valid", 59_999],
+    ["approval", "/runs/run_one/approvals/approval_one", "still valid", 59_999],
+  ])("selects the %s route after held body consumption: %s %s", async (_kind, suffix, _boundary, elapsedMs) => {
+    const startedAt = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok", {
+      headers: { "x-matrix-preview-platform-route": "candidate" },
+    }));
+    const body = JSON.stringify(suffix === "/turns"
+      ? { clientRequestId: "req_one", parts: [{ type: "text", text: "List metadata" }] }
+      : { clientRequestId: "req_one", decision: "approve" });
+    let releaseBody!: () => void;
+    let notifyReadStarted!: () => void;
+    const readStarted = new Promise<void>(resolve => { notifyReadStarted = resolve; });
+    const held = new Promise<void>(resolve => { releaseBody = resolve; });
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        notifyReadStarted();
+        await held;
+        controller.enqueue(new TextEncoder().encode(body));
+        controller.close();
+      },
+    }, { highWaterMark: 0 });
+    const path = `/vm/pr-2045/api/chats/chat_my_drive_test${suffix}?version=2`;
+    const request = new Request(`https://app.matrix-os.com${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: stream, duplex: "half",
+    } satisfies RequestInit & { duplex: "half" });
+    const pending = handleEdgeRouterRequest(request, { ...PREVIEW_CHAT_ENV,
+      PREVIEW_CHAT_CANDIDATE_EXPIRES_AT: new Date(startedAt + 60_000).toISOString() });
+    await readStarted;
+    expect(fetchMock).not.toHaveBeenCalled();
+    clock.mockReturnValue(startedAt + elapsedMs);
+    releaseBody();
+    const response = await pending;
+    const candidate = elapsedMs < 60_000;
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const upstream = fetchMock.mock.calls[0]![0] as Request;
+    expect(upstream.url).toBe(`${candidate ? PREVIEW_CHAT_ENV.PREVIEW_CHAT_CANDIDATE_ORIGIN : EDGE_ENV.PLATFORM_ORIGIN}${path}`);
+    expect(await upstream.text()).toBe(body);
+    expect(upstream.headers.get("x-forwarded-host")).toBe("app.matrix-os.com");
+    expect(upstream.headers.get("x-matrix-edge-secret")).toBe("edge-secret");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-matrix-preview-platform-route")).toBe(candidate ? "candidate" : null);
+  });
+
+  it.each([
     ["other chat", "/vm/pr-2045/api/chats/chat_other/turns", "POST"],
     ["other Preview", "/vm/pr-2046/api/chats/chat_my_drive_test/turns", "POST"],
     ["other runtime", "/vm/pr-2045/~runtime/primary/api/chats/chat_my_drive_test/turns", "POST"],

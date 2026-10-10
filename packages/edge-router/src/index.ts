@@ -60,12 +60,12 @@ export async function handleEdgeRouterRequest(
     });
   }
 
-  const candidateOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
-  const upstreamUrl = `${candidateOrigin ?? platformOrigin}${url.pathname}${url.search}`;
   const bodyLimit = routeClass === "platform" && url.pathname === "/api/ats/mail"
     ? ATS_MAIL_BODY_LIMIT : WORKER_BODY_LIMIT;
   const body = await readRequestBody(request, bodyLimit);
   if (body instanceof Response) return body;
+  const candidateOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
+  const upstreamUrl = `${candidateOrigin ?? platformOrigin}${url.pathname}${url.search}`;
   const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
 
   let response: Response;
