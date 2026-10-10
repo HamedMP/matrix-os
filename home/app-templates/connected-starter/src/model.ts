@@ -222,21 +222,31 @@ export function financeSummary(records: OwnerRecord[]) {
   }
   return { currencies: Object.keys(totals).sort(), totals, months, weeks };
 }
+export function invoiceOutstandingAmount(fields: OwnerRecord["fields"]): number | null {
+  if (fields.status === "Paid" || fields.status === "Externally paid") return 0;
+  const total = fields.amount;
+  if (typeof total !== "number" || !Number.isFinite(total) || total < 0 || total > 1e12) return null;
+  if (fields.status !== "Partial") return total;
+  const paid = fields["paid-amount"];
+  return typeof paid === "number" && Number.isFinite(paid) && paid >= 0 && paid <= total
+    ? total - paid : null;
+}
 function obligationSummary(
   records: OwnerRecord[],
   statuses: string[],
   cadence: boolean,
 ): Record<string, Record<string, number>> {
   const result: Record<string, Record<string, number>> = {},
-    allowed = new Set(statuses.slice(0, 2));
-  for (const record of records) {
-    const { amount, currency, status } = record.fields;
+    allowed = new Set(statuses.slice(0, 3));
+  for (const record of records.slice(0, 1000)) {
+    const { currency, status } = record.fields;
+    const amount = cadence ? record.fields.amount : invoiceOutstandingAmount(record.fields);
     if (
       record.archivedAt ||
       !allowed.has(String(status)) ||
       typeof amount !== "number" ||
       !Number.isFinite(amount) ||
-      amount < 0 ||
+      amount < 0 || (!cadence && amount === 0) ||
       !validCurrency(currency)
     )
       continue;
@@ -258,7 +268,7 @@ export function recurringSummary(records: OwnerRecord[]) {
   return obligationSummary(records, ["Active"], true);
 }
 export function receivablesSummary(records: OwnerRecord[]) {
-  return obligationSummary(records, ["Sent", "Overdue"], false);
+  return obligationSummary(records, ["Sent", "Overdue", "Partial"], false);
 }
 export function agendaGroups(records: OwnerRecord[]) {
   // Request-scoped buckets contain each supplied record once; owner reads cap
