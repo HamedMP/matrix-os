@@ -119,7 +119,14 @@ semantics. Concurrent reads can use the prior complete inode or the newly
 published complete inode; invalid path/identity races fail before inference.
 
 The producer validates the canonical owner directory and regular nonlinked
-SOUL, checks existing write permission without truncation, and preserves uid/gid
+SOUL and checks existing write permission without truncation.
+If another completed save changes the target between lstat and open, the producer
+rechecks only a regular-file inode mismatch, up to eight total snapshot attempts.
+It retains dev/ino equality, no-follow and nonblocking write-open checks. Permission,
+symlink, nonregular and I/O failures do not retry; continuous replacement fails
+closed after the bounded attempts, with owned staging cleanup.
+
+It preserves uid/gid
 and ordinary permission bits through the retained exclusive-created staging
 descriptor. Missing files use private0600; observed link/parent replacement and
 write failures reject the save. Before publication the helper checks that the
