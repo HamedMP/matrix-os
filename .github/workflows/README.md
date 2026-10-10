@@ -14,12 +14,17 @@ protection is also updated when the shard list changes.
 
 - `Detect CI-relevant changes`
 - `Type Check`
+- `Shell Production Build`
 - `Pattern Scan`
 - `React Doctor`
 - `Sync Client Package (Node 20)`
+- `Agent SDK Compatibility`
 - `Unit Tests`
+- `Funded Settlement PostgreSQL`
+- `Protected Funded Host Root Contracts`
 - `Docs Contract Tests`
-- `E2E Tests`
+- `OS View Parity`
+- `E2E Tests` (general and Electron lanes)
 
 The aggregate job writes a summary table and fails when any required internal
 job fails or is cancelled. Internal jobs may still be inspected directly for
@@ -43,6 +48,37 @@ run plans against the complete frontier-to-head diff, not only the newest commit
 Consequently, a failed or cancelled predecessor is automatically absorbed into
 the successor's source, docs-contract, pattern-scan, and React Doctor scope. If
 no trusted frontier exists, the run bootstraps from Git's empty tree.
+
+### Parallel validation and profiling
+
+Unit tests, sync-client validation, shell production builds and E2E lanes start
+independently after change classification. `CI Results` still waits for every
+selected check; this removes scheduling dependencies without removing coverage.
+General E2E and explicit Electron Desktop regressions run in separate lanes.
+Each E2E and funded PostgreSQL job builds shared prerequisites once with
+`bun run test:prepare`; subsequent invocations use direct Vitest execution.
+Local `bun run test:e2e` retains its prerequisite build for convenience.
+
+Next incremental compilation and Playwright browser revisions are cached by
+OS, architecture, Node/pnpm toolchain and the frozen lockfile. The shell bundle
+is rebuilt on every run. Both Playwright workspace installs still run on cache
+hits so different browser revisions and system dependencies stay complete.
+Caches are accelerators, never a substitute for validation.
+
+Every unit shard uploads `unit-profile-<shard>` with Vitest JSON, including on
+test failure, retained for seven days. Profile timings describe execution;
+measure runner queue and installation separately when assessing the five-minute
+target. Historical timings and bounded worker tuning live under `scripts/ci/`.
+
+`ci-pr-supersede.yml` cancels obsolete CI heads for an admitted PR. It runs only
+trusted base-branch code with no checkout, validates the current live PR head,
+and cannot cancel main or another PR. The main FIFO queue and coverage frontier
+remain unchanged. A denied or failed cancellation does not remove validation.
+
+Core workflows stay GitHub-hosted. Dedicated Linux experiments must use
+operator-started disposable containers until trusted job admission is enforced;
+a public repository must not expose a reusable self-hosted runner label to PR
+workflow code. See `scripts/ci/runner/README.md` for the isolation boundary.
 
 ## Release Artifacts
 
@@ -75,6 +111,7 @@ OTA payloads.
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
+| `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
 | `ci-supersede.yml` | Safe main-CI supersession | Non-doc pushes to `main` | No; optimization only, queueing remains safe if it fails |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
