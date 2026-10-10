@@ -21,7 +21,14 @@ export async function initializeAuthDiagnostic(auth: Pick<AuthService, "init" | 
   };
 }
 
-export function installAuthDiagnosticSession(target: Session): void {
+const AUTH_DIAGNOSTIC_CSP = [
+  "default-src 'none'", "script-src 'self'", "script-src-attr 'none'",
+  "style-src 'self' 'unsafe-inline'", "font-src 'self' data:", "img-src 'self' data:",
+  "connect-src 'none'", "object-src 'none'", "frame-src 'none'", "worker-src 'none'",
+  "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+].join("; ");
+
+export function installAuthDiagnosticSession(target: Session, packagedRendererUrl: string): void {
   // This session never gets bearer injection. Local packaged assets only;
   // accidental renderer network calls are blocked before Chromium sends them.
   target.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
@@ -29,6 +36,20 @@ export function installAuthDiagnosticSession(target: Session): void {
     try { cancel = !["file:", "data:", "blob:"].includes(new URL(details.url).protocol); }
     catch (error: unknown) { console.warn("[auth-diagnostic] invalid resource URL", error instanceof Error ? error.name : "unknown error"); }
     callback({ cancel });
+  });
+  // Inject before loading the packaged document. Network denial does not
+  // constrain inline/eval scripts or local frame/object execution; CSP does.
+  target.webRequest.onHeadersReceived((details, callback) => {
+    if (details.resourceType !== "mainFrame" || details.url !== packagedRendererUrl) {
+      callback({});
+      return;
+    }
+    const responseHeaders: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(details.responseHeaders ?? {})) {
+      if (key.toLowerCase() !== "content-security-policy") responseHeaders[key] = value;
+    }
+    responseHeaders["Content-Security-Policy"] = [AUTH_DIAGNOSTIC_CSP];
+    callback({ responseHeaders });
   });
   target.setPermissionCheckHandler(() => false);
   target.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
