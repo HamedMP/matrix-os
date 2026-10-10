@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const ROOT = resolve(__dirname, "../../..");
 const MAIN = join(ROOT, "desktop/out/main/index.js");
@@ -34,6 +35,7 @@ suite("Electron Desktop terminal snapshot recovery", () => {
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: userDataDir },
     });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: /create account/i }).waitFor({ timeout: 15_000 });
     await page.evaluate(async () => { await window.operator.invoke("auth:start-device-flow", {}); });
     await page.getByRole("button", { name: "Terminal", exact: true }).first().dblclick({ timeout: 15_000 });

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 import { createProviderWorkflowClient, ProviderWorkflowClientError } from "../../../packages/ui/src/agents-providers/provider-workflow-client";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
@@ -62,6 +63,7 @@ beforeAll(async () => {
   // Prevent the stub auth flow from opening any external browser.
   await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
   page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
   await page.getByRole("button", { name: /create account/i }).waitFor();
   await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
   await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
