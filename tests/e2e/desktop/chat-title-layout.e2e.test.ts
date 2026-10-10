@@ -6,6 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { startChatTitleGateway, LONG_CHAT_TITLE, SHORT_CHAT_TITLE, FAILED_CHAT_TITLE } from "./fixtures/chat-title-gateway";
 import { closeElectronApp } from "./fixtures/close-electron";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
+
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const evidence = join(root, "output/mat524");
@@ -53,7 +55,8 @@ suite("long Chat titles in the built Electron header", () => {
       args: [resolve(__dirname, "fixtures/canonical-input-electron.mjs")],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
     page = await app.firstWindow();
-    await dismissGettingStartedOnInteraction(page); page.setDefaultTimeout(8000);
+    await dismissGettingStartedOnInteraction(page);
+    page.setDefaultTimeout(8000);
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
     const done = page.getByRole("button", { name: "Done", exact: true });
     if (await done.getAttribute("aria-expanded") === "false") await done.click();
@@ -191,6 +194,5 @@ suite("long Chat titles in the built Electron header", () => {
       current = title;
     }
   });
-import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 });
