@@ -90,5 +90,5 @@ the independent unit/checks/E2E subset. PostgreSQL service jobs, root fixtures,
 Pattern Scan, and release validation remain hosted. A passing subset does not
 prove all CI finishes within five minutes.
 
-No dedicated-host timing is available yet. Provisioning is pending the owner's
-SSH ingress choice; the dedicated workflow remains disabled until validation.
+No dedicated-host timing is available yet. Provisioning requires available dedicated-vCPU quota and an approved SSH
+ingress configuration. The dedicated workflow remains disabled until validation.

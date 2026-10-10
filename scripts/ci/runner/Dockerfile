@@ -32,7 +32,9 @@ RUN groupadd -g 10001 runner && useradd -u 10001 -g 10001 -m -s /bin/bash runner
     && mkdir /work && chown 10001:10001 /work
 COPY benchmark.sh /opt/matrix-ci/benchmark.sh
 RUN chmod 0555 /opt/matrix-ci/benchmark.sh
-ENV CI=true GIT_TERMINAL_PROMPT=0 PLAYWRIGHT_BROWSERS_PATH=/work/browsers
+ENV CI=true GIT_TERMINAL_PROMPT=0 PLAYWRIGHT_BROWSERS_PATH=/work/browsers \
+    HOME=/home/runner XDG_CACHE_HOME=/work/cache XDG_DATA_HOME=/work/share \
+    npm_config_store_dir=/work/pnpm-store
 USER 10001:10001
 WORKDIR /work
-ENTRYPOINT ["/opt/matrix-ci/benchmark.sh"]
+ENTRYPOINT ["/usr/bin/sleep", "2100"]

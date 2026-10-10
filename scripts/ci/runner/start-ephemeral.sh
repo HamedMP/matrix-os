@@ -31,23 +31,47 @@ container=$(docker create --name "matrix-ci-$(basename "$result_dir")" \
   --label matrix-ci.disposable=true \
   --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
   --cpus 16 --memory 56g --memory-swap 56g --pids-limit 4096 --shm-size 2g \
+  --read-only \
+  --tmpfs /work:rw,exec,nosuid,nodev,size=32g,uid=10001,gid=10001,mode=0755 \
+  --tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777 \
+  --tmpfs /home/runner:rw,nosuid,nodev,size=1g,uid=10001,gid=10001,mode=0755 \
   --network matrix-ci --dns 1.1.1.1 --dns 1.0.0.1 \
   --log-opt max-size=10m --log-opt max-file=2 \
-  matrix-ci-benchmark:1 "$1" "$2" "$3")
+  matrix-ci-benchmark:1)
 status=0
-# A hard host-side deadline also stops a modified repository script that hangs.
+# A fixed idle PID1 keeps tmpfs alive through artifact collection. The trusted
+# Docker exec result supplies the benchmark status; no writable result marker.
 docker start "$container" >/dev/null
-timeout --signal=TERM --kill-after=15s 1800s docker wait "$container" >"$result_dir/exit-code" || status=$?
-if [[ $status == 0 ]]; then
-  read -r status <"$result_dir/exit-code"
-  [[ $status =~ ^[0-9]{1,3}$ && $status -le 255 ]] || status=70
+(ulimit -f 20480; timeout --signal=TERM --kill-after=15s 1800s \
+  docker exec --user 10001:10001 "$container" /opt/matrix-ci/benchmark.sh "$1" "$2" "$3") \
+  >"$result_dir/output.log" 2>&1 || status=$?
+printf '%s\n' "$status" >"$result_dir/exit-code"
+if [[ $status == 124 || $status == 137 ]]; then
+  # Stopping the exec client alone leaves its processes alive inside Docker.
+  # Kill the container immediately at the execution deadline; tmpfs evidence
+  # is deliberately discarded, while the bounded host log remains available.
+  cleanup
+  container=''
+  cat "$result_dir/output.log"
+  exit "$status"
 fi
-(ulimit -f 20480; docker logs --tail 10000 "$container") >"$result_dir/output.log" 2>&1 || true
 cat "$result_dir/output.log"
 # Stream only bounded, named regular files; never extract container paths/links.
 for file in unit-cold.json unit-warm.json timing.tsv; do
   timeout --signal=TERM --kill-after=5s 30s docker cp "$container:/work/results/$file" - 2>/dev/null \
     | python3 "$script_dir/copy-artifact.py" "$result_dir/$file" "$file" 2>/dev/null || true
 done
+# Successful execution without accepted evidence is not a usable benchmark.
+if [[ $status == 0 ]]; then
+  required=(timing.tsv)
+  case "$2" in unit|unit-shard-*|full) required+=(unit-cold.json unit-warm.json) ;; esac
+  for file in "${required[@]}"; do
+    if [[ ! -s "$result_dir/$file" ]]; then
+      echo 'Benchmark evidence missing or rejected' >&2
+      status=70
+    fi
+  done
+fi
+printf '%s\n' "$status" >"$result_dir/exit-code"
 printf 'Benchmark exit: %s; host evidence: %s\n' "$status" "$result_dir"
 exit "$status"

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,10 +7,24 @@ import { describe, expect, it } from "vitest";
 const root = resolve("scripts/ci/runner");
 const sha = "a".repeat(40);
 
-function invoke(args: string[], failure: boolean | "firewall" = false) {
+function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" = false) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
-  writeFileSync(resolve(dir, "docker"), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$CALLS"\nif [[ "$1" == create ]]; then echo test-container; fi\nif [[ "$1" == wait ]]; then if [[ "$FAIL_START" == 1 ]]; then echo 42; else echo 0; fi; fi\n`);
+  writeFileSync(resolve(dir, "docker"), `#!/bin/bash
+printf '%s\\n' "$*" >> "$CALLS"
+if [[ "$1" == create ]]; then echo test-container; fi
+if [[ "$1" == exec && "$FAIL_TIMEOUT" == 1 ]]; then exit 124; fi
+if [[ "$1" == exec && "$FAIL_START" == 1 ]]; then exit 42; fi
+if [[ "$1" == cp ]]; then
+  [[ "$FAIL_ARTIFACT" != 1 ]] || exit 1
+  python3 - "\${2##*/}" <<'PYTAR'
+import io,sys,tarfile
+with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
+    entry=tarfile.TarInfo(sys.argv[1]);entry.size=4
+    archive.addfile(entry,io.BytesIO(b'unit'))
+PYTAR
+fi
+`);
   chmodSync(resolve(dir, "docker"), 0o755);
   writeFileSync(resolve(dir, "flock"), "#!/bin/bash\nexit 0\n");
   chmodSync(resolve(dir, "flock"), 0o755);
@@ -22,9 +36,14 @@ function invoke(args: string[], failure: boolean | "firewall" = false) {
     const result = spawnSync("bash", [resolve(root, "start-ephemeral.sh"), ...args], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: log,
-        FAIL_START: failure === true ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
+        FAIL_TIMEOUT: failure === "timeout" ? "1" : "0", FAIL_START: failure === true ? "1" : "0", FAIL_ARTIFACT: failure === "artifact" ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
     });
-    return { result, calls: (() => { try { return readFileSync(log, "utf8"); } catch { return ""; } })() };
+    const resultsDir = resolve(dir, "results");
+    const persistedStatus = (() => {
+      try { return readFileSync(resolve(resultsDir, readdirSync(resultsDir)[0], "exit-code"), "utf8").trim(); }
+      catch { return ""; }
+    })();
+    return { result, persistedStatus, calls: (() => { try { return readFileSync(log, "utf8"); } catch { return ""; } })() };
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -49,8 +68,46 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(create).toContain("--pids-limit 4096");
     expect(create).toContain("--network matrix-ci");
     expect(create).not.toMatch(/--privileged|--volume|--mount|--network host|docker\.sock/);
-    expect(create).toContain(`${sha} unit 8`);
+    expect(calls).toContain(`exec --user 10001:10001 test-container /opt/matrix-ci/benchmark.sh ${sha} unit 8`);
     expect(calls).toContain("rm --force test-container");
+  });
+  it("bounds every writable container path without using host disk", () => {
+    const { result, calls } = invoke([sha, "unit", "8"]);
+    expect(result.status).toBe(0);
+    const create = calls.split("\n").find((line) => line.startsWith("create "))!;
+    expect(create).toContain("--read-only");
+    expect(create).toContain("--tmpfs /work:rw,exec,nosuid,nodev,size=32g,uid=10001,gid=10001,mode=0755");
+    expect(create).toContain("--tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777");
+    expect(create).toContain("--tmpfs /home/runner:rw,nosuid,nodev,size=1g,uid=10001,gid=10001,mode=0755");
+    const image = readFileSync(resolve(root, "Dockerfile"), "utf8");
+    expect(image).toContain("HOME=/home/runner");
+    expect(image).toContain("XDG_CACHE_HOME=/work/cache");
+    expect(image).toContain("XDG_DATA_HOME=/work/share");
+    expect(image).toContain("npm_config_store_dir=/work/pnpm-store");
+  });
+  it("collects tmpfs artifacts before stopping the trusted keepalive container", () => {
+    const { result, calls } = invoke([sha, "unit", "8"]);
+    expect(result.status).toBe(0);
+    const execute = calls.indexOf("exec --user 10001:10001 test-container");
+    const copy = calls.indexOf("cp test-container:/work/results/unit-cold.json -");
+    const remove = calls.indexOf("rm --force test-container");
+    expect(execute).toBeGreaterThan(0);
+    expect(copy).toBeGreaterThan(execute);
+    expect(remove).toBeGreaterThan(copy);
+    expect(calls).not.toContain("wait test-container");
+    expect(readFileSync(resolve(root, "Dockerfile"), "utf8")).toContain('ENTRYPOINT ["/usr/bin/sleep", "2100"]');
+  });
+  it("fails closed when a successful benchmark has no accepted timing evidence", () => {
+    const { result, calls, persistedStatus } = invoke([sha, "unit", "8"], "artifact");
+    expect(result.status).toBe(70);
+    expect(persistedStatus).toBe("70");
+    expect(calls).toContain("rm --force test-container");
+  });
+  it("stops timed-out benchmark processes before collecting artifacts", () => {
+    const { result, calls } = invoke([sha, "unit", "8"], "timeout");
+    expect(result.status).toBe(124);
+    expect(calls).toContain("rm --force test-container");
+    expect(calls).not.toContain("cp test-container:");
   });
   it("propagates job failures and removes the container", () => {
     const { result, calls } = invoke([sha, "unit", "8"], true);

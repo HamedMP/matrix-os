@@ -33,7 +33,7 @@ jobs:
     if: vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: matrix-ci
-    timeout-minutes: 35
+    timeout-minutes: 70
     steps:
       - name: Admit current source head
         id: admit
@@ -90,7 +90,7 @@ jobs:
           printf '%s\n' "$CI_SSH_KEY" > "$key_dir/id_ed25519"
           printf '%s\n' "$CI_KNOWN_HOSTS" > "$key_dir/known_hosts"
           mkdir -p output/ci-dedicated
-          timeout --signal=TERM --kill-after=15s 1900s ssh \
+          timeout --signal=TERM --kill-after=15s 3900s ssh \
             -i "$key_dir/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" \
             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \

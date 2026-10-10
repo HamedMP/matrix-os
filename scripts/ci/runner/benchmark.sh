@@ -30,6 +30,13 @@ git config --global user.name CI
 git config --global user.email ci@matrix-os.com
 measure install pnpm install --frozen-lockfile
 measure prerequisites pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build
+# Historical baselines predate the no-emit helper; retain their existing wrapper.
+# Inspect JSON only and emit one of two fixed script names.
+typecheck_script=$(node --input-type=module -e '
+  import { readFileSync } from "node:fs";
+  const { scripts = {} } = JSON.parse(readFileSync("package.json", "utf8"));
+  process.stdout.write(Object.hasOwn(scripts, "typecheck:run") ? "typecheck:run" : "typecheck");
+')
 export NEXT_TELEMETRY_DISABLED=1
 export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2ktc2FmZS5leGFtcGxlLmNvbSQ=
 export NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
@@ -42,7 +49,7 @@ case "$suite" in
     ;;
 esac
 run_suite() {
-  local pass=$1 failure=0
+  local pass=$1 desktop_prepared=${2:-false} failure=0
   local shard=()
   if [[ $suite == unit-shard-* ]]; then shard=("--shard=${suite##*-}/4"); fi
   export MATRIX_TEST_WORKERS=$workers
@@ -52,11 +59,11 @@ run_suite() {
       step "unit-$pass" pnpm exec vitest run "${shard[@]}" --maxWorkers="$workers" \
         --reporter=default --reporter=json --outputFile="/work/results/unit-$pass.json"
       ;;
-    typecheck) step "typecheck-$pass" bun run typecheck ;;
+    typecheck) step "typecheck-$pass" bun run "$typecheck_script" ;;
     shell) step "shell-$pass" bun run build:shell:production ;;
     checks)
       # Existing CI keeps typecheck diagnostic/nonblocking during baseline repair.
-      measure "typecheck-$pass" bun run typecheck || true
+      measure "typecheck-$pass" bun run "$typecheck_script" || true
       step "sync-build-$pass" pnpm --filter @finnaai/matrix build
       step "sync-test-$pass" pnpm --filter @finnaai/matrix test --maxWorkers=2
       step "sync-publish-$pass" pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
@@ -79,7 +86,7 @@ run_suite() {
       step "e2e-general-$pass" xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2
       ;;
     e2e-electron)
-      step "desktop-build-$pass" bun run build:desktop
+      if [[ $desktop_prepared != true ]]; then step "desktop-build-$pass" bun run build:desktop; fi
       step "terminal-grid-$pass" env MATRIX_GRID_ELECTRON=1 xvfb-run --auto-servernum \
         pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/terminal-soft-grid.e2e.test.ts --maxWorkers=1
       step "e2e-electron-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_PROVIDER_AUTH_ELECTRON=1 \
@@ -105,10 +112,13 @@ for pass in cold warm; do
     suite=unit workers=12 run_suite "$pass" & pids+=("$!")
     suite=checks workers=2 run_suite "$pass" & pids+=("$!")
     (
-      general_status=0 electron_status=0
+      desktop_status=0 general_status=0 electron_status=0
+      # General E2E also discovers build-gated Desktop suites. Prepare both
+      # passes before discovery so cold/warm select the same tests.
+      measure "desktop-build-$pass" bun run build:desktop || desktop_status=$?
       suite=e2e-general workers=2 run_suite "$pass" || general_status=$?
-      suite=e2e-electron workers=2 run_suite "$pass" || electron_status=$?
-      (( general_status == 0 && electron_status == 0 ))
+      suite=e2e-electron workers=2 run_suite "$pass" true || electron_status=$?
+      (( desktop_status == 0 && general_status == 0 && electron_status == 0 ))
     ) & pids+=("$!")
     for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   else

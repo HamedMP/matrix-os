@@ -14,7 +14,12 @@ Hetzner API key and operator GitHub credentials on the operator's computer.
 Upload only this reviewed directory, never `.env`, SSH private keys, or a home
 directory. Root manages Docker. The benchmark runs as UID 10001 in a fresh
 container with no mounts, host credentials, Docker socket, capabilities, or
-host networking. The firewall rejects new container access to the host and
+host networking. The image filesystem is read-only. Writable `/work` (32 GB),
+`/tmp` (2 GB), and runner home (1 GB) are bounded tmpfs mounts charged against
+the 56-GB container memory limit, so repository code cannot fill host disk.
+Package stores, Electron caches, and browsers stay under `/work`. The work
+and temporary mounts explicitly allow execution for native modules and browser
+binaries, while retaining `nosuid,nodev`. The firewall rejects new container access to the host and
 private/metadata IPv4 ranges. The Docker network has IPv6 disabled.
 
 Run on that host as root, from the uploaded directory:
@@ -28,9 +33,12 @@ bash start-ephemeral.sh <reviewed-40-character-commit-sha> unit 8
 Allowlisted suites: `unit`, `unit-shard-1` through `unit-shard-4`, `typecheck`,
 `shell`, `checks`, `e2e`/`e2e-general`, `e2e-electron`, `full`. Workers must be
 1–16. Checkout always fetches the exact SHA from
-the fixed public repository and verifies HEAD. The host script executes the
-trusted image entrypoint, never a caller-supplied command. Every benchmark has
-a 30-minute deadline, 16-CPU/56-GB cap, no extra swap, and a 4096-process cap.
+the fixed public repository and verifies HEAD. A fixed idle container process keeps tmpfs available while the host runs the
+trusted image benchmark through `docker exec` and copies its reports. The
+Docker exec exit status determines success, never a writable result marker
+or a caller-supplied command. Every benchmark has
+a 30-minute execution deadline; a timed-out container is killed immediately,
+discarding its tmpfs evidence while retaining the bounded host log. It has 16-CPU/56-GB cap, no extra swap, and a 4096-process cap.
 An exclusive lock admits one benchmark at a time, with a bounded 30-minute
 wait if another benchmark is active. Service-container and root
 fixture validation remains on GitHub-hosted runners.
@@ -63,7 +71,7 @@ after one dependency/prerequisite build, awaiting every group. It is a full
 Host evidence is under `/var/lib/matrix-ci/results/run.*`: bounded recent logs,
 `timing.tsv`, and unit cold/warm JSON reports. The host streams only fixed
 artifact names, rejects links/directories, and writes regular files exclusively
-with a 50-MB per-file bound and a 30-second transfer deadline. Treat
+with a 50-MB per-file bound and a 30-second transfer deadline. Missing required timing or unit profiles fail the benchmark. Treat
 all test output as untrusted data. Do not execute or source copied files.
 Retrieve evidence over the operator SSH connection. Remove old evidence after
 comparison; the host cleanup timer removes results older than seven days.
