@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { constants } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -200,4 +201,81 @@ it("concurrent paused Settings saves expose only complete previously committed v
   expect(simultaneous.map(response => response.status)).toEqual(Array(8).fill(200));
   expect(versions).toContain(await readOwnerSoul(home));
   expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+});
+
+it("a committed concurrent save between target inspection and open does not reject another valid save", async () => {
+  const soul = join(home, "system", "soul.md");
+  await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });
+  const delegate = vi.mocked(fs.open).getMockImplementation()!;
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let resume!: () => void;
+  const pause = new Promise<void>(resolve => { resume = resolve; });
+  let first = true;
+  vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+    if (first && String(path).endsWith("/soul.md") && typeof flags === "number" && (flags & constants.O_WRONLY) !== 0) {
+      first = false;
+      entered();
+      await pause;
+    }
+    return delegate(path, flags, mode);
+  });
+  const older = app.request("/files/system/soul.md", { method: "PUT", body: "Complete first Rick profile" });
+  try {
+    await started;
+    const newer = await app.request("/files/system/soul.md", { method: "PUT", body: "Complete second Rick profile" });
+    expect(newer.status).toBe(200);
+    expect(await readOwnerSoul(home)).toBe("Complete second Rick profile");
+  } finally { resume(); await older; }
+  expect((await older).status).toBe(200);
+  expect(await readOwnerSoul(home)).toBe("Complete first Rick profile");
+  expect((await fs.stat(soul)).mode & 0o777).toBe(0o640);
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+});
+
+it("bounds regular target replacement retries and retains a complete committed SOUL on exhaustion", async () => {
+  const soul = join(home, "system", "soul.md");
+  const replacement = join(home, "system", "replacement.md");
+  await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });
+  const delegate = vi.mocked(fs.open).getMockImplementation()!;
+  let replacements = 0;
+  vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+    if (String(path).endsWith("/soul.md") && typeof flags === "number" && (flags & constants.O_WRONLY) !== 0) {
+      await actual.writeFile(replacement, `Complete concurrent version ${++replacements}`, { mode: 0o640 });
+      await fs.rename(replacement, soul);
+    }
+    return delegate(path, flags, mode);
+  });
+  const response = await app.request("/files/system/soul.md", { method: "PUT", body: "Uncommitted Rick profile" });
+  expect(response.status).toBe(500);
+  expect(replacements).toBe(8);
+  expect(await readOwnerSoul(home)).toBe("Complete concurrent version 8");
+  expect(await fs.readdir(join(home, "system"))).toEqual(["soul.md"]);
+});
+
+it("does not retry a target symlink substitution during validation or modify the outside file", async () => {
+  const outside = await fs.mkdtemp(join(tmpdir(), "soul-validation-outside-"));
+  const foreign = join(outside, "soul.md");
+  const soul = join(home, "system", "soul.md");
+  try {
+    await actual.writeFile(soul, "Complete original identity", { mode: 0o640 });
+    await actual.writeFile(foreign, "Untouched outside identity", { mode: 0o600 });
+    const delegate = vi.mocked(fs.open).getMockImplementation()!;
+    let opens = 0;
+    vi.mocked(fs.open).mockImplementation(async (path, flags, mode) => {
+      if (String(path).endsWith("/soul.md") && typeof flags === "number" && (flags & constants.O_WRONLY) !== 0) {
+        opens++;
+        await fs.rename(soul, join(home, "system", "prior.md"));
+        await fs.symlink(foreign, soul);
+      }
+      return delegate(path, flags, mode);
+    });
+    const response = await app.request("/files/system/soul.md", { method: "PUT", body: "Rick" });
+    expect(response.status).toBe(500);
+    expect(opens).toBe(1);
+    expect(await fs.readFile(foreign, "utf8")).toBe("Untouched outside identity");
+    expect((await fs.stat(foreign)).mode & 0o777).toBe(0o600);
+    expect(await fs.readFile(join(home, "system", "prior.md"), "utf8")).toBe("Complete original identity");
+    expect((await fs.readdir(join(home, "system"))).sort()).toEqual(["prior.md", "soul.md"]);
+  } finally { await fs.rm(outside, { recursive: true, force: true }); }
 });
