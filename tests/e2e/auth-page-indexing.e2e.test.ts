@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
@@ -6,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const shell = resolve(__dirname, "../../shell");
+const nextEnvironment = resolve(shell, "next-env.d.ts");
 const require = createRequire(resolve(shell, "package.json"));
 
 /** Read served HTML attributes without depending on tag order or formatting. */
@@ -19,8 +21,10 @@ describe("Web Desktop account-page indexing over HTTP", () => {
   let processHandle: ChildProcess | undefined;
   let origin: string;
   let output = "";
+  let originalNextEnvironment: Buffer | undefined;
 
   beforeAll(async () => {
+    originalNextEnvironment = await readFile(nextEnvironment);
     const reservation = createServer();
     await new Promise<void>((done, reject) => {
       reservation.once("error", reject);
@@ -67,12 +71,24 @@ describe("Web Desktop account-page indexing over HTTP", () => {
   }, 120_000);
 
   afterAll(async () => {
-    const child = processHandle;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    child.kill("SIGTERM");
-    const deadline = Date.now() + 10_000;
-    while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await delay(50);
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    try {
+      const child = processHandle;
+      if (child && child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        const deadline = Date.now() + 10_000;
+        while (child.exitCode === null && child.signalCode === null && Date.now() < deadline) await delay(50);
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+          const killDeadline = Date.now() + 2_000;
+          while (child.exitCode === null && child.signalCode === null && Date.now() < killDeadline) await delay(50);
+          if (child.exitCode === null && child.signalCode === null) throw new Error("Auth test server did not stop");
+        }
+      }
+    } finally {
+      // Next dev rewrites this tracked file; preserve the caller's exact bytes so
+      // subsequent release builds can still verify a clean source checkout.
+      if (originalNextEnvironment) await writeFile(nextEnvironment, originalNextEnvironment);
+    }
   }, 15_000);
 
   for (const route of ["sign-in", "sign-up", "runtime"]) {
