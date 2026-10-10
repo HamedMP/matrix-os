@@ -22,6 +22,7 @@ SUDOERS
 chmod 0440 /etc/sudoers.d/matrix-ci
 visudo -cf /etc/sudoers.d/matrix-ci
 cat >/etc/ssh/sshd_config.d/70-matrix-ci-dispatch.conf <<'SSH'
+PermitUserEnvironment no
 Match User matrixci
     AuthorizedKeysFile /etc/ssh/matrix-ci/authorized_keys
     ForceCommand /usr/local/libexec/matrix-ci/dispatch.sh
@@ -30,7 +31,6 @@ Match User matrixci
     AllowAgentForwarding no
     X11Forwarding no
     PermitTunnel no
-    PermitUserEnvironment no
 Match all
 SSH
 sshd -t

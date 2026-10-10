@@ -198,6 +198,7 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(script).toContain('restrict,command="/usr/local/libexec/matrix-ci/dispatch.sh"');
     expect(script).toContain("ForceCommand /usr/local/libexec/matrix-ci/dispatch.sh");
     expect(script).toContain("AllowTcpForwarding no");
+    expect(script.indexOf("PermitUserEnvironment no")).toBeLessThan(script.indexOf("Match User matrixci"));
     expect(script).not.toMatch(/usermod.*docker|docker\.sock|--privileged|--token/);
   });
   it("collects both cold and warm passes even after a test failure", () => {
