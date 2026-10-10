@@ -2,6 +2,7 @@ import { mkdtemp, writeFile, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { windowChromeOptions } from "../../desktop/src/main/platform/window-chrome";
 
 // Electron and OS encryption are system boundaries. The real entrypoint,
 // AuthService, local store, credential store and all service factories execute.
@@ -102,6 +103,18 @@ describe("actual trusted main diagnostic composition", () => {
     expect(host.windows[0].options.trafficLightPosition).toBeUndefined();
     expect(host.windows[0].options.frame).not.toBe(false);
     expect(fetch).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["win32", "linux"] as const)("keeps normal platform controls on %s without diagnostic opt-in", async platform => {
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+    await boot({ mode: undefined });
+    expect(await request("app:get-startup-mode")).toEqual({ mode: "normal" });
+    expect(host.windows[0].options).toMatchObject(windowChromeOptions(platform));
+    expect(host.windows[0].options.trafficLightPosition).toBeUndefined();
+    expect(host.windows[0].options.frame).not.toBe(false);
+    expect(host.ipc.has("runtime:create-turn")).toBe(true);
+    host.appEvents.get("window-all-closed")!();
+    expect(host.app.quit).toHaveBeenCalledOnce();
   });
 
   it("quits the diagnostic process after the last macOS window closes, without normal services", async () => {

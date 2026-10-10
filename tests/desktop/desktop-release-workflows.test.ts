@@ -247,7 +247,9 @@ describe("desktop release workflows", () => {
     );
 
     expect(main).not.toContain("win.setWindowButtonVisibility(false)");
-    expect(main).toContain("...windowChromeOptions(process.platform)");
+    expect(main).toMatch(
+      /\.\.\.\(startupMode === "auth-diagnostic"\s*\? \{ titleBarStyle: "default" as const \}\s*: windowChromeOptions\(process\.platform\)\)/,
+    );
     expect(windowChrome).toContain("trafficLightPosition: { x: 14, y: 13 }");
   });
 
