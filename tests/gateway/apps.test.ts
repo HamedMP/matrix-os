@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { listApps } from "../../packages/gateway/src/apps.js";
-import { resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
+import { invalidateAppIndexCache, resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
 
 describe("T711: GET /api/apps", () => {
   let homePath: string;
@@ -63,6 +63,43 @@ describe("T711: GET /api/apps", () => {
 
     expect(apps).toHaveLength(1);
     expect(apps[0]?.iconUrl).toMatch(/^\/icons\/custom-brand\.png\?v=/);
+  });
+
+  it("uses the gallery artwork for an existing first-party install without changing an owner-selected icon", async () => {
+    mkdirSync(join(homePath, "system/icons"), { recursive: true });
+    mkdirSync(join(homePath, "apps/subscriptions"), { recursive: true });
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), readFileSync(join(process.cwd(), "home/system/icons/subscriptions.svg")));
+    writeFileSync(join(homePath, "system/icons/gallery-subscriptions.png"), "gallery-icon");
+    writeFileSync(join(homePath, "system/icons/my-subscriptions.png"), "owner-selected-icon");
+    writeFileSync(join(homePath, "apps/subscriptions/index.html"), "<html></html>");
+    const manifest = {
+      name: "Subscriptions", slug: "subscriptions", author: "Matrix OS",
+      listingTrust: "first_party", icon: "subscriptions", version: "1.0.0",
+      runtimeVersion: "^24.0.0", runtime: "static",
+    };
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify(manifest));
+
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/gallery-subscriptions\.png\?v=/);
+
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), "owner customized the same selected file");
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/subscriptions\.svg\?v=/);
+
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify({ ...manifest, icon: "my-subscriptions" }));
+    invalidateAppIndexCache();
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/my-subscriptions\.png\?v=/);
+  });
+
+  it("keeps legacy app artwork when the exact Gallery replacement is missing", async () => {
+    mkdirSync(join(homePath, "system/icons"), { recursive: true });
+    mkdirSync(join(homePath, "apps/subscriptions"), { recursive: true });
+    writeFileSync(join(homePath, "system/icons/subscriptions.svg"), readFileSync(join(process.cwd(), "home/system/icons/subscriptions.svg")));
+    writeFileSync(join(homePath, "system/icons/game-center.png"), "fallback artwork");
+    writeFileSync(join(homePath, "apps/subscriptions/index.html"), "<html></html>");
+    writeFileSync(join(homePath, "apps/subscriptions/matrix.json"), JSON.stringify({
+      name: "Subscriptions", slug: "subscriptions", author: "Matrix OS", icon: "subscriptions",
+      listingTrust: "first_party", version: "1.0.0", runtimeVersion: "^24.0.0", runtime: "static",
+    }));
+    expect((await listApps(homePath))[0]?.iconUrl).toMatch(/^\/icons\/subscriptions\.svg\?v=/);
   });
 
   it("lists multiple apps sorted by name", async () => {

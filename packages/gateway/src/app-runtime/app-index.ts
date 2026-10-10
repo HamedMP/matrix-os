@@ -3,7 +3,7 @@ import { join, sep } from "node:path";
 import { ManifestError } from "./errors.js";
 import { parseManifest, SAFE_SLUG, type AppManifest } from "./manifest-schema.js";
 
-const SKIP_DIRS = new Set([
+export const APP_INDEX_SKIP_DIRS = new Set([
   "node_modules",
   ".git",
   "dist",
@@ -105,7 +105,7 @@ async function scanManifestCandidates(
 
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
-    if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue;
+    if (!entry.isDirectory() || APP_INDEX_SKIP_DIRS.has(entry.name)) continue;
     const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
 
     const manifest = await readManifestCandidate(appsDir, relativePath);

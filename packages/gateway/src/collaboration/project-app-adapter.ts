@@ -28,7 +28,7 @@ const MutationEnvelopeSchema = z.object({
 }).strict();
 
 const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
-const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "bulkUpdate", "delete"];
+const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "compareAndSwap", "bulkUpdate", "delete"];
 
 export interface ProjectAppBridge {
   execute(input: {
@@ -53,6 +53,14 @@ export class ProjectAppAdapterError extends Error {
     super("Shared project app is unavailable");
     this.name = "ProjectAppAdapterError";
   }
+}
+
+/** A failed comparison completes the request without changing the app resource. */
+export function appMutationChanged(action: BridgeQueryBody["action"], result: unknown): boolean {
+  if (action !== "compareAndSwap") return true;
+  const outcome = z.object({ ok: z.boolean() }).strict().safeParse(result);
+  if (!outcome.success) throw new ProjectAppAdapterError("unavailable");
+  return outcome.data.ok;
 }
 
 function projectNamespace(scopeId: string, appId: string): string {
@@ -253,7 +261,7 @@ export function createProjectAppAdapter(options: {
           if (existing.payload_hash !== payloadHash || existing.status !== "completed" || existing.result_ref === null) {
             throw new ProjectAppAdapterError("conflict");
           }
-          return { ...parseStoredResult(existing.result_ref), replayed: true };
+          return { ...parseStoredResult(existing.result_ref), replayed: true, changed: false };
         }
         const binding = await requireBinding(trx, current, envelope.data.appId, "update");
         if (Number(binding.revision) !== envelope.data.expectedRevision) {
@@ -268,13 +276,16 @@ export function createProjectAppAdapter(options: {
           action: { ...action, app: app.namespace } as BridgeQueryBody,
           transaction: trx,
         }));
-        const revision = Number(binding.revision) + 1;
-        const changed = await trx.updateTable("collaboration_resource_bindings").set({
-          revision,
-          updated_at: now(),
-        }).where("id", "=", binding.id).where("revision", "=", Number(binding.revision))
-          .returning("id").executeTakeFirst();
-        if (!changed) throw new ProjectAppAdapterError("conflict");
+        const changed = appMutationChanged(action.action, result);
+        const revision = Number(binding.revision) + (changed ? 1 : 0);
+        if (changed) {
+          const updated = await trx.updateTable("collaboration_resource_bindings").set({
+            revision,
+            updated_at: now(),
+          }).where("id", "=", binding.id).where("revision", "=", Number(binding.revision))
+            .returning("id").executeTakeFirst();
+          if (!updated) throw new ProjectAppAdapterError("conflict");
+        }
         const replayResult = { result, revision };
         const timestamp = now();
         await trx.insertInto("collaboration_operations").values({
@@ -290,21 +301,23 @@ export function createProjectAppAdapter(options: {
           created_at: timestamp,
           expires_at: new Date(timestamp.getTime() + OPERATION_RETENTION_MS),
         }).execute();
-        const latestEvent = await trx.selectFrom("collaboration_events")
-          .select("scope_seq").where("scope_id", "=", current.scopeId)
-          .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
-        await trx.insertInto("collaboration_events").values({
-          scope_id: current.scopeId,
-          scope_seq: Number(latestEvent?.scope_seq ?? 0) + 1,
-          event_id: z.uuid().parse(createEventId()),
-          resource_kind: "project",
-          resource_id: current.resourceId,
-          revision,
-          authority_generation: current.authorityGeneration,
-          event_type: "project.app.changed",
-          payload: jsonb({ appId: envelope.data.appId, action: action.action }),
-          created_at: timestamp,
-        }).execute();
+        if (changed) {
+          const latestEvent = await trx.selectFrom("collaboration_events")
+            .select("scope_seq").where("scope_id", "=", current.scopeId)
+            .orderBy("scope_seq", "desc").limit(1).executeTakeFirst();
+          await trx.insertInto("collaboration_events").values({
+            scope_id: current.scopeId,
+            scope_seq: Number(latestEvent?.scope_seq ?? 0) + 1,
+            event_id: z.uuid().parse(createEventId()),
+            resource_kind: "project",
+            resource_id: current.resourceId,
+            revision,
+            authority_generation: current.authorityGeneration,
+            event_type: "project.app.changed",
+            payload: jsonb({ appId: envelope.data.appId, action: action.action }),
+            created_at: timestamp,
+          }).execute();
+        }
         await trx.insertInto("collaboration_audit").values({
           scope_id: current.scopeId,
           actor_id: current.actorId,
@@ -314,16 +327,16 @@ export function createProjectAppAdapter(options: {
           reason_code: null,
           created_at: timestamp,
         }).execute();
-        return { ...replayResult, replayed: false };
+        return { ...replayResult, replayed: false, changed };
       });
-      if (!committed.replayed && options.onCommitted) {
+      if (committed.changed && options.onCommitted) {
         try {
           await options.onCommitted(current.scopeId);
         } catch (error: unknown) {
           console.warn("[collaboration-project] project app event delivery failed", error instanceof Error ? error.name : "UnknownError");
         }
       }
-      return committed;
+      return { result: committed.result, revision: committed.revision, replayed: committed.replayed };
     } catch (error: unknown) {
       throw mapError(error);
     }

@@ -20,9 +20,11 @@ type AppIconSnapshots = Record<string, AppIconSnapshot>;
 type AppsLoader = (options?: RequestOptions) => Promise<ApiAppEntry[]>;
 
 const MAX_ICON_URL_PRESERVATION_LOOKUPS = 1_000;
-// Only gateway-owned, content-versioned icon paths may come from the catalog;
+// Only bounded owner icon paths or canonical bundled artwork may come from the catalog;
 // anything else falls back to the slug-derived icon URL.
 const SAFE_CATALOG_ICON_URL = /^\/icons\/[A-Za-z0-9_-]{1,64}\.(?:png|svg)(?:\?v=[A-Za-z0-9._~%-]{1,160})?$/;
+
+const SAFE_BUNDLED_APP_ICON_URL = /^\/system-app-icons\/v2\/(?:notes|whiteboard)\.png$/;
 
 export const appKeys = {
   all: () => ["apps"] as const,
@@ -54,7 +56,7 @@ export function resolveCatalogIconUrl(
   value: unknown,
   resolveAssetUrl: (path: string) => string | undefined = gatewayAssetUrl,
 ): string | undefined {
-  if (typeof value !== "string" || !SAFE_CATALOG_ICON_URL.test(value)) return undefined;
+  if (typeof value !== "string" || (!SAFE_CATALOG_ICON_URL.test(value) && !SAFE_BUNDLED_APP_ICON_URL.test(value))) return undefined;
   return resolveAssetUrl(value);
 }
 
@@ -65,6 +67,8 @@ export function hydrateAppIconUrls(
 ): ApiAppEntry[] | undefined {
   if (!apps) return undefined;
   return apps.map((app) => {
+    const selectedUrl = resolveCatalogIconUrl(app.iconUrl, resolveAssetUrl);
+    if (selectedUrl) return { ...app, iconUrl: selectedUrl };
     if (app.iconUrl) return app;
     const iconSlug = app.icon ?? app.slug;
     const versionedUrl = iconSlug ? icons?.[iconSlug]?.versionedUrl : undefined;

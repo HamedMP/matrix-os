@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   isDeniedFileApiPath,
+  isDeniedFileApiMutationPath,
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
@@ -78,7 +79,7 @@ export async function fileDelete(
   requestedPath: string,
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
   const lexicalPath = resolveWithinHome(homePath, requestedPath);
-  if (!lexicalPath || isDeniedFileApiPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
+  if (!lexicalPath || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   const normalized = requestedPath.replace(/^\/+/, "");
   if (PROTECTED_PATHS.has(normalized) || [...PROTECTED_PATHS].some((p) => normalized.startsWith(p + "/"))) {
