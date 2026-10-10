@@ -13,7 +13,8 @@ import {
   type OnboardingSettingsSection,
   type OnboardingStoredPrefs,
 } from "@matrix-os/ui";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { useChatProviderState } from "@/components/chat-app-provider-setup";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
@@ -52,15 +53,15 @@ async function readOptionalJson(path: string): Promise<unknown> {
 }
 
 function useShellOnboardingIdentity(): ShellOnboardingIdentity | null {
-  const [identity, setIdentity] = useState<ShellOnboardingIdentity | null>(null);
-  useEffect(() => {
-    let disposed = false;
-    void Promise.all([readOptionalJson("/api/identity"), readOptionalJson("/api/system/info")]).then(([owner, system]) => {
-      if (!disposed) setIdentity(shellOnboardingIdentity(owner, system));
-    });
-    return () => { disposed = true; };
-  }, []);
-  return identity;
+  const { data } = useQuery({
+    queryKey: ["onboarding-widget", "identity"],
+    queryFn: async () => {
+      const [owner, system] = await Promise.all([readOptionalJson("/api/identity"), readOptionalJson("/api/system/info")]);
+      return shellOnboardingIdentity(owner, system);
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  return data ?? null;
 }
 
 /** A maximized Chat already shows the conversation the widget would open. */

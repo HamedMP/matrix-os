@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +43,12 @@ describe("web onboarding widget host", () => {
   }
 
   function renderHost() {
-    return render(createElement(OnboardingWidgetHost, { onOpenChat: vi.fn(), onOpenSettings: vi.fn() }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(createElement(
+      QueryClientProvider,
+      { client },
+      createElement(OnboardingWidgetHost, { onOpenChat: vi.fn(), onOpenSettings: vi.fn() }),
+    ));
   }
 
   it("greets the owner on first visit and docks support above it", async () => {
