@@ -1,7 +1,8 @@
 "use client";
 
-import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
-import { FileResourceSharing } from "./file-browser/FileResourceSharing";
+import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
+import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
+import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -27,7 +28,6 @@ import {
   shouldRenderAppIframe,
   injectBridgeIntoAppHtml,
 } from "./app-viewer-helpers";
-import { isAllowedBridgeFetchUrl } from "./app-viewer-bridge-policy";
 
 const GATEWAY_URL = getGatewayUrl();
 const SESSION_REFRESH_DEBOUNCE_MS = 2000;
@@ -52,16 +52,9 @@ function readCurrentDesign(): string {
 
 async function handleBridgeFetch(appName: string, payload: unknown, port: MessagePort, signal: AbortSignal): Promise<void> {
   try {
-    if (!payload || typeof payload !== "object") {
-      throw new Error("Invalid bridge fetch payload");
-    }
-    const { url, init } = payload as { url?: unknown; init?: unknown };
-    if (typeof url !== "string" || !isAllowedBridgeFetchUrl(appName, url)) {
-      throw new Error("Blocked bridge fetch URL");
-    }
-    const bound = prepareAppBridgeFetch(appName, url, init && typeof init === "object" ? init as RequestInit : {});
+    const bound = prepareBridgeFetchRequest(appName, payload);
     const requestInit = bound.init;
-    const response = await fetch(`${getGatewayUrl()}${bound.url}`, {
+    const response = await fetch(resolveBridgeFetchUrl(getGatewayUrl(), bound.url), {
       method: requestInit.method,
       headers: requestInit.headers,
       body: requestInit.body,
@@ -184,12 +177,21 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   // Handle bridge messages from iframe
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- this effect only registers a window "message" listener; the fetch fires from the iframe bridge handler when a postMessage arrives (event-driven, not on mount/render) and already carries AbortSignal.timeout.
   useEffect(() => {
+    const launches = new Set<AbortController>();
     const handler: BridgeHandler = {
       sendToKernel(text) {
         send({ type: "message", text, sessionId });
       },
       fetchData: bridgeDataHandler,
-      openApp: onOpenApp,
+      openApp(name, requestedPath) {
+        if (!onOpenApp || launches.size >= 8) return;
+        const controller = new AbortController();
+        launches.add(controller);
+        void resolveAppBridgeLaunch(name, requestedPath, controller.signal)
+          .then(target => { if (!controller.signal.aborted) onOpenApp(target.name, target.path); })
+          .catch((error: unknown) => console.warn("[app-viewer] App launch unavailable", error instanceof Error ? error.name : "UnknownError"))
+          .finally(() => launches.delete(controller));
+      },
     };
 
     const pending = new Map<MessagePort, AbortController>();
@@ -199,6 +201,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
         && (event.origin === window.location.origin || event.origin === "null") && data.app === appName) {
         for (const [port, controller] of pending) { controller.abort(); port.close(); }
         pending.clear();
+        for (const controller of launches) controller.abort();
+        launches.clear();
         return;
       }
       if (
@@ -227,6 +231,8 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       window.removeEventListener("message", onMessage);
       for (const [port, controller] of pending) { controller.abort(); port.close(); }
       pending.clear();
+      for (const controller of launches) controller.abort();
+      launches.clear();
     };
   }, [send, sessionId, onOpenApp, appName, path, refreshKey]);
 
@@ -369,16 +375,17 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
     return null;
   }
 
-  return <div className="flex h-full w-full flex-col">
-    {slug ? <FileResourceSharing kind="app" path={slug} containerClassName="flex justify-end border-b px-3 py-1.5" /> : null}
-    <iframe
-      ref={iframeRef}
-      key={refreshKey}
-      src={iframeSrc}
-      srcDoc={slug && iframeHtml ? iframeHtml : undefined}
-      className="min-h-0 w-full flex-1 border-0"
-      sandbox={APP_IFRAME_SANDBOX}
-      title={path}
-    />
-  </div>;
+  return (
+    <div className="flex h-full w-full flex-col">
+      <iframe
+        ref={iframeRef}
+        key={refreshKey}
+        src={iframeSrc}
+        srcDoc={slug && iframeHtml ? iframeHtml : undefined}
+        className="min-h-0 w-full flex-1 border-0"
+        sandbox={APP_IFRAME_SANDBOX}
+        title={path}
+      />
+    </div>
+  );
 }

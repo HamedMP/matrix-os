@@ -103,6 +103,56 @@ describe("shell snapshot cache", () => {
     expect(loadShellSnapshot(scope, storage)?.desktopConfig?.desktopIcons).toEqual([]);
   });
 
+  it.each(["terminal", "chat", "activity-monitor", "workspace", "a".repeat(64)])(
+    "retains the manifest identity %s across cached shortcut save and reload",
+    (slug) => {
+      const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/vm/pr-2406" });
+      const path = `matrix-app:${slug}`;
+      const desktopConfig = {
+        ...freshSnapshot.desktopConfig,
+        pinnedApps: [path, "apps/notes/index.html", "__terminal__"],
+        dockOrder: { userApps: [path, "apps/notes/index.html"], systemApps: ["__terminal__", path] },
+        desktopIcons: [{ path, x: 321, y: 108 }, { path: "__terminal__", x: 20, y: 20 }],
+      };
+      const apps = [{ name: "Owner app", path, slug }];
+
+      saveShellSnapshot(scope, { desktopConfig, bootstrap: { apps } }, storage);
+
+      // The cached snapshot alone must retain shortcuts before settings can arrive.
+      const loaded = loadShellSnapshot(scope, storage);
+      expect(loaded?.desktopConfig?.pinnedApps).toEqual(desktopConfig.pinnedApps);
+      expect(loaded?.desktopConfig?.dockOrder).toEqual(desktopConfig.dockOrder);
+      expect(loaded?.desktopConfig?.desktopIcons).toEqual(desktopConfig.desktopIcons);
+      expect(loaded?.bootstrap?.apps).toEqual(apps);
+    },
+  );
+
+  it.each([
+    "matrix-app:", "matrix-app:../terminal", "matrix-app:Terminal", "matrix-app:with_space",
+    "matrix-app:-terminal", "matrix-app:terminal/child", "matrix-app:terminal:extra",
+    "matrix-app:terminal?x=1", "matrix-app:terminal\u0000", `matrix-app:${"a".repeat(65)}`,
+  ])("rejects unsafe manifest identity %j from an untrusted stored snapshot", (path) => {
+    const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/vm/pr-2406" });
+    storage.setItem(scope!.storageKey, JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      data: {
+        desktopConfig: {
+          ...freshSnapshot.desktopConfig,
+          pinnedApps: [path, "__terminal__"],
+          dockOrder: { userApps: [path], systemApps: [path, "__terminal__"] },
+          desktopIcons: [{ path, x: 321, y: 108 }, { path: "__terminal__", x: 20, y: 20 }],
+        },
+        bootstrap: { apps: [{ name: "Unsafe", path, slug: "terminal" }] },
+      },
+    }));
+    const loaded = loadShellSnapshot(scope, storage);
+    expect(loaded?.desktopConfig?.pinnedApps).toEqual(["__terminal__"]);
+    expect(loaded?.desktopConfig?.dockOrder).toEqual({ userApps: [], systemApps: ["__terminal__"] });
+    expect(loaded?.desktopConfig?.desktopIcons).toEqual([{ path: "__terminal__", x: 20, y: 20 }]);
+    expect(loaded?.bootstrap?.apps).toEqual([]);
+  });
+
   it("ignores corrupt, stale, and oversized entries", () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();

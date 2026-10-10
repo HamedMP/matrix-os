@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDefaultOsViewDocument, mergeOsViewStatePatch, type PatchOsViewStateRequest } from "@matrix-os/contracts";
 
@@ -452,16 +452,18 @@ describe("Desktop launcher dock button by mode", () => {
     )).toEqual(chatWindow);
   });
 
-  it("adds an existing generated app from the launcher and renders its persisted Web Desktop icon", async () => {
+  it.each([false, true])("adds a generated app from the launcher without duplicating saved moved placements (moved=%s)", async (moved) => {
     const sushi = {
       name: "Sushi Counter",
-      path: "/files/apps/sushi-counter/index.html",
+      path: moved ? "/files/apps/food/counter/index.html" : "/files/apps/sushi-counter/index.html",
       icon: "sushi-counter",
       slug: "sushi-counter",
     };
     const patches: PatchOsViewStateRequest[] = [];
     let revision = 1;
     let document = createDefaultOsViewDocument();
+    const saved = { path: "apps/food/counter/index.html", x: 321, y: 147 };
+    if (moved) document = { ...document, desktop: { ...document.desktop, icons: [saved] } };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return await jsonResponse({ complete: true });
@@ -491,6 +493,7 @@ describe("Desktop launcher dock button by mode", () => {
       return await jsonResponse({});
     }));
     resetShellMode("desktop", true);
+    if (moved) desktopConfigStore.getState().setDesktopIcons([saved]);
 
     renderDesktop();
 
@@ -500,22 +503,28 @@ describe("Desktop launcher dock button by mode", () => {
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));
-    fireEvent.contextMenu(await screen.findByRole("button", { name: "Sushi Counter" }));
+    fireEvent.contextMenu(within(await screen.findByTestId("launcher-destinations")).getByRole("button", { name: "Sushi Counter" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Add Sushi Counter to Desktop" }));
 
     await waitFor(() => expect(screen.queryByTestId("launcher-destinations")).toBeNull());
     expect(screen.getByRole("button", { name: "Sushi Counter" })).toBeTruthy();
-    expect(patches).toHaveLength(2);
-    expect(patches[1]).toEqual(expect.objectContaining({
-      baseRevision: 2,
-      patch: expect.objectContaining({
-        desktop: expect.objectContaining({
-          icons: expect.arrayContaining([
-            expect.objectContaining({ path: "apps/sushi-counter/index.html" }),
-          ]),
+    expect(patches).toHaveLength(moved ? 1 : 2);
+    if (moved) {
+      expect(document.desktop.icons).toEqual([saved]);
+      expect(desktopConfigStore.getState().desktopIcons).toEqual([saved]);
+      expect(screen.getAllByRole("button", { name: "Sushi Counter" })).toHaveLength(1);
+    } else {
+      expect(patches[1]).toEqual(expect.objectContaining({
+        baseRevision: 2,
+        patch: expect.objectContaining({
+          desktop: expect.objectContaining({
+            icons: expect.arrayContaining([
+              expect.objectContaining({ path: "apps/sushi-counter/index.html" }),
+            ]),
+          }),
         }),
-      }),
-    }));
+      }));
+    }
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
   });
 
@@ -600,6 +609,58 @@ describe("Desktop launcher dock button by mode", () => {
     )).toBe(false);
   });
 
+  it.each(["terminal", "chat", "activity-monitor"])("launches moved owner %s from the real Desktop catalog without replacing the shell tool", async slug => {
+    const owner = { name: `Owner ${slug}`, slug, path: `/files/apps/tools/my-${slug}/index.html` };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return jsonResponse([owner]);
+      if (url.includes("/api/shell/bootstrap")) return jsonResponse({ layout: { windows: [] }, apps: [owner], modules: [] });
+      return jsonResponse({});
+    }));
+    resetShellMode("desktop", true);
+    renderDesktop();
+    await waitFor(() => expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: `matrix-app:${slug}` }),
+    ])));
+    fireEvent.click(screen.getByRole("button", { name: "Open App Launcher" }));
+    const launcher = await screen.findByTestId("launcher-destinations");
+    fireEvent.click(within(launcher).getByRole("button", { name: owner.name }));
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter(win => win.path === `matrix-app:${slug}`)).toHaveLength(1));
+    expect(windowManagerStore.getState().windows.find(win => win.path === `matrix-app:${slug}`)?.title).toBe(owner.name);
+  });
+
+  it.each(["terminal", "chat", "activity-monitor", "workspace"])("preserves saved physical placement and manifest launch for moved owner %s", async slug => {
+    const owner = { name: `Owner ${slug}`, slug, path: `/files/apps/tools/my-${slug}/index.html` };
+    const saved = { path: owner.path.replace(/^\/files\//, ""), x: 321, y: 147 };
+    let document = createDefaultOsViewDocument();
+    document = { ...document, desktop: { ...document.desktop, icons: [saved] } };
+    let revision = 1;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return await jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return await jsonResponse([owner]);
+      if (url.includes("/api/shell/bootstrap")) return await jsonResponse({ layout: { windows: [] }, apps: [owner], modules: [] });
+      if (url.includes("/api/os-view-state")) {
+        if (init?.method === "PATCH") {
+          const mutation = JSON.parse(String(init.body)) as PatchOsViewStateRequest;
+          document = mergeOsViewStatePatch(document, mutation.patch); revision += 1;
+        }
+        return await jsonResponse({ revision, document, updatedAt: "2026-10-10T00:00:00.000Z" });
+      }
+      return await jsonResponse({});
+    }));
+    resetShellMode("desktop", true);
+    desktopConfigStore.setState({ desktopIcons: [saved] });
+    renderDesktop();
+    const icon = await screen.findByRole("button", { name: owner.name });
+    fireEvent.doubleClick(icon);
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter(win => win.path === `matrix-app:${slug}`)).toHaveLength(1));
+    expect(windowManagerStore.getState().windows.find(win => win.path === `matrix-app:${slug}`)?.title).toBe(owner.name);
+    expect(desktopConfigStore.getState().desktopIcons).toEqual([saved]);
+    expect(document.desktop.icons).toEqual([saved]);
+  });
+
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
@@ -625,7 +686,7 @@ describe("Desktop launcher dock button by mode", () => {
     await waitFor(() => {
       expect(queryClient.getQueryData(appKeys.list())).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          path: "/files/apps/notes/index.html",
+          path: "apps/notes/index.html",
           iconUrl: "http://localhost:3000/icons/notes.png?v=abc",
         }),
       ]));
@@ -725,7 +786,7 @@ describe("Desktop launcher dock button by mode", () => {
 
     await waitFor(() => {
       const paths = (queryClient.getQueryData<ApiAppEntry[]>(appKeys.list()) ?? []).map((app) => app.path);
-      expect(paths).toContain("apps/stickies/dist/index.html");
+      expect(paths).toContain("apps/stickies/index.html");
       expect(paths).not.toContain("apps/winxp-minesweeper/index.html");
     });
   });

@@ -17,7 +17,8 @@ export function prepareAppCapabilityRequest(app: string, init: RequestInit): Req
 
 export { MAX_APP_BRIDGE_REPLY_BYTES };
 export function appBridgeTimeoutMs(url: string): number {
-  return url === "/api/bridge/ai" || url.startsWith("/api/bridge/ai/routes?") || url === "/api/bridge/capabilities" ? APP_CAPABILITY_TIMEOUT_MS : 10_000;
+  const galleryInstall = /^\/api\/app-gallery\/[a-z][a-z0-9-]{0,47}\/install$/.test(url);
+  return galleryInstall || url === "/api/bridge/ai" || url.startsWith("/api/bridge/ai/routes?") || url === "/api/bridge/capabilities" ? APP_CAPABILITY_TIMEOUT_MS : 10_000;
 }
 function replyBytes(request?: {url:string;init:RequestInit}): number {
   if (request?.url === "/api/bridge/query" || request?.url === "/api/bridge/data") return MAX_APP_DATABASE_REPLY_BYTES;

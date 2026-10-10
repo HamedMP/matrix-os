@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within, cleanup } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanvasToolbar } from "../../shell/src/components/canvas/CanvasToolbar.js";
 import { useDotGrid } from "../../shell/src/components/DotGrid.js";
 import { useCanvasLabels } from "../../shell/src/stores/canvas-labels.js";
 import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
+import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
+
+vi.mock("@/components/UserButton", () => ({ UserButton: () => <button>Account</button> }));
 
 vi.mock("../../shell/src/components/onboarding/GettingStartedPopover.js", () => ({
   GettingStartedPopover: () => (
@@ -45,6 +48,7 @@ async function openCanvasControls() {
 
 describe("responsive CanvasToolbar", () => {
   beforeEach(resetStores);
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it("keeps priority controls available and hides only labels/secondary controls below lg", () => {
     render(<CanvasToolbar />);
@@ -63,6 +67,22 @@ describe("responsive CanvasToolbar", () => {
     expect(screen.getByRole("slider", { name: "Zoom level" }).className).toContain("hidden");
     expect(screen.getByTestId("full-canvas-actions").className).toContain("lg:flex");
     expect(screen.getByTestId("compact-canvas-actions").className).toContain("lg:hidden");
+  });
+
+  it("shows the desktop by leaving fullscreen and minimizing every open window without closing it", () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    useDesktopMode.setState({ mode: "canvas" });
+    const manager = useWindowManager.getState();
+    manager.openWindow("Notes", "apps/notes/index.html", 0);
+    manager.openWindow("Terminal", "__terminal__", 0);
+    const windows = useWindowManager.getState().windows;
+    manager.toggleFullscreen(windows[0].id);
+    render(<CanvasToolbar />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Workspace view" }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Show desktop" }));
+    expect(useDesktopMode.getState().mode).toBe("desktop");
+    expect(useWindowManager.getState().fullscreenWindowId).toBeNull();
+    expect(useWindowManager.getState().windows.map(w => [w.id, w.minimized])).toEqual(windows.map(w => [w.id, true]));
   });
 
   it("exposes and invokes every compact action with current toggle checked states", async () => {

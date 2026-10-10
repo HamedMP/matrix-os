@@ -3,18 +3,19 @@
 import { useEffect, useRef, useState } from "react";
 import { iconUrlForSlug } from "@/lib/app-launch";
 
-export function MobileAppIcon({ slug, size }: { slug: string; size: number }) {
-  const [src, setSrc] = useState(() => iconUrlForSlug(slug) ?? "/icon-192.png");
+export function MobileAppIcon({ slug, iconUrl, size }: { slug: string; iconUrl?: string; size: number }) {
+  const [src, setSrc] = useState(() => iconUrl ?? iconUrlForSlug(slug) ?? "/icon-192.png");
   const triedSvg = useRef(false);
-  const prevSlug = useRef(slug);
+  const selection = iconUrl ?? slug;
+  const prevSelection = useRef(selection);
 
   useEffect(() => {
-    if (prevSlug.current === slug) return;
-    prevSlug.current = slug;
+    if (prevSelection.current === selection) return;
+    prevSelection.current = selection;
     triedSvg.current = false;
-    // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the slug actually changes.
-    setSrc(iconUrlForSlug(slug) ?? "/icon-192.png");
-  }, [slug]);
+    // react-doctor-disable-next-line react-doctor/no-derived-state -- `src` is not pure derived state: it is seeded from the selected URL or `slug` but then mutated at runtime by the onError fallback chain (.png -> .svg -> /icon-192.png). Computing it in render would discard the resolved fallback and re-trigger the broken-image flicker on every render. This effect resets the chain only when the selected URL or slug changes.
+    setSrc(iconUrl ?? iconUrlForSlug(slug) ?? "/icon-192.png");
+  }, [slug, iconUrl, selection]);
 
   return (
     // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- icon src is swapped at runtime via onError fallback chain (.png -> .svg -> /icon-192.png), which next/image does not support; <img> preserves the graceful-degradation behavior.
@@ -27,7 +28,7 @@ export function MobileAppIcon({ slug, size }: { slug: string; size: number }) {
         width: size,
         height: size,
         borderRadius: Math.round(size * 0.22),
-        background: "rgba(244,237,224,0.08)",
+        background: "transparent",
         objectFit: "contain",
       }}
       onError={() => {

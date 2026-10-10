@@ -1,12 +1,15 @@
+import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { shellApi, type RequestOptions } from "./http";
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { catalogAppLaunchPath } from "@/lib/app-catalog-launch";
 import { gatewayAssetUrl } from "@/lib/gateway";
 
 export interface ApiAppEntry {
   name: string;
   path: string;
   slug?: string;
+  /** Validated physical catalog reference for saved owner shortcuts. */
+  ownerPath?: string;
   icon?: string;
   iconUrl?: string;
 }
@@ -38,11 +41,12 @@ export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]>
     if (!entry || typeof entry !== "object") return [];
     const raw = entry as Partial<ApiAppEntry> & { file?: unknown };
     if (typeof raw.name !== "string" || raw.name.length === 0 || raw.name.length > 256) return [];
-    const path = canonicalOsViewCatalogPath({ path: raw.path, file: raw.file });
+    const path = catalogAppLaunchPath(raw);
     if (!path) return [];
-    const { iconUrl: rawIconUrl, ...rest } = raw;
+    const { iconUrl: rawIconUrl, ownerPath: _ownerPath, ...rest } = raw;
+    const ownerPath = canonicalOsViewCatalogPath(raw);
     const iconUrl = resolveCatalogIconUrl(rawIconUrl);
-    return [{ ...rest, name: raw.name, path, ...(iconUrl ? { iconUrl } : {}) } as ApiAppEntry];
+    return [{ ...rest, name: raw.name, path, ...(ownerPath && ownerPath !== path ? { ownerPath } : {}), ...(iconUrl ? { iconUrl } : {}) } as ApiAppEntry];
   });
 }
 
@@ -66,7 +70,10 @@ export function hydrateAppIconUrls(
   resolveAssetUrl: (path: string) => string | undefined,
 ): ApiAppEntry[] | undefined {
   if (!apps) return undefined;
-  return apps.map((app) => {
+  return apps.map((entry) => {
+    const path = catalogAppLaunchPath(entry);
+    const ownerPath = canonicalOsViewCatalogPath({ path: entry.ownerPath }) ?? canonicalOsViewCatalogPath(entry);
+    const app = path ? { ...entry, path, ...(ownerPath && ownerPath !== path ? { ownerPath } : {}) } : entry;
     const selectedUrl = resolveCatalogIconUrl(app.iconUrl, resolveAssetUrl);
     if (selectedUrl) return { ...app, iconUrl: selectedUrl };
     if (app.iconUrl) return app;

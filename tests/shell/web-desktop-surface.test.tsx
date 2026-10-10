@@ -39,6 +39,17 @@ const windows = [
 ];
 
 describe("WebDesktopSurface", () => {
+  it("loads launcher artwork from the explicitly selected computer and runtime", () => {
+    const previous = window.location.href;
+    window.history.replaceState({}, "", "/vm/pr-2406?runtime=pr-2406");
+    try {
+      render(<WebDesktopSurface apps={apps} windows={[]} fullscreenWindowId={null} launcherOpen={false}
+        onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+      expect(screen.getByRole("button", { name: "Open App Launcher" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/icons/v3-app-gallery.png`);
+    } finally { window.history.replaceState({}, "", previous); }
+  });
   it("renders the native Desktop header without restoring the deprecated app menu", () => {
     render(
       <WebDesktopSurface
@@ -147,7 +158,8 @@ describe("WebDesktopSurface", () => {
     expect(Array.from(desktop.querySelectorAll("button")).map((button) => button.getAttribute("aria-label")))
       .toEqual(OS_VIEW_FIXED_APP_NAMES);
     const vscodeIcon = screen.getByRole("button", { name: "VS Code" }).querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(vscodeIcon?.style.background).toBe("rgb(255, 254, 252)");
+    expect(vscodeIcon?.style.background).toBe("transparent");
+    expect(vscodeIcon?.className).toContain("border-0 shadow-none");
     expect(vscodeIcon?.querySelector("img")?.getAttribute("src")).toBe("/vscode.png");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Connect Apps" }));
@@ -229,7 +241,7 @@ describe("WebDesktopSurface", () => {
     expect(onActivateWindow).toHaveBeenCalledWith("terminal-window");
   });
 
-  it("renders every canonical taskbar app as a full-size desktop tile", () => {
+  it("renders taskbar artwork at full size without a surrounding tile", () => {
     render(
       <WebDesktopSurface
         apps={apps}
@@ -254,9 +266,19 @@ describe("WebDesktopSurface", () => {
     for (const tile of [filesTile, terminalTile]) {
       expect(tile).toBeTruthy();
       expect(tile?.className).toContain("size-11");
-      expect(tile?.className).toContain("rounded-[13px]");
+      expect(tile?.className).not.toContain("rounded-[13px]");
+      expect(tile?.style.background).toBe("transparent");
+      expect(tile?.querySelector("img")?.className).toContain("size-full");
       expect(tile?.className).not.toContain("absolute");
     }
+
+    const launcher = screen.getByRole("button", { name: "Open App Launcher" });
+    expect(launcher.querySelector("span svg")).toBeNull();
+    expect(launcher.querySelector("img")?.getAttribute("src")).toBe(`${window.location.origin}/icons/v3-app-gallery.png`);
+    expect(launcher.querySelector("img")?.width).toBe(44);
+    fireEvent.error(terminalTile!.querySelector("img")!);
+    expect(terminalTile?.style.background).toBe("transparent");
+    expect(terminalTile?.querySelector("svg")?.classList.contains("size-full")).toBe(true);
 
     expect(desktopAppearanceForApp(apps.find((app) => app.path === "__terminal__")!)).toMatchObject({
       color: "var(--surface-warning-emphasis, #E0AA52)",
@@ -346,4 +368,32 @@ describe("WebDesktopSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close Terminal preview" }));
     expect(onCloseWindow).toHaveBeenCalledWith("terminal-window");
   });
+});
+
+it("keeps a saved moved-app placement visible and launches its manifest identity without changing its owner coordinates", () => {
+  const onOpenApp = vi.fn(); const onRemoveDesktopIcon = vi.fn();
+  render(<WebDesktopSurface apps={[{ name: "Folio", path: "apps/folio/index.html", ownerPath: "apps/finance/ledger/index.html" } as typeof apps[number]]}
+    windows={[]} fullscreenWindowId={null} launcherOpen={false}
+    desktopIcons={[{ path: "apps/finance/ledger/index.html", x: 28, y: 58 }]}
+    onOpenApp={onOpenApp} onRemoveDesktopIcon={onRemoveDesktopIcon}
+    onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+    onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+  const icon = screen.getByRole("button", { name: "Folio" });
+  fireEvent.doubleClick(icon);
+  expect(onOpenApp).toHaveBeenCalledWith("apps/folio/index.html", "Folio");
+  fireEvent.contextMenu(icon);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Remove Folio from Desktop" }));
+  expect(onRemoveDesktopIcon).toHaveBeenCalledWith("apps/finance/ledger/index.html");
+});
+
+it("preserves a placed manifest identity when a different app reuses its old folder", () => {
+  render(<WebDesktopSurface apps={[
+    { name: "Folio", path: "apps/folio/index.html", ownerPath: "apps/moved-ledger/index.html" },
+    { name: "Other", path: "apps/other/index.html", ownerPath: "apps/folio/index.html" },
+  ] as typeof apps} windows={[]} fullscreenWindowId={null} launcherOpen={false}
+    desktopIcons={[{ path: "apps/folio/index.html", x: 28, y: 58 }]}
+    onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
+    onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "Folio" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Other" })).toBeNull();
 });

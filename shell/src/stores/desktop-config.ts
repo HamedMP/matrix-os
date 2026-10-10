@@ -32,6 +32,7 @@ export interface DesktopIconPlacement {
 }
 
 const MAX_DESKTOP_ICONS = 512;
+const MAX_PIN_REFERENCES = 512;
 const MAX_DESKTOP_COORDINATE = 16_384;
 const OS_VIEW_CONFLICT_RETRY_MS = 2_000;
 
@@ -48,7 +49,7 @@ interface DesktopConfigStore {
   moveDesktopIcon: (path: string, x: number, y: number) => void;
   removeDesktopIcon: (path: string) => void;
   addDesktopIcon: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
-  togglePin: (path: string) => void;
+  togglePin: (path: string, aliases?: readonly string[]) => void;
   /** Persist a new section ordering. Accepts a partial update so callers
       can reorder one section without touching the other. */
   reorderDockSection: (
@@ -301,10 +302,12 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     );
     return operation;
   },
-  togglePin: (path) => {
+  togglePin: (path, aliases = [path]) => {
+    // Per-action lookup is capped by the persisted pin contract and discarded after this mutation.
+    const references = new Set(aliases.slice(0, MAX_PIN_REFERENCES));
     const current = get().pinnedApps ?? [];
-    const next = current.includes(path)
-      ? current.filter((p) => p !== path)
+    const next = current.some((pin) => references.has(pin))
+      ? current.filter((pin) => !references.has(pin))
       : [...current, path];
     set({ pinnedApps: next });
     persistDesktopPatch({ pinnedApps: next }).catch((err) => {
