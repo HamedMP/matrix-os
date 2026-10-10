@@ -73,15 +73,21 @@ describe("Claude built-in integration reads", () => {
     expect(Object.keys(services[0]!.actions)).toEqual(["read"]);
   });
 
-  it.each(["default", "review"])("wires owner reads into fresh and resumed %s Chat while keeping credentials isolated", async mode => {
+  it.each(["default", "review"])("wires owner discovery and receipt-bound actions into fresh and resumed %s Chat while keeping credentials isolated", async mode => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
     const seen: Array<{ token: string; args: string[] }> = [];
     const spawnFn = vi.fn((_command, args, opts) => {
       const token = opts.env.MATRIX_AGENT_INTEGRATIONS_TOKEN;
       seen.push({ token, args });
       expect(opts.env.MATRIX_AUTH_TOKEN).toBeUndefined();
-      expect(registry.resolve(token, "POST", "/api/integrations/read-call")).toBe(owner.ownerId);
-      expect(registry.resolve(token, "POST", "/api/integrations/call")).toBeNull();
+      expect(registry.resolve(token, "POST", "/api/integrations/read-call")).toBeNull();
+      const actionContext = registry.resolveRunContext(token, "POST", "/api/integrations/call");
+      if (mode === "default") {
+        expect(actionContext?.actorId).toBe(owner.ownerId);
+        expect(actionContext?.consumeIntegrationRequest?.("POST", "/api/integrations/call", {
+          service: "google_drive", action: "list_files", label: "Work", params: {},
+        })).toBe(false);
+      } else expect(actionContext).toBeNull();
       const child = new EventEmitter();
       const stdout = new EventEmitter();
       queueMicrotask(() => { stdout.emit("data", Buffer.from(`${JSON.stringify({ type: "result", subtype: "success", result: "done", session_id: "session_read_chat" })}\n`)); child.emit("exit", 0, null); });
@@ -93,8 +99,12 @@ describe("Claude built-in integration reads", () => {
     for await (const _ of adapter.resume!({ ...input, runId: "run_resumed", resumeState: { sessionId: "session_read_chat" } })) { /* Drain. */ }
     expect(seen).toHaveLength(2);
     for (const { args, token } of seen) {
-      expect(JSON.parse(args[args.indexOf("--settings") + 1]!).permissions.allow).toEqual(expect.arrayContaining(readTools));
-      expect(JSON.parse(args[args.indexOf("--mcp-config") + 1]!).mcpServers["matrix-integrations"].args.join(" ")).toContain("-integrations");
+      const allowed = JSON.parse(args[args.indexOf("--settings") + 1]!).permissions.allow;
+      expect(allowed).toEqual(expect.arrayContaining(readTools.slice(0, 2)));
+      expect(allowed).not.toContain("mcp__matrix-integrations__call_service");
+      expect(JSON.parse(args[args.indexOf("--mcp-config") + 1]!).mcpServers["matrix-integrations"].args).toContain(
+        `--tool-surface=chat-${mode === "default" ? "call" : "discovery"}`,
+      );
       expect(registry.resolve(token, "GET", "/api/integrations")).toBeNull();
     }
     registry.close();

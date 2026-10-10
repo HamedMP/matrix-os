@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MATRIX_BOT_SELECTION, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { AgentRecipesPanel } from "../../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
@@ -93,9 +93,20 @@ it.each(["empty", "unavailable", "failed"] as const)("blocks missing Daily Brief
   expect(client.calls.instantiate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
 });
 it("Daily Brief sends deliberate Automatic explicitly, and retains the ready concrete default", async () => {
-  const client = dailyClient({ ...ready, instances: [] }), open = vi.fn();
+  const empty = { ...ready, instances: [] };
+  const client = dailyClient(empty), open = vi.fn();
+  let finishDiscovery!: (value: CanonicalProviderCatalog) => void;
+  const discovery = new Promise<CanonicalProviderCatalog>(resolve => { finishDiscovery = resolve; });
+  client.catalog.mockResolvedValueOnce(empty).mockImplementation(() => discovery);
   render(<ChatAgentsPanel client={client as never} onClose={vi.fn()} onOpenBotChat={open}/>);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  expect(screen.getByRole("combobox", { name: "Bot model" })).toHaveProperty("disabled", true);
+  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+  expect(submitCreate().disabled).toBe(true);
+  expect(client.calls.instantiate).not.toHaveBeenCalled();
+  await act(async () => finishDiscovery(empty));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Bot model" })).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledWith({ recipe: { recipeId: dailyRecipe.recipeId, version: dailyRecipe.version }, name: "Personal Daily Brief", clientRequestId: expect.stringMatching(/^req_/), selection: MATRIX_BOT_SELECTION }));
@@ -105,6 +116,8 @@ it("Daily Brief creation includes its ready concrete model", async () => {
   const client = dailyClient(ready);
   render(<ChatAgentsPanel client={client as never} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledWith(expect.objectContaining({ selection })));
 });

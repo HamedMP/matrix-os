@@ -16,14 +16,14 @@ const job = (parse(readFileSync(".github/workflows/ci.yml", "utf8")) as {
 }).jobs["funded-postgres"];
 const settlementStep = job.steps.find((step) => step.name === "Verify funded settlement on PostgreSQL")!;
 
-function executeSettlementStep(url: string | undefined) {
+function executeSettlementStep(url: string | undefined, step = settlementStep) {
   const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-ci-"));
   try {
     const argsPath = join(directory, "arguments");
     const bun = join(directory, "bun");
     writeFileSync(bun, '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$WAIVER_CI_ARGUMENTS_PATH"\n');
     chmodSync(bun, 0o700);
-    const result = spawnSync("bash", ["-eu", "-c", settlementStep.run!], {
+    const result = spawnSync("bash", ["-eu", "-c", step.run!], {
       encoding: "utf8", timeout: 5_000,
       env: { PATH: `${directory}:${process.env.PATH}`, MATRIX_TEST_POSTGRES_URL: url,
         WAIVER_CI_ARGUMENTS_PATH: argsPath },
@@ -33,6 +33,15 @@ function executeSettlementStep(url: string | undefined) {
 }
 
 describe("funded PostgreSQL CI coverage", () => {
+  it("runs pooled custom Bot creation and rollback in the bounded disposable service step", () => {
+    const step = job.steps.find(candidate => candidate.run?.includes("tests/gateway/bots/integration-grant-source-postgres.test.ts"))!;
+    const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL, step);
+    expect(result).toMatchObject({ status: 0, args: expect.arrayContaining([
+      "run", "test", "--", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "--maxWorkers=1", "--no-file-parallelism",
+    ]) });
+    expect(executeSettlementStep(undefined, step)).toMatchObject({ status: 1, args: [] });
+  });
   it("executes waiver and private CLI regressions under the disposable PostgreSQL job", () => {
     const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL);
     expect(result.status).toBe(0);
@@ -51,7 +60,7 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
     expect(job["timeout-minutes"]).toBe(10);
-    expect(job.services.postgres.image).toBe("postgres:16");
+    expect(job.services.postgres.image).toBe("public.ecr.aws/docker/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",
       POSTGRES_PASSWORD: "matrix_test", POSTGRES_DB: "matrix_test" });
     expect(job.env.MATRIX_TEST_POSTGRES_URL).toBe("postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test");

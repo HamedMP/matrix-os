@@ -1,3 +1,5 @@
+import { isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
+import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
 /**
  * Runs one bot turn in the bot workload (spec 536). For each canonical run:
@@ -95,6 +97,7 @@ export function createBotTaskOrchestrator(deps: {
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
+  resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
   admission: Pick<PrivateBotAdmission, "admit" | "release"> & Partial<Pick<PrivateBotAdmission, "ownsDirectChat">>;
@@ -204,9 +207,10 @@ export function createBotTaskOrchestrator(deps: {
     if (!botId || !agent || agent.archived || !agent.recipeRef) return { status: "failed" };
     let recipe;
     try {
-      recipe = deps.recipes.resolve(agent.recipeRef);
+      if (isManagedCustomBot(agent) && (!deps.resolveProcedure || !sameCustomCoordinatorSelection(input.selection, agent.selection))) return { status: "failed" };
+      recipe = deps.resolveProcedure ? await deps.resolveProcedure(input.ownerId, agent) : deps.recipes.resolve(agent.recipeRef);
     } catch (error: unknown) {
-      if (error instanceof BotRecipeCatalogError) return { status: "failed" };
+      if (error instanceof BotRecipeCatalogError || error instanceof BotRouteError) return { status: "failed" };
       throw error;
     }
     const { task, continued } = await begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId });
@@ -247,7 +251,7 @@ export function createBotTaskOrchestrator(deps: {
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
         limits: { maxToolActions: MAX_TOOL_ACTIONS },
         turn: { kind: "prompt", text: input.text },
@@ -262,6 +266,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
+        ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
       });
     } catch (error: unknown) {

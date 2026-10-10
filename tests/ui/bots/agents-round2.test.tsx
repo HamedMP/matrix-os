@@ -25,8 +25,11 @@ it("creates a new agent with a concrete Matrix AI choice, without coding or Auto
   const client = clientFixture(); client.catalog.mockResolvedValue(matrixCatalog());
   render(<ChatAgentsPanel client={client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   expect(within(picker).getAllByRole("option").map(option => option.textContent)).toEqual(["Sonnet · Matrix AI"]);
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
@@ -37,11 +40,13 @@ it("does not fall back to an available coding agent when Matrix AI is disabled",
   const client = clientFixture(), setup = vi.fn(); client.catalog.mockResolvedValue(matrixCatalog(false));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onSetup={setup}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
   expect(picker).toHaveProperty("disabled", true);
   expect(within(picker).queryByRole("option", { name: /undefined/ })).toBeNull();
-  expect(dialog.getByText(/Disabled in Settings/)).toBeTruthy();
+  expect(await dialog.findByText(/Disabled in Settings/)).toBeTruthy();
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
   expect(dialog.getByRole("button", { name: "Create Agent" })).toHaveProperty("disabled", true);
@@ -59,9 +64,13 @@ it("uses accurate scoped host titles and removes Back to Chat", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open team" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("Your AI team"));
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("New agent"));
   expect(screen.queryByRole("button", { name: "Back to Chat" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeTruthy();
+  expect(screen.getByTestId("host-title").textContent).toBe("New agent");
+  fireEvent.click(screen.getByRole("button", { name: "Open team" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("Your AI team"));
 });
 it("does not duplicate transcript model failures and retains task history in Details", async () => {

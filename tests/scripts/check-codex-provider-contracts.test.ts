@@ -150,8 +150,10 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.162.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.162.0");
+  it("retains reviewed Codex schemas through 0.162.1", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.162.1");
+    expect(contract.verifiedVersions["0.162.1"]).toEqual(contract.verifiedVersions["0.162.0"]);
+    expect(appServerContract.verifiedVersions["0.162.1"]).toEqual(appServerContract.verifiedVersions["0.162.0"]);
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256: "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
     });
@@ -178,7 +180,7 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.160.0"]).toEqual(appServerContract.verifiedVersions["0.159.3"]);
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.162.0");
+    expect(appServerContract.latestVerifiedVersion).toBe("0.162.1");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",

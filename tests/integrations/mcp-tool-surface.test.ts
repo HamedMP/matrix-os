@@ -27,6 +27,18 @@ async function withClient(surface: string | undefined, inspect: (client: Client)
 }
 
 describe("Matrix MCP advertises only the selected runnable surface", () => {
+  it("Claude Chat discovers built-in accounts and schemas alongside Custom MCP without unrelated tools", async () => {
+    await withClient("chat-call", async client => {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+        "list_integration_inventory", "list_connected_services", "describe_service",
+        "connect_service", "sync_services", "call_service", "disconnect_service",
+        ...customDiscovery, "call_custom_mcp_tool",
+      ]);
+      expect(client.getInstructions()).toContain("list_integration_inventory");
+      expect(client.getInstructions()).toContain("account label");
+    });
+  });
+
   it("custom call clients discover the broker path without unavailable integration recommendations", async () => {
     await withClient("custom-mcp-call", async client => {
       expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([

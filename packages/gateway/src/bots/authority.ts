@@ -35,6 +35,7 @@ export function createBotAuthority(deps: {
   transact: BotStateTransactions;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
+  resolveProcedure?(ownerId: string, agent: import("@matrix-os/contracts").ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   client?: BotIntegrationClient;
   now?: () => Date;
 }) {
@@ -58,7 +59,7 @@ export function createBotAuthority(deps: {
       if (!agent?.recipeRef) throw new BotAuthorityError("not_found");
       let services: string[] = [];
       try {
-        services = deps.recipes.resolve(agent.recipeRef).integrations.map((entry) => entry.service);
+        services = (deps.resolveProcedure ? await deps.resolveProcedure(ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations.map((entry) => entry.service);
       } catch (error: unknown) {
         console.warn("[bots] recipe unavailable for authority:", error instanceof Error ? error.name : "UnknownError");
       }

@@ -150,6 +150,23 @@ describe("trusted runtime selection route", () => {
     expect(claims.runtime_slot).toBe("pr-1037");
   });
 
+  it.each(['clerk-device', 'clerk-browser', undefined] as const)('preserves verified provenance %s and original expiry across selection', async sessionProvenance => {
+    await insertMachine(db, { handle: 'alice-source', runtimeSlot: 'primary' });
+    await insertMachine(db, { handle: 'pr-1037', runtimeSlot: 'pr-1037', clerkUserId: 'user_bob',
+      provisioningClass: 'preview', accessClerkUserIds: ['user_alice'] });
+    const issued = await issueSyncJwt({ secret: JWT_SECRET, clerkUserId: 'user_alice', handle: 'alice-source',
+      gatewayUrl: 'https://app.matrix-os.com/vm/alice-source', runtimeSlot: 'primary', sessionProvenance, expiresInSec: 600 });
+    const response = await createTestApp(db).request('/api/auth/runtime-selection', { method: 'POST', headers: {
+      host: 'api.matrix-os.com', authorization: `Bearer ${issued.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ slot: 'pr-1037' }) });
+    expect(response.status).toBe(200);
+    const selected = RuntimeSelectionResponseSchema.parse(await response.json());
+    const claims = await verifySyncJwt(selected.accessToken, { secret: JWT_SECRET });
+    expect(claims.session_provenance).toBe(sessionProvenance);
+    expect(claims.exp).toBe(issued.claims.exp);
+    expect(claims.sub).toBe('user_alice');
+  });
+
   it("issues a runtime token on the configured app host for a native bearer", async () => {
     const sourceToken = await issueSourceToken(db);
     process.env.EDGE_ROUTER_SECRET = "edge-secret";

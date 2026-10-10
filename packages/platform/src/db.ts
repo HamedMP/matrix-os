@@ -806,6 +806,7 @@ export interface AccountDeletionJobsTable {
 }
 
 export interface PlatformDatabase {
+  preview_drive_grants: PreviewDriveGrantsTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;
@@ -858,6 +859,27 @@ export interface PlatformDatabase {
   social_comments: SocialCommentsTable;
   social_likes: SocialLikesTable;
   social_follows: SocialFollowsTable;
+}
+
+export interface PreviewDriveGrantsTable {
+  token_hash: string;
+  kind: 'run' | 'action';
+  proof_nonce_hash: string;
+  run_token_hash: string | null;
+  handle: string;
+  actor_id: string;
+  chat_id: string;
+  turn_id: string;
+  run_id: string;
+  client_request_id: string;
+  body_digest: string;
+  action_digest: string | null;
+  account_label: string | null;
+  connection_id: string | null;
+  provider_account_id: string | null;
+  max_results: number | null;
+  expires_at: string;
+  consumed_at: string | null;
 }
 
 export interface PlatformDB {

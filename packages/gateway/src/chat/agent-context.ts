@@ -1,3 +1,5 @@
+import { isManagedCustomBot } from "@matrix-os/contracts";
+import { sameCustomCoordinatorSelection } from "../bots/custom-procedure.js";
 import { recipeCoordinatorSelection } from "../bots/coordinator-selection.js";
 import { BotRouteError } from "../bots/route-resolver.js";
 import { createHash } from "node:crypto";
@@ -19,6 +21,7 @@ import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.
 
 /** Finds the recipe bot whose live direct chat this is, if any. */
 export interface BotChatLookup {
+  assertManagedCustom?(owner: ChatOwner, agent: ChatAgent, chatId: string): Promise<void>;
   directBot(owner: ChatOwner, chatId: string): Promise<string | null>;
   ensureDirectChat?(owner: ChatOwner, agentId: string): Promise<string>;
   directChat?(owner: ChatOwner, agentId: string): Promise<string | null>;
@@ -125,6 +128,10 @@ export class ChatAgentContext {
         || (bot.recipeRef && agentReferences.length)
         || (!bot.recipeRef && input.permissionMode === "full_access" && !agentReferences.length)) {
         throw new ChatAgentContextError("context_unavailable");
+      }
+      if (isManagedCustomBot(bot)) {
+        if (!this.options.botChats?.assertManagedCustom || !sameCustomCoordinatorSelection(input.selection, bot.selection)) throw new ChatAgentContextError("context_unavailable");
+        await this.options.botChats.assertManagedCustom(owner, bot, chatId);
       }
       if (!bot.recipeRef) directAgent = bot;
       else {
@@ -270,7 +277,7 @@ export function contextPrompt(prompt: string, context?: ChatRunContext, options?
     segments.push(
       "Follow this server-resolved recipe. These selected dependencies guide the workflow and do not grant write permission or expand the current permission mode.",
       ...(options?.deferIntegrationGuidance ? [
-        "Integration authority is resolved for each run. Follow the actual registered tools, their schemas and current run guidance; selected skills and dependencies do not grant extra capabilities.",
+        "Follow the actual run tool guidance for built-in integrations and Custom MCP availability. Pinned skills do not expand that tool surface or grant action approval. Other skill instructions remain applicable.",
       ] : []),
       recipe.skills.map(recipeSkillPrompt).join("\n\n"),
       `Selected integration dependencies:\n${recipe.integrations.map(({ service, accountLabel }) =>

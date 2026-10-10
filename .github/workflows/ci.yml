@@ -473,7 +473,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: matrix_test
           POSTGRES_PASSWORD: matrix_test
@@ -509,10 +509,15 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           bun run test -- tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
-      - name: Bot Integration grant and source admission races
+      - name: Bot creation, Integration grant and source admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Preview Drive revocation and admission races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          bun run test -- tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
 
   docs-contract:
     name: Docs Contract Tests
@@ -776,12 +781,12 @@ jobs:
           set -euo pipefail
           container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
-          timeout --kill-after=10s 120s docker pull node:24-bookworm
+          timeout --kill-after=10s 120s docker pull public.ecr.aws/docker/library/node:24-bookworm
           timeout --kill-after=10s 180s docker run --rm --init \
             --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
             --env MATRIX_DISPOSABLE_ROOT_TEST=true \
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
-            node:24-bookworm python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+            public.ecr.aws/docker/library/node:24-bookworm python3 -I /work/scripts/ci/run-funded-host-root-tests.py
 
   ci-results:
     name: CI Results

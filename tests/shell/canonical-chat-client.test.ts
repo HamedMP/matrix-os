@@ -188,6 +188,20 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("forwards the displayed action digest in an approval submission", async () => {
+    const actionDigest = "b".repeat(64);
+    const fetchFn = vi.fn(async () => Response.json({ approvalId: "approval_1", decision: "approve", submission: "accepted" }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+    const projected = projectCanonicalMessages([{ id: "msg_approval", chatId: "chat_shell_test", seq: 2,
+      role: "system", state: "committed", runId: "run_shell", parts: [{ type: "approval_request",
+        approvalId: "approval_1", title: "List files", description: "List up to three files", risk: "low",
+        allowedDecisions: ["approve", "decline"], actionDigest,
+      }], createdAt: "2026-08-31T00:00:02.000Z" }]);
+    expect(projected[0]?.metadata?.canonicalApproval).toMatchObject({ actionDigest });
+    await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_shell_digest", actionDigest);
+    expect(JSON.parse(String(fetchFn.mock.calls[0]?.[1]?.body))).toMatchObject({ actionDigest });
+  });
+
   it("resolves approvals by run and approval id instead of approval id alone", () => {
     const projected = projectCanonicalMessages([{
       id: "msg_request_a", chatId: "chat_shell_test", seq: 1, role: "system", state: "committed",

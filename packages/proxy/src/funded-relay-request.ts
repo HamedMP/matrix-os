@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import { BETA_ID } from "./funded-relay-config.js";
 
 const MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
+const MID_CONVERSATION_SYSTEM_BETA = "mid-conversation-system-2026-04-07";
 
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_ARRAY_ITEMS = 2_048;
@@ -56,7 +57,7 @@ export const BoundedJsonSchema = z.unknown().superRefine((value, ctx) => {
 });
 
 const MessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
+  role: z.enum(["user", "assistant", "system"]),
   content: z.union([
     z.string().max(MAX_JSON_STRING_LENGTH),
     z.array(BoundedJsonSchema).max(1_024),
@@ -134,6 +135,14 @@ export const FundedRequestSchema = z.object({
 }).strict();
 
 export type FundedRequest = z.infer<typeof FundedRequestSchema>;
+
+/** Claude Agent SDK may place a system turn in messages under this beta. */
+export function assertFundedSystemMessageBeta(request: FundedRequest, betas: string | null): void {
+  if (request.messages.some((message) => message.role === "system")
+    && !betas?.split(",").includes(MID_CONVERSATION_SYSTEM_BETA)) {
+    throw new Error("Mid-conversation system messages require their beta");
+  }
+}
 
 export function serializeFundedRequest(value: unknown): { body: string; request: FundedRequest } {
   const request = FundedRequestSchema.parse(value);

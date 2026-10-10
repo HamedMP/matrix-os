@@ -92,6 +92,7 @@ describe("CanonicalChatOrchestrator", () => {
     await repository.kysely.destroy();
   });
 
+
   it("commits admission before Provider work, revalidates the root, and replays normalized output", async () => {
     await repository.create(owner, {
       id: "chat_orchestrated",

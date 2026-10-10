@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
+import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MATRIX_BOT_SELECTION, type ChatAgent } from "@matrix-os/contracts";
@@ -80,6 +81,7 @@ it("keeps an exact saved Matrix selection in the revisioned edit request and reo
   client.update.mockImplementation(async (_id, input) => ({ ...savedBot, ...input, revision: savedBot.revision + 1 }));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${savedBot.name}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
   fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: JSON.stringify([model.instanceId, model.modelId]) } });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(client.update).toHaveBeenCalledWith(savedBot.id, expect.objectContaining({ baseRevision: savedBot.revision, selection: selected })));
@@ -204,6 +206,7 @@ it("keeps a legacy custom Agent route visible and switches explicitly to Matrix 
   client.list.mockResolvedValue({ enabled: true, agents: [saved] });
   render(<ChatAgentsPanel client={client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
   const picker = screen.getByRole("combobox", { name: "Model" });
   expect((picker as HTMLSelectElement).value).toBe(JSON.stringify([saved.selection.instanceId, saved.selection.model]));
   expect(screen.getByRole("option", { name: /Hermes/ }).textContent).toContain("Hermes");
@@ -213,6 +216,7 @@ it("keeps a legacy custom Agent route visible and switches explicitly to Matrix 
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ selection: { instanceId: "matrix_pi_default", model: "sonnet" }, baseRevision: saved.revision })));
   fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Model" })).toBeEnabled());
   expect((screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value).toBe(JSON.stringify(["matrix_pi_default", "sonnet"]));
   expect(screen.queryByRole("option", { name: /Saved route/ })).toBeNull();
 });
