@@ -24,14 +24,26 @@ export interface ShellOnboardingIntegrations extends OnboardingAppConnect {
   connections: ConnectedIntegration[];
 }
 
+class IntegrationsRequestError extends Error {
+  override readonly name = "IntegrationsRequestError";
+  constructor(readonly status: number) {
+    super(`IntegrationsRequestFailed:${status}`);
+  }
+}
+
 async function readJson(fetchFn: typeof fetch, url: string, init: RequestInit = {}): Promise<unknown> {
   const response = await fetchFn(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-  if (!response.ok) throw new Error(`IntegrationsRequestFailed:${response.status}`);
+  if (!response.ok) throw new IntegrationsRequestError(response.status);
   return response.json();
 }
 
+/** The gateway mounts these routes only when an integration service is configured; outages are 5xx. */
+function isIntegrationServiceMissing(error: unknown): boolean {
+  return error instanceof IntegrationsRequestError && error.status === 404;
+}
+
 function errorName(error: unknown): string {
-  return error instanceof Error ? error.name : typeof error;
+  return error instanceof IntegrationsRequestError ? `${error.name}:${error.status}` : error instanceof Error ? error.name : typeof error;
 }
 
 /** Lists the owner's apps and runs the popup consent flow behind the widget's Connect buttons. */
@@ -42,6 +54,8 @@ export function useShellOnboardingIntegrations(
   const [available, setAvailable] = useState<AvailableIntegration[]>([]);
   const [connections, setConnections] = useState<ConnectedIntegration[]>([]);
   const [connectingService, setConnectingService] = useState<string | null>(null);
+  const [appsUnavailable, setAppsUnavailable] = useState(false);
+  const appsUnavailableRef = useRef(false);
   const optionsRef = useRef(options);
   const connectionsRef = useRef(connections);
   const attemptRef = useRef(0);
@@ -60,6 +74,11 @@ export function useShellOnboardingIntegrations(
     setConnections(next);
   }, []);
 
+  const markAppsUnavailable = useCallback(() => {
+    appsUnavailableRef.current = true;
+    setAppsUnavailable(true);
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     const { gatewayUrl, fetchFn } = transport();
@@ -72,9 +91,10 @@ export function useShellOnboardingIntegrations(
       else console.warn("[onboarding-widget] apps unavailable:", errorName(availableResult.reason));
       if (connectionsResult.status === "fulfilled") applyConnections(parseConnectedIntegrations(connectionsResult.value));
       else console.warn("[onboarding-widget] connections unavailable:", errorName(connectionsResult.reason));
+      if (availableResult.status === "rejected" && isIntegrationServiceMissing(availableResult.reason)) markAppsUnavailable();
     });
     return () => { disposed = true; };
-  }, [applyConnections, transport]);
+  }, [applyConnections, markAppsUnavailable, transport]);
 
   useEffect(() => () => {
     attemptRef.current += 1;
@@ -86,6 +106,11 @@ export function useShellOnboardingIntegrations(
     cancelPollRef.current = null;
     const attempt = ++attemptRef.current;
     const isCurrent = () => attemptRef.current === attempt;
+    if (appsUnavailableRef.current) {
+      setConnectingService(null);
+      dispatch({ type: "connect.unavailable" });
+      return;
+    }
     // Opened synchronously inside the click so popup blockers allow it; the consent URL arrives later.
     const popup = window.open("about:blank", "_blank", "width=600,height=700");
     const fail = () => {
@@ -131,9 +156,13 @@ export function useShellOnboardingIntegrations(
     })().catch((error: unknown) => {
       console.warn("[onboarding-widget] app connect failed:", errorName(error));
       popup.close();
-      fail();
+      if (!isIntegrationServiceMissing(error)) { fail(); return; }
+      markAppsUnavailable();
+      if (!isCurrent()) return;
+      setConnectingService(null);
+      dispatch({ type: "connect.unavailable" });
     });
-  }, [applyConnections, dispatch, transport]);
+  }, [applyConnections, dispatch, markAppsUnavailable, transport]);
 
-  return { available, connections, connectingService, connectApp };
+  return { available, connections, connectingService, connectApp, appsUnavailable };
 }

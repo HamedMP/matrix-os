@@ -115,10 +115,10 @@ function ScreenView({ props, appQuery, onAppQuery }: { props: OnboardingWidgetPr
   const { state, actions } = props;
   const screen = state.screen;
   switch (screen.kind) {
-    case "tasks": return <TasksScreen state={state} apps={props.apps} userName={props.userName} actions={actions} />;
+    case "tasks": return <TasksScreen state={state} apps={props.apps} appsUnavailable={props.appsUnavailable} userName={props.userName} actions={actions} />;
     case "apps": return <AppsScreen apps={props.apps} actions={actions} query={appQuery} onQuery={onAppQuery} />;
     case "question": return <QuestionScreen taskId={screen.taskId} actions={actions} />;
-    case "connect": return <ConnectScreen taskId={screen.taskId} status={screen.status} apps={props.apps} actions={actions} />;
+    case "connect": return <ConnectScreen taskId={screen.taskId} status={props.appsUnavailable ? "unavailable" : screen.status} apps={props.apps} actions={actions} />;
     case "repo": return <RepoScreen repos={props.repos} actions={actions} />;
     case "run": return <RunScreen run={screen} state={state} runView={props.runView} creditsExhausted={props.creditsExhausted} activeAi={props.activeAi} actions={actions} />;
   }

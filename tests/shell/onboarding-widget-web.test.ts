@@ -60,6 +60,26 @@ describe("web onboarding widget host", () => {
     expect(document.documentElement.dataset.mxoOnboarding).toBeUndefined();
   });
 
+  it("hides app connecting when this computer has no integration service", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+      if (input.endsWith("/api/identity")) return json({ handle: "sahar", displayName: "Sahar K" });
+      if (input.endsWith("/api/system/info")) return json({ runtime: { runtimeSlot: "primary" } });
+      if (input.includes("/api/integrations")) return json({ error: "Not Found" }, 404);
+      if (input.includes("/api/github/repos")) {
+        return json({ repos: [{ nameWithOwner: "sahar/portfolio", url: "https://github.com/sahar/portfolio", updatedAt: null }] });
+      }
+      return json({ error: "unavailable" }, 503);
+    }));
+    renderHost();
+    await screen.findByText(/Sahar/);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Connect apps first" })).toBeNull());
+    act(() => screen.getByRole("button", { name: /Work on my code/ }).click());
+    expect(screen.getByText("App connections aren't available on this computer")).toBeTruthy();
+    act(() => screen.getByRole("button", { name: "Skip" }).click());
+    expect(await screen.findByRole("button", { name: /portfolio/ })).toBeTruthy();
+  });
+
   it("steps aside while Chat is maximized and comes back after", async () => {
     stubGateway();
     const { container } = renderHost();
@@ -212,6 +232,51 @@ describe("web onboarding app connect", () => {
     await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" }));
     expect(popup.close).toHaveBeenCalled();
     expect(popup.location.href).toBe("about:blank");
+  });
+
+  it("knows up front when the computer has no app connections and never opens a consent window", async () => {
+    vi.spyOn(window, "open");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn(async () => json({ error: "Not Found" }, 404));
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
+    await waitFor(() => expect(result.current.appsUnavailable).toBe(true));
+
+    act(() => result.current.connectApp("github"));
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.started" });
+    expect(window.open).not.toHaveBeenCalled();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("switches to unavailable when the connect request finds no integration service", async () => {
+    const popup = popupStub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn(async (url: string) => (url.endsWith("/connect") ? json({ error: "Not Found" }, 404) : json({ error: "busy" }, 503)));
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    expect(result.current.appsUnavailable).toBe(false);
+
+    act(() => result.current.connectApp("github"));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable" }));
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed" });
+    expect(popup.close).toHaveBeenCalled();
+    expect(result.current.appsUnavailable).toBe(true);
+    expect(result.current.connectingService).toBeNull();
+  });
+
+  it("keeps a server error retryable instead of calling it unavailable", async () => {
+    const popup = popupStub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn(async (url: string) => (url.endsWith("/connect") ? json({ error: "busy" }, 502) : json([])));
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
+
+    act(() => result.current.connectApp("github"));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" }));
+    expect(popup.close).toHaveBeenCalled();
+    expect(result.current.appsUnavailable).toBe(false);
   });
 
   it("gives up when the connection never lands", async () => {

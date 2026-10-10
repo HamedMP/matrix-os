@@ -9,6 +9,7 @@ import { useIntegrations } from "../integrations/integrations-store";
 /** Opens the integration consent page and waits for the new connection to land. */
 export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event: OnboardingWidgetEvent) => void): OnboardingAppConnect {
   const [connectingService, setConnectingService] = useState<string | null>(null);
+  const appsUnavailable = useIntegrations((state) => state.status === "unavailable");
   const attemptRef = useRef(0);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
@@ -27,10 +28,16 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     const attempt = ++attemptRef.current;
     const generation = captureRuntimeGeneration();
     const isCurrent = () => attemptRef.current === attempt && isCurrentRuntimeGeneration(generation);
+    const servicePresent = () => useIntegrations.getState().status !== "unavailable";
+    if (!servicePresent()) {
+      setConnectingService(null);
+      dispatch({ type: "connect.unavailable" });
+      return;
+    }
     const fail = () => {
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.failed" });
+      dispatch(servicePresent() ? { type: "connect.failed" } : { type: "connect.unavailable" });
     };
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
@@ -62,5 +69,5 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     });
   }, [api, dispatch]);
 
-  return { connectingService, connectApp };
+  return { connectingService, connectApp, appsUnavailable };
 }

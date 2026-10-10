@@ -13,7 +13,7 @@ import {
   type OnboardingWidgetState,
 } from "../../packages/contracts/src/index.js";
 import { OnboardingWidget } from "../../packages/ui/src/onboarding-widget/index.js";
-import type { OnboardingWidgetActions, OnboardingWidgetApp } from "../../packages/ui/src/onboarding-widget/index.js";
+import type { OnboardingWidgetActions, OnboardingWidgetApp, OnboardingWidgetProps } from "../../packages/ui/src/onboarding-widget/index.js";
 
 const APPS: OnboardingWidgetApp[] = [
   { id: "google_calendar", name: "Google Calendar", category: "work", status: "available", logoUrl: "https://example.test/gcal.png" },
@@ -38,16 +38,20 @@ function makeActions(): OnboardingWidgetActions {
   };
 }
 
+const REPOS = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }];
+
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
-  activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
+  appsUnavailable = false, repos = REPOS, activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
 }: {
+  repos?: OnboardingWidgetProps["repos"];
   actions: OnboardingWidgetActions;
   initial?: OnboardingWidgetState;
   runView?: OnboardingRunView | null;
   creditsExhausted?: boolean;
   events?: OnboardingWidgetEvent[];
   aiSignInNeedsCode?: boolean;
+  appsUnavailable?: boolean;
   activeAi?: OnboardingAiChoice;
   matrixAvailable?: boolean;
   connectedProviders?: readonly OnboardingAiProvider[];
@@ -70,13 +74,14 @@ function Harness({
       actions={wired}
       userName="Sahar"
       apps={APPS}
-      repos={[{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }]}
+      repos={repos}
       runView={runView}
       activeAi={activeAi}
       matrixAvailable={matrixAvailable}
       connectedProviders={connectedProviders}
       creditsExhausted={creditsExhausted}
       aiSignInNeedsCode={aiSignInNeedsCode}
+      appsUnavailable={appsUnavailable}
       prefs={{ keepInCorner: true, side: "right", showOnLogin: true }}
     />
   );
@@ -122,6 +127,29 @@ describe("OnboardingWidget", () => {
     expect(actions.connectApp).toHaveBeenCalledWith("google_calendar");
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
     expect(screen.getByText("Working…")).toBeInTheDocument();
+  });
+
+  it("says app connections aren't available instead of offering a sign-in that can't work", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} appsUnavailable />);
+    expect(screen.queryByRole("button", { name: "Connect apps first" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Work on my code/ }));
+    expect(actions.dispatch).toHaveBeenCalledWith({ type: "task.selected", taskId: "work-on-code", connectedServices: [], appsUnavailable: true });
+    expect(screen.getByText("App connections aren't available on this computer")).toBeInTheDocument();
+    expect(screen.queryByText("Sign-in didn't finish")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Connect|Try again/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(actions.connectApp).not.toHaveBeenCalled();
+    expect(screen.getByText("portfolio")).toBeInTheDocument();
+  });
+
+  it("updates an open connect card once the computer turns out to have no app connections", () => {
+    const events: OnboardingWidgetEvent[] = [{ type: "task.selected", taskId: "work-on-code", connectedServices: [] }];
+    const { rerender } = render(<Harness actions={makeActions()} events={events} />);
+    expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+    rerender(<Harness actions={makeActions()} events={events} appsUnavailable />);
+    expect(screen.getByText("App connections aren't available on this computer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
   it("starts research from a chip and shows the working status", () => {
@@ -330,5 +358,11 @@ describe("OnboardingWidget", () => {
     expect(screen.getByPlaceholderText("Or paste a repo URL…")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /portfolio/ }));
     expect(actions.dispatch).toHaveBeenCalledWith({ type: "answer.submitted", text: "portfolio", context: "https://github.com/sahar/portfolio" });
+  });
+
+  it("points to the repo link field when no repos are found", () => {
+    const events: OnboardingWidgetEvent[] = [{ type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] }];
+    render(<Harness actions={makeActions()} events={events} repos={[]} />);
+    expect(screen.getByText("No repos found. Paste a repo link below.")).toBeInTheDocument();
   });
 });
