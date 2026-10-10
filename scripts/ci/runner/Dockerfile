@@ -3,12 +3,13 @@ FROM ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git ripgrep xz-utils unzip python3 build-essential \
+    ca-certificates curl git jq ripgrep xz-utils unzip python3 python3-cryptography build-essential \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
     libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
     libgbm1 libdrm2 libxkbcommon0 libasound2t64 libcups2 libgtk-3-0 \
     libpango-1.0-0 libcairo2 libdbus-1-3 libsecret-1-0 fonts-liberation \
-    xvfb xauth time procps && rm -rf /var/lib/apt/lists/*
+    xvfb xauth time procps && rm -rf /var/lib/apt/lists/* \
+    && jq --version && /usr/bin/python3 -I -c 'import cryptography'
 
 RUN curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
       https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz -o /tmp/node.tar.xz \
