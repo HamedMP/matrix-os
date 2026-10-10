@@ -362,3 +362,25 @@ input:focus-visible {
     grid-template-rows: auto minmax(120px, 1fr);
   }
 }
+
+/* The instrument keeps a recessed readout and softly raised keys. */
+:root .calc-app { gap: 20px; padding: 20px; background: transparent; }
+.calc-app :is(.calc-pad, .calc-history) { border: 1px solid var(--app-border); border-radius: var(--family-radius); background: var(--family-surface); box-shadow: var(--family-lift); padding: 22px; }
+.calc-app .brand { color: var(--app-fg); }
+.calc-app .head-toggles { flex-wrap: wrap; }
+.calc-app .display { background: color-mix(in srgb, var(--app-muted) 72%, var(--app-card)); border: 1px solid var(--app-border); border-radius: 20px; box-shadow: var(--family-inset); padding: 22px 18px; }
+.calc-app .expr-input { color: var(--app-fg); }
+.calc-app .expr-input::placeholder { color: var(--app-muted-fg); }
+.calc-app .preview { color: var(--app-muted-fg); }
+.calc-app .preview--error { color: var(--app-danger); }
+.calc-app .key { border-radius: 16px; box-shadow: inset 0 1px 0 var(--app-card), 0 3px 6px color-mix(in srgb, var(--app-fg) 6%, transparent); }
+.calc-app .key--equals { background: var(--app-accent); color: var(--app-primary-fg); box-shadow: 0 5px 12px color-mix(in srgb, var(--app-accent) 18%, transparent); }
+.calc-app .hist-item { padding: 12px 0; }
+.calc-app :is(.hist-expr, .hist-result) { overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+ :root .calc-app { padding: max(12px, env(safe-area-inset-top)) 12px max(20px, env(safe-area-inset-bottom)); }
+ .calc-app :is(.calc-pad, .calc-history) { padding: 16px; }
+ .calc-app .keypad { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+ .calc-app .keypad--sci { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+ .calc-app .key--fn { min-height: 44px; }
+}
