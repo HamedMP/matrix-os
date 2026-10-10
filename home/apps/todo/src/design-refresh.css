@@ -21,3 +21,11 @@
 .inspector { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
 .inspector input, .inspector select { font-size: 16px; min-height: 44px; }
 @media (max-width: 760px) { .todo-app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .sidebar { padding: max(10px, env(safe-area-inset-top)) 16px 8px; gap: 8px; max-height: 180px; border-right: 0; border-bottom: 1px solid var(--app-border); } .brand { padding: 0; } .nav-group { display: flex; flex-direction: row; overflow-x: auto; flex-shrink: 0; } .nav-item { flex-shrink: 0; } .nav-heading { display: none; } .content { height: auto; min-height: 0; padding: 24px 16px max(20px, env(safe-area-inset-bottom)); } .content-head h1 { font-size: 32px; } .task-row { gap: 4px; } .inspector { width: 100%; max-height: 80dvh; } }
+
+/* Short stacked windows scroll the whole task workspace; no zero-height list. */
+@media (max-width: 760px) and (max-height: 450px) {
+  .todo-app { overflow-y: auto; grid-template-rows: max-content max-content; }
+  .todo-app .sidebar { max-height: none; overflow-y: visible; }
+  .todo-app .content { height: auto; overflow: visible; }
+  .todo-app .task-list { flex: none; overflow: visible; }
+}

@@ -394,5 +394,6 @@
   "system/wallpapers/moraine-lake.jpg": "65426455d586cf27f7feb10bcb11096fbb15c7bb8780282797167191da23752d",
   "system/wallpapers/win11-bloom.jpg": "664403cd143cb7fe8f404a66799452556ab908546ce344683cebb867feca6fda",
   "system/wallpapers/xp-bliss.jpg": "dff04f8438e20dd892a0191c3a357bc9a4a1b45ff6760835955ebe64a64bd0d9",
-  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688"
+  "templates/sqlite-client.js": "1df2d962d2f3c97a5935cbd65c533010eea912d872cd210b9e86e6bd3e2ce688",
+  "apps/todo/src/design-refresh.css": "af4b451ad0bd82deb9056b246c8e3e3f38a34d36a3cbc58ebeb76d151f7c2e0c"
 }

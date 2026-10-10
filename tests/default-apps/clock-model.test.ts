@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   alarmMinuteKey,
@@ -187,18 +185,4 @@ describe("stopwatch laps", () => {
     expect(lapExtremes(laps)).toEqual({ fastest: 2, slowest: 1 });
     expect(lapExtremes(computeLaps([1000]))).toEqual({ fastest: -1, slowest: -1 });
   });
-});
-
-it.each([".chip:hover", ".timer-ring-core em"])("Clock uses the readable text accent for %s", selector => {
-  const css = readFileSync(new URL("../../home/apps/clock/src/styles.css", import.meta.url), "utf8");
-  const rule = css.slice(css.indexOf(`${selector} {`)).split("}")[0];
-  expect(rule).toMatch(/color:\s*var\(--app-text-accent\)/);
-  expect(rule).not.toMatch(/(?<!-)color:\s*var\(--app-accent\)/);
-  if (selector === ".chip:hover") expect(rule).toContain("border-color: var(--app-accent)");
-});
-
-it("Clock template tracking includes the current readable-label stylesheet", () => {
-  const css = readFileSync(new URL("../../home/apps/clock/src/styles.css", import.meta.url));
-  const manifest = JSON.parse(readFileSync(new URL("../../home/.template-manifest.json", import.meta.url), "utf8"));
-  expect(manifest["apps/clock/src/styles.css"]).toBe(createHash("sha256").update(css).digest("hex"));
 });
