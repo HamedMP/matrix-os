@@ -42,3 +42,9 @@ Tests first cover source-scoped icons, transparency/fallbacks, menu actions, run
 Publish through the existing native stack #2407, request Greptile once per changed head, and add readiness only at exact-head 5/5 with zero unresolved blockers. Required Linux CI and exact-head disposable-preview evidence remain merge gates. Preserve owner data, dirty source/main checkouts and historical app profiles. Never start local preview servers or promote a production channel for this work.
 
 Public documentation is updated in [site PR #204](https://github.com/FinnaAI/matrix-os-site/pull/204). Live screenshots and short recordings must cover each required surface, exact installed artifact, new artwork/top-bar actions/narrow support placement and the Gallery launch journeys; link verified Slack #tech evidence in the PR. Keep [ENG-157](https://linear.app/matrix-os/issue/ENG-157/ship-and-qualify-the-production-app-gallery-launch-journey) open while Native Mobile remains unfinished.
+
+### Reviewed runtime eligibility and panel preference
+
+Gallery reserves owner legacy HTML, hidden manifests and inactive-design identities without advertising Open or permitting duplicate installation. Both actual hosts and Gallery share safe runtime catalog roots up to 4096 characters; persisted OS-view references retain their existing shorter bound. URL-ambiguous, oversized and unverifiable roots remain closed without rewriting owner files.
+
+The starter remembers the per-app controls panel choice through an app-scoped metadata row in the existing owner Postgres records table. The row is excluded from domain record projections and exports, preserves unrelated owner rows, and uses bounded compare-and-swap recovery. Late reads and app switches cannot overwrite a newer local choice; failures retain the choice with an explicit retry.
