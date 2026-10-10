@@ -3,7 +3,7 @@ import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createIntegrationsMcpServer } from "../../packages/integrations-mcp/src/server.js";
@@ -39,7 +39,7 @@ describe("Chat Agent HTTP boundary", () => {
   let gmailLookup: (ownerId: string) => Promise<typeof gmailAccounts>;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-agent-routes-"));
-    repository = new ChatRepository((await KyselyPGlite.create()).dialect);
+    repository = new ChatRepository((await createTestPGlite()).dialect);
     await repository.bootstrap();
     agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
     await agents.bootstrap();

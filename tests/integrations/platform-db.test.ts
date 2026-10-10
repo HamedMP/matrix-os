@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { KyselyPGlite } from "kysely-pglite";
+import type { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import {
   createPlatformDb,
   type PlatformDb,
@@ -10,7 +11,7 @@ describe("PlatformDb", () => {
   let instance: InstanceType<typeof KyselyPGlite>;
 
   beforeEach(async () => {
-    instance = await KyselyPGlite.create();
+    instance = await createTestPGlite();
     db = createPlatformDb({ dialect: instance.dialect });
     await db.migrate();
   });

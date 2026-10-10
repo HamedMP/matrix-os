@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CanonicalChatRunSchema, CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
@@ -37,7 +37,7 @@ let homePath: string;
 let projectFingerprint: string;
 const projectRef = { kind: "project" as const, projectId: "project_checkpoint" };
 beforeEach(async () => {
-  const database = await KyselyPGlite.create();
+  const database = await createTestPGlite();
   repository = new ChatRepository(database.dialect);
   await repository.bootstrap();
   await repository.create(owner, { id: chatId, clientRequestId: "req_create_checkpoint", title: "Continuity" });
