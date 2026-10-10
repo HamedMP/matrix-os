@@ -1,4 +1,5 @@
-import { AppIdentitySchema, appRuntimeSlugFromIdentity, canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
+import { canonicalAppRuntimeCatalogPath } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { AppIdentitySchema, appRuntimeSlugFromIdentity, resolveChatAppReference } from "@matrix-os/contracts";
 import { NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import { readBoundedJson } from "./native-app-bridge";
 
@@ -6,22 +7,6 @@ interface NativeAppOpenResolverOptions {
   getGatewayOrigin: () => string;
   getToken: () => string | null;
   fetchFn?: typeof fetch;
-}
-
-/** Validate long runtime catalog roots independently of shorter persisted OS-view paths. */
-function runtimeCatalogPath(row: { path?: unknown; file?: unknown }): string | null {
-  const desktopPath = canonicalOsViewCatalogPath(row);
-  if (desktopPath) return desktopPath;
-  for (const [value, fromFile] of [[row.path, false], [row.file, true]] as const) {
-    if (typeof value !== "string" || value.length > 4128) continue;
-    let path = value.trim().replace(/^\/+/, "").replace(/^files\//, "");
-    if (fromFile && !path.startsWith("apps/")) path = `apps/${path}`;
-    if (!path.endsWith("/index.html")) continue;
-    const root = path.replace(/\/(?:dist\/)?index\.html$/, "");
-    if (root.split("/").length > 17) continue;
-    if (NativeAppOpenRequestSchema.safeParse({ name: "Installed app", path: root }).success) return path;
-  }
-  return null;
 }
 
 /** Resolve only installed app roots/entries; names are catalog-owned metadata. */
@@ -43,7 +28,7 @@ export function createNativeAppOpenResolver(options: NativeAppOpenResolverOption
     const apps: Array<NativeAppOpenTarget & { path: string }> = [];
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
-      const path = runtimeCatalogPath(row);
+      const path = canonicalAppRuntimeCatalogPath(row);
       if (!path?.startsWith("apps/") || !path.endsWith("/index.html")) continue;
       const folderIdentity = path.slice(5).replace(/\/(?:dist\/)?index\.html$/, "");
       const parsedFolder = AppIdentitySchema.safeParse(folderIdentity);
