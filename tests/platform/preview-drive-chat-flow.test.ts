@@ -12,6 +12,9 @@ import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/
 import { authenticatedPreviewDriveProxyProof } from "../../packages/platform/src/preview-drive-proxy-proof.js";
 import { createPreviewDriveRoutes } from "../../packages/platform/src/preview-drive-routes.js";
 import { mintCustomMcpApprovalProof } from "../../packages/platform/src/custom-mcp-approval-proof.js";
+import { APP_SESSION_COOKIE } from "../../packages/platform/src/session-cookies.js";
+import { resolveAppDomainIdentity } from "../../packages/platform/src/session-routing-identity.js";
+import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
 
 const handle = "pr-1234";
@@ -38,11 +41,21 @@ describe("Preview browser-to-Claude Drive read", () => {
   it("requires a browser proof, executes one exact approval, and projects at most three metadata rows", async () => {
     const machine = await getActivePreviewMachineByHandle(db, handle);
     expect(machine).not.toBeNull();
+    const jwtSecret = "test-preview-browser-session-secret-32";
+    const { token } = await issueSyncJwt({ secret: jwtSecret, clerkUserId: actorId,
+      handle, runtimeSlot: handle, gatewayUrl: "https://app.matrix-os.com",
+      sessionProvenance: "clerk-browser" });
+    const identity = await resolveAppDomainIdentity({ authHeader: undefined,
+      cookieHeader: `${APP_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+      db, platformJwtSecret: jwtSecret, legacyContainerRoutingEnabled: false,
+      requestedHandle: handle, runtimeSlot: handle });
+    expect(identity).toMatchObject({ handle, userId: actorId, source: "auth",
+      sessionProvenance: "clerk-browser" });
     const browserTurn = new Request(`https://app.matrix-os.com/vm/${handle}/api/chats/chat_one/turns`, {
       method: "POST", body: JSON.stringify(body) });
     const turnProof = await authenticatedPreviewDriveProxyProof({
       request: browserTurn, method: "POST", path: "/api/chats/chat_one/turns",
-      machine: machine!, identity: { handle, userId: actorId, source: "auth" }, platformSecret: secret,
+      machine: machine!, identity: identity!, platformSecret: secret,
     });
     // The real proxy forwards the original tee branch after minting its proof.
     await browserTurn.text();
@@ -109,7 +122,7 @@ describe("Preview browser-to-Claude Drive read", () => {
     const approvalBody = { clientRequestId: "req_approval", decision: "approve", actionDigest: requested.actionDigest };
     const approvalProof = mintCustomMcpApprovalProof({ method: "POST",
       path: `/api/chats/chat_one/runs/run_one/approvals/${requested.approvalId}`,
-      identity: { handle, userId: actorId, source: "auth" }, body: JSON.stringify(approvalBody), secret });
+      identity: identity!, body: JSON.stringify(approvalBody), secret });
     await control.submit(requested.approvalId!, "approve", { chatId: "chat_one",
       clientRequestId: approvalBody.clientRequestId, platformApprovalProof: approvalProof! });
     const receipt = (respond.mock.calls[0]![0] as { updatedInput: { matrix_approval_receipt: string } })
