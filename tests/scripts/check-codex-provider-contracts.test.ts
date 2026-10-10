@@ -120,7 +120,7 @@ describe("Codex provider contract checker", () => {
     }
   });
 
-  it("qualifies the published 0.162.0 schema on both supported targets", () => {
+  it("retains the historical 0.162.0 qualification on both supported targets", () => {
     const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
     const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
       "../fixtures/codex-0162/app-server-schema-0162.json.gz", import.meta.url,
@@ -130,7 +130,11 @@ describe("Codex provider contract checker", () => {
     expect(digest(appServerSchemaBytes)).toBe("e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1");
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
       expect(() => verifyCodexProviderContracts({
-        version: "0.162.0", execContract: contract, appServerContract,
+        // The live gate checks the latest reviewed release; reconstruct the
+        // earlier qualification without changing either current contract.
+        version: "0.162.0",
+        execContract: { ...contract, latestVerifiedVersion: "0.162.0" },
+        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.0" },
         execSchemaBytes, appServerSchemaBytes, runtimeTarget,
       })).not.toThrow();
     }
