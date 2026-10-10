@@ -59,6 +59,15 @@ That is a likely contributor in the longest files, but has not been measured
 separately. Preserve per-test isolation; changing fixtures requires evidence
 and targeted isolation tests, rather than removing regression coverage.
 
+## Local diagnostic profile
+
+The unchanged `tests/platform/customer-vps.test.ts` passed all 97 tests locally
+with Node 24.13.1 and one worker in 64.29 seconds (63.01 seconds in tests).
+Most individual cases took about 600 ms, including their isolated database
+setup. This differs from the hosted 253-second historical file duration.
+It supports measuring actual runner hardware before changing test isolation;
+it is not a Linux host benchmark or a controlled before/after speedup.
+
 ## Dedicated-host acceptance
 
 1. Build the reviewed pinned image on a dedicated 16-vCPU/64-GB x86 Linux host.

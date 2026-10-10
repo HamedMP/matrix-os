@@ -110,3 +110,10 @@ allowing only `main`, and store `CI_RUNNER_SSH_KEY`, `CI_RUNNER_HOST`, and
 has merged, set repository variable `MATRIX_CI_DEDICATED_ENABLED=true`.
 Keep **CI Results** required during this rollout; benchmark success alone is
 not the merge gate. Disabling the variable stops new dedicated dispatches.
+
+GitHub's default public-repository `pull_request_target` policy is currently
+in evaluate mode, with enforcement announced for 2026-11-02. Check the
+repository's Actions event-policy insights and configure an applicable policy
+for these reviewed controllers before enforcement. Do not enable PR checkout
+with privileged credentials. See
+[GitHub's event-policy documentation](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
