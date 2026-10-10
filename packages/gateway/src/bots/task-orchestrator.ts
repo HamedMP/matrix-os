@@ -224,7 +224,8 @@ export function createBotTaskOrchestrator(deps: {
         deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
           botId, recipeRef: agent.recipeRef, ...(selection ? { modelId: selection.model } : {}) });
         if (recipe.identitySource !== "owner_soul" || selection && (selection.instanceId !== "matrix_pi_default" || selection.options?.length)) throw new Error("Isolated Bot unavailable");
-        selection = { instanceId: "matrix_pi_default", model: isolatedModel };
+        selection = { instanceId: "matrix_pi_default", model: isolatedModel === "anthropic/claude-sonnet-5"
+          ? "claude-sonnet-5" : isolatedModel };
       }
     } catch (error: unknown) {
       console.warn("[bots] coordinator unavailable:", error instanceof Error ? error.name : "UnknownError");
