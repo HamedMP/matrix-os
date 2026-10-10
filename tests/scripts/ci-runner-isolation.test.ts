@@ -74,6 +74,7 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     const { result, calls } = invoke([sha, "unit", "8"]);
     expect(result.status).toBe(0);
     const create = calls.split("\n").find((line) => line.startsWith("create "))!;
+    expect(create).toContain("--init");
     expect(create).toContain("--user 10001:10001");
     expect(create).toContain("--cap-drop ALL");
     expect(create).toContain("--security-opt no-new-privileges:true");
