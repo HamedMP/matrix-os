@@ -1,10 +1,10 @@
+import { themeSemantics } from "@matrix-os/brand/themes";
 import type { ChromeColors } from "./theme-types";
-import { DEFAULT_THEME_ID, getThemeChrome, getUnifiedTheme } from "./index";
+import type { CustomTheme } from "./index";
+import { getThemeChrome, getUnifiedTheme } from "./index";
 
-// tokens.css defines the semantic variables both statically (the Matrix brand
-// theme, no flash before JS runs) and as the vocabulary every component
-// consumes. Non-default themes override those variables inline on <html>;
-// the Matrix theme removes the overrides so the stylesheet values win again.
+// tokens.css supplies the first paint. Every selected theme uses this same
+// mapping so previews and the running interface remain consistent.
 
 export type ThemeMode = "dark" | "light" | "system";
 
@@ -15,6 +15,7 @@ export function resolveThemeMode(mode: ThemeMode): "dark" | "light" {
 
 /** Semantic variables driven by a theme's chrome layer. */
 export function chromeToSemanticVars(chrome: ChromeColors): Record<string, string> {
+  const semantic = themeSemantics(chrome);
   return {
     "--bg-app": chrome.background,
     "--bg-surface": chrome.card,
@@ -25,12 +26,17 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--bg-active": chrome.secondary,
     "--bg-selected": chrome.secondary,
 
+    "--sidebar": chrome.sidebar,
+    "--sidebar-foreground": chrome.sidebarForeground,
+    "--sidebar-accent": chrome.sidebarAccent,
+    "--sidebar-accent-foreground": chrome.sidebarAccentForeground,
+    "--sidebar-border": chrome.sidebarBorder,
     "--forest": chrome.sidebar,
     "--forest-deep": chrome.surface0,
     "--forest-foreground": chrome.sidebarForeground,
     "--forest-muted": chrome.mutedForeground,
 
-    "--border-subtle": chrome.sidebarBorder,
+    "--border-subtle": chrome.border,
     "--border-default": chrome.border,
     "--border-strong": chrome.input,
 
@@ -38,29 +44,51 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
     "--text-secondary": chrome.mutedForeground,
     "--text-tertiary": chrome.mutedForeground,
     "--text-disabled": chrome.mutedForeground,
+    "--bg-disabled": chrome.muted,
+    "--muted": chrome.muted,
     "--text-on-accent": chrome.primaryForeground,
 
-    "--accent": chrome.ring,
-    "--accent-hover": chrome.sidebarPrimary,
+    "--accent": chrome.primary,
+    "--accent-hover": semantic.primaryHover,
+    "--text-on-accent-hover": semantic.primaryHoverForeground,
     "--accent-muted": chrome.accent,
     "--highlight": chrome.chart4,
     "--highlight-muted": chrome.accent,
-    "--success": chrome.chart2,
-    "--success-muted": chrome.accent,
-    "--warning": chrome.chart3,
-    "--warning-muted": chrome.accent,
-    "--danger": chrome.destructive,
-    "--danger-muted": chrome.accent,
-    "--info": chrome.chart1,
-    "--info-muted": chrome.accent,
+    "--success": semantic.success,
+    "--success-muted": semantic.successMuted,
+    "--success-text": semantic.successText,
+    "--text-on-success": semantic.successForeground,
+    "--warning": semantic.warning,
+    "--warning-muted": semantic.warningMuted,
+    "--warning-text": semantic.warningText,
+    "--text-on-warning": semantic.warningForeground,
+    "--danger": semantic.danger,
+    "--danger-muted": semantic.dangerMuted,
+    "--danger-text": semantic.dangerText,
+    "--text-on-danger": semantic.dangerForeground,
+    "--info": semantic.info,
+    "--info-muted": semantic.infoMuted,
+    "--info-text": semantic.infoText,
+    "--text-on-info": semantic.infoForeground,
+    "--surface-base-background": chrome.background,
+    "--surface-primary": chrome.card,
+    "--surface-success": semantic.successMuted,
+    "--surface-success-emphasis": semantic.success,
+    "--surface-error-emphasis": semantic.danger,
+    "--surface-warning-emphasis": semantic.warning,
+    "--surface-info-emphasis": semantic.info,
+    "--surface-card-foreground-subtle": chrome.card,
+    "--surface-tertiary": chrome.secondary,
+    "--text-subtle": chrome.mutedForeground,
+    "--text-danger": semantic.dangerText,
 
     "--status-todo": chrome.mutedForeground,
-    "--status-running": chrome.chart1,
-    "--status-waiting": chrome.chart3,
-    "--status-blocked": chrome.destructive,
-    "--status-complete": chrome.chart2,
-    "--status-attention": chrome.chart3,
-    "--status-failed": chrome.destructive,
+    "--status-running": semantic.infoText,
+    "--status-waiting": semantic.warningText,
+    "--status-blocked": semantic.dangerText,
+    "--status-complete": semantic.successText,
+    "--status-attention": semantic.warningText,
+    "--status-failed": semantic.dangerText,
 
     // color-mix keeps the ring translucent for any CSS color form (hex,
     // rgba, oklch); appending a hex alpha only works for 6-digit hex.
@@ -68,14 +96,14 @@ export function chromeToSemanticVars(chrome: ChromeColors): Record<string, strin
   };
 }
 
-const MANAGED_VARS = Object.keys(chromeToSemanticVars(getThemeChrome(DEFAULT_THEME_ID, "dark")));
+
 
 /**
  * Applies a unified theme to the document: sets data-theme for the stylesheet
- * variant and, for non-Matrix themes, overrides the semantic variables with
+ * variant and overrides the semantic variables with
  * the theme's chrome layer.
  */
-export function applyUnifiedTheme(themeId: string, mode: ThemeMode): void {
+export function applyUnifiedTheme(themeId: string, mode: ThemeMode, custom?: CustomTheme | null): void {
   const root = document.documentElement;
   const theme = getUnifiedTheme(themeId);
   const requested = resolveThemeMode(mode);
@@ -87,12 +115,8 @@ export function applyUnifiedTheme(themeId: string, mode: ThemeMode): void {
       ? "dark"
       : "light";
   root.setAttribute("data-theme", effective);
-  root.setAttribute("data-theme-id", theme.id);
-  if (theme.id === "matrix") {
-    for (const name of MANAGED_VARS) root.style.removeProperty(name);
-    return;
-  }
-  const vars = chromeToSemanticVars(getThemeChrome(theme.id, effective));
+  root.setAttribute("data-theme-id", themeId === "custom" && custom ? "custom" : theme.id);
+  const vars = chromeToSemanticVars(getThemeChrome(themeId, effective, custom));
   for (const [name, value] of Object.entries(vars)) {
     root.style.setProperty(name, value);
   }
