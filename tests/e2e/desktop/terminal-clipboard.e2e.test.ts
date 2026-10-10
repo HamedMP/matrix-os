@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const REPOSITORY_ROOT = resolve(__dirname, "../../..");
 const DESKTOP_ROOT = join(REPOSITORY_ROOT, "desktop");
@@ -147,6 +148,7 @@ suite("packaged Electron terminal clipboard", () => {
       },
     });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await page.waitForFunction(() => typeof window.operator?.invoke === "function");
     await page.evaluate(async () => {
       await window.operator.invoke("auth:start-device-flow", {});
@@ -308,11 +310,6 @@ suite("packaged Electron production-mode terminal selection", () => {
 
   async function prepareVisibleTerminal() {
     // Pixel-based xterm gestures need a visible, unobstructed surface on small CI displays.
-    const onboarding = page.getByRole("dialog", { name: "Getting started", exact: true });
-    if (await onboarding.isVisible()) {
-      await page.getByRole("button", { name: /Getting started/ }).click();
-      await onboarding.waitFor({ state: "hidden" });
-    }
     const surfaceMode = () => terminalSurface().evaluate((element) =>
       element.closest("[data-surface-mode]")?.getAttribute("data-surface-mode"));
     if (await surfaceMode() === "window") {
@@ -383,6 +380,7 @@ suite("packaged Electron production-mode terminal selection", () => {
       },
     });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 768));
     await page.waitForFunction(() => typeof window.operator?.invoke === "function");
     await page.evaluate(async () => {

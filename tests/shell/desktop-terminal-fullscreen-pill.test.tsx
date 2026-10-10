@@ -252,15 +252,29 @@ describe("Desktop terminal fullscreen chrome", () => {
     expect(windowManagerStore.getState().fullscreenWindowId).toBe("win-terminal");
   });
 
-  it("exits fullscreen before the Desktop tab hides the active window", async () => {
+  it("exits fullscreen before Show desktop minimizes the active window", async () => {
     resetStores(appWindow);
     desktopModeStore.setState({ mode: "desktop", previousMode: null, _hydrated: true });
 
     renderDesktop();
 
     await screen.findByText("App content");
-    fireEvent.click(screen.getByRole("tab", { name: "Show desktop" }));
+    fireEvent.pointerDown(screen.getByRole("tab", { name: "Desktop" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Show desktop" }));
 
     expect(windowManagerStore.getState().fullscreenWindowId).toBeNull();
+    await waitFor(() => {
+      const windows = windowManagerStore.getState().windows.filter(win => win.id === appWindow.id);
+      expect(windows).toHaveLength(1);
+      expect(windows[0]).toMatchObject({
+        id: appWindow.id,
+        path: appWindow.path,
+        x: appWindow.x,
+        y: appWindow.y,
+        width: appWindow.width,
+        height: appWindow.height,
+        minimized: true,
+      });
+    });
   });
 });
