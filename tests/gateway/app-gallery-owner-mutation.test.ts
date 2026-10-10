@@ -15,7 +15,9 @@ import { registerAppGalleryRoutes } from "../../packages/gateway/src/app-gallery
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { loadGallery, installGalleryApp, openGalleryApp } from "../../home/apps/app-gallery/src/model.js";
 import { withOwnerFileMutation } from "../../packages/gateway/src/owner-file-mutations.js";
+import { resolveAppBridgeLaunch } from "../../shell/src/lib/app-bridge-launch.js";
 import { listAppCatalog } from "../../packages/gateway/src/apps.js";
+import { createNativeAppOpenClient } from "../../desktop/src/shared/native-app-open.js";
 
 vi.mock("../../packages/gateway/src/app-gallery/filesystem.js", async original => ({
   ...await original<typeof import("../../packages/gateway/src/app-gallery/filesystem.js")>(),
@@ -322,8 +324,15 @@ it.each([256, 257])("keeps the %i-character owner name boundary aligned with act
     expect(row.installed).toBe(length === 256);
     if (length === 256) {
       await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed", name, path });
-      await openGalleryApp(bridge, row);
-      expect(bridge.openApp).toHaveBeenCalledWith(name.slice(0, 200), "matrix-app:folio");
+      const invoke = vi.fn(async () => undefined), nativeOpen = createNativeAppOpenClient(invoke);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([{ slug: "folio", name, path: `/files/${path}/index.html` }]))));
+      try {
+        bridge.openApp.mockImplementation(async (title: string, reference: string) => {
+          const target = await resolveAppBridgeLaunch(title, reference, new AbortController().signal);
+          expect(target).toEqual({ name, path: "apps/folio/index.html" }); nativeOpen(target.name, target.path);
+        });
+        await openGalleryApp(bridge, row); expect(invoke).toHaveBeenCalledWith({ name, path: "apps/folio/index.html" });
+      } finally { vi.unstubAllGlobals(); }
     } else {
       await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
       expect(row.launchPath).toBeUndefined(); expect(row.installedName).toBeUndefined();
