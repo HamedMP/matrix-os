@@ -1,4 +1,4 @@
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { canonicalAppRuntimeCatalogPath } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { normalizeBuiltInAppPath } from "./builtin-apps";
 import { extractSlug } from "@/components/app-viewer-helpers";
 
@@ -7,7 +7,7 @@ const SAFE_MANIFEST_SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Physical owner folders are catalog references, not runtime/grant identities. */
 export function catalogAppLaunchPath(app: CatalogApp): string | null {
-  const path = canonicalOsViewCatalogPath(app) ?? canonicalOsViewCatalogPath({ path: app.ownerPath });
+  const path = canonicalAppRuntimeCatalogPath(app) ?? canonicalAppRuntimeCatalogPath({ path: app.ownerPath });
   if (!path) return null;
   const slug = typeof app.slug === "string" && SAFE_MANIFEST_SLUG.test(app.slug) ? app.slug : null;
   // Catalog-backed owners use explicit runtime identity when the canonical
@@ -29,7 +29,7 @@ export function createCatalogAppPathResolver(apps: readonly CatalogApp[] | undef
   const physical = new Map<string, string | null>();
   const canonical = new Map<string, string | null>();
   for (const app of apps) {
-    const owner = canonicalOsViewCatalogPath({ path: app.ownerPath }) ?? canonicalOsViewCatalogPath(app);
+    const owner = canonicalAppRuntimeCatalogPath({ path: app.ownerPath }) ?? canonicalAppRuntimeCatalogPath(app);
     const launch = catalogAppLaunchPath(app);
     if (!owner || !launch) continue;
     physical.set(owner, physical.has(owner) ? null : launch);

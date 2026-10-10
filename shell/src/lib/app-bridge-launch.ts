@@ -1,4 +1,5 @@
-import { canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
+import { canonicalAppRuntimeCatalogPath } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { resolveChatAppReference } from "@matrix-os/contracts";
 import { readAppBridgeResponse } from "@/components/app-capability-request";
 import { catalogAppLaunchPath } from "./app-catalog-launch";
 import { normalizeAppBridgeLaunchPath } from "./builtin-apps";
@@ -20,7 +21,7 @@ export async function resolveAppBridgeLaunch(name: string, requestedPath: string
   const apps = value.flatMap(row => {
     if (!row || typeof row !== "object" || (row.slug !== undefined && (typeof row.slug !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(row.slug)))
       || typeof row.name !== "string" || !row.name.trim() || row.name.length > 256) return [];
-    const path = canonicalOsViewCatalogPath(row);
+    const path = canonicalAppRuntimeCatalogPath(row);
     return path ? [{ slug: row.slug ?? "", name: row.name, path }] : [];
   });
   const identities = identity === null ? [] : apps.filter(app => app.slug === identity);
