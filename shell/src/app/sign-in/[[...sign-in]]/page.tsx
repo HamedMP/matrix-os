@@ -4,6 +4,8 @@ import { shellAuthAppearance } from "@/components/auth/auth-brand";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
 
 export const metadata: Metadata = {
+  robots: { index: false, follow: true },
+  alternates: { canonical: "https://app.matrix-os.com/sign-in" },
   title: "Sign in | Matrix OS",
   description: "Sign in to your Matrix OS computer. One session carries across matrix-os.com and app.matrix-os.com.",
 };

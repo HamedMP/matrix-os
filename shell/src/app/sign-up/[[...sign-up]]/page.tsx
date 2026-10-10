@@ -4,6 +4,8 @@ import { shellAuthAppearance } from "@/components/auth/auth-brand";
 import { ShellAuthLayout } from "@/components/auth/ShellAuthLayout";
 
 export const metadata: Metadata = {
+  robots: { index: false, follow: true },
+  alternates: { canonical: "https://app.matrix-os.com/sign-up" },
   title: "Create your account | Matrix OS",
   description: "Sign up for Matrix OS. No card required until you provision a hosted Matrix computer.",
 };
