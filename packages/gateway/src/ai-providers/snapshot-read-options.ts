@@ -2,7 +2,7 @@
 export interface ProviderSnapshotReadOptions {
   refresh?: boolean;
   /** Exact managed Matrix admission skips unrelated native inventory; never cache its authority. */
-  admissionScope?: "managed_matrix";
+  admissionScope?: "managed_matrix" | "canonical_matrix";
   /** Trusted runtime-owner-only identity/allowance enrichment; never renderer input. */
   includeNativeAccountMetadata?: boolean;
   /** Foreground login completion verifies identity independently of quota. */

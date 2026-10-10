@@ -28,7 +28,7 @@ import {
   readBoundedBody,
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
-import type { PiRuntimeBinding } from "./runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -152,6 +152,7 @@ export async function forwardBotInference(
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
+    if (isolated && (await deps.isolatedChat!.validate?.(binding) === false || lifecycle.aborted || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
@@ -249,11 +250,16 @@ const IsolatedInferenceSchema = z.object({
   temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
   n: z.literal(1).optional(), store: z.literal(false).optional(),
 }).strict();
+// Canonical Bot phases may reuse bounded text history. Ordinary managed phases
+// retain the original empty-session wire contract.
+const CanonicalIsolatedInferenceSchema = IsolatedInferenceSchema.extend({
+  messages: z.array(z.object({ role: z.enum(["system", "developer", "user", "assistant"]), content: IsolatedText }).strict()).min(1).max(32),
+});
 function validIsolatedInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding): boolean {
   if (Buffer.byteLength(request.body, "utf8") > 131072 || binding.accessSourceId !== "matrix_included"
     || binding.route.maxOutputTokens !== 256) return false;
   try {
-    const value = IsolatedInferenceSchema.safeParse(JSON.parse(request.body));
+    const value = (isManagedPiBinding(binding) ? IsolatedInferenceSchema : CanonicalIsolatedInferenceSchema).safeParse(JSON.parse(request.body));
     if (!value.success || value.data.model !== binding.route.modelId
       || (value.data.max_tokens === undefined) === (value.data.max_completion_tokens === undefined)
       || value.data.messages.at(-1)?.role !== "user") return false;

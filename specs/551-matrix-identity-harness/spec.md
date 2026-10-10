@@ -1,6 +1,6 @@
 # Connect Settings SOUL to Matrix Bot
 
-Status: implemented corrected Bot scope; exact-head live acceptance pending. ENG-235; PR2438.
+Status: implemented corrected Bot scope; exact-head live acceptance pending. ENG-235; original PR2438 retained, SOUL layer PR2443 preserved, canonical-phase layer prepared above it in native stack2444.
 
 ## Goal and scope
 
@@ -76,7 +76,7 @@ Wrong: decide SOUL inheritance from `agent.name === "Matrix Bot"` or the shared 
 
 Run focused personality/recipe/orchestration/worker tests, typecheck, patterns, required full tests and lint; distinguish known base macOS failures from changed-code regressions. Update existing English implementation PR2438 and private FinnaAI/matrix-os-site docs PR221 with correct identity scope, creation entry, display-label separation and next-turn behavior. Link ENG235 and required PR invariants.
 
-Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. No Greptile/merge until explicit Yuhan approval. No Slack/team message authorization.
+Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. Greptile may run only for an explicitly authorized frozen source candidate; merge remains gated on Human Review and live acceptance. No Slack/team message authorization.
 
 
 ## Isolated readiness source composition
@@ -88,20 +88,64 @@ ordinary managed Pi server-issued isolated turn limits in the shared runtime.
 The broker's 131072-byte bound applies to the complete serialized inference
 body, including system/SOUL instructions; identity never bypasses that bound.
 
-This composition does not add isolated generation fencing to canonical recipe
-Bots. Ordinary Pi claim/broker tests and Bot creation are not live Bot acceptance.
-The canonical recipe's real run/broker binding needs its own proof before any
-single-generation claim. No paid cache warming is allowed; missing, stale or
-mismatched cached readiness remains unavailable.
+The optional trusted phase target is either `{ kind: "managed_chat" }` or
+`{ kind: "canonical_bot", botId, recipeRef: { recipeId, version } }`. Omission
+keeps the original managed Chat behavior. Unknown fields and incomplete targets
+reject configuration. A canonical target never changes `isManagedPiBinding` or
+widens ordinary isolated Chat's empty-history rule.
 
-Matching trusted Gateway/Platform cache-only phase configuration is default-off
-and does not remove funding-summary promotional grant or balance handoff paths.
-A complete catalog observation requires separate fresh evidence of no such
-mutation, or a reviewed server-owned exact-target read path that omits them.
-Client query parameters must not disable server financial/authorization policy.
-Do not change global promotion/permission flags to facilitate a test. Expired
-phase configuration fails closed; restore the recorded original phase values
-through the owner of that deployment rather than leave ordinary Chat blocked.
+For the canonical target, validate owner, machine, runtime slot, actual runtime
+credential hash and epoch, installed source and bounded phase window. Resolve
+the current live canonical recipe definition from owner files, never an assumed
+agent SQL table or Bot display name. Automatic chooses only the phase's fixed
+managed model; conflicting explicit model/payment selections reject without
+fallback. Revalidate personal active nonshared direct binding and the actual
+`matrix_bot` / `matrix_bot_default` accepted/running attempt-one canonical run,
+matching owner/Bot/task/chat/run and a running top-level task. Claim the real
+registry binding after admission and inside guaranteed release. Carry the strict
+canonical descriptor into the actual worker through the broker run specification.
+
+A read-only claim/runtime/definition preflight blocks stale phases before any
+credential resolution; it does not consume or release the durable phase.
+The broker validates the complete serialized 131072-byte text-only body, fixed
+model and output256, zero tools/thinking, then conditionally consumes the durable
+phase immediately before its single outbound fetch. Definition, runtime and
+DB binding checks repeat at consume. Consumption is never refunded on error,
+capacity, abort, uncertain send, restart or rebind. Worker steering, continuation,
+retry, queued extra generation and summary/compaction are disabled for the phase.
+A canonical second phase on the same Bot uses genuine stored first-turn history,
+without truncation or dropping turns; invalidated summaries fail before inference.
+Ordinary isolated managed Chat still refuses nonempty history.
+
+A trusted internal `canonical_matrix` observation scope fences the actual UI
+catalog, provider and Settings snapshots. It keeps the safe catalog projection
+while omitting unrelated native, API-key and subscription account observations.
+Existing API/subscription catalog IDs retain safe unavailable descriptors with
+empty models/options, produced by the same pure projection helpers as ordinary
+account routes; no account readiness is fabricated.
+Gateway validates actual runtime/source/window and sends runtime-authenticated
+phase/digest headers. Platform independently validates the exact configured
+runtime, epoch, credential, phase and config digest before cache-only readiness.
+Jev or mismatched private hints fail closed. Other Platform runtimes without phase
+headers retain ordinary behavior. Missing, stale or mismatched fixed-model cache
+entries remain unavailable and never warm/probe a paid model. No renderer query
+parameter enables this scope.
+
+The same exact trusted canonical phase must use a read-only funding summary that
+projects policy, funding and Chat availability without promotional grant,
+balance handoff, monthly reconciliation or credential issuance. Ordinary summary
+and reservation behavior stays unchanged. Enabled-promotion and actual DB state
+regressions must prove this full catalog path before freeze. Do not change global
+promotion/permission flags to facilitate a test. Expired phase configuration fails
+closed; deployment owners restore the recorded original phase values afterwards.
+
+Local acceptance exercises authenticated SOUL save, real Bot creation/admission,
+registry/claim, broker, Unix bridge, installed worker SDK and actual PostgreSQL,
+including two stored-history phases, concurrent consume, stale target/runtime and
+unknown send failures. Scripted offline SSE is explicitly fixture evidence, never
+Main Computer Bot reply acceptance. Contracts, Gateway, Platform and worker
+changes require fresh component input analysis and artifacts; an old Electron
+ASAR must not be relabelled as the new source.
 
 Source checks and independent review are prerequisites to any later deployment.
 This candidate performs no Main update, catalog GET, policy/funding write,

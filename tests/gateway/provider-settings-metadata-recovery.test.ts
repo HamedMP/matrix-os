@@ -9,6 +9,8 @@ import { projectProviderSettings } from '../../packages/gateway/src/ai-providers
 import { initialProviderSettingsConfiguration } from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from './provider-settings-test-support.js';
 import type { CodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+import * as codexMetadata from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+import { createRuntimeProviderSettings } from '../../packages/gateway/src/server/provider-discovery-composition.js';
 function codexFixture() {
   const canonical = providerSettingsCanonicalFixture();
   canonical.accessSources.push({ ...canonical.accessSources[1]!, id: 'owner_openai_profile', vendor: 'openai', accountLabel: 'Codex', state: 'unknown', action: 'retry', safeReason: 'unknown' });
@@ -55,8 +57,23 @@ describe('metadata recovery boundaries', () => {
     } finally { warning.mockRestore(); }
   });
   it('wires the same selected CODEX_HOME as canonical observation', async () => {
+    const homePath = await mkdtemp(join(tmpdir(), 'metadata-recovery-')); homes.push(homePath);
+    const selectedCodexHome = join(homePath, 'selected-codex-profile');
+    const reader = vi.fn(async () => null);
+    const factory = vi.spyOn(codexMetadata, 'createCodexNativeAccountMetadataReader').mockReturnValue(reader);
+    vi.stubEnv('CODEX_HOME', selectedCodexHome);
+    try {
+      const store = createRuntimeProviderSettings({ homePath, codexExecutable: '/fixture/bin/codex',
+        providerSnapshotReader: { getSnapshot: async () => codexFixture() } });
+      expect(store).toBeInstanceOf(ProviderSettingsStore);
+      expect(factory).toHaveBeenCalledExactlyOnceWith({ executable: '/fixture/bin/codex', cwd: homePath,
+        environment: expect.objectContaining({ HOME: homePath, MATRIX_HOME: homePath, CODEX_HOME: selectedCodexHome }) });
+      expect(reader).not.toHaveBeenCalled();
+    } finally { factory.mockRestore(); vi.unstubAllEnvs(); }
+    // The server wires this tested composition and selects the same profile for canonical authority.
     const server = await readFile(new URL('../../packages/gateway/src/server.ts', import.meta.url), 'utf8');
-    expect(server).toMatch(/createCodexNativeAccountMetadataReader\(\{[\s\S]*?environment: \{[\s\S]*?CODEX_HOME: process\.env\.CODEX_HOME/);
+    expect(server).toMatch(/providerSettingsStore = createRuntimeProviderSettings\(\{\s*codexExecutable,/);
+    expect(server).toMatch(/observeCodexLocalCredential\(\{\s*executable: codexExecutable,\s*runtimeHome: homePath,\s*codexHome: process\.env\.CODEX_HOME,/);
   });
   it('reconciles only exact native API-key presentation without changing canonical authority', async () => {
     const canonical = codexFixture();

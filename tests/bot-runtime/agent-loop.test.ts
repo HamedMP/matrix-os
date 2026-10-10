@@ -434,3 +434,13 @@ describe("server-issued isolated ordinary turn", () => {
     expect(stream).not.toHaveBeenCalled();
   });
 });
+
+
+it("preserves ordinary isolated empty-history behavior after removing invalidated derived summaries", async () => {
+  const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+  const base = command(), broker = memoryBroker({ load: async () => ({ revision: 3, needsRecompaction: true,
+    messages: [{ role: "user", content: "Discard this derived summary", timestamp: 1, matrixBotSessionKind: "summary" }] }) }).broker;
+  const result = await run({ command: { ...base, route: { ...base.route, maxOutputTokens: 256 }, limits: { maxToolActions: 1 },
+    isolatedTurn: { phaseId: "phase_old_managed", maxInputBytes: 131072 } }, broker, route });
+  expect(result.status).toBe("completed");
+});
