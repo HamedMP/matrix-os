@@ -1,97 +1,79 @@
-# Connect Identity & personality to Matrix AI
+# Connect Settings SOUL to Matrix Bot
 
-Status: implemented; live acceptance pending. ENG-235.
+Status: implemented corrected Bot scope; exact-head live acceptance pending. ENG-235; PR2438.
 
 ## Goal and scope
 
-The owner-edited Settings > Identity & personality SOUL must reach ordinary Matrix AI Chat through the Matrix-owned Pi harness. Keep the existing editor and file API. Apply edits on the next admitted turn, including an existing Chat; do not replace history or restart the gateway.
+Settings > Identity & personality edits system/soul.md. The canonical personal Matrix Bot must consume this owner-saved identity on each new/continued turn through the actual direct Bot executor. The existing ordinary managed Matrix Pi Chat wiring remains included. A Global Chat screenshot is not Bot acceptance.
 
-Design redesign, new profile tabs, onboarding/hatching, general memory, CLI harnesses and custom/recipe/company Bots are outside this increment. The existing legacy kernel already loads SOUL; this fixes the managed Pi seam.
+There is no pre-existing canonical Matrix Bot in the fixed recipe catalog. Add a dedicated Matrix Bot recipe using the existing recipe creation/Agents/direct Bot Chat flow. Its exact server-resolved recipe version opts into owner SOUL; other custom and task-specific Bots remain independent, even if named Matrix or Rick. No client-supplied inheritance flag, model/driver/name heuristic, auto-migration, or startup creation of an owner Bot.
 
-## Evidence
+Settings redesign, onboarding/hatching, general memory, arbitrary Bot inheritance, coding CLIs, company/shared Bots, production fleet rollout, and merge before Human Review are deferred.
 
-- `desktop/src/renderer/src/features/settings/sections/IdentityPersonalitySection.tsx:8` uses `/files/system/soul.md`; saving uses the same path.
-- `shell/src/components/settings/sections/IdentityPersonalitySection.tsx:55` saves through the existing file endpoint.
-- `packages/kernel/src/prompt.ts:34` loads SOUL for the legacy kernel.
-- `packages/gateway/src/chat/managed-pi-runtime.ts:82` supplies a fixed system prompt without owner SOUL.
-- `packages/gateway/src/startup/bots.ts:360` constructs the managed runtime and already has homePath/runtimeOwnerId available.
-- `packages/bot-runtime/src/loop.ts:75` drops persisted system messages and rebuilds the system prompt from each run; line 98 supplies it to the Pi Agent. Thus refresh requires no session migration.
-- `specs/543-matrix-ai-pi-routing/spec.md` distinguishes ordinary managed Chat from custom/recipe Bots and fixes sandbox mount authority.
+## Source of truth and runtime flow
 
-## Requirements and acceptance
+Authenticated Settings file PUT -> owner's system/soul.md -> configured bounded gateway reader -> canonical verified direct Bot binding -> exact server recipe resolution -> fixed Bot rules/job + owner personality -> BotRunSpec -> broker -> Pi worker.
 
-R1: Read the current SOUL from the authenticated runtime owner's home after Chat admission, before the run specification is published. New and existing Chats receive the newest successfully saved content on their next turn; an already active run retains its snapshot.
+Settings already uses /files/system/soul.md. Bot task-orchestrator previously built a prompt solely from saved agent name/instructions, recipe and confirmed memory. Ordinary managed Chat uses a separate prompt seam. Share the existing secure reader/composition between these seams; never duplicate filesystem validation or let client data choose the home/path. Pi already rebuilds system messages each turn while preserving non-system history.
 
-R2: Use only the server-configured home and verified runtime owner, never a client-selected path, project root, agent name or metadata. A foreign owner, company/shared scope or custom Agent context cannot receive personal SOUL. Unconfigured owner identity must not expose home contents.
+## Requirements
 
-R3: Preserve the current Matrix tool rules, capabilities, approval enforcement and worker isolation. SOUL customizes identity/tone/behavior but grants no permissions. Do not mount the whole owner home or copy it into the worker workspace.
+R1. Resolve the canonical Matrix Bot recipe on the server. Only its explicit identity policy enables the profile, after verification of the direct binding and personal runtime owner. Existing recipes/custom Agents retain default-off policy.
 
-R4: Use bounded asynchronous reads, regular-file and symlink confinement checks, explicit ENOENT handling and deterministic prompt budgeting. Missing/empty SOUL keeps the existing Matrix prompt. Invalid, oversized or unreadable configuration returns the existing safe run failure before inference; diagnostics contain categories only, never profile text or filesystem paths. Admit at most 16 KiB of file bytes and remain below the existing 7,000-token prompt budget; do not silently slice away instructions.
+R2. Read current SOUL once per admitted turn before inference/publication. New and continued Bot Chats receive the next saved version without restart/history loss; active runs retain their snapshot. Only startup-configured homePath and runtimeOwnerId may supply it. Foreign, missing/unverified, org/company/shared contexts receive no personal SOUL.
 
-R5: Integration regression proves Settings file-save to real run-spec assembly and Pi worker prompt use. It must cover fresh/continued Chat, edit while a run is active, deletion/empty file, custom/company/foreign-owner exclusion, invalid/symlinked/oversized files, permissions, and preserved transcript. Funded, ChatGPT-subscription and owner-Anthropic Matrix Pi selections share this seam.
+R3. SOUL can set conversational name, tone and behavior, taking precedence over the canonical default Matrix name. Saved Bot display label remains separate. SOUL does not change fixed authority, recipe job constraints, tools, capabilities, approved integration scope, memory admission or human approvals. Do not mount the owner's whole home in workers.
 
-R6: Exact-head Preview VPS plus Electron Desktop acceptance demonstrates a distinctive saved response style/name before and after an edit and after restart. Verify affected Web Desktop/Web Canvas and supported mobile Chat consumption separately when claiming surface acceptance. Restore synthetic test profile content after live validation; record evidence limitations explicitly. No production rollout in this task.
+R4. Reuse asynchronous secure reads: at most16KiB, regular-file/O_NOFOLLOW/inode checks and pinned Linux parent; combined prompt including admitted memory stays under7000tokens. Missing/empty SOUL retains defaults. Invalid UTF8/control bytes, unsafe links, unreadable files or overflow fail safely before inference; diagnostics log categories only. Never silently truncate identity instructions. Always close opened handles.
+
+R5. TDD proves authenticated Settings save -> real canonical Bot instantiation/direct binding -> orchestrator -> broker -> actual Pi worker prompt. Cover next-turn refresh, history, active snapshots, unchanged capabilities/approvals, foreign/unconfigured owners, other/custom recipes (including misleading names), and unsafe input failures. Existing ordinary Chat regressions continue to pass.
+
+R6. Exact-head Main Computer Electron acceptance must use the Agents direct Matrix Bot. Preserve existing SOUL bytes, append an authorized meaningful Rick identity consistent with its original values, and leave that addition saved. Send a neutral self-introduction prompt without providing Rick's name, obtain a live reply, and capture Settings SOUL plus Bot reply together in a real app screenshot. Record immutable runtime version, Electron SHA/profile and actual Bot binding. Keep the verified exact-head Main Computer Bot environment available for Human Review; record the pre-QA backend for rollback, which must retain Rick SOUL. Preview and other affected surface evidence remains separately classified.
 
 ## Auth matrix
 
 | Boundary | Authority | Public |
 | --- | --- | --- |
-| Existing Settings file read/write | Existing file-route authentication and owner home confinement | No |
-| Chat start/continue | Existing Chat ACL, canonical personal owner and managed Pi admission | No |
-| SOUL read | Gateway server home + verified runtime owner; no new endpoint | No |
-| Pi run specification | Existing generation-bound broker | No |
+| Existing Settings file read/write | Existing authentication and owner home confinement | No |
+| Recipe catalog/instantiate/direct Bot Chat | Existing authenticated owner-scoped routes and server recipe resolution | No |
+| SOUL read | Server-configured home and verified personal runtime owner | No |
+| Pi run specification/tools | Existing generation-bound broker, capability/approval enforcement | No |
 
-## Technical design
+No new endpoint, DB table, credentials, environment key, worker mount, file copy/cache/watcher or session migration.
 
-Extract the fixed managed prompt into a focused helper and add a gateway-owned SOUL loader/composer. Inject its dependency at startup with homePath/runtimeOwnerId. After admission, compose the fixed Matrix rules and a clearly scoped owner-personality section; omit profile injection for custom Agent context. The broker carries the resulting string through existing BotRunSpec without schema changes. The worker already refreshes the system prompt each turn while retaining non-system history.
+## Error and budget contract
 
-Use the existing conservative token estimator from bots/system-prompt.ts. Bound reads on the opened file handle; reject non-regular files and unsafe links, including a linked system directory. Fixed defaults and security guidance remain in the trusted base. A profile cannot alter capability grants or approval state.
-
-No new database table, cache, watcher, permanent copy, scope-runtime profile or session format. Existing owner files and history remain authoritative. Reverting the prompt injection restores prior behavior without data migration.
-
-## Executable contract
-
-### Scope / trigger
-
-The authenticated Settings file save crosses into gateway-managed Matrix Chat inference. Compose personality after managed admission, before publishing the run spec.
-
-### Signatures
-
-`createManagedPiSystemPrompt(config?: { homePath: string; runtimeOwnerId: string | null | undefined })` returns an async composer accepting `Pick<CanonicalProviderRunInput, "owner" | "context" | "sharedScopeId">` and returning `Promise<string>`. Startup passes server configuration through `createManagedPiRuntime({ personality, ... })`.
-
-### Contracts
-
-`BotRunSpec.systemPrompt` contains the unchanged trusted Matrix base plus bounded SOUL preferences and a final authority reminder. Missing runtime owner, foreign/personal owner mismatch, company owner, shared scope, custom Agent or drive context uses the base without reading personal files. No new endpoint or environment key is introduced. All managed model variants share this composer.
-
-### Validation and error matrix
-
-| Condition | Behavior |
+| Condition | Outcome |
 | --- | --- |
-| Missing or whitespace-only SOUL | Existing base prompt |
-| Regular UTF-8 SOUL within 16 KiB and the 7,000-token combined budget | Compose once per admitted turn |
-| File/system-directory link, nonregular file or inode mismatch | `unsafe_file`; fail before inference |
-| Invalid UTF-8 or control bytes | `invalid_text`; fail before inference |
-| Byte or token overflow | `too_large`; no truncation |
-| Other read/close failure | `unreadable`; fail before inference |
+| Missing/blank profile or default-off recipe | Existing Bot defaults |
+| Eligible regular bounded UTF8 profile | Compose current snapshot |
+| Symlink/nonregular/inode mismatch | unsafe_file; no inference |
+| Invalid UTF8/control bytes | invalid_text; no inference |
+| Byte or combined token overflow | too_large; no truncation/inference |
+| Other read/close error | unreadable; generic client failure |
 
-Only those diagnostic categories are logged. The existing run failure remains generic to the client. All opened handles close on success/failure.
+Memory may be admitted only within the remaining combined budget. Personality cannot weaken fixed security or expand capability manifests. Linux pins /proc/self/fd parent; non-Linux path/inode fallback cannot fully exclude hostile rename/restore races and must not be described as equivalent production protection.
 
-Linux production pins the system directory using `/proc/self/fd/<fd>/soul.md`, checks inode identity and opens the final component with `O_NOFOLLOW`. The non-Linux fallback checks real paths and inode identity, but cannot completely exclude a malicious parent rename/restore race between checks and open; do not claim equivalent hostile-filesystem race protection on those platforms. No native binding is added in this increment.
+## Executable signatures and contracts
 
-### Good / base / bad cases
+- Canonical recipe reference: `{ recipeId: "matrix-bot", version: "2026-10-10.1" }`; server-only `BotRecipe.identitySource?: "owner_soul"`. Old recipes omit the policy. Client-created definitions cannot write recipeRef.
+- `OwnerPersonalityConfig` supplies `{ homePath: string; runtimeOwnerId: string | null | undefined }` from startup. `readOwnerSoul(homePath): Promise<string>` reads only fixed `system/soul.md`; `ownerPersonalitySection(soul): string` preserves authority/job precedence and conversational-name precedence.
+- `createBotTaskOrchestrator({ personality, admission, ... })` invokes `admission.ownsDirectChat({ ownerId, botId, chatId })` before profile read, and existing `admit` revalidates before runtime publication. The binding must be active, direct, personal, owner-matched and noncollaborative.
+- `buildBotSystemPrompt({ botName, instructions, recipe, now, memory?, ownerSoul? })` appends SOUL only for the opt-in recipe; base+profile must fit before lower-priority confirmed memory is trimmed. `BotRunSpec.systemPrompt` remains the existing transport contract.
+- Ordinary `createManagedPiSystemPrompt` keeps custom/drive/shared/foreign exclusions and delegates to the same reader/formatter. Existing error/limit exports remain aliases for compatibility.
 
-Good: save Juniper, send a message, save Cedar while a run is active, then continue; the active run keeps Juniper and the next run receives Cedar. Base: delete or empty SOUL and continue with unchanged history. Bad: symlink SOUL outside home, exceed the byte/token limit or spoof an owner; do not infer from unsafe content or expose another owner's profile.
+## Good, base and bad cases
 
-### Required tests
+Good: create Matrix Bot from its server recipe, append Rick in Settings, ask for a self-introduction without naming Rick, and continue the same Bot conversation with unchanged history. Base: missing/empty SOUL keeps Matrix Bot's saved default identity. Bad: rename Writing Bot to Rick or Matrix Bot, spoof a foreign owner, or use a collaborative Chat; these cannot consume personal SOUL. Unsafe profile bytes fail before inference.
 
-The four `managed-pi-personality*.test.ts` files verify filesystem/error boundaries, variant run specs and the authenticated Settings PUT → canonical admission → broker → actual Pi Agent chain. Assert preserved non-system history, unchanged capabilities and per-run prompt snapshots. Fault injection around real temporary files verifies parent/file replacement, growth and cleanup failures; synthetic Linux path mapping does not prove native `/proc` semantics. Linux CI executes the descriptor-pinned branch. Live Preview/Electron proof separately verifies model adherence.
+## Tests required and common mistake
 
-### Wrong / correct
+`tests/gateway/bots/matrix-bot-personality.test.ts` exercises recipe listing/instantiation, authenticated Settings save, real direct Bot orchestration, broker and Pi worker prompt, updates/snapshots/history, verified owner/private binding, invalid input and unchanged capabilities. Existing managed Pi personality suites cover secure reader fault injection; private-admission tests assert active noncollaborative SQL authority; system-prompt tests assert combined profile/memory budget; UI handoff tests include the canonical launch ID.
 
-Wrong: read SOUL from the client's project path or cache it when the runtime starts. Correct: `await systemPrompt(input)` after admission, using only server home and verified runtime owner. Personality text never changes capability grants or approval state.
+Wrong: decide SOUL inheritance from `agent.name === "Matrix Bot"` or the shared matrix_bot executor. Correct: resolve immutable server recipe policy and independently verify direct personal runtime ownership before reading the configured home.
 
-## Delivery and deferred work
+## Verification and delivery
 
-Ship tests and runtime wiring in one implementation PR linked to ENG-235. Add a separate documentation PR in private FinnaAI/matrix-os-site/content/docs explaining SOUL scope and next-turn behavior. Suggest product/design stakeholder review without messaging other people unless the user explicitly authorizes it. Stop at Yuhan Human Review; Greptile and merge follow only explicit approval. Existing onboarding and Identity/User templates remain unchanged.
+Run focused personality/recipe/orchestration/worker tests, typecheck, patterns, required full tests and lint; distinguish known base macOS failures from changed-code regressions. Update existing English implementation PR2438 and private FinnaAI/matrix-os-site docs PR221 with correct identity scope, creation entry, display-label separation and next-turn behavior. Link ENG235 and required PR invariants.
 
-Before review readiness, attach immutable build/SHA and live evidence. Missing runtime/surface access is a validation blocker, never synthetic proof. A Slack tech evidence post requires explicit messaging authorization in this chat; prepare it but do not send under the current issue/PR-only request.
+Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. No Greptile/merge until explicit Yuhan approval. No Slack/team message authorization.
