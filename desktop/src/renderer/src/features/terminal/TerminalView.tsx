@@ -868,6 +868,7 @@ export default function TerminalView({
         onCopy={(link) => copyTerminalTextWithFeedback(link.url)}
         onCopySelection={copyTerminalTextWithFeedback}
         onSelectAll={() => termRef.current?.selectAll()}
+        onPaste={() => { void pasteClipboardRef.current(); }}
       />
     </div>
   );

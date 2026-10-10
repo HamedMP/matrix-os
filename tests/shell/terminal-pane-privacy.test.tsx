@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -156,6 +156,44 @@ describe("TerminalPane session replay privacy", () => {
     } else {
       Reflect.deleteProperty(navigator, "platform");
     }
+  });
+
+  it.each([1, 0.5])("pastes through the right-click menu at Canvas zoom %s into the current socket without submitting", async (canvasZoom) => {
+    const payload = "λ pasted 👩🏽‍💻";
+    const readText = vi.fn().mockResolvedValue(payload);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    const { container } = render(<TerminalPane paneId="paste-menu" cwd="" theme={theme} canvasZoom={canvasZoom}
+      isFocused sessionId={TERMINAL_REF_KEY} isClosing={false}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} onFocus={() => {}} />);
+    await waitFor(() => expect(stubTerminal.customKeyEventHandler).toBeTypeOf("function"));
+    fireEvent.contextMenu(container.querySelector("[data-terminal-viewport]")!, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+    await waitFor(() => expect(readText).toHaveBeenCalledOnce());
+    await waitFor(() => expect(stubWs.send).toHaveBeenCalled());
+    const messages = stubWs.send.mock.calls.map(([message]) => JSON.parse(message));
+    expect(messages.filter((message) => message.type === "input").map((message) => message.data).join("")).toBe(`${BRACKETED_PASTE_OPEN}${payload}${BRACKETED_PASTE_CLOSE}`);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("reports denied menu paste safely and retries once without sending Enter", async () => {
+    const readText = vi.fn().mockRejectedValueOnce(new DOMException("private provider token", "NotAllowedError"))
+      .mockResolvedValueOnce("retry");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    const { container } = render(<TerminalPane paneId="denied-menu" cwd="" theme={theme}
+      isFocused sessionId={TERMINAL_REF_KEY} isClosing={false}
+      shouldCacheOnUnmount={() => false} shouldDestroyOnUnmount={() => false} onFocus={() => {}} />);
+    await waitFor(() => expect(stubTerminal.customKeyEventHandler).toBeTypeOf("function"));
+    const paste = () => {
+      fireEvent.contextMenu(container.querySelector("[data-terminal-viewport]")!, { clientX: 120, clientY: 80 });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+    };
+    paste();
+    expect(await screen.findByText(/Clipboard paste failed/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("private provider token");
+    expect(stubWs.send.mock.calls.filter(([message]) => JSON.parse(message).type === "input")).toEqual([]);
+    paste();
+    await waitFor(() => expect(stubWs.send.mock.calls.filter(([message]) => JSON.parse(message).type === "input")).toHaveLength(1));
+    expect(readText).toHaveBeenCalledTimes(2);
   });
 
   it("shows only generic clipboard failures and keeps private values out of diagnostics", async () => {

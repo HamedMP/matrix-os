@@ -1463,6 +1463,38 @@ describe("TerminalView session switching", () => {
     expect(createdTerminals[0]).toBe(terminal);
   });
 
+  it.each([0.5, 1])("pastes from the right-click menu at presentation scale %s without submitting", async (visualScale) => {
+    const payload = "λ pasted 👩🏽‍💻";
+    const readText = vi.fn().mockResolvedValue(payload);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    const { container } = render(<TerminalView sessionName="alpha" visualScale={visualScale} />);
+    const terminal = createdTerminals.at(-1)!;
+    fireEvent.contextMenu(container.querySelector("[data-terminal-viewport]")!, { clientX: 120, clientY: 80 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+    await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith(payload));
+    expect(readText).toHaveBeenCalledOnce();
+    expect(attachmentWrite.mock.calls).toEqual([[payload]]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("reports denied menu paste safely and retries once", async () => {
+    const readText = vi.fn().mockRejectedValueOnce(new DOMException("private provider token", "NotAllowedError"))
+      .mockResolvedValueOnce("retry");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { readText } });
+    const { container } = render(<TerminalView sessionName="alpha" />);
+    const paste = () => {
+      fireEvent.contextMenu(container.querySelector("[data-terminal-viewport]")!, { clientX: 120, clientY: 80 });
+      fireEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+    };
+    paste();
+    expect(await screen.findByText("Clipboard paste failed. Try again.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("private provider token");
+    expect(attachmentWrite).not.toHaveBeenCalled();
+    paste();
+    await waitFor(() => expect(attachmentWrite.mock.calls).toEqual([["retry"]]));
+    expect(readText).toHaveBeenCalledTimes(2);
+  });
+
   it("opens terminal actions without a selection and can select the buffer", async () => {
     const { container } = render(<TerminalView sessionName="alpha" />);
     const terminal = createdTerminals.at(-1)!;
