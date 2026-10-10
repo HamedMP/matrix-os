@@ -9,6 +9,11 @@ export const CODING_AGENT_ARTWORK = {
   pi: { src: "/agent-logos/pi-coding-agent.png", background: "#1E2F5C" },
 } as const;
 
+/** Settings and import provenance share these exact shipped harness marks. */
+export function settingsHarnessArtworkSrc(harness: "claude" | "codex"): string {
+  return codingAgentArtworkSrc(harness === "claude" ? "/agents/settings/claude.svg" : "/agents/settings/openai.svg");
+}
+
 /** Packaged Electron serves public assets beside index.html; explicit Web VM tabs
  * must load artwork from that computer, rather than the primary shell at root. */
 export function codingAgentArtworkSrc(src: string, baseUri = typeof document === "undefined" ? "" : document.baseURI): string {

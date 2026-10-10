@@ -31,7 +31,7 @@ function harness() {
   const getDetail = vi.fn(async () => snapshot("Before"));
   const list = vi.fn(async () => Response.json({ items: [record] }));
   stubLegacyChatFetch( vi.fn(async (url: string) => {
-    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1")) return response;
+    if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1")) return response;
     if (url.includes("/api/chats?")) return list();
     if (url.includes(`/api/chats/${record.chat.id}?`)) return getDetail();
     throw new Error("Unexpected request");

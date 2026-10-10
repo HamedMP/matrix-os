@@ -48,6 +48,8 @@ export interface RequestTimeoutOptions {
 }
 
 export interface JsonRequestOptions extends RequestTimeoutOptions {
+  /** Internal request headers, including opt-in response projections. */
+  headers?: Record<string, string>;
   /** Hard cap on JSON response bytes before parsing. */
   maxBytes?: number;
 }
@@ -126,7 +128,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
   }
 
   async function request<T>(path: string, init: RequestInit, options?: JsonRequestOptions): Promise<T> {
-    const response = await send(path, init, options);
+    let requestInit = init;
+    if (options?.headers) {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of Object.entries(options.headers)) headers.set(name, value);
+      requestInit = { ...init, headers };
+    }
+    const response = await send(path, requestInit, options);
     // Successful bodyless mutations (including Terminal DELETE) are not JSON.
     if (response.status === 204) return undefined as T;
     try {

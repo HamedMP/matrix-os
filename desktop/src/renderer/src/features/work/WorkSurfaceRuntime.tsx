@@ -1,3 +1,4 @@
+import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { CanonicalChatClientProvider } from "../chat/CanonicalChatClientContext";
 import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
@@ -51,7 +52,7 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
     if (!api || !active) return null;
     return createCanonicalChatEventSource({
       openStream({ cursor, signal }) {
-        return api.openStream(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events"))), {
+        return api.openStream(chatImportSourceVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl("/api/chats/events")))), {
           accept: "text/event-stream",
           signal,
           timeoutMs: 5 * 60 * 1000,

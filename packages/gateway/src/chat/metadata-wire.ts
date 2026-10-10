@@ -21,3 +21,21 @@ export function projectChatMetadata<T>(value: T, version: "0" | "1"): T {
   }
   return project(value, 0) as T;
 }
+
+export const ChatImportSourceVersionSchema = z.enum(["0", "1"]).default("0");
+
+/** Immutable provenance is opt-in because released v1 clients use strict schemas. */
+export function projectChatImportSource<T>(value: T, version: "0" | "1"): T {
+  if (version === "1") return value;
+  function project(input: unknown, depth: number): unknown {
+    if (depth > 4 || input === null || typeof input !== "object") return input;
+    if (Array.isArray(input)) return input.map(item => project(item, depth + 1));
+    const result = { ...input } as Record<string, unknown>;
+    if (result.chat && typeof result.chat === "object") delete result.importSource;
+    for (const key of ["record", "items", "content"]) {
+      if (key in result) result[key] = project(result[key], depth + 1);
+    }
+    return result;
+  }
+  return project(value, 0) as T;
+}

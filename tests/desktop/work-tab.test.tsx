@@ -370,11 +370,11 @@ describe("WorkTab rail integration", () => {
         baseUrl: "https://matrix.test",
         get,
         post: vi.fn(async (path: string) => {
-          if (path === "/api/chats?readStateVersion=1") return chat("chat_draft_terminal", "New chat");
+          if (path === "/api/chats?readStateVersion=1&importSourceVersion=1") return chat("chat_draft_terminal", "New chat");
           throw new Error("Unexpected WorkTab test request");
         }),
         patch: vi.fn(async (path: string, body: unknown) => {
-          if (path === "/api/chats/chat_global/title?readStateVersion=1") return {
+          if (path === "/api/chats/chat_global/title?readStateVersion=1&importSourceVersion=1") return {
             ...globalChat,
             chat: {
               ...globalChat.chat,
@@ -821,7 +821,7 @@ describe("WorkTab rail integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create draft terminal" }));
 
     await waitFor(() => expect(useConnection.getState().api?.post).toHaveBeenCalledWith(
-      "/api/chats?readStateVersion=1",
+      "/api/chats?readStateVersion=1&importSourceVersion=1",
       expect.objectContaining({ title: "New chat", clientRequestId: expect.stringMatching(/^req_/) }),
     ));
     await waitFor(() => expect(activeWorkTab()).toMatchObject({
@@ -1046,7 +1046,7 @@ describe("WorkTab rail integration", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(useConnection.getState().api?.patch).toHaveBeenCalledWith(
-      "/api/chats/chat_global/title?readStateVersion=1",
+      "/api/chats/chat_global/title?readStateVersion=1&importSourceVersion=1",
       { expectedTitleVersion: 0, title: "Release plan" },
     ));
     expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();

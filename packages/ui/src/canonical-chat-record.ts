@@ -20,3 +20,8 @@ export function compareCanonicalChatActivity(a: ChatNavigationRecord, b: ChatNav
   const right = b.chat.activityAt ?? b.chat.createdAt;
   return right.localeCompare(left) || a.chat.id.localeCompare(b.chat.id);
 }
+
+/** Opt into provenance without changing the navigation protocol version. */
+export function chatImportSourceVersionUrl(path: string): string {
+  return `${path}${path.includes("?") ? "&" : "?"}importSourceVersion=1`;
+}
