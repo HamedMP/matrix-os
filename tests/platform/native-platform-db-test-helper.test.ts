@@ -7,6 +7,14 @@ import { createNativePlatformFixtureManager, type NativePlatformFixtureManager }
 
 const fixtureUrl = 'postgresql://fixture:fixture@127.0.0.1:5432/matrix_ci_platform_fixture_admin';
 const liveUrl = process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL;
+const integerInputs = ['0', '931', '102', '9007199254740991', '-9007199254740991',
+  '9007199254740992', '-9007199254740992', '9007199254740993', '-9007199254740993',
+  '9223372036854775807', '-9223372036854775808', null];
+async function integerRows(db: PlatformDB): Promise<{ value: number | bigint | null }[]> {
+  return (await sql<{ value: number | bigint | null }>`SELECT value::bigint AS value FROM
+    (VALUES ${sql.join(integerInputs.map((value, index) => sql`(${index}::int, ${value}::text)`))})
+    AS cases(position,value) ORDER BY position`.execute(db.kysely)).rows;
+}
 const managers: NativePlatformFixtureManager[] = [];
 beforeEach(() => { vi.stubEnv('MATRIX_PLATFORM_FIXTURE_POSTGRES_URL', undefined); });
 afterEach(async () => {
@@ -167,6 +175,32 @@ describe('native platform fixture admission and lifecycle', () => {
     expect(createPool).not.toHaveBeenCalled();
     await manager.destroyTestPlatformDb(fixture.db);
     expect(destroy).toHaveBeenCalledExactlyOnceWith(fixture.db);
+  });
+
+  it('matches actual PGlite scalar INT8 decoding only on owned pool connections without global parser changes', async () => {
+    const baseline = await original.createTestPlatformDb();
+    const globalParser = pg.types.getTypeParser(20, 'text');
+    const unrelated = new pg.Client();
+    const { manager, createPool } = fakeNative();
+    try {
+      const expected = await integerRows(baseline.db);
+      const fixture = await manager.createTestPlatformDb(fixtureUrl);
+      for (const [config] of createPool.mock.calls) {
+        const client = new pg.Client(config);
+        try {
+          const parser = client.getTypeParser(20, 'text');
+          expect(integerInputs.map(value => ({ value: value === null ? null : parser(value) }))).toEqual(expected);
+          for (const oid of [23, 1700, 114, 1016]) {
+            expect(client.getTypeParser(oid, 'text')).toBe(pg.types.getTypeParser(oid, 'text'));
+          }
+          expect(client.getTypeParser(20, 'binary')).toBe(pg.types.getTypeParser(20, 'binary'));
+        } finally { await client.end(); }
+      }
+      expect(globalParser('931')).toBe('931');
+      expect(unrelated.getTypeParser(20, 'text')('9007199254740993')).toBe('9007199254740993');
+      expect(pg.types.getTypeParser(20, 'text')).toBe(globalParser);
+      await manager.destroyTestPlatformDb(fixture.db);
+    } finally { await unrelated.end(); await original.destroyTestPlatformDb(baseline.db); }
   });
 
   it.each([
@@ -418,6 +452,15 @@ describe('native platform fixture admission and lifecycle', () => {
 });
 
 describe.skipIf(!liveUrl)('native platform fixtures against disposable PostgreSQL', () => {
+  it('roundtrips scalar BIGINT values and null exactly like the original PGlite fixture', async () => {
+    const baseline = await original.createTestPlatformDb();
+    const manager = createNativePlatformFixtureManager(); managers.push(manager);
+    try {
+      const native = await manager.createTestPlatformDb(liveUrl);
+      expect(await integerRows(native.db)).toEqual(await integerRows(baseline.db));
+    } finally { await original.destroyTestPlatformDb(baseline.db); }
+  }, 30_000);
+
   it('preserves schema, defaults, seed data, concurrent rows, sequences and rollback isolation', async () => {
     const manager = createNativePlatformFixtureManager(); managers.push(manager);
     const [first, second] = await Promise.all([manager.createTestPlatformDb(liveUrl), manager.createTestPlatformDb(liveUrl)]);
