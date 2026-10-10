@@ -1,7 +1,7 @@
 import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFundedModelProbeService, loadFundedModelProbeLimits, reserveFundedModelProbe } from "../../packages/platform/src/ai-funded-model-probes.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 import type { PlatformDB } from "../../packages/platform/src/db.js";
 
 const now = new Date("2026-09-25T12:00:00.000Z");

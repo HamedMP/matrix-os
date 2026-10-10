@@ -13,7 +13,7 @@ import {
   type StripeBillingClient,
   type StripeWebhookEvent,
 } from '../../packages/platform/src/billing-routes.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const env = {
   STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: 'price_builder_monthly',

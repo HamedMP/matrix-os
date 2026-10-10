@@ -26,7 +26,7 @@ import {
   type StripeWebhookEvent,
 } from '../../packages/platform/src/billing-routes.js';
 import { MATRIX_TELEMETRY_EVENTS } from '../../packages/observability/src/events.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const env = {
   STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_starter_monthly',

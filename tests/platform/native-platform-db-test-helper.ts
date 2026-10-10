@@ -27,9 +27,19 @@ interface Resource {
   poolClosed: boolean;
   closing?: Promise<void>;
 }
-export interface NativePlatformFixtureManager {
-  createTestPlatformDb(url?: string): Promise<{ db: PlatformDB }>;
-  destroyTestPlatformDb(db: PlatformDB | undefined): Promise<void>;
+export interface FixtureDatabase {
+  ready: Promise<unknown>;
+  destroy(): Promise<void>;
+}
+export interface FixtureDependencies<DB extends FixtureDatabase> {
+  createPool(config: PoolConfig): Pool;
+  createDb(options: { dialect: unknown }): DB;
+  createFallback(): Promise<{ db: DB }>;
+  destroyFallback(db: DB): Promise<void>;
+}
+export interface NativeFixtureManager<DB extends FixtureDatabase> {
+  createTestPlatformDb(url?: string): Promise<{ db: DB }>;
+  destroyTestPlatformDb(db: DB | undefined): Promise<void>;
   drainClones(): Promise<void>;
   shutdown(): Promise<void>;
 }
@@ -65,18 +75,25 @@ function validateUrl(url: string): string {
   return parsed.href;
 }
 
-/** One isolated test module owns one closed template and four reusable clone name slots. */
+export type NativePlatformFixtureManager = NativeFixtureManager<PlatformDB>;
+
 export function createNativePlatformFixtureManager(overrides: Partial<Dependencies> = {}): NativePlatformFixtureManager {
   const dependencies: Dependencies = { createPool: config => new pg.Pool(config), createPlatformDb, ...overrides };
+  return createNativeFixtureManager({ createPool: dependencies.createPool,
+    createDb: dependencies.createPlatformDb, createFallback: createPGliteDb, destroyFallback: destroyPGliteDb });
+}
+
+/** One isolated test module owns one closed template and four reusable clone name slots. */
+export function createNativeFixtureManager<DB extends FixtureDatabase>(dependencies: FixtureDependencies<DB>): NativeFixtureManager<DB> {
   const prefix = `matrix_ci_platform_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
   const templateName = `${prefix}_template`;
   const cloneNames = Array.from({ length: MAX_CLONES }, (_, index) => `${prefix}_clone_${index}`);
   const allowedNames = [templateName, ...cloneNames];
   const reserved = new Set<string>(); // Cap four; release only after clone cleanup.
   const resources = new Map<string, Resource>(); // Cap five; remove on complete cleanup.
-  const pending = new Set<Promise<{ db: PlatformDB }>>(); // Cap four total native/fallback factories; remove on settlement.
-  const fallbackDbs = new Set<PlatformDB>(); // Cap four; remove on owner teardown.
-  const nativeClose = new WeakMap<PlatformDB, () => Promise<void>>(); // Closed DB references do not remain retained.
+  const pending = new Set<Promise<{ db: DB }>>(); // Cap four total native/fallback factories; remove on settlement.
+  const fallbackDbs = new Set<DB>(); // Cap four; remove on owner teardown.
+  const nativeClose = new WeakMap<DB, () => Promise<void>>(); // Closed DB references do not remain retained.
   let fallbackPending = 0;
   let admin: Pool | undefined;
   let activeUrl: string | undefined;
@@ -138,10 +155,10 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
     const ready = query(`CREATE DATABASE ${identifier(name)} TEMPLATE ${template === 'template0' ? 'template0' : identifier(template)} ALLOW_CONNECTIONS true`);
     return { resource, ready };
   }
-  function compose(resource: Resource, url: string): PlatformDB {
+  function compose(resource: Resource, url: string): DB {
     const target = new URL(url); target.pathname = `/${resource.name}`;
     resource.pool = pool(target.href);
-    const db = dependencies.createPlatformDb({ dialect: new PostgresDialect({ pool: resource.pool }) });
+    const db = dependencies.createDb({ dialect: new PostgresDialect({ pool: resource.pool }) });
     resource.closePool = db.destroy.bind(db);
     return db;
   }
@@ -182,12 +199,12 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
     });
     return templatePromise;
   }
-  function trackTask(task: Promise<{ db: PlatformDB }>): Promise<{ db: PlatformDB }> {
+  function trackTask(task: Promise<{ db: DB }>): Promise<{ db: DB }> {
     pending.add(task);
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
   }
-  async function create(url = process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL): Promise<{ db: PlatformDB }> {
+  async function create(url = process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL): Promise<{ db: DB }> {
     if (closed) throw new Error('Native platform fixture manager is closed');
     if (draining) throw new Error('Native platform fixture manager is draining');
     const admittedEpoch = epoch;
@@ -197,7 +214,7 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
       fallbackPending++;
       return trackTask((async () => {
         try {
-          const { db } = await createPGliteDb();
+          const { db } = await dependencies.createFallback();
           // Own the database before any teardown attempt; failed late cleanup
           // must remain visible to a later drain, just like published fixtures.
           fallbackDbs.add(db);
@@ -239,11 +256,11 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
     })();
     return trackTask(task);
   }
-  async function destroy(db: PlatformDB | undefined): Promise<void> {
+  async function destroy(db: DB | undefined): Promise<void> {
     if (!db) return;
     const close = nativeClose.get(db);
     if (close) await close();
-    else { await destroyPGliteDb(db); fallbackDbs.delete(db); }
+    else { await dependencies.destroyFallback(db); fallbackDbs.delete(db); }
   }
   function drainClones(): Promise<void> {
     if (drainPromise) return drainPromise;

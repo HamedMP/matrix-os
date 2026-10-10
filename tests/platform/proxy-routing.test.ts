@@ -8,6 +8,7 @@ import {
   ensurePlatformUser,
   getContainer,
   getPlatformUserByClerkId,
+  insertContainer,
   insertCheckoutAttempt,
   insertUserMachine,
   updateContainerStatus,
@@ -26,6 +27,7 @@ import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import * as syncJwt from "../../packages/platform/src/sync-jwt.js";
 import { shouldServePlatformRuntimeShell } from "../../packages/platform/src/session-routing-middleware.js";
 import type { CustomerVpsService } from "../../packages/platform/src/customer-vps.js";
+import { createTestPlatformDb } from "./native-platform-db-test-helper.js";
 import {
   admitPrebillingIntent,
   authorizePrebillingIntent,
@@ -37,7 +39,6 @@ import {
   combinedSetCookie,
   cookieHeaderFromSetCookie,
   expectedFallbackProvisionHandle,
-  setupProxyRoutingTest,
   stubDocker,
   stubOrchestrator,
 } from "./proxy-routing-test-utils.js";
@@ -48,7 +49,11 @@ describe("platform proxy routing", () => {
   let db: PlatformDB;
 
   beforeEach(async () => {
-    db = await setupProxyRoutingTest();
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = "true";
+    ({ db } = await createTestPlatformDb());
+    await insertContainer(db, {
+      handle: "alice", clerkUserId: "user_alice", port: 5001, shellPort: 6001, status: "running",
+    });
   });
 
   afterEach(async () => {
