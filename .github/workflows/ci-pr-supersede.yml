@@ -67,6 +67,7 @@ jobs:
                   cancelled++;
                 } catch (error) {
                   if (error.status !== 409) throw error; // Already completed.
+                  core.info(`CI run ${run.id} already completed before cancellation; skipping completion race.`);
                 }
               }
               if (data.workflow_runs.length < 100) break;

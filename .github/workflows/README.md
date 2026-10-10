@@ -68,17 +68,20 @@ Caches are accelerators, never a substitute for validation.
 Every unit shard uploads `unit-profile-<shard>` with Vitest JSON, including on
 test failure, retained for seven days. Profile timings describe execution;
 measure runner queue and installation separately when assessing the five-minute
-target. Historical timings and bounded worker tuning live under `scripts/ci/`.
+target. Duration-based shard balancing, a timing manifest and profile-refresh
+tooling are planned in a separate follow-up; they are not included in this
+hosted-workflow layer.
 
 `ci-pr-supersede.yml` cancels obsolete CI heads for an admitted PR. It runs only
 trusted base-branch code with no checkout, validates the current live PR head,
 and cannot cancel main or another PR. The main FIFO queue and coverage frontier
 remain unchanged. A denied or failed cancellation does not remove validation.
 
-Core workflows stay GitHub-hosted. Dedicated Linux experiments must use
-operator-started disposable containers until trusted job admission is enforced;
-a public repository must not expose a reusable self-hosted runner label to PR
-workflow code. See `scripts/ci/runner/README.md` for the isolation boundary.
+Core workflows stay GitHub-hosted. An isolated Linux benchmark bridge is planned
+in a separate follow-up; this layer includes no dedicated dispatch workflow or
+runner tools. A public repository must not expose a reusable self-hosted runner
+label to PR workflow code. An 8-vCPU/32-GB host has been provisioned in Falkenstein;
+Linux validation and any automatic dedicated dispatch remain pending.
 
 ## Release Artifacts
 

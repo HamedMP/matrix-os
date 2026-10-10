@@ -21,12 +21,15 @@ Job durations include setup and teardown. Queues and test execution must be
 reported separately: faster test execution alone cannot fix the hosted queues.
 The previous dependency chain also serialized sync, unit, and E2E validation.
 
-## Unit-test profile
+## Planned unit-profile and shard-balancing follow-up
 
-The checked-in timing manifest contains 2,519 file durations parsed from this
-run's four successful unit logs. It contains only repository-relative paths and
-milliseconds. These are historical suite wall times, not CPU measurements.
-New files remain included and receive median estimated cost until measured.
+The prepared follow-up timing manifest contains 2,519 file durations parsed from
+this run's four successful unit logs. The manifest, shard sequencer and
+profile-refresh tooling are not included in this hosted-workflow layer. The
+historical analysis below informs that follow-up; it does not describe the
+currently shipped shard assignment. Durations use repository-relative paths
+and milliseconds and measure suite wall time, not CPU. The proposed sequencer
+will retain new files with median estimated cost until measured.
 
 Duration-balancing predicts these cumulative file loads for four shards:
 
@@ -68,27 +71,33 @@ setup. This differs from the hosted 253-second historical file duration.
 It supports measuring actual runner hardware before changing test isolation;
 it is not a Linux host benchmark or a controlled before/after speedup.
 
-## Dedicated-host acceptance
+## Planned dedicated-host acceptance follow-up
 
-1. Build the reviewed pinned image on a dedicated 16-vCPU/64-GB x86 Linux host.
+The isolated Linux bridge, benchmark image and dispatch tools are a separate
+follow-up and are not runnable from this layer. Once that follow-up is available:
+
+1. Build the reviewed pinned image on the provisioned 8-vCPU/32-GB x86 Linux host
+   in Falkenstein. Record actual CPU/memory limits; a 16-vCPU/64-GB upgrade remains
+   subject to available quota.
 2. Run a known baseline source and optimized source with the same image,
    workers, suite, and resource limits. Record image ID and exact commit SHA.
-3. Compare unit execution at 8, 12, and 16 workers. Use `unit-shard-1` through
-   `unit-shard-4` to verify real assignment and retained test counts.
+3. Compare worker counts within the host's CPU/memory budget and verify every
+   shard's real assignment and retained test counts.
 4. Run `full` cold/warm to measure unit, checks, and both E2E lanes under
    shared CPU/memory contention. Retain exit codes, profiles, and timings.
-5. Refresh the manifest from successful optimized JSON profiles with
-   `node scripts/ci/test-profile.mjs --root /work/repo --output <manifest>
-   <unit-report.json>`. Never execute or source retrieved artifacts.
+5. Refresh the future manifest from successful optimized JSON profiles using
+   the follow-up's profile tooling. Never execute or source retrieved artifacts.
 6. Enable automatic dedicated dispatch only after image execution, isolation,
    admission, and all applicable suites pass. Preserve required hosted gates
    until equivalent dedicated validation is proven.
 
 For a five-minute goal, measure push-to-required-check completion on typical
-PRs, including queue/setup. The dedicated `full` benchmark currently covers
+PRs, including queue/setup. The planned dedicated `full` benchmark will cover
 the independent unit/checks/E2E subset. PostgreSQL service jobs, root fixtures,
 Pattern Scan, and release validation remain hosted. A passing subset does not
 prove all CI finishes within five minutes.
 
-No dedicated-host timing is available yet. Provisioning requires available dedicated-vCPU quota and an approved SSH
-ingress configuration. The dedicated workflow remains disabled until validation.
+An 8-vCPU/32-GB host is now provisioned in Falkenstein; no dedicated-host timing
+or complete Linux validation is available yet. The planned dedicated dispatch
+must remain disabled until that validation succeeds. This hosted layer does
+not activate it.

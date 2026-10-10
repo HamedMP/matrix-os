@@ -11,15 +11,16 @@ const currentSha = 'a'.repeat(40);
 const previousSha = 'b'.repeat(40);
 const context = { repo: { owner: 'owner', repo: 'repo' }, payload: { pull_request: { number: 17, head: { sha: currentSha } } } };
 const run = (id: number, sha: string, number = 17, event = 'pull_request', status = 'in_progress') => ({ id, head_sha: sha, event, status, pull_requests: [{ number, head: { sha }, base: { repo: { id: 123 } } }] });
-async function execute(runs: unknown[], heads = [currentSha]) {
+async function execute(runs: unknown[], heads = [currentSha], cancellationError?: { status: number }) {
   let call = 0;
   const cancel = vi.fn().mockResolvedValue({ status: 202 });
+  if (cancellationError) cancel.mockRejectedValueOnce(cancellationError);
   const get = vi.fn().mockImplementation(async () => ({ data: { head: { sha: heads[Math.min(call++, heads.length - 1)] }, state: 'open', base: { repo: { id: 123 } }, merge_commit_sha: 'c'.repeat(40) } }));
   const list = vi.fn().mockResolvedValue({ data: { workflow_runs: runs } });
   const github = { rest: { pulls: { get }, actions: { listWorkflowRuns: list, cancelWorkflowRun: cancel } } };
   const core = { info: vi.fn(), warning: vi.fn() };
   await new AsyncFunction('github', 'context', 'core', script)(github, context, core);
-  return { cancel, get, list };
+  return { cancel, get, list, core };
 }
 
 describe('trusted PR CI supersession', () => {
@@ -54,8 +55,20 @@ describe('trusted PR CI supersession', () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
-  it('bounds pagination and accepts completion races only', async () => {
+  it('bounds pagination', async () => {
     const { list } = await execute(Array.from({ length: 100 }, (_, i) => run(i + 1, currentSha)));
     expect(list).toHaveBeenCalledTimes(3);
+  });
+
+  it('logs completion races and continues cancelling other obsolete runs', async () => {
+    const { cancel, core } = await execute([run(1, previousSha), run(2, previousSha)], [currentSha], { status: 409 });
+    expect(cancel.mock.calls.map(([arg]) => arg.run_id)).toEqual([1, 2]);
+    expect(core.info).toHaveBeenCalledWith('CI run 1 already completed before cancellation; skipping completion race.');
+    expect(core.info).toHaveBeenCalledWith('Cancelled 1 obsolete PR CI runs.');
+  });
+
+  it('propagates cancellation failures other than a completion race', async () => {
+    const error = { status: 403 };
+    await expect(execute([run(1, previousSha)], [currentSha], error)).rejects.toBe(error);
   });
 });
