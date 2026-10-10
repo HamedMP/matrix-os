@@ -132,6 +132,7 @@
     "@vitejs/plugin-react": "^4.4.1",
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.10.0",
+    "chess.js": "1.4.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.11.9",
     "lexical": "0.41.0",
