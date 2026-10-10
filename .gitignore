@@ -46,6 +46,12 @@ logs/
 packages/platform/data/
 
 # Test artifacts
+/output/chat-dock-badge/
+/output/chat-subagent-activity/
+/output/chat-tool-details/
+/output/eng203/
+/output/mat524/
+/output/ci/
 shell/test-results/
 shell/e2e/test-results/
 shell/e2e/playwright-report/
