@@ -234,8 +234,9 @@ describe("disposable manual CI benchmark admission and isolation", () => {
   it("full benchmarks run bounded independent groups and wait for every result", () => {
     const script = readFileSync(resolve(root, "benchmark.sh"), "utf8");
     expect(script).toContain('suite=unit workers=$unit_workers run_suite "$pass" &');
-    expect(script).toContain('suite=checks workers=2 run_suite "$pass" &');
-    expect(script).toContain('wait "$pid" || failed=1');
+    expect(script).toContain('suite=checks workers=2 run_suite "$pass" false true & pids+=("$!")');
+    expect(script).toContain('suite=shell workers=2 run_suite "$pass" & pids+=("$!")');
+    expect(script).toContain('for pid in "${pids[@]}"; do wait "$pid" || failed=1; done');
     expect(script).toContain('--maxWorkers=2');
   });
   it("artifact extraction rejects symlinks, directories, and excess file sizes", () => {
