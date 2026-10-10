@@ -43,6 +43,11 @@ on:
         required: true
         type: string
 
+      require_existing_service:
+        description: "Refuse a missing or inaccessible preview service instead of bootstrapping one"
+        type: boolean
+        default: false
+
       custom_mcp:
         description: "Enable the personal MCP broker with the isolated preview encryption key"
         type: boolean
@@ -100,6 +105,7 @@ jobs:
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.PREVIEW_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-preview-v1' }}
       CONNECT_COLLABORATION_PREVIEW: ${{ github.event_name == 'workflow_dispatch' && inputs.connect_collaboration_preview && 'true' || 'false' }}
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+      REQUIRE_EXISTING_SERVICE: ${{ inputs.require_existing_service && 'true' || 'false' }}
     steps:
       - name: Check preview configuration
         id: config
@@ -110,6 +116,10 @@ jobs:
             exit 1
           fi
           if [ -z "${CLOUD_RUN_PREVIEW_SERVICE:-}" ]; then
+            if [ "${REQUIRE_EXISTING_SERVICE:-false}" = "true" ]; then
+              echo "An existing preview service must be configured; refusing to continue." >&2
+              exit 1
+            fi
             echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "::notice::CLOUD_RUN_PREVIEW_SERVICE is not configured; platform previews are disabled. See specs/093-preview-environments/."
             exit 0
@@ -189,6 +199,10 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Require existing preview service
+        if: steps.config.outputs.configured == 'true' && env.REQUIRE_EXISTING_SERVICE == 'true'
+        run: bash scripts/require-existing-preview-service.sh
 
       - name: Verify preview funded AI control-plane secrets
         if: steps.config.outputs.configured == 'true' && env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true'
@@ -395,9 +409,14 @@ jobs:
             ' >/dev/null
           }
 
-          service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --format='value(status.url)' 2>/dev/null || true)"
+          service_base_url=""
+          if [ "${REQUIRE_EXISTING_SERVICE:-false}" = "true" ]; then
+            service_base_url="$(bash scripts/require-existing-preview-service.sh)"
+          else
+            service_base_url="$(gcloud run services describe "$CLOUD_RUN_PREVIEW_SERVICE" \
+              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+              --format='value(status.url)' 2>/dev/null || true)"
+          fi
           BOOTSTRAP_API_ORIGIN="https://preview-bootstrap.invalid"
           if [ -z "$service_base_url" ]; then
             deploy_preview "$BOOTSTRAP_API_ORIGIN"
