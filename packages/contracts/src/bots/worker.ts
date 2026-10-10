@@ -1,4 +1,4 @@
-import { MatrixComputerRuntimeSlotSchema } from "../runtime-slot.js";
+import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 import { z } from "zod/v4";
 import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";

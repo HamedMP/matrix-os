@@ -1,5 +1,5 @@
-import { MatrixComputerRuntimeSlotSchema } from "./runtime-slot.js";
-export { MatrixComputerRuntimeSlotSchema } from "./runtime-slot.js";
+import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
 export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#chat-drive-project";
