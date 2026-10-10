@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
 import { ProjectAccessManager } from "../../packages/ui/src/collaboration/ProjectAccessManager";
 import { ProjectSharingButton } from "../../packages/ui/src/collaboration/ProjectSharingButton";
+import { ProjectSharingDialog } from "../../packages/ui/src/collaboration/ProjectSharingDialog";
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
@@ -126,6 +127,53 @@ describe("Figma-aligned project access dialog", () => {
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
       `/api/collaboration/scopes/${scope.id}/grants/40000000-0000-4000-8000-000000000611`,
       expect.objectContaining({ expectedRevision: "7", expectedGrantRevision: "2", preset: "contributor" }),
+    ));
+  });
+
+  it("keeps owner AI source and consent controls inside the published access dialog", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7",
+      capabilities: { ...scope.capabilities, read: true, requestAi: true } };
+    const source = { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" as const };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [
+          { actorId: "user_owner", displayName: "Alex Rivera", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+        ] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id, revision: "7", owner: { actorId: "user_owner", displayName: "Alex Rivera" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000610", preset: "contributor", revision: "3" },
+          people: [],
+        };
+        if (path.endsWith("/execution-policy/options")) return {
+          organizationAiSubmission: "members",
+          policy: null,
+          options: [{ source, sourceLabel: "Owner Claude account", sourceKind: "owner_account",
+            available: true, modelIds: ["claude-sonnet-5"], defaultModelId: "claude-sonnet-5" }],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => ({})),
+      put: vi.fn(async () => ({
+        scope: { kind: "project", scopeId: scope.id, projectId: scope.resourceId },
+        ownerId: scope.ownerId, source, submitMode: "follow_organization", organizationAiSubmission: "members",
+        effectiveSubmitMode: "members", providerTermsAcknowledgedAt: "2026-10-09T00:00:00.000Z",
+        allowedModelIds: ["claude-sonnet-5"], revision: "1", updatedAt: "2026-10-09T00:00:00.000Z",
+      })),
+      patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectSharingDialog api={api} scope={sharedScope} projectName="Launch plan"
+      organizationName="Acme Research" refreshInventory={async () => inventory} onClose={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "Editor AI" })).toBeVisible();
+    const enable = screen.getByRole("button", { name: "Use this AI source for Editors" });
+    expect(enable).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
+    fireEvent.click(enable);
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/execution-policy`,
+      expect.objectContaining({ acknowledgeProviderTerms: true, allowedModelIds: ["claude-sonnet-5"] }),
     ));
   });
 

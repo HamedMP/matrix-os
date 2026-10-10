@@ -13,6 +13,7 @@ import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 import { ProjectSourceSummary } from "./ProjectSourceSummary.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
 import { ProjectAccessManager } from "./ProjectAccessManager.js";
+import { ContributorAiSettings } from "./ContributorAiSettings.js";
 import {
   deriveProjectPresentation,
   projectMembershipEffectKey,
@@ -222,6 +223,11 @@ export function ProjectSharingDialog({
           className="text-xs leading-5">{projectMembershipEffectLabel(effect)}</li>)}
       </ul>
     </section> : null}
+
+      {published ? <div className="border-t px-4 py-3"
+        style={{ borderColor: "var(--border-subtle, var(--border-default))" }}>
+        <ContributorAiSettings api={api} scope={scope} compact />
+      </div> : null}
 
       {presentation && presentation.blockerMessages.length > 0 ? <div role="alert" className="mx-4 mb-3 rounded-lg border p-3 text-xs">
       {presentation.blockerMessages.map((message) => <p key={message}>{message}</p>)}

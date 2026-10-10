@@ -8,13 +8,15 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { CollaborationApi } from "./ChatCollaboratorsDialog.js";
 
-const controlClass = "rounded-lg border bg-transparent px-3 py-2 text-sm disabled:opacity-50";
-
-export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
+export function ContributorAiSettings({ api, scope, onPolicyUpdated, compact = false }: {
   api: CollaborationApi;
   scope: CollaborationScope;
   onPolicyUpdated?: () => void | Promise<void>;
+  compact?: boolean;
 }) {
+  const controlClass = compact
+    ? "rounded-lg border bg-transparent px-2.5 py-1.5 text-xs disabled:opacity-50"
+    : "rounded-lg border bg-transparent px-3 py-2 text-sm disabled:opacity-50";
   const executionScopeId = scope.kind === "chat" && scope.membershipMode === "inherited"
     ? scope.parentScopeId
     : scope.id;
@@ -95,7 +97,7 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated }: {
     }
   };
 
-  return <section aria-label="Editor AI" className="rounded-xl border p-4 text-sm">
+  return <section aria-label="Editor AI" className={compact ? "text-xs" : "rounded-xl border p-4 text-sm"}>
     <h3 className="font-medium">Editor AI</h3>
     {state === null ? error ? <p role="alert" className="mt-2">{error}</p>
       : <p className="mt-2">Loading owner AI sources…</p> : state.options.length === 0 ? <p className="mt-2">

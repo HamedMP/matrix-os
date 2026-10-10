@@ -12,7 +12,7 @@ Design reference: [Desktop app — project collaboration](https://www.figma.com/
 
 ### Published access manager
 
-`02-published-access-manager.png` renders the published state of that same dialog. It shows immutable **Owner**, organization-wide **Editor** access, activated and pending members, and inherited Editor precedence over a weaker direct Viewer grant.
+`02-published-access-manager.png` renders the published state of that same dialog. It shows immutable **Owner**, organization-wide **Editor** access, activated and pending members, and inherited Editor precedence over a weaker direct Viewer grant. The scrollable published dialog also retains the owner-funded **Editor AI** source, model, and consent controls.
 
 ### Shared Chat — Editor
 
@@ -30,7 +30,8 @@ The three states were rendered at `1440×1200` (dialogs) and `1440×980` (Chat) 
 
 ## Validation represented by this change
 
-- Changed project-sharing, shared-Chat, and legacy-access UI suites: 55 tests passed.
+- Changed project-sharing, shared-Chat, and legacy-access UI suites: 61 tests passed.
+- Project publication transition suite: 23 tests passed and 1 environment-specific test skipped, including explicit **Restricted** preservation.
 - Gateway collaboration rerun: 47 tests passed serially after the parallel run hit test-hook resource timeouts.
 - UI, Web Desktop, and Electron Desktop TypeScript checks passed.
 - Web production and Electron Desktop production builds passed.
