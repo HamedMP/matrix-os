@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { eraseOwnerSites } from '../sites/account-lifecycle.js';
 import { sql, type Transaction } from 'kysely';
 import { parseNullableProviderActionId, type PlatformDatabase, type PlatformDB } from '../db.js';
 import type { CustomerVpsService } from '../customer-vps.js';
@@ -19,6 +20,8 @@ export interface AccountDeletionAdapterOptions {
   customerVpsService?: Pick<CustomerVpsService, 'delete'>;
   hetzner?: Pick<HetznerClient, 'getServer' | 'deleteServer' | 'listServersByLabel'> & Partial<Pick<HetznerClient, 'getAction'>>;
   objectStore?: AccountDeletionObjectStore;
+  sitesObjectStore?: AccountDeletionObjectStore;
+  env?: NodeJS.ProcessEnv;
   r2PrefixRoot: string;
   stripeSecretKey?: string;
   ownerHash?: (owner: string) => string;
@@ -306,6 +309,7 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       await createAppleRevoker(options.apple, request)(context.appleTokens);
     },
     async storage(context) {
+      await eraseOwnerSites(db, context.clerkUserId, options.sitesObjectStore, options.env);
       const machines = await db.executor.selectFrom('user_machines').select('deleted_at')
         .where('clerk_user_id','=',context.clerkUserId).limit(1001).execute();
       if (machines.length > 1000 || machines.some((machine) => !machine.deleted_at ||
