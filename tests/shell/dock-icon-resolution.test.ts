@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { webShellIconUrlForApp } from "../../shell/src/lib/web-desktop-app-launch";
+import { iconUrlForSlug } from "../../shell/src/lib/app-launch";
 
 describe("dock icon resolution", () => {
   it("uses React Query as the sole Web Desktop app catalog", async () => {
@@ -20,7 +22,9 @@ describe("dock icon resolution", () => {
     expect(source).not.toContain("function iconUrlForSlug");
     expect(source).not.toContain("/icons/${encodeURIComponent(slug)}.png");
     expect(source).not.toContain("const iconPath = `/icons/${slug}.png`");
-    expect(source).toContain("app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug)");
+    expect(source).toContain("iconUrl: webShellIconUrlForApp(");
+    expect(webShellIconUrlForApp({ path: "apps/notes/index.html", iconUrl: "/owner-notes.svg", slug: "notes" })).toBe("/owner-notes.svg");
+    expect(webShellIconUrlForApp({ path: "apps/custom-owner-app/index.html", slug: "custom-owner-app" })).toBe(iconUrlForSlug("custom-owner-app"));
     expect(source).not.toContain("method: \"HEAD\"");
   });
 
@@ -49,7 +53,7 @@ describe("dock icon resolution", () => {
       readFile("shell/src/components/mobile/MobileDock.tsx", "utf8"),
     ]);
 
-    expect(dockSource).toContain('<MobileAppIcon slug={app.iconSlug} size={28} />');
+    expect(dockSource).toContain('<MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={28} />');
 
     expect(source).toContain("import { iconUrlForSlug } from \"@/lib/app-launch\"");
     expect(source).not.toContain("function iconUrl");
