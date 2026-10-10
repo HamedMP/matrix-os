@@ -47,7 +47,7 @@ describe("WebDesktopSurface", () => {
         onOpenApp={vi.fn()} onOpenLauncher={vi.fn()} onOpenSettings={vi.fn()} onActivateWindow={vi.fn()}
         onCloseWindow={vi.fn()} onShowDesktop={vi.fn()} onToggleFullscreen={vi.fn()} />);
       expect(screen.getByRole("button", { name: "Open App Launcher" }).querySelector("img")?.getAttribute("src"))
-        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/launcher.png`);
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/icons/v3-app-gallery.png`);
     } finally { window.history.replaceState({}, "", previous); }
   });
   it("renders the native Desktop header without restoring the deprecated app menu", () => {
@@ -274,7 +274,7 @@ describe("WebDesktopSurface", () => {
 
     const launcher = screen.getByRole("button", { name: "Open App Launcher" });
     expect(launcher.querySelector("span svg")).toBeNull();
-    expect(launcher.querySelector("img")?.getAttribute("src")).toBe(`${window.location.origin}/system-app-icons/v2/launcher.png`);
+    expect(launcher.querySelector("img")?.getAttribute("src")).toBe(`${window.location.origin}/icons/v3-app-gallery.png`);
     expect(launcher.querySelector("img")?.width).toBe(44);
     fireEvent.error(terminalTile!.querySelector("img")!);
     expect(terminalTile?.style.background).toBe("transparent");

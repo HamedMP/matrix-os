@@ -9,6 +9,8 @@ import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
 import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
+vi.mock("@/components/UserButton", () => ({ UserButton: () => <button>Account</button> }));
+
 vi.mock("../../shell/src/components/onboarding/GettingStartedPopover.js", () => ({
   GettingStartedPopover: () => (
     <button type="button" aria-label="Getting started — 0 of 5">Getting started</button>

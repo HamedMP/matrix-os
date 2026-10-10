@@ -6,7 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
+import { buildWebDesktopIconApps, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
@@ -377,7 +377,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <img src={`${getGatewayUrl()}/system-app-icons/v2/launcher.png`} alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
+          <img src={webGalleryLauncherIconUrl(apps)} alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
         </TaskbarButton>
 
         <TaskbarButton

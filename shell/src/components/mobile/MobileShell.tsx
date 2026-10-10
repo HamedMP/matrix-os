@@ -38,6 +38,7 @@ import {
 import { useChatContext } from "@/stores/chat-context";
 import { mobileAppsFromBootstrap } from "./mobile-app";
 import { getGatewayUrl } from "@/lib/gateway";
+import { webShellIconUrlForApp, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import { nameToSlug } from "@/lib/utils";
 import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
 import {
@@ -95,7 +96,7 @@ function mobileTerminalCapacityAction<T extends {
 
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
-  { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
+  { id: "files", name: "Files", path: "__file-browser__", iconSlug: "files" },
   ...(HERMES_CHAT_HIDDEN
     ? []
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
@@ -392,7 +393,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     setView("switcher");
   };
 
-  const pinnedDock = apps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
+  const displayApps = apps.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) }));
+  const pinnedDock = displayApps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
 
   // Touch: swipe from the bottom edge up by >40px when an app is foregrounded
   // opens the app switcher (matches iOS swipe-up). Done with pointer events
@@ -504,7 +506,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
               exit="exit"
             >
               <MobileLauncher
-                apps={apps}
+                apps={displayApps}
                 onOpen={openApp}
                 onOpenSettings={() => {
                   setSettingsDefaultSection("appearance");
@@ -549,7 +551,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         </AnimatePresence>
       </main>
 
-      <MobileDock
+      <MobileDock galleryIconUrl={webGalleryLauncherIconUrl(apps)}
         apps={pinnedDock}
         currentPath={view === "app" ? top?.app.path : undefined}
         view={view}

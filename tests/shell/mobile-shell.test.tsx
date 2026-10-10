@@ -141,6 +141,20 @@ async function loadMobileShell() {
 }
 
 describe("mobile shell", () => {
+  it("resolves built-in artwork from the current preview even when the module was already loaded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    const previous = window.location.href;
+    window.history.replaceState({}, "", "/vm/pr-2406?runtime=pr-2406");
+    try {
+      render(<MobileShell />);
+      const dock = screen.getByTestId("mobile-bottom-dock");
+      expect(within(dock).getByRole("button", { name: "Terminal" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/terminal.png`);
+      expect(within(dock).getByRole("button", { name: "Files" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/files.png`);
+    } finally { window.history.replaceState({}, "", previous); }
+  });
   beforeEach(() => {
     fileChangeHandler = null;
     fileChangeHandlers.length = 0;

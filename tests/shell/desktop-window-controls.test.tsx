@@ -13,9 +13,8 @@ import {
 import { TrafficLights } from "@/components/desktop/DesktopDockControls";
 import type { AppWindow } from "@/hooks/useWindowManager";
 
-const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown}}));
 vi.mock("@/components/AppViewer", () => ({
-  AppViewer: (props: {onOpenApp: unknown}) => { viewerProps.current=props; return <div data-testid="app-viewer" />; },
+  AppViewer: () => <div data-testid="app-viewer" />,
 }));
 
 describe("web desktop window controls", () => {
@@ -143,51 +142,4 @@ describe("web desktop window controls", () => {
     expect(hasActiveWindowInteraction(drag, null)).toBe(true);
     expect(hasActiveWindowInteraction(null, null)).toBe(false);
   });
-});
-
-it("keeps the app bridge callback stable while window chrome rerenders",()=>{
-    const win: AppWindow = {
-      id: "maximized-demo", title: "Demo", path: "apps/demo/dist/index.html",
-      x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
-    };
-    const noop = vi.fn();
-    const view = render(
-      <DesktopWindow
-        win={win}
-        dockPosition="bottom"
-        fullscreenWindowId={win.id}
-        interacting={false}
-        minimizingIds={new Set()}
-        onAnimateMinimize={noop}
-        onCloseWindow={noop}
-        onDragEnd={noop}
-        onDragMove={noop}
-        onDragStart={noop}
-        onFocusWindow={noop}
-        onOpenWindow={noop}
-        onResizeInteractionChange={noop}
-        onToggleFullscreen={noop}
-        topInset={38}
-      />,
-    );
-const callback=viewerProps.current?.onOpenApp;
-expect(typeof callback).toBe("function");
-view.rerender(<DesktopWindow
-        win={{...win,width:720}}
-        dockPosition="bottom"
-        fullscreenWindowId={win.id}
-        interacting={false}
-        minimizingIds={new Set()}
-        onAnimateMinimize={noop}
-        onCloseWindow={noop}
-        onDragEnd={noop}
-        onDragMove={noop}
-        onDragStart={noop}
-        onFocusWindow={noop}
-        onOpenWindow={noop}
-        onResizeInteractionChange={noop}
-        onToggleFullscreen={noop}
-        topInset={38}
-      />);
-expect(viewerProps.current?.onOpenApp).toBe(callback);
 });

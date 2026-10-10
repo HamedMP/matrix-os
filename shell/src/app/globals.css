@@ -1592,3 +1592,11 @@ pre {
   background: rgba(0, 0, 0, 0.25);
   border-radius: 3px;
 }
+
+
+/* The SDK launcher sits outside the shell tree. Reserve the mobile dock and safe area,
+   while leaving an explicitly opened support conversation at its normal placement. */
+body:has([data-testid="mobile-shell"]) #ph-conversations-widget-container > div:has(button[aria-label^="Open chat"]) {
+  bottom: calc(100px + env(safe-area-inset-bottom, 0px)) !important;
+  right: 12px !important;
+}

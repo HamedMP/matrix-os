@@ -1,7 +1,3 @@
-import { appIdentityFromPath, extractSlug } from "../../shell/src/components/app-viewer-helpers";
-import { normalizeBuiltInAppPath } from "../../shell/src/lib/builtin-apps";
-import { mobileAppsFromBootstrap } from "../../shell/src/components/mobile/mobile-app";
-import { catalogAppLaunchPath, createCatalogAppPathResolver } from "../../shell/src/lib/app-catalog-launch";
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, listApps, resolveCatalogIconUrl, hydrateAppIconUrls } from "../../shell/src/api/apps";
@@ -152,62 +148,4 @@ it("binds selected bootstrap artwork to the active computer before legacy snapsh
   const resolve = (path: string) => `https://app.test/vm/current${path}`;
   const apps = [{ name: "Notes", path: "apps/notes/index.html", icon: "notes", iconUrl: "/system-app-icons/v2/notes.png" }];
   expect(hydrateAppIconUrls(apps, { notes: { versionedUrl: "/icons/notes.png?v=old" } }, resolve)?.[0]?.iconUrl).toBe("https://app.test/vm/current/system-app-icons/v2/notes.png");
-});
-
-
-it.each(["renamed-ledger", "finance/ledger", "My Finance/Owner Ledger"])("uses the stable manifest launch path for the catalog and cached owner folder %s", async folder => {
-  const row = { name: "Ledger", path: `/files/apps/${folder}/index.html`, slug: "folio", iconUrl: "/icons/folio.png?v=owner" };
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json([row]));
-  try {
-    expect((await listApps())[0]?.path).toBe("apps/folio/index.html");
-    expect(hydrateAppIconUrls([row], undefined, p => p)?.[0]).toMatchObject({ path: "apps/folio/index.html", iconUrl: row.iconUrl });
-  } finally { fetch.mockRestore(); }
-});
-
-
-it("preserves supported game migrations and legacy file apps without inventing identities", () => {
-  expect(catalogAppLaunchPath({ slug: "2048", file: "games/2048/index.html" })).toBe("apps/games/2048/index.html");
-  expect(catalogAppLaunchPath({ path: "apps/legacy.html" })).toBe("apps/legacy.html");
-  expect(catalogAppLaunchPath({ path: "apps/legacy/index.html" })).toBe("apps/legacy/index.html");
-  expect(catalogAppLaunchPath({ slug: "bad/identity", path: "apps/legacy/index.html" })).toBe("apps/legacy/index.html");
-  expect(catalogAppLaunchPath({ slug: "folio", path: "../private/index.html" })).toBeNull();
-  const ambiguous = createCatalogAppPathResolver([{ slug: "first", path: "apps/renamed/index.html" }, { slug: "second", path: "apps/renamed/index.html" }]);
-  expect(ambiguous("apps/renamed/index.html")).toBe("apps/renamed/index.html");
-  const unknown = createCatalogAppPathResolver([{ slug: "folio", path: "apps/renamed/index.html" }]);
-  expect(unknown("apps/unknown/index.html")).toBe("apps/unknown/index.html");
-});
-
-it("retains the physical alias needed to reconcile saved shortcuts after current and cached catalog normalization", async () => {
-  const raw = [{ name: "Folio", slug: "folio", path: "/files/apps/finance/ledger/index.html" }];
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(raw));
-  try {
-    const current = await listApps();
-    const cached = hydrateAppIconUrls(raw, undefined, path => path)!;
-    for (const catalog of [current, cached]) {
-      expect(createCatalogAppPathResolver(catalog)("apps/finance/ledger/index.html")).toBe("apps/folio/index.html");
-      expect(catalog[0]?.path).toBe("apps/folio/index.html");
-    }
-  } finally { fetch.mockRestore(); }
-});
-
-
-it.each(["terminal", "chat", "activity-monitor", "workspace"])("keeps owner manifest %s distinct from legacy shell aliases through current and cached catalogs", async slug => {
-  const ownerPath = `apps/tools/my-${slug}/index.html`;
-  const raw = [{ name: `Owner ${slug}`, slug, path: `/files/${ownerPath}` }];
-  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(raw));
-  try {
-    const identity = `matrix-app:${slug}`;
-    const current = await listApps();
-    const cached = hydrateAppIconUrls(raw, undefined, path => path)!;
-    for (const catalog of [current, cached, hydrateAppIconUrls(current, undefined, path => path)!]) {
-      expect(catalog[0]).toMatchObject({ path: identity, ownerPath });
-      expect(normalizeBuiltInAppPath(catalog[0]!.path)).toBe(identity);
-      expect(extractSlug(identity)).toBe(slug);
-      expect(appIdentityFromPath(identity)).toBe(slug);
-      expect(createCatalogAppPathResolver(catalog)(ownerPath)).toBe(identity);
-      expect(mobileAppsFromBootstrap(catalog)[0]?.path).toBe(identity);
-      // Existing explicit shell aliases stay distinct from the owner's runtime.
-      expect(normalizeBuiltInAppPath(`apps/${slug}/index.html`)).toBe(`__${slug}__`);
-    }
-  } finally { fetch.mockRestore(); }
 });

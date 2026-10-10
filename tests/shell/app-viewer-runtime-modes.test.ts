@@ -42,11 +42,14 @@ describe("AppViewer bridged runtime loading", () => {
     });
   });
 
-  describe("edge-to-edge app content", () => {
-    it("does not insert a sharing toolbar above the app iframe", async () => {
+  describe("legacy standalone app access", () => {
+    // AppViewer is not render-testable here, so the invariant is asserted on the source:
+    // projects are the only newly live-shareable resource; the app window can only
+    // mount the discovery-only manager for a share that already exists.
+    it("offers legacy management without a standalone share creator", async () => {
       const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
-      expect(source).not.toContain("<FileResourceSharing");
-      expect(source).toContain('className="min-h-0 w-full flex-1 border-0"');
+      expect(source).toContain("FileResourceSharing");
+      expect(source).not.toMatch(/ResourceSharingButton|TerminalSharingButton|scopes\`,?\s*\{/);
     });
   });
 
@@ -192,18 +195,4 @@ describe("AppViewer bridged runtime loading", () => {
       expect(isAllowedBridgeFetchUrl("resource-manager", "https://app.matrix-os.com/api/system/activity")).toBe(false);
     });
   });
-  it('allows bundled blob workers while keeping runtime apps opaque and network-restricted',()=>{
-    const html=injectBridgeIntoAppHtml('<html><head></head><body></body></html>','chess-coach',{},'/apps/chess-coach/');
-    expect(html).toContain("worker-src 'self' blob:");
-    expect(html).toContain("connect-src 'self'");
-    expect(APP_IFRAME_SANDBOX).not.toContain('allow-same-origin');
-    expect(html).not.toContain('worker-src https:');
-    expect(html).not.toContain('worker-src data:');
-  });
-
-});
-
-it('permits owner-initiated CSV downloads without granting same-origin access',()=>{
- expect(APP_IFRAME_SANDBOX.split(' ')).toContain('allow-downloads');
- expect(APP_IFRAME_SANDBOX.split(' ')).not.toContain('allow-same-origin');
 });

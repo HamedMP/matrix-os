@@ -28,7 +28,7 @@ export function MobileAppIcon({ slug, iconUrl, size }: { slug: string; iconUrl?:
         width: size,
         height: size,
         borderRadius: Math.round(size * 0.22),
-        background: "rgba(244,237,224,0.08)",
+        background: "transparent",
         objectFit: "contain",
       }}
       onError={() => {

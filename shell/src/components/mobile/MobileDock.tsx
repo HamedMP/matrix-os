@@ -1,14 +1,16 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Layers, LayoutGrid } from "@/lib/hugeicons";
+import { Layers } from "@/lib/hugeicons";
 import { MobileAppIcon } from "./MobileAppIcon";
+import { webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import type { MobileApp } from "./mobile-app";
 
 export function MobileDock({
-  apps, currentPath, view, hidden, openCount, onOpen, onShowApps, onShowSwitcher,
+  apps, currentPath, view, hidden, openCount, onOpen, onShowApps, onShowSwitcher, galleryIconUrl,
 }: {
   apps: MobileApp[];
+  galleryIconUrl?: string;
   currentPath?: string;
   view: "launcher" | "app" | "switcher";
   hidden: boolean;
@@ -36,7 +38,7 @@ export function MobileDock({
         </DockButton>
       ))}
       <DockButton label="Apps" current={view === "launcher"} onClick={onShowApps}>
-        <LayoutGrid size={26} aria-hidden />
+        <MobileAppIcon slug="v3-app-gallery" iconUrl={galleryIconUrl ?? webGalleryLauncherIconUrl()} size={28} />
       </DockButton>
       <DockButton label="Open" current={view === "switcher"} onClick={onShowSwitcher} disabled={openCount === 0} badge={openCount}>
         <Layers size={26} aria-hidden />
