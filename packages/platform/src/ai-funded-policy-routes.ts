@@ -282,7 +282,7 @@ export function createAiFundedRuntimeRoutes(options: {
           runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
         phaseHint: c.req.header("x-matrix-isolated-chat-phase"), configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
       let summary = readOnly ? await options.repository.getCheckoutFundingSummary(identity,
-        Date.now() + 5000, body.data) : await options.repository.getRuntimeFundingSummary(identity, body.data);
+        Date.now() + 5000, { ...body.data, projectExpiredCredit: true }) : await options.repository.getRuntimeFundingSummary(identity, body.data);
       if (!readOnly && options.promotionalGrant?.enabled
         && summary.policy.enabled
         && summary.policy.allowedModelIds.length > 0

@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import type { AiFundedRuntimeBalancesTable, PlatformDB } from "./db.js";
 
-const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
+export const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
 const ACTIVE_RESERVATION_STATUSES = ["reserved", "starting", "in_flight"] as const;
 
 export interface FundedAiRuntimeIdentity {

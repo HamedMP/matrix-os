@@ -188,7 +188,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   async function getCheckoutFundingSummary(
     identityInput: z.input<typeof IdentitySchema>,
     deadlineAtMs: number,
-    projection: { includeChatAvailability?: true } = {},
+    projection: { includeChatAvailability?: true; projectExpiredCredit?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
     return readCheckoutFundingSnapshot({
