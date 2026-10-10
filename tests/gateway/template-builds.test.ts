@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { mkdtemp, cp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { existsSync } from "node:fs";
 import { BuildOrchestrator } from "../../packages/gateway/src/app-runtime/build-orchestrator.js";
 
@@ -21,7 +21,7 @@ describe("Vite template build", () => {
     await cp(
       join(process.cwd(), "home/apps/_template-vite"),
       appDir,
-      { recursive: true },
+      { recursive: true, filter: (source) => !["node_modules", "dist", ".build.log", ".build-stamp.json"].includes(basename(source)) },
     );
     // Fix slug to match directory name and use non-frozen install
     const manifestPath = join(appDir, "matrix.json");
@@ -36,6 +36,9 @@ describe("Vite template build", () => {
     });
 
     const result = await orch.build("myapp", appDir);
+    // Preserve the real install/build stage and bounded command output in CI
+    // before afterEach removes the disposable app and its .build.log.
+    if (!result.ok) throw result.error;
     expect(result.ok).toBe(true);
 
     const indexPath = join(appDir, "dist", "index.html");

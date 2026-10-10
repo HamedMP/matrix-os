@@ -94,4 +94,3 @@ A video supplements a working review environment. It does not replace it. Do not
 Use existing ownership: ENG-89 for Native Mobile readiness; ENG-96/ENG-161 for app lifecycle/builder qualification; ENG-157 for curated production discovery; ENG-158 for opt-in listings; ENG-162 under ENG-91 for connected accounts; ENG-75 for technical go/no-go; GTM-514/515 for claims and offer; GTM-520/527 for qualified showcase evidence. Keep open login, deletion and gallery PRs as dependencies rather than duplicating them.
 
 The release owner records pass/fail evidence and any explicit presentation limitation. A website launch, Native Mobile submission and approved Native Mobile availability are separate milestones.
-

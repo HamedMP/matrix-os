@@ -1,13 +1,23 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
-export const DEFAULT_ICON_STYLE = "Light premium iOS/macOS skeuomorphic app icon artwork with refined Apple-like product rendering. Fill the entire 1:1 square canvas edge to edge with a bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly represents the app. Use dimensional glass/plastic/ceramic materials, crisp high-detail edges, friendly premium colors, and consistent lighting across the icon family. Keep the family aligned with Matrix OS forest, cream, ember, and deep accents without making every icon monochrome. Do not include text, logos, watermarks, transparent background, black/dark dock backgrounds, or empty padding. The Matrix shell owns the final corner radius, so do not bake a separate visible icon frame into the artwork.";
+export const DEFAULT_ICON_STYLE = "Matrix desktop app icon artwork: original, polished application pictogram with mixed silhouettes, inspired by the clarity and color variety of Ubuntu/Yaru app icons without copying existing icons or trademarks. Choose a shape that explains this app's specific job: a folder may be landscape, a clock circular, a note portrait, a terminal a window; games must have distinct objects rather than a shared controller. Freestanding subject on a transparent background, centered with generous clear padding, no repeated beige rounded-square tile or generic common frame. Use rich, distinct hues across neighboring apps including aubergine, cobalt, teal, orange, green and warm gold. Give the subject controlled gradient highlights, tactile depth and a soft contact shadow; favor a strong silhouette and few large details over tiny decoration. No text, numbers, logos, watermarks, busy scenes, or photorealism. Keep the icon readable at 64, 48 and 20 pixels. Preserve an owner's existing icon or requested iconStyle.";
+
+// Existing owner homes retain desktop.json during template sync. Recognize only
+// the exact former shipped default; any owner-edited style remains authoritative.
+const RETIRED_SHIPPED_CLAY_STYLE_SHA256 = "b109bf13ef04d91e27c67740af5bfe335bae3b5f290f79fab1e5664b351860ec";
 
 export function loadIconStyle(homePath: string): string {
   try {
     const desktop = JSON.parse(readFileSync(join(homePath, "system/desktop.json"), "utf-8"));
-    if (desktop.iconStyle) return desktop.iconStyle;
+    const style = desktop.iconStyle;
+    if (typeof style === "string" && style.length > 0) {
+      return createHash("sha256").update(style).digest("hex") === RETIRED_SHIPPED_CLAY_STYLE_SHA256
+        ? DEFAULT_ICON_STYLE
+        : style;
+    }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn("[image-gen] Failed to read desktop.json icon style:", err instanceof Error ? err.message : String(err));

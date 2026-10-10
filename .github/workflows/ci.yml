@@ -781,12 +781,16 @@ jobs:
           set -euo pipefail
           container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
-          timeout --kill-after=10s 120s docker pull public.ecr.aws/docker/library/node:24-bookworm
+          image="public.ecr.aws/docker/library/node:24-bookworm"
+          if ! timeout --kill-after=10s 120s docker pull "$image"; then
+            image="docker.io/library/node:24-bookworm"
+            timeout --kill-after=10s 120s docker pull "$image"
+          fi
           timeout --kill-after=10s 180s docker run --rm --init \
             --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
             --env MATRIX_DISPOSABLE_ROOT_TEST=true \
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
-            public.ecr.aws/docker/library/node:24-bookworm python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+            "$image" python3 -I /work/scripts/ci/run-funded-host-root-tests.py
 
   ci-results:
     name: CI Results

@@ -109,13 +109,11 @@ describe("POST /api/apps/:slug/icon", () => {
     expect(existsSync(join(homePath, "system/icons"))).toBe(true);
   });
 
-  it("uses default light skeuomorphic icon style when no desktop.json", async () => {
+  it("uses the distinct Matrix icon style when no desktop.json", async () => {
     const res = await app.request("/api/apps/timer/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
-    expect(body.prompt).toContain("Light premium iOS/macOS skeuomorphic app icon artwork");
-    expect(body.prompt).toContain("refined Apple-like product rendering");
-    expect(body.prompt).toContain("forest");
-    expect(body.prompt).toContain("ember");
+    expect(body.prompt).toContain("mixed silhouettes");
+    expect(body.prompt).toContain("transparent background");
     expect(body.prompt).toContain("timer");
   });
 
@@ -127,7 +125,7 @@ describe("POST /api/apps/:slug/icon", () => {
     const res = await app.request("/api/apps/calculator/icon", { method: "POST" });
     const body = await res.json() as { prompt: string };
     expect(body.prompt).toContain("pixel art retro 8-bit style");
-    expect(body.prompt).not.toContain("Light premium iOS/macOS");
+    expect(body.prompt).not.toContain("Ubuntu/Yaru");
   });
 
   it("uses style from request body over desktop.json", async () => {
