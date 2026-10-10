@@ -66,7 +66,7 @@ describe('bundled icon upgrades preserve selected owner artwork', () => {
   it.each([true, false])('upgrades the actual nested game manifest with unchanged legacy artwork (tracked: %s)', (tracked) => {
     const f = fixture({ nestedGame: true, tracked });
     expect(f.relManifest).toBe('apps/games/chess/matrix.json');
-    expectSelection(f, f.newManifest);
+    expectSelection(f, tracked ? f.newManifest : f.oldManifest);
     expect(readFileSync(join(f.home, 'system/icons/game-center.png'))).toEqual(legacyBytes);
   });
   it('keeps selected customized artwork for the actual nested game manifest', () => {
@@ -292,4 +292,16 @@ it('preserves selected owner artwork across host sync followed by kernel startup
  const f=fixture({nestedGame:true});f.write(f.home,'system/icons/game-center.png','owner customized art');
  f.sync();smartSyncTemplate(f.home,f.template);
  expect(readFileSync(join(f.home,f.relManifest),'utf8')).toBe(f.oldManifest);
+});
+
+it.each(['{}', '{corrupt tracking'])('keeps all differing untracked nested game settings with tracking %s', tracking => {
+  const f = fixture({ nestedGame: true, tracked: false, currentStem: 'chess', nextStem: 'chess' });
+  const owner = JSON.stringify({ ...JSON.parse(f.oldManifest), name: 'Owner chess', permissions: ['network'], storage: { tables: { scores: { columns: { note: 'text' } } } }, build: { command: 'owner build', output: 'owner-dist' } });
+  f.write(f.home, f.relManifest, owner);
+  f.write(f.home, '.template-manifest.json', tracking);
+  f.sync();
+  expect(readFileSync(join(f.home, f.relManifest), 'utf8')).toBe(owner);
+  expect(JSON.parse(readFileSync(join(f.home, '.template-manifest.json'), 'utf8'))[f.relManifest]).toBeUndefined();
+  f.sync();
+  expect(readFileSync(join(f.home, f.relManifest), 'utf8')).toBe(owner);
 });

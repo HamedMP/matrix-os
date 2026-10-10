@@ -358,7 +358,7 @@ if (!existsSync(templateManifestPath)) {
       } else if (
         // Older nested games never tracked source hashes. Ownership labels alone
         // cannot distinguish bundled code from an owner's edits in those homes.
-        (!relPath.startsWith("apps/games/") || relPath.endsWith("/matrix.json")) &&
+        !relPath.startsWith("apps/games/") &&
         isSystemOwnedFirstPartyApp(appSlugForRelPath(relPath))
       ) {
         copyTemplateFile(templatePath, homePath);
