@@ -15,6 +15,7 @@ import { registerAppGalleryRoutes } from "../../packages/gateway/src/app-gallery
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { loadGallery, installGalleryApp, openGalleryApp } from "../../home/apps/app-gallery/src/model.js";
 import { withOwnerFileMutation } from "../../packages/gateway/src/owner-file-mutations.js";
+import { readOwnerSoul } from "../../packages/gateway/src/bots/owner-personality.js";
 import { resolveAppBridgeLaunch } from "../../shell/src/lib/app-bridge-launch.js";
 import { listAppCatalog } from "../../packages/gateway/src/apps.js";
 import { createNativeAppOpenClient } from "../../desktop/src/shared/native-app-open.js";
@@ -79,6 +80,56 @@ function galleryBridge(homePath: string) {
   };
 }
 function json(body: unknown): RequestInit { return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }; }
+it.each(["manifest", "cleanup"] as const)("Settings SOUL waits through Gallery %s and publishes Rick without a nested owner lock", async window => {
+  const f = await fixture(window);
+  await mkdir(join(f.homePath, "system"));
+  await writeFile(join(f.homePath, "system/soul.md"), "Complete original personality", { mode: 0o640 });
+  const before = await stat(join(f.homePath, "system/soul.md"));
+  const install = f.service.install("folio"); await f.entered.promise;
+  let settled = false;
+  const save = f.app.request("/files/system/soul.md", { method: "PUT", body: "Complete Rick personality" })
+    .then(response => { settled = true; return response; });
+  try {
+    await setImmediate(); await setImmediate();
+    expect(settled).toBe(false);
+    expect(await readOwnerSoul(f.homePath)).toBe("Complete original personality");
+  } finally { f.released.resolve(); await Promise.allSettled([install, save]); }
+  expect(await install).toMatchObject({ status: "installed" });
+  expect((await save).status).toBe(200);
+  expect(await readOwnerSoul(f.homePath)).toBe("Complete Rick personality");
+  const after = await stat(join(f.homePath, "system/soul.md"));
+  expect([after.mode & 0o777, after.uid, after.gid]).toEqual([0o640, before.uid, before.gid]);
+  expect(JSON.parse(await readFile(join(f.homePath, "apps/folio/matrix.json"), "utf8")).slug).toBe("folio");
+});
+
+it("an admitted SOUL save blocks Gallery directory access and releases both operations", async () => {
+  const f = await fixture("cleanup"), entered = deferred(), released = deferred(), app = new Hono();
+  await mkdir(join(f.homePath, "system"));
+  await writeFile(join(f.homePath, "system/soul.md"), "Complete original personality");
+  registerFileRoutes(app, {
+    homePath: f.homePath, getOwnerId: () => "owner",
+    projectPathAdmission: {
+      async withPaths(input, operation) {
+        expect(input.paths).toEqual(["system/soul.md"]);
+        entered.resolve(); await released.promise; return operation();
+      },
+      async withStoredPaths(_input, operation) { return operation(); },
+    },
+  });
+  const save = app.request("/files/system/soul.md", { method: "PUT", body: "Complete Rick personality" });
+  await entered.promise;
+  const install = f.service.install("folio");
+  try {
+    await setImmediate(); await setImmediate();
+    expect(filesystem.pinDirectory).not.toHaveBeenCalled();
+    expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
+    expect(await readOwnerSoul(f.homePath)).toBe("Complete original personality");
+  } finally { released.resolve(); f.released.resolve(); await Promise.allSettled([save, install]); }
+  expect((await save).status).toBe(200);
+  expect(await install).toMatchObject({ status: "installed" });
+  expect(await readOwnerSoul(f.homePath)).toBe("Complete Rick personality");
+});
+
 it.each(["mkdir-open", "manifest", "cleanup"] as const)("owner rename/replacement waits through gallery %s window", async window => {
   const f = await fixture(window); const install = f.service.install("folio"); await f.entered.promise;
   let renamed = false, replaced = false;
