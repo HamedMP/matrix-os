@@ -84,7 +84,7 @@ Good: save Juniper, send a message, save Cedar while a run is active, then conti
 
 ### Required tests
 
-The three `managed-pi-personality*.test.ts` files verify filesystem/error boundaries, variant run specs and the authenticated Settings PUT → canonical admission → broker → actual Pi Agent chain. Assert preserved non-system history, unchanged capabilities and per-run prompt snapshots. Linux CI executes the descriptor-pinned branch. Live Preview/Electron proof separately verifies model adherence.
+The four `managed-pi-personality*.test.ts` files verify filesystem/error boundaries, variant run specs and the authenticated Settings PUT → canonical admission → broker → actual Pi Agent chain. Assert preserved non-system history, unchanged capabilities and per-run prompt snapshots. Fault injection around real temporary files verifies parent/file replacement, growth and cleanup failures; synthetic Linux path mapping does not prove native `/proc` semantics. Linux CI executes the descriptor-pinned branch. Live Preview/Electron proof separately verifies model adherence.
 
 ### Wrong / correct
 
