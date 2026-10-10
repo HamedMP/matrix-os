@@ -18,7 +18,7 @@ import {
   createPrebillingIntent,
   markPrebillingPreparationFailed,
 } from '../../packages/platform/src/prebilling-provisioning-store.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const SECRET = 'test-platform-jwt-secret-at-least-32-chars-long';
 const APP_ORIGIN = 'https://app.matrix-os.com';

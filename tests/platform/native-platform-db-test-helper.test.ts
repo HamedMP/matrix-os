@@ -21,11 +21,12 @@ afterEach(async () => {
   for (const manager of managers.splice(0)) await manager.shutdown();
   vi.restoreAllMocks(); vi.unstubAllEnvs();
 });
-function fakeNative(options: { startupFailure?: Error; cleanupFailure?: Error; blockedStartup?: Promise<void>; blockedCloneCreation?: Promise<void>; templateBytes?: string } = {}) {
+function fakeNative(options: { startupFailure?: Error; cleanupFailure?: Error; blockedStartup?: Promise<void>; blockedCloneCreation?: Promise<void>; templateBytes?: string; templateConnections?: string[] } = {}) {
   const events: string[] = [];
   const databases = new Set<string>(); // Bounded by the helper's fixed five names.
   let startupFailure = options.startupFailure;
   let cleanupFailure = options.cleanupFailure;
+  let connectionChecks = 0;
   const pools: Pool[] = [];
   const createPool = vi.fn((config: PoolConfig) => {
     const name = new URL(config.connectionString!).pathname.slice(1);
@@ -38,7 +39,8 @@ function fakeNative(options: { startupFailure?: Error; cleanupFailure?: Error; b
         if (create) databases.add(create[1]);
         if (create?.[1].includes('_clone_')) await options.blockedCloneCreation;
         if (drop) databases.delete(drop[1]);
-        return { rows: query.includes('pg_database_size') ? [{ bytes: options.templateBytes ?? '16777216' }] : query.includes('pg_stat_activity') ? [{ count: '0' }]
+        const counts = options.templateConnections ?? ['0'];
+        return { rows: query.includes('pg_database_size') ? [{ bytes: options.templateBytes ?? '16777216' }] : query.includes('pg_stat_activity') ? [{ count: counts[Math.min(connectionChecks++, counts.length - 1)] }]
           : query.includes('pg_database') ? [...databases].map(datname => ({ datname })) : [] };
       }),
       end: vi.fn(async () => {
@@ -163,6 +165,40 @@ describe('native platform fixture admission and lifecycle', () => {
       expect(admin.end).toHaveBeenCalledOnce();
       expect(vi.mocked(admin.query).mock.calls).toHaveLength(queryCount);
     } finally { unblock(); vi.useRealTimers(); managers.splice(managers.indexOf(manager), 1); }
+  });
+
+  it('denies template connections before waiting for asynchronously released server sessions', async () => {
+    const { manager, events } = fakeNative({ templateConnections: ['1', '1', '0'] });
+    const { db } = await manager.createTestPlatformDb(fixtureUrl);
+    const deny = events.findIndex(event => event.startsWith('ALTER DATABASE'));
+    const checks = events.flatMap((event, index) => event.includes('pg_stat_activity') ? [index] : []);
+    expect(checks).toHaveLength(3);
+    expect(checks.every(index => index > deny)).toBe(true);
+    expect(events.findIndex(event => event.startsWith('CREATE DATABASE') && event.includes('_clone_')))
+      .toBeGreaterThan(checks.at(-1)!);
+    await manager.destroyTestPlatformDb(db);
+  });
+
+  it('fails closed within the publication bound even with a frozen Date clock when a template session never releases', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    const { manager, events, databases } = fakeNative({ templateConnections: ['1'] });
+    const task = manager.createTestPlatformDb(fixtureUrl);
+    let settled = false;
+    void task.then(() => { settled = true; }, () => { settled = true; });
+    const failure = task.then(() => undefined, error => error);
+    try {
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(settled).toBe(true);
+      expect(await failure).toMatchObject({ message: expect.stringMatching(/template connection drain/i) });
+      expect(events.some(event => event.startsWith('CREATE DATABASE') && event.includes('_clone_'))).toBe(false);
+      expect(databases.size).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.restoreAllMocks();
+      await vi.advanceTimersByTimeAsync(100);
+      vi.useRealTimers();
+    }
   });
 
   it('uses the original cached PGlite helper unchanged when the distinct URL is unset', async () => {

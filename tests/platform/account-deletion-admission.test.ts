@@ -6,7 +6,7 @@ import { insertUserMachine, upsertBillingCustomer, upsertBillingSubscription, en
 import { dispatchBillingRuntimeActions } from '../../packages/platform/src/billing-runtime-actions.js';
 import { processAiCreditWebhookEvent } from '../../packages/platform/src/ai-credit-checkout-webhook.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret = 'admission-secret-with-at-least-32-bytes';
 const owner = 'user_deletion_admission';

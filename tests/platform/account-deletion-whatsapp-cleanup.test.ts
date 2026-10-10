@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
 import { createWhatsAppRepository } from '../../packages/platform/src/whatsapp/repository.js';
 import { encryptWhatsAppPayload } from '../../packages/platform/src/whatsapp/crypto.js';

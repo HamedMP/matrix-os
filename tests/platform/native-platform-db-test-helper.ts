@@ -188,9 +188,8 @@ export function createNativeFixtureManager<DB extends FixtureDatabase>(dependenc
         const bytes = Number(size.rows[0]?.bytes);
         if (!Number.isFinite(bytes) || bytes <= 0 || bytes > MAX_TEMPLATE_BYTES) throw new Error('Native platform fixture template exceeds its nonempty 64 MiB limit');
         await closePool(resource);
-        const connections = await query('SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1', [templateName]);
-        if (Number(connections.rows[0]?.count) !== 0) throw new Error('Native platform fixture template still has connections');
         await query(`ALTER DATABASE ${identifier(templateName)} ALLOW_CONNECTIONS false`);
+        await waitForTemplateConnections();
       } catch (error) { await disposeFailure(resources.get(templateName), error); }
     })().catch(error => {
       templatePromise = undefined;
@@ -198,6 +197,24 @@ export function createNativeFixtureManager<DB extends FixtureDatabase>(dependenc
       throw error;
     });
     return templatePromise;
+  }
+  async function waitForTemplateConnections(): Promise<void> {
+    // Client close may finish before PostgreSQL removes its backend. Deny new
+    // connections first, then retain the exact zero-session publication guard.
+    const expires = Date.now() + 5_000;
+    for (;;) {
+      const remaining = expires - Date.now();
+      if (remaining <= 0) throw new Error('Native platform fixture template connection drain deadline exceeded');
+      const result = await deadline('template connection drain',
+        query('SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1', [templateName]), remaining);
+      const count = Number(result.rows[0]?.count);
+      if (count === 0) return;
+      if (!Number.isSafeInteger(count) || count < 0) throw new Error('Native platform fixture template session count is invalid');
+      if (Date.now() >= expires) {
+        throw new Error(`Native platform fixture template connection drain deadline exceeded (${count} sessions remain)`);
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, expires - Date.now())));
+    }
   }
   function trackTask(task: Promise<{ db: DB }>): Promise<{ db: DB }> {
     pending.add(task);

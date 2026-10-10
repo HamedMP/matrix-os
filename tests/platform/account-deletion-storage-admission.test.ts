@@ -4,7 +4,7 @@ import { AccountDeletionRepository } from '../../packages/platform/src/account-d
 import { createInternalSyncRoutes } from '../../packages/platform/src/internal-sync-routes.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { insertContainer, type PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret = 'storage-admission-secret-at-least-32-bytes';
 const owner = 'user_storage_deletion';
