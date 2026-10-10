@@ -41,11 +41,11 @@ if [[ $status == 0 ]]; then
   read -r status <"$result_dir/exit-code"
   [[ $status =~ ^[0-9]{1,3}$ && $status -le 255 ]] || status=70
 fi
-docker logs --tail 10000 "$container" >"$result_dir/output.log" 2>&1 || true
+(ulimit -f 20480; docker logs --tail 10000 "$container") >"$result_dir/output.log" 2>&1 || true
 cat "$result_dir/output.log"
 # Copy only bounded, named benchmark evidence, without following symlinks.
 for file in unit-cold.json unit-warm.json timing.tsv; do
-  (ulimit -f 102400; docker cp "$container:/work/results/$file" "$result_dir/$file") 2>/dev/null || rm -f "$result_dir/$file"
+  (ulimit -f 51200; docker cp "$container:/work/results/$file" "$result_dir/$file") 2>/dev/null || rm -f "$result_dir/$file"
 done
 printf 'Benchmark exit: %s; host evidence: %s\n' "$status" "$result_dir"
 exit "$status"

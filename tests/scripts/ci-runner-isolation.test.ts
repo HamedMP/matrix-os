@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const root = resolve("scripts/ci/runner");
 const sha = "a".repeat(40);
 
-function invoke(args: string[], failure = false) {
+function invoke(args: string[], failure: boolean | "firewall" = false) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
   writeFileSync(resolve(dir, "docker"), `#!/bin/bash\nprintf '%s\\n' "$*" >> "$CALLS"\nif [[ "$1" == create ]]; then echo test-container; fi\nif [[ "$1" == wait ]]; then if [[ "$FAIL_START" == 1 ]]; then echo 42; else echo 0; fi; fi\n`);
@@ -16,13 +16,13 @@ function invoke(args: string[], failure = false) {
   chmodSync(resolve(dir, "flock"), 0o755);
   writeFileSync(resolve(dir, "timeout"), '#!/bin/bash\nshift 3\nexec "$@"\n');
   chmodSync(resolve(dir, "timeout"), 0o755);
-  writeFileSync(resolve(dir, "iptables"), "#!/bin/bash\nexit 0\n");
+  writeFileSync(resolve(dir, "iptables"), '#!/bin/bash\n[[ "$FAIL_FIREWALL" != 1 ]]\n');
   chmodSync(resolve(dir, "iptables"), 0o755);
   try {
     const result = spawnSync("bash", [resolve(root, "start-ephemeral.sh"), ...args], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: log,
-        FAIL_START: failure ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
+        FAIL_START: failure === true ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
     });
     return { result, calls: (() => { try { return readFileSync(log, "utf8"); } catch { return ""; } })() };
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -102,6 +102,9 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     const script = readFileSync(resolve(root, "start-ephemeral.sh"), "utf8");
     expect(script.indexOf("iptables -C DOCKER-USER")).toBeLessThan(script.indexOf("docker create"));
     expect(script).toContain("iptables -C INPUT -i matrix-ci0 -j REJECT");
+    const { result, calls } = invoke([sha, "unit", "8"], "firewall");
+    expect(result.status).not.toBe(0);
+    expect(calls).toBe("");
   });
   it("installs a restricted SSH key without Docker membership or persistent privileged runner", () => {
     const script = readFileSync(resolve(root, "install-dispatch.sh"), "utf8");
