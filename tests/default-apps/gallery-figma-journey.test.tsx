@@ -1,0 +1,117 @@
+// @vitest-environment jsdom
+import React from 'react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import Gallery from '../../home/apps/app-gallery/src/App';
+import catalog from '../../home/system/app-gallery.json';
+afterEach(() => { cleanup(); vi.restoreAllMocks(); delete window.MatrixOS; });
+it('offers installed apps, a working build request and a returnable full app detail', async () => {
+  const generate=vi.fn();
+  window.MatrixOS={generate, integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:catalog.apps.slice(0,3).map((app,i)=>({...app,installed:i===0, ...(i===0 ? {launchPath:`apps/${app.id}`}:{})}))})};
+  render(<Gallery/>);
+  await screen.findByRole('heading',{name:'Your apps'});
+  fireEvent.change(screen.getByRole('textbox',{name:'Describe an app'}),{target:{value:'My weekly plan'}});
+  fireEvent.click(screen.getByRole('button',{name:'Build app'}));
+  expect(generate).toHaveBeenCalledTimes(1);
+  await screen.findByText('Build requested. Check Chat for delivery. Your prompt is kept here.');
+  expect(screen.getByRole('textbox',{name:'Describe an app'})).toHaveProperty('value','My weekly plan');
+  fireEvent.click(screen.getByRole('button',{name:`Explore ${catalog.apps[0].name}`}));
+  expect(await screen.findByRole('button',{name:'Back to gallery'})).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:'Back to gallery'}));
+  expect(screen.getByRole('heading',{name:'Apps'})).toBeTruthy();
+});
+it('announces a failed installed-strip launch even when search hides its card', async () => {
+  const app=catalog.apps[0];
+  window.MatrixOS={gatewayFetch:async()=>({version:1,apps:[{...app,installed:true,launchPath:`apps/${app.id}`}]}),integrations:async()=>[],openApp:async()=>{throw new Error('unavailable');}};
+  render(<Gallery/>);
+  await screen.findByRole('button',{name:`Launch ${app.name}`});
+  fireEvent.change(screen.getByRole('textbox',{name:'Search apps'}),{target:{value:'not present'}});
+  fireEvent.click(screen.getByRole('button',{name:`Launch ${app.name}`}));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent',`${app.name}: The app could not open. Try again.Retry ${app.name}`);
+});
+
+it.each(['Explore', 'Details for'])('returns focus to the exact %s trigger after details', async (prefix) => {
+  const app=catalog.apps[0];
+  window.MatrixOS={integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:[{...app,installed:false}]})};
+  render(<Gallery/>);
+  const trigger=await screen.findByRole('button',{name:`${prefix} ${app.name}`});
+  trigger.focus();
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('button',{name:'Back to gallery'}));
+  expect(document.activeElement).toBe(screen.getByRole('button',{name:`${prefix} ${app.name}`}));
+});
+it('preserves a typed request when the host rejects the build handoff', async () => {
+  window.MatrixOS={generate:async()=>{throw new Error('unavailable');},integrations:async()=>[],gatewayFetch:async()=>({version:1,apps:[]})};
+  render(<Gallery/>);
+  fireEvent.change(screen.getByRole('textbox',{name:'Describe an app'}),{target:{value:'Track my receipts'}});
+  fireEvent.click(screen.getByRole('button',{name:'Build app'}));
+  await screen.findByText('The build request could not be sent. Try again in Chat.');
+  expect(screen.getByRole('textbox',{name:'Describe an app'})).toHaveProperty('value','Track my receipts');
+});
+
+it('helps a new owner find their first app from the installed-app empty state', async () => {
+  window.MatrixOS={integrations:async()=>[], gatewayFetch:async()=>({version:1,apps:[]})};
+  render(<Gallery/>);
+  const heading=await screen.findByRole('heading',{name:'No apps yet'});
+  expect(heading.closest('.installed-empty')?.querySelector('svg')).toBeTruthy();
+  expect(screen.getByText('Get an app from Gallery to make it yours.')).toBeTruthy();
+  const base=document.createElement('base');
+  base.href='https://preview.example/apps/app-gallery/';
+  document.head.append(base);
+  try {
+    const before=window.location.href;
+    const bridge=window.MatrixOS;
+    const target=screen.getByRole('heading',{name:'Gallery',exact:true});
+    const scroll=vi.fn(); target.scrollIntoView=scroll;
+    fireEvent.click(screen.getByRole('button',{name:'Explore Gallery'}));
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(target);
+    expect(window.location.href).toBe(before);
+    expect(window.MatrixOS).toBe(bridge);
+  } finally { base.remove(); }
+});
+
+it('distinguishes unavailable installed inventory from a successfully empty collection and supports retry', async () => {
+  const gatewayFetch=vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue({version:1,apps:[]});
+  window.MatrixOS={integrations:async()=>[],gatewayFetch};
+  render(<Gallery/>);
+  expect(await screen.findByRole('heading',{name:'Your apps are unavailable'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'No apps yet'})).toBeNull();
+  expect(screen.getByText('Refresh Gallery to try again.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Try again'}));
+  expect(await screen.findByRole('heading',{name:'No apps yet'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'Your apps are unavailable'})).toBeNull();
+});
+
+it('announces a named install failure after collection switches',async()=>{
+ const app=catalog.apps[0];let reject!: (e:Error)=>void;
+ const pending=new Promise((_yes,no)=>{reject=no;});
+ window.MatrixOS={integrations:async()=>[],gatewayFetch:async(_url,init)=>init?.method==='POST'?pending:{version:1,apps:[{...app,installed:false}]}};
+ render(<Gallery/>);
+ const trigger=await screen.findByRole('button',{name:`Explore ${app.name}`});
+ fireEvent.click(within(trigger.closest('article')!).getByRole('button',{name:'Get',exact:true}));
+ fireEvent.click(screen.getByRole('tab',{name:'Business'}));
+ reject(new Error('Offline'));
+ expect((await screen.findByRole('alert')).textContent).toContain(app.name);
+});
+
+
+it('returns focus to Gallery when late connections remove the original card', async () => {
+  const app = catalog.apps.find(app => app.collection === 'personal' && app.services.length > 0)!;
+  let settle!: (connections: unknown[]) => void;
+  const inventory = new Promise<unknown[]>(resolve => { settle = resolve; });
+  window.MatrixOS = { integrations: () => inventory, gatewayFetch: async () => ({ version: 1, apps: [{ ...app, installed: false }] }) };
+  render(<Gallery />);
+  await screen.findByRole('button', { name: `Explore ${app.name}` });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Connection readiness' }), { target: { value: 'unknown' } });
+  const trigger = screen.getByRole('button', { name: `Explore ${app.name}` });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const back = await screen.findByRole('button', { name: 'Back to gallery' });
+  back.focus();
+  await act(async () => { settle([]); await inventory; });
+  fireEvent.click(back);
+  expect(screen.queryByRole('button', { name: `Explore ${app.name}` })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Gallery', exact: true }));
+});
