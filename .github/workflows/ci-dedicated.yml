@@ -13,8 +13,8 @@ on:
       suite:
         description: Benchmark suite
         type: choice
-        default: full
-        options: [full, unit, checks, e2e-general, e2e-electron]
+        default: qualification
+        options: [qualification, full, unit, checks, e2e-general, e2e-electron]
   pull_request_target:
     branches: [main]
     types: [labeled, ready_for_review, synchronize]
@@ -43,27 +43,40 @@ jobs:
         with:
           script: |
             let sha = process.env.INPUT_SHA || context.sha;
+            let headSha = sha, baseSha = "", prNumber = 0;
             if (context.eventName === 'pull_request_target') {
               const {data: pull} = await github.rest.pulls.get({
                 ...context.repo, pull_number: context.payload.pull_request.number, request: {timeout: 10000}
               });
-              if (pull.state !== 'open' || pull.draft ||
+              if (pull.state !== 'open' || pull.draft || pull.base.ref !== "main" ||
                   pull.head.sha !== context.payload.pull_request.head.sha ||
                   pull.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
                   !pull.labels.some(label => label.name === 'ready-for-ci')) {
                 core.setOutput('admitted', 'false');
                 return;
               }
-              sha = pull.head.sha;
+              headSha = pull.head.sha;
+              baseSha = pull.base.sha;
+              prNumber = pull.number || context.payload.pull_request.number;
+              sha = pull.merge_commit_sha;
+              if (!/^[a-f0-9]{40}$/.test(sha || "")) throw new Error("Current merge commit unavailable");
+              const {data: merge} = await github.rest.repos.getCommit({...context.repo, ref: sha, request: {timeout: 10000}});
+              const parents = merge.parents?.map(parent => parent.sha) || [];
+              if (merge.sha !== sha || parents.length !== 2 || !parents.includes(headSha) || !parents.includes(baseSha)) {
+                throw new Error("Merge commit does not bind the current PR head and base");
+              }
             }
             if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Exact commit SHA required');
             await github.rest.repos.getCommit({...context.repo, ref: sha, request: {timeout: 10000}});
             const {data: check} = await github.rest.checks.create({
-              ...context.repo, name: 'Dedicated CI Results', head_sha: sha, request: {timeout: 10000},
+              ...context.repo, name: context.eventName === 'pull_request_target' || context.payload.inputs?.suite === 'qualification' || !context.payload.inputs?.suite ? 'Dedicated CI Results' : 'Dedicated CI Benchmark', head_sha: headSha, request: {timeout: 10000},
               status: 'in_progress', details_url:
                 `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
             core.setOutput('sha', sha);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('base_sha', baseSha);
+            core.setOutput('pr_number', String(prNumber));
             core.setOutput('check_id', String(check.id));
             core.setOutput('admitted', 'true');
 
@@ -72,7 +85,7 @@ jobs:
         if: steps.admit.outputs.admitted == 'true'
         env:
           SOURCE_SHA: ${{ steps.admit.outputs.sha }}
-          SUITE: ${{ inputs.suite || 'full' }}
+          SUITE: ${{ inputs.suite || 'qualification' }}
           CI_SSH_KEY: ${{ secrets.CI_RUNNER_SSH_KEY }}
           CI_SSH_HOST: ${{ secrets.CI_RUNNER_HOST }}
           CI_KNOWN_HOSTS: ${{ secrets.CI_RUNNER_KNOWN_HOSTS }}
@@ -81,7 +94,7 @@ jobs:
           set +x
           [[ $SOURCE_SHA =~ ^[a-f0-9]{40}$ ]]
           [[ $CI_SSH_HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
-          case "$SUITE" in full|unit|checks|e2e-general|e2e-electron) ;; *) exit 64 ;; esac
+          case "$SUITE" in qualification|full|unit|checks|e2e-general|e2e-electron) ;; *) exit 64 ;; esac
           : "${CI_SSH_KEY:?CI SSH key required}"
           : "${CI_KNOWN_HOSTS:?Pinned host key required}"
           key_dir=$(mktemp -d)
@@ -111,9 +124,12 @@ jobs:
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           CHECK_ID: ${{ steps.admit.outputs.check_id }}
+          HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
+          BASE_SHA: ${{ steps.admit.outputs.base_sha }}
+          PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
           DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
           SOURCE_SHA: ${{ steps.admit.outputs.sha }}
-          SUITE: ${{ inputs.suite || 'full' }}
+          SUITE: ${{ inputs.suite || 'qualification' }}
         with:
           script: |
             const success = process.env.DISPATCH_OUTCOME === 'success';
@@ -121,9 +137,37 @@ jobs:
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
               status: 'completed', conclusion: success ? 'success' : 'failure',
               output: {
-                title: success ? 'Isolated benchmark passed' : 'Isolated benchmark failed',
-                summary: `Commit ${process.env.SOURCE_SHA}; suite ${process.env.SUITE}. ` +
-                  'See the workflow artifact for timings. This benchmark does not replace ' +
-                  'CI Results, Pattern Scan, PostgreSQL race tests, or root-fixture validation.'
+                title: success ? 'Isolated Linux suite passed' : 'Isolated Linux suite failed',
+                summary: JSON.stringify({schemaVersion: 1, suite: process.env.SUITE,
+                  sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA,
+                  baseSha: process.env.BASE_SHA, prNumber: Number(process.env.PR_NUMBER),
+                  controllerSha: context.sha, controllerRef: context.ref,
+                  controllerWorkflow: '.github/workflows/ci-dedicated.yml'})
               }
             });
+
+      - name: Create immutable qualification provenance
+        if: always() && steps.admit.outputs.admitted == 'true' && (inputs.suite == 'qualification' || inputs.suite == '')
+        env:
+          SOURCE_SHA: ${{ steps.admit.outputs.sha }}
+          HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
+          BASE_SHA: ${{ steps.admit.outputs.base_sha }}
+          PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
+          DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const {SOURCE_SHA,HEAD_SHA,BASE_SHA,PR_NUMBER,DISPATCH_OUTCOME}=process.env;
+          writeFileSync('output/ci-dedicated/provenance.json',JSON.stringify({
+            schemaVersion:1,sourceSha:SOURCE_SHA,headSha:HEAD_SHA,baseSha:BASE_SHA,
+            prNumber:Number(PR_NUMBER),dispatchOutcome:DISPATCH_OUTCOME
+          }),{flag:'wx'});
+          NODE
+      - name: Upload immutable qualification provenance
+        if: always() && steps.admit.outputs.admitted == 'true' && (inputs.suite == 'qualification' || inputs.suite == '')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}
+          path: output/ci-dedicated/provenance.json
+          if-no-files-found: error
+          retention-days: 7

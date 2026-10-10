@@ -5,8 +5,9 @@ sha=${1:?Missing reviewed SHA}
 suite=${2:?Missing suite}
 workers=${3:?Missing worker count}
 [[ $sha =~ ^[a-f0-9]{40}$ && $workers =~ ^([1-9]|1[0-6])$ ]] || exit 64
-case "$suite" in unit|unit-shard-[1-4]|typecheck|shell|checks|e2e|e2e-general|e2e-electron|full) ;; *) exit 64 ;; esac
+case "$suite" in unit|unit-shard-[1-4]|typecheck|shell|checks|e2e|e2e-general|e2e-electron|full|qualification) ;; *) exit 64 ;; esac
 export MATRIX_TEST_WORKERS=$workers
+export PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
 mkdir -p /work/results
 measure() {
   local label=$1 start end status=0
@@ -28,6 +29,16 @@ measure checkout timeout 120s bash -c '
 cd /work/repo
 git config --global user.name CI
 git config --global user.email ci@matrix-os.com
+prepared_dependencies=false
+# Prepared data is immutable image content. Copy package content into this run's
+# private tmpfs; never share a writable store or node_modules across PRs.
+if [[ -f /opt/matrix-ci/prepared-lock.sha256 ]] && [[ $(sha256sum pnpm-lock.yaml | cut -d ' ' -f 1) == $(cat /opt/matrix-ci/prepared-lock.sha256) ]]; then
+  measure prepared-store cp -R /opt/matrix-ci/pnpm-store /work/pnpm-store
+  export PLAYWRIGHT_BROWSERS_PATH=/opt/matrix-ci/browsers
+  prepared_dependencies=true
+else
+  export PLAYWRIGHT_BROWSERS_PATH=/work/browsers
+fi
 measure install pnpm install --frozen-lockfile
 measure prerequisites pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build
 # Historical baselines predate the no-emit helper; retain their existing wrapper.
@@ -43,9 +54,24 @@ export NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sig
 export NEXT_PUBLIC_POSTHOG_KEY=phc_ci_shell_build NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_ci_shell_build
 export NEXT_PUBLIC_POSTHOG_HOST=https://eu.posthog.com NEXT_PUBLIC_POSTHOG_API_HOST=/relay
 case "$suite" in
-  e2e|e2e-general|e2e-electron|full)
-    measure browsers pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
-    measure shell-browsers pnpm --filter shell exec playwright install chromium
+  e2e|e2e-general|e2e-electron|full|qualification)
+    if [[ $prepared_dependencies == true ]]; then
+      measure prepared-browsers test -d /opt/matrix-ci/browsers
+    else
+      measure browsers pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
+      measure shell-browsers pnpm --filter shell exec playwright install chromium
+    fi
+    ;;
+esac
+# The database stays inside this container, on loopback, under the same UID and
+# tmpfs/memory/deadline as test code. It receives no host or production secrets.
+case "$suite" in
+  unit|unit-shard-*|full|qualification)
+    if [[ -x /usr/lib/postgresql/16/bin/initdb ]]; then
+      source /opt/matrix-ci/fixture-postgres.sh
+      trap stop_fixture_postgres EXIT
+      start_fixture_postgres
+    fi
     ;;
 esac
 # Hosted general CI runs before Desktop exists. Full benchmarks retain that
@@ -107,7 +133,11 @@ run_suite() {
     shell) step "shell-$pass" bun run build:shell:production ;;
     checks)
       # Existing CI keeps typecheck diagnostic/nonblocking during baseline repair.
-      measure "typecheck-$pass" bun run "$typecheck_script" || true
+      if [[ ${qualification:-false} == true ]]; then
+        step "typecheck-$pass" bun run "$typecheck_script"
+      else
+        measure "typecheck-$pass" bun run "$typecheck_script" || true
+      fi
       step "sync-build-$pass" pnpm --filter @finnaai/matrix build
       step "sync-test-$pass" pnpm --filter @finnaai/matrix test --maxWorkers=2
       step "sync-publish-$pass" pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
@@ -155,21 +185,26 @@ run_suite() {
 # Cold/warm passes belong to one admitted benchmark. Continue on suite failures
 # so both measurements are recorded, then propagate the failed result.
 unit_workers=12
-if (( workers <= 8 )); then unit_workers=4; fi
+if (( workers <= 8 )); then unit_workers=4; elif (( workers == 16 )); then unit_workers=16; fi
 failed=0
-for pass in cold warm; do
-  if [[ $suite == full ]]; then
+passes=(cold warm)
+qualification=false
+if [[ $suite == qualification ]]; then passes=(cold); qualification=true; fi
+for pass in "${passes[@]}"; do
+  if [[ $suite == full || $suite == qualification ]]; then
     pids=()
     suite=unit workers=$unit_workers run_suite "$pass" & pids+=("$!")
     suite=checks workers=2 run_suite "$pass" & pids+=("$!")
+    # General browser tests have no Desktop build dependency and get a distinct
+    # Xvfb display. Do not serialize them behind the Electron production build.
+    suite=e2e-general workers=2 run_suite "$pass" & pids+=("$!")
     (
-      desktop_status=0 general_status=0 electron_status=0
+      desktop_status=0 electron_status=0
       # Build once per pass for the required Electron lane. General explicitly
       # excludes build-gated native suites so both passes match hosted CI.
       measure "desktop-build-$pass" bun run build:desktop || desktop_status=$?
-      suite=e2e-general workers=2 run_suite "$pass" || general_status=$?
       suite=e2e-electron workers=2 run_suite "$pass" true || electron_status=$?
-      (( desktop_status == 0 && general_status == 0 && electron_status == 0 ))
+      (( desktop_status == 0 && electron_status == 0 ))
     ) & pids+=("$!")
     for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
   else

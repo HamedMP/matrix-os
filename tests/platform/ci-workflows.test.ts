@@ -353,7 +353,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('ci-results:');
     expect(workflow).toContain('name: CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e]');
+    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');

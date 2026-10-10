@@ -30,6 +30,7 @@ jobs:
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
       os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
+      dedicated_eligible: ${{ steps.route.outputs.eligible }}
     steps:
       - name: Checkout with bounded retry
         env:
@@ -138,15 +139,30 @@ jobs:
           echo "Docs contract tests: $docs_contract_tests"
           echo "OS-view parity tests: $os_view_parity_tests"
 
+      - name: Select guarded Linux delegation
+        id: route
+        env:
+          MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync, appendFileSync} from 'node:fs';
+          const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
+          const pull=event.pull_request;
+          const eligible=process.env.SHOULD_RUN === 'true' && process.env.MATRIX_CI_DEDICATED_ENABLED === 'true' &&
+            process.env.GITHUB_EVENT_NAME === 'pull_request' && pull?.base?.ref === 'main' &&
+            pull.head.repo?.full_name?.toLowerCase() === process.env.GITHUB_REPOSITORY.toLowerCase() &&
+            pull.state === 'open' && !pull.draft && pull.labels?.some(label=>label.name === 'ready-for-ci');
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\n`);
+          NODE
+
   # Independent validation jobs share only the change-classification dependency.
   typecheck:
     name: Type Check
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # TODO: remove continue-on-error once baseline type errors in kernel are fixed
-    continue-on-error: true
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
@@ -177,7 +193,7 @@ jobs:
   shell-production-build:
     name: Shell Production Build
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -284,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
     # Include observed 5m15s checkout, audit and cleanup/transfer variance.
     timeout-minutes: 10
-    # Non-blocking during rollout (matches typecheck baseline). Remove once the
+    # Non-blocking during the React audit rollout. Remove once the
     # React audit baseline is clean, then it gates merges. https://github.com/millionco/react-doctor
     continue-on-error: true
     steps:
@@ -392,7 +408,7 @@ jobs:
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -430,7 +446,7 @@ jobs:
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
@@ -541,7 +557,7 @@ jobs:
   docs-contract:
     name: Docs Contract Tests
     needs: changes
-    if: needs.changes.outputs.docs_contract_tests == 'true'
+    if: needs.changes.outputs.docs_contract_tests == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -571,7 +587,7 @@ jobs:
   os-view-parity:
     name: OS View Parity
     needs: changes
-    if: needs.changes.outputs.os_view_parity_tests == 'true'
+    if: needs.changes.outputs.os_view_parity_tests == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -612,7 +628,7 @@ jobs:
   e2e:
     name: E2E Tests
     needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -824,9 +840,38 @@ jobs:
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
             "$image" python3 -I /work/scripts/ci/run-funded-host-root-tests.py
 
+  dedicated-linux:
+    name: Verified Dedicated Linux Qualification
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify exact merge revision Linux outcome
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
+            const result=await waitForDedicatedResult(github,{
+              ...context.repo, sourceSha: context.sha,
+              headSha: context.payload.pull_request.head.sha,
+              baseSha: context.payload.pull_request.base.sha,
+              prNumber: context.payload.pull_request.number, serverUrl: context.serverUrl
+            });
+            core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
+
   ci-results:
     name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e]
+    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -835,6 +880,8 @@ jobs:
         env:
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
+          DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
@@ -850,6 +897,8 @@ jobs:
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
+          DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
+          DEDICATED_LINUX_RESULT=${DEDICATED_LINUX_RESULT:-skipped}
 
           {
             echo "### CI Results"
@@ -874,6 +923,7 @@ jobs:
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
+            echo "| Verified Dedicated Linux Qualification | $DEDICATED_LINUX_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$CI_TRIGGER_REQUESTED" != "true" ]; then
@@ -882,7 +932,7 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$DEDICATED_LINUX_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -897,6 +947,10 @@ jobs:
           fi
 
           if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_HOST_ROOT_RESULT" != "success" ]; then
+            failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_ELIGIBLE" = "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
             failed=true
           fi
 

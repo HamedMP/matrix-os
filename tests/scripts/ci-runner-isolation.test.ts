@@ -22,11 +22,13 @@ function readOptionalEvidence(read: () => string): string {
 function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false, hostCores = 16) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
+  writeFileSync(resolve(dir, "meminfo"), `MemTotal:       ${hostCores >= 32 ? 130023424 : 67108864} kB\n`);
   writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${hostCores}\n`);
   chmodSync(resolve(dir, "nproc"), 0o755);
   writeFileSync(resolve(dir, "docker"), `#!/bin/bash
 [[ "$FAIL_READ" != 1 ]] || mkdir -p "$CALLS"
 printf '%s\\n' "$*" >> "$CALLS"
+if [[ "$1" == image && "$2" == inspect ]]; then echo sha256:$(printf "%064d" 1); fi
 if [[ "$1" == create ]]; then echo test-container; fi
 if [[ "$1" == exec && "$5" == /usr/bin/tar ]]; then
   [[ "$FAIL_ARTIFACT" != 1 ]] || exit 1
@@ -52,7 +54,7 @@ if [[ "$1" == exec && "$FAIL_START" == 1 ]]; then exit 42; fi
     const result = spawnSync("bash", [resolve(root, "start-ephemeral.sh"), ...args], {
       encoding: "utf8",
       env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, CALLS: log,
-        FAIL_READ: failure === "read" ? "1" : "0", FAIL_TIMEOUT: failure === "timeout" ? "1" : "0", FAIL_START: failure === true ? "1" : "0", FAIL_ARTIFACT: failure === "artifact" ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir },
+        FAIL_READ: failure === "read" ? "1" : "0", FAIL_TIMEOUT: failure === "timeout" ? "1" : "0", FAIL_START: failure === true ? "1" : "0", FAIL_ARTIFACT: failure === "artifact" ? "1" : "0", FAIL_FIREWALL: failure === "firewall" ? "1" : "0", MATRIX_CI_STATE_DIR: dir, MATRIX_CI_MEMINFO_PATH: resolve(dir, "meminfo") },
     });
     const resultsDir = resolve(dir, "results");
     const persistedStatus = readOptionalEvidence(() => readFileSync(resolve(resultsDir, readdirSync(resultsDir)[0], "exit-code"), "utf8").trim());
@@ -106,7 +108,7 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     const create = calls.split("\n").find((line) => line.startsWith("create "))!;
     expect(create).toContain("--read-only");
     expect(create).toContain("--tmpfs /work:rw,exec,nosuid,nodev,size=32g,uid=10001,gid=10001,mode=0755");
-    expect(create).toContain("--tmpfs /tmp:rw,exec,nosuid,nodev,size=2g,mode=1777");
+    expect(create).toContain("--tmpfs /tmp:rw,exec,nosuid,nodev,size=8g,mode=1777");
     expect(create).toContain("--tmpfs /home/runner:rw,nosuid,nodev,size=1g,uid=10001,gid=10001,mode=0755");
     const image = readFileSync(resolve(root, "Dockerfile"), "utf8");
     expect(image).toContain("HOME=/home/runner");
@@ -172,7 +174,8 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(script).toContain('git rev-parse HEAD');
     expect(script).toContain('pnpm install --frozen-lockfile');
     expect(script).toContain('https://github.com/HamedMP/matrix-os.git');
-    expect(script).not.toMatch(/eval |source \/|--with-deps|GITHUB_TOKEN|HETZNER/);
+    expect(script).not.toMatch(/eval |--with-deps|GITHUB_TOKEN|HETZNER/);
+    expect(script.match(/source ([^\n]+)/g)).toEqual(["source /opt/matrix-ci/fixture-postgres.sh"]);
   });
   it("all shell entrypoints have valid syntax", () => {
     for (const file of ["start-ephemeral.sh", "benchmark.sh", "bootstrap-host.sh", "dispatch.sh", "install-dispatch.sh", "cleanup-host.sh"])
@@ -184,14 +187,15 @@ describe("disposable manual CI benchmark admission and isolation", () => {
       expect(result.status).toBe(64);
     },
   );
-  it.each([[8, "8"], [16, "12"]])("forced SSH dispatch fits %s cores with fixed arguments", (cores, workers) => {
+  it.each([[8, "8"], [16, "12"], [32, "16"]])("forced SSH dispatch fits %s cores with fixed arguments", (cores, workers) => {
     const dir = mkdtempSync(resolve(tmpdir(), "matrix-dispatch-test-"));
     writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${cores}\n`);
+    writeFileSync(resolve(dir, "meminfo"), "MemTotal:       130023424 kB\n");
     chmodSync(resolve(dir, "nproc"), 0o755);
     writeFileSync(resolve(dir, "sudo"), '#!/bin/bash\nprintf "%s\\n" "$@"\n');
     chmodSync(resolve(dir, "sudo"), 0o755);
     try {
-      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SSH_ORIGINAL_COMMAND: `run ${sha} unit` } });
+      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MATRIX_CI_MEMINFO_PATH: resolve(dir,"meminfo"), SSH_ORIGINAL_COMMAND: `run ${sha} unit` } });
       expect(result.status).toBe(0);
       expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/start-ephemeral.sh", sha, "unit", workers, ""]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -248,5 +252,25 @@ for kind in ['symlink','directory','oversize','valid']:
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(resolve(dir, "valid"), "utf8")).toBe("unit");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("bare-metal resource and corrected environment admission", () => {
+  it("reserves capacity on 32-thread/128GB hardware and pins the resolved image ID", () => {
+    const {result,calls} = invoke([sha,"qualification","12"],false,32);
+    expect(result.status,result.stderr).toBe(0);
+    const create=calls.split("\n").find(line=>line.startsWith("create "))!;
+    expect(create).toContain("--cpus 30 --memory 112g --memory-swap 112g");
+    expect(create).toContain("/work:rw,exec,nosuid,nodev,size=64g");
+    expect(create).toContain("/tmp:rw,exec,nosuid,nodev,size=8g");
+    expect(create).toMatch(/sha256:[a-f0-9]{64}$/);
+    expect(calls).not.toContain("-- unit-warm.json");
+  });
+  it("supplies Chromium, SSH tools and Python bytecode policy without weakening test provenance", () => {
+    const image=readFileSync(resolve(root,"Dockerfile"),"utf8");
+    expect(image).toContain("openssh-client");
+    expect(image).toContain("postgresql-16");
+    expect(image).toContain("PYTHONDONTWRITEBYTECODE=1");
+    expect(image).toContain("PLAYWRIGHT_CHROMIUM_CHANNEL=chromium");
   });
 });

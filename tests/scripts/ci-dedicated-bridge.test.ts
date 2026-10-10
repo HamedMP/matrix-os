@@ -11,12 +11,12 @@ async function admit(overrides: Record<string, unknown> = {}, inputSha = '') {
   const sha = 'a'.repeat(40);
   const outputs: Record<string, string> = {};
   const pull = {
-    state: 'open', draft: false, labels: [{ name: 'ready-for-ci' }],
+    number: 2440, base: {ref: 'main', sha: 'b'.repeat(40)}, merge_commit_sha: 'c'.repeat(40), state: 'open', draft: false, labels: [{ name: 'ready-for-ci' }],
     head: { sha, repo: { full_name: 'HamedMP/matrix-os' } }, ...overrides,
   };
   const github = { rest: {
     pulls: { get: vi.fn(async () => ({ data: pull })) },
-    repos: { getCommit: vi.fn(async () => ({})) },
+    repos: { getCommit: vi.fn(async () => ({data:{sha:'c'.repeat(40),parents:[{sha},{sha:'b'.repeat(40)}]}})) },
     checks: { create: vi.fn(async () => ({ data: { id: 123 } })) },
   } };
   const context = {
@@ -37,12 +37,13 @@ afterEach(() => vi.unstubAllEnvs());
 describe('dedicated CI trusted dispatcher', () => {
   it('admits and attaches a check to the current labeled source head', async () => {
     const { outputs, github } = await admit();
-    expect(outputs).toEqual({ sha: 'a'.repeat(40), check_id: '123', admitted: 'true' });
+    expect(outputs).toEqual({ sha: 'c'.repeat(40), head_sha: 'a'.repeat(40), base_sha: 'b'.repeat(40), pr_number: '2440', check_id: '123', admitted: 'true' });
     expect(github.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({ head_sha: 'a'.repeat(40) }));
   });
 
   it.each([
     { state: 'closed' },
+    {base: {ref: 'other', sha: 'b'.repeat(40)}},
     { draft: true },
     { labels: [] },
     { head: { sha: 'b'.repeat(40), repo: { full_name: 'HamedMP/matrix-os' } } },
@@ -52,6 +53,10 @@ describe('dedicated CI trusted dispatcher', () => {
     expect(outputs).toEqual({ admitted: 'false' });
     expect(github.rest.checks.create).not.toHaveBeenCalled();
     expect(github.rest.repos.getCommit).not.toHaveBeenCalled();
+  });
+
+  it.each([{merge_commit_sha:null},{merge_commit_sha:'e'.repeat(40)},{base:{ref:'main',sha:'e'.repeat(40)}}])('rejects unavailable or mismatched synthetic merge provenance: %j',async override=>{
+    await expect(admit(override)).rejects.toThrow(/merge commit|Merge commit/i);
   });
 
   it('uses the default-branch controller and a protected secret environment', () => {
@@ -83,7 +88,7 @@ describe('dedicated CI trusted dispatcher', () => {
     expect(admit).toContain('pull.head.sha !== context.payload.pull_request.head.sha');
     expect(admit).toContain('pull.head.repo?.full_name !==');
     expect(admit).toContain("labels.some");
-    expect(admit).toContain('head_sha: sha');
+    expect(admit).toContain('head_sha: headSha');
     const settle = steps.find((s: { name?: string }) => s.name === 'Settle source-head check');
     expect(settle.if).toContain('always()');
     expect(settle.with.script).toContain('github.rest.checks.update');
