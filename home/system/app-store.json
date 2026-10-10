@@ -1,5 +1,24 @@
 [
   {
+    "id": "utilities",
+    "name": "Utilities",
+    "description": "Private tools for everyday text, files, images, audio, and development",
+    "longDescription": "Browse a searchable folder of 104 tools: 71 run on your device inside Matrix, and 33 advanced tools link to the website. Open local files and download your results; workspaces are temporary.",
+    "category": "Utilities",
+    "author": "Matrix OS",
+    "source": "bundled",
+    "icon": "utilities",
+    "version": "1.0.0",
+    "tags": [
+      "tools",
+      "text",
+      "pdf",
+      "images",
+      "audio",
+      "developer"
+    ]
+  },
+  {
     "id": "todo",
     "name": "Todo",
     "description": "Simple task list with add, complete, and delete",
