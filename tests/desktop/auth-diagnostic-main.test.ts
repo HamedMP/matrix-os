@@ -92,6 +92,18 @@ afterEach(async () => { Object.defineProperty(process, "platform", platformDescr
   await rm(directory, { recursive: true, force: true }); });
 
 describe("actual trusted main diagnostic composition", () => {
+  it.each(["darwin", "win32"])("uses a native draggable title bar for diagnostics on %s", async platform => {
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+    await boot();
+    // The diagnostic renderer has no custom drag region. Keep window movement
+    // in native chrome so diagnostic text retains ordinary mouse interaction.
+    expect(host.windows[0].options).toMatchObject({ titleBarStyle: "default" });
+    expect(host.windows[0].options.titleBarOverlay).toBeUndefined();
+    expect(host.windows[0].options.trafficLightPosition).toBeUndefined();
+    expect(host.windows[0].options.frame).not.toBe(false);
+    expect(fetch).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("quits the diagnostic process after the last macOS window closes, without normal services", async () => {
     Object.defineProperty(process, "platform", { ...platformDescriptor, value: "darwin" });
     await boot();
@@ -190,6 +202,9 @@ describe("actual trusted main diagnostic composition", () => {
     expect(host.ipc.has("chatgpt-plan:status")).toBe(true);
     expect(host.ipc.has("runtime:create-turn")).toBe(true);
     expect(host.windows[0].url).toBe("https://renderer.invalid/");
+    expect(host.windows[0].options).toMatchObject({
+      titleBarStyle: "hidden", trafficLightPosition: { x: 14, y: 13 },
+    });
     const modeHandler = host.ipc.get("app:get-startup-mode")!;
     await expect(modeHandler({ ...event(), sender: {} }, {})).rejects.toThrow("invalid request");
     await expect(modeHandler({ ...event(), senderFrame: {} }, {})).rejects.toThrow("invalid request");

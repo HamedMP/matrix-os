@@ -164,7 +164,9 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const trustedRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
   const win = new BrowserWindow({
     ...bounds,
-    ...windowChromeOptions(process.platform),
+    ...(startupMode === "auth-diagnostic"
+      ? { titleBarStyle: "default" as const }
+      : windowChromeOptions(process.platform)),
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {

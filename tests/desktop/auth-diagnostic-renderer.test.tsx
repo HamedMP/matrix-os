@@ -26,6 +26,16 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("trusted desktop startup", () => {
+  it("allows diagnostic status and provenance text through the shared selectable-content contract", async () => {
+    const source = { commit: "b".repeat(40), ancestors: [] };
+    invoke.mockImplementation(async channel => channel === "app:get-startup-mode" ? { mode: "auth-diagnostic" }
+      : channel === "auth:status" ? auth : { ...version, source });
+    await act(async () => { await mountDesktopRenderer(root); });
+    const selectable = screen.getByText("Signed in").closest("[data-selectable]");
+    expect(selectable).toBeTruthy();
+    expect(screen.getByText(source.commit).closest("[data-selectable]")).toBe(selectable);
+  });
+
   it("shows real auth/version only, without importing normal Desktop or making a remote request", async () => {
     const fetch = vi.fn(() => { throw new Error("remote request forbidden"); }); vi.stubGlobal("fetch", fetch);
     invoke.mockImplementation(async channel => channel === "app:get-startup-mode" ? { mode: "auth-diagnostic" }
