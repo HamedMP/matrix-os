@@ -496,7 +496,7 @@ describe("T711: GET /api/apps", () => {
       name: "Clock",
       slug: "clock",
       runtime: "vite",
-      icon: "clock",
+      icon: "v3-clock",
       author: "system",
       listingTrust: "first_party",
       runtimeVersion: "^1.0.0",
