@@ -58,7 +58,7 @@ describe('Preview Drive Platform routes', () => {
   }
   async function redeem() {
     const proof = mintPreviewDriveTurnProof({ method: 'POST', path: '/api/chats/chat_one/turns',
-      identity: { handle, userId: 'user_owner', source: 'auth' }, body: JSON.stringify(turnBody), secret });
+      identity: { handle, userId: 'user_owner', source: 'auth', sessionProvenance: 'clerk-browser' }, body: JSON.stringify(turnBody), secret });
     const value = { actorId: 'user_owner', chatId: 'chat_one', turnId: 'cturn_one', runId: 'run_one',
       clientRequestId: 'req_one', bodyDigest: previewDriveTurnBodyDigest(turnBody) };
     const response = await post('/turn/redeem', value, { 'x-matrix-preview-drive-turn-proof': proof! });
@@ -70,7 +70,7 @@ describe('Preview Drive Platform routes', () => {
     let now = Date.now();
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const proof = mintPreviewDriveTurnProof({ method: 'POST', path: '/api/chats/chat_one/turns',
-      identity: { handle, userId: 'user_owner', source: 'auth' }, body: JSON.stringify(turnBody), secret });
+      identity: { handle, userId: 'user_owner', source: 'auth', sessionProvenance: 'clerk-browser' }, body: JSON.stringify(turnBody), secret });
     const transaction = db.transaction.bind(db);
     vi.spyOn(db, 'transaction').mockImplementation(async work => {
       now += 61_000; // Model the admission lock returning after the signed TTL.
@@ -121,7 +121,7 @@ describe('Preview Drive Platform routes', () => {
       clientRequestId: 'req_one', bodyDigest: previewDriveTurnBodyDigest(turnBody) };
     expect((await post('/turn/redeem', value)).status).toBe(403);
     const proof = mintPreviewDriveTurnProof({ method: 'POST', path: '/api/chats/chat_one/turns',
-      identity: { handle, userId: 'user_owner', source: 'auth' }, body: JSON.stringify(turnBody), secret });
+      identity: { handle, userId: 'user_owner', source: 'auth', sessionProvenance: 'clerk-browser' }, body: JSON.stringify(turnBody), secret });
     expect((await post('/turn/redeem', { ...value, actorId: 'user_other' },
       { 'x-matrix-preview-drive-turn-proof': proof! })).status).toBe(403);
     expect((await post('/turn/redeem', value, { 'x-matrix-preview-drive-turn-proof': proof! })).status).toBe(200);
@@ -180,7 +180,7 @@ describe('Preview Drive Platform routes', () => {
     const repo = new AccountDeletionRepository(db.kysely, { secret: deletionSecret });
     await repo.accept({ clerkUserId: 'user_owner', appleTokens: [] }, false);
     const proof = mintPreviewDriveTurnProof({ method: 'POST', path: '/api/chats/chat_one/turns',
-      identity: { handle, userId: 'user_owner', source: 'auth' }, body: JSON.stringify(turnBody), secret });
+      identity: { handle, userId: 'user_owner', source: 'auth', sessionProvenance: 'clerk-browser' }, body: JSON.stringify(turnBody), secret });
     const response = await post('/turn/redeem', { actorId: 'user_owner', chatId: 'chat_one',
       turnId: 'cturn_one', runId: 'run_one', clientRequestId: 'req_one', bodyDigest: previewDriveTurnBodyDigest(turnBody) },
       { 'x-matrix-preview-drive-turn-proof': proof! });

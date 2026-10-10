@@ -87,3 +87,19 @@ legacy action grants without bindings fail closed.
 This control-plane layer does not enable Preview runtime access. Ordinary
 machine-proxied personal integrations and Custom MCP remain denied; a later
 runtime layer must redeem fresh browser authority and obtain action approval.
+
+## Shared Preview session compatibility
+
+Shared Preview Drive approval requires a verified Clerk browser session or a
+Platform-signed session issued by Clerk-approved Matrix device login. Electron
+Desktop's device bearer and browser cookies carry the same signed user-session
+origin; a native presentation marker or generic sync credential grants no personal
+integration authority. Generic, delegated and older unmarked tokens still
+authenticate their existing routes, and native app-session exchange copies the same verified token and expiry. Neither
+cookie transport nor its native presentation marker upgrades personal authority. A fresh Matrix login may be necessary before testing
+personal Drive on shared Preview; this does not change Claude subscription login.
+Derived runtime-selection and Code cookies cannot extend the original signed
+session's expiry. Owner-machine Custom MCP behavior stays compatible. Preview
+acceptance remains one approved metadata-only `google_drive.list_files` action,
+with an explicit account label and at most three results; it does not authorize
+file contents, writes or additional accounts.

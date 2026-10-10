@@ -4,11 +4,18 @@ export const SYNC_JWT_ISSUER = 'matrix-os-platform';
 export const SYNC_JWT_AUDIENCE = 'matrix-os-sync';
 const DEFAULT_EXPIRES_IN_SEC = 24 * 60 * 60; // 24 hours
 
+/** Established only at a verified Clerk browser exchange or approved device flow. */
+export type UserSessionProvenance = 'clerk-device' | 'clerk-browser';
+export function isUserSessionProvenance(value: unknown): value is UserSessionProvenance {
+  return value === 'clerk-device' || value === 'clerk-browser';
+}
+
 export interface SyncJwtClaims extends JWTPayload {
   sub: string; // clerkUserId
   handle: string;
   gateway_url: string;
   runtime_slot?: string;
+  session_provenance?: UserSessionProvenance;
   aud?: string | string[];
   iat: number;
   exp: number;
@@ -21,6 +28,7 @@ export interface IssueOpts {
   handle: string;
   gatewayUrl: string;
   runtimeSlot?: string;
+  sessionProvenance?: UserSessionProvenance;
   expiresInSec?: number;
   now?: number; // epoch seconds; defaults to current time
 }
@@ -49,6 +57,9 @@ function secretToKey(secret: string): Uint8Array {
 }
 
 export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
+  if (opts.sessionProvenance !== undefined && !isUserSessionProvenance(opts.sessionProvenance)) {
+    throw new Error('Invalid sync JWT claims');
+  }
   const key = secretToKey(opts.secret);
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const expiresInSec = opts.expiresInSec ?? DEFAULT_EXPIRES_IN_SEC;
@@ -59,6 +70,7 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
     handle: opts.handle,
     gateway_url: opts.gatewayUrl,
     ...(opts.runtimeSlot ? { runtime_slot: opts.runtimeSlot } : {}),
+    ...(opts.sessionProvenance ? { session_provenance: opts.sessionProvenance } : {}),
     aud: SYNC_JWT_AUDIENCE,
     iat: now,
     exp,
@@ -98,6 +110,7 @@ export async function verifySyncJwt(
     payload.handle.length === 0 ||
     typeof payload.gateway_url !== 'string' ||
     (payload.runtime_slot !== undefined && typeof payload.runtime_slot !== 'string') ||
+    (payload.session_provenance !== undefined && !isUserSessionProvenance(payload.session_provenance)) ||
     typeof payload.iat !== 'number' ||
     typeof payload.exp !== 'number'
   ) {

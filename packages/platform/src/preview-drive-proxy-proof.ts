@@ -1,7 +1,7 @@
 import type { UserMachineRecord } from './db.js';
 import type { AppDomainIdentity } from './session-routing-identity.js';
 import { isPreviewMachine } from './customer-vps-preview.js';
-import { mintPreviewDriveTurnProof } from './preview-drive-turn-proof.js';
+import { hasVerifiedPreviewUserSession, mintPreviewDriveTurnProof } from './preview-drive-turn-proof.js';
 
 const TURN_PATH = /^\/api\/chats\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\/turns$/;
 // Match the Gateway's canonical direct Chat turn limit exactly.
@@ -9,12 +9,11 @@ const MAX_BODY_BYTES = 128 * 1024;
 
 /** Inspect only direct, authenticated Preview Chat turns; queued/background turns get no proof. */
 export async function authenticatedPreviewDriveProxyProof(input: {
-  request: Request; method: string; path: string; machine: UserMachineRecord;
+  request: Request; method: string; path: string; machine: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>;
   identity: AppDomainIdentity; platformSecret: string; timeoutMs?: number;
 }): Promise<string | null | { status: 400 | 408 | 413 | 503 }> {
   if (input.method !== 'POST' || !TURN_PATH.test(input.path)
-    || !isPreviewMachine(input.machine) || input.identity.source !== 'auth'
-    || input.identity.verifiedSyncBearer === true || !input.platformSecret) return null;
+    || !isPreviewMachine(input.machine) || !hasVerifiedPreviewUserSession(input.identity) || !input.platformSecret) return null;
   const reader = input.request.clone().body?.getReader();
   if (!reader) return null;
   const cancel = () => {
@@ -39,7 +38,8 @@ export async function authenticatedPreviewDriveProxyProof(input: {
     const body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
     return mintPreviewDriveTurnProof({ method: input.method, path: input.path,
       identity: { handle: input.machine.handle, userId: input.identity.userId,
-        source: input.identity.source, verifiedSyncBearer: input.identity.verifiedSyncBearer },
+        source: input.identity.source, sessionProvenance: input.identity.sessionProvenance,
+        sessionExpiresAt: input.identity.sessionExpiresAt },
       body, secret: input.platformSecret });
   } catch (error: unknown) {
     cancel();

@@ -145,3 +145,32 @@ services, account management and Custom MCP cannot authorize a Drive read.
 Run grants expire after 35 minutes; action grants after 90 seconds. A recurring
 Platform sweep removes expired rows. Returned metadata remains visible to shared
 Terminal users under the account owner's explicitly accepted test boundary.
+
+### Signed user-session origin on shared Preview
+
+A personal Preview turn or action approval requires an authenticated identity with
+positive verified `clerk-device` or `clerk-browser` session provenance. The Platform
+signs the optional sync-JWT claim only after the Clerk-approved device flow or a
+fresh verified Clerk browser exchange. Bearer, app-cookie and code-cookie transport
+preserve the same verified authority; native presentation markers confer none.
+Direct verified Clerk routing establishes browser provenance. Generic, delegated
+and legacy sync tokens retain existing routing/authentication but cannot mint
+Preview Drive turn or action proofs, including after native cookie exchange.
+Native app-session exchanges retain the verified JWT bytes, claim class and expiry;
+the native presentation marker cannot upgrade generic tokens into personal authority.
+
+Runtime selection and JWT-derived code-cookie renewal preserve the original
+verified expiry; expired sessions acquire no personal authority through clock
+tolerance or renewal; both proof paths recheck source expiry after bounded body reads. Fresh Clerk authentication may use the existing browser
+session lifetime. Previously issued unmarked device/browser sessions may require
+fresh Matrix sign-in for shared Preview authorization; Claude subscription
+credentials are unchanged. Ordinary owner-machine Custom MCP approvals retain
+existing semantics. Shared Preview classification comes from the current database
+machine, not a handle shape or native-client marker. Existing signed actor/access,
+exact turn/action digest, supervised/default mode, expiry and one-use grant checks
+and the three-record Drive metadata bound remain required.
+
+The existing large session-routing middleware receives only proof policy inputs
+and renewal wiring. Session validation and lifetime derivation stay in the focused
+JWT/identity/proof helpers; future routing composition changes should extract a
+standalone session-cookie renewal module before adding policy to that middleware.

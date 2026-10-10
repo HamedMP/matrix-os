@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { canonicalPreviewDriveTurnBody, CanonicalCreateChatTurnRequestSchema } from '@matrix-os/contracts';
+import { isUserSessionProvenance, type UserSessionProvenance } from './sync-jwt.js';
 import { z } from 'zod/v4';
 
 export const PREVIEW_DRIVE_TURN_PROOF_HEADER = 'x-matrix-preview-drive-turn-proof';
@@ -27,14 +28,21 @@ export function previewDriveTurnBodyDigest(value: unknown): string {
   return createHash('sha256').update(canonicalPreviewDriveTurnBody(value)).digest('hex');
 }
 
-/** Only the Platform proxy may mint this after resolving a live browser actor. */
+/** Positive user-session authority; native markers and transport never establish it. */
+export function hasVerifiedPreviewUserSession(identity: {
+  source?: 'auth' | 'mobile-session' | 'static-route'; sessionProvenance?: UserSessionProvenance; sessionExpiresAt?: number;
+}): boolean {
+  return identity.source === 'auth' && isUserSessionProvenance(identity.sessionProvenance)
+    && (identity.sessionExpiresAt === undefined || identity.sessionExpiresAt > Math.floor(Date.now() / 1000));
+}
+
+/** Only the Platform proxy may mint this after resolving a verified user session. */
 export function mintPreviewDriveTurnProof(input: {
   method: string; path: string; identity: { handle: string; userId: string;
-    source?: 'auth' | 'mobile-session' | 'static-route'; verifiedSyncBearer?: boolean };
+    source?: 'auth' | 'mobile-session' | 'static-route'; verifiedSyncBearer?: boolean; sessionProvenance?: UserSessionProvenance; sessionExpiresAt?: number };
   body: string; secret: string; now?: number;
 }): string | null {
-  if (input.method !== 'POST' || !input.secret || input.identity.source !== 'auth'
-    || input.identity.verifiedSyncBearer === true || !Payload.shape.handle.safeParse(input.identity.handle).success
+  if (input.method !== 'POST' || !input.secret || !hasVerifiedPreviewUserSession(input.identity) || !Payload.shape.handle.safeParse(input.identity.handle).success
     || !input.identity.userId || Buffer.byteLength(input.body) > MAX_BODY_BYTES) return null;
   const match = PATH.exec(input.path);
   if (!match || !REF.test(match[1]!)) return null;

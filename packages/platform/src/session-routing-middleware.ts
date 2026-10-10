@@ -6,7 +6,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { CUSTOM_MCP_APPROVAL_PROOF_HEADER, isCustomMcpApprovalSubmitPath, mintCustomMcpApprovalProof } from './custom-mcp-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
-import { PREVIEW_DRIVE_TURN_PROOF_HEADER } from './preview-drive-turn-proof.js';
+import { hasVerifiedPreviewUserSession, PREVIEW_DRIVE_TURN_PROOF_HEADER } from './preview-drive-turn-proof.js';
 import { parseChatShareRoute, proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
 export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
@@ -26,7 +26,7 @@ import {
   getRunningUserMachineByHandle,
   updateLastActive,
 } from './db.js';
-import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleFromHost } from './customer-vps-preview.js';
+import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, isPreviewMachine, previewHandleFromHost } from './customer-vps-preview.js';
 import { issueSyncJwt } from './sync-jwt.js';
 import {
   buildCustomerVpsProxyUrl,
@@ -101,6 +101,7 @@ import {
   readShellRouteCookie,
   readShellRuntimeSlotCookie,
   resolveAppDomainIdentity,
+  renewedUserSessionLifetime,
   shouldMarkNativeAppSession,
 } from './session-routing-identity.js';
 import {
@@ -134,8 +135,10 @@ export function shouldServePlatformRuntimeShell(input: {
 export async function authenticatedApprovalProxyProof(input: {
   request: Request; method: string; path: string; handle: string;
   identity: AppDomainIdentity; platformSecret: string; timeoutMs?: number;
+  machine?: Pick<UserMachineRecord, 'handle' | 'runtimeSlot' | 'provisioningClass'>;
 }): Promise<string | null | { status: 408 | 413 }> {
   if (!input.platformSecret || input.identity.source !== 'auth'
+    || (input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity))
     || !isCustomMcpApprovalSubmitPath(input.method, input.path)) return null;
   const reader = input.request.clone().body?.getReader();
   if (!reader) return null;
@@ -166,6 +169,8 @@ export async function authenticatedApprovalProxyProof(input: {
       chunks.push(next.value);
     }
     const body = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+    // A bounded body read may span the source session expiry. Recheck before issuing authority.
+    if (input.machine && isPreviewMachine(input.machine) && !hasVerifiedPreviewUserSession(input.identity)) return null;
     return mintCustomMcpApprovalProof({ method: input.method, path: input.path,
       identity: { handle: input.handle, userId: input.identity.userId, source: input.identity.source },
       body, secret: input.platformSecret });
@@ -789,7 +794,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
-        identity, platformSecret });
+        identity, platformSecret, machine });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
@@ -958,7 +963,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
-        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret });
+        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });
@@ -1052,8 +1057,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             clerkUserId: identity.userId,
             handle: runningMachine.handle,
             gatewayUrl: 'https://code.matrix-os.com',
+            sessionProvenance: identity.sessionProvenance,
             runtimeSlot,
-            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC),
           });
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }
@@ -1266,7 +1272,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
             clerkUserId: identity.userId,
             handle: record.handle,
             gatewayUrl: 'https://code.matrix-os.com',
-            expiresInSec: CODE_SESSION_EXPIRES_IN_SEC,
+            sessionProvenance: identity.sessionProvenance,
+            expiresInSec: renewedUserSessionLifetime(identity, CODE_SESSION_EXPIRES_IN_SEC),
           });
           responseHeaders.append('set-cookie', buildCodeSessionCookie(issued.token));
         }
