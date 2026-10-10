@@ -1,3 +1,5 @@
+import { canonicalOsViewCatalogPath } from "./os-view.js";
+
 /** Shared exact-path capability policy for the Web and Electron app bridges. */
 export function isAllowedAppGalleryBridgeRequest(url: string, method = "GET"): boolean {
   if (url === "/api/app-gallery" || url === "/api/integrations") return method === "GET";
@@ -21,4 +23,22 @@ export function isAppGalleryIdentity(identity: string, routeSlug = identity): bo
 export function isAppGalleryInventoryIdentity(identity: string, routeSlug = identity): boolean {
   return identity === routeSlug && (isAppGalleryIdentity(identity, routeSlug)
     || APP_GALLERY_STARTER_IDENTITIES.some((id) => id === identity));
+}
+
+/** Runtime catalog roots may be longer than persisted OS-view references. */
+export function canonicalAppRuntimeCatalogPath(row: { path?: unknown; file?: unknown }): string | null {
+  for (const [value, fromFile] of [[row.path, false], [row.file, true]] as const) {
+    if (typeof value !== "string" || value.length > 4128 || /[\u0000-\u001f\u007f%?#:\\]/.test(value)) continue;
+    let path = value.trim().replace(/^\/+/, "").replace(/^files\//, "");
+    if (fromFile && !path.startsWith("apps/")) path = `apps/${path}`;
+    if (!path.startsWith("apps/")) continue;
+    const parts = path.split("/");
+    if (parts.some(part => !part || part === "." || part === ".." || new TextEncoder().encode(part).length > 255)) continue;
+    const root = path.replace(/\/(?:dist\/)?index\.html$/, "");
+    if (root.length > 4096 || root.split("/").length > 17) continue;
+    const persisted = canonicalOsViewCatalogPath({ path });
+    if (persisted) return persisted;
+    if (path.endsWith("/index.html") && root !== path) return path;
+  }
+  return null;
 }
