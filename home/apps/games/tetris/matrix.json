@@ -3,7 +3,7 @@
   "description": "Classic block-stacking puzzle",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "v3-tetris",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -38,7 +38,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../../system/icons/v3-*.png"
     ]
   }
 }
