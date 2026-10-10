@@ -1,0 +1,180 @@
+.badge {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+  background: var(--bg);
+}
+.badge.settled {
+  color: var(--brand);
+  background: var(--tint);
+  border-color: transparent;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+  gap: 18px;
+}
+.record-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+.card-top .muted {
+  font-size: 9px;
+}
+.record-card h3 {
+  font-size: 18px;
+  line-height: 1.5;
+  margin-bottom: 15px;
+  overflow-wrap: anywhere;
+}
+.record-fact {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  font-size: 11px;
+  margin: 9px 0;
+  line-height: 1.5;
+}
+.record-fact span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.record-fact strong {
+  font-weight: 500;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.record-actions {
+  display: flex;
+  gap: 9px;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 18px;
+}
+.record-actions button {
+  font-size: 10px;
+  padding: 5px 0;
+  color: var(--brand);
+}
+.note-excerpt {
+  font-size: 12px;
+  white-space: pre-wrap;
+  line-height: 1.9;
+  color: var(--muted);
+  max-height: 160px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.original-link {
+  display: inline-block;
+  font-size: 11px;
+  margin-top: 12px;
+}
+.note-grid .record-card {
+  border-top: 3px solid var(--brand);
+  min-height: 200px;
+}
+.note-grid .note-excerpt {
+  font-size: 13px;
+}
+.empty-state {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 30px 20px 45px;
+  min-height: 330px;
+}
+.empty-illustration {
+  width: 210px;
+  opacity: 0.9;
+  margin: 0 0 12px;
+}
+.empty-state h2 {
+  font-size: 27px;
+  font-weight: 550;
+  margin: 10px 0;
+}
+.empty-state p {
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--muted);
+  max-width: 400px;
+  margin-bottom: 20px;
+}
+.empty-state small {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.quiet-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 30px 0;
+  line-height: 1.8;
+}
+.board {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 15px;
+}
+.board-column {
+  background: color-mix(in srgb, var(--tint) 40%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  min-width: 250px;
+  flex: 1;
+  padding: 14px;
+  min-height: 280px;
+}
+.board-column > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 20px;
+}
+.board-column > header h3 {
+  font-size: 12px;
+}
+.board-column > header > span:last-child {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+.board-column .record-card {
+  padding: 14px;
+  margin-bottom: 12px;
+  border-radius: 9px;
+}
+.board-column .record-card h3 {
+  font-size: 14px;
+}
+.column-empty {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px 10px;
+}
+.column-add {
+  font-size: 11px;
+  color: var(--brand);
+  width: 100%;
+  text-align: left;
+}
