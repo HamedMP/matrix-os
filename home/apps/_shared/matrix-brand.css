@@ -1,0 +1,104 @@
+/* Generated brand palette from @matrix-os/brand. Run scripts/generate-default-app-brand.mjs.
+ * App chrome defaults to light; explicit Matrix theme bridge tokens remain authoritative.
+ * Fontsource 5.3.0 fonts are self-hosted, OFL licenses travel with this source. */
+@font-face { font-family: 'Matrix App Geist'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('./fonts/geist-latin-wght-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Matrix App Bricolage'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('./fonts/bricolage-grotesque-latin-wght-normal.woff2') format('woff2'); }
+:root:root:root:root:root {
+  --matrix-brand-forest: #0E3422;
+  --matrix-brand-forestDeep: #092417;
+  --matrix-brand-stageStart: #16472F;
+  --matrix-brand-forestHover: #174D34;
+  --matrix-brand-coral: #D06E53;
+  --matrix-brand-gold: #F1C379;
+  --matrix-brand-green: #BED77B;
+  --matrix-brand-blue: #C5D6E2;
+  --matrix-brand-paper: #FCFCF8;
+  --matrix-brand-canvas: #F1F4E8;
+  --matrix-brand-surfaceMuted: #F7F8F1;
+  --matrix-brand-textMuted: #536259;
+  --matrix-brand-danger: #9F3F2C;
+  --matrix-brand-teal: var(--matrix-brand-forest);
+  --matrix-font-heading: 'Matrix App Bricolage', 'Bricolage Grotesque', system-ui, sans-serif;
+  --matrix-font-sans: 'Matrix App Geist', Geist, system-ui, sans-serif;
+  --brand-font-ui: 'Matrix App Geist', Geist, system-ui, sans-serif;
+  --brand-font-heading: 'Matrix App Bricolage', 'Bricolage Grotesque', system-ui, sans-serif;
+  --app-font: var(--brand-font-ui);
+  --app-bg: var(--matrix-bg, var(--matrix-brand-paper));
+  --app-fg: var(--matrix-fg, var(--matrix-brand-teal));
+  --app-card: var(--matrix-card, var(--matrix-brand-paper));
+  --app-muted: var(--matrix-muted, var(--matrix-brand-surfaceMuted));
+  --app-muted-fg: var(--matrix-muted-fg, var(--matrix-brand-textMuted));
+  --app-border: var(--matrix-border, color-mix(in srgb, var(--app-fg) 13%, var(--app-bg)));
+  --app-primary: var(--identity-accent, var(--matrix-brand-teal));
+  --app-primary-fg: var(--identity-on-accent, var(--matrix-brand-paper));
+  --app-accent: var(--app-primary);
+  --app-danger: var(--matrix-destructive, var(--matrix-brand-danger));
+  --app-success: var(--matrix-success, var(--matrix-brand-forestHover));
+  --app-warning: var(--matrix-warning, var(--matrix-brand-gold));
+  --app-radius: var(--matrix-radius, 18px);
+  --background: var(--app-bg); --foreground: var(--app-fg); --card: var(--app-card);
+  --card-soft: var(--app-muted); --muted: var(--app-muted-fg); --border: var(--app-border); --accent: var(--app-accent);
+  --gallery-blush: transparent;
+  --gallery-ink: var(--app-fg); --gallery-porcelain: var(--app-card); --gallery-indigo: var(--matrix-brand-teal);
+  --gallery-mist: var(--matrix-brand-canvas); --gallery-mint: var(--matrix-brand-green);
+  --family-surface: var(--app-card);
+  --family-lift: 0 8px 24px color-mix(in srgb, var(--app-fg) 5%, transparent);
+  --family-control-radius: 12px; --family-radius: 18px;
+  --identity-accent: var(--matrix-brand-teal); --identity-on-accent: var(--matrix-brand-paper);
+  --identity-wash: var(--matrix-brand-paper); --identity-glow: var(--matrix-brand-green);
+  --game-accent: var(--identity-accent); --game-wash: var(--app-bg);
+  --game-text-accent: var(--app-fg);
+  color-scheme: var(--matrix-color-scheme, light);
+  font-family: var(--brand-font-ui);
+}
+/* Each app gets one recognisable Matrix accent, with readable foregrounds. */
+:root:root:root:root:root:is([data-app='clock'], [data-app='stickies'], [data-app='2048'], [data-app='task-manager']) { --identity-accent: var(--matrix-brand-gold); --identity-on-accent: var(--matrix-brand-teal); }
+:root:root:root:root:root:is([data-app='weather'], [data-app='todo'], [data-app='tetris'], [data-app='whiteboard']) { --identity-accent: var(--matrix-brand-blue); --identity-on-accent: var(--matrix-brand-teal); }
+:root:root:root:root:root:is([data-app='expense-tracker'], [data-app='chess'], [data-app='snake'], [data-app='games'], [data-app='profile']) { --identity-accent: var(--matrix-brand-green); --identity-on-accent: var(--matrix-brand-teal); }
+:root:root:root:root:root:is([data-app='pomodoro'], [data-app='minesweeper'], [data-app='backgammon'], [data-app='social']) { --identity-accent: var(--matrix-brand-coral); --identity-on-accent: var(--matrix-brand-forestDeep); }
+:root body { color: var(--app-fg); background: var(--app-bg); font-family: var(--brand-font-ui); }
+:root :is(h1, h2, .title, .ms-title, .score-value, .brand-name, .stage-title h1, .library-head h1, .focus-clock span) { font-family: var(--brand-font-heading); letter-spacing: -.035em; }
+:root :is(.chess-app, .tetris-app, .snake-app, .sol-app, .bg-app, .ms-root, .app, .calc-app, .clock-app, .default-app, .weather-app, .board-shell) { background: var(--app-bg); }
+:root :is(.btn.primary, .primary-action, .primary-btn, .focus-start, .exp-primary, .button--primary, .sol-btn--primary, .sol-btn--accent, .bg-btn.primary, .key--equals) { background: var(--app-accent); color: var(--app-primary-fg); }
+:root :is(.game-cover, .calc-pad, .calc-history, .timer-card, .zone-row, .alarm-row, .score-card, .capture-tray, .history-card, .control-card, .tetris-app .preview, .stat, .ms-frame) { background: var(--app-card); border-color: var(--app-border); }
+:root .brand-mark, :root .product-mark, :root .brand__mark, :root .sol-mark, :root .exp-brand__mark, :root .app-title .app-icon {
+  width: 44px; height: 44px; flex-shrink: 0; border: 0; border-radius: 0;
+  background: var(--brand-icon) center / contain no-repeat; box-shadow: none;
+}
+:root :is(.brand-mark, .product-mark, .brand__mark, .sol-mark, .exp-brand__mark, .app-title .app-icon) > svg { visibility: hidden; }
+:root:root:root:root:root[data-app='calculator'] { --brand-icon: url('../../system/icons/v3-calculator.png'); }
+:root:root:root:root:root[data-app='clock'] { --brand-icon: url('../../system/icons/v3-clock.png'); }
+:root:root:root:root:root[data-app='todo'] { --brand-icon: url('../../system/icons/v3-todo.png'); }
+:root:root:root:root:root[data-app='task-manager'] { --brand-icon: url('../../system/icons/v3-task-manager.png'); }
+:root:root:root:root:root[data-app='expense-tracker'] { --brand-icon: url('../../system/icons/v3-expense-tracker.png'); }
+:root:root:root:root:root[data-app='chess'] { --brand-icon: url('../../system/icons/v3-chess.png'); --sq-light: var(--matrix-brand-paper); --sq-dark: var(--matrix-brand-green); }
+:root:root:root:root:root[data-app='tetris'] { --brand-icon: url('../../system/icons/v3-tetris.png'); }
+:root:root:root:root:root[data-app='snake'] { --brand-icon: url('../../system/icons/v3-snake.png'); }
+:root:root:root:root:root[data-app='solitaire'] { --brand-icon: url('../../system/icons/v3-solitaire.png'); }
+:root .chess-app .piece--w { color: #ffffff; -webkit-text-stroke: 1px var(--matrix-brand-teal); }
+:root .chess-app .piece--b { color: var(--matrix-brand-teal); -webkit-text-stroke: .5px #ffffff; }
+:root[data-app='2048'] .board { background: var(--matrix-brand-canvas); }
+:root[data-app='2048'] .cell { background: color-mix(in srgb, var(--matrix-brand-green) 32%, var(--matrix-brand-paper)); }
+:root[data-app='2048'] .tile-inner { color: var(--matrix-brand-teal); }
+:root[data-app='2048'] .tile-2 .tile-inner { background: var(--matrix-brand-paper); }
+:root[data-app='2048'] .tile-4 .tile-inner { background: var(--matrix-brand-blue); }
+:root[data-app='2048'] .tile-8 .tile-inner { background: var(--matrix-brand-gold); }
+:root[data-app='2048'] .tile-16 .tile-inner { background: var(--matrix-brand-green); }
+:root[data-app='2048'] :is(.tile-32, .tile-64) .tile-inner { background: var(--matrix-brand-coral); color: var(--matrix-brand-forestDeep); }
+:root[data-app='2048'] :is(.tile-128, .tile-256, .tile-512, .tile-1024, .tile-2048, .tile-super) .tile-inner { background: var(--matrix-brand-teal); color: var(--matrix-brand-paper); }
+:root .game-cover .game-art { background: var(--app-muted); text-shadow: none; box-shadow: none; }
+:root .game-art img { width: 112px; height: 112px; object-fit: contain; }
+:root .game-cover { border-radius: 18px; box-shadow: none; }
+:root .game-cover--2048 .game-art, :root .game-cover--backgammon .game-art { background: color-mix(in srgb, var(--matrix-brand-gold) 25%, var(--app-card)); }
+:root .game-cover--chess .game-art, :root .game-cover--snake .game-art { background: color-mix(in srgb, var(--matrix-brand-green) 25%, var(--app-card)); }
+:root .game-cover--tetris .game-art { background: color-mix(in srgb, var(--matrix-brand-blue) 25%, var(--app-card)); }
+:root .game-cover--solitaire .game-art, :root .game-cover--minesweeper .game-art { background: color-mix(in srgb, var(--matrix-brand-coral) 12%, var(--app-card)); }
+:root[data-app='calculator'] .display { background: var(--matrix-brand-teal); color: var(--matrix-brand-paper); }
+:root[data-app='calculator'] .expr-input { color: var(--matrix-brand-paper); }
+:root[data-app='calculator'] .preview { background: transparent; color: var(--matrix-brand-green); }
+:root[data-app='calculator'] .preview--error { color: var(--matrix-brand-gold); }
+:root[data-app='calculator'] .preview-hint, :root[data-app='calculator'] .expr-input::placeholder { color: var(--matrix-brand-blue); }
+:root .identity-art { color: var(--app-accent); }
+:root .focus-clock { border-color: var(--matrix-brand-coral); box-shadow: inset 0 0 0 12px color-mix(in srgb, var(--matrix-brand-coral) 12%, var(--app-bg)); }
+:root[data-app='whiteboard'] .wb-canvas { background: var(--app-card); }
+@media (max-width: 420px) { :root .game-art img { width: 88px; height: 88px; } }
