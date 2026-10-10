@@ -13,6 +13,7 @@ import type { Server } from 'node:http';
 import type Dockerode from 'dockerode';
 import type { Agent } from 'undici';
 import { shouldEnablePlatformBackgroundWorkers } from './platform-worker-mode.js';
+import { runPlatformStartupWithCleanup } from './platform-startup-cleanup.js';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -1149,20 +1150,6 @@ async function startPlatformServerWithCleanup(
 }
 
 export async function startPlatformServer(opts: StartPlatformServerOptions): Promise<void> {
-  let customMcpStartupCleanup: (() => Promise<void>) | undefined;
-  try {
-    await startPlatformServerWithCleanup(opts, (cleanup) => {
-      customMcpStartupCleanup = cleanup;
-    });
-  } catch (startupError: unknown) {
-    try {
-      await customMcpStartupCleanup?.();
-    } catch (cleanupError: unknown) {
-      console.error(
-        '[platform] Custom MCP startup cleanup failed:',
-        cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-      );
-    }
-    throw startupError;
-  }
+  await runPlatformStartupWithCleanup(registerCleanup =>
+    startPlatformServerWithCleanup(opts, registerCleanup));
 }

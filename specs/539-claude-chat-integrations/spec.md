@@ -338,6 +338,17 @@ baseline match after upgrade. PGlite covers older predecessors independently.
 These tests establish compatibility; Cloud Run startup and installed runtime
 provenance must establish deployment success separately.
 
+Platform startup retains a bounded registry of failure cleanups (maximum 32)
+and drains every registered callback in reverse order before rethrowing the
+original startup error. A disabled ATS worker's no-op cleanup must not replace
+Custom MCP, funded-worker, WhatsApp or account-deletion cleanup. An individual
+cleanup failure produces a coarse warning and cannot prevent other drains.
+Custom MCP broker and owned pool close guards remain idempotent when early pool
+registration and later composite callbacks overlap. Successful startup releases
+the failure registry; normal shutdown retains resource ownership. Behavioral
+injection tests verify drain order, pending-worker completion, failure isolation,
+the registration cap and normal ownership transfer.
+
 Private owner file-path previews retain main's absolute-path presentation, even
 outside the execution root. Commands, working directories, queries and patterns
 always use safe projection. Shared file paths remain relative or omitted; secret
