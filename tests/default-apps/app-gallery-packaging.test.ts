@@ -1,7 +1,9 @@
 import { readFile, access } from "node:fs/promises";
+import { basename } from "node:path";
 import { describe, expect, it } from "vitest";
 import catalog from "../../home/system/app-gallery.json";
 import { iconUrlForSlug } from "../../shell/src/lib/app-launch";
+import { resolveSystemIconPath } from "../../packages/gateway/src/default-icons";
 
 describe("curated gallery release packaging", () => {
   it("builds the portable starter before hashing the shipped home template", async () => {
@@ -20,7 +22,16 @@ describe("curated gallery release packaging", () => {
     for (const icon of ["app-gallery", ...catalog.apps.map(app => app.icon)]) {
       const url = iconUrlForSlug(icon);
       expect(url).toMatch(/^\/icons\/[a-z0-9-]+\.(svg|png)$/);
-      await expect(access(`home/system${url}`)).resolves.toBeUndefined();
+      const requestedFile = basename(url!);
+      const stem = requestedFile.replace(/\.(svg|png)$/, "");
+      const shippedPath = await resolveSystemIconPath("home", requestedFile);
+      // PNG requests preserve owner artwork precedence; the gateway may serve
+      // the app's shipped SVG, but a generic game fallback is not sufficient.
+      expect([
+        `home/system/icons/${stem}.png`,
+        `home/system/icons/${stem}.svg`,
+      ]).toContain(shippedPath);
+      await expect(access(shippedPath!)).resolves.toBeUndefined();
     }
   });
 });
