@@ -9,6 +9,7 @@ import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
+import { bundledDesktopIconForPath, desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
 import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
@@ -25,6 +26,7 @@ import { useDesktopIcons } from "../../stores/desktop-icons";
 import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
+  osViewUsesBundledArtworkForLegacyIcon,
   type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -86,6 +88,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const { data: installedApps = [], refetch: refetchInstalledApps, isPending: appsLoading } = useAppsQuery();
+  const displayTabs = useMemo(
+    () => desktopTabsWithLiveAppArtwork(tabs, installedApps, platformHost, runtimeSlot),
+    [tabs, installedApps, platformHost, runtimeSlot],
+  );
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -251,6 +257,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [closeTab, tabs]);
 
   const destinations = useMemo<DesktopDestination[]>(() => {
+    const fixedApps = FIXED_DESKTOP_APPS.map((app) => {
+      if (app.id !== "notes" && app.id !== "whiteboard") return app;
+      const installed = installedApps.find((candidate) => candidate.path === app.path);
+      return installed?.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
+        ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
+        : app;
+    });
     const openers: Record<DesktopAppId, () => void> = {
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
@@ -271,10 +284,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         openTab({ kind: "settings", title: "Connect Apps" });
       }),
       browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
-      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
-      whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard" })),
+      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
+      whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
     };
-    const fixed = FIXED_DESKTOP_APPS.map((app) => ({
+    const fixed = fixedApps.map((app) => ({
       ...app,
       open: () => {
         trackDesktopEvent({ name: "desktop_app_opened", appKind: FIXED_APP_ANALYTICS_KINDS[app.id] });
@@ -294,7 +307,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         color: "var(--bg-surface)",
         open: () => {
           trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
-          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
+          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, icon: appIconUrl(platformHost, app, runtimeSlot) ?? undefined, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
         },
       }];
     });
@@ -391,7 +404,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       <DesktopBackground />
       <DesktopAppDrawer
         open={drawerOpen}
-        tabs={tabs}
+        tabs={displayTabs}
         surfaces={surfaces}
         onClose={() => setDrawerOpen(false)}
         onActivate={activateFromDrawer}
@@ -405,7 +418,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       <DesktopBackgroundMenu>
         <DesktopWorkspacePlane mode={desktopMode} onBackgroundClick={showDesktopWithRefresh}>
           {desktopMode === "canvas" ? <DesktopIconGrid destinations={destinations} placements={effectiveDesktopIcons} onMove={moveIcon} onRemove={removeIcon} /> : null}
-          {tabs.map((tab) => {
+          {displayTabs.map((tab) => {
           const surface = surfaces[tab.id];
           if (!surface) return null;
           return (
@@ -454,7 +467,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       ) : null}
       {!tabWorkspaceActive ? (
         <DesktopTaskbar
-          tabs={tabs}
+          tabs={displayTabs}
           surfaces={surfaces}
           activeTabId={activeTabId}
           onOpenApps={toggleApps}

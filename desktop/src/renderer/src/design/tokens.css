@@ -5,7 +5,7 @@
 
 :root {
   /* ── Background layers (low → high) ─────────────────────────── */
-  --bg-app: #fcfcfb;
+  --bg-app: #fcfcf8;
   --bg-surface: #ffffff;
   --bg-raised: #ffffff;
   --bg-overlay: #ffffff;
@@ -30,16 +30,16 @@
   --gradient-accent: #6a8a7a;
 
   /* ── Brand surfaces (the dark forest panel) ─────────────────── */
-  --forest: #434e3f;
-  --forest-deep: #32352e;
+  --forest: #0e3422;
+  --forest-deep: #092417;
   --forest-foreground: #fafaf5;
   --forest-muted: rgba(250, 250, 245, 0.62);
 
   /* Pinned brand tokens for pre-auth brand surfaces (sign-in panel).
      Unlike --forest*, the theme engine never overrides these, so the
      Matrix forest + orange identity survives every workspace theme. */
-  --brand-forest: #434e3f;
-  --brand-forest-deep: #32352e;
+  --brand-forest: #0e3422;
+  --brand-forest-deep: #092417;
   --brand-forest-foreground: #fafaf5;
   --brand-forest-muted: rgba(250, 250, 245, 0.62);
 
@@ -52,7 +52,7 @@
   --sidebar-divider: color-mix(in srgb, var(--border-subtle) 62%, transparent);
 
   /* ── Text ───────────────────────────────────────────────────── */
-  --text-primary: #282c25;
+  --text-primary: #0e3422;
   --text-secondary: #5b5f53;
   /* WCAG AA: 4.99:1 on --bg-surface, 4.86:1 on --bg-app. */
   --text-tertiary: #73705f;
@@ -63,10 +63,10 @@
   --text-danger: #b42318;
 
   /* ── Brand & semantic ───────────────────────────────────────── */
-  --accent: #434e3f;
-  --accent-hover: #353e31;
+  --accent: #0e3422;
+  --accent-hover: #174d34;
   --accent-muted: rgba(67, 78, 63, 0.1);
-  --highlight: #d06f25;
+  --highlight: #d06e53;
   --highlight-muted: rgba(208, 111, 37, 0.12);
   --success: #4f9d69;
   --success-muted: rgba(79, 157, 105, 0.14);
@@ -103,8 +103,8 @@
   --status-failed: #c8553d;
 
   /* ── Typography ─────────────────────────────────────────────── */
-  --font-ui: "Instrument Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
-  --font-editorial: "Instrument Serif", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-ui: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-editorial: "Bricolage Grotesque", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --font-mono: "JetBrains Mono", "MesloLGS NF", "SF Mono", ui-monospace, monospace;
   --text-xs: 11px;
   --text-sm: 12px;
@@ -168,8 +168,8 @@
   /* Brand surfaces stay identical across OS color schemes. The surrounding
      workspace may go dark, but sign-in must retain the recognizable Matrix
      forest palette rather than collapsing into the app's near-black chrome. */
-  --brand-forest: #434e3f;
-  --brand-forest-deep: #32352e;
+  --brand-forest: #0e3422;
+  --brand-forest-deep: #092417;
   --brand-forest-foreground: #fafaf5;
   --brand-forest-muted: rgba(250, 250, 245, 0.62);
 

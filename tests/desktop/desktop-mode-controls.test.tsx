@@ -2,7 +2,7 @@
 
 import React from "react";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -45,25 +45,33 @@ describe("Desktop mode controls", () => {
       button.getAttribute("aria-label") ?? button.textContent
     ));
     expect(labels).toEqual([
-      "Web Desktop",
-      "Web Canvas",
       "Search",
-      "Support",
-      "Join Discord",
+      "Inbox",
+      "Help",
       "Main computer",
-      "Getting started — 0 of 5",
       "Update Matrix OS to 1.2.3",
       "Open account menu",
     ]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Join Discord" }));
-    expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
-      url: "https://discord.gg/WHbvTG33w",
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(useUi.getState().rendererOverlayCount).toBeGreaterThan(0);
+    expect(screen.getByRole("link", { name: "Join Discord" }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
 
     const update = screen.getByRole("button", { name: "Update Matrix OS to 1.2.3" });
     const avatar = screen.getByRole("button", { name: "Open account menu" }).querySelector("span");
     expect(update.className).toContain("size-6");
     expect(avatar?.className).toContain("size-6");
   });
+  it("opens and toggles the checklist through the actual nested Help controls", async () => {
+    render(<GettingStartedVisibilityProvider scope="controls-test"><DesktopModeControls /></GettingStartedVisibilityProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const trigger = await screen.findByRole("button", { name: "Getting started — 0 of 5" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+  });
+
 });

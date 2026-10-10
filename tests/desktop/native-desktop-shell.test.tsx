@@ -39,6 +39,12 @@ function mockLoadedWallpaperImage(): void {
   });
 }
 
+async function selectDesktopViewAction(name: "Show desktop" | "Desktop view" | "Canvas view"): Promise<void> {
+  fireEvent.pointerDown(screen.getByRole("tab", { name: "Desktop" }), { button: 0, ctrlKey: false });
+  const item = await screen.findByRole(name === "Show desktop" ? "menuitem" : "menuitemradio", { name });
+  fireEvent.click(item);
+}
+
 function getWindowControl(title: string, action: "Close" | "Minimize" | "Maximize"): HTMLElement {
   return within(screen.getByRole("dialog", { name: `${title} window` }))
     .getByRole("button", { name: action });
@@ -80,6 +86,7 @@ vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () =>
 }));
 
 beforeEach(() => {
+  vi.stubGlobal("PointerEvent", MouseEvent);
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useConnection.setState(useConnection.getInitialState(), true);
@@ -131,30 +138,18 @@ describe("native desktop shell", () => {
     expect(browserLabel?.style.color).toBe("rgb(255, 255, 255)");
     expect(browserLabel?.style.background).toBe("");
     expect(browserLabel?.style.textShadow).toContain("rgba(0, 0, 0");
-    const browserGlow = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon-shine]");
-    expect(browserGlow?.style.background).toContain("linear-gradient(180deg");
-    expect(browserGlow?.style.height).toBe("50%");
-    const browserAppIcon = browserIcon.querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(browserAppIcon?.style.background).toBe("var(--surface-info-emphasis, #3B85BA)");
-    expect(browserAppIcon?.style.color).toBe("white");
-    expect(screen.getByRole("button", { name: "Chat" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-error-emphasis, #BA5236)");
-    expect(screen.getByRole("button", { name: "Terminal" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-warning-emphasis, #E0AA52)");
-    expect(screen.getByRole("button", { name: "Files" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-brand-emphasis, #748E59)");
+    for (const name of ["Browser", "Chat", "Terminal", "Files", "Settings", "VS Code"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.querySelector("img")?.className).toContain("object-contain");
+      expect(button.querySelector("[data-desktop-app-icon]")).toBeNull();
+      expect(button.querySelector("[data-desktop-app-icon-shine]")).toBeNull();
+    }
     expect(screen.queryByRole("button", { name: "Projects" })).toBeNull();
     expect(screen.getByRole("button", { name: "Connect Apps" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Notes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Whiteboard" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Editor" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "VS Code" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Settings" })
-      .querySelector<HTMLElement>("[data-desktop-app-icon]")?.style.background)
-      .toBe("var(--surface-neutral-emphasis, #6B7280)");
     const filesDockIcon = screen.getByTestId("desktop-taskbar-files")
       .querySelector<HTMLElement>("[data-desktop-app-icon]");
     expect(filesDockIcon?.classList.contains("absolute")).toBe(true);
@@ -170,10 +165,7 @@ describe("native desktop shell", () => {
   it("switches between Desktop and Canvas from visible header controls and keeps Settings reachable", async () => {
     render(<><NavigationHeader /><NativeDesktopShell overlayOpen={false} /></>);
 
-    const desktopMode = screen.getByRole("button", { name: "Web Desktop" });
-    const canvasMode = screen.getByRole("button", { name: "Web Canvas" });
-    expect(desktopMode.getAttribute("aria-pressed")).toBe("true");
-    expect(canvasMode.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Settings" }));
     const settingsTab = useTabs.getState().tabs.find((candidate) => candidate.kind === "settings");
@@ -183,10 +175,10 @@ describe("native desktop shell", () => {
     expect(settingsContent.getAttribute("data-settings-section")).toBe("agents-providers");
     const desktopBounds = useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds;
 
-    fireEvent.click(canvasMode);
+    await selectDesktopViewAction("Canvas view");
 
     expect(useNativeDesktopMode.getState().mode).toBe("canvas");
-    expect(canvasMode.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("native-desktop-canvas")).toBeTruthy();
     expect(settingsContent.getAttribute("data-settings-section")).toBe("agents-providers");
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("window");
@@ -198,13 +190,13 @@ describe("native desktop shell", () => {
     ));
     const canvasBounds = useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds;
 
-    fireEvent.click(desktopMode);
+    await selectDesktopViewAction("Desktop view");
     expect(useNativeDesktopMode.getState().mode).toBe("desktop");
-    expect(desktopMode.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("native-desktop-workspace")).toBeTruthy();
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds).toEqual(desktopBounds);
 
-    fireEvent.click(canvasMode);
+    await selectDesktopViewAction("Canvas view");
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]!.bounds).toEqual(canvasBounds);
   });
 
@@ -324,7 +316,7 @@ describe("native desktop shell", () => {
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
     fireEvent.click(getWindowControl("Browser", "Maximize"));
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
 
     await waitFor(() => {
       expect(screen.getByTestId("desktop-background").style.backgroundColor).toBe("rgb(34, 51, 68)");
@@ -421,7 +413,7 @@ describe("native desktop shell", () => {
     ]);
   });
 
-  it("offers Settings as a native app and maximizes it into tabs", () => {
+  it("offers Settings as a native app and maximizes it into tabs", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     const settingsIcon = screen.getByRole("button", { name: "Settings" });
@@ -445,11 +437,11 @@ describe("native desktop shell", () => {
     expect(useDesktopSurfaces.getState().surfaces[settingsTab!.id]?.mode).toBe("tab");
     expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
     expect(screen.getByRole("button", { name: "Settings" })).toBeTruthy();
   });
 
-  it("opens Terminal as its own window and only adds it to the main tab strip when maximized", () => {
+  it("opens Terminal as its own window and only adds it to the main tab strip when maximized", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
@@ -468,12 +460,12 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Terminal" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.queryByRole("navigation", { name: "Running apps" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
     expect(screen.getByRole("tab", { name: "Desktop" }).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByRole("button", { name: "Browser" })).toBeTruthy();
     expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).toEqual([]);
 
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
     expect(useDesktopSurfaces.getState().desktopHiddenSurfaceIds).not.toContain(terminalTab!.id);
     expect(useDesktopSurfaces.getState().surfaces[terminalTab!.id]?.mode).toBe("tab");
 
@@ -823,13 +815,13 @@ describe("native desktop shell", () => {
       .classList.contains("rounded-[24px]")).toBe(true);
   });
 
-  it("opens launcher apps as windows after returning from retained tabs to the Desktop", () => {
+  it("opens launcher apps as windows after returning from retained tabs to the Desktop", async () => {
     useConnection.setState({ platformHost: "https://runtime.example.com" });
     seedDesktopApps([{ slug: "notes", name: "Notes" }]);
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
 
     fireEvent.click(screen.getAllByRole("button", { name: "Open App Launcher" })[0]!);
     fireEvent.click(within(screen.getByRole("dialog", { name: "App launcher" }))
@@ -895,11 +887,11 @@ describe("native desktop shell", () => {
     const launcher = dock.querySelector<HTMLElement>("[aria-label='Open App Launcher']");
     expect(launcher?.style.background).toBe("");
     const launcherAppIcon = launcher?.querySelector<HTMLElement>("[data-desktop-app-icon]");
-    expect(launcherAppIcon?.style.background).toBe("var(--surface-inverse, #0D0C0C)");
-    expect(launcherAppIcon?.style.color).toBe("rgb(250, 250, 245)");
+    expect(launcherAppIcon?.style.background).toBe("");
+    expect(launcher?.querySelector("img")?.getAttribute("width")).toBe("44");
     expect(launcherAppIcon?.className).toContain("group-hover:-translate-y-0.5");
-    expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeTruthy();
-    expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeTruthy();
+    expect(launcher?.querySelector("[data-desktop-app-icon-shine]")).toBeNull();
+    expect(dock.querySelector("[data-testid='desktop-taskbar-files'] [data-desktop-app-icon-shine]")).toBeNull();
     expect(dock.style.minWidth).toBe("");
     expect(dock.querySelector("[data-testid='desktop-taskbar-running-apps']"))
       .toBeNull();
@@ -934,19 +926,19 @@ describe("native desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "Files window" })).toBeNull();
   });
 
-  it("focuses Dock apps instead of minimizing them, including tabbed apps from Desktop", () => {
+  it("focuses Dock apps instead of minimizing them, including tabbed apps from Desktop", async () => {
     render(<><NavigationHeader nativeDesktop /><NativeDesktopShell overlayOpen={false} /></>);
 
     fireEvent.doubleClick(screen.getByRole("button", { name: "Terminal" }));
     const terminalTabId = useTabs.getState().activeTabId!;
     const dock = screen.getByRole("navigation", { name: "Running apps" });
-    expect(dock.querySelector("[title='Terminal'] [data-desktop-app-icon-shine]")).toBeTruthy();
+    expect(dock.querySelector("[title='Terminal'] [data-desktop-app-icon-shine]")).toBeNull();
     fireEvent.click(dock.querySelector<HTMLButtonElement>("[title='Terminal']")!);
     expect(useDesktopSurfaces.getState().surfaces[terminalTabId]?.mode).toBe("window");
     expect(useTabs.getState().activeTabId).toBe(terminalTabId);
 
     fireEvent.click(getWindowControl("Terminal", "Maximize"));
-    fireEvent.click(screen.getByRole("tab", { name: "Desktop" }));
+    await selectDesktopViewAction("Show desktop");
     fireEvent.click(
       screen.getByRole("navigation", { name: "Running apps" })
         .querySelector<HTMLButtonElement>("[title='Terminal']")!,

@@ -36,7 +36,7 @@ describe("native installed-app opening", () => {
     expect(openApp).toHaveBeenCalledWith(app);
   });
   it.each(["https://evil.test", "//evil.test", "__settings__", "/etc/passwd", "apps/planner/../../system/config.json",
-    "apps/planner/%2e%2e/index.html", "apps/planner/src/main.tsx", "apps/planner/index.html?token=forged", "apps/planner\\index.html"])("rejects unsafe destinations before lookup: %s", async (path) => {
+    "apps/planner/%2e%2e/index.html", "apps/planner/index.html?token=forged", "apps/planner\\index.html"])("rejects unsafe destinations before lookup: %s", async (path) => {
     const { bridge, openApp, resolveApp } = fixture();
     await expect(bridge.openApp(sender, { name: "Planner", path })).rejects.toThrow();
     expect(resolveApp).not.toHaveBeenCalled(); expect(openApp).not.toHaveBeenCalled();
@@ -140,7 +140,9 @@ describe("installed app catalog resolution", () => {
     }
     expect(fetchFn).toHaveBeenCalledWith("https://gateway.test/api/apps", expect.objectContaining({ redirect: "error",
       headers: { authorization: "Bearer desktop-token" }, signal: expect.any(AbortSignal) }));
-    await expect(resolveApp({ name: "Planner", path: "apps/missing" })).rejects.toThrow();
+    for (const path of ["apps/missing", "apps/planner/src/main.tsx"]) {
+      await expect(resolveApp({ name: "Planner", path })).rejects.toThrow();
+    }
   });
   it("rejects built-in destinations, unavailable auth, failed and oversized catalog responses", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "settings", name: "Settings", path: "__settings__" }])));
@@ -152,5 +154,69 @@ describe("installed app catalog resolution", () => {
     await expect(resolveApp(request)).rejects.toThrow();
     const signedOut = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => null, fetchFn });
     await expect(signedOut(request)).rejects.toThrow(); expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+});
+
+
+describe("manifest-backed moved owner app launch", () => {
+  it.each(["apps/renamed-ledger", "apps/finance/renamed-ledger", "apps/My Finance/Owner Ledger"])("opens %s through the registered bridge and catalog resolver", async (path) => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "folio", name: "Owner Ledger", path: `/files/${path}/index.html`, launchUrl: "/apps/folio/" }])));
+    const resolver = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn });
+    const openApp = vi.fn();
+    const bridge = new NativeAppBridge({ authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", resolveApp: resolver, openApp });
+    bridge.register(1, "gallery");
+    for (const entry of [path, `${path}/index.html`, `${path}/dist/index.html`, "apps/folio"]) {
+      await bridge.openApp(sender, { name: "Forged", path: entry });
+    }
+    expect(openApp).toHaveBeenCalledTimes(4);
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "folio", name: "Owner Ledger", appIdentity: "folio" });
+    await expect(bridge.openApp(sender, { name: "Other", path: "apps/not-installed" })).rejects.toThrow();
+    expect(openApp).toHaveBeenCalledTimes(4);
+  });
+});
+
+
+describe("explicit manifest launch identities", () => {
+  const catalog = [
+    { slug: "folio", name: "Folio", path: "/files/apps/ledger/index.html" },
+    { slug: "ledger", name: "Ledger", path: "/files/apps/folio/index.html" },
+  ];
+  it("opens the manifest identity despite another app occupying its old folder, while retaining folder launches", async () => {
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify(catalog)));
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn });
+    const openApp = vi.fn();
+    const bridge = new NativeAppBridge({ authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test", resolveApp, openApp });
+    bridge.register(1, "gallery");
+    const open = createNativeAppOpenClient(value => bridge.openApp(sender, value));
+    open("Forged", "matrix-app:folio");
+    await vi.waitFor(() => expect(openApp).toHaveBeenCalledWith({ slug: "folio", name: "Folio", appIdentity: "folio" }));
+    await bridge.openApp(sender, { name: "Forged", path: "apps/folio" });
+    expect(openApp).toHaveBeenLastCalledWith({ slug: "ledger", name: "Ledger", appIdentity: "ledger" });
+  });
+  it.each(["matrix-app:missing", "matrix-app:../folio", "matrix-app:folio?x", "matrix-app:folio/other", "matrix-app://folio"])("keeps invalid or unavailable identity %s closed", async path => {
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn: vi.fn(async () => new Response(JSON.stringify(catalog))) });
+    await expect(resolveApp({ name: "Forged", path })).rejects.toThrow();
+  });
+  it("keeps duplicate manifest identities closed instead of picking one owner folder", async () => {
+    const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "owner-token", fetchFn: vi.fn(async () => new Response(JSON.stringify([catalog[0], { ...catalog[0], path: "/files/apps/duplicate/index.html" }]))) });
+    await expect(resolveApp({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow();
+  });
+});
+
+describe("bounded long owner paths with explicit manifest identities", () => {
+  const ownerRoot = "apps/" + Array.from({ length: 16 }, () => "a".repeat(250)).join("/");
+  const row = { slug: "folio", name: "Owner Folio", path: `/files/${ownerRoot}/index.html` };
+  const resolver = (rows: unknown[]) => createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "token", fetchFn: vi.fn(async () => new Response(JSON.stringify(rows))) });
+  it.each([2049, 4096])("opens a supported %s-character catalog root through its manifest identity", async length => {
+    const components = Array.from({ length: 16 }, (_, index) => "a".repeat(Math.floor((length - 20) / 16) + (index < (length - 20) % 16 ? 1 : 0)));
+    const root = "apps/" + components.join("/");
+    expect(root.length).toBe(length);
+    await expect(resolver([{ ...row, path: `/files/${root}/index.html` }])({ name: "Forged", path: "matrix-app:folio" })).resolves.toEqual({ slug: "folio", name: "Owner Folio", appIdentity: "folio" });
+  });
+  it("counts long-folder duplicate identities before allowing a short-folder launch", async () => {
+    await expect(resolver([{ ...row, path: "/files/apps/short/index.html" }, row])({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow("installed app unavailable");
+  });
+  it.each(["apps/../owner", "apps/owner%2fsecret", "apps/owner\\secret", "apps/owner?secret", "apps/" + "a".repeat(4096)])("rejects unsafe or oversized catalog roots: %s", async root => {
+    await expect(resolver([{ ...row, path: `/files/${root}/index.html` }])({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow("installed app unavailable");
   });
 });
