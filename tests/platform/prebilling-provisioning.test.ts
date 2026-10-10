@@ -44,6 +44,7 @@ describe('platform prebilling provisioning foundation', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await destroyTestPlatformDb(db);
   });
 
@@ -639,6 +640,12 @@ describe('platform prebilling provisioning foundation', () => {
   });
 
   it('records payment first and atomically authorizes the exact machine when it becomes ready', async () => {
+    for (const [key, value] of Object.entries({ MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true',
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', AI_FUNDED_PROMOTIONAL_GRANT_ENABLED: 'true',
+      AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID: 'existing-starter', AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD: '5000000', AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32),
+      AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT: EXPIRES_AT })) vi.stubEnv(key, value);
+    await db.executor.updateTable('ai_funded_global_policy').set({ enabled: true,
+      allowed_model_ids: '["anthropic/claude-sonnet-5"]' }).execute();
     await seedCheckout('checkout-1', 'user_123');
     await createIntent('intent-1', 'checkout-1', 'user_123');
     const admitted = await admitPrebillingIntent(db, {
@@ -702,9 +709,20 @@ describe('platform prebilling provisioning foundation', () => {
     });
     await expect(getRunningUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
     await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+    expect(await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().execute()).toEqual([
+      expect.objectContaining({ enabled: true, monthly_budget_microusd: 5000000, expires_at: null })]);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toEqual([
+      expect.objectContaining({ amount_microusd: 5000000, expires_at: null })]);
   });
 
   it('keeps a ready machine fenced until payment authorizes that same machine', async () => {
+    for (const [key, value] of Object.entries({ MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true',
+      MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', AI_FUNDED_PROMOTIONAL_GRANT_ENABLED: 'true',
+      AI_FUNDED_PROMOTIONAL_GRANT_CAMPAIGN_ID: 'existing-starter', AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD: '5000000', AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32),
+      AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT: EXPIRES_AT })) vi.stubEnv(key, value);
+    await db.executor.updateTable('ai_funded_global_policy').set({ enabled: true,
+      allowed_model_ids: '["anthropic/claude-sonnet-5"]' }).execute();
+
     await seedCheckout('checkout-1', 'user_123');
     await createIntent('intent-1', 'checkout-1', 'user_123');
     const admitted = await admitPrebillingIntent(db, {
@@ -762,6 +780,10 @@ describe('platform prebilling provisioning foundation', () => {
       authorizedAt: CREATED_AT,
     });
     await expect(getAccessibleActiveUserMachineByClerkId(db, 'user_123', 'primary')).resolves.toBeDefined();
+    expect(await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().execute()).toEqual([
+      expect.objectContaining({ enabled: true, monthly_budget_microusd: 5000000, expires_at: null })]);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toEqual([
+      expect.objectContaining({ amount_microusd: 5000000, expires_at: null })]);
   });
 
   it('durably retires an unauthorized machine only from signed checkout expiry', async () => {
