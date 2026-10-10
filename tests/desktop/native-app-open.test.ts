@@ -202,3 +202,21 @@ describe("explicit manifest launch identities", () => {
     await expect(resolveApp({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow();
   });
 });
+
+describe("bounded long owner paths with explicit manifest identities", () => {
+  const ownerRoot = "apps/" + Array.from({ length: 16 }, () => "a".repeat(250)).join("/");
+  const row = { slug: "folio", name: "Owner Folio", path: `/files/${ownerRoot}/index.html` };
+  const resolver = (rows: unknown[]) => createNativeAppOpenResolver({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "token", fetchFn: vi.fn(async () => new Response(JSON.stringify(rows))) });
+  it.each([2049, 4096])("opens a supported %s-character catalog root through its manifest identity", async length => {
+    const components = Array.from({ length: 16 }, (_, index) => "a".repeat(Math.floor((length - 20) / 16) + (index < (length - 20) % 16 ? 1 : 0)));
+    const root = "apps/" + components.join("/");
+    expect(root.length).toBe(length);
+    await expect(resolver([{ ...row, path: `/files/${root}/index.html` }])({ name: "Forged", path: "matrix-app:folio" })).resolves.toEqual({ slug: "folio", name: "Owner Folio", appIdentity: "folio" });
+  });
+  it("counts long-folder duplicate identities before allowing a short-folder launch", async () => {
+    await expect(resolver([{ ...row, path: "/files/apps/short/index.html" }, row])({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow("installed app unavailable");
+  });
+  it.each(["apps/../owner", "apps/owner%2fsecret", "apps/owner\\secret", "apps/owner?secret", "apps/" + "a".repeat(4096)])("rejects unsafe or oversized catalog roots: %s", async root => {
+    await expect(resolver([{ ...row, path: `/files/${root}/index.html` }])({ name: "Forged", path: "matrix-app:folio" })).rejects.toThrow("installed app unavailable");
+  });
+});
