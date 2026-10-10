@@ -47,7 +47,7 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
   const inventory = MatrixComputerListSchema.parse(list);
   const slot = ComputerContextSchema.parse(context).runtime.runtimeSlot;
   // Installed runtime identity wins over the account's stored primary selection.
-  if (!inventory.items.some(computer => computer.runtimeSlot === slot)) throw new Error("Current computer unavailable");
+  // A bounded list may omit this verified installed slot; keep its valid choices.
   return { inventory, slot };
 }
 
@@ -76,7 +76,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     return () => controller.abort();
   }, [gateway, refresh]);
   const current = state.inventory?.items.find(computer => computer.runtimeSlot === state.slot);
-  const label = current?.label ?? (state.status === "loading" ? "Loading computers…" : "Computer unavailable");
+  const label = current?.label ?? (state.status === "loading" ? "Loading computers…" : state.status === "ready" ? "Current computer" : "Computer unavailable");
   const triggerLabel = state.status === "loading" ? "Loading computers" : state.status === "error" ? "Computer list unavailable" : `Change computer, currently ${label}`;
   const requestRefresh = useCallback(() => { setState({ status: "loading", inventory: null, slot: null }); setRefresh(value => value + 1); }, []);
   return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild>
@@ -95,6 +95,6 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
           <Menu.Item key={computer.runtimeSlot} asChild><a href={computer.gatewayPath} className={rowClass}>{contents}</a></Menu.Item>
         : <Menu.Item key={computer.runtimeSlot} disabled className={rowClass}>{contents}</Menu.Item>;
     })}
-    {state.inventory?.hasMore ? <Link href="/runtime" className={rowClass}>All computers</Link> : null}
+    <Link href="/runtime" className={rowClass}>All computers</Link>
   </Menu.Content></Menu.Portal></Menu.Root>;
 }

@@ -1,5 +1,5 @@
-import type { AppEntry } from "@/hooks/useWindowManager";
-import type { DesktopMode } from "@/stores/desktop-mode";
+import { useWindowManager, type AppEntry } from "@/hooks/useWindowManager";
+import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
 import { getGatewayUrl, gatewayAssetUrl } from "@/lib/gateway";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import {
@@ -10,6 +10,16 @@ import {
   isOsViewDestinationPath,
   otherOsViewMode,
 } from "@matrix-os/contracts";
+
+/** Reveal the desktop without discarding open apps or their saved geometry. */
+export function showWebDesktop(minimizeWindow: (id: string) => void = useWindowManager.getState().minimizeWindow): void {
+  const state = useWindowManager.getState();
+  useDesktopMode.getState().setMode("desktop");
+  state.exitFullscreen();
+  for (const windowRecord of state.windows) {
+    if (!windowRecord.minimized) minimizeWindow(windowRecord.id);
+  }
+}
 
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }

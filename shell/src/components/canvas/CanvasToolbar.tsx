@@ -11,6 +11,7 @@ import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
 import { DesktopViewMenu } from "@matrix-os/ui";
 import { WebDesktopControls, type WebDesktopSettingsSection } from "../desktop/WebDesktopControls";
 import { openShellSupport } from "@/lib/posthog-client";
+import { showWebDesktop } from "@/lib/web-desktop-app-launch";
 import { useDesktopMode } from "@/stores/desktop-mode";
 
 interface CanvasToolbarProps {
@@ -62,7 +63,7 @@ export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () 
 
   return (
     <>
-      <DesktopViewMenu mode={mode} onModeChange={setMode} onShowDesktop={() => setMode("desktop")} />
+      <DesktopViewMenu mode={mode} onModeChange={setMode} onShowDesktop={() => showWebDesktop()} />
       <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
       <button
         type="button"

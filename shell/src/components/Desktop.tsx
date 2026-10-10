@@ -40,6 +40,7 @@ import { versionedIconUrl } from "@/lib/icon-url";
 import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
+  showWebDesktop,
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
   webShellIconUrlForApp,
@@ -1282,12 +1283,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               }}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
               onCloseWindow={wmCloseWindow}
-              onShowDesktop={() => {
-                wmExitFullscreen();
-                for (const windowRecord of windows) {
-                  if (!windowRecord.minimized) animateMinimize(windowRecord.id);
-                }
-              }}
+              onShowDesktop={() => showWebDesktop(animateMinimize)}
               onToggleFullscreen={wmToggleFullscreen}
               desktopIcons={desktopIcons}
               onMoveDesktopIcon={moveDesktopIcon}

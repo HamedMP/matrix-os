@@ -42,11 +42,23 @@ describe("shared Web Desktop top bar", () => {
   expect(screen.getByRole("link", { name: "Join Discord" }).getAttribute("href")).toBe("https://discord.gg/WHbvTG33w");
   fireEvent.click(screen.getByRole("button", { name: "Support chat" }));expect(support).toHaveBeenCalledOnce();
  });
+ it("retains validated choices and All computers when the installed slot is outside the bounded list", async () => {
+  const bounded = { ...inventory, items: [inventory.items[0]], hasMore: true };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () =>
+    url.includes("/api/auth/computers") ? bounded : url.includes("/api/system/info") ? { runtime: { runtimeSlot: "review" } } : {} })));
+  render(<WebDesktopControls onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} />);
+  const trigger = await screen.findByRole("button", { name: "Change computer, currently Current computer" });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+  expect(screen.getByRole("menuitem", { name: /Main Computer/ }).getAttribute("href")).toBe(inventory.items[0].gatewayPath);
+  expect(screen.getByRole("link", { name: "All computers" }).getAttribute("href")).toBe("/runtime");
+  expect(screen.queryByText(/Current · neo/)).toBeNull();
+ });
  it("never offers navigation from an invalid computer inventory", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ ...inventory, items:[{...inventory.items[0],gatewayPath:"https://outside.example.com"}] }) })));
   render(<WebDesktopControls onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} />);
   fireEvent.pointerDown(await screen.findByRole("button", { name: "Computer list unavailable" }), { button: 0, ctrlKey: false });
   expect(screen.queryByRole("menuitem", { name: /Main Computer/ })).toBeNull();
   expect(screen.getByRole("button", { name: "Refresh computers" })).toBeTruthy();
+  expect(screen.getByRole("link", { name: "All computers" }).getAttribute("href")).toBe("/runtime");
  });
 });
