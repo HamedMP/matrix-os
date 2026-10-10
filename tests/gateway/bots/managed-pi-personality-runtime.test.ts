@@ -19,7 +19,7 @@ const defaults: CanonicalChatModelSelection = { instanceId: "matrix_pi_default",
 const custom: ChatRunContext = { version: 1, requestHash: "a".repeat(64), chats: [],
   agent: { id: "bot_0123456789abcdef", revision: 1, name: "Custom", instructions: "Custom instructions" } };
 
-function fixture(selection = defaults) {
+function fixture(selection = defaults, isolated = false) {
   const snapshot = makeAiProviderSnapshot();
   const funded = resolveManagedPiRoute(snapshot, defaults);
   const resolved: ResolvedBotRoute = selection.instanceId === "matrix_pi_chatgpt_plan" ? {
@@ -28,6 +28,7 @@ function fixture(selection = defaults) {
   } : selection.instanceId === "matrix_pi_anthropic_api" ? {
     ...funded, accessSourceId: "owner_anthropic_key", route: { ...funded.route, api: "anthropic-messages" }, anthropicApi: { connectionRevision: 1, credentialGeneration: "12345678-1234-4123-8123-123456789abc" },
   } : funded;
+  if (isolated) resolved.route = { ...resolved.route, maxOutputTokens: 256 };
   const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "user_owner", chatId: "chat_soul", runId: "run_soul",
     runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" },
     rootFingerprint: "a".repeat(64), ...resolved, capabilities: ["artifact.read"], requestClass: "interactive" };
@@ -43,6 +44,11 @@ function fixture(selection = defaults) {
     host: { client: { runBot } } as unknown as ScopeRuntimeHost,
     providers: { getSnapshot: async () => snapshot }, personality: { homePath: home, runtimeOwnerId: "user_owner" },
     chatgptPlan: { resolve: async () => resolved } as never, matrixAnthropic: { resolve: async () => resolved } as never,
+    ...(isolated ? { isolatedChat: {
+      select: () => true, targets: () => true,
+      claim: vi.fn(async () => ({ phaseId: "phase_soul_union", maxInputBytes: 131072 as const })),
+      consume: vi.fn(async () => true),
+    } } : {}),
     lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined,
   });
   const input: CanonicalProviderRunInput = { owner: { type: "personal", ownerId: "user_owner" }, chatId: binding.chatId, turnId: "cturn_soul", runId: binding.runId,
@@ -109,4 +115,18 @@ it.each([
   await expect(f.start(overrides)).rejects.toThrow("Unsupported Matrix AI input");
   expect(f.admit).not.toHaveBeenCalled();
   expect(f.runBot).not.toHaveBeenCalled();
+});
+
+
+it("preserves the per-turn owner SOUL and server-issued isolated run limits together", async () => {
+  await writeFile(soul(), "Your name is Rick. Keep authority and approvals unchanged.");
+  const f = fixture(defaults, true);
+  expect((await f.start()).at(-1)).toMatchObject({ outcome: "completed" });
+  expect(f.spec()).toMatchObject({
+    systemPrompt: expect.stringContaining("Your name is Rick."),
+    route: { maxOutputTokens: 256 }, limits: { maxToolActions: 1 },
+    isolatedTurn: { phaseId: "phase_soul_union", maxInputBytes: 131072 },
+    capabilities: ["artifact.read"],
+  });
+  expect(f.spec()?.systemPrompt).toContain(MANAGED_PI_BASE_PROMPT);
 });
