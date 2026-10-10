@@ -9,6 +9,28 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+const MAX_TARGET_SNAPSHOT_ATTEMPTS = 8;
+
+async function writableSoulSnapshot(path: string): Promise<Stats | undefined> {
+  for (let attempt = 0; attempt < MAX_TARGET_SNAPSHOT_ATTEMPTS; attempt++) {
+    let target: Stats;
+    try { target = await lstat(path); }
+    catch (error: unknown) { if (isMissing(error)) return undefined; throw error; }
+    if (!target.isFile() || target.isSymbolicLink()) throw new OwnerPersonalityError("unsafe_file");
+    // Preserve write permission and no-follow boundaries without truncating.
+    const existing = await open(path, constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const checked = await existing.stat();
+      if (!checked.isFile()) throw new OwnerPersonalityError("unsafe_file");
+      if (sameFile(target, checked)) return target;
+      // Another atomic commit can legitimately change the inode between
+      // lstat and open. Reinspect only this regular-file identity mismatch;
+      // permission, symlink and I/O failures never trigger a retry.
+    } finally { await existing.close(); }
+  }
+  throw new OwnerPersonalityError("unsafe_file");
+}
+
 /** Canonical Settings producer only. Never truncate a published SOUL inode. */
 export async function writeOwnerSoulAtomic(homePath: string, text: string): Promise<void> {
   let directory: FileHandle | undefined;
@@ -38,17 +60,8 @@ export async function writeOwnerSoulAtomic(homePath: string, text: string): Prom
     await writeUtf8FileAtomic(path, text, 0o600, {
       beforeCommit: async (_temp, stagedFile) => {
         await assertParent();
-        let target: Stats | undefined;
-        try { target = await lstat(path); }
-        catch (error: unknown) { if (!isMissing(error)) throw error; }
+        const target = await writableSoulSnapshot(path);
         if (target) {
-          if (!target.isFile() || target.isSymbolicLink()) throw new OwnerPersonalityError("unsafe_file");
-          // Preserve the existing file's write permission boundary without O_TRUNC.
-          const existing = await open(path, constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-          try {
-            const checked = await existing.stat();
-            if (!checked.isFile() || !sameFile(target, checked)) throw new OwnerPersonalityError("unsafe_file");
-          } finally { await existing.close(); }
           const staged = await stagedFile.stat();
           if (staged.uid !== target.uid || staged.gid !== target.gid) await stagedFile.chown(target.uid, target.gid);
           await stagedFile.chmod(target.mode & 0o777);
