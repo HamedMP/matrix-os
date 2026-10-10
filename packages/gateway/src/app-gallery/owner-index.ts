@@ -38,7 +38,9 @@ export async function indexOwnerApps(apps: PinnedDirectory) {
     for await (const entry of readableEntries(parent)) {
       if (exhausted || ++visited > 16_384) { unavailable = true; exhausted = true; return; }
       if (!entry.isDirectory() || APP_INDEX_SKIP_DIRS.has(entry.name)) continue;
-      if (!isSupportedGalleryComponent(entry.name) || depth >= 16) { unavailable = true; continue; }
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      // Match the client's complete launch-path bound, including the apps/ prefix.
+      if (!isSupportedGalleryComponent(entry.name) || depth >= 16 || path.length + 5 > 4096) { unavailable = true; continue; }
       if (++directories > 512) { unavailable = true; exhausted = true; return; }
       let child: PinnedDirectory;
       try { child = await parent.child(entry.name); }
@@ -48,7 +50,6 @@ export async function indexOwnerApps(apps: PinnedDirectory) {
         throw error;
       }
       try {
-        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
         const read = await readOwnerManifest(child); unavailable ||= read.unavailable;
         if (read.manifest && read.manifest.slug !== "symphony") {
           const { slug, name } = read.manifest;

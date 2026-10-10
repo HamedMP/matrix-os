@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import * as filesystem from "../../packages/gateway/src/app-gallery/filesystem.js";
 import { createAppGalleryService } from "../../packages/gateway/src/app-gallery/service.js";
+import { indexOwnerApps } from "../../packages/gateway/src/app-gallery/owner-index.js";
 import { PinnedDirectory } from "../../packages/gateway/src/app-gallery/pinned-directory.js";
 import { registerFileRoutes } from "../../packages/gateway/src/server/file-routes.js";
 import { invalidateAppIndexCache, listUniqueAppManifests, resolveAppBySlug } from "../../packages/gateway/src/app-runtime/app-index.js";
@@ -319,4 +320,42 @@ it.each(['\n', '\t', '\r', '\u007f'])("does not assert a runnable installation w
   await expect(f.service.install('folio')).rejects.toMatchObject({ status: 409 });
   expect(await readFile(join(f.homePath, 'apps/folio/matrix.json'), 'utf8')).toBe(original);
   expect(await readFile(join(f.homePath, skipped, 'matrix.json'), 'utf8')).toBe(original);
+});
+
+// Descriptor traversal can reach paths beyond an OS absolute-path limit. A bounded
+// directory double keeps the complete-path/client contract portable on macOS.
+it.each([4096, 4097, 4100])("bounds the complete owner launch path at %i characters without hiding Gallery", async length => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  const bytes = await readFile(join(f.homePath, "apps/folio/matrix.json"));
+  const names = Array.from({ length: 16 }, (_, index) => "a".repeat(index === 15 ? length - 3845 : 255));
+  const path = `apps/${names.join("/")}`; expect(path.length).toBe(length);
+  const reads = vi.fn(async () => bytes);
+  function directory(depth: number): PinnedDirectory {
+    return {
+      async close() {},
+      async *entries() { if (depth < names.length) yield { name: names[depth], isDirectory: () => true }; },
+      async child(name: string) { if (name !== names[depth]) throw Object.assign(new Error("Missing directory"), { code: "ENOENT" }); return directory(depth + 1); },
+      async readFile() {
+        if (depth === names.length) return reads();
+        throw Object.assign(new Error("No manifest"), { code: "ENOENT" });
+      },
+    } as unknown as PinnedDirectory;
+  }
+  const apps = directory(0);
+  const owner = { async close() {}, async child(name: string) { expect(name).toBe("apps"); return apps; } } as unknown as PinnedDirectory;
+  vi.mocked(filesystem.pinDirectory).mockResolvedValue(owner);
+  vi.mocked(filesystem.readLimited).mockImplementation(async source => Buffer.from(source.endsWith("catalog.json")
+    ? JSON.stringify({ version: 1, apps: [definition, { ...definition, id: "focus", name: "Focus" }] }) : "icon"));
+  const index = await indexOwnerApps(apps);
+  expect(index.unavailable).toBe(length > 4096);
+  expect(index.entries.has("folio")).toBe(length <= 4096);
+  await expect(loadGallery(galleryBridge(f.homePath))).resolves.toMatchObject({ apps: [
+    { id: "folio", installed: length <= 4096, ...(length <= 4096 ? { launchPath: path } : {}) },
+    { id: "focus", installed: false },
+  ] });
+  if (length > 4096) {
+    await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
+    expect(reads).not.toHaveBeenCalled();
+  }
+  expect(await readFile(join(f.homePath, "apps/folio/matrix.json"))).toEqual(bytes);
 });
