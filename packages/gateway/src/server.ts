@@ -1300,8 +1300,8 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
-    app, homePath, integrationRoutes, internalIntegrationBaseUrl,
+  const { processManager, customMcp } = await registerDeferredRuntimeRoutes({
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
       proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix }),

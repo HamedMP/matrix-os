@@ -1,0 +1,34 @@
+import { siteBuildFixture } from './site-build-fixture.js';
+import { afterEach, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Hono } from 'hono';
+import { createSiteRoutes } from '../../packages/gateway/src/sites/routes.js';
+import { markAuthContextReady, setPlatformVerifiedPrincipal } from '../../packages/gateway/src/request-principal.js';
+import { SitePublishingSchema } from '@matrix-os/contracts';
+let home: string;
+afterEach(async () => { if (home) await rm(home, { recursive: true, force: true }); });
+it('holds all four publish slots until platform success or failure settles', async () => {
+ home = await mkdtemp(join(tmpdir(), 'sites-admission-'));
+ const dir = join(home, 'apps/event'); await mkdir(join(dir, 'dist'), { recursive: true });
+ const config = SitePublishingSchema.parse({});
+ await writeFile(join(dir, 'matrix.json'), JSON.stringify({ name: 'Event', slug: 'event', version: '1.0.0', runtime: 'vite', runtimeVersion: '1.0.0', build: { command: 'pnpm build', output: 'dist' }, publishing: config }));
+ await writeFile(join(dir, 'dist/index.html'), '<html>Event</html>');
+ const pending: Array<{ resolve(value: unknown): void; reject(error: Error): void }> = [];
+ const platform = { request: vi.fn(() => new Promise((resolve, reject) => pending.push({ resolve, reject }))) };
+ const app = new Hono(); app.use('*', async (c, next) => { markAuthContextReady(c); setPlatformVerifiedPrincipal(c, 'owner'); await next(); });
+ app.route('/', createSiteRoutes({ homePath: home, ownerIds: ['owner'], platform: platform as any, submissions: {} as any, build: siteBuildFixture({ build: vi.fn().mockResolvedValue({ ok: true }) }) }));
+ const publish = () => app.request('/api/apps/event/site', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ reviewedConfig: config }) });
+ const requests: Array<Promise<Response>> = [];
+ for (let i = 0; i < 4; i++) { requests.push(publish()); await vi.waitFor(() => expect(pending).toHaveLength(i + 1)); }
+ const fifth = publish();
+ await vi.waitFor(() => expect(pending).toHaveLength(4));
+ expect(await Promise.race([fifth.then(r => r.status), new Promise(resolve => setTimeout(() => resolve('pending'), 50))])).toBe(429);
+ pending[0].resolve({ id: 'published' }); expect((await requests[0]).status).toBe(200);
+ const recovered = publish(); await vi.waitFor(() => expect(pending).toHaveLength(5));
+ pending[1].reject(new Error('platform failed')); expect((await requests[1]).status).toBe(503);
+ const recoveredAfterFailure = publish(); await vi.waitFor(() => expect(pending).toHaveLength(6));
+ for (const entry of pending.slice(2)) entry.resolve({ id: 'published' });
+ await Promise.all([...requests.slice(2), recovered, recoveredAfterFailure]);
+});
