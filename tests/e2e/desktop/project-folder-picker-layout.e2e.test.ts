@@ -100,6 +100,9 @@ suite("Desktop Add Project compact folder picker", () => {
     await chatNavigation.waitFor({ timeout: 10_000 });
     phase = "reveal Create project";
     await chatNavigation.getByRole("button", { name: "Projects", exact: true }).hover({ timeout: 10_000 });
+    // Keep the section's action revealed while the pointer moves from its
+    // heading to Create project; focus-within is the supported keyboard path.
+    await chatNavigation.getByRole("button", { name: "Projects", exact: true }).focus();
     await chatNavigation.getByRole("button", { name: "Create project" }).click({ timeout: 10_000 });
     const dialog = page.getByRole("dialog", { name: "Create a project" });
     phase = "open existing folder picker";
