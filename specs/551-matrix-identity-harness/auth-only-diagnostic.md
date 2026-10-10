@@ -19,6 +19,10 @@ Only the current main renderer/main frame at its exact packaged file URL can rea
 
 Canonical URL comparison preserves ordinary root-URL startup when Chromium adds the trailing slash. Existing normal-mode IPC authorization is unchanged except the equivalent navigation-cache sender check reuses this helper.
 
+Diagnostic closes the process normally when its last window closes, including macOS. It does not leave a windowless single-instance holder or construct normal services to handle reactivation. Closed-window IPC callers are rejected; a later launch runs fresh startup. Normal macOS window/activation behavior stays unchanged.
+
+Trusted main injects a restrictive CSP into only the exact packaged main-frame response before loading. Scripts, styles and bundled fonts use local sources; inline style is allowed for existing font/theme tokens. Inline/eval scripts, network connections, workers, frames, objects, base changes and form submission are denied. Existing response CSP headers are replaced case-insensitively, unrelated headers retained. Network/permission denial remains an independent guard. Offline composition tests verify response injection, local-font allowance, remote-font denial and unchanged normal wiring; actual Chromium enforcement/visual fonts remain controlled-launch acceptance.
+
 Offline acceptance covers real trusted-main wiring, existing AuthService/credential store with synthetic fixtures, two-hour fake-clock zero network/timer behavior, expiry/decryption/init rejection, sender/payload validation, isolated renderer import/mount behavior, and unchanged default normal wiring. Electron/OS APIs and one rejecting local-profile read are test boundaries. Tests do not read retained credentials.
 
 Surface scope: Electron Desktop only. Web Desktop, Web Canvas, Web Mobile and Native Mobile do not host the native main/preload startup flag. They still require their own ordinary product acceptance; this checkpoint substitutes for none of them. Recommend native/runtime-owner review before an operator launch. No public user journey or account capability changes.

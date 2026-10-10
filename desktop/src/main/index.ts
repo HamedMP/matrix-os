@@ -293,7 +293,7 @@ if (!gotLock) {
       });
       if (startupMode === "auth-diagnostic") {
         const getAuthStatus = await initializeAuthDiagnostic(auth);
-        installAuthDiagnosticSession(session.defaultSession);
+        installAuthDiagnosticSession(session.defaultSession, pathToFileURL(join(__dirname, "../renderer/index.html")).toString());
         registerAuthDiagnosticIpc(ipcMain, {
           getAuthStatus,
           getVersion: () => ({ version: app.getVersion(), source: readDesktopBuildSource() }),
@@ -712,6 +712,8 @@ if (!gotLock) {
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    // Diagnostic has no normal activation graph. Exit so Dock/second launch
+    // can start a fresh sole instance rather than leave a windowless process.
+    if (startupMode === "auth-diagnostic" || process.platform !== "darwin") app.quit();
   });
 }

@@ -57,6 +57,7 @@ vi.mock("../../desktop/src/main/persistence/local-store", async importOriginal =
   } };
 });
 let directory: string;
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
 const source = { commit: "a".repeat(40), ancestors: [] };
 const fetch = vi.fn(() => { throw new Error("unexpected remote request"); });
 function event() {
@@ -86,10 +87,55 @@ beforeEach(async () => {
   await writeFile(join(directory, "credential.bin"), JSON.stringify({
     accessToken: "synthetic-fixture-only", expiresAt: Date.now() + 3600000, handle: "fixture", userId: "fixture-owner" }));
 });
-afterEach(async () => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+afterEach(async () => { Object.defineProperty(process, "platform", platformDescriptor);
+  vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
   await rm(directory, { recursive: true, force: true }); });
 
 describe("actual trusted main diagnostic composition", () => {
+  it("quits the diagnostic process after the last macOS window closes, without normal services", async () => {
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "darwin" });
+    await boot();
+    const staleEvent = event();
+    host.windows[0].events.get("closed")!();
+    host.windows.length = 0;
+    host.appEvents.get("window-all-closed")!();
+    expect(host.app.quit).toHaveBeenCalledOnce();
+    await expect(host.ipc.get("auth:status")!(staleEvent, {})).rejects.toThrow("invalid request");
+    expect(fetch).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+    expect(host.ipc.has("chatgpt-plan:status")).toBe(false);
+  });
+
+  it("injects local-only CSP on the packaged main frame while preserving fonts and network denial", async () => {
+    await boot();
+    const intercept = host.targetSession.webRequest.onHeadersReceived.mock.calls[0]?.at(-1);
+    expect(intercept).toBeTypeOf("function");
+    const answer = vi.fn();
+    intercept({ url: host.windows[0].url, resourceType: "mainFrame", responseHeaders: {
+      "content-security-policy": ["default-src * 'unsafe-eval'"], "X-Fixture": ["preserved"],
+    } }, answer);
+    const headers = answer.mock.calls[0][0].responseHeaders;
+    expect(headers["X-Fixture"]).toEqual(["preserved"]);
+    expect(Object.keys(headers).filter(key => key.toLowerCase() === "content-security-policy")).toHaveLength(1);
+    const policy = headers["Content-Security-Policy"][0];
+    expect(policy).toContain("default-src 'none'"); expect(policy).toContain("script-src 'self'");
+    expect(policy).toContain("font-src 'self' data:"); expect(policy).toContain("style-src 'self' 'unsafe-inline'");
+    for (const directive of ["connect-src", "object-src", "frame-src", "worker-src", "base-uri", "form-action"])
+      expect(policy).toContain(`${directive} 'none'`);
+    expect(policy).not.toMatch(/https?:|wss?:|unsafe-eval|script-src[^;]*unsafe-inline/);
+    for (const details of [{ url: "https://other.invalid", resourceType: "mainFrame" },
+      { url: host.windows[0].url, resourceType: "subFrame" }]) {
+      const ignored = vi.fn(); intercept(details, ignored); expect(ignored).toHaveBeenCalledWith({});
+    }
+    const beforeRequest = host.targetSession.webRequest.onBeforeRequest.mock.calls[0][1];
+    const localFont = vi.fn(); beforeRequest({ url: "file:///fixture/assets/font.woff2" }, localFont);
+    expect(localFont).toHaveBeenCalledWith({ cancel: false });
+    const remote = vi.fn(); beforeRequest({ url: "https://other.invalid/font.woff2" }, remote);
+    expect(remote).toHaveBeenCalledWith({ cancel: true });
+    expect(host.targetSession.setPermissionCheckHandler.mock.calls[0][0]()).toBe(false);
+    const permission = vi.fn(); host.targetSession.setPermissionRequestHandler.mock.calls[0][0]({}, "media", permission);
+    expect(permission).toHaveBeenCalledWith(false);
+  });
+
   it("uses real auth/version and no normal services, remote renderer, update or browser over time", async () => {
     await boot();
     expect(await request("app:get-startup-mode")).toEqual({ mode: "auth-diagnostic" });
@@ -138,6 +184,7 @@ describe("actual trusted main diagnostic composition", () => {
   });
 
   it.each([undefined, "true", "0"])("preserves normal service wiring without exact opt-in %s", async mode => {
+    Object.defineProperty(process, "platform", { ...platformDescriptor, value: "darwin" });
     await boot({ mode });
     expect(await request("app:get-startup-mode")).toEqual({ mode: "normal" });
     expect(host.ipc.has("chatgpt-plan:status")).toBe(true);
@@ -147,5 +194,7 @@ describe("actual trusted main diagnostic composition", () => {
     await expect(modeHandler({ ...event(), sender: {} }, {})).rejects.toThrow("invalid request");
     await expect(modeHandler({ ...event(), senderFrame: {} }, {})).rejects.toThrow("invalid request");
     expect(vi.getTimerCount()).toBeGreaterThan(0);
+    host.appEvents.get("window-all-closed")!();
+    expect(host.app.quit).not.toHaveBeenCalled();
   });
 });
