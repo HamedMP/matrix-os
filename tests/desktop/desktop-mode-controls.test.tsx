@@ -2,7 +2,7 @@
 
 import React from "react";
 import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -62,4 +62,16 @@ describe("Desktop mode controls", () => {
     expect(update.className).toContain("size-6");
     expect(avatar?.className).toContain("size-6");
   });
+  it("opens and toggles the checklist through the actual nested Help controls", async () => {
+    render(<GettingStartedVisibilityProvider scope="controls-test"><DesktopModeControls /></GettingStartedVisibilityProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const trigger = await screen.findByRole("button", { name: "Getting started — 0 of 5" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+  });
+
 });

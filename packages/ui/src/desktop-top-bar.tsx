@@ -7,6 +7,8 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Popover from "@radix-ui/react-popover";
 import { Bell, ChevronDown, CircleCheck, CircleHelp, ExternalLink, LayoutGrid, MessageCircle, Monitor, Search } from "lucide-react";
 
+const useHelpPopoverScope = Popover.createPopoverScope();
+
 const colors: CSSProperties = {
   color: "var(--text-primary, var(--foreground))",
   background: "var(--bg-surface, var(--card))",
@@ -37,14 +39,15 @@ export function DesktopTopBarActions({ onSearch, inbox, help, computer, update, 
 export function DesktopHelpMenu({ gettingStarted, incomplete, onSupport, discordIcon, overlay }: {
   gettingStarted: ReactNode; incomplete: boolean; onSupport(): void; discordIcon: ReactNode; overlay?: MenuOverlay;
 }) {
+  const helpScope = useHelpPopoverScope(undefined);
   const [open, setOpen] = useState(false);
   useMenuOverlay(open, overlay);
-  return <Popover.Root open={open} onOpenChange={setOpen}>
-    <Popover.Trigger asChild><button type="button" aria-label="Help" className={actionClass}>
+  return <Popover.Root {...helpScope} open={open} onOpenChange={setOpen}>
+    <Popover.Trigger {...helpScope} asChild><button type="button" aria-label="Help" className={actionClass}>
       <CircleHelp size={14} aria-hidden="true" />
       {incomplete ? <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full" style={{ background: "var(--accent, var(--primary))" }} /> : null}
     </button></Popover.Trigger>
-    <Popover.Portal forceMount><Popover.Content hidden={!open} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
+    <Popover.Portal {...helpScope} forceMount><Popover.Content {...helpScope} hidden={!open} aria-label="Help" side="bottom" align="end" sideOffset={6} collisionPadding={8}
       forceMount className="data-[state=closed]:hidden no-drag w-[240px] rounded-xl border p-1.5 shadow-lg outline-none" style={{ ...colors, zIndex: "var(--desktop-menu-z, 11000)" }}>
       {gettingStarted}
       <div className="my-0.5 h-px" style={{ background: colors.borderColor }} />
@@ -118,7 +121,11 @@ function ScopedActivityInbox({ load, onOpenTask, overlay }: { load(): Promise<un
         const result = RuntimeSummarySchema.parse(await load());
         if (active) { setSnapshot(result); setStatus("ready"); }
       } catch (error: unknown) {
-        // The transport logs the cause; the UI never displays provider/owner details.
+        // Never log raw names/messages or schema issues containing owner data.
+        const category = error instanceof Error
+          ? (["AbortError", "TimeoutError", "ZodError"].includes(error.name) ? error.name : "Error")
+          : "non-error";
+        console.warn("[desktop-inbox] load failed:", category);
         if (active) { setSnapshot(null); setStatus("error"); }
       } finally { inFlight = false; }
     };
