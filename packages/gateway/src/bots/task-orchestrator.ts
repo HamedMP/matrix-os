@@ -36,6 +36,7 @@ import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
 import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, type BotRuntimeRegistry } from "./runtime-registry.js";
+import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
 
 const ACTIVE_DEADLINE_MS = 10 * 60_000;
@@ -96,7 +97,8 @@ export function createBotTaskOrchestrator(deps: {
   recipes: BotRecipeCatalog;
   resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
-  admission: Pick<PrivateBotAdmission, "admit" | "release">;
+  admission: Pick<PrivateBotAdmission, "admit" | "release"> & Partial<Pick<PrivateBotAdmission, "ownsDirectChat">>;
+  personality?: OwnerPersonalityConfig;
   registry: Pick<BotRuntimeRegistry, "lookupRun" | "cancelInference">;
   client: Pick<ScopeRuntimeHostClient, "runBot">;
   onRunFinished?(runId: string): void;
@@ -236,15 +238,23 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "failed");
     }
     try {
+      let ownerSoul: string | undefined;
+      if (recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
+        if (!await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId })) {
+          throw new OwnerPersonalityError("unsafe_file");
+        }
+        ownerSoul = await readOwnerSoul(deps.personality.homePath);
+      }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
         limits: { maxToolActions: MAX_TOOL_ACTIONS },
         turn: { kind: "prompt", text: input.text },
       });
     } catch (error: unknown) {
-      if (!(error instanceof BotSystemPromptError)) console.warn("[bots] run spec invalid:", error instanceof Error ? error.name : "UnknownError");
+      if (error instanceof OwnerPersonalityError) console.warn("[bots] personality unavailable:", error.code);
+      else if (!(error instanceof BotSystemPromptError)) console.warn("[bots] run spec invalid:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "policy_denied");
     }
 

@@ -329,6 +329,7 @@ export async function startBots(options: {
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({
+    personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
     bindings,
     transact,
     interactions,

@@ -74,6 +74,7 @@ export function createPrivateBotAdmission(deps: {
       .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", "direct")
       .where("binding.removed_at", "is", null)
       .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", input.ownerId)
+      .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
       .executeTakeFirst();
     return row !== undefined;
   }
@@ -133,6 +134,9 @@ export function createPrivateBotAdmission(deps: {
         throw error;
       }
       try {
+        // Provisioning awaits external work; authority may have changed since preflight.
+        // Refuse publication and stop the new workload through the existing cleanup path.
+        if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
           executionGeneration: runtime.executionGeneration,
@@ -159,6 +163,7 @@ export function createPrivateBotAdmission(deps: {
       return { ...runtime, rootFingerprint: root.fingerprint };
     },
     release,
+    ownsDirectChat,
   };
 }
 
