@@ -4,7 +4,7 @@
 set -euo pipefail
 [[ $EUID == 0 && $(uname -m) == x86_64 ]] || { echo 'Requires root on dedicated x86-64 host' >&2; exit 64; }
 apt-get update
-apt-get install -y docker.io iptables ufw util-linux ca-certificates
+apt-get install -y docker.io iptables ufw util-linux ca-certificates python3
 systemctl enable --now docker
 install -d -m 0700 /var/lib/matrix-ci/results
 printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' >/etc/ssh/sshd_config.d/60-matrix-ci.conf
@@ -37,13 +37,35 @@ cat >/etc/systemd/system/matrix-ci-firewall.service <<'SERVICE'
 Description=Block CI container access to host and private networks
 After=docker.service
 Requires=docker.service
+PartOf=docker.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/matrix-ci-firewall
 RemainAfterExit=yes
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target docker.service
 SERVICE
+script_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+install -d -o root -g root -m 0755 /usr/local/libexec/matrix-ci
+install -o root -g root -m 0755 "$script_dir/cleanup-host.sh" /usr/local/libexec/matrix-ci/cleanup-host.sh
+cat >/etc/systemd/system/matrix-ci-cleanup.service <<'SERVICE'
+[Unit]
+Description=Remove expired disposable CI containers and evidence
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/matrix-ci/cleanup-host.sh
+SERVICE
+cat >/etc/systemd/system/matrix-ci-cleanup.timer <<'TIMER'
+[Unit]
+Description=Recurring CI orphan cleanup
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target
+TIMER
 systemctl daemon-reload
 systemctl enable --now matrix-ci-firewall
+systemctl enable --now matrix-ci-cleanup.timer
 echo 'Build image from the reviewed scripts/ci/runner directory, then run start-ephemeral.sh.'

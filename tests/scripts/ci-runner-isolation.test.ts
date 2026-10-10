@@ -16,6 +16,8 @@ function invoke(args: string[], failure = false) {
   chmodSync(resolve(dir, "flock"), 0o755);
   writeFileSync(resolve(dir, "timeout"), '#!/bin/bash\nshift 3\nexec "$@"\n');
   chmodSync(resolve(dir, "timeout"), 0o755);
+  writeFileSync(resolve(dir, "iptables"), "#!/bin/bash\nexit 0\n");
+  chmodSync(resolve(dir, "iptables"), 0o755);
   try {
     const result = spawnSync("bash", [resolve(root, "start-ephemeral.sh"), ...args], {
       encoding: "utf8",
@@ -77,7 +79,47 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(script).not.toMatch(/eval |source \/|--with-deps|GITHUB_TOKEN|HETZNER/);
   });
   it("all shell entrypoints have valid syntax", () => {
-    for (const file of ["start-ephemeral.sh", "benchmark.sh", "bootstrap-host.sh"])
+    for (const file of ["start-ephemeral.sh", "benchmark.sh", "bootstrap-host.sh", "dispatch.sh", "install-dispatch.sh", "cleanup-host.sh"])
       expect(() => execFileSync("bash", ["-n", resolve(root, file)])).not.toThrow();
+  });
+  it.each(["run main unit", `run ${sha} unit;id`, `run ${sha} full extra`, "bash", "scp -t /tmp/file", `run ${sha} unit\nid`])(
+    "forced SSH dispatch denies shell, injection, and transfer: %s", (command) => {
+      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, SSH_ORIGINAL_COMMAND: command } });
+      expect(result.status).toBe(64);
+    },
+  );
+  it("forced SSH dispatch uses argument boundaries and fixed paths", () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "matrix-dispatch-test-"));
+    writeFileSync(resolve(dir, "sudo"), '#!/bin/bash\nprintf "%s\\n" "$@"\n');
+    chmodSync(resolve(dir, "sudo"), 0o755);
+    try {
+      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SSH_ORIGINAL_COMMAND: `run ${sha} unit` } });
+      expect(result.status).toBe(0);
+      expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/start-ephemeral.sh", sha, "unit", "12", ""]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("requires the private-egress firewall before a container is created", () => {
+    const script = readFileSync(resolve(root, "start-ephemeral.sh"), "utf8");
+    expect(script.indexOf("iptables -C DOCKER-USER")).toBeLessThan(script.indexOf("docker create"));
+    expect(script).toContain("iptables -C INPUT -i matrix-ci0 -j REJECT");
+  });
+  it("installs a restricted SSH key without Docker membership or persistent privileged runner", () => {
+    const script = readFileSync(resolve(root, "install-dispatch.sh"), "utf8");
+    expect(script).toContain('restrict,command="/usr/local/libexec/matrix-ci/dispatch.sh"');
+    expect(script).toContain("ForceCommand /usr/local/libexec/matrix-ci/dispatch.sh");
+    expect(script).toContain("AllowTcpForwarding no");
+    expect(script).not.toMatch(/usermod.*docker|docker\.sock|--privileged|--token/);
+  });
+  it("collects both cold and warm passes even after a test failure", () => {
+    const script = readFileSync(resolve(root, "benchmark.sh"), "utf8");
+    expect(script).toContain('run_suite "$pass" || failed=1');
+    expect(script).toContain('exit "$failed"');
+  });
+  it("full benchmarks run bounded independent groups and wait for every result", () => {
+    const script = readFileSync(resolve(root, "benchmark.sh"), "utf8");
+    expect(script).toContain('suite=unit workers=12 run_suite "$pass" &');
+    expect(script).toContain('suite=checks workers=2 run_suite "$pass" &');
+    expect(script).toContain('wait "$pid" || failed=1');
+    expect(script).toContain('--maxWorkers=2');
   });
 });

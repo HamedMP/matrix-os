@@ -26,11 +26,13 @@ bash start-ephemeral.sh <reviewed-40-character-commit-sha> unit 8
 ```
 
 Allowlisted suites: `unit`, `unit-shard-1` through `unit-shard-4`, `typecheck`,
-`shell`, `e2e`. Workers must be 1–16. Checkout always fetches the exact SHA from
+`shell`, `checks`, `e2e`/`e2e-general`, `e2e-electron`, `full`. Workers must be
+1–16. Checkout always fetches the exact SHA from
 the fixed public repository and verifies HEAD. The host script executes the
 trusted image entrypoint, never a caller-supplied command. Every benchmark has
 a 30-minute deadline, 16-CPU/56-GB cap, no extra swap, and a 4096-process cap.
-An exclusive lock admits one benchmark at a time. Service-container and root
+An exclusive lock admits one benchmark at a time, with a bounded 30-minute
+wait if another benchmark is active. Service-container and root
 fixture validation remains on GitHub-hosted runners.
 
 The image pins Ubuntu by digest and Node 24.14.1, pnpm 10.33.4, and Bun 1.3.10
@@ -44,10 +46,19 @@ Each admitted benchmark runs cold then warm passes within the same disposable
 container, sharing its dependencies/build state. Both passes run all tests for
 the selected suite. It is destroyed after this benchmark, even after failure.
 Cold includes checkout/install/prerequisite timings separately; warm is a
-second execution with the same source and already-built prerequisites. These
+second execution with the same source and already-built prerequisites. A failing
+suite still receives its warm pass and the final command exits unsuccessfully.
+These
 are execution timings, not GitHub queue or full required-check elapsed times.
-The `e2e` suite is the base `test:e2e` script; additional explicitly gated
-Electron regression commands in `ci.yml` require their own benchmark expansion.
+`e2e-general` runs the base E2E configuration. `e2e-electron` builds Electron
+then runs the environment-gated regressions explicitly listed in `ci.yml`.
+`checks` covers sync client, Agent SDK compatibility, docs/parity contracts,
+and shell production build. Typecheck is diagnostic, matching existing CI's
+nonblocking baseline. Pattern Scan stays hosted because it needs the trusted
+PR base/main coverage frontier; database/root suites also stay hosted.
+`full` runs unit (12 workers), checks (2 workers), and E2E (2 workers) concurrently
+after one dependency/prerequisite build, awaiting every group. It is a full
+**dedicated-host subset benchmark**, not proof that all required CI checks pass.
 
 Host evidence is under `/var/lib/matrix-ci/results/run.*`: bounded recent logs,
 `timing.tsv`, and unit cold/warm JSON reports. The host copies only fixed
@@ -55,6 +66,8 @@ artifact paths, without following symlinks, with a 50-MB per-file bound. Treat
 all test output as untrusted data. Do not execute or source copied files.
 Retrieve evidence over the operator SSH connection. Remove old evidence after
 comparison; the host cleanup timer removes results older than seven days.
+It retains at most 20 completed result directories, skips symlinks, and removes
+orphaned containers only after their 30-minute deadline plus 15-minute grace.
 
 ## Admission and future automatic CI
 
@@ -71,3 +84,16 @@ trusted workflow must use read-only GitHub permissions and never execute PR
 code before dispatch. Do not use `pull_request_target` to check out PR code
 alongside credentials. The dedicated host must not accept generic GitHub
 runner registration until enforceable workflow admission is available.
+
+Install the bridge on the host with only a dedicated public key on stdin:
+
+```sh
+bash install-dispatch.sh < dedicated-ci-ed25519.pub
+```
+
+From the trusted controller, dispatch exactly `run <40-character-sha> <suite>`
+to SSH user `matrixci`. No other command, shell, SCP, PTY, agent, TCP, or tunnel
+forwarding is accepted. Unit/full use 12 workers; other suites use 2. Pin the
+host key in the controller's known-hosts file from the operator's independently
+verified host fingerprint. Keep workflow environment restrictions and the
+dedicated opt-in flag disabled until this setup and the workflow are reviewed.

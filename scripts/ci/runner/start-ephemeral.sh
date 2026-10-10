@@ -3,16 +3,18 @@
 set -euo pipefail
 set +x
 if [[ $# != 3 || ! $1 =~ ^[a-f0-9]{40}$ || ! $3 =~ ^([1-9]|1[0-6])$ ]]; then
-  echo 'Usage: start-ephemeral.sh <reviewed-40-char-sha> <unit|unit-shard-{1..4}|typecheck|shell|e2e> <workers-1..16>' >&2
+  echo 'Usage: start-ephemeral.sh <reviewed-40-char-sha> <allowlisted-suite> <workers-1..16>' >&2
   exit 64
 fi
-case "$2" in unit|unit-shard-[1-4]|typecheck|shell|e2e) ;; *) echo 'Unsupported suite' >&2; exit 64 ;; esac
+case "$2" in unit|unit-shard-[1-4]|typecheck|shell|checks|e2e|e2e-general|e2e-electron|full) ;; *) echo 'Unsupported suite' >&2; exit 64 ;; esac
+iptables -C DOCKER-USER -i matrix-ci0 -j MATRIX-CI-EGRESS >/dev/null
+iptables -C INPUT -i matrix-ci0 -j REJECT >/dev/null
 
 state_dir=${MATRIX_CI_STATE_DIR:-/var/lib/matrix-ci}
 mkdir -p "$state_dir/results"
 # One 16-core/56-GB benchmark at a time; leave memory for the host.
 exec 9>"$state_dir/benchmark.lock"
-flock -n 9 || { echo 'A benchmark is already running' >&2; exit 75; }
+flock -w 1800 9 || { echo 'A benchmark is already running' >&2; exit 75; }
 result_dir=$(mktemp -d "$state_dir/results/run.XXXXXXXX")
 container=''
 cleanup() {
