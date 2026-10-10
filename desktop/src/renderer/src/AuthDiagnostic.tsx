@@ -7,7 +7,7 @@ export interface AuthDiagnosticSnapshot {
 }
 
 export function AuthDiagnostic({ auth, version }: AuthDiagnosticSnapshot) {
-  return <main className="h-screen overflow-auto bg-[var(--bg-app)] p-8 text-[var(--text-primary)]">
+  return <main data-selectable className="h-screen overflow-auto bg-[var(--bg-app)] p-8 text-[var(--text-primary)]">
     <h1 className="mb-4 text-xl font-semibold">Native auth diagnostic</h1>
     <p className="mb-6">Local auth and app provenance only. Chat and Bot acceptance has not run.</p>
     <dl className="space-y-2">
