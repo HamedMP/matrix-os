@@ -185,3 +185,35 @@ it("retains coalesced pending add failures through the catalog adapter", async (
     expect(fetchMock).toHaveBeenCalledOnce();
   } finally { useDesktopConfigStore.setState(previous); vi.restoreAllMocks(); }
 });
+
+
+it.each(["apps/folio/index.html", "apps/finance/ledger/index.html"])("deduplicates alias pins and dock ordering and removes every alias in one Unpin through %s", async selected => {
+  const canonical = "apps/folio/index.html", old = "apps/finance/ledger/index.html";
+  const unrelated = "apps/other/index.html", terminal = "__terminal__";
+  const previous = useDesktopConfigStore.getState();
+  const placement = { path: old, x: 321, y: 147 };
+  const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+  vi.stubGlobal("fetch", fetchMock);
+  useDesktopConfigStore.setState({
+    pinnedApps: [old, canonical, old, unrelated, terminal],
+    dockOrder: { userApps: [old, unrelated, canonical, old], systemApps: [terminal, terminal] },
+    desktopIcons: [placement],
+  });
+  try {
+    const { result } = renderHook(() => useCatalogAppShortcuts([{ name: "Folio", slug: "folio", path: canonical, ownerPath: old }]));
+    expect(result.current.pinnedApps).toEqual([canonical, unrelated, terminal]);
+    expect(result.current.dockOrder).toEqual({ userApps: [canonical, unrelated], systemApps: [terminal] });
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual([old, canonical, old, unrelated, terminal]);
+    await act(async () => result.current.togglePin(selected));
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual([unrelated, terminal]);
+    expect(result.current.pinnedApps).toEqual([unrelated, terminal]);
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual([placement]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).patch.pinnedApps).toEqual([unrelated, terminal]);
+    await act(async () => result.current.togglePin(selected));
+    expect(useDesktopConfigStore.getState().pinnedApps).toEqual([unrelated, terminal, canonical]);
+    expect(result.current.pinnedApps).toEqual([unrelated, terminal, canonical]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).patch.pinnedApps).toEqual([unrelated, terminal, canonical]);
+  } finally { act(() => useDesktopConfigStore.setState(previous)); }
+});

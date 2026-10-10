@@ -14,16 +14,21 @@ export function useCatalogAppShortcuts(apps: readonly ApiAppEntry[]) {
   const addSavedDesktopIcon = useDesktopConfigStore(state => state.addDesktopIcon);
   const toggleSavedPin = useDesktopConfigStore(state => state.togglePin);
   const resolvePath = useMemo(() => createCatalogAppPathResolver(apps), [apps]);
-  const pinnedApps = useMemo(() => savedPins.map(resolvePath), [savedPins, resolvePath]);
+  const resolveUnique = useCallback((paths: readonly string[]) => paths.map(resolvePath)
+    .filter((path, index, resolved) => resolved.indexOf(path) === index), [resolvePath]);
+  const pinnedApps = useMemo(() => resolveUnique(savedPins), [savedPins, resolveUnique]);
   const dockOrder = useMemo(() => savedOrder ? {
     ...savedOrder,
-    ...(savedOrder.userApps ? { userApps: savedOrder.userApps.map(resolvePath) } : {}),
-    ...(savedOrder.systemApps ? { systemApps: savedOrder.systemApps.map(resolvePath) } : {}),
-  } : undefined, [savedOrder, resolvePath]);
+    ...(savedOrder.userApps ? { userApps: resolveUnique(savedOrder.userApps) } : {}),
+    ...(savedOrder.systemApps ? { systemApps: resolveUnique(savedOrder.systemApps) } : {}),
+  } : undefined, [savedOrder, resolveUnique]);
   const togglePin = useCallback((path: string) => {
     const pins = useDesktopConfigStore.getState().pinnedApps ?? EMPTY_PINS;
-    const savedPath = pins.find(pin => resolvePath(pin) === path);
-    toggleSavedPin(savedPath ?? path);
+    const canonicalPath = resolvePath(path);
+    const aliases = pins.filter((pin, index) => resolvePath(pin) === canonicalPath && pins.indexOf(pin) === index);
+    // Reuse the store's durable toggle flow once per distinct saved reference.
+    if (aliases.length) aliases.forEach(alias => toggleSavedPin(alias));
+    else toggleSavedPin(canonicalPath);
   }, [resolvePath, toggleSavedPin]);
   const addDesktopIcon = useCallback<typeof addSavedDesktopIcon>((path, bounds) => {
     const canonicalPath = resolvePath(path);
