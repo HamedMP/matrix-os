@@ -246,5 +246,6 @@ export * from "./chat-navigation/browser-cache.js";
 export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
+export * from "./onboarding-widget/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
