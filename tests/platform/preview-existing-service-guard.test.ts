@@ -20,7 +20,8 @@ function execute(metadata: unknown, exitCode = 0, configured = true, deploy = fa
     writeFileSync(date, '#!/usr/bin/env bash\nprintf "2030-01-01T00:00:00.000Z\\n"\n');
     chmodSync(date, 0o700);
     const command = deploy ? ["-eu", "-c", steps.find(step => step.name === "Deploy zero-traffic tagged revision to preview service")!.run!] : [script];
-    const result = spawnSync("bash", command, {
+    // Ignore host startup files while preserving the workflow's strict -eu body.
+    const result = spawnSync("bash", ["--noprofile", "--norc", ...command], {
       encoding: "utf8", timeout: 5_000,
       env: { PATH: `${directory}:${process.env.PATH}`, GUARD_ARGS: args,
         GUARD_METADATA: JSON.stringify(metadata), GUARD_EXIT: String(exitCode),
@@ -76,7 +77,7 @@ describe("existing Preview service guard", () => {
   });
   it("fails configuration before disabling the guarded workflow on an absent service", () => {
     const check = steps.find(step => step.name === "Check preview configuration")!.run!;
-    const result = spawnSync("bash", ["-eu", "-c", check], {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-eu", "-c", check], {
       encoding: "utf8", timeout: 5_000,
       env: { PATH: process.env.PATH, REQUIRE_EXISTING_SERVICE: "true" },
     });
