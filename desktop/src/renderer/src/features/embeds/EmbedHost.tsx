@@ -49,6 +49,7 @@ export default function EmbedHost({
   activeRef.current = active;
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
+  const [retrying, setRetrying] = useState(false);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
 
@@ -66,6 +67,7 @@ export default function EmbedHost({
     const host = hostRef.current;
     if (!host) return;
     embedIdRef.current = null;
+    setRetrying(false);
     setState("loading");
     setSnapshotDataUrl(null);
     let disposed = false;
@@ -247,9 +249,21 @@ export default function EmbedHost({
           </span>
           <Button
             variant="primary"
+            disabled={retrying}
             onClick={() => {
-              setState("loading");
-              setRetryRevision((revision) => revision + 1);
+              const id = embedIdRef.current;
+              if (!id) { setState("loading"); setRetryRevision(revision => revision + 1); return; }
+              setRetrying(true);
+              void invoke("embed:close", { embedId: id }).then(result => {
+                if (embedIdRef.current !== id) return;
+                setRetrying(false);
+                if (!result.ok) return;
+                embedIdRef.current = null;
+                setState("loading"); setRetryRevision(revision => revision + 1);
+              }).catch((error: unknown) => {
+                console.warn("[embeds] retry close unavailable", error instanceof Error ? "Error" : "UnknownError");
+                if (embedIdRef.current === id) setRetrying(false);
+              });
             }}
           >
             Try again

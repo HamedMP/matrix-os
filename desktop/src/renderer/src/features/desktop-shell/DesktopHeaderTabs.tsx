@@ -1,3 +1,4 @@
+import { afterTabClose } from "./after-tab-close";
 import { useCallback } from "react";
 import {
   topmostVisibleDesktopSurfaceId,
@@ -55,10 +56,12 @@ export default function DesktopHeaderTabs() {
 
   const close = useCallback((tab: Tab) => {
     const wasActive = useTabs.getState().activeTabId === tab.id;
-    if (tab.closable) closeTab(tab.id);
-    else closeSurface(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
-    if (wasActive) focusFallback(tab.id);
+    const afterClose = () => {
+      if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
+      if (wasActive) focusFallback(tab.id);
+    };
+    if (tab.closable) afterTabClose(closeTab(tab.id), afterClose);
+    else { closeSurface(tab.id); afterClose(); }
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
   const restore = useCallback((tabId: string) => {

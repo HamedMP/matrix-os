@@ -318,6 +318,15 @@ if (!gotLock) {
       );
 
       const nativeAppBridge = new NativeAppBridge({
+        confirmUtilitiesClose: async (signal) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return false;
+          const result = await dialog.showMessageBox(mainWindow, {
+            type: "warning", title: "Close Utilities?", message: "Close Utilities?",
+            detail: "Utilities could not check this workspace. Any temporary input and results may be lost if you close it.",
+            buttons: ["Keep working", "Close Utilities"], defaultId: 0, cancelId: 0, noLink: true, signal,
+          });
+          return result.response === 1;
+        },
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
         openApp: (app) => {

@@ -19,6 +19,7 @@ export interface EmbedViewLike {
   setScale(factor: number): void;
   loadUrl(url: string): Promise<void>;
   captureSnapshot?(): Promise<string | null>;
+  requestClose?(): Promise<boolean>;
   attach(): void;
   detach(): void;
   destroy(): void;
@@ -51,6 +52,7 @@ const SAFE_SLUG = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/;
 const ERR_ABORTED = -3;
 
 interface EmbedRecord {
+  appIdentity: string | null;
   id: string;
   url: string;
   view: EmbedViewLike;
@@ -130,6 +132,7 @@ export class EmbedManager {
 
     const active = options?.active ?? true;
     if (this.records.has(id)) throw new Error("embed id already exists");
+    if (kind === "app" && slug === "utilities" && this.findApp("utilities")) throw new Error("Utilities is already open");
     const onState = options?.onState ?? (() => undefined);
     let record: EmbedRecord | null = null;
     const emitState = (state: "loading" | "ready" | "failed") => {
@@ -158,6 +161,7 @@ export class EmbedManager {
       id,
       url,
       view,
+      appIdentity: kind === "app" ? slug : null,
       live: active,
       loadFailed: false,
       loadGeneration: 0,
@@ -293,6 +297,22 @@ export class EmbedManager {
     return true;
   }
 
+  findApp(appIdentity: string): string | undefined {
+    return [...this.records.values()].find(record => record.appIdentity === appIdentity)?.id;
+  }
+
+  async requestClose(embedId: string): Promise<boolean> {
+    const record = this.records.get(embedId);
+    if (!record) return false;
+    if (record.appIdentity === "utilities" && !record.view.requestClose) return false;
+    if (record.view.requestClose) {
+      try { if (!await record.view.requestClose()) return false; }
+      catch (error: unknown) { console.warn("[embeds] close unavailable", error instanceof Error ? "Error" : "UnknownError"); return false; }
+    }
+    if (this.records.get(embedId) !== record) return false;
+    return this.close(embedId);
+  }
+
   close(embedId: string): boolean {
     const record = this.records.get(embedId);
     if (!record) return false;
@@ -348,7 +368,8 @@ export class EmbedManager {
   private enforceTotalCap(): void {
     while (this.records.size > MAX_TOTAL_EMBEDS) {
       const victim =
-        this.leastRecentlyUsed((r) => !r.live) ?? this.leastRecentlyUsed(() => true);
+        this.leastRecentlyUsed((r) => !r.live && r.appIdentity !== "utilities")
+        ?? this.leastRecentlyUsed((r) => r.appIdentity !== "utilities");
       if (!victim) break;
       this.destroyRecord(victim);
       this.records.delete(victim.id);

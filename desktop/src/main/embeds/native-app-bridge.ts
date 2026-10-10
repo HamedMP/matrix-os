@@ -1,6 +1,8 @@
 import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
+import { NativeUtilitiesCloseGuard } from "./native-utilities-close";
+import { UTILITIES_CLOSE_REPLY, UTILITIES_CLOSE_READY, UtilitiesCloseReplySchema, UtilitiesCloseReadySchema } from "../../shared/native-utilities-close";
 export { createNativeAppAiRequester } from "./native-app-ai";
 import { z } from "zod/v4";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
@@ -70,10 +72,13 @@ interface NativeAppBridgeOptions {
   openApp?: (app: NativeAppOpenTarget) => void;
   maxSenders?: number;
   getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
+  confirmUtilitiesClose?: (signal: AbortSignal) => Promise<boolean>;
 }
 
 interface NativeAppDocumentLifecycle {
   isDestroyed(): boolean;
+  getURL?(): string;
+  send?(channel: string, payload: unknown): void;
   on(event: "did-start-navigation", listener: (details: { isMainFrame: boolean; isSameDocument: boolean }) => void): unknown;
   on(event: "destroyed", listener: () => void): unknown;
   removeListener(event: "did-start-navigation", listener: (details: { isMainFrame: boolean; isSameDocument: boolean }) => void): unknown;
@@ -81,6 +86,7 @@ interface NativeAppDocumentLifecycle {
 }
 
 interface NativeAppRegistration {
+  utilitiesReady?: boolean;
   appIdentity: string; routeSlug: string; gatewayOrigin: string; authGeneration: number;
   controller: AbortController; openWindow: number; openCount: number; dispose?: () => void;
 }
@@ -201,6 +207,7 @@ function isSenderAtApp(sender: NativeAppSender, origin: string, slug: string): b
 }
 
 export class NativeAppBridge {
+  private readonly utilitiesClose = new NativeUtilitiesCloseGuard();
   private readonly senders = new Map<number, NativeAppRegistration>();
   private generateWindow = 0;
   private generateCount = 0;
@@ -238,7 +245,7 @@ export class NativeAppBridge {
         previous.controller.abort();
         // Keep the trusted app registration, but never share cancellation or
         // late-result authority between documents. Pending slots drain normally.
-        this.senders.set(senderId, { ...previous, controller: new AbortController() });
+        this.senders.set(senderId, { ...previous, utilitiesReady: false, controller: new AbortController() });
       };
       const destroyed = () => this.unregister(senderId);
       const dispose = () => {
@@ -266,6 +273,25 @@ export class NativeAppBridge {
 
   clear(): void {
     for (const senderId of this.senders.keys()) this.unregister(senderId);
+  }
+
+  async requestUtilitiesClose(senderId: number): Promise<boolean> {
+    const lifetime = this.options.getSenderLifecycle?.(senderId);
+    if (!lifetime?.getURL || !lifetime.send || lifetime.isDestroyed()) return false;
+    const identity = this.senders.get(senderId);
+    const valid = () => identity && this.senders.get(senderId) === identity && identity.appIdentity === "utilities"
+      && identity.routeSlug === "utilities" && identity.authGeneration === this.options.authGeneration()
+      && identity.gatewayOrigin === new URL(this.options.gatewayOrigin()).origin
+      && !identity.controller.signal.aborted && !lifetime.isDestroyed();
+    if (!valid() || !identity) return false;
+    if (identity.utilitiesReady) {
+      const decision = await this.utilitiesClose.request(senderId, identity.controller.signal, (channel, request) => lifetime.send!(channel, request));
+      if (!valid()) return false;
+      if (decision.available) return decision.allow;
+    }
+    if (!this.options.confirmUtilitiesClose || !valid()) return false;
+    const approved = await this.utilitiesClose.confirm(senderId, identity.controller.signal, this.options.confirmUtilitiesClose);
+    return Boolean(approved && valid());
   }
 
   async query(sender: NativeAppSender, rawQuery: unknown): Promise<unknown> {
@@ -370,6 +396,28 @@ export class NativeAppBridge {
   }
 
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
+    ipcMain.handle(UTILITIES_CLOSE_READY, async (event: IpcMainInvokeEvent, rawReady: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) throw new Error("not authorized");
+        const identity = this.authorizeCapability({ id: event.sender.id, url: event.sender.getURL() });
+        if (identity.appIdentity !== "utilities" || identity.routeSlug !== "utilities") throw new Error("not authorized");
+        identity.utilitiesReady = UtilitiesCloseReadySchema.parse(rawReady).ready;
+        return { ok: true };
+      } catch (error: unknown) { console.warn("[utilities-close] readiness rejected", error instanceof Error ? "Error" : "UnknownError"); throw new Error("Close request is unavailable"); }
+    });
+    ipcMain.handle(UTILITIES_CLOSE_REPLY, async (event: IpcMainInvokeEvent, rawReply: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) throw new Error("not authorized");
+        const identity = this.authorizeCapability({ id: event.sender.id, url: event.sender.getURL() });
+        if (identity.appIdentity !== "utilities" || identity.routeSlug !== "utilities") throw new Error("not authorized");
+        const reply = UtilitiesCloseReplySchema.parse(rawReply);
+        this.utilitiesClose.reply(event.sender.id, reply.requestId, reply.allow);
+        return { ok: true };
+      } catch (error: unknown) {
+        console.warn("[utilities-close] reply rejected", error instanceof Error ? "Error" : "UnknownError");
+        throw new Error("Close request is unavailable");
+      }
+    });
     if (this.options.capabilityRequest || this.options.aiRoutesRequest) {
       if (!this.options.capabilityRequest || !this.options.aiRoutesRequest) throw new Error("App capability dependencies are required");
       registerNativeAppCapabilityIpc(ipcMain, {

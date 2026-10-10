@@ -18,6 +18,7 @@
  *   apps they've installed.
  */
 
+import { deferUtilitiesWindowClose } from "@/stores/utilities-close-guard";
 import {useCompanyDriveChatLaunch} from "./useCompanyDriveChatLaunch";
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -371,8 +372,14 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     if (opened) launchPathConsumedRef.current = launchRequestKey;
   }, [apps, launchAppPath, openApp, sharedTerminalScopeId, terminalInstanceCount]);
 
+  const focusClosingApp = (openId: string) => {
+    setOpenStack((previous) => [...previous.filter((entry) => entry.id !== openId), ...previous.filter((entry) => entry.id === openId)]);
+    setView("app");
+  };
   const closeApp = (openId: string) => {
     const closed = stackRef.current.find((o) => o.id === openId);
+    if (closed && deferUtilitiesWindowClose({ id: openId, path: closed.app.path })) { focusClosingApp(openId); return; }
+    stackRef.current = stackRef.current.filter((entry) => entry.id !== openId);
     setOpenStack((prev) => {
       const next = prev.filter((o) => o.id !== openId);
       if (next.length === 0) {
@@ -384,10 +391,18 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   };
 
   const closeAll = () => {
+    const blocked = stackRef.current.find((entry) => deferUtilitiesWindowClose({ id: entry.id, path: entry.app.path }, true));
+    if (blocked) { focusClosingApp(blocked.id); return; }
     const count = stackRef.current.length;
+    stackRef.current = [];
     setOpenStack([]);
     setView("launcher");
     if (count > 0) toast(`Closed ${count} app${count === 1 ? "" : "s"}`);
+  };
+
+  const confirmUtilitiesClose = (openId: string, all: boolean) => {
+    closeApp(openId);
+    if (all) closeAll();
   };
 
   const showSwitcher = () => {
@@ -490,7 +505,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} onConfirmClose={confirmUtilitiesClose} />
             </motion.div>
           );
         })}
@@ -598,7 +613,9 @@ function MobileAppFrame({
   openApp,
   chat,
   visible,
+  onConfirmClose,
 }: {
+  onConfirmClose: (id: string, all: boolean) => void;
   openApp: OpenApp;
   visible: boolean;
   chat: ReturnType<typeof useChatContext>;
@@ -676,7 +693,7 @@ function MobileAppFrame({
       </div>
     );
   }
-  return <AppViewer path={app.path} onOpenApp={() => {}} />;
+  return <AppViewer windowId={openId} path={app.path} onOpenApp={() => {}} onConfirmClose={onConfirmClose} />;
 }
 
 function AppSwitcher({

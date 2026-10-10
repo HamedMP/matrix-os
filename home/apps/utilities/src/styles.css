@@ -46,7 +46,7 @@ body { min-width: 280px; }
 .utilities-feedback h2 { font-size: 20px; font-weight: 600; margin-bottom: 10px; color: var(--utilities-ink); }
 .utilities-feedback a { display: inline-block; text-decoration: underline; font-weight: 600; margin-top: 16px; }
 .utilities-feedback button { border: 1px solid var(--utilities-ink); border-radius: 10px; padding: 10px 14px; margin-top: 16px; }
-.utilities-dialog { color: var(--utilities-ink); background: var(--utilities-paper); border: 1px solid color-mix(in srgb, var(--utilities-ink) 20%, transparent); border-radius: 18px; padding: 24px; width: min(430px, calc(100vw - 32px)); box-sizing: border-box; }
+.utilities-dialog { margin: auto; color: var(--utilities-ink); background: var(--utilities-paper); border: 1px solid color-mix(in srgb, var(--utilities-ink) 20%, transparent); border-radius: 18px; padding: 24px; width: min(430px, calc(100vw - 32px)); box-sizing: border-box; }
 .utilities-dialog::backdrop { background: color-mix(in srgb, var(--utilities-ink) 45%, transparent); }
 .utilities-dialog h2 { font-size: 20px; font-weight: 650; margin: 0 0 10px; }
 .utilities-dialog p { color: var(--utilities-muted); margin-bottom: 22px; }

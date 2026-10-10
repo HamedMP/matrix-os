@@ -1,0 +1,22 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { UtilitiesCloseRequestSchema } from "@desktop/shared/native-utilities-close";
+const electron = vi.hoisted(() => ({ contextBridge: { exposeInMainWorld: vi.fn() }, ipcRenderer: { invoke: vi.fn().mockResolvedValue({ ok: true }), on: vi.fn(), removeListener: vi.fn() } }));
+vi.mock("electron", () => electron);
+afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); vi.resetModules(); });
+it("exposes the bounded typed close API only when the trusted native view opts in", async () => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
+  await import("../../desktop/src/preload/index");
+  expect(electron.contextBridge.exposeInMainWorld.mock.calls[0]![1].utilitiesClose).toBeUndefined();
+  vi.resetModules(); electron.contextBridge.exposeInMainWorld.mockClear();
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge", "--matrix-utilities-close-bridge"]);
+  await import("../../desktop/src/preload/index");
+  const close = electron.contextBridge.exposeInMainWorld.mock.calls[0]![1].utilitiesClose;
+  const listener = vi.fn(); const off = close.onCloseRequest(listener);
+  const receive = electron.ipcRenderer.on.mock.calls[0]![1];
+  const request = { type: "request", requestId: "00000000-0000-4000-8000-000000000000" };
+  receive({}, { ...request, content: "never cross the bridge" }); expect(listener).not.toHaveBeenCalled();
+  receive({}, request); expect(listener).toHaveBeenCalledWith(UtilitiesCloseRequestSchema.parse(request));
+  await expect(close.respondToClose(request.requestId, false)).resolves.toEqual({ ok: true });
+  expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith("native-app:utilities-close-reply", { requestId: request.requestId, allow: false });
+  off(); expect(electron.ipcRenderer.removeListener).toHaveBeenCalledWith("native-app:utilities-close-request", receive);
+});

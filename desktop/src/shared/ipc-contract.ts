@@ -442,6 +442,10 @@ export const INVOKE_CHANNELS = {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,
   },
+  "embed:close-utilities": {
+    request: Empty,
+    response: Ok,
+  },
   "embed:retry-auth": {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,

@@ -1,3 +1,4 @@
+import { utilitiesAppCsp } from "@matrix-os/contracts";
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
 import { appRuntimeSlugFromIdentity } from "@matrix-os/contracts";
 
@@ -53,6 +54,21 @@ export function extractSlug(path: string): string | null {
   return null;
 }
 
+function isUtilitiesRuntimeBaseHref(baseHref: string): boolean {
+  return /^(?:https?:\/\/[^\s/?#@]+)?(?:\/vm\/[A-Za-z0-9_-]{1,64}(?:\/~runtime\/[A-Za-z0-9_-]{1,32})?)?\/apps\/utilities\/$/.test(baseHref);
+}
+
+export function appIframePermissions(path: string): string | undefined {
+  return extractSlug(path) === "utilities" || isUtilitiesRuntimeBaseHref(path) ? "clipboard-write" : undefined;
+}
+
+export function appIframeSandbox(path: string): string {
+  // Popups are only fixed canonical website fallbacks with noopener; the app
+  // itself keeps an opaque origin and never gains parent DOM access.
+  return extractSlug(path) === "utilities" || isUtilitiesRuntimeBaseHref(path)
+    ? `${APP_IFRAME_SANDBOX} allow-downloads allow-popups-to-escape-sandbox` : APP_IFRAME_SANDBOX;
+}
+
 export function shouldRenderAppIframe(path: string): boolean {
   return !path.startsWith("__");
 }
@@ -66,10 +82,13 @@ export function injectBridgeIntoAppHtml(
 ): string {
   const bridgeScript = buildBridgeScript(appName, themeVars, design)
     + `\n;if(window.MatrixOS&&window.MatrixOS.db){useDb=true;}if(typeof loadData==="function"){loadData();}\n`;
+  // Select the OS-bundled route exactly; never trust the display name or a substring.
+  const utilitiesRoute = isUtilitiesRuntimeBaseHref(baseHref);
+  const policy = utilitiesRoute ? utilitiesAppCsp({ baseUri: "'self'" }) : APP_IFRAME_CSP;
   const escapedBaseHref = baseHref.replace(/"/g, "&quot;");
   const injection = [
     `<base href="${escapedBaseHref}">`,
-    `<meta http-equiv="Content-Security-Policy" content="${APP_IFRAME_CSP.replace(/"/g, "&quot;")}">`,
+    `<meta http-equiv="Content-Security-Policy" content="${policy.replace(/"/g, "&quot;")}">`,
     `<script>${bridgeScript}</script>`,
   ].join("");
 

@@ -9,6 +9,7 @@ import { safeExternalHttpUrl } from "../external-url";
 import type { RuntimeBrowserNavigationDecision } from "../../shared/runtime-browser-url";
 import { resolveBrowserAddress } from "../../shared/runtime-browser-url";
 import { NATIVE_APP_ACTIVITY_BRIDGE_ARG, isNativeAppActivityIdentity } from "../../shared/native-app-gateway";
+import { UTILITIES_CLOSE_BRIDGE_ARG } from "../../shared/native-utilities-close";
 
 const MAX_PUBLIC_BROWSER_ORIGINS = 64;
 const MAX_EMBED_SNAPSHOT_BYTES = 3_000_000;
@@ -56,6 +57,7 @@ export function createWebContentsView(options: {
     preloadPath: string;
     register: (senderId: number, appIdentity: string, routeSlug: string) => void;
     unregister: (senderId: number) => void;
+    requestUtilitiesClose?: (senderId: number) => Promise<boolean>;
   };
 }): EmbedViewLike {
   const view = new WebContentsView({
@@ -68,6 +70,8 @@ export function createWebContentsView(options: {
         preload: options.appBridge.preloadPath,
         additionalArguments: [
           "--matrix-app-bridge",
+          ...(options.appBridge.appIdentity === "utilities" && options.appBridge.routeSlug === "utilities"
+            ? [UTILITIES_CLOSE_BRIDGE_ARG] : []),
           ...(isNativeAppActivityIdentity(options.appBridge.appIdentity, options.appBridge.routeSlug)
             ? [NATIVE_APP_ACTIVITY_BRIDGE_ARG] : []),
         ],
@@ -237,6 +241,9 @@ export function createWebContentsView(options: {
   };
 
   return {
+    ...(options.appBridge?.appIdentity === "utilities" ? {
+      requestClose: () => options.appBridge?.requestUtilitiesClose?.(contents.id) ?? Promise.resolve(false),
+    } : {}),
     setBounds(bounds: Bounds) {
       const { cornerRadius = 0, ...rectangle } = bounds;
       view.setBounds(rectangle);

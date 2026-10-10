@@ -4,6 +4,12 @@
 // tab; openTabInstance() is the explicit user gesture for a separate top-level
 // app tab with independent mounted UI state.
 import { create } from "zustand";
+import { invoke } from "../lib/operator";
+import { useDesktopSurfaces } from "./desktop-surfaces";
+import { useDesktopAppDrawer } from "./desktop-app-drawer";
+
+let pendingUtilitiesClose: { id: string; promise: Promise<boolean> } | null = null;
+export const isUtilitiesTab = (tab: Pick<Tab, "kind" | "slug" | "appIdentity">): boolean => tab.kind === "app" && (tab.appIdentity ?? tab.slug) === "utilities";
 
 export type TabKind =
   | "home"
@@ -143,7 +149,7 @@ interface TabsState {
   ): void;
   updateChatTitle(chatId: string, title: string): void;
   clearActiveTab(id: string): void;
-  closeTab(id: string): void;
+  closeTab(id: string): boolean | Promise<boolean>;
   closeProjectTabs(projectSlug: string): void;
   focusTab(id: string): void;
   ensureNavigationScope(scope: string): void;
@@ -158,7 +164,7 @@ function appendNewTab(state: TabsState, tab: Tab): Partial<TabsState> {
   let tabs = [...state.tabs, tab];
   if (tabs.length > MAX_TABS) {
     const victim = tabs.find((candidate) => (
-      candidate.closable && candidate.id !== tab.id && candidate.id !== state.activeTabId
+      candidate.closable && !isUtilitiesTab(candidate) && candidate.id !== tab.id && candidate.id !== state.activeTabId
     ));
     if (victim) tabs = tabs.filter((candidate) => candidate.id !== victim.id);
   }
@@ -234,6 +240,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
   },
 
   openTabInstance: (spec) => {
+    if (isUtilitiesTab(spec)) return get().openTab(spec);
     counter += 1;
     const id = `tab-${counter}`;
     const tab: Tab = { ...spec, id, closable: spec.closable ?? true };
@@ -280,8 +287,12 @@ export const useTabs = create<TabsState>()((set, get) => ({
     state.activeTabId === id ? { activeTabId: null } : state
   )),
 
-  closeTab: (id) =>
-    set((state) => {
+  closeTab: (id) => {
+    const tab = get().tabs.find(candidate => candidate.id === id);
+    if (!tab?.closable) return false;
+    const remove = () => {
+      if (!get().tabs.some(candidate => candidate.id === id)) return false;
+      set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === id);
       if (idx === -1) return state;
       if (!state.tabs[idx]!.closable) return state;
@@ -293,7 +304,22 @@ export const useTabs = create<TabsState>()((set, get) => ({
         activeTabId = next?.id ?? null;
       }
       return { tabs, activeTabId };
-    }),
+      });
+      return true;
+    };
+    if (!isUtilitiesTab(tab)) return remove();
+    if (pendingUtilitiesClose) return pendingUtilitiesClose.id === id ? pendingUtilitiesClose.promise : false;
+    get().focusTab(id);
+    useDesktopSurfaces.getState().activateSurface(id);
+    useDesktopAppDrawer.getState().setOpen(false);
+    const scope = get().navigationScope;
+    const promise = invoke("embed:close-utilities", {}).then(reply => reply.ok && get().navigationScope === scope ? remove() : false)
+      .catch((error: unknown) => { console.warn("[utilities-close] request unavailable", error instanceof Error ? "Error" : "UnknownError"); return false; });
+    const pending = { id, promise };
+    pendingUtilitiesClose = pending;
+    void promise.then(() => { if (pendingUtilitiesClose === pending) pendingUtilitiesClose = null; });
+    return promise;
+  },
 
   closeProjectTabs: (projectSlug) =>
     set((state) => {

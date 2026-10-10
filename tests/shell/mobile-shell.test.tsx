@@ -8,6 +8,7 @@ import { ChatProvider } from "../../shell/src/stores/chat-context.js";
 import { clientFixture, saved } from "../desktop/chat-agents-fixture.js";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat.js";
 import { toast } from "sonner";
+import { useUtilitiesCloseGuard } from "../../shell/src/stores/utilities-close-guard";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
@@ -392,6 +393,35 @@ describe("mobile shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resume foreground app" }));
     expect(frame.hasAttribute("inert")).toBe(false);
     expect(screen.getByTestId("terminal-app")).toBe(terminal);
+  });
+
+  it.each(["one", "all"])("guards temporary Utilities input before Web Mobile close %s", async (mode) => {
+    useUtilitiesCloseGuard.setState({ guards: {}, pending: null });
+    HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({
+      ok: true,
+      text: async () => "<!doctype html><html><head></head><body>Utilities</body></html>",
+      json: async () => ({ apps: [{ name: "Utilities", path: "apps/utilities/", icon: "utilities" }], icons: {}, modules: [], layout: { windows: [] } }),
+    })));
+    const MobileShell = await loadMobileShell();
+    render(<MobileShell/>);
+    const utilitiesLauncher = await screen.findByTestId("mobile-launcher-app-apps/utilities/");
+    if (mode === "all") fireEvent.click(screen.getByTestId("mobile-launcher-app-__terminal__"));
+    fireEvent.click(utilitiesLauncher);
+    const frame = await screen.findByTitle("apps/utilities/") as HTMLIFrameElement;
+    act(() => window.dispatchEvent(new MessageEvent("message", { source: frame.contentWindow, origin: "null", data: { type: "matrix-os:utilities-workspace-state", app: "utilities", dirty: true } })));
+    fireEvent.click(screen.getByLabelText("Open"));
+    fireEvent.click(mode === "one" ? screen.getByLabelText("Close Utilities") : screen.getByRole("button", { name: "Close all" }));
+    const dialog = screen.getByRole("dialog", { name: "Close Utilities?" });
+    if (mode === "all") expect(screen.getByTestId("terminal-app")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep working" }));
+    expect(screen.getByTitle("apps/utilities/")).toBe(frame);
+    fireEvent.click(screen.getByLabelText("Open"));
+    fireEvent.click(mode === "one" ? screen.getByLabelText("Close Utilities") : screen.getByRole("button", { name: "Close all" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Close Utilities?" })).getByRole("button", { name: "Close Utilities" }));
+    await waitFor(() => expect(screen.queryByTitle("apps/utilities/")).toBeNull());
+    if (mode === "all") expect(screen.queryByTestId("terminal-app")).toBeNull();
   });
 
   it("loads installed mobile apps from the shared shell bootstrap endpoint", async () => {

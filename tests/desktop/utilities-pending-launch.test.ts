@@ -1,0 +1,52 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { EmbedService } from "@desktop/main/embeds/embed-service";
+vi.mock("electron", () => ({ net: { request: vi.fn() }, session: { fromPartition: vi.fn() } }));
+afterEach(() => vi.restoreAllMocks());
+it("closes an exact never-mounted Utilities launch and prevents a late retry from attaching", async () => {
+  const service = new EmbedService({ getWindow: () => null, getGatewayOrigin: () => "https://gateway.test", getToken: () => "fixture", emitState: vi.fn() });
+  const internals = service as unknown as { fetchLaunchToken: () => Promise<{ launchUrl: string; expiresAt: number }>; manager: { open: (...args: unknown[]) => string } };
+  const token = vi.spyOn(internals, "fetchLaunchToken").mockRejectedValueOnce(new Error("synthetic"));
+  const open = vi.spyOn(internals.manager, "open");
+  const failed = await service.open({ kind: "app", slug: "utilities", appIdentity: "utilities", bounds: { x: 0, y: 0, width: 500, height: 500 } });
+  expect(failed.state).toBe("failed"); expect(open).not.toHaveBeenCalled();
+  let resolve!: (value: { launchUrl: string; expiresAt: number }) => void;
+  token.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const retry = service.retryAuth(failed.embedId);
+  expect(await service.closeUtilities()).toBe(true);
+  resolve({ launchUrl: "/apps/utilities/", expiresAt: Date.now() + 60_000 });
+  expect(await retry).toBe(false); expect(open).not.toHaveBeenCalled();
+  expect(await service.closeUtilities()).toBe(false);
+  service.closeAll();
+});
+it("does not remove another app's pending launch", async () => {
+  const service = new EmbedService({ getWindow: () => null, getGatewayOrigin: () => "https://gateway.test", getToken: () => "fixture", emitState: vi.fn() });
+  vi.spyOn(service as any, "fetchLaunchToken").mockRejectedValue(new Error("synthetic"));
+  const failed = await service.open({ kind: "app", slug: "notes", appIdentity: "notes", bounds: { x: 0, y: 0, width: 500, height: 500 } });
+  expect(await service.closeUtilities()).toBe(false);
+  expect(service.close(failed.embedId)).toBe(true);
+  service.closeAll();
+});
+it("keeps a failed Utilities launch closable when other failures fill the bounded pending registry", async () => {
+  const service = new EmbedService({ getWindow: () => null, getGatewayOrigin: () => "https://gateway.test", getToken: () => "fixture", emitState: vi.fn() });
+  const internals = service as unknown as { fetchLaunchToken: () => Promise<never>; pendingApps: Map<string, unknown>; pendingActive: Map<string, boolean> };
+  vi.spyOn(internals, "fetchLaunchToken").mockRejectedValue(new Error("synthetic"));
+  const bounds = { x: 0, y: 0, width: 500, height: 500 };
+  const failed = await service.open({ kind: "app", slug: "utilities", appIdentity: "utilities", bounds });
+  for (let i = 0; i < 12; i++) await service.open({ kind: "app", slug: `app-${i}`, appIdentity: `app-${i}`, bounds });
+  expect(internals.pendingApps.size).toBe(12);
+  expect(internals.pendingActive.size).toBe(12);
+  expect(internals.pendingApps.has(failed.embedId)).toBe(true);
+  expect(await service.closeUtilities()).toBe(true);
+  expect(internals.pendingApps.has(failed.embedId)).toBe(false);
+  service.closeAll();
+});
+it("keeps the pending cap even when repeated low-level Utilities launches fail", async () => {
+  const service = new EmbedService({ getWindow: () => null, getGatewayOrigin: () => "https://gateway.test", getToken: () => "fixture", emitState: vi.fn() });
+  const internals = service as unknown as { fetchLaunchToken: () => Promise<never>; pendingApps: Map<string, unknown>; pendingActive: Map<string, boolean> };
+  vi.spyOn(internals, "fetchLaunchToken").mockRejectedValue(new Error("synthetic"));
+  for (let i = 0; i < 14; i++) await service.open({ kind: "app", slug: "utilities", appIdentity: "utilities", bounds: { x: 0, y: 0, width: 500, height: 500 } });
+  expect(internals.pendingApps.size).toBe(12);
+  expect(internals.pendingActive.size).toBe(12);
+  expect(await service.closeUtilities()).toBe(true);
+  service.closeAll();
+});
