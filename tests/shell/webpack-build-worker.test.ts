@@ -29,6 +29,7 @@ describe("production Webpack worker boundaries", () => {
     vi.resetModules();
     const { default: exported } = await import("../../shell/next.config.ts");
     const userConfig = await resolveProductionConfig(exported);
+    expect(userConfig.experimental?.optimizePackageImports).toEqual(["@hugeicons/core-free-icons"]);
     // Next caches config per directory/phase. Separate owned directories keep
     // the two actual production-loader cases independent.
     const fixture = mkdtempSync(resolve(tmpdir(), "matrix-next-workers-"));
@@ -37,6 +38,11 @@ describe("production Webpack worker boundaries", () => {
       expect(config.experimental?.webpackBuildWorker).toBe(true);
       expect(config.experimental?.parallelServerCompiles).toBe(true);
       expect(config.experimental?.parallelServerBuildTraces).toBe(true);
+      // Next merges our targeted barrel with its built-in optimization list.
+      expect(config.experimental?.optimizePackageImports).toEqual(expect.arrayContaining([
+        "@hugeicons/core-free-icons", "lucide-react", "date-fns",
+      ]));
+      expect(config.experimental?.optimizePackageImports?.filter((name) => name === "@hugeicons/core-free-icons")).toHaveLength(1);
       expect(config.reactCompiler).toBe(true);
       const configureWebpack = config.webpack;
       if (!configureWebpack) throw new Error("Source extension aliases require the Webpack hook");

@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
     webpackBuildWorker: true,
     parallelServerCompiles: true,
     parallelServerBuildTraces: true,
+    // Avoid traversing thousands of unused icon re-exports in both bundles.
+    optimizePackageImports: ["@hugeicons/core-free-icons"],
   },
   transpilePackages: ["@matrix-os/contracts", "@matrix-os/observability", "@matrix-os/ui"],
   // Allow HMR websockets when the dev shell is reached through a tunnel
