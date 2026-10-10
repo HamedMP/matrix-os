@@ -1,8 +1,12 @@
-import type { R2Client } from "./r2-client.js";
+import { SyncObjectTooLargeError, type R2Client } from "./r2-client.js";
 import { Readable } from "node:stream";
 
 const INTERNAL_SYNC_READ_TIMEOUT_MS = 10_000;
 const INTERNAL_SYNC_WRITE_TIMEOUT_MS = 30_000;
+// Broker writes reach the platform through the edge router Worker, which
+// buffers request bodies and rejects anything over its limit
+// (EDGE_WORKER_BODY_LIMIT in packages/edge-router; a test guards drift).
+const BROKERED_PUT_MAX_BYTES = 10 * 1024 * 1024;
 
 function noSuchKey(): Error {
   const err = new Error("NoSuchKey");
@@ -50,6 +54,8 @@ export function createPlatformR2Client(config: {
   }
 
   return {
+    maxPutObjectBytes: BROKERED_PUT_MAX_BYTES,
+
     async getPresignedGetUrl(key: string, expiresIn?: number): Promise<string> {
       const res = await request("/presign/get", {
         method: "POST",
@@ -179,6 +185,10 @@ export function createPlatformR2Client(config: {
         signal: options?.signal,
         ...(streamed ? { duplex: "half" } : {}),
       } as RequestInit & { duplex?: "half" }, INTERNAL_SYNC_WRITE_TIMEOUT_MS);
+      if (res.status === 413) {
+        await res.body?.cancel();
+        throw new SyncObjectTooLargeError();
+      }
       const data = await expectJson<{ etag: string | null }>(res);
       return { etag: data.etag ?? undefined };
     },

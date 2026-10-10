@@ -1,5 +1,6 @@
 export const UPSTREAM_TIMEOUT_MS = 30_000;
-const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
+/** Request bodies are buffered up to this size; larger bodies get a 413. */
+export const EDGE_WORKER_BODY_LIMIT = 10 * 1024 * 1024;
 const ATS_MAIL_BODY_LIMIT = 32 * 1024 * 1024;
 const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
 const PREVIEW_CHAT_CANDIDATE_MAX_DURATION_MS = 2 * 60 * 60 * 1000;
@@ -61,7 +62,7 @@ export async function handleEdgeRouterRequest(
   }
 
   const bodyLimit = routeClass === "platform" && url.pathname === "/api/ats/mail"
-    ? ATS_MAIL_BODY_LIMIT : WORKER_BODY_LIMIT;
+    ? ATS_MAIL_BODY_LIMIT : EDGE_WORKER_BODY_LIMIT;
   const body = await readRequestBody(request, bodyLimit);
   if (body instanceof Response) return body;
   const candidateOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
