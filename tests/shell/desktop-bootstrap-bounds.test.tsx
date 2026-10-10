@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDefaultOsViewDocument } from "@matrix-os/contracts";
+import { createDefaultOsViewDocument, mergeOsViewStatePatch } from "@matrix-os/contracts";
 import { useCatalogAppShortcuts } from "../../shell/src/hooks/useCatalogAppShortcuts";
 import { useDesktopConfigStore } from "../../shell/src/stores/desktop-config";
 import { useDesktopBootstrap } from "../../shell/src/components/desktop/useDesktopBootstrap";
 import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from "../../shell/src/hooks/useWindowManager";
-import { resetWebOsViewStateClientForTests } from "../../shell/src/lib/os-view-state-client";
+import { loadWebOsViewState, resetWebOsViewStateClientForTests } from "../../shell/src/lib/os-view-state-client";
+
+import { getGatewayUrl } from "../../shell/src/lib/gateway";
 
 beforeEach(() => {
   useWindowManager.setState(useWindowManager.getInitialState(), true);
@@ -208,12 +210,46 @@ it.each(["apps/folio/index.html", "apps/finance/ledger/index.html"])("deduplicat
     expect(useDesktopConfigStore.getState().pinnedApps).toEqual([unrelated, terminal]);
     expect(result.current.pinnedApps).toEqual([unrelated, terminal]);
     expect(useDesktopConfigStore.getState().desktopIcons).toEqual([placement]);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).patch.pinnedApps).toEqual([unrelated, terminal]);
     await act(async () => result.current.togglePin(selected));
     expect(useDesktopConfigStore.getState().pinnedApps).toEqual([unrelated, terminal, canonical]);
     expect(result.current.pinnedApps).toEqual([unrelated, terminal, canonical]);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(fetchMock.mock.calls.at(-1)![1].body).patch.pinnedApps).toEqual([unrelated, terminal, canonical]);
+  } finally { act(() => useDesktopConfigStore.setState(previous)); }
+});
+
+it("keeps a concurrent client pin when one Unpin removes every saved manifest alias", async () => {
+  const canonical = "apps/folio/index.html", old = "apps/finance/ledger/index.html";
+  const local = "apps/local/index.html", remote = "apps/remote/index.html";
+  const previous = useDesktopConfigStore.getState();
+  const placement = { path: old, x: 321, y: 147 };
+  let server = { revision: 1, updatedAt: new Date().toISOString(), document: { ...createDefaultOsViewDocument(), pinnedApps: [old, canonical, local] } };
+  const patches: Array<{ baseRevision: number; patch: { pinnedApps: string[] } }> = [];
+  vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+    if (init?.method === "PATCH") {
+      const request = JSON.parse(init.body); patches.push(request);
+      if (patches.length === 1) {
+        server = { ...server, revision: 2, document: { ...server.document, pinnedApps: [...server.document.pinnedApps, remote] } };
+        return new Response("", { status: 409 });
+      }
+      expect(request.baseRevision).toBe(server.revision);
+      server = { ...server, revision: server.revision + 1, document: mergeOsViewStatePatch(server.document, request.patch) };
+    }
+    return new Response(JSON.stringify(server));
+  }));
+  useDesktopConfigStore.setState({ pinnedApps: [old, canonical, local], desktopIcons: [placement] });
+  try {
+    await loadWebOsViewState(getGatewayUrl());
+    const { result } = renderHook(() => useCatalogAppShortcuts([{ name: "Folio", slug: "folio", path: canonical, ownerPath: old }]));
+    await act(async () => {
+      result.current.togglePin(canonical);
+      await vi.waitFor(() => expect(patches.length).toBeGreaterThanOrEqual(2));
+    });
+    expect(server.document.pinnedApps).toEqual([local, remote]);
+    expect(patches).toHaveLength(2); // One mutation, retried once after a real revision conflict.
+    expect(patches[1].patch.pinnedApps).toEqual([local, remote]);
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual([placement]);
   } finally { act(() => useDesktopConfigStore.setState(previous)); }
 });

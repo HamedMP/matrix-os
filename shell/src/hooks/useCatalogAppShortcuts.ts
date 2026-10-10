@@ -26,8 +26,9 @@ export function useCatalogAppShortcuts(apps: readonly ApiAppEntry[]) {
     const pins = useDesktopConfigStore.getState().pinnedApps ?? EMPTY_PINS;
     const canonicalPath = resolvePath(path);
     const aliases = pins.filter((pin, index) => resolvePath(pin) === canonicalPath && pins.indexOf(pin) === index);
-    // Reuse the store's durable toggle flow once per distinct saved reference.
-    if (aliases.length) aliases.forEach(alias => toggleSavedPin(alias));
+    // Remove aliases in one durable mutation so conflict rebasing preserves other clients.
+    if (aliases.length > 1) toggleSavedPin(canonicalPath, aliases);
+    else if (aliases.length) toggleSavedPin(aliases[0]);
     else toggleSavedPin(canonicalPath);
   }, [resolvePath, toggleSavedPin]);
   const addDesktopIcon = useCallback<typeof addSavedDesktopIcon>((path, bounds) => {
