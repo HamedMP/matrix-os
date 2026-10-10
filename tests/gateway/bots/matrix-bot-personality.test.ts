@@ -52,7 +52,7 @@ interface InferenceContext {
   setClock(date: Date): void;
 }
 
-async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean; isolated?: boolean; realPostgres?: boolean; unixSdk?: boolean; duplicateFrames?: boolean; reusePhase?: boolean; beforeInference?(context: InferenceContext): Promise<void>; finalFailure?: "capacity" | "unknown" | "abort" } = {}) {
+async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean; isolated?: boolean; realPostgres?: boolean; unixSdk?: boolean; realResolver?: boolean; duplicateFrames?: boolean; reusePhase?: boolean; beforeInference?(context: InferenceContext): Promise<void>; finalFailure?: "capacity" | "unknown" | "abort" } = {}) {
   const { db, destroy } = await (options.realPostgres ? createRealBotStateDatabase() : createBotStateDatabase()); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "matrix-bot-soul-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
@@ -158,8 +158,10 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
   const resolved = { route: { api: "anthropic-messages" as const, modelId: "claude-sonnet-5", input: ["text" as const], contextWindow: 128000, maxOutputTokens: 8192 }, accessSourceId: "matrix_included" as const };
   const orchestrator = createBotTaskOrchestrator({ bindings: createBotBindingsRepository(db), transact: createBotStateTransactions(repository),
     ...(isolated ? { isolatedChat: isolated } : {}),
-    agents, recipes, resolveRoute: options.unixSdk ? createBotModelRouteResolver({ providers: { getSnapshot: async options => {
-      expect(options?.admissionScope).toBe("managed_matrix");
+    agents, recipes, resolveRoute: options.unixSdk || options.realResolver ? createBotModelRouteResolver({ providers: { getSnapshot: async snapshotOptions => {
+      expect(snapshotOptions?.admissionScope).toBe("managed_matrix");
+      if (!options.unixSdk) return { accessSources: [{ id: "matrix_included", state: "ready", staleAfter: null, eligibleModelIds: ["claude-sonnet-5"] }],
+        models: [{ id: "claude-sonnet-5", vendor: "anthropic", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_included"] }] } as never;
       return { accessSources: [{ id: "matrix_cloudflare", state: "ready", staleAfter: null, eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] }],
         models: [{ id: "@cf/zai-org/glm-5.3-flash", vendor: "cloudflare", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"] }] } as never;
     } } }) : async () => resolved, admission, registry, client: host.client,
@@ -281,6 +283,20 @@ it("uses the canonical recipe default for empty and missing SOUL", async () => {
   }
 });
 
+
+it("resolves a canonical Anthropic phase through the actual Provider V3 model catalog and preserves its authority", async () => {
+  const f = await fixture({ isolated: true, realResolver: true, realPostgres: Boolean(process.env.MATRIX_TEST_POSTGRES_URL) });
+  await f.turn("Who are you?"); await f.wait();
+  expect(f.specs).toHaveLength(1);
+  expect(f.specs[0]).toMatchObject({ route: { api: "anthropic-messages", modelId: "claude-sonnet-5", maxOutputTokens: 256 },
+    capabilities: [], isolatedTurn: { phaseId: "phase_canonical_1", target: { kind: "canonical_bot", botId: f.created.agent.id } } });
+  await f.turn("Continue."); await f.wait();
+  expect(f.specs).toHaveLength(2);
+  expect(f.specs[1]).toMatchObject({ isolatedTurn: { phaseId: "phase_canonical_2" } });
+  expect(JSON.stringify((await f.sessions.load({ ownerId: OWNER, botId: f.created.agent.id, chatId: f.created.chatId })).messages))
+    .toContain("SYNTHETIC_REPLY_1");
+  expect(f.registry.size).toBe(0);
+});
 
 it("constrains the actual canonical Bot run and preserves its genuine first-turn session on the second phase", async () => {
   const f = await fixture({ isolated: true });
