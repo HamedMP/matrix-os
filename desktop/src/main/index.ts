@@ -55,6 +55,7 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
+import { discoverLocalChats } from "./files/local-chat-discovery";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -447,12 +448,7 @@ if (!gotLock) {
         saveDownload: saveDriveDownloadFile,
       });
       localChatImports = createNativeChatImportService({auth, progress:progress=>sendEvent("runtime:chat-import-progress",progress),
-        chooseFile:async harness=>{
-          const root=harness==="codex"?process.env.CODEX_HOME??join(app.getPath("home"),".codex"):process.env.CLAUDE_CONFIG_DIR??join(app.getPath("home"),".claude");
-          const options={title:`Import ${harness==="codex"?"Codex":"Claude Code"} transcript`,defaultPath:join(root,harness==="codex"?"sessions":"projects"),filters:[{name:"Transcript",extensions:["jsonl"]}],properties:["openFile"] as Array<"openFile">};
-          const result=mainWindow&&!mainWindow.isDestroyed()?await dialog.showOpenDialog(mainWindow,options):await dialog.showOpenDialog(options);
-          return result.canceled?null:result.filePaths[0]??null;
-        }});
+        discoverSources:signal=>discoverLocalChats({home:app.getPath("home"),codexRoot:process.env.CODEX_HOME,claudeRoot:process.env.CLAUDE_CONFIG_DIR},signal)});
       registerLocalChatImportIpc(ipcMain,localChatImports,rawEvent=>{
         const event=rawEvent as IpcMainInvokeEvent;const contents=mainWindow?.webContents;
         const rendererUrl=desktopRendererUrl??pathToFileURL(join(__dirname,"../renderer/index.html")).toString();

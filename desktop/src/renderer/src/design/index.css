@@ -16,6 +16,7 @@
 @import "./tokens.css";
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
+@import "@matrix-os/ui/chat-import.css";
 
 @keyframes native-desktop-window-hide {
   from { opacity: 1; transform: translate3d(0, 0, 0); }
