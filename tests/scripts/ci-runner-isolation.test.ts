@@ -163,6 +163,10 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     expect(image.match(/sha256sum -c/g)).toHaveLength(3);
     expect(image).toContain("USER 10001:10001");
   });
+  it("gives native Chromium a UTF-8 locale so dragged Unicode filenames survive", () => {
+    const image = readFileSync(resolve(root, "Dockerfile"), "utf8");
+    expect(image).toMatch(/^ENV .*\bLANG=C\.UTF-8\b.*\bLC_ALL=C\.UTF-8\b/m);
+  });
   it("checks immutable checkout and a frozen lockfile before executing suites", () => {
     const script = readFileSync(resolve(root, "benchmark.sh"), "utf8");
     expect(script).toContain('git rev-parse HEAD');
