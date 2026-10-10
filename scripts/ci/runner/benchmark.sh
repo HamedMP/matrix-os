@@ -140,9 +140,14 @@ run_suite() {
         tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts \
         tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts \
         tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts \
-        tests/e2e/desktop/terminal-clipboard.e2e.test.ts tests/e2e/desktop/terminal-file-drop.e2e.test.ts \
+        tests/e2e/desktop/terminal-file-drop.e2e.test.ts \
         tests/e2e/desktop/terminal-snapshot.e2e.test.ts tests/e2e/desktop/release-alignment.e2e.test.ts \
         tests/e2e/desktop/chat-title-layout.e2e.test.ts
+      # Hosted CI gives clipboard its own display. A different Electron window
+      # can blur a held mouse drag and cancel its edge-scroll selection timer.
+      step "e2e-clipboard-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 xvfb-run --auto-servernum \
+        pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=1 \
+        tests/e2e/desktop/terminal-clipboard.e2e.test.ts
       ;;
   esac
   return "$failure"

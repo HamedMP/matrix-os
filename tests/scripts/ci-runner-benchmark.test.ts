@@ -21,6 +21,7 @@ const electronSuites = [
   "tests/e2e/desktop/release-alignment.e2e.test.ts",
   "tests/e2e/desktop/chat-title-layout.e2e.test.ts",
 ];
+const clipboardSuite = "tests/e2e/desktop/terminal-clipboard.e2e.test.ts";
 
 function buildGatedElectronSuites() {
   return readdirSync("tests/e2e/desktop").filter((file) => file.endsWith(".e2e.test.ts")).flatMap((file) => {
@@ -41,6 +42,7 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
   mkdirSync(bin);
+  writeFileSync(resolve(dir, "displays"), "");
   const fixtureScripts = { ...scripts };
   if (historical) {
     fixtureScripts.typecheck = `bun run typecheck:build-kernel && ${scripts["typecheck:run"]}`;
@@ -60,7 +62,7 @@ case "$1" in
   rev-parse) echo "$REVIEWED_SHA" ;;
 esac`);
   executable("timeout", 'shift; exec "$@"');
-  executable("xvfb-run", 'shift; exec "$@"');
+  executable("xvfb-run", 'printf "%s\\n" "$*" >> "$DISPLAYS"; shift; exec "$@"');
   const barrier = `
 await_peer() {
   touch "$HARNESS_DIR/$1.started"
@@ -117,8 +119,13 @@ if [[ "$*" == *"exec vitest run"* ]]; then
       fi
       printf 'general-selection %s\\n' "$selection" >> "$CALLS"
       [[ "$FAIL_LANE" != general ]] || exit 42
-    elif [[ "$*" == *"tests/e2e/desktop/file-download.e2e.test.ts"* ]]; then
-      [[ "$FAIL_LANE" != electron ]] || exit 42
+    else
+      if [[ "$*" == *"tests/e2e/desktop/terminal-clipboard.e2e.test.ts"* ]]; then
+        [[ "$FAIL_LANE" != clipboard ]] || exit 42
+      fi
+      if [[ "$*" == *"tests/e2e/desktop/file-download.e2e.test.ts"* ]]; then
+        [[ "$FAIL_LANE" != electron ]] || exit 42
+      fi
     fi
   fi
 fi`);
@@ -128,6 +135,7 @@ fi`);
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
         HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane,
+        DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: suite === "full" ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
         TYPECHECK_BUILD: fixtureScripts["typecheck:build-kernel"],
@@ -136,6 +144,7 @@ fi`);
     });
     return {
       result, calls: readFileSync(resolve(dir, "calls"), "utf8").trim().split("\n"),
+      displays: readFileSync(resolve(dir, "displays"), "utf8").trim().split("\n").filter(Boolean),
       timings: readFileSync(resolve(work, "results/timing.tsv"), "utf8").trim().split("\n").map((line) => line.split("\t")),
     };
   } finally {
@@ -178,8 +187,11 @@ describe("isolated cold and warm benchmark execution", () => {
       .flatMap((line) => line.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? [])
       .filter((file) => !file.endsWith("terminal-soft-grid.e2e.test.ts"));
     expect(hosted).toEqual(electronSuites);
-    for (const call of electron) {
-      expect(call.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g)).toEqual(hosted);
+    const clipboard = calls.filter((call) => call.includes(clipboardSuite) && !call.includes("--exclude="));
+    expect(clipboard).toHaveLength(2);
+    for (const [index, call] of electron.entries()) {
+      const files = [call, clipboard[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      expect(files.sort()).toEqual([...hosted].sort());
       expect(call).not.toContain("operator.e2e.test.ts");
       expect(call).not.toContain("hermes-conversations.e2e.test.ts");
     }
@@ -201,10 +213,42 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(calls.filter((call) => call === "bun run build:desktop")).toHaveLength(2);
     const electron = calls.filter((call) => call.includes("tests/e2e/desktop/file-download.e2e.test.ts"));
     expect(electron).toHaveLength(2);
-    for (const call of electron) {
-      for (const file of electronSuites) expect(call).toContain(file);
+    const clipboard = calls.filter((call) => call.includes(clipboardSuite));
+    for (const [index, call] of electron.entries()) {
+      const files = [call, clipboard[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      expect(files.sort()).toEqual([...electronSuites].sort());
     }
     expect(timings.filter(([label]) => label.startsWith("terminal-grid-"))).toHaveLength(2);
+  });
+
+  it.each(["full", "e2e-electron"])("%s gives clipboard its own single-file display on both passes", suite => {
+    const { result, displays, timings } = invoke(suite);
+    expect(result.status, result.stderr).toBe(0);
+    const clipboard = displays.filter(call => call.includes(clipboardSuite) && !call.includes("--exclude="));
+    const common = displays.filter(call => call.includes(electronSuites[0]) && !call.includes("--exclude="));
+    expect(clipboard).toHaveLength(2); expect(common).toHaveLength(2);
+    for (const [index, pass] of ["cold", "warm"].entries()) {
+      expect(clipboard[index]).toContain("--auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=1");
+      expect(clipboard[index].match(/tests\/e2e\/\S+\.e2e\.test\.ts/g)).toEqual([clipboardSuite]);
+      expect(common[index]).toContain("--maxWorkers=2");
+      expect(common[index]).not.toContain(clipboardSuite);
+      const files = [common[index], clipboard[index]].flatMap(call => call.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      expect(files.sort()).toEqual([...electronSuites].sort());
+      const commonTiming = timings.findIndex(([label]) => label === `e2e-electron-${pass}`);
+      const clipboardTiming = timings.findIndex(([label]) => label === `e2e-clipboard-${pass}`);
+      expect(clipboardTiming).toBeGreaterThan(commonTiming);
+      expect(timings[clipboardTiming]).toEqual([`e2e-clipboard-${pass}`, expect.any(String), "0"]);
+    }
+  });
+
+  it("propagates standalone clipboard failures while preserving both complete Electron passes", () => {
+    const { result, timings } = invoke("e2e-electron", "clipboard");
+    expect(result.status, result.stderr).toBe(1);
+    for (const pass of ["cold", "warm"]) {
+      expect(timings).toContainEqual([`e2e-clipboard-${pass}`, expect.any(String), "42"]);
+      for (const lane of ["desktop-build", "terminal-grid", "e2e-electron"])
+        expect(timings).toContainEqual([`${lane}-${pass}`, expect.any(String), "0"]);
+    }
   });
 
   it.each(["typecheck", "checks", "full"])("%s reuses prerequisites for both no-emit passes", (suite) => {
@@ -239,12 +283,12 @@ describe("isolated cold and warm benchmark execution", () => {
     ].join(" && "));
   });
 
-  it.each(["unit", "shell", "general", "electron", "desktop-build"])("propagates full %s failures after collecting both concurrent passes", (lane) => {
+  it.each(["unit", "shell", "general", "electron", "clipboard", "desktop-build"])("propagates full %s failures after collecting both concurrent passes", (lane) => {
     const { result, timings } = invoke("full", lane);
     expect(result.status, result.stderr).toBe(1);
     for (const pass of ["cold", "warm"]) {
-      expect(timings).toContainEqual([`${lane === "general" ? "e2e-general" : lane === "electron" ? "e2e-electron" : lane}-${pass}`, expect.any(String), "42"]);
-      for (const label of ["unit", "typecheck", "shell", "e2e-general", "e2e-electron"])
+      expect(timings).toContainEqual([`${lane === "general" ? "e2e-general" : lane === "electron" ? "e2e-electron" : lane === "clipboard" ? "e2e-clipboard" : lane}-${pass}`, expect.any(String), "42"]);
+      for (const label of ["unit", "typecheck", "shell", "e2e-general", "e2e-electron", "e2e-clipboard", "terminal-grid"])
         expect(timings.some(([record]) => record === `${label}-${pass}`)).toBe(true);
     }
   });
