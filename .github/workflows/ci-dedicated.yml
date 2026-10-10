@@ -1,0 +1,129 @@
+name: Dedicated CI Benchmark
+
+# This controller comes from the default branch and never executes PR code.
+# Enable only after configuring the main-only `matrix-ci` environment and
+# installing the root-owned forced-command dispatcher on a dedicated host.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact public commit to benchmark (blank uses this commit)
+        required: false
+        type: string
+      suite:
+        description: Benchmark suite
+        type: choice
+        default: full
+        options: [full, unit, checks, e2e-general, e2e-electron]
+  pull_request_target:
+    branches: [main]
+    types: [labeled, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
+concurrency:
+  group: dedicated-ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    if: vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: matrix-ci
+    timeout-minutes: 35
+    steps:
+      - name: Admit current source head
+        id: admit
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          INPUT_SHA: ${{ inputs.source_sha }}
+        with:
+          script: |
+            let sha = process.env.INPUT_SHA || context.sha;
+            if (context.eventName === 'pull_request_target') {
+              const {data: pull} = await github.rest.pulls.get({
+                ...context.repo, pull_number: context.payload.pull_request.number, request: {timeout: 10000}
+              });
+              if (pull.state !== 'open' || pull.draft ||
+                  pull.head.sha !== context.payload.pull_request.head.sha ||
+                  pull.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                  !pull.labels.some(label => label.name === 'ready-for-ci')) {
+                core.setOutput('admitted', 'false');
+                return;
+              }
+              sha = pull.head.sha;
+            }
+            if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Exact commit SHA required');
+            await github.rest.repos.getCommit({...context.repo, ref: sha, request: {timeout: 10000}});
+            const {data: check} = await github.rest.checks.create({
+              ...context.repo, name: 'Dedicated CI Results', head_sha: sha, request: {timeout: 10000},
+              status: 'in_progress', details_url:
+                `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });
+            core.setOutput('sha', sha);
+            core.setOutput('check_id', String(check.id));
+            core.setOutput('admitted', 'true');
+
+      - name: Dispatch isolated benchmark
+        id: dispatch
+        if: steps.admit.outputs.admitted == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.admit.outputs.sha }}
+          SUITE: ${{ inputs.suite || 'full' }}
+          CI_SSH_KEY: ${{ secrets.CI_RUNNER_SSH_KEY }}
+          CI_SSH_HOST: ${{ secrets.CI_RUNNER_HOST }}
+          CI_KNOWN_HOSTS: ${{ secrets.CI_RUNNER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          set +x
+          [[ $SOURCE_SHA =~ ^[a-f0-9]{40}$ ]]
+          [[ $CI_SSH_HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
+          case "$SUITE" in full|unit|checks|e2e-general|e2e-electron) ;; *) exit 64 ;; esac
+          : "${CI_SSH_KEY:?CI SSH key required}"
+          : "${CI_KNOWN_HOSTS:?Pinned host key required}"
+          key_dir=$(mktemp -d)
+          trap 'rm -rf "$key_dir"' EXIT
+          umask 077
+          printf '%s\n' "$CI_SSH_KEY" > "$key_dir/id_ed25519"
+          printf '%s\n' "$CI_KNOWN_HOSTS" > "$key_dir/known_hosts"
+          mkdir -p output/ci-dedicated
+          timeout --signal=TERM --kill-after=15s 1900s ssh \
+            -i "$key_dir/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+            "matrixci@$CI_SSH_HOST" "run $SOURCE_SHA $SUITE" \
+            > output/ci-dedicated/benchmark.log 2>&1
+
+      - name: Upload isolated benchmark log
+        if: always() && steps.admit.outputs.admitted == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dedicated-ci-${{ steps.admit.outputs.sha }}
+          path: output/ci-dedicated/benchmark.log
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Settle source-head check
+        if: always() && steps.admit.outputs.check_id != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CHECK_ID: ${{ steps.admit.outputs.check_id }}
+          DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+          SOURCE_SHA: ${{ steps.admit.outputs.sha }}
+          SUITE: ${{ inputs.suite || 'full' }}
+        with:
+          script: |
+            const success = process.env.DISPATCH_OUTCOME === 'success';
+            await github.rest.checks.update({
+              ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
+              status: 'completed', conclusion: success ? 'success' : 'failure',
+              output: {
+                title: success ? 'Isolated benchmark passed' : 'Isolated benchmark failed',
+                summary: `Commit ${process.env.SOURCE_SHA}; suite ${process.env.SUITE}. ` +
+                  'See the workflow artifact for timings. This benchmark does not replace ' +
+                  'CI Results, Pattern Scan, PostgreSQL race tests, or root-fixture validation.'
+              }
+            });

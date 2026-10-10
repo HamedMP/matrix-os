@@ -80,7 +80,8 @@ Automatic dispatch must come from an immutable, reviewed default-branch
 workflow through a dedicated forced-command SSH key. The key may invoke only a
 root-owned dispatcher with bounded SHA/suite/workers, no PTY, forwarding, shell,
 or file transfer. The SSH key stays outside the benchmark container. The
-trusted workflow must use read-only GitHub permissions and never execute PR
+trusted workflow must use read-only source permissions, with check-write access
+only on its controller to report the admitted SHA, and never execute PR
 code before dispatch. Do not use `pull_request_target` to check out PR code
 alongside credentials. The dedicated host must not accept generic GitHub
 runner registration until enforceable workflow admission is available.
@@ -97,3 +98,14 @@ forwarding is accepted. Unit/full use 12 workers; other suites use 2. Pin the
 host key in the controller's known-hosts file from the operator's independently
 verified host fingerprint. Keep workflow environment restrictions and the
 dedicated opt-in flag disabled until this setup and the workflow are reviewed.
+
+The included `ci-dedicated.yml` controller creates **Dedicated CI Results** for
+the exact admitted commit and uploads the untrusted SSH log as an artifact.
+For automatic PR dispatch it verifies the live PR is open, non-draft,
+`ready-for-ci`, current-head, and from this repository. Forks remain hosted.
+Create the `matrix-ci` GitHub environment with a deployment branch policy
+allowing only `main`, and store `CI_RUNNER_SSH_KEY`, `CI_RUNNER_HOST`, and
+`CI_RUNNER_KNOWN_HOSTS` there. After manual benchmarks pass and the controller
+has merged, set repository variable `MATRIX_CI_DEDICATED_ENABLED=true`.
+Keep **CI Results** required during this rollout; benchmark success alone is
+not the merge gate. Disabling the variable stops new dedicated dispatches.
