@@ -76,6 +76,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       try { apps = await owner.child("apps"); }
       catch (error) { if (!isFsError(error, "ENOENT")) throw error; }
       const index = apps ? await indexOwnerApps(apps) : null;
+      if (index?.unavailable) throw new GalleryError(409, "Owner app identity cannot be verified");
       if (index?.entries.has(definition.id)) {
         const indexed = index.entries.get(definition.id);
         if (!indexed) throw new GalleryError(409, "Duplicate owner app slug");
@@ -83,7 +84,6 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       }
       const installed = apps ? await existing(apps, definition.id) : null;
       if (installed) return installed;
-      if (index?.unavailable) throw new GalleryError(409, "Owner app identity cannot be verified");
       // Validate and prepare everything privately before creating any discoverable app folder.
       const icon = await readLimited(join(BUNDLED_HOME, "apps/app-gallery/src/assets/icons", `${definition.id}.png`), limits.maxFileBytes);
       const files = injectedFiles(await readTemplate(templatePath, limits), definition, icon);
@@ -170,7 +170,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
         const index = apps ? await indexOwnerApps(apps) : null;
         const result: GalleryAppListing[] = [];
         for (const definition of definitions) {
-          const installed = index?.entries.has(definition.id) ? index.entries.get(definition.id) : apps ? await existing(apps, definition.id) : null;
+          const installed = index?.unavailable ? null : index?.entries.has(definition.id) ? index.entries.get(definition.id) : apps ? await existing(apps, definition.id) : null;
           result.push({ ...definition, installed: Boolean(installed), ...(installed ? { installedName: installed.name, launchPath: installed.path } : {}) });
         }
         return result;

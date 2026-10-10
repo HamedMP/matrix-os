@@ -250,7 +250,7 @@ it("an unrelated symlink manifest leaves the authenticated Gallery usable and ne
   vi.mocked(filesystem.readLimited).mockImplementation(async source => Buffer.from(source.endsWith("catalog.json") ? JSON.stringify({ version: 1, apps: [definition, { ...definition, id: "focus", name: "Focus" }] }) : "icon"));
   const bridge = galleryBridge(f.homePath);
   const listed = await loadGallery(bridge);
-  expect(listed.apps).toMatchObject([{ id: "folio", installed: true }, { id: "focus", installed: false }]);
+  expect(listed.apps).toMatchObject([{ id: "folio", installed: false }, { id: "focus", installed: false }]);
   await expect(f.service.install("focus")).rejects.toMatchObject({ status: 409 });
   expect(existsSync(join(f.homePath, "apps/focus"))).toBe(false);
   expect(await readFile(outside, "utf8")).toBe("keep private owner content");
@@ -294,4 +294,29 @@ it.each(["\n", "\t", "\r", "\u007f"])("keeps authenticated Gallery usable after 
   expect(existsSync(join(f.homePath, "apps/folio"))).toBe(false);
   expect(existsSync(join(f.homePath, "apps/focus"))).toBe(false);
   expect(await readFile(join(f.homePath, unsupported, "matrix.json"), "utf8")).toBe(bytes);
+});
+
+it.each([' ', '\t', '\n'])("isolates blank owner names %j on canonical and moved paths without changing owner bytes", async name => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  for (const path of ['apps/folio', 'apps/moved-folio']) {
+    if (path !== 'apps/folio') expect((await f.app.request('/api/files/rename', json({ from: 'apps/folio', to: path }))).status).toBe(200);
+    const manifestPath = join(f.homePath, path, 'matrix.json');
+    const bytes = JSON.stringify({ ...JSON.parse(await readFile(manifestPath, 'utf8')), name });
+    expect((await f.app.request(`/files/${path}/matrix.json`, { method: 'PUT', body: bytes })).status).toBe(200);
+    await expect(loadGallery(galleryBridge(f.homePath))).resolves.toMatchObject({ apps: [{ id: 'folio', installed: false }] });
+    await expect(f.service.install('folio')).rejects.toMatchObject({ status: 409 });
+    expect(await readFile(manifestPath, 'utf8')).toBe(bytes);
+  }
+});
+it.each(['\n', '\t', '\r', '\u007f'])("does not assert a runnable installation when a skipped owner copy hides a duplicate slug %j", async control => {
+  const f = await fixture('cleanup'); f.released.resolve(); await f.service.install('folio');
+  const original = await readFile(join(f.homePath, 'apps/folio/matrix.json'), 'utf8');
+  await mkdir(join(f.homePath, 'apps/copy'));
+  await writeFile(join(f.homePath, 'apps/copy/matrix.json'), original);
+  const skipped = `apps/copy${control}backup`;
+  expect((await f.app.request('/api/files/rename', json({ from: 'apps/copy', to: skipped }))).status).toBe(200);
+  await expect(loadGallery(galleryBridge(f.homePath))).resolves.toMatchObject({ apps: [{ id: 'folio', installed: false }] });
+  await expect(f.service.install('folio')).rejects.toMatchObject({ status: 409 });
+  expect(await readFile(join(f.homePath, 'apps/folio/matrix.json'), 'utf8')).toBe(original);
+  expect(await readFile(join(f.homePath, skipped, 'matrix.json'), 'utf8')).toBe(original);
 });

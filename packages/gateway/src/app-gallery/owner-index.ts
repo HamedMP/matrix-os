@@ -12,6 +12,7 @@ export function isOwnerFileUnavailable(error: unknown): boolean {
 export async function readOwnerManifest(directory: PinnedDirectory): Promise<{ manifest: AppManifest | null; unavailable: boolean }> {
   try {
     const parsed = AppManifestSchema.safeParse(JSON.parse((await directory.readFile("matrix.json", 32_768)).toString("utf8")));
+    if (parsed.success && !parsed.data.name.trim()) return { manifest: null, unavailable: true };
     return { manifest: parsed.success ? parsed.data : null, unavailable: false };
   } catch (error) {
     if (isOwnerFileUnavailable(error)) return { manifest: null, unavailable: true };
