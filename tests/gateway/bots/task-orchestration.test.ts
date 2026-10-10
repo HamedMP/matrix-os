@@ -155,6 +155,18 @@ describe("bot turns through the matrix_bot adapter", () => {
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "completed" })]);
   });
 
+  it("records an ordinary invalid coordinator as a blocked model task", async () => {
+    const resolveRoute = vi.fn();
+    const { orchestrator, admission } = setup({ resolveRoute });
+    const handle = orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: "run_invalid_coordinator",
+      text: "Hello", selection: { instanceId: "matrix_anthropic_api", model: ROUTE.modelId },
+      signal: new AbortController().signal });
+    expect(await handle.result).toEqual({ status: "blocked", blockedReason: "model_unavailable" });
+    expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "model_unavailable", run_id: "run_invalid_coordinator" })]);
+    expect(resolveRoute).not.toHaveBeenCalled();
+    expect(admission.admit).not.toHaveBeenCalled();
+  });
+
   it("keeps legacy Automatic routing when an internal caller omits selection", async () => {
     const resolveRoute = vi.fn(async (selection?: unknown) => {
       if (selection !== undefined) throw new BotRouteError("model_unavailable");

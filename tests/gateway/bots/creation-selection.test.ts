@@ -20,3 +20,13 @@ it.each([
 it("keeps unavailable host admission closed", async () => {
   await expect(createBotCreationSelectionValidator({ available: () => false, providers: { getSnapshot: vi.fn() } })("owner", MATRIX_BOT_SELECTION)).rejects.toMatchObject({ code: "unavailable" });
 });
+
+
+it("validates explicit managed Bot creation through scoped readiness without native inventory", async () => {
+  const providers = { getSnapshot: vi.fn(async (options?: { admissionScope?: string }) => {
+    if (options?.admissionScope !== "managed_matrix") throw new Error("Native inventory unavailable");
+    return { accessSources: [{ id: "matrix_cloudflare", state: "ready", staleAfter: null, eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] }],
+      models: [{ id: "@cf/zai-org/glm-5.3-flash", vendor: "cloudflare", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"] }] } as never;
+  }) };
+  await expect(createBotCreationSelectionValidator({ available: () => true, providers })("owner", { instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" })).resolves.toBeUndefined();
+});

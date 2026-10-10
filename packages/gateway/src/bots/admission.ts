@@ -47,6 +47,7 @@ export interface PrivateBotRunRequest {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
   managedDefinitionRevision?: number;
+  recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
@@ -149,6 +150,7 @@ export function createPrivateBotAdmission(deps: {
           rootFingerprint: root.fingerprint,
           route: input.route,
           accessSourceId: input.accessSourceId,
+          ...(input.recipeRef ? { recipeRef: input.recipeRef } : {}),
           ...(input.managedDefinitionRevision !== undefined ? { managedDefinitionRevision: input.managedDefinitionRevision } : {}),
           ...(input.subscription ? { subscription: input.subscription } : {}),
           ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
