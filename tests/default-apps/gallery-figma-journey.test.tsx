@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import Gallery from '../../home/apps/app-gallery/src/App';
 import catalog from '../../home/system/app-gallery.json';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); delete window.MatrixOS; });
@@ -94,4 +94,24 @@ it('announces a named install failure after collection switches',async()=>{
  fireEvent.click(screen.getByRole('tab',{name:'Business'}));
  reject(new Error('Offline'));
  expect((await screen.findByRole('alert')).textContent).toContain(app.name);
+});
+
+
+it('returns focus to Gallery when late connections remove the original card', async () => {
+  const app = catalog.apps.find(app => app.collection === 'personal' && app.services.length > 0)!;
+  let settle!: (connections: unknown[]) => void;
+  const inventory = new Promise<unknown[]>(resolve => { settle = resolve; });
+  window.MatrixOS = { integrations: () => inventory, gatewayFetch: async () => ({ version: 1, apps: [{ ...app, installed: false }] }) };
+  render(<Gallery />);
+  await screen.findByRole('button', { name: `Explore ${app.name}` });
+  fireEvent.change(screen.getByRole('combobox', { name: 'Connection readiness' }), { target: { value: 'unknown' } });
+  const trigger = screen.getByRole('button', { name: `Explore ${app.name}` });
+  trigger.focus();
+  fireEvent.click(trigger);
+  const back = await screen.findByRole('button', { name: 'Back to gallery' });
+  back.focus();
+  await act(async () => { settle([]); await inventory; });
+  fireEvent.click(back);
+  expect(screen.queryByRole('button', { name: `Explore ${app.name}` })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Gallery', exact: true }));
 });

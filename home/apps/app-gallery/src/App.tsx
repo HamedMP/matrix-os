@@ -53,7 +53,7 @@ export default function App() {
     if (selected) { if (galleryRef.current) galleryRef.current.scrollTop = 0; return; }
     if (lastSelected.current) {
       const button = galleryRef.current?.querySelector<HTMLButtonElement>(`article[aria-labelledby="gallery-title-${lastSelected.current}"] .${lastTrigger.current}`);
-      button?.focus({ preventScroll: true });
+      (button ?? catalogTitle.current)?.focus({ preventScroll: true });
       if (galleryRef.current) galleryRef.current.scrollTop = browseScroll.current;
     }
   }, [selected]);
