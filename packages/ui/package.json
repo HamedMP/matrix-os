@@ -12,7 +12,8 @@
     "./styles.css": "./src/styles.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
-    "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css"
+    "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
+    "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

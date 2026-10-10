@@ -34,6 +34,7 @@ import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
+import { OnboardingWidgetHost } from "./onboarding-widget/OnboardingWidgetHost";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
@@ -828,6 +829,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     openAppOrFocus("__chat__", "Chat");
   }, [openAppOrFocus]);
 
+  const openOnboardingChat = useCallback((chatId: string | null) => {
+    if (chatId) chat?.switchConversation(chatId);
+    openAppOrFocus("__chat__", "Chat");
+  }, [chat, openAppOrFocus]);
+
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar
       onOpenSettings={openWebSettings}
@@ -1364,6 +1370,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         </div>
       </div>
 
+      <OnboardingWidgetHost onOpenChat={openOnboardingChat} onOpenSettings={openWebSettings} />
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

@@ -15,7 +15,7 @@ import { invoke, onEvent } from "../../lib/operator";
 import { useEffect } from "react";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
-import "./support-dock.css";
+import "@matrix-os/ui/onboarding-support-dock.css";
 
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
 

@@ -35,6 +35,7 @@ export {
   type OnboardingAiConnectPort,
 } from "./use-onboarding-ai-connect.js";
 export { COMPUTER_RETRY_DELAYS_MS, useOnboardingRun, type OnboardingRunDeps } from "./use-onboarding-run.js";
+export { useOnboardingSupportDock, type OnboardingSupportDockInput } from "./use-onboarding-support-dock.js";
 export {
   onboardingFirstName,
   useOnboardingWidgetSession,
