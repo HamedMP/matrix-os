@@ -65,7 +65,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
           const refreshed = await loadRepairPlan({ ...scope, readLocal });
           if (current()) {
             setPlan(refreshed);
-            setComplete(!refreshed.compatibilityUpdateRequired && !refreshed.targets.length);
+            setComplete(refreshed.compatibility === "compatible" && !refreshed.targets.length && refreshed.local.state === "current" && refreshed.cloud.state === "current");
             setProgress(refreshed.reason);
           }
         }
