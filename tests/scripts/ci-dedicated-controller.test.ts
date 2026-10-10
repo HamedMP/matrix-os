@@ -10,7 +10,7 @@ describe("dedicated controller timeout budgets", () => {
     const dispatch = job.steps.find((step: { id?: string }) => step.id === "dispatch").run;
     const lockWait = Number(host.match(/flock -w (\d+) /)![1]);
     const [, executionKill, executionWait] = host.match(/--kill-after=(\d+)s (\d+)s[\s\\]+docker exec/)!.map(Number);
-    const [, transferKill, transferWait] = host.match(/--kill-after=(\d+)s (\d+)s docker cp/)!.map(Number);
+    const [, transferKill, transferWait] = host.match(/--kill-after=(\d+)s (\d+)s docker exec --user 10001:10001 "\$container" \/usr\/bin\/tar /)!.map(Number);
     const artifactCount = host.match(/for file in ([^;]+); do/)![1].trim().split(/\s+/).length;
     const [, sshKill, sshWait] = dispatch.match(/--kill-after=(\d+)s (\d+)s ssh/)!.map(Number);
     const boundedHostPhases = lockWait + executionWait + executionKill + artifactCount * (transferWait + transferKill);
