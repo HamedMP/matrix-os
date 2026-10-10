@@ -127,6 +127,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const installedApps = useMemo(
     () => apiApps.map((app) => ({
       name: app.name,
+      slug: app.slug,
       ownerPath: app.ownerPath,
       path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
       iconUrl: webShellIconUrlForApp({ ...app, path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")) }),

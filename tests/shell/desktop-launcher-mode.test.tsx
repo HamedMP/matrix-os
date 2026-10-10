@@ -630,6 +630,37 @@ describe("Desktop launcher dock button by mode", () => {
     expect(windowManagerStore.getState().windows.find(win => win.path === `matrix-app:${slug}`)?.title).toBe(owner.name);
   });
 
+  it.each(["terminal", "chat", "activity-monitor", "workspace"])("preserves saved physical placement and manifest launch for moved owner %s", async slug => {
+    const owner = { name: `Owner ${slug}`, slug, path: `/files/apps/tools/my-${slug}/index.html` };
+    const saved = { path: owner.path.replace(/^\/files\//, ""), x: 321, y: 147 };
+    let document = createDefaultOsViewDocument();
+    document = { ...document, desktop: { ...document.desktop, icons: [saved] } };
+    let revision = 1;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/settings/onboarding-status")) return await jsonResponse({ complete: true });
+      if (url.includes("/api/apps")) return await jsonResponse([owner]);
+      if (url.includes("/api/shell/bootstrap")) return await jsonResponse({ layout: { windows: [] }, apps: [owner], modules: [] });
+      if (url.includes("/api/os-view-state")) {
+        if (init?.method === "PATCH") {
+          const mutation = JSON.parse(String(init.body)) as PatchOsViewStateRequest;
+          document = mergeOsViewStatePatch(document, mutation.patch); revision += 1;
+        }
+        return await jsonResponse({ revision, document, updatedAt: "2026-10-10T00:00:00.000Z" });
+      }
+      return await jsonResponse({});
+    }));
+    resetShellMode("desktop", true);
+    desktopConfigStore.setState({ desktopIcons: [saved] });
+    renderDesktop();
+    const icon = await screen.findByRole("button", { name: owner.name });
+    fireEvent.doubleClick(icon);
+    await waitFor(() => expect(windowManagerStore.getState().windows.filter(win => win.path === `matrix-app:${slug}`)).toHaveLength(1));
+    expect(windowManagerStore.getState().windows.find(win => win.path === `matrix-app:${slug}`)?.title).toBe(owner.name);
+    expect(desktopConfigStore.getState().desktopIcons).toEqual([saved]);
+    expect(document.desktop.icons).toEqual([saved]);
+  });
+
   it("registers apps from the scoped shell bootstrap snapshot before network bootstrap returns", async () => {
     const scope = createShellSnapshotScope({ userId: "user_123", pathname: "/" });
     expect(scope).not.toBeNull();
