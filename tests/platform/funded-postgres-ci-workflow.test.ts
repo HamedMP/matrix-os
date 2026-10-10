@@ -38,7 +38,9 @@ describe("funded PostgreSQL CI coverage", () => {
     const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL, step);
     expect(result).toMatchObject({ status: 0, args: expect.arrayContaining([
       "run", "test", "--", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "--maxWorkers=1", "--no-file-parallelism",
+      "tests/gateway/bots/instantiation.test.ts",
+      "tests/platform/canonical-funding-expiry-projection.test.ts",
+      "--maxWorkers=1", "--no-file-parallelism",
     ]) });
     expect(executeSettlementStep(undefined, step)).toMatchObject({ status: 1, args: [] });
   });

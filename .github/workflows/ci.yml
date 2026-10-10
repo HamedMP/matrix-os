@@ -512,7 +512,7 @@ jobs:
       - name: Bot creation, Integration grant and canonical phase admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/matrix-bot-personality.test.ts tests/gateway/bots/funded-inference-timeout.test.ts tests/platform/canonical-phase-catalog-readiness.test.ts tests/gateway/canonical-phase-discovery.test.ts --maxWorkers=1 --no-file-parallelism
+          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/matrix-bot-personality.test.ts tests/gateway/bots/funded-inference-timeout.test.ts tests/platform/canonical-phase-catalog-readiness.test.ts tests/platform/canonical-funding-expiry-projection.test.ts tests/gateway/canonical-phase-discovery.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Preview Drive revocation and admission races
         run: |
