@@ -70,6 +70,11 @@ suite("Desktop Add Project compact folder picker", () => {
     });
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1224, height: 768 });
+    await page.addLocatorHandler(page.getByRole("dialog", { name: "Getting started", exact: true }), async () => {
+      const checklist = page.getByRole("button", { name: /^Getting started —/ });
+      if (!await checklist.isVisible()) await page.getByRole("button", { name: "Help", exact: true }).click();
+      await checklist.click();
+    });
     await page.getByRole("button", { name: /create account/i }).click();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
   }, 60_000);
