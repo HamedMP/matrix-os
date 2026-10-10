@@ -56,18 +56,27 @@ describe("Web Desktop account-page indexing over HTTP", () => {
     processHandle.stderr?.on("data", capture);
 
     const deadline = Date.now() + 110_000;
-    while (Date.now() < deadline) {
-      if (processHandle.exitCode !== null) throw new Error(`Auth test server exited: ${output}`);
-      try {
-        const response = await fetch(`${origin}/sign-in`, { signal: AbortSignal.timeout(10_000) });
-        if (response.ok) return;
-        if (response.status >= 500) throw new Error(`Auth test server returned ${response.status}: ${output}`);
-      } catch (error) {
-        if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === "TimeoutError")) throw error;
+    // Compile every tested route during setup; cold Next compilation is not an
+    // assertion about the response time of an already-running production page.
+    for (const route of ["sign-in", "sign-up", "runtime"]) {
+      let ready = false;
+      while (Date.now() < deadline) {
+        if (processHandle.exitCode !== null) throw new Error(`Auth test server exited: ${output}`);
+        try {
+          const response = await fetch(`${origin}/${route}`, { signal: AbortSignal.timeout(10_000) });
+          if (response.ok) {
+            await response.text();
+            ready = true;
+            break;
+          }
+          if (response.status >= 500) throw new Error(`Auth test server returned ${response.status}: ${output}`);
+        } catch (error) {
+          if (!(error instanceof TypeError) && !(error instanceof DOMException && error.name === "TimeoutError")) throw error;
+        }
+        await delay(250);
       }
-      await delay(250);
+      if (!ready) throw new Error(`Auth test route ${route} did not become ready: ${output}`);
     }
-    throw new Error(`Auth test server did not become ready: ${output}`);
   }, 120_000);
 
   afterAll(async () => {
