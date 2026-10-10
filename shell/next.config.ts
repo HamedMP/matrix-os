@@ -13,6 +13,13 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
   },
   reactCompiler: true,
+  // The required source-extension hook disables Next's automatic build worker.
+  // Explicit workers allow server/edge compilation and tracing to overlap.
+  experimental: {
+    webpackBuildWorker: true,
+    parallelServerCompiles: true,
+    parallelServerBuildTraces: true,
+  },
   transpilePackages: ["@matrix-os/contracts", "@matrix-os/observability", "@matrix-os/ui"],
   // Allow HMR websockets when the dev shell is reached through a tunnel
   // (staging/dev.matrix-os.com) rather than localhost. Next 16 blocks dev

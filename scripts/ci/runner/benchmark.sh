@@ -120,7 +120,7 @@ for name in "${general_native_suites[@]}"; do
   general_exclusions+=("--exclude=tests/e2e/desktop/$name.e2e.test.ts")
 done
 run_suite() {
-  local pass=$1 desktop_prepared=${2:-false} failure=0
+  local pass=$1 desktop_prepared=${2:-false} web_build_separate=${3:-false} failure=0
   local shard=()
   if [[ $suite == unit-shard-* ]]; then shard=("--shard=${suite##*-}/4"); fi
   export MATRIX_TEST_WORKERS=$workers
@@ -157,7 +157,9 @@ run_suite() {
         tests/desktop/os-view-state-client.test.ts tests/desktop/native-os-view-persistence.test.ts \
         tests/gateway/os-view-state-repository.test.ts
       fi
-      step "shell-$pass" bun run build:shell:production
+      # Standalone checks retain their complete build sequence; full suites
+      # launch Web builds independently of mechanical checks below.
+      if [[ $web_build_separate != true ]]; then step "shell-$pass" bun run build:shell:production; fi
       ;;
     e2e|e2e-general)
       step "e2e-general-$pass" xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2 "${general_exclusions[@]}"
@@ -197,7 +199,8 @@ for pass in "${passes[@]}"; do
   if [[ $suite == full || $suite == qualification ]]; then
     pids=()
     suite=unit workers=$unit_workers run_suite "$pass" & pids+=("$!")
-    suite=checks workers=2 run_suite "$pass" & pids+=("$!")
+    suite=checks workers=2 run_suite "$pass" false true & pids+=("$!")
+    suite=shell workers=2 run_suite "$pass" & pids+=("$!")
     # General browser tests have no Desktop build dependency and get a distinct
     # Xvfb display. Do not serialize them behind the Electron production build.
     suite=e2e-general workers=2 run_suite "$pass" & pids+=("$!")
