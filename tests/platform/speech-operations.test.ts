@@ -7,7 +7,7 @@ import {
   SpeechOperationRateLimitError,
   createSpeechOperationsRepository,
 } from "../../packages/platform/src/speech/operations.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 
 const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;

@@ -20,7 +20,7 @@ import {
 import { createApp } from '../../packages/platform/src/main.js';
 import { buildPreviewTerminalAccess } from '../../packages/platform/src/preview-terminal-access.js';
 import { getRuntimeEntitlementDecisionForUser } from '../../packages/platform/src/runtime-entitlement.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
 const secret = 'platform-secret-123';

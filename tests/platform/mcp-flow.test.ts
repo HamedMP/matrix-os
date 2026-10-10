@@ -6,7 +6,7 @@ import { createApp } from '../../packages/platform/src/main.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 import { insertUserMachine } from '../../packages/platform/src/db.js';
 import { verifySyncJwt } from '../../packages/platform/src/sync-jwt.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 it('composes signed OAuth, SDK HTTP, tenant lookup and attenuated gateway authentication', async () => {
   const { db } = await createTestPlatformDb();

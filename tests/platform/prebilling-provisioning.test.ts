@@ -31,7 +31,7 @@ import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { listProvisioningJobs } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const CREATED_AT = '2026-08-24T10:00:00.000Z';
 const EXPIRES_AT = '2026-08-24T10:31:00.000Z';

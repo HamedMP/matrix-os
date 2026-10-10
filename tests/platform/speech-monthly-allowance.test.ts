@@ -4,7 +4,7 @@ import {
   ensureSpeechMonthlyAllowance,
   reconcileSpeechMonthlyAllowances,
 } from "../../packages/platform/src/speech/allowance.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const september = new Date("2026-09-28T12:00:00.000Z");
 const october = new Date("2026-10-01T00:01:00.000Z");

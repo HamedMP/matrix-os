@@ -12,7 +12,7 @@ import {
   type PlatformDB,
   upsertHostBundleRelease,
 } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
 const secret = 'platform-secret-123';

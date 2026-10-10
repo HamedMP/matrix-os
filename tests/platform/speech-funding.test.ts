@@ -7,7 +7,7 @@ import {
   SpeechFundingError,
   createAiFundedSpeechFundingPort,
 } from "../../packages/platform/src/speech/funding.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const now = new Date("2026-09-10T12:00:00.000Z");
 const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;

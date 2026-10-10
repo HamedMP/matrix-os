@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { Hono } from 'hono';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { previewDriveActionCanonical } from '@matrix-os/contracts';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createPreviewDriveRoutes, projectPreviewDriveFiles } from '../../packages/platform/src/preview-drive-routes.js';
 import { mintPreviewDriveTurnProof, previewDriveTurnBodyDigest } from '../../packages/platform/src/preview-drive-turn-proof.js';
