@@ -12,6 +12,83 @@ const action = { service: "google_drive", action: "list_files", label: "work", p
 const tool = "mcp__matrix-integrations__call_service";
 
 describe("Claude built-in integration authority", () => {
+  it("issues Preview Drive authority only for a redeemed actor and exact run", () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "preview_owner", previewRuntime: true });
+    expect(registry.issue({ owner, runId: "run_1", scope: "chat_call" })).toBeNull();
+    expect(registry.authorizePreviewDriveRun({ actorId: owner.ownerId, chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) })).toBe(true);
+    expect(registry.issue({ owner: { type: "personal", ownerId: "owner_other" }, runId: "run_1", scope: "chat_call" })).toBeNull();
+    expect(registry.issue({ owner, runId: "run_2", scope: "chat_call" })).toBeNull();
+    const capability = registry.issue({ owner, runId: "run_1", scope: "chat_call", fullAccess: false })!;
+    expect(capability.surface).toBe("preview_drive_call");
+    expect(registry.issue({ owner, runId: "run_1", scope: "chat_call" })).toBeNull();
+    const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call")!;
+    expect(context.scope).toBe("preview_drive_call");
+    expect(context.previewDrive).toMatchObject({ chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) });
+    for (const [method, path] of [["POST", "/api/integrations/connect"], ["POST", "/api/integrations/sync"],
+      ["DELETE", "/api/integrations/00000000-0000-4000-8000-000000000001"],
+      ["GET", "/api/mcp-servers"], ["POST", "/api/integrations/read-call"]]) {
+      expect(registry.resolve(capability.token, method!, path!)).toBeNull();
+    }
+    expect(capability.grantIntegrationTool!(tool, { ...action, params: { maxResults: 4 } })).toBeNull();
+    const exact = { ...action, params: { maxResults: 3 } };
+    const local = capability.grantIntegrationTool!(tool, exact)!;
+    expect(capability.bindPreviewActionGrant?.(local.receipt, "b".repeat(64))).toBe(true);
+    expect(context.previewDrive!.consumeActionGrant(exact, local.receipt)).toBe("b".repeat(64));
+    expect(context.previewDrive!.consumeActionGrant(exact, local.receipt)).toBeNull();
+    capability.revoke(); registry.close();
+  });
+  it("routes only one approved Preview Drive read through the scoped Platform client", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "preview_owner", previewRuntime: true });
+    registry.authorizePreviewDriveRun({ actorId: owner.ownerId, chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) });
+    const capability = registry.issue({ owner, runId: "run_1", scope: "chat_call" })!;
+    const discover = vi.fn(async () => []);
+    const execute = vi.fn(async () => ({ service: "google_drive" as const, action: "list_files" as const,
+      data: { files: [{ id: "file_1", name: "safe.txt" }] } }));
+    const fetcher = vi.fn<typeof fetch>();
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+    app.all("*", c => proxyIntegrationRequest(c, { targetBase: "https://platform.test/internal/integrations",
+      machineToken: "machine-secret", fetcher, previewDriveClient: { discover, execute } as never }));
+    const headers = { authorization: `Bearer ${capability.token}`, "content-type": "application/json" };
+    expect((await app.request("/api/integrations", { headers })).status).toBe(200);
+    expect(discover).toHaveBeenCalledWith({ runGrant: "a".repeat(64), chatId: "chat_1", runId: "run_1", kind: "inventory" });
+    expect((await app.request("/api/integrations/call", { method: "POST", headers,
+      body: JSON.stringify({ ...action, params: { maxResults: 3 } }) })).status).toBe(403);
+    const exact = { ...action, params: { maxResults: 3 } };
+    const local = capability.grantIntegrationTool!(tool, exact)!;
+    capability.bindPreviewActionGrant!(local.receipt, "b".repeat(64));
+    const approved = await app.request("/api/integrations/call", { method: "POST",
+      headers: { ...headers, "x-matrix-integration-approval": local.receipt }, body: JSON.stringify(exact) });
+    expect(approved.status).toBe(200);
+    expect(await approved.json()).toEqual({ service: "google_drive", action: "list_files",
+      data: { files: [{ id: "file_1", name: "safe.txt" }] } });
+    expect(execute).toHaveBeenCalledWith({ runGrant: "a".repeat(64), chatId: "chat_1", runId: "run_1",
+      actionGrant: "b".repeat(64), action: exact });
+    expect((await app.request("/api/integrations/call", { method: "POST",
+      headers: { ...headers, "x-matrix-integration-approval": local.receipt }, body: JSON.stringify(exact) })).status).toBe(403);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(fetcher).not.toHaveBeenCalled();
+    registry.close();
+  });
+  it("fails closed when local integration routes exist on a Preview runtime", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+    registry.authorizePreviewDriveRun({ actorId: owner.ownerId, chatId: "chat_1", runId: "run_1", runGrant: "a".repeat(64) });
+    const capability = registry.issue({ owner, runId: "run_1", scope: "chat_call" })!;
+    const app = new Hono();
+    app.use("*", authMiddleware("machine-secret", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+    app.use("*", async (c, next) => {
+      const denied = await authorizeChatIntegrationRequest(c, { localRoutes: true });
+      if (denied) return denied;
+      await next();
+    });
+    app.get("/api/integrations", c => c.json([{ service: "gmail", account_label: "other" }]));
+    app.post("/api/integrations/call", c => c.json({ data: "local read" }));
+    const headers = { authorization: `Bearer ${capability.token}` };
+    expect((await app.request("/api/integrations", { headers })).status).toBe(503);
+    expect((await app.request("/api/integrations/call", { method: "POST", headers,
+      body: JSON.stringify({ ...action, params: { maxResults: 3 } }) })).status).toBe(503);
+    registry.close();
+  });
   it("keeps review metadata-only and full access within the fixed integration route set", () => {
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
     const review = registry.issue({ owner, runId: "review", scope: "chat_discovery", fullAccess: true })!;
@@ -102,5 +179,29 @@ it.each(["chat_call", "chat_discovery"] as const)("keeps legacy read opt-in sepa
     expect(settings.permissions.allow).not.toContain("mcp__matrix-integrations__call_service");
     const guidance = launch.args[launch.args.indexOf("--append-system-prompt") + 1]!;
     expect(guidance).not.toContain("This run cannot connect, sync, disconnect or mutate integrations");
+  } finally { registry.close(); }
+});
+
+
+it.each([true, "true"])("rejects a legacy read opt-in before consuming Preview authority (%s)", integrationRead => {
+  const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+  try {
+    expect(registry.authorizePreviewDriveRun({ actorId: owner.ownerId, chatId: "chat_mixed_preview",
+      runId: "run_mixed_preview", runGrant: "f".repeat(64) })).toBe(true);
+    expect(registry.issue({ owner, runId: "run_mixed_preview", scope: "chat_call", integrationRead: integrationRead as never })).toBeNull();
+    const cap = registry.issue({ owner, runId: "run_mixed_preview", scope: "chat_call" })!;
+    expect(cap.surface).toBe("preview_drive_call");
+    for (const path of ["/api/integrations/read-call", "/api/mcp-servers"]) {
+      expect(registry.resolve(cap.token, path.endsWith("read-call") ? "POST" : "GET", path)).toBeNull();
+    }
+    const launch = buildAgentLaunch({ agent: "claude", cwd: "/safe/project", runtimeHome: "/safe/home",
+      matrixCustomMcp: true, matrixCustomMcpScope: "preview_drive_call", matrixIntegrationRead: true,
+      claudePermissionMode: "default", approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: ["/safe/project"] } });
+    const settings = JSON.parse(launch.args[launch.args.indexOf("--settings") + 1]!);
+    expect(settings.permissions.allow).not.toContain("mcp__matrix-integrations__call_service");
+    expect(JSON.parse(launch.args[launch.args.indexOf("--mcp-config") + 1]!).mcpServers["matrix-integrations"].args)
+      .toContain("--tool-surface=preview-drive-call");
+    expect(launch.args[launch.args.indexOf("--append-system-prompt") + 1]!).not.toContain("This run cannot connect, sync, disconnect or mutate integrations");
   } finally { registry.close(); }
 });

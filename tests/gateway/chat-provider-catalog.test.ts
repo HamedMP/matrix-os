@@ -1243,6 +1243,29 @@ describe("canonical Chat Provider catalog", () => {
     expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
   });
 
+  it("exposes a funded Claude Chat instance despite missing personal Claude login when the CLI is installed", async () => {
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({
+        id: "claude", kind: "claude", displayName: "Claude",
+        availability: "auth_required", authStatus: "unauthenticated",
+      })]),
+      agentRuntimeSource: runtimeSource(),
+      aiProviderSource: { getSnapshot: async () => makeAiProviderSnapshot() },
+      executableDriverKinds: ["claude_code"],
+    });
+    const catalog = await service.getCatalog(principal);
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_default")?.availability)
+      .toBe("auth_required");
+    expect(catalog.instances.find((instance) => instance.id === "claude_code_matrix_included"))
+      .toMatchObject({ availability: "available", connectionState: "ready" });
+    expect(catalog.instances.find((instance) => instance.id === "kernel_matrix_included")).toBeUndefined();
+    const selected = await service.getCatalog(principal, {
+      instanceId: "claude_code_matrix_included", model: "claude-sonnet-5",
+    });
+    expect(selected.instances.map(instance => instance.id)).toEqual(["claude_code_matrix_included"]);
+    expect(selected.drivers.map(driver => driver.kind)).toEqual(["claude_code"]);
+  });
+
   it("retains unavailable Matrix AI without exposing models or acquiring credentials", async () => {
     const homePath = mkdtempSync(join(tmpdir(), "chat-provider-kernel-"));
     mkdirSync(join(homePath, "system"), { recursive: true });

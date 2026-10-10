@@ -44,5 +44,16 @@ describe("personal integration and company Drive merge boundaries", () => {
     }
   });
 
-
+  it("never widens an approved shared Preview Google Drive lease into company Drive context", () => {
+    const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+    try {
+      expect(registry.authorizePreviewDriveRun({ actorId: owner.ownerId, chatId: "chat_selected",
+        runId: "run_selected", runGrant: "a".repeat(64) })).toBe(true);
+      expect(registry.issue({ owner, runId: "run_selected", scope: "chat_call", driveContext: true })).toBeNull();
+      const capability = registry.issue({ owner, runId: "run_selected", scope: "chat_call" })!;
+      expect(capability.surface).toBe("preview_drive_call");
+      expect(registry.resolve(capability.token, "POST", "/api/chat-drive-context/search")).toBeNull();
+      expect(registry.resolve(capability.token, "POST", "/api/chat-drive-context/read")).toBeNull();
+    } finally { registry.close(); }
+  });
 });

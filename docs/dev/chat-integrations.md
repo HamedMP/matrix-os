@@ -18,7 +18,10 @@ model or provider credential does not add missing harness tools.
 | Jev Inbox recipe | Receipt-bound preview workflow | Intentionally excludes general Drive actions |
 
 Funded canonical Chat uses the owned Pi worker; the retired SDK-funded Chat route
-remains denied. A user-installed Pi CLI is independent of that managed worker.
+remains denied. The separate Claude Chat Matrix AI option uses a native relay
+lease bound to its Run, isolated from the owner's subscription session profile.
+Model discovery does not lease credit. A user-installed Pi CLI is independent
+of the managed worker.
 
 This table records implementation/configuration paths, not a live pass for every
 model, account or release. Record exact versions and actual tool outcomes when
@@ -67,8 +70,20 @@ Verify write/account-management approval with synthetic fixtures unless that
 specific mutation has been authorized.
 
 Shared PR Preview VPSes reject ordinary machine-proxied personal integrations.
+The narrow Preview Drive acceptance path requires a fresh Platform-authenticated
+Chat turn and a separate browser approval for one exact `google_drive.list_files`
+request with an explicit account label and `maxResults` from 1 to 3. Platform
+consumes a short-lived grant once and returns at most three metadata records;
+the machine bearer alone cannot select a personal account. Connect, sync,
+disconnect, file-content access, other services and Custom MCP remain denied.
+Do not copy OAuth or model subscription credentials onto a shared VPS.
 
-## Preview authorization control plane
+The Preview host is shared. Terminal users may inspect Chat output or runtime
+state, including returned metadata. Only use the narrow real-account path when
+the account owner accepts that visibility. A tagged Platform Preview backed by
+staging data cannot validate an owner's production Drive connection. Record the
+serving Platform revision and exact host bundle separately, then verify the
+machine-only negative case before a real provider read.
 
 The additive Platform endpoints store browser-actor leases and exact one-use
 Drive action grants in Postgres. Optional action digests travel through shared
@@ -84,9 +99,12 @@ before issuing new authority; an admitted provider call may finish.
 Generation 17 adds nullable binding columns without resetting generation 16 data;
 legacy action grants without bindings fail closed.
 
-This control-plane layer does not enable Preview runtime access. Ordinary
-machine-proxied personal integrations and Custom MCP remain denied; a later
-runtime layer must redeem fresh browser authority and obtain action approval.
+Preview Drive redemption, discovery, grant issuance and execution honor the
+authenticated actor's account-deletion admission under the same owner lock as
+ordinary integration mutations. Deletion of the shared machine owner does not
+select or authorize a collaborator's personal account. Grant revocation remains
+available for cleanup. A provider failure still consumes the approved one-use
+grant and requires new approval before retry.
 
 ## Shared Preview session compatibility
 
