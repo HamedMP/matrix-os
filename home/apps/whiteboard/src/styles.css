@@ -379,7 +379,7 @@ body {
 }
 
 .wb-boarditem--active .wb-boarditem__name {
-  color: color-mix(in srgb, var(--app-accent) 70%, var(--app-fg));
+  color: var(--app-text-accent);
 }
 
 .wb-boarditem__time {

@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (app: string, file: string) => readFileSync(new URL(`../../home/apps/${app}/src/${file}`, import.meta.url), "utf8");
 const cases = [
+  ["task-manager", "styles.css", ".column-adder__trigger:hover"],
+  ["task-manager", "styles.css", ".field__label em"],
+  ["whiteboard", "styles.css", ".wb-boarditem--active .wb-boarditem__name"],
   ["expense-tracker", "styles.css", ".exp-text-btn"],
   ["todo", "styles.css", ".due--today"],
   ["todo", "styles.css", ".nav-item--active .nav-count"],
@@ -20,4 +24,10 @@ describe("utility text accent contrast", () => {
     expect(read("expense-tracker", "styles.css")).toMatch(/\.exp-primary\s*\{[^}]*background:\s*var\(--app-accent\)/);
     expect(read("todo", "styles.css")).toMatch(/\.nav-item--active \.nav-count\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--app-accent\)/);
   });
+});
+
+it.each(["task-manager", "whiteboard"])("tracks the shipped %s stylesheet bytes for upgrades", app => {
+  const path = `apps/${app}/src/styles.css`;
+  const manifest = JSON.parse(readFileSync("home/.template-manifest.json", "utf8"));
+  expect(manifest[path]).toBe(createHash("sha256").update(read(app, "styles.css")).digest("hex"));
 });

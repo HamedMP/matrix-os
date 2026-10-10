@@ -327,7 +327,7 @@ input, textarea, select { font-family: inherit; }
   font-weight: 600;
   transition: all .15s ease;
 }
-.column-adder__trigger:hover { border-color: var(--app-accent); color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 6%, transparent); }
+.column-adder__trigger:hover { border-color: var(--app-text-accent); color: var(--app-text-accent); background: color-mix(in srgb, var(--app-accent) 6%, transparent); }
 .column-adder__form {
   background: var(--app-card);
   border: 1px solid var(--app-border);
@@ -445,7 +445,7 @@ input, textarea, select { font-family: inherit; }
 .field { display: flex; flex-direction: column; gap: 5px; font-size: 0.78rem; color: var(--app-muted-fg); font-weight: 600; }
 .field--block { grid-column: 1 / -1; }
 .field__label { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--app-muted-fg); font-weight: 600; }
-.field__label em { font-style: normal; color: var(--app-accent); }
+.field__label em { font-style: normal; color: var(--app-text-accent); }
 .field input, .field select, .field textarea, .field--block textarea {
   border: 1px solid var(--app-border);
   border-radius: 10px;
