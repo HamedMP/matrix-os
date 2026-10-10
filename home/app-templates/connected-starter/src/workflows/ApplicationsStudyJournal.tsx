@@ -25,7 +25,7 @@ function Practice({ record, props }: { record: OwnerRecord; props: ViewProps }) 
 }
 export function Study(props: ViewProps) {
   const [title, setTitle] = useState(""), [passage, setPassage] = useState(""), [progress, setProgress] = useState(0), [drafts, setDrafts] = useState<OwnerRecord[]>([]);
-  const saved = useSavedAction(props.onSave), batch = useRef(false), group = useCreationScope(props.creationScope);
+  const saved = useSavedAction(props.onSave), batch = useRef(false), typedBatch = useRef(false), group = useCreationScope(props.creationScope);
   const cards = props.records.filter(record => record.fields.question || record.fields.answer), sources = props.records.filter(record => !record.fields.question && !record.fields.answer);
   function createDrafts(source: OwnerRecord) {
     return sourceQuestions(source).map((card, index) => ({ ...newRecord({ title: `${String(source.fields.title ?? "Notes")} · card ${index + 1}`, "source-text": String(source.fields["source-text"] ?? ""), question: card.question, answer: card.answer, quote: card.quote, practice: "New", date: localDate() }, source.scope), sources: source.sources, accounts: source.accounts }));
@@ -34,16 +34,19 @@ export function Study(props: ViewProps) {
     if (batch.current) return;
     const pending = drafts.length ? drafts : createDrafts(source ?? newRecord({ title: title.trim() || "My notes", "source-text": passage.trim() }, group.scope));
     if (!pending.length) { saved.setError("Paste a passage with at least one complete statement to make source-backed practice cards."); return; }
+    if (!drafts.length) typedBatch.current = !source;
     batch.current = true; setDrafts(pending);
     try {
       for (let index = progress; index < pending.length; index++) { if (!(await saved.save(pending[index]))) return; setProgress(index + 1); }
-      setDrafts([]); setProgress(0); setPassage(""); setTitle("");
+      setDrafts([]); setProgress(0);
+      if (typedBatch.current) { setPassage(""); setTitle(""); }
+      typedBatch.current = false;
     } finally { batch.current = false; }
   }
   function stopCards() {
     if (batch.current || saved.busy) return;
     // Saved cards belong to the owner; abandon only the remaining local drafts.
-    setDrafts([]); setProgress(0); saved.setError("");
+    setDrafts([]); setProgress(0); typedBatch.current = false; saved.setError("");
   }
   return <div className="new-workflow nw-study"><Intro title="Practice what your notes actually say." detail="Paste your own passage to create up to five extractive cards. Every answer stays tied to an exact quotation you can inspect and correct." action={<button onClick={props.onAdd}>Add source or card</button>} />
     <section className="nw-study-input"><CreationGroup {...group} disabled={saved.busy || drafts.length > 0} /><label>Passage title<input value={title} maxLength={200} onChange={event => setTitle(event.target.value)} disabled={saved.busy || drafts.length > 0} placeholder="e.g. Cell biology" /></label><label>Your source passage<textarea value={passage} maxLength={12000} rows={6} onChange={event => setPassage(event.target.value)} disabled={saved.busy || drafts.length > 0} placeholder="Paste notes you own. Cards use only this text." /></label><button className="primary" onClick={() => void saveCards()} disabled={saved.busy || (!passage.trim() && !drafts.length)}>{saved.busy ? "Saving card…" : drafts.length ? `Retry remaining cards (${progress}/${drafts.length} saved)` : "Create and save practice cards"}</button>{drafts.length > 0 && <><button disabled={saved.busy} onClick={stopCards}>{progress > 0 ? "Stop remaining saves" : "Discard card drafts"}</button>{progress > 0 && <p className="nw-footnote">Stopping keeps your saved cards and discards only the remaining card drafts. Your passage stays here for editing.</p>}</>}<SaveError error={saved.error} /></section>

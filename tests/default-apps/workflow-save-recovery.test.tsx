@@ -99,3 +99,27 @@ it.each(["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty", "c
   else expect(parsed.ingredients).toEqual([]);
   expect(mealGroceries([row("meal", { title: "Rice", status: "Planned", date: "2026-10-09", servings: 1, "planned-portions": 2, ingredients: `rice | 2 | ${unit}` })]).items).toEqual(parsed.ingredients.map(item => ({ ...item, quantity: item.quantity * 2 })));
 });
+it.each([false, true])("Study preserves an unrelated typed passage after saved-source cards complete (retry: %s)", async retry => {
+  const savedPassage = "Cells contain genetic information. Membranes control what enters cells. Proteins perform cellular functions.";
+  const typedPassage = "Gravity attracts objects with mass.";
+  const p = props("study-notes", [row("saved-source", { title: "Biology", "source-text": savedPassage })]);
+  if (retry) p.onSave.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Save failure"));
+  render(<Study {...p} />);
+  fireEvent.change(screen.getByLabelText("Passage title"), { target: { value: "Unsaved physics" } });
+  fireEvent.change(screen.getByLabelText("Your source passage"), { target: { value: typedPassage } });
+  fireEvent.click(screen.getByRole("button", { name: "Create practice cards" }));
+  if (retry) {
+    await screen.findByRole("alert");
+    const failedId = p.onSave.mock.calls[1][0].id; fireEvent.click(screen.getByRole("button", { name: /Retry remaining cards/ }));
+    await waitFor(() => expect(p.onSave).toHaveBeenCalledTimes(4));
+    expect(p.onSave.mock.calls[2][0].id).toBe(failedId);
+  }
+  await waitFor(() => expect(screen.getByLabelText("Your source passage")).toHaveProperty("disabled", false));
+  expect(screen.getByLabelText("Passage title")).toHaveProperty("value", "Unsaved physics");
+  expect(screen.getByLabelText("Your source passage")).toHaveProperty("value", typedPassage);
+  expect(p.onSave.mock.calls.every(([card]) => card.fields["source-text"] === savedPassage)).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Create and save practice cards" }));
+  await waitFor(() => expect(screen.getByLabelText("Your source passage")).toHaveProperty("value", ""));
+  expect(screen.getByLabelText("Passage title")).toHaveProperty("value", "");
+  expect(p.onSave.mock.calls.at(-1)?.[0].fields["source-text"]).toBe(typedPassage);
+});
