@@ -186,7 +186,8 @@ export function createAppDispatcher(homeDir: string, config?: DispatcherConfig) 
         if (!distStat || !distStat.isDirectory()) {
           return c.json({ error: "needs_build", status: "needs_build" }, 503);
         }
-        return await serveStaticFileWithin(distDir, subPath, c);
+        const profile = slug === "utilities" && manifest.listingTrust === "first_party" && manifest.author === "system" ? "utilities" : undefined;
+        return await serveStaticFileWithin(distDir, subPath, c, profile);
       }
 
       case "node": {
