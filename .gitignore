@@ -156,3 +156,6 @@ paper/*.pdf
 .gstack/
 /output/playwright/
 distro/observability/logs-edge/logs-edge.env
+
+# Local shared-package compiler state (never included in bundles)
+.matrix-build-cache/

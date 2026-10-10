@@ -37,7 +37,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc"
+    "build": "node ../../scripts/build-typescript.mjs"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
