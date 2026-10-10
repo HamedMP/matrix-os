@@ -402,7 +402,7 @@ describe("WorkRail", () => {
     expect(rail.className).toContain("pb-2");
     expect(rail.className).not.toContain("px-2");
     expect(screen.getByTestId("work-rail-scroll").className).toContain("pl-2.5");
-    expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
+    expect(rail.getAttribute("style")).toContain("background: var(--sidebar)");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
     expect(newChat.className).toContain("h-8");

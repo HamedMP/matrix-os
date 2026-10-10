@@ -1120,6 +1120,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@matrix-os/brand':
+        specifier: workspace:*
+        version: link:../brand
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -1190,6 +1193,9 @@ importers:
       '@codemirror/lang-python':
         specifier: ^6.2.1
         version: 6.2.1
+      '@codemirror/language':
+        specifier: ^6.12.3
+        version: 6.12.3
       '@codemirror/search':
         specifier: ^6.7.0
         version: 6.7.0
@@ -1241,6 +1247,9 @@ importers:
       '@hugeicons/react':
         specifier: ^1.1.9
         version: 1.1.9(react@19.2.6)
+      '@lezer/highlight':
+        specifier: ^1.2.3
+        version: 1.2.3
       '@matrix-os/brand':
         specifier: workspace:*
         version: link:../packages/brand

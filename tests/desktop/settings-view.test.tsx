@@ -82,11 +82,11 @@ describe("SettingsView", () => {
     const services = screen.getByRole("button", { name: "Connect Apps" });
 
     fireEvent.click(providers);
-    expect(providers.className).toContain("bg-[var(--bg-selected)]");
+    expect(providers.classList.contains("bg-[var(--sidebar-accent)]")).toBe(true);
 
     fireEvent.click(services);
-    expect(services.className).toContain("bg-[var(--bg-selected)]");
-    expect(providers.className).not.toContain("bg-[var(--bg-selected)]");
+    expect(services.classList.contains("bg-[var(--sidebar-accent)]")).toBe(true);
+    expect(providers.classList.contains("bg-[var(--sidebar-accent)]")).toBe(false);
   });
 
   it("uses the shared runtime-scoped Agents & providers settings surface", async () => {

@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { legacyThemeMode } from "@matrix-os/brand/themes/customization";
+import { RETIRED_THEME_IDS } from "@matrix-os/brand/themes";
+import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
+import { normalizeAppearance, type AppearancePreferences } from "@matrix-os/brand/themes/preferences";
+import { useEffect, useRef, useState } from "react";
 import { useFileWatcher } from "./useFileWatcher";
 import { getGatewayUrl } from "@/lib/gateway";
 import {
@@ -11,6 +15,7 @@ import {
 
 export interface Theme {
   name: string;
+  appearance?: AppearancePreferences;
   mode?: "light" | "dark";
   style?: "flat" | "neumorphic" | "macos-glass" | "winxp" | "win11";
   colors: Record<string, string>;
@@ -18,36 +23,7 @@ export interface Theme {
   radius: string;
 }
 
-export const DEFAULT_THEME: Theme = {
-  name: "default",
-  colors: {
-    background: "#FAFAF9",
-    foreground: "#32352E",
-    card: "#FCFCF8",
-    "card-foreground": "#32352E",
-    popover: "#FCFCF8",
-    "popover-foreground": "#32352E",
-    primary: "#434E3F",
-    "primary-foreground": "#FAFAF5",
-    secondary: "#F1F0E3",
-    "secondary-foreground": "#3E4339",
-    muted: "#E1E1D0",
-    "muted-foreground": "#747668",
-    accent: "#F1F0E3",
-    "accent-foreground": "#3E4339",
-    destructive: "#D74A3A",
-    success: "#3A7D44",
-    warning: "#E0A12E",
-    border: "#D8D6C7",
-    input: "#D8D6C7",
-    ring: "#D06F25",
-  },
-  fonts: {
-    mono: "JetBrains Mono, monospace",
-    sans: "Inter, system-ui, sans-serif",
-  },
-  radius: "0.75rem",
-};
+export const DEFAULT_THEME: Theme = buildWebTheme();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -64,7 +40,18 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   if (!isRecord(value)) return fallbackTheme;
   if (Object.keys(value).length === 0) return fallbackTheme;
 
+  if (typeof value.name === 'string' && (RETIRED_THEME_IDS as readonly string[]).includes(value.name) && !value.appearance) {
+    const mode = value.mode === 'light' || value.mode === 'dark' ? value.mode : legacyThemeMode(String(stringEntries(value.colors).background ?? '#ffffff'));
+    return buildWebTheme({ ...normalizeAppearance({}), mode });
+  }
+  const colors = { ...fallbackTheme.colors, ...stringEntries(value.colors) };
+  const savedColors = stringEntries(value.colors);
+  // Older files used general chrome tokens for navigation.
+  for (const [key, fallback] of Object.entries({ sidebar: 'secondary', 'sidebar-foreground': 'foreground', 'sidebar-primary': 'primary', 'sidebar-primary-foreground': 'primary-foreground', 'sidebar-accent': 'accent', 'sidebar-accent-foreground': 'accent-foreground', 'sidebar-border': 'border', 'sidebar-ring': 'ring' })) {
+    if (!savedColors[key]) colors[key] = colors[fallback]!;
+  }
   return {
+    ...(isRecord(value.appearance) ? { appearance: normalizeAppearance(value.appearance) } : {}),
     name: typeof value.name === "string" && value.name.trim() ? value.name : fallbackTheme.name,
     ...(value.mode === "light" || value.mode === "dark" ? { mode: value.mode } : {}),
     ...(value.style === "flat" ||
@@ -76,10 +63,7 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
       : fallbackTheme.style
         ? { style: fallbackTheme.style }
         : {}),
-    colors: {
-      ...fallbackTheme.colors,
-      ...stringEntries(value.colors),
-    },
+    colors,
     fonts: {
       ...fallbackTheme.fonts,
       ...stringEntries(value.fonts),
@@ -88,7 +72,9 @@ export function normalizeTheme(value: unknown, fallbackTheme: Theme = DEFAULT_TH
   };
 }
 
-function applyTheme(theme: Theme) {
+function applyTheme(saved: Theme) {
+  const derived = saved.appearance ? buildWebTheme(saved.appearance, window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false) : null;
+  const theme = derived ? { ...saved, ...derived, colors: { ...saved.colors, ...derived.colors }, fonts: { ...saved.fonts, ...derived.fonts } } : saved;
   const root = document.documentElement;
 
   // Set mode attribute so CSS and apps can detect light/dark
@@ -116,14 +102,7 @@ function applyTheme(theme: Theme) {
 
 /** Infer light/dark mode from the background color luminance */
 function inferMode(theme: Theme): "light" | "dark" {
-  const bg = theme.colors.background || "#ffffff";
-  const hex = bg.replace("#", "");
-  const r = parseInt(hex.substring(0, 2), 16);
-  const g = parseInt(hex.substring(2, 4), 16);
-  const b = parseInt(hex.substring(4, 6), 16);
-  // Relative luminance approximation
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5 ? "dark" : "light";
+  return legacyThemeMode(theme.colors.background ?? '#ffffff');
 }
 
 export function getThemeFallback(): Theme {
@@ -163,11 +142,14 @@ function initialTheme(
     : fallbackTheme;
 }
 
-export function useTheme(options: ShellCacheHookOptions = {}) {
+export function useThemeState(options: ShellCacheHookOptions = {}) {
   const fallbackTheme = getThemeFallback();
   const cacheScope = options.cacheScope ?? null;
   const cacheKey = cacheScope?.storageKey;
   const gatewayUrl = getGatewayUrl();
+  const requestVersion = useRef(0);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => initialTheme(cacheScope, fallbackTheme, gatewayUrl));
 
   useEffect(() => {
@@ -179,30 +161,60 @@ export function useTheme(options: ShellCacheHookOptions = {}) {
   // Fetch theme from server on mount
   useEffect(() => {
     const controller = new AbortController();
-    fetchTheme(fallbackTheme, controller.signal).then((nextTheme) => {
-      if (controller.signal.aborted) return;
+    const version = ++requestVersion.current;
+    setLoaded(false);
+    setLoadError(false);
+    fetchTheme(fallbackTheme, controller.signal, (ok) => {
+      if (!controller.signal.aborted && version === requestVersion.current) { setLoaded(ok); setLoadError(!ok); }
+    }).then((nextTheme) => {
+      if (controller.signal.aborted || version !== requestVersion.current) return;
       setTheme(nextTheme);
       saveShellSnapshot(cacheScope, { theme: nextTheme });
     });
 
     return () => controller.abort();
-  }, [fallbackTheme, cacheKey, cacheScope]);
+  }, [fallbackTheme, cacheKey, cacheScope, gatewayUrl]);
 
   useEffect(() => {
     rememberTheme(gatewayUrl, theme);
     applyTheme(theme);
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const updateMode = () => { if (theme.appearance?.mode === "system") applyTheme(theme); };
+    media?.addEventListener?.("change", updateMode);
+    return () => media?.removeEventListener?.("change", updateMode);
   }, [gatewayUrl, theme]);
+
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<{ gatewayUrl: string; theme: Theme }>).detail;
+      if (detail.gatewayUrl !== gatewayUrl) return;
+      requestVersion.current++;
+      setLoaded(true); setLoadError(false);
+      setTheme(detail.theme);
+      saveShellSnapshot(cacheScope, { theme: detail.theme });
+    };
+    window.addEventListener("matrix-theme-saved", update);
+    return () => window.removeEventListener("matrix-theme-saved", update);
+  }, [gatewayUrl, cacheScope]);
 
   useFileWatcher((path, event) => {
     if (path === "system/theme.json" && event !== "unlink") {
-      fetchTheme(fallbackTheme).then((nextTheme) => {
+      const version = ++requestVersion.current;
+      fetchTheme(fallbackTheme, undefined, (ok) => {
+        if (version === requestVersion.current) { setLoaded(ok); setLoadError(!ok); }
+      }).then((nextTheme) => {
+        if (version !== requestVersion.current) return;
         setTheme(nextTheme);
         saveShellSnapshot(cacheScope, { theme: nextTheme });
       });
     }
   });
 
-  return theme;
+  return { theme, loaded, loadError };
+}
+
+export function useTheme(options: ShellCacheHookOptions = {}) {
+  return useThemeState(options).theme;
 }
 
 export function saveTheme(theme: Theme): Promise<void>;
@@ -225,6 +237,7 @@ export async function saveTheme(
   rememberTheme(gatewayUrl, theme);
   if (typeof document !== "undefined") {
     applyTheme(theme);
+    window.dispatchEvent(new CustomEvent("matrix-theme-saved", { detail: { gatewayUrl, theme } }));
   }
 }
 
@@ -238,16 +251,21 @@ function settingsFetchSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 }
 
-async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME, signal?: AbortSignal): Promise<Theme> {
+async function fetchTheme(defaultTheme: Theme = DEFAULT_THEME, signal?: AbortSignal, onRead?: (ok: boolean) => void): Promise<Theme> {
   try {
     const gatewayUrl = getGatewayUrl();
     const res = await fetch(`${gatewayUrl}/api/settings/theme`, {
       signal: settingsFetchSignal(signal),
     });
-    if (res.ok) return normalizeTheme(await res.json(), defaultTheme);
+    if (res.ok) {
+      const theme = normalizeTheme(await res.json(), defaultTheme);
+      onRead?.(true);
+      return theme;
+    }
   } catch (err: unknown) {
     if (signal?.aborted) return defaultTheme;
     console.warn("[theme] Failed to fetch theme:", err instanceof Error ? err.message : String(err));
   }
+  onRead?.(false);
   return defaultTheme;
 }
