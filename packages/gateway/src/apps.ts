@@ -133,7 +133,7 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
 
 const DEFAULT_DESIGN_ID: DesignId = "flat";
 
-async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
+export async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
   const themePath = join(homePath, "system/theme.json");
   let theme: unknown;
   try {

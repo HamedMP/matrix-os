@@ -15,6 +15,7 @@ import { registerAppGalleryRoutes } from "../../packages/gateway/src/app-gallery
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { loadGallery, installGalleryApp, openGalleryApp } from "../../home/apps/app-gallery/src/model.js";
 import { withOwnerFileMutation } from "../../packages/gateway/src/owner-file-mutations.js";
+import { listAppCatalog } from "../../packages/gateway/src/apps.js";
 
 vi.mock("../../packages/gateway/src/app-gallery/filesystem.js", async original => ({
   ...await original<typeof import("../../packages/gateway/src/app-gallery/filesystem.js")>(),
@@ -322,7 +323,7 @@ it.each([256, 257])("keeps the %i-character owner name boundary aligned with act
     if (length === 256) {
       await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed", name, path });
       await openGalleryApp(bridge, row);
-      expect(bridge.openApp).toHaveBeenCalledWith(row.installedName, "matrix-app:folio");
+      expect(bridge.openApp).toHaveBeenCalledWith(name, "matrix-app:folio");
     } else {
       await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
       expect(row.launchPath).toBeUndefined(); expect(row.installedName).toBeUndefined();
@@ -380,4 +381,47 @@ it.each([4096, 4097, 4100])("bounds the complete owner launch path at %i charact
     expect(reads).not.toHaveBeenCalled();
   }
   expect(await readFile(join(f.homePath, "apps/folio/matrix.json"))).toEqual(bytes);
+});
+
+it.each(["%", "?", "#", ":"])("preserves URL-ambiguous owner folders %s without advertising Open", async character => {
+ const f=await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+ const path=`apps/folio${character}backup`,bytes=await readFile(join(f.homePath,"apps/folio/matrix.json"));
+ expect((await f.app.request("/api/files/rename",json({from:"apps/folio",to:path}))).status).toBe(200);
+ expect((await f.service.list())[0]).toMatchObject({installed:false});
+ await expect(f.service.install("folio")).rejects.toMatchObject({status:409});
+ expect(await readFile(join(f.homePath,path,"matrix.json"))).toEqual(bytes);
+});
+it.each([false,true])("reserves a legacy HTML identity before or after runtime installation (%s)",async installed=>{
+ const f=await fixture("cleanup");f.released.resolve();if(installed)await f.service.install("folio");
+ const bytes="<!doctype html><title>Owner app</title>";await writeFile(join(f.homePath,"apps/folio.html"),bytes);
+ const {apps:catalog}=await listAppCatalog(f.homePath);expect(catalog.find(row=>row.path.endsWith("folio.html"))).toBeDefined();
+ expect(catalog.find(row=>row.slug==="folio")).toBeUndefined();
+ expect((await f.service.list())[0]).toMatchObject({installed:false});
+ await expect(f.service.install("folio")).rejects.toMatchObject({status:409});
+ expect(await readFile(join(f.homePath,"apps/folio.html"),"utf8")).toBe(bytes);
+ if(!installed)expect(existsSync(join(f.homePath,"apps/folio"))).toBe(false);
+});
+it.each([{hidden:true},{designs:["winxp"]}])("reserves an owner app excluded from the launch catalog %j",async excluded=>{
+ const f=await fixture("cleanup");f.released.resolve();await f.service.install("folio");
+ const path=join(f.homePath,"apps/folio/matrix.json"),manifest=JSON.parse(await readFile(path,"utf8"));
+ const bytes=JSON.stringify({...manifest,...excluded});await writeFile(path,bytes);invalidateAppIndexCache();
+ expect((await listAppCatalog(f.homePath)).apps.find(row=>row.slug==="folio")).toBeUndefined();
+ expect((await f.service.list())[0]).toMatchObject({installed:false});
+ await expect(f.service.install("folio")).rejects.toMatchObject({status:409});
+ expect(await readFile(path,"utf8")).toBe(bytes);
+ if("designs" in excluded){await mkdir(join(f.homePath,"system"));await writeFile(join(f.homePath,"system/theme.json"),JSON.stringify({style:"winxp"}));}
+ else await writeFile(path,JSON.stringify(manifest));
+ invalidateAppIndexCache();expect((await listAppCatalog(f.homePath)).apps.find(row=>row.slug==="folio")).toBeDefined();
+ expect((await f.service.list())[0]).toMatchObject({installed:true});
+});
+it("rejects a legacy identity introduced while staging without publishing a manifest",async()=>{
+ const f=await fixture("cleanup");f.released.resolve();const original=filesystem.readTemplate;
+ vi.mocked(original).mockImplementationOnce(async()=>{await writeFile(join(f.homePath,"apps/folio.html"),"Owner late file");return new Map([["dist/index.html",Buffer.from("__MATRIX_APP_DEFINITION__")],["index.html",Buffer.from("__MATRIX_APP_DEFINITION__")],["src/definition.json",Buffer.from("{}")]]);});
+ await expect(f.service.install("folio")).rejects.toMatchObject({status:409});
+ expect(await readFile(join(f.homePath,"apps/folio.html"),"utf8")).toBe("Owner late file");
+ expect(existsSync(join(f.homePath,"apps/folio/matrix.json"))).toBe(false);
+});
+it("caps request-scoped legacy identities and refuses readiness after overflow",async()=>{
+ const apps={async *entries(){for(let i=0;i<600;i++)yield {name:`legacy-${i}.html`,isDirectory:()=>false,isFile:()=>true};}} as unknown as PinnedDirectory;
+ const index=await indexOwnerApps(apps);expect(index.entries.size).toBe(512);expect(index.unavailable).toBe(true);
 });

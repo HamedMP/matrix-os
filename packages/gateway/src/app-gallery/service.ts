@@ -1,3 +1,4 @@
+import { resolveActiveDesignId } from "../apps.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
@@ -75,11 +76,11 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
     try {
       try { apps = await owner.child("apps"); }
       catch (error) { if (!isFsError(error, "ENOENT")) throw error; }
-      const index = apps ? await indexOwnerApps(apps) : null;
+      const index = apps ? await indexOwnerApps(apps, await resolveActiveDesignId(home)) : null;
       if (index?.unavailable) throw new GalleryError(409, "Owner app identity cannot be verified");
       if (index?.entries.has(definition.id)) {
         const indexed = index.entries.get(definition.id);
-        if (!indexed) throw new GalleryError(409, "Duplicate owner app slug");
+        if (!indexed) throw new GalleryError(409, "Owner app cannot be opened from the current catalog");
         return indexed;
       }
       const installed = apps ? await existing(apps, definition.id) : null;
@@ -148,7 +149,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
             if (a.dev !== b.dev || a.ino !== b.ino) throw new GalleryError(409, "App directory changed during installation");
           } finally { await bound.close(); }
         }
-        const finalIndex = await indexOwnerApps(apps);
+        const finalIndex = await indexOwnerApps(apps, await resolveActiveDesignId(home));
         if (finalIndex.unavailable || finalIndex.entries.has(definition.id)) throw new GalleryError(409, "Owner app changed before publication");
         await stage.publish(manifestName, destination, "matrix.json");
         return { status: "installed", slug: definition.id, name: definition.name, path: `apps/${definition.id}` };
@@ -167,7 +168,7 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
       try {
         try { apps = await owner.child("apps"); }
         catch (error) { if (!isFsError(error, "ENOENT")) throw error; }
-        const index = apps ? await indexOwnerApps(apps) : null;
+        const index = apps ? await indexOwnerApps(apps, await resolveActiveDesignId(home)) : null;
         const result: GalleryAppListing[] = [];
         for (const definition of definitions) {
           const installed = index?.unavailable ? null : index?.entries.has(definition.id) ? index.entries.get(definition.id) : apps ? await existing(apps, definition.id) : null;
