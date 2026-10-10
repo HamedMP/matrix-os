@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
 import {
@@ -65,7 +65,7 @@ export interface CollaborationTestDatabase {
 
 /** PostgreSQL-compatible unit fixture. Real-server race tests use MATRIX_TEST_POSTGRES_URL. */
 export async function createCollaborationTestDatabase(): Promise<CollaborationTestDatabase> {
-  const instance = await KyselyPGlite.create();
+  const instance = await createTestPGlite();
   const db = new Kysely<ChatDatabase & CollaborationDatabase>({ dialect: instance.dialect });
   return {
     db,
