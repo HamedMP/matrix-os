@@ -148,7 +148,7 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
 function isTrustedStartupSender(rawEvent: unknown): boolean {
   const event = rawEvent as IpcMainInvokeEvent;
   const contents = mainWindow?.webContents;
-  const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+  const rendererUrl = new URL(desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString()).href;
   return !!contents && !contents.isDestroyed() && event?.sender === contents
     && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
 }
@@ -311,13 +311,7 @@ if (!gotLock) {
       }
       await auth.init();
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
-      registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
-        const event = rawEvent as IpcMainInvokeEvent;
-        const contents = mainWindow?.webContents;
-        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
-        return !!contents && !contents.isDestroyed() && event.sender === contents
-          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
-      });
+      registerNavigationCacheIpc(ipcMain, navigationCache, isTrustedStartupSender);
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
         openBrowser: async url => {
