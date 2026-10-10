@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CanonicalChatRunActivitySchema } from "@matrix-os/contracts";
 import { createClaudeIntegrationApprovalControl } from "../../packages/gateway/src/chat/claude-integration-approval.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
@@ -23,6 +24,43 @@ function fixture(verified = true) {
 const proof = { chatId: "chat_1", clientRequestId: "req_1", platformApprovalProof: "signed-decision" };
 
 describe("built-in integration human decisions", () => {
+  it("retains the explicit action and ordinary account in a persisted-safe approval title", () => {
+    const f = fixture();
+    try {
+      expect(f.requested.title).toBe("Allow google_drive/create_folder (work)?");
+      expect(CanonicalChatRunActivitySchema.safeParse({ ...f.requested, id: "activity_1", chatId: "chat_1",
+        runId: "run_1", occurredAt: "2026-10-10T00:00:00.000Z" }).success).toBe(true);
+    } finally { f.control.close(); f.registry.close(); }
+  });
+
+  it.each(["sk-fixture-account", "token=fixture-account", "id_rsa team"])("persists approval for valid private-looking label %s without changing the exact approved request", async label => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner_claude" });
+    const capability = registry.issue({ owner: { type: "personal", ownerId: "owner_claude" }, runId: "run_1", scope: "chat_call" })!;
+    const exact = { ...action, label };
+    const events: CanonicalProviderRunEvent[] = [];
+    const respond = vi.fn(async (value: unknown) => { void value; });
+    const control = createClaudeIntegrationApprovalControl({ runId: "run_1", homePath: "/safe/home", capability,
+      verify: vi.fn(async () => true), onError: vi.fn(), emit: event => {
+        // Use the same persisted activity contract as orchestrator.persistActivities.
+        CanonicalChatRunActivitySchema.parse({ ...event, id: "activity_1", chatId: "chat_1", runId: "run_1",
+          occurredAt: "2026-10-10T00:00:00.000Z" });
+        events.push(event);
+      } });
+    try {
+      expect(() => control.onToolPermission({ nativeRequestId: "native_secret_label", toolName, input: exact }, respond)).not.toThrow();
+      const request = events[0] as Extract<CanonicalProviderRunEvent, { type: "approval.requested" }>;
+      expect(request.type).toBe("approval.requested");
+      expect(request.title).not.toContain(exact.label);
+      expect(respond).not.toHaveBeenCalled();
+      await control.submit(request.approvalId, "approve", proof);
+      const updated = (respond.mock.calls[0]![0] as { updatedInput: typeof exact & { matrix_approval_receipt: string } }).updatedInput;
+      expect(updated).toEqual({ ...exact, matrix_approval_receipt: expect.stringMatching(/^[a-f0-9]{64}$/) });
+      const context = registry.resolveRunContext(capability.token, "POST", "/api/integrations/call")!;
+      expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", { ...exact, label: "other" }, updated.matrix_approval_receipt)).toBe(false);
+      expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", exact, updated.matrix_approval_receipt)).toBe(true);
+    } finally { control.close(); registry.close(); }
+  });
+
   it("retracts a completed native allow when cancellation arrives before execution", async () => {
     const f = fixture();
     await f.control.submit(f.requested.approvalId, "approve", proof);

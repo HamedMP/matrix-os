@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { canonicalChatApprovalTitle } from "@matrix-os/contracts";
 import type { CanonicalChatApprovalDecision } from "@matrix-os/contracts";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import type { MatrixMcpRunCapability } from "./matrix-mcp-launch.js";
@@ -79,7 +80,7 @@ export function createClaudeIntegrationApprovalControl(options: {
       current.timer.unref?.();
       pending.set(id, current);
       options.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
-        title: sanitizeAssistantText(action.title, { homePath: options.homePath }).slice(0, 160),
+        title: canonicalChatApprovalTitle(sanitizeAssistantText(action.title, { homePath: options.homePath }).slice(0, 160)),
         safeDescription: sanitizeAssistantText(description, { homePath: options.homePath }),
         risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
       return true;

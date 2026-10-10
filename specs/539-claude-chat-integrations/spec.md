@@ -49,6 +49,15 @@ approval requests are rejected.
 Cancelling one native permission request retracts only its own outstanding grant,
 including when another approval has identical arguments. Other integration and
 Custom MCP authority remains live; native transport failure closes run authority.
+Managed OAuth and MCP preset calls resolve every explicit label or connection ID
+against the authenticated owner's active accounts before broker execution. Missing,
+ambiguous or mismatched selections are denied; the broker receives the resolved
+immutable ID. Only legacy calls with neither selector retain broker defaults.
+The approved request body and exact receipt remain unchanged by internal selection.
+
+Approval titles use the shared persisted safe-label contract with a fixed safe
+fallback. A valid account label that resembles private credential text still
+requests approval; projection never changes its exact action or account arguments.
 Integration account credentials stay at the provider boundary. Host control
 bearers and their upgrade/code-proxy aliases are removed from the agent's
 environment; its selected Claude model credential remains available to the CLI.
