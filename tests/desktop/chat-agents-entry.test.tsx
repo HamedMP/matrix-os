@@ -23,6 +23,7 @@ function ChatAgentsEntry({ client, scopeKey = "chat_one" }: { client: ChatAgentC
 }
 async function openCustomBriefDraft() {
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Personal Daily Brief" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Description Optional" }), { target: { value: "Prepare email and calendar" } });
   fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Prepare a daily brief" } });
@@ -263,6 +264,7 @@ describe("shared Agents entry", () => {
     expect(screen.getByRole("region", { name: "Agents" }).closest("main")).toBeTruthy();
     expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Your AI team" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Unsent Agent" } });
     fireEvent.click(screen.getByRole("button", { name: "Close Agents" }));
     expect(screen.getByRole("textbox", { name: "Chat draft" })).toBe(draft);
@@ -285,12 +287,14 @@ describe("shared Agents entry", () => {
     const view = render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Private draft" } });
     view.rerender(<ChatAgentsEntry client={clientFixture({ matrix: true })} />);
     expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
     expect(screen.queryByDisplayValue("Private draft")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("");
   });
   it("opens Agents as page content without a modal", async () => {
@@ -321,6 +325,7 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: name } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Help" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
@@ -421,6 +426,7 @@ describe("shared Agents entry", () => {
     const editor = screen.getByRole("textbox", { name: "Existing draft" });
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Meeting helper" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Summarize decisions." } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));
@@ -502,6 +508,7 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     expect(await screen.findByRole("button", { name: "Edit Meeting helper" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Keep this draft" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Keep these instructions." } });
     expect(await screen.findByText("Recipe options are unavailable.")).toBeTruthy();
@@ -570,6 +577,7 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsEntry client={client} />);
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "My helper" } });
     fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Keep my instructions" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Create Agent" }) as HTMLButtonElement).disabled).toBe(false));

@@ -91,20 +91,21 @@ function DailyBriefCreation({ onRefreshCatalog, onSetup, recipe, client, models,
     onCreate={(name,executor) => { void create(name,executor); }} onClose={onClose} />;
 }
 
-function AgentLibraryBody({ state, client, models, edit, change, save, archive, back, retryRecipes, setup, openDailyBrief, refreshModels, setupPaused }: {
+function AgentLibraryBody({ state, client, models, edit, newAgent, chooser = false, change, save, archive, back, retryRecipes, setup, openDailyBrief, refreshModels, setupPaused }: {
   state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   edit(agent: ChatAgent | "new"): void; openDailyBrief?: () => void; change(value: Partial<Draft>): void;
+  newAgent(): void; chooser?: boolean;
   save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void; refreshModels(): void; setupPaused: boolean;
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
   return <div className="matrix-chat-agents-library mx-auto grid w-full max-w-3xl gap-5 py-8">
-    <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)} className="grid gap-5">
+    <div hidden={chooser || Boolean(state.editing)} inert={chooser || Boolean(state.editing)} className="grid gap-5">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="sr-only">Saved agents</h3>
       {client.bots ? <button type="button" aria-label="Personal Daily Brief" className={button}
         disabled={state.pending || !openDailyBrief} onClick={openDailyBrief}>Personal Daily Brief</button> : null}
-      <button type="button" aria-label="New Agent" className={`${button} ml-auto`} disabled={state.pending || !state.catalog || state.agents.length >= 100} onClick={() => edit("new")}>+ New agent</button>
+      <button type="button" aria-label="New Agent" className={`${button} ml-auto`} disabled={state.pending || !state.catalog || state.agents.length >= 100} onClick={newAgent}>+ New agent</button>
     </header>
     {!state.agents.length && !state.error ? <p className="py-6 text-sm" style={muted}>No agents yet. Add an agent to get started.</p> : null}
     <div className="grid gap-2" aria-label="Saved agents">
@@ -136,12 +137,29 @@ function AgentLibraryBody({ state, client, models, edit, change, save, archive, 
   </div>;
 }
 
-export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange }: {
+type ChatAgentsPanelProps = {
   hostedChrome?: boolean; onTitleChange?: (title: "Your AI team" | "New agent" | "Edit agent") => void;
   client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
-}) {
+};
+
+export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
+  const navigation = useChatAgentsNavigation();
+  const generation = navigation?.generation;
+  const [scope, setScope] = useState({ client: props.client, view: props.view, generation, key: 0 });
+  let current = scope;
+  if (scope.client !== props.client || scope.view !== props.view || scope.generation !== generation) {
+    current = { client: props.client, view: props.view, generation, key: scope.key + 1 };
+    setScope(current);
+  }
+  // A new host navigation or owner must not inherit another creation draft.
+  return <ChatAgentsPanelBody key={current.key} {...props}/>;
+}
+
+function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const scratchTrigger = useRef<HTMLButtonElement | null>(null);
+  const [creationView, setCreationView] = useState(view === "recipes");
   const [dailyRecipe, setDailyRecipe] = useState<{ client: ChatAgentClient; recipe: BotRecipeSummary } | null>(null);
   const customCreated = useRef<{ client: ChatAgentClient; result: InstantiateBotResponse } | null>(null);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
@@ -170,7 +188,10 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     });
     return () => { current = false; };
   }, [client, botRecipeAttempt]);
-  useEffect(() => { heading.current?.focus(); }, [state.editing]);
+  useEffect(() => {
+    if (creationView && !state.editing && scratchTrigger.current?.isConnected) scratchTrigger.current.focus();
+    else heading.current?.focus();
+  }, [state.editing, creationView]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
   useEffect(() => {
     let current = true;
@@ -324,6 +345,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
           ...agentRecipePatch(state.editing!, draft.recipe) });
       if (!saved) throw new Error("Created Bot readback unavailable");
       customCreated.current = null;
+      setCreationView(false);
       setState((current) => ({ ...current, pending: false, editing: null, draft: null,
         agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
         notice: recipeBot || customManaged ? "Saved. Open this bot’s Chat from the sidebar to send a request."
@@ -350,7 +372,7 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
       patch({ pending: false, error: "Agent could not be archived. Try again." });
     }
   };
-  const recipes = view === "recipes" && !state.editing;
+  const recipes = creationView;
   const title = state.editing === "new" || recipes ? "New agent" : state.editing ? "Edit agent" : "Your AI team";
   useEffect(() => { onTitleChange?.(title); }, [onTitleChange, title]);
   return <section aria-label={recipes ? "Agent recipes" : "Agents"} data-agent-surface={recipes ? "recipes" : "library"} className="matrix-chat-agents-panel ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
@@ -363,24 +385,28 @@ export function ChatAgentsPanel({ client, view = "library", onClose, onSetup, on
     {setupPaused ? <button type="button" className={button} onClick={() => { setSetupPaused(false); modelCatalog.refresh(); }}>Resume agent setup</button> : null}
     {modelCatalog.error ? <p role="alert" className="text-xs">{modelCatalog.error}</p> : null}
     <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
-    {recipes ? <AgentRecipesPanel onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
+    {recipes ? <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)}><AgentRecipesPanel
+      onStartFromScratch={trigger => { scratchTrigger.current = trigger; edit("new"); }}
+      scratchDisabled={state.loading || !state.enabled || state.pending || jevPending || !state.catalog || state.agents.length >= 100}
+      onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
       botRecipeStatus={botRecipeStatus} onRetryBotRecipes={() => setBotRecipeAttempt(attempt => attempt + 1)}
       matrixModels={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}
       onInstantiateBot={client.bots && onOpenBotChat ? async (recipe, clientRequestId, selection, name) =>
         (await client.bots!.instantiate({ recipe, clientRequestId, ...(selection ? { selection } : {}), ...(name ? { name } : {}) })).chatId : undefined}
       onCreateJev={client.bots && onOpenBotChat ? createJev : undefined} connections={state.connections}
-      jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /> : <div className="mx-auto w-full max-w-3xl">
+      jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /></div> : null}
+    {!recipes || state.editing ? <div className="mx-auto w-full max-w-3xl">
     <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
       ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model)
       : state.editing === "new" && client.bots?.createCustom
         ? botModels.filter(choice => choice.instanceId === "matrix_pi_default" || choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)
         : state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels : models}
       openDailyBrief={client.bots && onOpenBotChat ? openDailyBrief : undefined}
-      edit={edit} change={change} save={save} archive={archive}
+      chooser={recipes} newAgent={() => setCreationView(true)} edit={edit} change={change} save={save} archive={archive}
       back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
       setup={onSetup ? () => { setSetupPaused(true); onSetup(); } : undefined} />
     {state.error && !state.editing ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
-    </div>}
+    </div> : null}
     </div>
   </section>;
 }
