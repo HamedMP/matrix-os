@@ -67,6 +67,11 @@ approximately 576 paid readiness calls per day; failures, cancellations and Jev
 may consume remaining budget, so this is not an availability or dollar-cost
 guarantee.
 
+An explicitly configured [isolated ordinary Chat phase](../isolated-ordinary-chat.md)
+uses cache-only fixed-model readiness for its exact runtime. Missing or expired
+health remains unavailable without a probe, lease or count reservation. This mode
+does not change ordinary runtime defaults, authorize paid work or create credit.
+
 Runtime route-readiness and checkout pass their
 request deadlines into the shared probe service. It cancels an abandoned probe
 when its last caller in the probing process expires; a second active caller in

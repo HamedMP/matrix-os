@@ -1,3 +1,5 @@
+import { MatrixComputerRuntimeSlotSchema } from "./runtime-slot.js";
+export { MatrixComputerRuntimeSlotSchema } from "./runtime-slot.js";
 export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
 export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#chat-drive-project";
@@ -294,10 +296,6 @@ export const MatrixComputerHandleSchema = z.string()
   .min(2)
   .max(63)
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
-export const MatrixComputerRuntimeSlotSchema = z.string()
-  .min(1)
-  .max(32)
-  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
 export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);

@@ -51,6 +51,22 @@ describe.skipIf(!databaseUrl)("shared model health on independent PostgreSQL con
       from ai_funded_model_probe_budget`.execute(db.executor)).rows;
   }
 
+  it("cache-only reads never reserve, dispatch, acquire leases or refresh observations", async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => priced());
+    const cachedService = service(db, fetchFn);
+    expect((await cachedService.readCached!(sonnet)).ready).toBe(false);
+    expect(await budget()).toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
+    const first = await cachedService.probe(sonnet);
+    const rows = (await sql`select * from ai_funded_model_probe_cache`.execute(db.executor)).rows;
+    expect(await service(secondDb, fetchFn).readCached!(sonnet)).toEqual(first);
+    expect((await sql`select * from ai_funded_model_probe_cache`.execute(db.executor)).rows).toEqual(rows);
+    clock = new Date("2026-10-10T06:05:00.000Z");
+    expect((await cachedService.readCached!(sonnet)).ready).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(await budget()).toEqual([{ day_used: 1, minute_used: 1 }]);
+  });
+
   it("creates its additive schema despite a newer core marker without resetting budget counters", async () => {
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => priced());
     await service(db, fetchFn).probe(sonnet);
@@ -100,6 +116,7 @@ describe.skipIf(!databaseUrl)("shared model health on independent PostgreSQL con
     expect((await service(secondDb, fetchFn).probe(glm)).ready).toBe(true);
     for (const overrides of [{ relayBaseUrl: "https://other.example.test" },
       { relayControlToken: "d".repeat(32) }, { minuteLimit: 1 }]) {
+      expect((await service(secondDb, fetchFn, overrides).readCached!(sonnet)).ready).toBe(false);
       expect((await service(secondDb, fetchFn, overrides).probe(sonnet)).ready).toBe(false);
     }
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -121,6 +138,8 @@ describe.skipIf(!databaseUrl)("shared model health on independent PostgreSQL con
     const first = service(db, fetchFn);
     expect((await first.probe(sonnet)).ready).toBe(true);
     await sql`drop table ai_funded_model_probe_cache`.execute(db.executor);
+    expect((await first.readCached!(sonnet)).ready).toBe(false);
+    expect((await service(secondDb, fetchFn).readCached!(sonnet)).ready).toBe(false);
     expect((await first.probe(sonnet)).ready).toBe(false);
     expect((await service(secondDb, fetchFn).probe(sonnet)).ready).toBe(false);
     expect(fetchFn).toHaveBeenCalledTimes(1);

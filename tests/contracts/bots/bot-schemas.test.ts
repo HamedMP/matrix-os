@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  IsolatedChatEnvelopeSchema, parseIsolatedChatEnvelope,
   BotAuthorityViewSchema,
   BotGrantSchema,
   BotInteractionPayloadSchema,
@@ -201,4 +202,19 @@ describe("bot grant, memory, task, and authority contracts", () => {
     expect(BotAuthorityViewSchema.safeParse({ ...view, grants: Array.from({ length: 101 }, () => grant) }).success).toBe(false);
     expect(BotAuthorityViewSchema.safeParse({ ...view, connections: [{ service: "gmail", state: "unknown" }] }).success).toBe(false);
   });
+});
+
+
+it("accepts only complete trusted isolated phase configuration and preserves default-off behavior", () => {
+  const config = { phaseId: "phase_one", ownerId: "owner", machineId: "machine_one", runtimeSlot: "pv-2438-eaef1eaf",
+    runtimeTokenEpoch: 1, runtimeCredentialSha256: "a".repeat(64), chatId: "chat_one", modelId: "@cf/zai-org/glm-5.3-flash",
+    sourceSha: "b".repeat(40), startsAt: "2026-10-10T12:00:00.000Z", expiresAt: "2026-10-10T12:20:00.000Z" };
+  expect(parseIsolatedChatEnvelope(undefined)).toBeUndefined();
+  expect(parseIsolatedChatEnvelope(JSON.stringify(config))).toEqual(config);
+  for (const invalid of [{ ...config, runtimeTokenEpoch: 0 }, { ...config, clientOptIn: true },
+    { ...config, expiresAt: config.startsAt }, { ...config, expiresAt: "2026-10-10T13:01:00.000Z" },
+    { ...config, runtimeSlot: "../primary" }, { ...config, sourceSha: "short" }, { ...config, runtimeCredentialSha256: undefined }]) {
+    expect(IsolatedChatEnvelopeSchema.safeParse(invalid).success).toBe(false);
+    expect(() => parseIsolatedChatEnvelope(JSON.stringify(invalid))).toThrow("configuration");
+  }
 });

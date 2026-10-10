@@ -330,6 +330,21 @@ export interface BotMigration {
 }
 
 /** Applied in this order; never edit a released version, add a new one. */
+async function migrateIsolatedChatPhasesV8(trx: Transaction<OwnerBotDatabase>): Promise<void> {
+  await sql`CREATE TABLE managed_pi_isolated_phases (
+    phase_id TEXT PRIMARY KEY CHECK (char_length(phase_id) BETWEEN 1 AND 80),
+    config_hash TEXT NOT NULL CHECK (config_hash ~ '^[a-f0-9]{64}$'),
+    owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 160),
+    chat_id TEXT NOT NULL CHECK (chat_id ~ '^chat_[A-Za-z0-9_-]{1,128}$'),
+    run_id TEXT NOT NULL CHECK (run_id ~ '^run_[A-Za-z0-9_-]{1,128}$'),
+    runtime_handle TEXT NOT NULL CHECK (runtime_handle ~ '^runtime_[a-f0-9]{32}$'),
+    execution_generation TEXT NOT NULL CHECK (execution_generation ~ '^(0|[1-9][0-9]{0,19})$'),
+    dispatched BOOLEAN NOT NULL DEFAULT false,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`.execute(trx);
+}
+
 export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 1, name: "bot_state_m1", up: migrateBotStateV1 },
   { version: 2, name: "bot_approvals_by_task", up: migrateApprovalsByTaskV2 },
@@ -339,4 +354,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 5, name: "bot_provider_connections", up: migrateBotProviderConnections },
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
   { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
+  { version: 8, name: "isolated_chat_phases", up: migrateIsolatedChatPhasesV8 },
 ];

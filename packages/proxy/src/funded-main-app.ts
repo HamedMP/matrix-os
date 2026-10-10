@@ -47,7 +47,10 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     if (!priceValidThrough || !isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews)) {
       return c.json({ ready: false }, 503);
     }
-    const probed = await probeFundedModel(config, model, options.fetchFn);
+    const probed = await probeFundedModel(config, model, options.fetchFn, {
+      probeId: c.req.header("x-matrix-readiness-probe-id"),
+      traceId: c.req.header("x-cloud-trace-context")?.split("/")[0],
+    });
     const ready = probed && isFundedModelPriceCurrent(model, (options.now ?? (() => new Date()))(), config.pricingReviews);
     return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });

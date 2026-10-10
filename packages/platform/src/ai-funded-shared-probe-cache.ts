@@ -100,6 +100,19 @@ export function createSharedFundedProbeCache(input: { db: PlatformDB; now: () =>
     });
   }
   return {
+    /** SELECT only: no cleanup, lease acquisition, budget reservation or provider I/O. */
+    async readCached(key: string, signal: AbortSignal, unavailable: () => FundedModelProbeResult): Promise<FundedModelProbeResult> {
+      try {
+        const row = await boundedDb(input.db, signal, dbDeadlineMs, async trx =>
+          (await sql<Row>`select lease_token, ready, checked_ms, stale_ms, price_expiry_ms
+            from ai_funded_model_probe_cache where cache_key = ${key}`.execute(trx.executor)).rows[0]);
+        signal.throwIfAborted();
+        return fresh(row, input.now().getTime()) ?? unavailable();
+      } catch (error: unknown) {
+        console.warn("[funded-ai] Cached model readiness unavailable:", error instanceof Error ? error.name : typeof error);
+        return unavailable();
+      }
+    },
     async probe(key: string, signal: AbortSignal, run: () => Promise<FundedModelProbeResult>,
       unavailable: () => FundedModelProbeResult): Promise<FundedModelProbeResult> {
       const token = randomUUID();

@@ -1,5 +1,6 @@
 import {
   FundedAiRuntimeCredentialIssueResponseSchema,
+  parseIsolatedChatEnvelope, type IsolatedChatEnvelope,
   type FundedAiRequestClass,
   type FundedAiRuntimeCredentialIssueResponse,
 } from "@matrix-os/contracts";
@@ -29,6 +30,7 @@ export interface FundedAiRuntimeConfig {
   relayBaseUrl: string;
   runtimeAuthToken: string;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
+  isolatedChat?: IsolatedChatEnvelope;
   maxRunMs: number;
   requestTimeoutMs: number;
 }
@@ -144,6 +146,7 @@ export function loadFundedAiRuntimeConfig(
   );
   routeReadinessUrl.searchParams.set("runtimeSlot", identity.runtimeSlot);
   return {
+    isolatedChat: parseIsolatedChatEnvelope(env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     issueUrl: issueUrl.toString(),
     fundingSummaryUrl: fundingSummaryUrl.toString(),
     routeReadinessUrl: routeReadinessUrl.toString(),

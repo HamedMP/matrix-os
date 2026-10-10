@@ -70,6 +70,7 @@ export function runCommandFromSpec(runId: string, spec: BotRunSpec, images: read
     systemPrompt: spec.systemPrompt,
     capabilities: spec.capabilities,
     limits: spec.limits,
+    ...(spec.isolatedTurn ? { isolatedTurn: spec.isolatedTurn } : {}),
     turn,
   });
   if (!command.success || command.data.kind !== "bot.run") throw new BotRunInputError();

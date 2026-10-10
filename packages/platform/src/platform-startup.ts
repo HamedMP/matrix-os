@@ -1,3 +1,4 @@
+import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createConfiguredAccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -375,6 +376,7 @@ async function startPlatformServerWithCleanup(
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
+      isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,

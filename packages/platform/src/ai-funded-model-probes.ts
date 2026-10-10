@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createSharedFundedProbeCache, fundedProbeCacheKey, SHARED_FUNDED_HEALTH_TTL_MS } from "./ai-funded-shared-probe-cache.js";
 import { sql } from "kysely";
 import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
@@ -16,8 +17,8 @@ const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string; priceValidThrough?: string }
-export interface FundedModelProbeCall { signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
-export interface FundedModelProbeService { probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
+export interface FundedModelProbeCall { receiptId?: string; signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
+export interface FundedModelProbeService { readCached?(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult>; probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
   const dailyLimit = Number(env.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT);
@@ -135,6 +136,7 @@ export function createFundedModelProbeService(input: {
     controller: AbortController;
     waiters: Map<symbol, { deadlineAtMs: number; signal?: AbortSignal }>;
     promise: Promise<FundedModelProbeResult>;
+    probeId?: string;
   }
   const inFlight = new Map<string, PendingProbe>();
   function remember(key: string, result: FundedModelProbeResult): void {
@@ -175,6 +177,11 @@ export function createFundedModelProbeService(input: {
         clearTimeout(timer);
         call.signal?.removeEventListener("abort", onAbort);
         entry.waiters.delete(token);
+        if (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(call.receiptId ?? "")) {
+          console.info(JSON.stringify({ event: "funded_readiness_join", receiptId: call.receiptId!.toLowerCase(),
+            ...(entry.probeId ? { probeId: entry.probeId } : {}),
+            modelId: FUNDED_PROBE_MODELS.includes(model as FundedProbeModel) ? model : JEV_MODEL_ID, ready: result.ready }));
+        }
         if (entry.waiters.size === 0 && inFlight.get(model) === entry) {
           inFlight.delete(model);
           entry.controller.abort();
@@ -192,6 +199,15 @@ export function createFundedModelProbeService(input: {
     });
   }
   return {
+    async readCached(modelId, call = {}) {
+      if (!enabled || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
+      const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
+      if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
+      const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
+      const key = fundedProbeCacheKey({ modelId, relayOrigin: base!.origin,
+        controlToken: input.relayControlToken!, dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit! });
+      return shared.readCached(key, signal, unavailable);
+    },
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
       if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
@@ -220,6 +236,7 @@ export function createFundedModelProbeService(input: {
             return result;
           }
           let priceValidThrough: string | undefined;
+          const probeId = runtime ? undefined : randomUUID();
           try {
             if (runtime) {
               const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.jevProbeMs)]);
@@ -228,15 +245,22 @@ export function createFundedModelProbeService(input: {
                 fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
             } else {
               const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
+              entry.probeId = probeId;
               const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
+              console.info(JSON.stringify({ event: "funded_readiness_dispatch", probeId, modelId: model }));
               const response = await (input.fetchFn ?? fetch)(url.toString(), {
-                headers: { authorization: `Bearer ${input.relayControlToken}` },
+                headers: { authorization: `Bearer ${input.relayControlToken}`, "x-matrix-readiness-probe-id": probeId! },
                 redirect: "error", signal,
               });
               priceValidThrough = await readPriceValidThrough(response, signal);
+              console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+                relayStatus: response.status, pricedReady: priceValidThrough !== undefined }));
             }
           } catch (error) {
-            console.warn("[funded-ai] Model probe unavailable:", error instanceof Error ? error.name : typeof error);
+            const errorName = error instanceof Error && ["TimeoutError", "AbortError", "SyntaxError"].includes(error.name) ? error.name : "UnknownError";
+            console.warn("[funded-ai] Model probe unavailable:", errorName);
+            if (probeId) console.info(JSON.stringify({ event: "funded_readiness_receipt", probeId, modelId: model,
+              outcome: errorName === "TimeoutError" ? "timeout" : errorName === "AbortError" ? "aborted" : "unavailable" }));
           }
           const checked = now().getTime();
           if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
