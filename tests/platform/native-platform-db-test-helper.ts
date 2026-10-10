@@ -189,16 +189,19 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
       return trackTask((async () => {
         try {
           const { db } = await createPGliteDb();
+          // Own the database before any teardown attempt; failed late cleanup
+          // must remain visible to a later drain, just like published fixtures.
+          fallbackDbs.add(db);
           if (closed || admittedEpoch !== epoch) {
             const failure = new Error('Native platform fixture manager closed or drained during fallback startup');
-            try { await destroyPGliteDb(db); }
+            try { await destroy(db); }
             catch (cleanupError) {
               log('Late fallback cleanup failed', cleanupError);
               throw new AggregateError([failure, cleanupError], 'Platform fallback startup and cleanup failed');
             }
             throw failure;
           }
-          fallbackDbs.add(db); return { db };
+          return { db };
         } finally { fallbackPending--; }
       })());
     }

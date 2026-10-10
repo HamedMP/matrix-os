@@ -180,6 +180,44 @@ describe('native platform fixture admission and lifecycle', () => {
     } finally { vi.useRealTimers(); unblock(); await creating; }
   });
 
+  it('retains a late fallback database after cleanup failure so the next drain retries its exact owner', async () => {
+    let unblock!: () => void;
+    const gate = new Promise<void>(resolve => { unblock = resolve; });
+    const create = original.createTestPlatformDb;
+    let owned: PlatformDB | undefined;
+    let cleanupRetried = false;
+    vi.spyOn(original, 'createTestPlatformDb').mockImplementationOnce(async () => {
+      await gate;
+      const fixture = await create(); owned = fixture.db;
+      return fixture;
+    });
+    const cleanupFailure = new Error('Synthetic late fallback cleanup failure');
+    const destroy = vi.spyOn(original, 'destroyTestPlatformDb').mockRejectedValueOnce(cleanupFailure);
+    const { manager } = fakeNative();
+    const creating = manager.createTestPlatformDb().then(value => ({ value }), error => ({ error }));
+    vi.useFakeTimers();
+    try {
+      const draining = manager.drainClones().then(() => ({}), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await draining).toMatchObject({ error: expect.objectContaining({ message: expect.stringMatching(/deadline/i) }) });
+      vi.useRealTimers(); unblock();
+      expect(await creating).toMatchObject({ error: { errors: [expect.objectContaining({ message: expect.stringMatching(/closed|drained/i) }), cleanupFailure] } });
+      expect(owned).toBeDefined();
+      const closeOwner = vi.spyOn(owned!, 'destroy');
+      expect(destroy).toHaveBeenCalledExactlyOnceWith(owned);
+      await manager.drainClones();
+      expect(destroy).toHaveBeenCalledTimes(2);
+      expect(destroy).toHaveBeenNthCalledWith(2, owned);
+      expect(closeOwner).toHaveBeenCalledOnce();
+      cleanupRetried = true;
+      await manager.drainClones();
+      expect(destroy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers(); unblock(); await creating;
+      if (owned && !cleanupRetried) await original.destroyTestPlatformDb(owned);
+    }
+  });
+
   it('resets failed template initialization for retry after disposing its resources', async () => {
     const failure = new Error('Synthetic template startup failure');
     const { manager, createDatabase, databases } = fakeNative({ startupFailure: failure });
