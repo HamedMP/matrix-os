@@ -15,7 +15,7 @@ function headElements(html: string) {
   );
 }
 
-describe("Web Desktop authentication indexing over HTTP", () => {
+describe("Web Desktop account-page indexing over HTTP", () => {
   let processHandle: ChildProcess | undefined;
   let origin: string;
   let output = "";
@@ -75,7 +75,7 @@ describe("Web Desktop authentication indexing over HTTP", () => {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }, 15_000);
 
-  for (const route of ["sign-in", "sign-up"]) {
+  for (const route of ["sign-in", "sign-up", "runtime"]) {
     for (const query of ["", "?redirect_url=https%3A%2F%2Fapp.matrix-os.com%2Frecipes%2Fevent-request-desk&promo=launch"]) {
       it(`${route}${query ? " query variant" : " base URL"} serves noindex and a stable canonical`, async () => {
         const response = await fetch(`${origin}/${route}${query}`, { signal: AbortSignal.timeout(20_000) });
