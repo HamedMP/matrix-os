@@ -76,7 +76,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
     // Never summarize an invalidated summary: its original source turns may
     // already be compacted away, so discard derived context before inference.
-    if (snapshot.needsRecompaction) history = withoutDerivedSummaries(history);
+    if (snapshot.needsRecompaction && !command.isolatedTurn?.target) history = withoutDerivedSummaries(history);
   } catch (error: unknown) {
     return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
   }
@@ -86,7 +86,9 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
   }
   const isolated = command.isolatedTurn !== undefined;
-  if (isolated && (command.turn.kind !== "prompt" || command.turn.images?.length || history.length
+  const canonical = command.isolatedTurn?.target;
+  if (isolated && (command.turn.kind !== "prompt" || command.turn.images?.length || (!canonical && history.length)
+    || (canonical && (canonical.runId !== command.runId || command.capabilities.length || snapshot.needsRecompaction))
     || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
     return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
   }

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { IsolatedChatEnvelopeSchema, FUNDED_AI_READINESS_TIMEOUTS, FundedAiRouteReadinessReceiptSchema, FundedAiRouteReadinessRequestSchema, JEV_MODEL_ID, type FundedAiRouteReadinessReceipt } from "@matrix-os/contracts";
 import type { FundedAiRuntimeConfig } from "./funded-ai-credential-manager.js";
+import { createCanonicalPhaseReadiness, type CanonicalPhaseReadinessOptions } from "./chat/canonical-phase-readiness.js";
 import { readBoundedFundedJson } from "./funded-ai-funding-summary-client.js";
 
 export interface FundedAiRouteReadinessReader {
@@ -11,12 +12,16 @@ export interface FundedAiRouteReadinessReader {
 export function createFundedAiRouteReadinessClient(
   config: FundedAiRuntimeConfig,
   fetchFn: typeof fetch = fetch,
+  options: CanonicalPhaseReadinessOptions = {},
 ): FundedAiRouteReadinessReader {
   const phase = config.isolatedChat ? IsolatedChatEnvelopeSchema.parse(config.isolatedChat) : undefined;
+  const scoped = createCanonicalPhaseReadiness(phase, options);
   const target = phase !== undefined && phase.ownerId === config.identity.ownerId
     && phase.machineId === config.identity.machineId && phase.runtimeSlot === config.identity.runtimeSlot;
   return {
     async getRouteReadiness(options = {}) {
+      scoped.observationScope();
+      if (scoped.canonical && (!target || options.modelId !== undefined)) throw new Error("Matrix AI route readiness unavailable");
       // Generic readiness also waits for a cold relay. Do not extend credential
       // issuance/funding-summary timeouts. Jev has its own bounded settlement window.
       const timeout = AbortSignal.timeout(options.modelId === JEV_MODEL_ID
@@ -29,7 +34,8 @@ export function createFundedAiRouteReadinessClient(
       const response = await fetchFn(config.routeReadinessUrl, {
         method: "POST", redirect: "error", signal,
         headers: { authorization: `Bearer ${config.runtimeAuthToken}`, "content-type": "application/json", accept: "application/json",
-          ...(bound ? { "x-matrix-isolated-chat-phase": phase!.phaseId } : {}) },
+          ...(bound ? { "x-matrix-isolated-chat-phase": phase!.phaseId,
+            ...(scoped.canonical ? { "x-matrix-isolated-chat-config": scoped.digest! } : {}) } : {}) },
         body: JSON.stringify(FundedAiRouteReadinessRequestSchema.parse({ modelId: options.modelId })),
       });
       if (!response.ok) {
