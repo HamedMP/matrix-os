@@ -11,6 +11,9 @@ import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from '
 import type { CodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
 import * as codexMetadata from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
 import { createRuntimeProviderSettings } from '../../packages/gateway/src/server/provider-discovery-composition.js';
+import { createHash } from 'node:crypto';
+import { createCanonicalPhaseDiscovery } from '../../packages/gateway/src/server/canonical-phase-discovery.js';
+import * as settingsPersistence from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 function codexFixture() {
   const canonical = providerSettingsCanonicalFixture();
   canonical.accessSources.push({ ...canonical.accessSources[1]!, id: 'owner_openai_profile', vendor: 'openai', accountLabel: 'Codex', state: 'unknown', action: 'retry', safeReason: 'unknown' });
@@ -28,6 +31,48 @@ const metadata: CodexNativeAccountMetadata = { accountLabel: 'old@example.test',
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 describe('metadata recovery boundaries', () => {
+  it.each(['configuration', 'dependencies', 'final_file'].flatMap(stage =>
+    ['expiry', 'source'].map(drift => ({ stage, drift }))))(
+    'rejects standalone canonical Settings after $drift during $stage', async ({ stage, drift }) => {
+      const homePath = await mkdtemp(join(tmpdir(), 'canonical-settings-fence-')); homes.push(homePath);
+      const token = 'fixture-phase-token', sourceSha = 'a'.repeat(40);
+      let clock = now, actualSource = sourceSha, savedReads = 0;
+      const phase = { phaseId: 'phase_settings', ownerId: 'fixture_owner', machineId: 'fixture_machine', runtimeSlot: 'primary',
+        runtimeTokenEpoch: 1, runtimeCredentialSha256: createHash('sha256').update(token).digest('hex'), sourceSha,
+        chatId: 'chat_settings', modelId: '@cf/zai-org/glm-5.3-flash', startsAt: now.toISOString(),
+        expiresAt: new Date(+now + 60000).toISOString(),
+        target: { kind: 'canonical_bot', botId: 'bot_settings1', recipeRef: { recipeId: 'matrix-bot', version: '1.0.0' } } };
+      const scope = createCanonicalPhaseDiscovery(undefined, phase.ownerId, {
+        env: { MATRIX_ISOLATED_CHAT_ENVELOPE: JSON.stringify(phase), MATRIX_MACHINE_ID: phase.machineId,
+          MATRIX_RUNTIME_SLOT: phase.runtimeSlot, MATRIX_RUNTIME_TOKEN_EPOCH: '1', MATRIX_FUNDED_AI_RUNTIME_TOKEN: token },
+        sourceSha: () => actualSource, now: () => clock,
+      });
+      const invalidate = () => { if (drift === 'expiry') clock = new Date(phase.expiresAt); else actualSource = 'b'.repeat(40); };
+      const originalRead = settingsPersistence.readSavedProviderSettingsConfiguration;
+      const savedRead = vi.spyOn(settingsPersistence, 'readSavedProviderSettingsConfiguration').mockImplementation(async path => {
+        const saved = await originalRead(path);
+        savedReads += 1;
+        if (stage === 'configuration' && savedReads === 1 || stage === 'final_file' && savedReads === 2) invalidate();
+        return saved;
+      });
+      const dependencies = vi.fn(async () => {
+        await Promise.resolve();
+        if (stage === 'dependencies') invalidate();
+        return { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 };
+      });
+      const canonicalReader = vi.fn(async () => providerSettingsCanonicalFixture());
+      const native = vi.fn(async () => metadata);
+      const store = new ProviderSettingsStore({ homePath, now: () => now, observationScope: scope.observationScope,
+        providerSnapshotReader: { getSnapshot: canonicalReader }, codexNativeAccountMetadataReader: native,
+        dependencyCoordinator: { getAccountDependencies: dependencies, reassignDependencies: async () => undefined } });
+      try {
+        await expect(store.getSnapshot({ includeNativeAccountMetadata: true })).rejects.toThrow('Matrix AI route readiness unavailable');
+        expect(canonicalReader).toHaveBeenCalledTimes(1);
+        expect(savedReads).toBe(2);
+        if (stage === 'dependencies') expect(dependencies).toHaveBeenCalled();
+        expect(native).not.toHaveBeenCalled();
+      } finally { savedRead.mockRestore(); }
+    });
   it('does not copy private verification authority through a cloned public observation', async () => {
     const observed = bindNativeAccountMetadata({ ...metadata }, async () => true);
     expect(await verifyNativeAccountMetadata(observed)).toBe(observed);
