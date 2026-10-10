@@ -16,3 +16,9 @@ it("builds all review entries and resolves the standalone shell alias after stac
   } } } });
   for (const name of ["index.html", "auth.html", "mobile.html"]) expect(await readFile(join(output, name), "utf8")).toContain("<html");
 }, 60_000);
+
+it("uses installed app light styles and artwork in the review fixture", async () => {
+  const fixture = await readFile("specs/362-default-app-sculpted-family/preview/review.tsx", "utf8");
+  expect(fixture).toContain('import("../../../home/app-templates/connected-starter/src/styles/gallery-light.css")');
+  expect(fixture).toContain("iconDataUrl");
+});
