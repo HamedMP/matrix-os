@@ -85,6 +85,7 @@ import {
   type R2CapabilityGate,
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
+import { bootstrapPlatformSlack } from './slack-startup.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
@@ -243,6 +244,7 @@ type CreatePlatformApp = (deps: {
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
+  slackRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
@@ -460,6 +462,11 @@ async function startPlatformServerWithCleanup(
   });
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: process.env, collaboration, logError: logPlatformRouteError,
+  });
+  const slack = await bootstrapPlatformSlack({
+    env: process.env, db, platformSecret, platformJwtSecret,
+    clerkAuth, collaboration, customerVpsProxyDispatcher,
+    startCleanup: backgroundWorkersEnabled,
   });
 
   let matrixProvisioner: MatrixProvisioner | undefined;
@@ -1050,6 +1057,7 @@ async function startPlatformServerWithCleanup(
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
+    slackRoutes: slack.routes,
     customerVpsService,
     goldenSnapshotService,
     goldenSnapshotConfig,
@@ -1104,6 +1112,7 @@ async function startPlatformServerWithCleanup(
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           collaboration?.shutdown(),
+          slack.close(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),
