@@ -292,6 +292,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         && (captured.absent ? saved === null : saved?.revision === captured.config.revision);
     });
     if (!accepted) throw new ProviderSettingsStoreError("projection_unavailable", 503);
+    if (options.admissionScope === "canonical_matrix" && this.#observationScope
+      && this.#observationScope() !== "canonical_matrix") {
+      throw new ProviderSettingsStoreError("projection_unavailable", 503);
+    }
     return snapshot;
   }
 
