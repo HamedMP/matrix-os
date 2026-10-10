@@ -309,6 +309,28 @@ it.each([' ', '\t', '\n'])("isolates blank owner names %j on canonical and moved
     expect(await readFile(manifestPath, 'utf8')).toBe(bytes);
   }
 });
+it.each([256, 257])("keeps the %i-character owner name boundary aligned with actual Web/Electron openers", async length => {
+  const f = await fixture("cleanup"); f.released.resolve(); await f.service.install("folio");
+  for (const path of ["apps/folio", "apps/moved-folio"]) {
+    if (path !== "apps/folio") expect((await f.app.request("/api/files/rename", json({ from: "apps/folio", to: path }))).status).toBe(200);
+    const manifestPath = join(f.homePath, path, "matrix.json"), name = "x".repeat(length);
+    const bytes = JSON.stringify({ ...JSON.parse(await readFile(manifestPath, "utf8")), name });
+    expect((await f.app.request(`/files/${path}/matrix.json`, { method: "PUT", body: bytes })).status).toBe(200);
+    const bridge = galleryBridge(f.homePath), client = await loadGallery(bridge);
+    const row = client.apps[0];
+    expect(row.installed).toBe(length === 256);
+    if (length === 256) {
+      await expect(f.service.install("folio")).resolves.toMatchObject({ status: "already_installed", name, path });
+      await openGalleryApp(bridge, row);
+      expect(bridge.openApp).toHaveBeenCalledWith(row.installedName, "matrix-app:folio");
+    } else {
+      await expect(f.service.install("folio")).rejects.toMatchObject({ status: 409 });
+      expect(row.launchPath).toBeUndefined(); expect(row.installedName).toBeUndefined();
+      await expect(openGalleryApp(bridge, row)).rejects.toThrow(); expect(bridge.openApp).not.toHaveBeenCalled();
+    }
+    expect(await readFile(manifestPath, "utf8")).toBe(bytes);
+  }
+});
 it.each(['\n', '\t', '\r', '\u007f'])("does not assert a runnable installation when a skipped owner copy hides a duplicate slug %j", async control => {
   const f = await fixture('cleanup'); f.released.resolve(); await f.service.install('folio');
   const original = await readFile(join(f.homePath, 'apps/folio/matrix.json'), 'utf8');
