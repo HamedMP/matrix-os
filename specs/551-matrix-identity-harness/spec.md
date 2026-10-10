@@ -77,3 +77,69 @@ Wrong: decide SOUL inheritance from `agent.name === "Matrix Bot"` or the shared 
 Run focused personality/recipe/orchestration/worker tests, typecheck, patterns, required full tests and lint; distinguish known base macOS failures from changed-code regressions. Update existing English implementation PR2438 and private FinnaAI/matrix-os-site docs PR221 with correct identity scope, creation entry, display-label separation and next-turn behavior. Link ENG235 and required PR invariants.
 
 Prior Juniper/Cedar/Maple Main screenshots prove ordinary Matrix Pi Chat only. Private Preview inference was unavailable; no funding/credential transfer is authorized or required. Human Review readiness requires honest actual Bot evidence. No Greptile/merge until explicit Yuhan approval. No Slack/team message authorization.
+
+
+## Isolated readiness source composition
+
+The candidate composes frozen SOUL `7cb84b1a3f557b776ffba99979604b92947bfc25`
+with funded-readiness `de0238fa3fb62be3e609525649fb07b39436950f` in a separate
+manual worktree. Preserve both per-turn owner personality and the existing
+ordinary managed Pi server-issued isolated turn limits in the shared runtime.
+The broker's 131072-byte bound applies to the complete serialized inference
+body, including system/SOUL instructions; identity never bypasses that bound.
+
+This composition does not add isolated generation fencing to canonical recipe
+Bots. Ordinary Pi claim/broker tests and Bot creation are not live Bot acceptance.
+The canonical recipe's real run/broker binding needs its own proof before any
+single-generation claim. No paid cache warming is allowed; missing, stale or
+mismatched cached readiness remains unavailable.
+
+Matching trusted Gateway/Platform cache-only phase configuration is default-off
+and does not remove funding-summary promotional grant or balance handoff paths.
+A complete catalog observation requires separate fresh evidence of no such
+mutation, or a reviewed server-owned exact-target read path that omits them.
+Client query parameters must not disable server financial/authorization policy.
+Do not change global promotion/permission flags to facilitate a test. Expired
+phase configuration fails closed; restore the recorded original phase values
+through the owner of that deployment rather than leave ordinary Chat blocked.
+
+Source checks and independent review are prerequisites to any later deployment.
+This candidate performs no Main update, catalog GET, policy/funding write,
+new VPS allocation or Electron launch. Preserve current Main SOUL, Bot and owner
+data. The original exact runtime remains the rollback baseline until a reviewed
+replacement is selected. Real reply screenshots remain a separate acceptance gate.
+
+
+## Atomic Settings SOUL publication
+
+The existing authenticated/fenced `PUT /files/system/soul.md` producer publishes
+one complete version through the shared exclusive-temp/rename helper. It never
+truncates the current SOUL inode. Other generic file writes keep their existing
+semantics. Concurrent reads can use the prior complete inode or the newly
+published complete inode; invalid path/identity races fail before inference.
+
+The producer validates the canonical owner directory and regular nonlinked
+SOUL, checks existing write permission without truncation, and preserves uid/gid
+and ordinary permission bits through the retained exclusive-created staging
+descriptor. Missing files use private0600; observed link/parent replacement and
+write failures reject the save. Before publication the helper checks that the
+staged entry is regular, nonlinked, and matches the held descriptor's dev/ino.
+Cleanup only unlinks an owned matching entry; a collision or substituted entry
+is not removed. Linux pins
+temp creation, rename and cleanup to the opened system directory. Other hosts
+revalidate the parent at commit and cleanup; if a parent has been replaced,
+cleanup must not follow it into a foreign directory. A private staged file can
+remain in the renamed original directory for its owner to remove in that rare
+failure case; it is never published as SOUL. Non-Linux retains the documented
+residual directory rename race rather than claiming descriptor pinning. On all
+platforms a same-UID process with direct directory access can still race the
+child-entry check and pathname rename; parent pinning does not eliminate this
+race. The reader rejects unsafe identity/link changes before inference, but
+this is not a guarantee that an unsuccessful save left its path unchanged.
+
+Regression evidence must exercise actual Settings route and reader with a real
+write paused after truncating/writing the staging file, plus I/O failure,
+metadata preservation, repeated/concurrent saves, and outside-parent/staging-link
+guards. Do not mock the reader or
+weaken its assertions. Gateway producer-only corrections do not relabel an
+unchanged Electron component's earlier source/package metadata.
