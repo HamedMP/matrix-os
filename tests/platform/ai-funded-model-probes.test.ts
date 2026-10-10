@@ -50,7 +50,7 @@ describe("fleet funded model probe budget", () => {
     expect((await first.probe(sonnet)).ready).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const restarted = createFundedModelProbeService(input);
-    expect((await restarted.probe(sonnet)).ready).toBe(false);
+    expect((await restarted.probe(sonnet)).ready).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -61,7 +61,7 @@ describe("fleet funded model probe budget", () => {
     const first = createFundedModelProbeService(input);
     const second = createFundedModelProbeService(input);
     const results = await Promise.all([first.probe(sonnet), second.probe(sonnet)]);
-    expect(results.filter((result) => result.ready)).toHaveLength(1);
+    expect(results.filter((result) => result.ready)).toHaveLength(2);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
