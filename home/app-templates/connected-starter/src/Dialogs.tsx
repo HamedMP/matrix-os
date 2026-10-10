@@ -22,6 +22,7 @@ export function Editor({
   onLoadLatest?: (draftId: string) => Promise<OwnerRecord | null>;
 }) {
   const baseline = useRef(record);
+  const changedFields = useRef<OwnerRecord["fields"]>({}), changedScope = useRef(false);
   const [conflict, setConflict] = useState(false), [latest, setLatest] = useState<OwnerRecord | null>(null);
   const [draftId] = useState(() => record?.id ?? crypto.randomUUID());
   const [fields, setFields] = useState<OwnerRecord["fields"]>(
@@ -106,10 +107,12 @@ export function Editor({
   }
   function reapply() {
     if (!latest || busy) return;
-    const changed = Object.fromEntries(app.fields.filter(field => fields[field.key] !== baseline.current?.fields[field.key])
+    const changed = Object.fromEntries(app.fields.filter(field => Object.hasOwn(changedFields.current, field.key) || fields[field.key] !== baseline.current?.fields[field.key])
       .map(field => [field.key, fields[field.key]]));
+    changedFields.current = changed;
     setFields({ ...latest.fields, ...changed });
-    if (scope === baseline.current?.scope) setScope(latest.scope);
+    changedScope.current ||= scope !== baseline.current?.scope;
+    if (!changedScope.current) setScope(latest.scope);
     baseline.current = { ...latest, manualFields: Array.from(new Set([
       ...latest.manualFields, ...(baseline.current?.manualFields ?? []), ...Object.keys(changed),
     ])) };

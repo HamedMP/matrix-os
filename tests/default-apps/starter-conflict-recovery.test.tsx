@@ -98,14 +98,15 @@ it('recovers a new draft by its stable ID after an unacknowledged committed inse
   expect(compareAndSwap).toHaveBeenCalledWith('records', insert.mock.calls[0][1].id, insert.mock.calls[0][1].payload, { payload: expect.objectContaining({ fields: expect.objectContaining({ title: 'Revised draft' }) }) });
 });
 
-it('retains owner markers when an import matches the draft across repeated conflicts', async () => {
+it.each([false, true])('retains owner values and markers across equal-value then differing conflicts (owner group: %s)', async ownerGroup => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const same = { ...latest, fields: { ...latest.fields, amount: 20 }, manualFields: ['currency'] };
-  const later = { ...same, fields: { ...same.fields, title: 'Later imported title' }, basePayload: { revision: 3 } };
+  const later = { ...same, fields: { ...same.fields, amount: 30, title: 'Later imported title' }, scope: 'personal' as const, basePayload: { revision: 3 } };
   const save = vi.fn().mockRejectedValueOnce(new RecordConflictError()).mockRejectedValueOnce(new RecordConflictError()).mockResolvedValueOnce(undefined);
   const load = vi.fn().mockResolvedValueOnce(same).mockResolvedValueOnce(later), close = vi.fn();
   render(<Editor app={app} record={original} onSave={save} onArchive={vi.fn()} onClose={close} onLoadLatest={load} />);
   fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '20' } });
+  if (ownerGroup) fireEvent.change(screen.getByLabelText('Record group'), { target: { value: 'work' } });
   for (let attempt = 0; attempt < 2; attempt++) {
     fireEvent.click(screen.getByRole('button', { name: 'Save record' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save record' })).toHaveProperty('disabled', true));
@@ -118,6 +119,8 @@ it('retains owner markers when an import matches the draft across repeated confl
   expect(save.mock.calls[1][0].manualFields).toEqual(expect.arrayContaining(['amount', 'currency']));
   expect(save.mock.calls[2][0].manualFields).toEqual(expect.arrayContaining(['amount', 'currency']));
   expect(save.mock.calls[2][0].manualFields).not.toContain('title');
+  expect(save.mock.calls[2][0].fields.amount).toBe(20);
+  expect(save.mock.calls[2][0].scope).toBe(ownerGroup ? 'work' : 'personal');
   expect(save.mock.calls[2][0].fields.title).toBe('Later imported title');
   expect(save.mock.calls[2][0].basePayload).toEqual({ revision: 3 });
 });
