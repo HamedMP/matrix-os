@@ -44,6 +44,42 @@ it("keeps Agents on management while both creation entries open the same scratch
   expect(bots.instantiate).not.toHaveBeenCalled(); expect(bots.createCustom).not.toHaveBeenCalled();
 });
 
+it.each([
+  { entry: "management", revoked: false },
+  { entry: "sidebar +", revoked: false },
+  { entry: "management", revoked: true },
+])("keeps Build in Chat available through $entry and checks current authority (revoked=$revoked)", async ({ entry, revoked }) => {
+  const { client, bots } = fixture(), start = vi.fn(), intent = vi.fn();
+  let authorized = true;
+  render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client} onStartChat={start}
+    onSelectionIntent={intent} isCurrent={() => authorized}/>
+    <ChatAgentsContent client={client} scopeKey="main"><textarea aria-label="Chat draft" defaultValue="Keep my draft"/></ChatAgentsContent>
+  </ChatAgentsWorkspace>);
+  if (entry === "management") {
+    fireEvent.click(await screen.findByRole("button", { name: "Agents", exact: true }));
+    expect(await screen.findByRole("heading", { name: "Your AI team" })).toBeVisible();
+    fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  } else fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Ad Spend Watch" } });
+  const build = await screen.findByRole("button", { name: "Use Ad Spend Watch" });
+  expect(build).toBeEnabled();
+  expect(build).toHaveTextContent("Build in Chat");
+  expect(start).not.toHaveBeenCalled(); expect(intent).toHaveBeenCalledTimes(1);
+  authorized = !revoked;
+  fireEvent.click(build);
+  if (revoked) {
+    expect(start).not.toHaveBeenCalled(); expect(intent).toHaveBeenCalledTimes(1);
+  } else {
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith(expect.stringContaining("Ad Spend Watch"));
+    expect(intent).toHaveBeenCalledTimes(2);
+  }
+  expect(screen.queryByRole("region", { name: "Agent recipes" })).toBeNull();
+  expect(screen.getByRole("textbox", { name: "Chat draft" })).toHaveValue("Keep my draft");
+  expect(client.create).not.toHaveBeenCalled(); expect(bots.createCustom).not.toHaveBeenCalled();
+  expect(bots.instantiate).not.toHaveBeenCalled();
+});
+
 it.each(["Cancel", "Close agent settings", "Escape"])("returns an empty scratch form to the filtered chooser via %s without mutation", async action => {
   const { client, bots } = fixture();
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}/>);
