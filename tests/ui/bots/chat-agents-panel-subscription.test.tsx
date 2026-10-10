@@ -74,12 +74,15 @@ it("allows an existing recipe Bot to switch coordinator with account and grant b
 
 it("keeps subscription models out of generic Agents even if a future descriptor advertises Full access", async () => {
   const x = fixture(); x.catalog.instances.find(instance => instance.id === planSelection.instanceId)!.supports.permissionModes = ["full_access"]; x.client.list.mockResolvedValue({ enabled: true, agents: [saved] });
-  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
+  const panel = render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   expect(screen.queryByRole("option", { name: /ChatGPT subscription/ })).toBeNull();
   expect(screen.queryByRole("option", { name: /Owner model/ })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  fireEvent.click(screen.getByRole("button", { name: `Edit ${saved.name}` }));
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeTruthy();
+  panel.rerender(<ChatAgentsPanel client={x.client} view="library" onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${saved.name}` }));
   expect(screen.queryByRole("option", { name: /ChatGPT subscription/ })).toBeNull();
   expect(screen.queryByRole("option", { name: /Owner model/ })).toBeNull();
 });
@@ -135,6 +138,7 @@ it("does not reuse a saved stale account/grant binding when selecting a current 
  x.client.list.mockResolvedValue({ enabled: true, agents: [saved] });
  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
  fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  const connection = screen.getByRole("combobox", { name: "Connection" });
  await waitFor(() => expect(connection).toBeEnabled());
  fireEvent.change(connection, {target: {value: planSelection.instanceId}});
@@ -160,6 +164,7 @@ it("does not reuse a saved stale account/grant binding when selecting a current 
  x.catalog.instances=x.catalog.instances.filter(instance=>instance.id===planSelection.instanceId);
  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
  fireEvent.click(await screen.findByRole("button", {name:"New Agent"}));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  await waitFor(()=>expect(screen.getByRole("combobox", {name:"Connection"})).toBeEnabled());
  expect(screen.getByRole("combobox", {name:"Connection"})).toHaveValue("matrix_pi_default");
  expect(screen.getByRole("combobox", {name:"Model"})).toHaveValue("unselected");
@@ -167,6 +172,7 @@ it("does not reuse a saved stale account/grant binding when selecting a current 
  it("refreshes recovered models without changing the editor draft", async () => {
  const x=fixture(); render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
  fireEvent.click(await screen.findByRole("button", {name: "New Agent"}));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  fireEvent.change(screen.getByRole("textbox", {name: "Name"}), {target:{value:"Keep my name"}});
  fireEvent.change(screen.getByRole("textbox", {name:"Instructions"}), {target:{value:"Keep my instructions"}});
  await waitFor(() => expect(screen.getByRole("button", {name:"Refresh models"})).toBeEnabled());
@@ -184,6 +190,7 @@ it('recovers the created Bot after a readback failure even if the owner edits th
  (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=createCustom;
  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
  fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  await waitFor(()=>expect(screen.getByRole('combobox',{name:'Connection'})).toBeEnabled());
  fireEvent.change(screen.getByRole('combobox',{name:'Connection'}),{target:{value:planSelection.instanceId}});
  fireEvent.change(screen.getByRole('combobox',{name:'Model'}),{target:{value:JSON.stringify([planSelection.instanceId,planSelection.model,options])}});
@@ -211,6 +218,7 @@ it('preserves the supported Hermes executor when a new draft selects the legacy 
  x.client.recipeCatalog.mockResolvedValue({...recipes,skills:[...recipes.skills,{id:'matrix-jev-email-triage',name:'Jev Inbox Triage',description:'Legacy Hermes workflow'}]});
  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
  fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  fireEvent.click(await screen.findByRole('button',{name:'Add recipe'}));
  fireEvent.click(await screen.findByRole('checkbox',{name:'Jev Inbox Triage'}));
  await screen.findByRole('option',{name:'Hermes owner model · Hermes'});
@@ -222,6 +230,7 @@ it('removes the committed recipe during retained new-Bot recovery and retries a 
  (x.bots as unknown as {createCustom:ReturnType<typeof vi.fn>}).createCustom=createCustom;
  render(<ChatAgentsPanel client={x.client} onClose={vi.fn()}/>);
  fireEvent.click(await screen.findByRole('button',{name:'New Agent'}));
+ fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
  await waitFor(()=>expect(screen.getByRole('combobox',{name:'Connection'})).toBeEnabled());
  fireEvent.change(screen.getByRole('combobox',{name:'Connection'}),{target:{value:planSelection.instanceId}});
  fireEvent.change(screen.getByRole('combobox',{name:'Model'}),{target:{value:JSON.stringify([planSelection.instanceId,planSelection.model,options])}});
