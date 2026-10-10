@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Copy, ExternalLink, TextSelect } from "@/lib/hugeicons";
+import { ClipboardPasteIcon, Copy, ExternalLink, TextSelect } from "@/lib/hugeicons";
 
 import type { TerminalLinkEntry } from "./terminal-links";
 
@@ -20,6 +20,7 @@ interface TerminalLinkContextMenuProps {
   onCopy: (link: TerminalLinkEntry) => void;
   onCopySelection: (selection: string) => void;
   onSelectAll: () => void;
+  onPaste: () => void;
 }
 
 function openLabel(link: TerminalLinkEntry): string {
@@ -35,6 +36,7 @@ export function TerminalLinkContextMenu({
   onCopy,
   onCopySelection,
   onSelectAll,
+  onPaste,
 }: TerminalLinkContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const firstActionRef = useRef<HTMLButtonElement>(null);
@@ -62,13 +64,17 @@ export function TerminalLinkContextMenu({
   if (!menu || typeof window === "undefined" || typeof document === "undefined") return null;
 
   const x = Math.max(8, Math.min(menu.x, window.innerWidth - 228));
-  const y = Math.max(8, Math.min(menu.y, window.innerHeight - (menu.link ? 248 : 104)));
+  const y = Math.max(8, Math.min(menu.y, window.innerHeight - (menu.link ? 288 : 144)));
   const perform = (action: (link: TerminalLinkEntry) => void) => {
     if (menu.link) action(menu.link);
     onClose();
   };
   const performSelectionCopy = () => {
     if (menu.selection) onCopySelection(menu.selection);
+    onClose();
+  };
+  const performPaste = () => {
+    onPaste();
     onClose();
   };
   const performSelectAll = () => {
@@ -109,6 +115,16 @@ export function TerminalLinkContextMenu({
       </button>
       <button
         ref={menu.selection ? undefined : firstActionRef}
+        type="button"
+        role="menuitem"
+        aria-label="Paste"
+        onClick={performPaste}
+        className={itemClass}
+      >
+        <ClipboardPasteIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+        Paste
+      </button>
+      <button
         type="button"
         role="menuitem"
         aria-label="Select All"
