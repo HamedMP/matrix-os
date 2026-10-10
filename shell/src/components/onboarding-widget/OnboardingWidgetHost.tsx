@@ -6,6 +6,7 @@ import {
   OnboardingWidget,
   onboardingPrefsKey,
   readOnboardingPrefs,
+  useGettingStartedAutoOpenSuppression,
   useOnboardingSupportDock,
   useOnboardingWidgetSession,
   useOnboardingWidgetState,
@@ -77,6 +78,8 @@ function useShellSupportOpen(): boolean {
 }
 
 export function OnboardingWidgetHost(props: OnboardingWidgetHostProps) {
+  // Held before identity loads so the checklist can't auto-open over the widget in the meantime.
+  useGettingStartedAutoOpenSuppression();
   const identity = useShellOnboardingIdentity();
   if (!identity) return null;
   const prefsKey = onboardingPrefsKey(identity.handle, identity.runtimeSlot);

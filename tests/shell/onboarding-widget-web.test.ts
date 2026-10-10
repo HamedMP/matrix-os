@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GettingStartedVisibilityProvider, useGettingStartedVisibility } from "@matrix-os/ui";
 import { OnboardingWidgetHost } from "@/components/onboarding-widget/OnboardingWidgetHost";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { CanonicalShellChatRequestError } from "@/lib/canonical-chat-client";
@@ -78,6 +79,28 @@ describe("web onboarding widget host", () => {
     expect(screen.getByText("App connections aren't available on this computer")).toBeTruthy();
     act(() => screen.getByRole("button", { name: "Skip" }).click());
     expect(await screen.findByRole("button", { name: /portfolio/ })).toBeTruthy();
+  });
+
+  it("holds back the Getting Started auto-open from first render until it unmounts", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => undefined)));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function Probe() {
+      return createElement("output", null, String(useGettingStartedVisibility().autoOpenSuppressed));
+    }
+    const scene = (showHost: boolean) => createElement(
+      QueryClientProvider,
+      { client },
+      createElement(
+        GettingStartedVisibilityProvider,
+        { scope: "test" },
+        showHost ? createElement(OnboardingWidgetHost, { onOpenChat: vi.fn(), onOpenSettings: vi.fn() }) : null,
+        createElement(Probe),
+      ),
+    );
+    const view = render(scene(true));
+    expect(screen.getByRole("status").textContent).toBe("true");
+    view.rerender(scene(false));
+    expect(screen.getByRole("status").textContent).toBe("false");
   });
 
   it("steps aside while Chat is maximized and comes back after", async () => {

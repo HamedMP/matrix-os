@@ -160,7 +160,14 @@ export { TerminalControls } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
 
-export { GettingStartedVisibilityProvider, GettingStartedBlocker, useGettingStartedVisibility, useGettingStartedBlocker, useGettingStartedPopoverFocus } from "./getting-started-visibility.js";
+export {
+  GettingStartedVisibilityProvider,
+  GettingStartedBlocker,
+  useGettingStartedAutoOpenSuppression,
+  useGettingStartedVisibility,
+  useGettingStartedBlocker,
+  useGettingStartedPopoverFocus,
+} from "./getting-started-visibility.js";
 export { dispatchTerminalPaneRequest, TerminalPaneActionsUnavailableError } from "./terminal/terminal-pane-request.js";
 
 export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationConnection, type ChatAgentDraftRequest, type StartAgentChat } from "./chat-agents/client.js";
