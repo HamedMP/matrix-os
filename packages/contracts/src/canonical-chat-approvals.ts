@@ -1,7 +1,15 @@
 import type { CanonicalChatDetailResponse } from "./canonical-chat-api.js";
 import type { CanonicalChatApprovalDecision } from "./canonical-chat.js";
 import { canonicalChatApprovalDisplay } from "#canonical-chat-approval-display";
+import { canonicalSafeLabel } from "#canonical-chat-primitives";
 export { canonicalChatApprovalOutcome } from "#canonical-chat-approval-display";
+
+const ApprovalTitleSchema = canonicalSafeLabel(160, 640);
+/** Match persisted approval title safety without altering execution arguments. */
+export function canonicalChatApprovalTitle(value: string): string {
+  const parsed = ApprovalTitleSchema.safeParse(value);
+  return parsed.success ? parsed.data : "Review integration request";
+}
 
 export interface CanonicalChatApprovalView {
   id: string;

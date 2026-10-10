@@ -9,6 +9,8 @@ const PrepareResponse = z.discriminatedUnion("kind", [
 const DecisionResponse = z.object({ receipt: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 
 export interface CustomMcpApprovalClient {
+  verifyIntegrationDecision?(input: { chatId: string; runId: string; approvalId: string;
+    decision: "approve" | "decline" | "cancel"; clientRequestId: string; platformApprovalProof: string }): Promise<boolean>;
   registerRun(runId: string): Promise<{ generation: number }>;
   prepare(runId: string, input: {
     generation: number;
@@ -50,6 +52,11 @@ export function createCustomMcpApprovalClient(options: {
   }
 
   return {
+    async verifyIntegrationDecision(input) {
+      const { platformApprovalProof, ...decision } = input;
+      const result = await post(`/internal/containers/${options.handle}/integrations/approval/verify`, decision, platformApprovalProof);
+      return z.strictObject({ verified: z.literal(true) }).parse(await result.json()).verified;
+    },
     async registerRun(runId) {
       const id = RunId.parse(runId);
       const result = await post("runs", { runId: id });

@@ -9,12 +9,13 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
     const normalized = key.toLowerCase();
     if (normalized !== "host" && normalized !== "authorization"
       && normalized !== "x-matrix-mcp-run-id"
+      && normalized !== "x-matrix-integration-approval"
       && normalized !== INTEGRATION_READ_SCOPE_HEADER
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }
   if (routePrefix === "/api/mcp-servers") {
     const run = context.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
-    if (run?.scope === "call") headers.set("x-matrix-mcp-run-id", run.runId);
+    if (run?.scope === "call" || run?.scope === "chat_call") headers.set("x-matrix-mcp-run-id", run.runId);
   }
   return headers;
 }
