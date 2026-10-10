@@ -2,6 +2,7 @@
 
 import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { FileResourceSharing } from "./file-browser/FileResourceSharing";
+import { AppSiteButton } from "./app-sites/AppSiteButton";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -370,7 +371,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
   }
 
   return <div className="flex h-full w-full flex-col">
-    {slug ? <FileResourceSharing kind="app" path={slug} containerClassName="flex justify-end border-b px-3 py-1.5" /> : null}
+    {slug ? <div className="flex items-center justify-end gap-2 border-b px-3 py-1.5"><FileResourceSharing kind="app" path={slug} /><AppSiteButton key={slug} appSlug={slug} /></div> : null}
     <iframe
       ref={iframeRef}
       key={refreshKey}
