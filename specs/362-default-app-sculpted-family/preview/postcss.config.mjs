@@ -1,1 +1,3 @@
-export default { plugins: { "@tailwindcss/postcss": {} } };
+import { shellRequire } from "./shell-require.mjs";
+
+export default { plugins: [shellRequire("@tailwindcss/postcss")()] };

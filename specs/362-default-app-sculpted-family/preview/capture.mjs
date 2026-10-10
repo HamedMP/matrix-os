@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { chromium } from "@playwright/test";
+import { shellRequire } from "./shell-require.mjs";
+const { chromium } = shellRequire("@playwright/test");
 
 const repository = resolve(import.meta.dirname, "../../..");
 const catalog = JSON.parse(await readFile(join(repository, "home/system/app-gallery.json"), "utf8"));

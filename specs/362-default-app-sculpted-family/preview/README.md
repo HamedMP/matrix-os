@@ -27,3 +27,5 @@ After refreshing, build Gallery and inspect `?app=gallery`: open app details and
 verify screenshot identity and its Example data / Empty workspace label. Check
 `http://127.0.0.1:3052/mobile.html` for the 390px list and details layout. These
 checks validate presentation; they do not prove hosted installation works.
+
+Preview build and capture tooling resolves Tailwind CSS/PostCSS and Playwright through `shell/package.json`, where those dependencies are declared. It does not require root dependency hoisting.
