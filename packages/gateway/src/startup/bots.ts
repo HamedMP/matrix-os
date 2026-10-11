@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
+import { readReleaseInfo } from "../system-info.js";
+import { createIsolatedChatAuthority } from "../chat/isolated-chat-envelope.js";
 import { createBotSourceRevalidator } from "../bots/source-revalidation.js";
 import { createBotProcedureResolver } from "../bots/custom-procedure.js";
 import { createChatAgentRecipeResolver, discoverChatAgentRecipeSkillsRoot } from "../chat/agent-recipe.js";
@@ -38,7 +42,7 @@ import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { createPrivateBotAdmission } from "../bots/admission.js";
-import { createBotBrokerActions, registerBotBroker, type BotToolDispatcher } from "../bots/broker-actions.js";
+import { BotBrokerActionError, createBotBrokerActions, registerBotBroker, type BotToolDispatcher } from "../bots/broker-actions.js";
 import { createMatrixBotChatProviderAdapter, type BotChatState } from "../bots/chat-adapter.js";
 import { bootstrapBotDatabase } from "../bots/database.js";
 import { createBotInstantiation, ensureBotWorkspace, ownerBotExecutor, type BotInstantiation } from "../bots/instantiation.js";
@@ -165,6 +169,12 @@ export async function startBots(options: {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
     return undefined;
   }
+  const isolatedConfig = parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE);
+  const isolatedChat = isolatedConfig ? createIsolatedChatAuthority({ config: isolatedConfig, db,
+    identity: () => ({ ownerId: options.runtimeOwnerId ?? "", machineId: process.env.MATRIX_MACHINE_ID ?? "",
+      runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "",
+      credentialSha256: createHash("sha256").update(process.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN ?? "").digest("hex"),
+      sourceSha: readReleaseInfo()?.gitCommit ?? process.env.MATRIX_BUILD_SHA ?? "" }), now }) : undefined;
   const recipes = createBotRecipeCatalog();
   const customRecipes = createChatAgentRecipeResolver({ homePath: options.homePath,
     skillsRoot: await discoverChatAgentRecipeSkillsRoot({}), services: listServices().map(({ id, name }) => ({ id, name })) });
@@ -353,7 +363,7 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
@@ -363,10 +373,12 @@ export async function startBots(options: {
   const qualifiedTools: BotToolDispatcher = {
     effectClass: request => tools.effectClass(request),
     async prepare(binding, request, signal) {
+      if (isolatedChat?.targets(binding)) throw new BotBrokerActionError("denied");
       await revalidateSource(binding, signal);
       await tools.prepare?.(binding, request, signal);
     },
     async dispatch(binding, request, signal) {
+      if (isolatedChat?.targets(binding)) throw new BotBrokerActionError("denied");
       await revalidateSource(binding, signal);
       return tools.dispatch(binding, request, signal);
     },
@@ -385,6 +397,7 @@ export async function startBots(options: {
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: qualifiedTools,
     inference: {
+      ...(isolatedChat ? { isolatedChat } : {}),
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,

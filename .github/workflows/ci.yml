@@ -520,7 +520,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Account deletion PostgreSQL races
         if: needs.changes.outputs.should_run == 'true'
@@ -531,7 +531,7 @@ jobs:
       - name: Bot creation, Integration grant and source admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/funded-inference-timeout.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Preview Drive revocation and admission races
         run: |
@@ -615,6 +615,9 @@ jobs:
     if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
     strategy:
       fail-fast: false
       matrix:
