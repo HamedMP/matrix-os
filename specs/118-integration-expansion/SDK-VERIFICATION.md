@@ -6,7 +6,7 @@ Date: 2026-09-08
 
 The live Pipedream development-environment spike is **blocked** in this checkout. `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, `PIPEDREAM_PROJECT_ID`, a development external-user ID, and connected provider test accounts are not present. No successful provider read, granted-scope capture, or SDK component key is claimed here.
 
-Run `node --import tsx scripts/verify-pipedream-integration-expansion.ts` with `PIPEDREAM_ENVIRONMENT=development` and `PIPEDREAM_VERIFICATION_CASES` containing an account, read action, parameters, and the exact live-discovered `componentKey` for each component-backed case (currently PostHog and Jira). Direct-API cases omit `componentKey`. Paste its JSONL output and the Pipedream connection metadata below before release. The script rejects production projects, confirms each supplied component key appears in `discoverActions()`, and invokes one real read through Matrix's action boundary for each provider.
+Run `node --import tsx scripts/verify-pipedream-integration-expansion.ts` with `PIPEDREAM_ENVIRONMENT=development` and `PIPEDREAM_VERIFICATION_CASES` containing an account, read action, parameters, and the exact live-discovered `componentKey` for each component-backed case (Jira and PostHog actions other than `list_projects`). Direct-API cases, including PostHog `list_projects`, omit `componentKey`. Paste its JSONL output and the Pipedream connection metadata below before release. The script rejects production projects, confirms each supplied component key appears in `discoverActions()`, and invokes one real read through Matrix's action boundary for each provider.
 
 | Provider | Documented app slug/auth evidence | Paid-plan evidence | Live app/auth/scopes/read | Component keys |
 | --- | --- | --- | --- | --- |
@@ -22,9 +22,46 @@ Sources consulted: Pipedream's official app catalog, app-discovery/API documenta
 ## Release rule
 
 - Do not hand-author or infer component keys. `discoverComponentKeys()` only accepts keys returned by the live SDK action catalog.
-- PostHog and Jira actions have no speculative component keys or direct endpoint contracts. They deliberately fail as not implemented until the live spike records compatible SDK components.
+- Jira and the remaining unimplemented PostHog actions have no speculative component keys or direct endpoint contracts. They deliberately fail as not implemented until the live spike records compatible SDK components. ENG-260 adds only the source-verified PostHog `list_projects` provider read described below; its actual connected-account gate is still pending.
 - The remaining new providers use explicitly reviewed direct API routes, but their end-to-end release gate is still a successful development-account read.
 - Stripe must use a connected restricted read-only key (`rk_...`) scoped only to the catalog reads. Matrix billing Stripe credentials are never accepted by this flow.
+
+## PostHog project discovery source verification (2026-10-11)
+
+ENG-260 addresses the missing advertised API-key `list_projects` action. The
+[official Projects API](https://posthog.com/docs/api/projects) documents the
+organization-selected GET endpoint, `project:read` scope and limit/offset
+pagination; its example response includes `api_token`, which Matrix strips.
+The [API overview](https://posthog.com/docs/api) identifies canonical private
+US/EU cloud hosts. Matrix requires explicit EU selection and does not retry
+the same account in another region.
+
+The no-organization route is independently confirmed in official source at
+commit `f390805cceba8e90fde2981c01c761c4d04f6d49`:
+
+- [Router registration](https://github.com/PostHog/posthog/blob/f390805cceba8e90fde2981c01c761c4d04f6d49/posthog/api/rest_router.py#L108)
+  maps `/api/projects/` to `RootProjectViewSet`.
+- [Root view](https://github.com/PostHog/posthog/blob/f390805cceba8e90fde2981c01c761c4d04f6d49/posthog/api/project.py#L2359)
+  inherits `ProjectViewSet`; it is hidden from generated docs, not disabled.
+  Its inherited query filters enforce visible projects and authenticator
+  organization restrictions. The provider supplies the current organization
+  when callers omit an organization selector.
+- [Provider contract tests](https://github.com/PostHog/posthog/blob/f390805cceba8e90fde2981c01c761c4d04f6d49/posthog/api/test/test_project.py#L1629)
+  exercise a successful root project list without an organization ID.
+- [Provider pagination configuration](https://github.com/PostHog/posthog/blob/f390805cceba8e90fde2981c01c761c4d04f6d49/posthog/settings/web.py#L536)
+  selects DRF `LimitOffsetPagination` without a project-view override.
+  [DRF 3.16.1's continuation](https://github.com/encode/django-rest-framework/blob/3.16.1/rest_framework/pagination.py#L423)
+  advances `offset + limit`, independent of serialized result length.
+  Matrix computes the same numeric step and never follows the provider URL;
+  a short-page fixture reproduces and verifies this contract.
+
+Local RED reproduced `IntegrationActionNotImplementedError` and the existing
+authenticated read route's HTTP 501. Fixture GREEN verifies the adapter,
+bounded page shape, safe field projection and selected-account proxy wiring.
+No actual account, API key, Pipedream broker, OAuth flow or production
+configuration was accessed. Actual region configuration, granted key scope,
+normal-account read, model continuation and three desktop-surface acceptance
+remain **UNVERIFIED**. ENG-147 / PR #2215 remains independent and unchanged.
 
 ## Granola verification
 

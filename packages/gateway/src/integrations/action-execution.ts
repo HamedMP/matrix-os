@@ -4,6 +4,7 @@ import { validateActionParams } from "./parameter-validation.js";
 import { BoundedPipedreamReadError } from "./pipedream-bounded-get.js";
 import { DriveContentError } from "./drive-content.js";
 import { executeCatalogBoundAction } from "./catalog-bound-action.js";
+import { listPostHogProjects } from "./posthog-projects.js";
 
 export class IntegrationActionNotImplementedError extends Error {
   readonly serviceId: string;
@@ -35,6 +36,9 @@ export async function executeIntegrationAction(opts: {
 
   if (actionDef.paramsSchema && !validateActionParams(actionDef, params).valid) {
     throw new Error("Invalid action parameters");
+  }
+  if (serviceId === "posthog" && actionId === "list_projects") {
+    return listPostHogProjects({ pipedream, externalUserId, accountId: connection.pipedream_account_id, params });
   }
   const boundCatalog = await executeCatalogBoundAction({ pipedream, externalUserId,
     accountId: connection.pipedream_account_id, serviceId, actionId, params });

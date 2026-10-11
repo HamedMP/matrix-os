@@ -77,3 +77,51 @@ route authenticated by that exact credential and expected owner ID.
 The primary kernel can use enabled servers. A custom subagent call is denied
 unless its YAML `mcp` frontmatter names the server ID or name. No upstream
 server is injected into Agent SDK `mcpServers`.
+
+## PostHog API-key project discovery (ENG-260)
+
+This extends the original advertised `posthog/list_projects` read action; it
+does not change `posthog_oauth` or the separately deferred PostHog work in
+ENG-147 / PR #2215. Existing integration account selection and authentication
+remain authoritative. The executor passes the selected owner's Pipedream
+external-user ID and exact connected-account ID to one provider proxy read.
+No API key is read by the adapter, returned to a caller or copied to a runtime.
+
+- Empty or omitted params remain valid. The default region is **US**; an EU
+  connection must explicitly request `region: "eu"`. Allowed private API
+  origins are only `https://us.posthog.com` and `https://eu.posthog.com`.
+  Arbitrary host, URL and header overrides, self-hosted instances and
+  automatic cross-region retries are excluded.
+- Without `organizationId`, use the source-confirmed `GET /api/projects/`
+  entry point. PostHog applies its current organization and API-key access
+  restrictions. With a UUID normalized to lowercase, use the documented
+  `GET /api/organizations/:organization_id/projects/` and reject returned
+  projects from another organization. Neither path creates or modifies data.
+- `limit` is an integer from 1 to 100 (default 25); `offset` is an integer
+  from 0 to 1,000,000 (default 0). Read exactly one page with the existing
+  Pipedream proxy's 10-second abort deadline and zero retries.
+- Validate the page and project metadata before returning it. Return only
+  `id`, `name`, `organization`, optional page `count` and numeric
+  `nextOffset` (or null). Never return project `api_token`, configuration,
+  raw pagination URLs or arbitrary upstream fields. Compute a continuation
+  offset locally as `offset + limit` for a non-null continuation, matching
+  PostHog's LimitOffsetPagination; never follow upstream `next`/`previous`
+  URLs. Malformed,
+  oversized, cross-organization and non-progressing pages fail closed.
+- Existing authenticated `/api/integrations/read-call` and general action
+  paths continue to enforce owner/account selection, body limits, read risk
+  and safe errors. This adds no public endpoint, grant, credential store,
+  scope request or database write. Failed reads do not update usage metadata.
+- The registry's GET descriptor and provider helper share the same strict
+  target/query builder. Existing development verification can therefore bind
+  the read without an invented Pipedream component key. Runtime execution
+  always passes through the field-projecting helper, including when a
+  discovered component key is also present.
+
+Fixture contracts must reproduce the previous HTTP 501 before implementation
+and cover parameter bounds, owner/account propagation, EU/US targets, secret
+projection, pagination and safe provider failures. They do not establish a
+successful actual account read, deployed broker behavior, model continuation
+or Electron Desktop / Web Desktop / Web Canvas acceptance. Those live gates
+remain required and pending. Public documentation is a separate
+`FinnaAI/matrix-os-site` PR deliverable, coordinated with ENG-260.
