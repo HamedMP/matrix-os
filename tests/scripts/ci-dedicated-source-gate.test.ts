@@ -67,7 +67,7 @@ it.each(['unlabel','switch-off'])('keeps old delegated green blocked after paren
  f.pull.base.sha=nextBase;f.pull.merge_commit_sha=nextMerge;f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:nextMerge,parents:[{sha:nextBase},{sha:head}]}});
  if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
  await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:nextBase,source_sha:nextMerge,execution_mode:'hosted-only'}}));
- const ci={id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${nextBase} merge=${nextMerge}`,status:'queued',conclusion:'success'};
+ const ci={created_at:new Date().toISOString(),id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${nextBase} merge=${nextMerge}`,status:'queued',conclusion:'success'};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[ci]}});await reconcile(f);expect(prior.conclusion).toBe('failure');ci.status='completed';ci.conclusion='failure';await reconcile(f);expect(prior.conclusion).toBe('failure');ci.conclusion='success';
  const check={id:88,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44'};
  const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[{id:44,run_id:321,run_attempt:1,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88'}]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};
@@ -77,8 +77,8 @@ it('recovers old delegated history conservatively during App-issuer migration',a
  const f=fixture();f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{id:12,name:'Dedicated CI Results',head_sha:head,app:{slug:'github-actions'},conclusion:'success'}]}});await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
 });
 function hostedFixture(){
- const f=fixture();const prior={id:9,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true})}};f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior]}});
- const run={id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,status:'completed',conclusion:'success'};
+ const f=fixture();const prior={id:9,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true,headSha:head,baseSha:base,sourceSha:merge,executionMode:'hosted-only',recoveryStartedAt:new Date(Date.now()-20000).toISOString(),recoveryAfterRunId:320})}};f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior]}});
+ const run={created_at:new Date(Date.now()-10000).toISOString(),id:321,run_attempt:1,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,status:'completed',conclusion:'success'};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run]}});const job={id:44,run_id:321,run_attempt:1,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',check_run_url:'https://api.github.com/repos/HamedMP/matrix-os/check-runs/88'};const check={id:88,name:'CI Results',head_sha:main,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/321/job/44'};
  const github={rest:{...f.github.rest,actions:{...f.github.rest.actions,listJobsForWorkflowRun:vi.fn(async()=>({data:{total_count:1,jobs:[job]}}))},checks:{...f.github.rest.checks,get:vi.fn(async()=>({data:check}))}}};return{...f,github,run,job,check};
 }
@@ -104,7 +104,7 @@ it.each(['unlabel','switch-off'])('requires a fresh main hosted dispatch after u
  expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({ref:'main',inputs:{pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge,execution_mode:'hosted-only'}}));
  expect(f.github.rest.actions.listJobsForWorkflowRun).not.toHaveBeenCalled();
  // The unchanged tuple is eligible only through the explicit full-hosted marker.
- const fresh={...f.run,id:322,status:'queued'};
+ const fresh={...f.run,id:322,status:'queued',created_at:new Date(Date.now()+1000).toISOString()};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[previous,fresh]}});
  await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
  fresh.status='completed';fresh.conclusion='failure';await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
@@ -113,6 +113,54 @@ it.each(['unlabel','switch-off'])('requires a fresh main hosted dispatch after u
  f.github.rest.checks.get.mockResolvedValue({data:{...f.check,details_url:'https://github.com/HamedMP/matrix-os/actions/runs/322/job/44'}});
  await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'success',output:expect.objectContaining({summary:expect.stringContaining('"requestingRunId":322')})}));
  expect(f.github.rest.checks.update).not.toHaveBeenCalled();
+});
+
+it.each(['unlabel','switch-off'])('never reuses a previous hosted recovery after re-enable and second %s',async kind=>{
+ const f=hostedFixture();const prior=(await f.github.rest.checks.listForRef()).data.check_runs[0];
+ f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+ f.run.created_at=new Date(Date.now()-10000).toISOString();
+ const old=JSON.parse(prior.output.summary);prior.output.summary=JSON.stringify({...old,executionMode:'hosted-only',recoveryStartedAt:new Date(Date.now()-20000).toISOString(),recoveryAfterRunId:320});
+ await reconcile(f);expect(prior.conclusion).toBe('success');
+ f.pull.labels=[{name:'ci-linux'},{name:'ready-for-ci'}];
+ const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,created_at:new Date().toISOString()};
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
+ await reconcile(f);expect(prior.conclusion).toBe('failure');
+ if(kind==='unlabel')f.pull.labels=[{name:'ready-for-ci'}];else f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:0,variables:[]}});
+ await reconcile(f);expect(prior.conclusion).toBe('failure');expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenLastCalledWith(expect.objectContaining({inputs:expect.objectContaining({execution_mode:'hosted-only'})}));
+ expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryAfterRunId:400});
+ await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);
+ const fresh={...f.run,id:401,created_at:new Date(Date.now()+1000).toISOString()};
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[fresh,delegated,f.run]}});
+ f.github.rest.actions.listJobsForWorkflowRun.mockResolvedValue({data:{total_count:1,jobs:[{...f.job,run_id:401}]}});
+ f.github.rest.checks.get.mockResolvedValue({data:{...f.check,details_url:'https://github.com/HamedMP/matrix-os/actions/runs/401/job/44'}});
+ await reconcile(f);expect(prior.conclusion).toBe('success');expect(JSON.parse(prior.output.summary)).toMatchObject({requestingRunId:401,hostedRecovery:true});
+});
+it('does not brick source discovery with a newest match in three hundred retained runs',async()=>{
+ const f=completeFixture();f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args:any)=>({data:{workflow_runs:[args.workflow_id===98?f.ci:f.controller,...Array.from({length:99},(_,i)=>({...f.controller,id:i+1,event:'schedule',display_title:'old unrelated schedule'}))]}}));
+ await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'success'}));
+});
+
+it('denies a new delegated admission that races hosted recovery settlement',async()=>{
+ const f=hostedFixture();
+ f.github.rest.actions.listJobsForWorkflowRun.mockImplementation(async()=>{
+  const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`};
+  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
+  return{data:{total_count:1,jobs:[f.job]}};
+ });
+ await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenLastCalledWith(expect.objectContaining({conclusion:'failure'}));
+});
+it('updates an authenticated owned gate without scanning hundreds of unrelated check records',async()=>{
+ const f=completeFixture();const prior={id:15,name:'CI Source Qualification',head_sha:head,app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,admittedPreviously:true})}};
+ f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[prior,f.check,...Array.from({length:98},(_,i)=>({id:i+20,name:'Unrelated check',head_sha:head,app:{slug:'other'}}))]}});
+ await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:15,conclusion:'success'}));
+});
+
+it('dispatches immediately when a new Linux admission interrupts pending hosted recovery',async()=>{
+ const f=hostedFixture();const prior=(await f.github.rest.checks.listForRef()).data.check_runs[0];
+ prior.output.summary=JSON.stringify({...JSON.parse(prior.output.summary),refreshDispatchedAt:new Date().toISOString()});
+ const delegated={...f.run,id:400,status:'queued',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`};
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[delegated,f.run]}});
+ await reconcile(f);expect(f.github.rest.actions.createWorkflowDispatch).toHaveBeenCalledTimes(1);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));
 });
 
 it('dispatches fresh native source proof retaining direct branchbase and cumulative mergeSHA',async()=>{
