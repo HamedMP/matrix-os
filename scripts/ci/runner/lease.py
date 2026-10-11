@@ -52,12 +52,15 @@ def main():
         raise ValueError('Lease command does not bind envelope')
     # Imported only after all fixed installed inputs match the root approval.
     from qualification_host import QualificationHost
+    # Capture trusted admission time before FIFO waiting; output allocation
+    # still happens only after reservation and shared CPU lock acquisition.
+    queue_started_epoch = time.time()
     host = None
     def preflight():
         nonlocal host
         # The manager reserves ownership and acquires the shared CPU lock
         # before this callback can allocate any qualification outputs.
-        host = QualificationHost(STATE, lease, value['request'])
+        host = QualificationHost(STATE, lease, value['request'], queue_started_epoch=queue_started_epoch)
         return host.preflight()
     def cleanup():
         return True if host is None else host.cleanup()

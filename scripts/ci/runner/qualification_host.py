@@ -78,9 +78,12 @@ def copy_member(data, destination, expected):
 
 
 class QualificationHost:
-    def __init__(self, root, lease, request, *, execute=command):
+    def __init__(self, root, lease, request, *, execute=command, queue_started_epoch=None):
         if not hex_value(lease, 32) or request.get('limits') != LIMITS:
             raise ValueError('Invalid approved workload identity')
+        # Internal root admission time, never supplied by the SSH envelope.
+        queued_epoch = time.time() if queue_started_epoch is None else queue_started_epoch
+        queued_utc = datetime.datetime.fromtimestamp(queued_epoch, datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
         self.root, self.lease, self.request = Path(root), lease, request
         self.execute = execute
         self.name = 'matrix-ci-lease-' + lease
@@ -103,7 +106,7 @@ class QualificationHost:
                 raise ValueError('Existing lease source differs')
         else:
             write_json(filename, request)
-            write_json(self.lease_dir / 'queued.json', dict(queueStartedUtc=utc(), queueStartedEpoch=time.time()))
+            write_json(self.lease_dir / 'queued.json', dict(queueStartedUtc=queued_utc, queueStartedEpoch=queued_epoch))
 
     def modules(self):
         parent = Path(__file__).resolve().parent

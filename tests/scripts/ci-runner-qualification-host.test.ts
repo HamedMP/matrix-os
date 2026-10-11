@@ -10,6 +10,18 @@ from pathlib import Path
 request=dict(repository='HamedMP/matrix-os',prNumber=2454,headSha='a'*40,baseSha='b'*40,baseRef='codex/parent',mergeSha='c'*40,mergeParents=['b'*40,'a'*40],requestingRunId=101,requestingRunAttempt=1,controllerRunId=202,controllerRunAttempt=1,controllerSha='d'*40,controllerRef='refs/heads/main',controllerWorkflow='.github/workflows/ci-dedicated.yml',imageDigest='sha256:'+'e'*64,harnessDigest='f'*64,mode='shadow',suite='qualification',limits=dict(LIMITS))
 `;
 describe('root-owned disposable qualification host',()=>{
+ it('retains the trusted admission timestamp across delayed allocation and child reconstruction',()=>python(`${fixture}
+from unittest.mock import patch
+admitted=1767225600.25
+with tempfile.TemporaryDirectory() as td:
+ with patch('qualification_host.time.time',return_value=admitted+600):
+  host=QualificationHost(Path(td),'1'*32,request,queue_started_epoch=admitted)
+  queued=json.loads((host.lease_dir/'queued.json').read_text())
+  assert queued==dict(queueStartedUtc='2026-01-01T00:00:00Z',queueStartedEpoch=admitted),queued
+ with patch('qualification_host.time.time',return_value=admitted+900):
+  child=QualificationHost(Path(td),'1'*32,request)
+  assert json.loads((child.lease_dir/'queued.json').read_text())==queued
+`));
  it('pins nonroot isolation and approved quotas without mount, secret or caller resource overrides',()=>python(`${fixture}
 with tempfile.TemporaryDirectory() as td:
  host=QualificationHost(Path(td),'1'*32,request)
