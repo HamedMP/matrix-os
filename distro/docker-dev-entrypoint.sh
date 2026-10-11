@@ -7,6 +7,23 @@ APP_ROOT="$(cd "$ENTRYPOINT_DIR/.." && pwd)"
 cd "$APP_ROOT"
 export PATH="$APP_ROOT/node_modules/.bin:$PATH"
 
+prepare_build_outputs() {
+  local package base output
+  for package in brand observability terminal-runtime kernel; do
+    base="$APP_ROOT/packages/$package"
+    # Generated directories are the only source-mount paths the non-root build
+    # needs to own. Never follow an output symlink into source or owner data.
+    for output in "$APP_ROOT/packages" "$base" "$base/dist" "$base/.matrix-build-cache"; do
+      if [ -L "$output" ]; then
+        echo "[matrix-os-dev] Refusing symlinked build output: $output" >&2
+        return 1
+      fi
+    done
+    mkdir -p "$base/dist" "$base/.matrix-build-cache"
+    chown -hR matrixos:matrixos "$base/dist" "$base/.matrix-build-cache"
+  done
+}
+
 prepare_gateway() {
   echo "[matrix-os-dev] Building terminal runtime package..."
   # The gateway imports @matrix-os/terminal-runtime through package exports that
@@ -19,6 +36,10 @@ launch_gateway() {
 }
 
 case "${1:-}" in
+  --prepare-build-outputs)
+    prepare_build_outputs
+    exit 0
+    ;;
   --prepare-gateway)
     prepare_gateway
     exit 0
@@ -199,8 +220,7 @@ cp /app/distro/p10k.zsh "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 chown -R matrixos:matrixos "$MATRIX_HOME"
 chown -R matrixos:matrixos /home/matrixos/.claude 2>/dev/null || true
 chown -R matrixos:matrixos /home/matrixos/.codex 2>/dev/null || true
-mkdir -p /app/packages/brand/dist /app/packages/observability/dist /app/packages/terminal-runtime/dist /app/packages/kernel/dist
-chown -R matrixos:matrixos /app/packages/brand/dist /app/packages/observability/dist /app/packages/terminal-runtime/dist /app/packages/kernel/dist 2>/dev/null || true
+prepare_build_outputs
 chown matrixos:matrixos "$MATRIX_HOME/.zshrc" "$MATRIX_HOME/.p10k.zsh" 2>/dev/null || true
 
 # Set zsh as default shell for matrixos user (for PTY sessions)
