@@ -36,7 +36,7 @@ trap 'exit 143' TERM
 
 # No volumes, bind mounts, host networking, host credentials, or Docker socket.
 # bootstrap-host.sh installs the matrix-ci network and private-egress firewall.
-container=$(docker create --name "matrix-ci-$(basename "$result_dir")" \
+container=$(docker create --init --name "matrix-ci-$(basename "$result_dir")" \
   --label matrix-ci.disposable=true \
   --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges:true \
   --cpus "$cpu_limit" --memory "$memory_limit" --memory-swap "$memory_limit" --pids-limit 4096 --shm-size 2g \
