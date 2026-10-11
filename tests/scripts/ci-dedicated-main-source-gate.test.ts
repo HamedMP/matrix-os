@@ -149,10 +149,10 @@ it.each(['expired','deleted','transient-failure','source-api-failure'])('revalid
  expect(history.current().conclusion).toBe('success');expect(JSON.parse(history.current().output.summary).coverageProof).toEqual(proof);
  expect(f.github.rest.actions.listJobsForWorkflowRun.mock.calls.length).toBeGreaterThan(inventories);expect(Buffer.byteLength(history.current().output.summary)).toBeLessThanOrEqual(4096);
 });
-it.each(['fake-issuer','versionless','unqualified','wrong-decision','wrong-artifact','wrong-source','wrong-base','wrong-parents','wrong-controller','wrong-image','wrong-harness','wrong-mode','old-run','new-attempt','new-requester','parent-drift','selected-failed','detector-skipped','aggregate-forged','api-denied','duplicate-artifact','changed-digest','changed-artifact','extra-proof-key','wrong-origin','future-proof','wrong-workflow','duplicate-parents','download-denied'])('fails closed when durable main coverage is %s',async kind=>{
+it.each(['fake-issuer','versionless','unqualified','wrong-decision','wrong-artifact','wrong-source','wrong-base','wrong-parents','wrong-controller','wrong-image','wrong-harness','wrong-mode','old-run','new-attempt','new-requester','parent-drift','selected-failed','detector-skipped','aggregate-forged','api-denied','duplicate-artifact','changed-digest','changed-artifact','extra-proof-key','wrong-origin','future-proof','wrong-workflow','duplicate-parents','download-denied','not-applicable','neutral-prior','pending-prior'])('fails closed when durable main coverage is %s',async kind=>{
  const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
  const prior=history.current(),evidence=JSON.parse(prior.output.summary),proof=evidence.coverageProof;f.artifact.expired=true;
- if(kind==='fake-issuer')prior.app.id=666;
+ if(kind==='fake-issuer')prior.app.id=666;if(kind==='not-applicable')evidence.notApplicable=true;if(kind==='neutral-prior')prior.conclusion='neutral';if(kind==='pending-prior')prior.status='in_progress';
  expect(proof).toBeDefined();
  {
   if(kind==='extra-proof-key')proof.extra=true;if(kind==='wrong-origin')proof.origin='legacy-summary';if(kind==='future-proof')proof.qualifiedAt='2099-01-01T00:00:00.000Z';if(kind==='wrong-workflow')proof.controller.workflow='.github/workflows/ci.yml';if(kind==='duplicate-parents')proof.source.mergeParents=[base,base];
