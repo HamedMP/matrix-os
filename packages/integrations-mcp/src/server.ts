@@ -4,6 +4,7 @@ import { registerOwnerDataImportTools } from "./data-imports.js";
 import { registerChatAgentTools } from "./chat-agents.js";
 import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
+import { registerBrainTools } from "./brain-tools.js";
 import {
   callServiceHandler,
   connectServiceHandler,
@@ -214,6 +215,7 @@ export function createIntegrationsMcpServer(
     );
 
     registerChatAgentTools(server, fetcher);
+    registerBrainTools(server, fetcher);
   }
   return server;
 }
