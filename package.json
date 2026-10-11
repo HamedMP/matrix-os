@@ -53,7 +53,8 @@
     "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
     "typecheck:build-kernel": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/integrations-mcp' build",
     "typecheck": "bun run typecheck:build-kernel && bun run typecheck:run",
-    "typecheck:run": "pnpm --filter '@matrix-os/observability' exec tsc --noEmit && pnpm --filter '@matrix-os/integrations-mcp' exec tsc --noEmit && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit && pnpm --filter '@matrix-os/edge-router' exec tsc --noEmit && pnpm --filter desktop run typecheck",
+    "typecheck:run": "node scripts/typecheck.mjs",
+    "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
     "lint": "bun run --filter './shell' lint"
@@ -126,6 +127,7 @@
     }
   },
   "devDependencies": {
+    "@typescript/native": "npm:typescript@7.0.2",
     "@excalidraw/excalidraw": "^0.18.0",
     "@matrix-os/gateway": "workspace:*",
     "@testing-library/react": "^16.3.2",
