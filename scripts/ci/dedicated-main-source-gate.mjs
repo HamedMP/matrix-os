@@ -3,7 +3,7 @@
 import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
-import {verifyMainCiDecision} from './main-ci-decision.mjs';
+import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
 const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const {data:ref}=await github.rest.git.getRef({...repo,ref:'heads/main',request});
@@ -14,8 +14,12 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
  let snapshot={sourceKind:'main',prNumber:0,sourceSha:source,headSha:source,headRef:'main',baseRef:'main'};
  const mode=!config.admitted&&['delegated','shadow'].includes(prior?.evidence.qualificationMode)?prior.evidence.qualificationMode:config.mode;
  const evidence={schemaVersion:1,admittedPreviously:true,...snapshot,qualificationMode:mode,controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
+ const oldRun={id:prior?.evidence.requestingRunId,run_attempt:prior?.evidence.requestingRunAttempt,head_sha:source};
+ const retained=authenticatedMainDecisionProof(prior,repo,oldRun,{...prior?.evidence,...snapshot},controller,config,mode);
+ if(retained)Object.assign(evidence,retained.source,{coverageProof:retained,requestingRunId:oldRun.id,requestingRunAttempt:oldRun.run_attempt});
  const write=async(conclusion,title,extra={})=>{
-  const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,status:'completed',conclusion,request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
+  const summary=JSON.stringify({...evidence,...extra});if(Buffer.byteLength(summary)>4096)throw new Error('Main qualification App summary exceeds bound');
+  const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,status:'completed',conclusion,request,output:{title,summary}};
   const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name:'CI Source Qualification',head_sha:source});
   if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!=='CI Source Qualification'||written.head_sha!==source)throw new Error('Dedicated main gate App issuer response mismatch');
  };
@@ -24,11 +28,13 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
  }
  try{
   snapshot=await resolveMainSource(github,repo,source);Object.assign(evidence,snapshot);
+  if(!authenticatedMainDecisionProof(prior,repo,oldRun,snapshot,controller,config,mode))delete evidence.coverageProof;
   const requester=await currentRequester(github,repo,snapshot);
+  if(!requester||!authenticatedMainDecisionProof(prior,repo,requester,snapshot,controller,config,mode))delete evidence.coverageProof;
   if(!requester||requester.status!=='completed'||requester.conclusion!=='success'){
    await write('failure','Current exact-main requesting CI is pending or failed',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt}:{});return 1;
   }
-  const decision=await verifyMainCiDecision(github,repo,requester);
+  const decision=await verifyMainCiDecision(github,repo,requester,{prior,snapshot,controller,config,mode});
   const result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};
   if(result.docsOnly)Object.assign(evidence,{docsOnly:true,selectedHostedLaneCount:decision.selectedHostedLaneCount});
   if(result.infrastructure){
@@ -38,6 +44,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   await verifyMainSource(github,repo,snapshot);
   const latest=await currentRequester(github,repo,snapshot);
   if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.status!=='completed'||latest.conclusion!=='success')throw new Error('New main requesting attempt superseded coverage');
+  Object.assign(evidence,{coverageProof:decision.coverageProof});
   await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;

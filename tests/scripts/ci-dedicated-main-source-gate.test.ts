@@ -120,6 +120,87 @@ it('requires only actually selected parity for a valid no-source/no-docs main de
  const f=docsFixture();f.decision.docsContractTests=false;f.jobs.find(job=>job.name==='Docs Contract Tests')!.conclusion='skipped';f.pin();
  await reconcile(f);expect(written(f)).toMatchObject({conclusion:'success'});expect(JSON.parse(written(f).output.summary)).toMatchObject({docsOnly:true,selectedHostedLaneCount:1});
 });
+// Persist actual App responses and authenticate their protected controller on later cycles.
+function retainAppHistory(f:ReturnType<typeof fixture>){
+ let prior:any;const originalList=f.github.rest.checks.listForRef.getMockImplementation()!;
+ f.github.rest.checks.listForRef.mockImplementation(async args=>{const value=await originalList(args);return{data:{check_runs:[...value.data.check_runs,...(prior?[prior]:[])]}};});
+ const protectedRun={...f.controller,id:123,event:'schedule',head_branch:'main'};
+ f.github.rest.actions.getWorkflowRun.mockImplementation(async args=>({data:args.run_id===123?protectedRun:f.controller}));
+ const save=async(args:any)=>{prior={id:100,name:'CI Source Qualification',head_sha:source,...args,app:{id:777,slug:'matrix-ci-gate'}};return{data:prior};};
+ f.gateGithub.rest.checks.create.mockImplementation(save);f.gateGithub.rest.checks.update.mockImplementation(save);
+ return{current:()=>prior};
+}
+it.each(['expired','deleted','transient-failure','source-api-failure'])('revalidates durable authenticated main decision after artifact %s',async kind=>{
+ const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);
+ expect(history.current().conclusion).toBe('success');const proof=JSON.parse(history.current().output.summary).coverageProof;
+ expect(proof).toMatchObject({schemaVersion:1,origin:'main-ci-decision-artifact-v1',qualified:true,artifact:{id:56,name:f.artifact.name,digest:f.artifact.digest},decision:f.decision});
+ f.artifact.expired=true;
+ if(kind==='deleted')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{total_count:0,artifacts:[]}} as any);
+ if(kind==='source-api-failure'){
+  f.github.rest.repos.getCommit.mockRejectedValueOnce(new Error('Temporary source API failure'));await reconcile(f);
+  expect(history.current().conclusion).toBe('failure');expect(JSON.parse(history.current().output.summary).coverageProof).toEqual(proof);
+ }
+ if(kind==='transient-failure'){
+  const list=f.github.rest.actions.listJobsForWorkflowRun.getMockImplementation()!;f.github.rest.actions.listJobsForWorkflowRun.mockRejectedValueOnce(new Error('Temporary API failure'));
+  await reconcile(f);expect(history.current().conclusion).toBe('failure');expect(JSON.parse(history.current().output.summary).coverageProof).toEqual(proof);
+  f.github.rest.actions.listJobsForWorkflowRun.mockImplementation(list);
+ }
+ const inventories=f.github.rest.actions.listJobsForWorkflowRun.mock.calls.length;await reconcile(f);
+ expect(history.current().conclusion).toBe('success');expect(JSON.parse(history.current().output.summary).coverageProof).toEqual(proof);
+ expect(f.github.rest.actions.listJobsForWorkflowRun.mock.calls.length).toBeGreaterThan(inventories);expect(Buffer.byteLength(history.current().output.summary)).toBeLessThanOrEqual(4096);
+});
+it.each(['fake-issuer','versionless','unqualified','wrong-decision','wrong-artifact','wrong-source','wrong-base','wrong-parents','wrong-controller','wrong-image','wrong-harness','wrong-mode','old-run','new-attempt','new-requester','parent-drift','selected-failed','detector-skipped','aggregate-forged','api-denied','duplicate-artifact','changed-digest','changed-artifact','extra-proof-key','wrong-origin','future-proof','wrong-workflow','duplicate-parents','download-denied'])('fails closed when durable main coverage is %s',async kind=>{
+ const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
+ const prior=history.current(),evidence=JSON.parse(prior.output.summary),proof=evidence.coverageProof;f.artifact.expired=true;
+ if(kind==='fake-issuer')prior.app.id=666;
+ expect(proof).toBeDefined();
+ {
+  if(kind==='extra-proof-key')proof.extra=true;if(kind==='wrong-origin')proof.origin='legacy-summary';if(kind==='future-proof')proof.qualifiedAt='2099-01-01T00:00:00.000Z';if(kind==='wrong-workflow')proof.controller.workflow='.github/workflows/ci.yml';if(kind==='duplicate-parents')proof.source.mergeParents=[base,base];
+  if(kind==='versionless')delete proof.schemaVersion;if(kind==='unqualified')proof.qualified=false;
+  if(kind==='wrong-decision')proof.decision.shouldRun='false';if(kind==='wrong-artifact')proof.artifact.digest='';
+  if(kind==='wrong-source')proof.source.sourceSha=base;if(kind==='wrong-base')proof.source.baseSha=source;if(kind==='wrong-parents')proof.source.mergeParents=[source];
+  if(kind==='wrong-controller')proof.controller.sha=base;if(kind==='wrong-image')proof.controller.imageDigest='sha256:'+'0'.repeat(64);if(kind==='wrong-harness')proof.controller.harnessDigest='0'.repeat(64);if(kind==='wrong-mode')proof.controller.mode='shadow';
+  if(kind==='old-run')proof.decision.requestingRunId=999;
+ }
+ prior.output.summary=JSON.stringify(evidence);
+ if(kind==='new-attempt')f.ci.run_attempt=2;if(kind==='new-requester')f.ci.id=322;
+ if(kind==='parent-drift')f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:source,parents:[{sha:source}],commit:{tree:{sha:tree}}}});
+ if(kind==='selected-failed')f.jobs.find(job=>job.name==='Docs Contract Tests')!.conclusion='failure';if(kind==='detector-skipped')f.detector.steps[1].conclusion='skipped';if(kind==='aggregate-forged')f.aggregate.app.slug='other';
+ if(kind==='download-denied'){f.artifact.expired=false;f.github.rest.actions.downloadArtifact=async()=>{throw new Error('API denied');};}
+ if(kind==='api-denied')f.github.rest.actions.listWorkflowRunArtifacts.mockRejectedValue(new Error('API denied'));
+ if(kind==='duplicate-artifact')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{total_count:2,artifacts:[f.artifact,{...f.artifact,id:57}]}} as any);
+ if(kind==='changed-digest')f.artifact.digest='sha256:'+'0'.repeat(64);if(kind==='changed-artifact')f.artifact.id=57;
+ await reconcile(f);expect(history.current().conclusion).toBe('failure');
+});
+it('does not bootstrap a durable decision from an already expired artifact',async()=>{
+ const f=docsFixture();f.artifact.expired=true;await reconcile(f);expect(written(f).conclusion).toBe('failure');expect(JSON.parse(written(f).output.summary).coverageProof).toBeUndefined();
+});
+it('still requires complete source workloads when only the full-scope detector decision expires',async()=>{
+ const f=fixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
+ const inventory=(await f.github.rest.actions.listWorkflowRunArtifacts({run_id:321} as any)).data as any;inventory.artifacts[0].expired=true;
+ await reconcile(f);expect(history.current().conclusion).toBe('success');expect(JSON.parse(history.current().output.summary).infrastructureFallback).toBe(true);
+ f.jobs[0].conclusion='skipped';await reconcile(f);expect(history.current().conclusion).toBe('failure');
+});
+
+it('never substitutes the cached detector decision for an expired private Linux qualification receipt',async()=>{
+ const f=fixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
+ const original=f.github.rest.actions.listWorkflowRunArtifacts.getMockImplementation()!;
+ f.github.rest.actions.listWorkflowRunArtifacts.mockImplementation(async args=>{const value:any=await original(args);for(const artifact of value.data.artifacts)artifact.expired=true;return value;});
+ await reconcile(f);expect(history.current().conclusion).toBe('failure');
+});
+
+it('retains exact authenticated docs coverage after routing is switched off and its artifact expires',async()=>{
+ const f=docsFixture(),history=retainAppHistory(f);await reconcile(f);expect(history.current().conclusion).toBe('success');
+ const configuration=(await f.github.rest.actions.listRepoVariables()).data;configuration.variables.find(value=>value.name==='MATRIX_CI_DEDICATED_ENABLED')!.value='false';
+ f.github.rest.actions.listRepoVariables.mockResolvedValue({data:configuration});f.artifact.expired=true;
+ await reconcile(f);expect(history.current().conclusion).toBe('success');expect(JSON.parse(history.current().output.summary).qualificationMode).toBe('delegated');
+});
+it('cannot mint durable original-success proof when selected main work has never passed',async()=>{
+ const f=docsFixture(),history=retainAppHistory(f),docs=f.jobs.find(job=>job.name==='Docs Contract Tests')!;docs.conclusion='failure';
+ await reconcile(f);expect(history.current().conclusion).toBe('failure');expect(JSON.parse(history.current().output.summary).coverageProof).toBeUndefined();
+ docs.conclusion='success';f.artifact.expired=true;await reconcile(f);expect(history.current().conclusion).toBe('failure');expect(JSON.parse(history.current().output.summary).coverageProof).toBeUndefined();
+});
+
 function producerEnv(directory:string){return{RUNNER_TEMP:directory,GITHUB_EVENT_NAME:'push',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'HamedMP/matrix-os',GITHUB_WORKFLOW_REF:'HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main',GITHUB_SHA:source,GITHUB_RUN_ID:'321',GITHUB_RUN_ATTEMPT:'1',COVERAGE_BASE_SHA:base,COVERAGE_BOOTSTRAP:'false',SHOULD_RUN:'false',DOCS_CONTRACT_TESTS:'true',OS_VIEW_PARITY_TESTS:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false'};}
 it('records the actual detector/route outputs once and cleans only its owned bounded proof',async()=>{
  const directory=mkdtempSync(join(tmpdir(),'main-decision-producer-')),env=producerEnv(directory);

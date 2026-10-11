@@ -42,7 +42,30 @@ async function verifyAggregate(github,repo,jobs,run){
  const {data:check}=await github.rest.checks.get({...repo,check_run_id:checkId,request});
  if(check.id!==checkId||check.name!=='CI Results'||check.app?.slug!=='github-actions'||check.head_sha!==run.head_sha||check.status!=='completed'||check.conclusion!=='success'||!check.details_url?.startsWith(`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${run.id}/`))throw new Error('Main aggregate is not genuine');
 }
-export async function verifyMainCiDecision(github,repo,run){
+const exactKeys=(value,wanted)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===wanted.length&&wanted.every(key=>Object.hasOwn(value,key));
+const sourceKeys=['sourceKind','headSha','sourceSha','baseSha','mergeParents'];
+const controllerKeys=['sha','ref','workflow','imageDigest','harnessDigest','mode'];
+const artifactKeys=['id','name','digest'];
+const proofKeys=['schemaVersion','origin','qualified','qualifiedAt','decision','artifact','source','controller'];
+function proofSource(snapshot){return Object.fromEntries(sourceKeys.map(key=>[key,snapshot[key]]));}
+function proofController(controller,config,mode){return{sha:controller.sha,ref:controller.ref,workflow:'.github/workflows/ci-dedicated.yml',imageDigest:config.imageDigest,harnessDigest:config.harnessDigest,mode};}
+// Only ownedGate's authenticated checks-only App history may supply this proof.
+// The original-success marker survives red rechecks; it never replaces live workload checks.
+export function authenticatedMainDecisionProof(prior,repo,run,snapshot,controller,config,mode){
+ const proof=prior?.evidence?.coverageProof;if(!proof||!id(run?.id)||!id(run?.run_attempt)||!sha.test(run?.head_sha||''))return null;
+ if(prior.check.status!=='completed'||!exactKeys(proof,proofKeys)||proof.schemaVersion!==1||proof.origin!=='main-ci-decision-artifact-v1'||proof.qualified!==true||typeof proof.qualifiedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(proof.qualifiedAt)||!Number.isFinite(Date.parse(proof.qualifiedAt))||Date.parse(proof.qualifiedAt)>Date.now()+30000||Buffer.byteLength(JSON.stringify(proof))>3072)return null;
+ if(!exactKeys(proof.source,sourceKeys)||proof.source.sourceKind!=='main'||![proof.source.headSha,proof.source.sourceSha,proof.source.baseSha].every(value=>sha.test(value||''))||proof.source.headSha!==proof.source.sourceSha||!Array.isArray(proof.source.mergeParents)||proof.source.mergeParents.length<1||proof.source.mergeParents.length>2||!proof.source.mergeParents.every(value=>sha.test(value||'')&&value!==proof.source.sourceSha)||new Set(proof.source.mergeParents).size!==proof.source.mergeParents.length||proof.source.baseSha!==proof.source.mergeParents[0])return null;
+ if(sourceKeys.some(key=>JSON.stringify(proof.source[key])!==JSON.stringify(snapshot[key])||JSON.stringify(proof.source[key])!==JSON.stringify(prior.evidence[key])))return null;
+ if(!exactKeys(proof.controller,controllerKeys)||JSON.stringify(proof.controller)!==JSON.stringify(proofController(controller,config,mode))||prior.evidence.controllerSha!==controller.sha||prior.evidence.controllerRef!==controller.ref||prior.evidence.qualificationMode!==mode)return null;
+ if(!exactKeys(proof.artifact,artifactKeys)||!id(proof.artifact.id)||!/^sha256:[a-f0-9]{64}$/.test(proof.artifact.digest||'')||proof.artifact.name!==`main-ci-decision-${run.head_sha}-${run.id}-${run.run_attempt}`||prior.evidence.requestingRunId!==run.id||prior.evidence.requestingRunAttempt!==run.run_attempt)return null;
+ try{assertDecision(proof.decision,repo,run);}catch(error){if(!(error instanceof Error))throw error;console.warn('Durable main coverage proof rejected',{stage:'decision-schema'});return null;}
+ return proof;
+}
+function verifiedProof(decision,artifact,context){
+ return{schemaVersion:1,origin:'main-ci-decision-artifact-v1',qualified:true,qualifiedAt:new Date().toISOString(),decision,artifact:Object.fromEntries(artifactKeys.map(key=>[key,artifact[key]])),source:proofSource(context.snapshot),controller:proofController(context.controller,context.config,context.mode)};
+}
+
+export async function verifyMainCiDecision(github,repo,run,context){
  if(!id(run.id)||!id(run.run_attempt)||!sha.test(run.head_sha||'')||run.event!=='push'||run.head_branch!=='main'||run.status!=='completed'||run.conclusion!=='success')throw new Error('Invalid main coverage requesting run');
  const {data}=await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,filter:'latest',per_page:100,request});
  if(!Number.isSafeInteger(data.total_count)||data.total_count>100||!Array.isArray(data.jobs)||data.jobs.length!==data.total_count)throw new Error('Main coverage job inventory incomplete');
@@ -52,11 +75,18 @@ export async function verifyMainCiDecision(github,repo,run){
  }
  const {data:inventory}=await github.rest.actions.listWorkflowRunArtifacts({...repo,run_id:run.id,per_page:100,request});
  if(!Number.isSafeInteger(inventory.total_count)||inventory.total_count>100||!Array.isArray(inventory.artifacts)||inventory.artifacts.length!==inventory.total_count)throw new Error('Main coverage artifact inventory incomplete');
+ const cached=context?authenticatedMainDecisionProof(context.prior,repo,run,context.snapshot,context.controller,context.config,context.mode):null;
  const matches=inventory.artifacts.filter(artifact=>artifact.name===`main-ci-decision-${run.head_sha}-${run.id}-${run.run_attempt}`);
- if(matches.length!==1)throw new Error('Main coverage decision artifact missing or duplicated');const artifact=matches[0];
- if(artifact.workflow_run?.id!==run.id||artifact.workflow_run?.head_sha!==run.head_sha||!/^sha256:[a-f0-9]{64}$/.test(artifact.digest||''))throw new Error('Main coverage artifact provenance mismatch');
- const decision=await downloadControllerReceipt(github,repo,artifact);assertDecision(decision,repo,run);
- if(decision.shouldRun)return decision;
+ if(matches.length>1||(!matches.length&&!cached))throw new Error('Main coverage decision artifact missing or duplicated');
+ const artifact=matches[0];
+ if(artifact&&(!id(artifact.id)||![true,false].includes(artifact.expired)||!Number.isSafeInteger(artifact.size_in_bytes)||artifact.size_in_bytes<1||artifact.size_in_bytes>16384||artifact.workflow_run?.id!==run.id||artifact.workflow_run?.head_sha!==run.head_sha||!/^sha256:[a-f0-9]{64}$/.test(artifact.digest||'')))throw new Error('Main coverage artifact provenance mismatch');
+ if(artifact&&cached&&artifactKeys.some(key=>artifact[key]!==cached.artifact[key]))throw new Error('Authenticated main decision artifact changed');
+ if(artifact?.expired&&!cached)throw new Error('Main coverage decision artifact expired before qualification');
+ // Only absence/explicit expiry can reuse previously verified bytes, never an API failure.
+ const reused=!artifact||artifact.expired;
+ const decision=reused?cached.decision:await downloadControllerReceipt(github,repo,artifact);assertDecision(decision,repo,run);
+ const coverageProof=context?(cached??verifiedProof(decision,artifact,context)):undefined;
+ if(decision.shouldRun)return{...decision,coverageProof};
  for(const job of data.jobs){
   if(!exactJob(job,run)||!['success','skipped'].includes(job.conclusion))throw new Error('Main docs coverage contains failed or stale work');
   const unselected=HOSTED_LANES.includes(job.name)&&!['Docs Contract Tests','OS View Parity'].includes(job.name)||/^Unit Tests \(|^E2E Tests(?: \(|$)/.test(job.name)||job.name==='Verified Dedicated Linux Qualification';
@@ -64,7 +94,7 @@ export async function verifyMainCiDecision(github,repo,run){
  }
  const selected=['OS View Parity',...(decision.docsContractTests?['Docs Contract Tests']:[])];for(const name of selected)selectedJob(data.jobs,name,run);
  if(!decision.docsContractTests&&data.jobs.some(job=>job.name==='Docs Contract Tests'&&job.conclusion!=='skipped'))throw new Error('Unselected docs contract job executed');
- await verifyAggregate(github,repo,data.jobs,run);return{...decision,selectedHostedLaneCount:selected.length};
+ await verifyAggregate(github,repo,data.jobs,run);return{...decision,selectedHostedLaneCount:selected.length,coverageProof};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  if(process.argv[2]==='--cleanup')await cleanupMainCiDecision(process.env);else await writeMainCiDecision(process.env);
