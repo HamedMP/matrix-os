@@ -177,3 +177,34 @@ it('retains ordinary completed source gate success after a newer reconciliation-
  f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===98?[f.ci]:[extra,f.controller]}}));
  await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'success'}));
 });
+
+
+it('retains the same hosted recovery generation across a temporary source API failure',async()=>{
+ const f=hostedFixture(),prior=(await f.github.rest.checks.listForRef()).data.check_runs[0];
+ const saved=JSON.parse(prior.output.summary);
+ f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+ f.run.status='queued';
+ f.github.rest.repos.getCommit.mockRejectedValueOnce(new Error('Temporary source API failure'));
+ await reconcile(f);expect(prior.conclusion).toBe('failure');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ await reconcile(f);expect(prior.conclusion).toBe('failure');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ expect(JSON.parse(prior.output.summary)).toMatchObject({recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId,requestingRunId:321});
+ f.run.status='completed';await reconcile(f);
+ expect(prior.conclusion).toBe('success');
+ expect(JSON.parse(prior.output.summary)).toMatchObject({hostedRecovery:true,requestingRunId:321,requestingRunAttempt:1,recoveryStartedAt:saved.recoveryStartedAt,recoveryAfterRunId:saved.recoveryAfterRunId});
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+ expect(f.github.rest.checks.update).not.toHaveBeenCalled();
+});
+it.each(['head','base','source','mode','time','boundary'])('does not retain an incompatible %s recovery generation on source failure',async kind=>{
+ const f=hostedFixture(),prior=(await f.github.rest.checks.listForRef()).data.check_runs[0];
+ const saved=JSON.parse(prior.output.summary);
+ if(kind==='head')saved.headSha=main;if(kind==='base')saved.baseSha=main;if(kind==='source')saved.sourceSha=main;
+ if(kind==='mode')saved.executionMode='delegated';if(kind==='time')saved.recoveryStartedAt='invalid';if(kind==='boundary')saved.recoveryAfterRunId=-1;
+ prior.output.summary=JSON.stringify(saved);
+ f.gateGithub.rest.checks.update.mockImplementation(async(args:any)=>{Object.assign(prior,args);return{data:prior};});
+ f.github.rest.repos.getCommit.mockRejectedValueOnce(new Error('Source not available'));
+ await reconcile(f);expect(prior.conclusion).toBe('failure');
+ const evidence=JSON.parse(prior.output.summary);expect(evidence).not.toHaveProperty('recoveryStartedAt');expect(evidence).not.toHaveProperty('recoveryAfterRunId');
+ expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
