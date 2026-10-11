@@ -22,6 +22,7 @@ interface IpcMainLike {
 }
 
 export interface HandlerContext {
+  isTrustedStartupSender?: (event: unknown) => boolean;
   auth: AuthService;
   store: LocalStore;
   embeds: EmbedService;
@@ -176,6 +177,7 @@ function toWebContentsViewBounds(
 }
 
 export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): void {
+  const isTrustedStartupSender = ctx.isTrustedStartupSender ?? (() => false);
   const buildSource = BuildSourceSchema.nullable().parse(ctx.buildSource);
   const { downloadFile, cancelFileDownload, uploadOrganizationDrive, downloadOrganizationDrive,
     cancelOrganizationDriveTransfer } = ctx;
@@ -230,6 +232,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("support:get-identity", () => ctx.fetchSupportIdentity());
 
+  handle("app:get-startup-mode", (_payload, event) => {
+    if (!isTrustedStartupSender(event)) throw new Error("invalid request");
+    return { mode: "normal" };
+  });
   handle("app:get-version", () => ({ version: ctx.getAppVersion(), source: buildSource }));
 
   handle("runtime:list-computers", () => ctx.auth.listRuntimeComputers());
