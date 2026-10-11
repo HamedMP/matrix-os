@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import type { ColumnType, Generated } from "kysely";
 import { z } from "zod/v4";
 import type { BrainDocument, BrainRefMatchMode, BrainScopeKey } from "../types.js";
-import type { BrainClaimModelOutcome } from "./model/types.js";
+import type { BrainClaimModelOutcome, BrainModelSkipCode } from "./model/types.js";
 
 type Timestamp = ColumnType<Date | string, Date | string, Date | string>;
 type NullableTimestamp = ColumnType<Date | string | null, Date | string | null, Date | string | null>;
@@ -91,7 +91,7 @@ export const BRAIN_MODEL_PROVENANCES = ["git_pr", "git_commit", "git_spec"] as c
  * document is retried until it failed this often on one revision. tokensPerRun: input plus output tokens, checked
  * before each model call, so one call may overrun it. spendMicroUsdPer30d: model spend of the scope over the last 30
  * days (spend.ts), checked before each model call against that call's worst case; only a call whose usage never
- * reaches the run row (a timeout, an abort, or the call in flight when a run is lost) can pass it.
+ * reaches the run row (a timeout, an abort, a lost answer, or the call in flight when a run is lost) can pass it.
  */
 export interface BrainExtractionLimits {
   readonly documentsPerRun: number; readonly bodyBytesPerRun: number; readonly runBudgetMs: number;
@@ -410,7 +410,12 @@ export interface BrainClaimModelOutput {
   readonly outcome?: BrainClaimModelOutcome;
 }
 
+/**
+ * skip: why this model would not send a revision (no call, so no cost), or null to call extract. The job asks before
+ * the spend cap, which such a revision must never wait on; extract still skips it for any other caller.
+ */
 export interface BrainClaimModel {
+  skip?(input: BrainClaimModelInput): BrainModelSkipCode | null;
   extract(input: BrainClaimModelInput, signal: AbortSignal): Promise<BrainClaimModelOutput>;
 }
 
