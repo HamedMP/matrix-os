@@ -29,7 +29,7 @@ import {
   buildPlatformSpeechRuntimeVerificationToken,
 } from "../../packages/platform/src/platform-token.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
-import type { FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, type FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
@@ -154,6 +154,33 @@ describe("funded AI policy routes", () => {
     expect(after.funding.creditBalanceMicrousd).toBe(before.funding.creditBalanceMicrousd);
   });
 
+  it.each(["disabled", "exhausted"])("rechecks %s owner policy while sharing older priced provider health", async (state) => {
+    let providerClock = new Date(Date.parse(now) - 60_000);
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({
+      ready: true, priceValidThrough: "2026-08-31T20:00:00.000Z",
+    }));
+    const probes = createFundedModelProbeService({ db, relayBaseUrl: "https://relay.example.test",
+      relayControlToken, dailyLimit: 2, minuteLimit: 2, fetchFn, now: () => providerClock });
+    const health = await probes.probe(modelId);
+    expect(health.ready).toBe(true);
+    providerClock = new Date(now);
+    const { app, repository } = await createTestApp({ routeProbes: probes });
+    const reads = vi.spyOn(repository, "getCheckoutFundingSummary");
+    const request = () => app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
+      method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
+    });
+    const first = FundedAiRouteReadinessReceiptSchema.parse(await (await request()).json());
+    expect(first).toMatchObject({ checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z", readyModelIds: [modelId] });
+    expect(health.checkedAt).toBe("2026-08-30T19:59:00.000Z");
+    await repository.setRuntimePolicy({ identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
+      expectedRevision: 1, enabled: state !== "disabled", allowedModelIds: [modelId], expiresAt: null,
+      monthlyBudgetMicrousd: state === "exhausted" ? 0 : 1_000 });
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await (await request()).json()).readyModelIds).toEqual([]);
+    expect(reads).toHaveBeenCalledTimes(4);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(await probes.probe(modelId)).toEqual(health);
+  });
+
   it("wires an exact runtime token through Platform receipt to Gateway readiness", async () => {
     const probe = vi.fn(async () => ({ ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" }));
     const { app } = await createTestApp({ routeProbes: { probe } });
@@ -174,7 +201,6 @@ describe("funded AI policy routes", () => {
   });
 
   it("fails closed after an asynchronous probe when owner policy is revoked", async () => {
-    let repository!: ReturnType<typeof createAiFundedPolicyRepository>;
     const probe = vi.fn(async () => {
       await repository.setRuntimePolicy({
         identity: { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" },
@@ -184,7 +210,7 @@ describe("funded AI policy routes", () => {
       return { ready: true, checkedAt: now, staleAfter: "2026-08-30T20:00:30.000Z" };
     });
     const created = await createTestApp({ routeProbes: { probe } });
-    repository = created.repository;
+    const repository = created.repository;
     const response = await created.app.request("/internal/containers/alice/ai/route-readiness?runtimeSlot=primary", {
       method: "POST", headers: { authorization: `Bearer ${bearerFor("alice")}`, "content-type": "application/json" }, body: "{}",
     });
