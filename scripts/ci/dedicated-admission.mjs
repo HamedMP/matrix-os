@@ -70,11 +70,13 @@ export async function admitDedicatedSource(github, input) {
 // Revalidate before dispatch, settlement and waiter acceptance. A parent move
 // without a child commit requires a fresh main-defined requesting run; an old
 // Actions rerun retains its event snapshot and cannot certify the new candidate.
-export async function verifyCurrentDedicatedSource(github, repo, snapshot) {
+export async function verifyCurrentDedicatedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,true);}
+export async function verifyCurrentHostedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,false);}
+async function verifyCurrentSource(github, repo, snapshot,requireLabels) {
   if (snapshot?.prNumber === 0) return;
   if (!validSnapshot(snapshot)) throw new Error('Invalid dedicated qualification revision');
   const {data: pull} = await github.rest.pulls.get({...repo, pull_number: snapshot.prNumber, request});
-  if (pull.number !== snapshot.prNumber || !admittedPull(pull, repository(repo)) ||
+  if (pull.number !== snapshot.prNumber || pull.state!=='open'||pull.draft!==false||!sameRepo(pull.head?.repo?.full_name,repository(repo))||!sameRepo(pull.base?.repo?.full_name,repository(repo))||(requireLabels&&!admittedPull(pull,repository(repo))) ||
       pull.head.sha !== snapshot.headSha || (snapshot.headRef !== undefined && pull.head.ref !== snapshot.headRef) ||
       pull.base.sha !== snapshot.baseSha ||
       pull.base.ref !== snapshot.baseRef || pull.merge_commit_sha !== snapshot.sourceSha) {

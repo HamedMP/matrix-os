@@ -46,6 +46,23 @@ it('admits a rerun through in_progress because GitHub requested events do not fi
  run.run_attempt=1;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toMatchObject({prNumber:2454,baseRef:'stack/parent',sourceSha:merge});
  run.run_attempt=2;run.display_title=`CI coverage-v1 · ${main}`;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).rejects.toThrow(/stale|admission/);
 });
+it('resolves hosted-only rollback after label removal while Linux refresh remains label-gated',async()=>{
+ const f=fixture();f.pull.labels=[];const inputs={...f.inputs,execution_mode:'hosted-only'};
+ await expect(helpers.resolveRequestingSource(f.github,repo,f.context,inputs)).resolves.toMatchObject({sourceSha:merge,executionMode:'hosted-only'});
+ await expect(helpers.resolveRequestingSource(f.github,repo,f.context,f.inputs)).rejects.toThrow();
+ const run={id:123,workflow_id:98,path:'.github/workflows/ci.yml',event:'workflow_dispatch',head_sha:main,head_branch:'main',run_attempt:1,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI hosted-refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,pull_requests:[]};
+ expect(helpers.authenticatedRequestingRun(run,repo,{prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,executionMode:'hosted-only'},{id:98})).toBe(true);
+ expect(helpers.authenticatedRequestingRun(run,repo,{prNumber:2454,headSha:head,baseSha:base,sourceSha:merge},{id:98})).toBe(false);
+ const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(),getWorkflowRun:vi.fn()}}};await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toBeNull();expect(github.rest.actions.getWorkflow).not.toHaveBeenCalled();
+});
+
+it.each(['pull_request','pull_request_target','push','schedule','repository_dispatch'])('rejects every %s requester for hosted-only recovery even with an exact source tuple',event=>{
+ const run={id:123,workflow_id:98,path:'.github/workflows/ci.yml',event,head_sha:head,head_branch:'child',run_attempt:1,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};
+ const snapshot={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,baseRef:'stack/parent',executionMode:'hosted-only'};
+ expect(helpers.authenticatedRequestingRun(run,repo,snapshot,{id:98})).toBe(false);
+ if(event==='pull_request')expect(helpers.authenticatedRequestingRun(run,repo,{...snapshot,executionMode:undefined},{id:98})).toBe(true);
+});
+
 it('starts initial non-main CI through the default-main workflow_run bridge',async()=>{
  const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
  const condition=w.jobs.benchmark.if;expect(condition).toContain("startsWith(github.event.workflow_run.display_title, 'CI coverage-v1");

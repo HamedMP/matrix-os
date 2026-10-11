@@ -246,6 +246,12 @@ jobs:
   reconcile:
     name: Revoke stale stacked qualification
     if: github.ref == 'refs/heads/main'
+    environment: matrix-ci
+    permissions:
+      actions: write
+      contents: read
+      checks: read
+      pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
@@ -272,9 +278,29 @@ jobs:
           ref: ${{ steps.origin.outputs.controller_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Create repository-scoped checks-only gate token
+        id: gate-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          private-key: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-checks: write
+      - name: Verify gate installation identity
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          GATE_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          TOKEN_INSTALLATION_ID: ${{ steps.gate-token.outputs.installation-id }}
+        with:
+          script: |
+            const expected=process.env.GATE_INSTALLATION_ID;
+            if(expected && (!/^[1-9][0-9]{0,15}$/.test(expected)||expected!==process.env.TOKEN_INSTALLATION_ID))throw new Error('Dedicated gate App installation mismatch');
       - name: Reconcile completed child source checks
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          GATE_TOKEN: ${{ steps.gate-token.outputs.token }}
+          GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
           CONTROLLER_SHA: ${{ steps.origin.outputs.controller_sha }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -282,11 +308,9 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
-            const {reconcileDedicatedChildren,reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
-            const result=await reconcileDedicatedChildren(github,context.repo,
-              {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              {serverUrl:context.serverUrl,...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
+            const {reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const gateGithub=require('@actions/github').getOctokit(process.env.GATE_TOKEN);
             const gate=await reconcileSourceQualification(github,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              {runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
-            core.info(`Examined ${result.examined} children; revoked ${result.invalidated} stale qualifications; refreshed ${gate.dispatched} source requests.`);
+              {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
+            core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);

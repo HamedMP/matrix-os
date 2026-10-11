@@ -1,10 +1,15 @@
 name: CI
 run-name: >-
-  ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && format('CI metadata-v1 · {0}', github.sha) || inputs.pr_number && format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI coverage-v1 · {0}', github.sha) }}
+  ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && format('CI metadata-v1 · {0}', github.sha) || inputs.pr_number && (inputs.execution_mode == 'hosted-only' && format('CI hosted-refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha)) || format('CI coverage-v1 · {0}', github.sha) }}
 
 on:
   workflow_dispatch:
     inputs:
+      execution_mode:
+        description: Exact-source refresh coverage mode
+        type: choice
+        default: linux
+        options: [linux, hosted-only]
       pr_number:
         description: Trusted same-head stack refresh PR (blank runs ordinary manual CI)
         type: string
@@ -132,7 +137,7 @@ jobs:
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
           const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
           const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
-          if(refresh){appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=true\n`);process.exit(0);}
+          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
           const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
             shouldRun:process.env.SHOULD_RUN, pull:event.pull_request});

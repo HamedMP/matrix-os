@@ -143,3 +143,9 @@ it('supersedes obsolete CI for arbitrary parent branch names without executing t
  const value=parse(readFileSync('.github/workflows/ci-pr-supersede.yml','utf8'));
  expect(value.on.pull_request_target.branches).toBeUndefined();expect(value.jobs.supersede.steps.every((step:{uses:string})=>!step.uses.startsWith('actions/checkout'))).toBe(true);
 });
+it('restricts the required-gate App key to main-only reconciliation and creates a checks-only separate client',()=>{
+ const value=workflow(),job=value.jobs.reconcile;expect(job.environment).toBe('matrix-ci');expect(job.permissions.checks).toBe('read');
+ const token=job.steps.find((step:{id?:string})=>step.id==='gate-token');expect(token.uses).toBe('actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349');expect(token.with).toEqual(expect.objectContaining({'app-id':'${{ vars.MATRIX_CI_GATE_APP_ID }}','private-key':'${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}',owner:'${{ github.repository_owner }}',repositories:'${{ github.event.repository.name }}','permission-checks':'write'}));expect(Object.keys(token.with).filter(key=>key.startsWith('permission-'))).toEqual(['permission-checks']);
+ const gate=job.steps.at(-1);expect(gate.env.GATE_TOKEN).toBe('${{ steps.gate-token.outputs.token }}');expect(gate.with.script).toContain('getOctokit(process.env.GATE_TOKEN)');expect(gate.with.script).toContain('gateGithub');expect(gate.with.script).toContain('gateAppId');
+ expect(JSON.stringify(value.jobs.benchmark)).not.toContain('MATRIX_CI_GATE_APP_PRIVATE_KEY');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
+});
