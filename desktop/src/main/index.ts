@@ -75,10 +75,13 @@ import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./render
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
+import { initializeAuthDiagnostic, installAuthDiagnosticSession, readDesktopStartupMode, registerAuthDiagnosticIpc } from "./auth-diagnostic";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
-const desktopRendererUrl = resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL);
+const startupMode = readDesktopStartupMode(process.env.OPERATOR_DIAGNOSTIC_AUTH_ONLY);
+const desktopRendererUrl = startupMode === "normal"
+  ? resolveDesktopRendererUrl(process.env.ELECTRON_RENDERER_URL) : undefined;
 
 app.setName(DESKTOP_APP_NAME);
 if (desktopRendererUrl && desktopRendererUrl !== process.env.ELECTRON_RENDERER_URL) {
@@ -142,6 +145,14 @@ function sendEvent<C extends EventChannel>(channel: C, payload: EventPayload<C>)
   mainWindow?.webContents.send(channel, parsed.data);
 }
 
+function isTrustedStartupSender(rawEvent: unknown): boolean {
+  const event = rawEvent as IpcMainInvokeEvent;
+  const contents = mainWindow?.webContents;
+  const rendererUrl = new URL(desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString()).href;
+  return !!contents && !contents.isDestroyed() && event?.sender === contents
+    && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+}
+
 async function openExternalHttpUrl(url: string): Promise<void> {
   const externalUrl = safeExternalHttpUrl(url);
   if (!externalUrl) return;
@@ -153,7 +164,9 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   const trustedRendererUrl = desktopRendererUrl ?? pathToFileURL(packagedRendererPath).toString();
   const win = new BrowserWindow({
     ...bounds,
-    ...windowChromeOptions(process.platform),
+    ...(startupMode === "auth-diagnostic"
+      ? { titleBarStyle: "default" as const }
+      : windowChromeOptions(process.platform)),
     backgroundColor: "#0e0e13",
     show: false,
     webPreferences: {
@@ -164,17 +177,26 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     },
   });
 
-  installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
+  if (startupMode === "normal") {
+    installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
+  }
 
   win.once("ready-to-show", () => win.show());
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void openExternalHttpUrl(url).catch((err: unknown) => {
-      logMainError("failed to open external URL", err);
-    });
+    if (startupMode === "normal") {
+      void openExternalHttpUrl(url).catch((err: unknown) => {
+        logMainError("failed to open external URL", err);
+      });
+    }
     return { action: "deny" };
   });
+  if (startupMode === "auth-diagnostic") {
+    win.webContents.on("will-navigate", (event, url) => {
+      if (url !== trustedRendererUrl) event.preventDefault();
+    });
+  }
 
   win.on("focus", () => sendEvent("window:focus-changed", { focused: true }));
   win.on("blur", () => sendEvent("window:focus-changed", { focused: false }));
@@ -217,7 +239,7 @@ if (!gotLock) {
   void app
     .whenReady()
     .then(async () => {
-      const failedProtocolRegistrations = registerWindowsProtocolClients(app);
+      const failedProtocolRegistrations = startupMode === "normal" ? registerWindowsProtocolClients(app) : [];
       if (failedProtocolRegistrations.length > 0) {
         console.warn(
           `[main] could not register Windows URL schemes: ${failedProtocolRegistrations.join(", ")}`,
@@ -271,15 +293,27 @@ if (!gotLock) {
           });
         },
       });
+      if (startupMode === "auth-diagnostic") {
+        const getAuthStatus = await initializeAuthDiagnostic(auth);
+        installAuthDiagnosticSession(session.defaultSession, pathToFileURL(join(__dirname, "../renderer/index.html")).toString());
+        registerAuthDiagnosticIpc(ipcMain, {
+          getAuthStatus,
+          getVersion: () => ({ version: app.getVersion(), source: readDesktopBuildSource() }),
+          isTrustedSender: isTrustedStartupSender,
+        });
+        const bounds = { width: 640, height: 480 };
+        mainWindow = createWindow(fitWindowBoundsToWorkArea(bounds, screen.getDisplayMatching({
+          x: 0, y: 0, ...bounds,
+        }).workArea));
+        mainWindow.on("closed", () => { mainWindow = null; });
+        // No normal menu (browser/help/update actions), graph or quit flushes.
+        const { Menu } = await import("electron");
+        Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: DESKTOP_APP_NAME, submenu: [{ role: "quit" }] }, { role: "editMenu" }]));
+        return;
+      }
       await auth.init();
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
-      registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
-        const event = rawEvent as IpcMainInvokeEvent;
-        const contents = mainWindow?.webContents;
-        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
-        return !!contents && !contents.isDestroyed() && event.sender === contents
-          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
-      });
+      registerNavigationCacheIpc(ipcMain, navigationCache, isTrustedStartupSender);
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
         openBrowser: async url => {
@@ -472,6 +506,7 @@ if (!gotLock) {
         },
       });
       registerIpcHandlers(ipcMain, {
+        isTrustedStartupSender,
         downloadFile: (request) => downloads.download(request),
         cancelFileDownload: (requestId) => downloads.cancel(requestId),
         uploadOrganizationDrive: (request) => driveTransfers.upload(request),
@@ -679,6 +714,8 @@ if (!gotLock) {
   });
 
   app.on("window-all-closed", () => {
-    if (process.platform !== "darwin") app.quit();
+    // Diagnostic has no normal activation graph. Exit so Dock/second launch
+    // can start a fresh sole instance rather than leave a windowless process.
+    if (startupMode === "auth-diagnostic" || process.platform !== "darwin") app.quit();
   });
 }

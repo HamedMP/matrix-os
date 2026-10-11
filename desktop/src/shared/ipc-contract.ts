@@ -142,6 +142,8 @@ const BoundedJsonValue = z.unknown().refine(
   { message: "state value too large" },
 );
 
+import { DesktopStartupModeResultSchema } from "./startup-mode";
+
 export const INVOKE_CHANNELS = {
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
@@ -353,6 +355,7 @@ export const INVOKE_CHANNELS = {
   // App-wide UI zoom: the renderer owns the persisted factor; main applies it
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
+  "app:get-startup-mode": { request: Empty, response: DesktopStartupModeResultSchema },
   "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {

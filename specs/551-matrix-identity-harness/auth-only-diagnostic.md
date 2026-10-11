@@ -1,0 +1,34 @@
+# Native local-auth diagnostic checkpoint
+
+Related task: [ENG-235](https://linear.app/matrix-os/issue/ENG-235/connect-settings-soul-to-the-personal-matrix-bot).
+
+Trusted Electron main reads `OPERATOR_DIAGNOSTIC_AUTH_ONLY=1` once. Every other value retains normal startup. Renderer receives a validated read-only startup mode before importing/mounting normal Desktop. Rejected or malformed mode must show a safe error and never fall back.
+
+The diagnostic path initializes the real local AuthService and stores, reads actual `auth:status` and `app:get-version`, and displays local signed-in/signed-out/error and build source. It neither signs in nor proves remote credentials, Gateway, Chat or Bot readiness. Existing expiry cleanup and decrypt-to-signed-out semantics remain unchanged; initialization rejection displays a generic error independently of version. No credentials cross IPC.
+
+Only the current main renderer/main frame at its exact packaged file URL can read diagnostic IPC. Requests and responses retain shared strict validation. The normal branch's new mode IPC also checks that sender. The diagnostic branch registers no auth mutation, runtime selection, provider, native-app or catalog operations. Manual update requests reject visibly. It does not construct Plan lifecycle, updater, embed, download/import, navigation-cache or thread-event services, nor install their normal menus/shutdown flushes. Packaged local assets only; its Chromium session blocks remote requests and all permissions. This guard is local protection, not live network/funding acceptance.
+
+| IPC channel | Startup mode | Authorization | Request / rejection policy |
+| --- | --- | --- | --- |
+| `app:get-startup-mode` | Diagnostic | Current main window, main frame, exact packaged file URL; not public | Strict empty request; invalid sender/payload rejected |
+| `auth:status` | Diagnostic | Same trusted diagnostic sender; not public | Strict empty request; invalid sender/payload rejected; local read failure returns generic error |
+| `app:get-version` | Diagnostic | Same trusted diagnostic sender; not public | Strict empty request; invalid sender/payload rejected; local read failure returns generic error |
+| `update:check` | Diagnostic | Same trusted diagnostic sender; not public | Strict empty request; invalid sender/payload rejected; otherwise explicit unavailable rejection |
+| `update:install` | Diagnostic | Same trusted diagnostic sender; not public | Strict empty request; invalid sender/payload rejected; otherwise explicit unavailable rejection |
+| `app:get-startup-mode` | Normal | Current main window, main frame, exact canonical renderer URL; not public | Strict empty request; invalid sender/payload rejected; only returns `normal` |
+
+Canonical URL comparison preserves ordinary root-URL startup when Chromium adds the trailing slash. Existing normal-mode IPC authorization is unchanged except the equivalent navigation-cache sender check reuses this helper.
+
+Diagnostic closes the process normally when its last window closes, including macOS. It does not leave a windowless single-instance holder or construct normal services to handle reactivation. Closed-window IPC callers are rejected; a later launch runs fresh startup. Normal macOS window/activation behavior stays unchanged.
+
+Diagnostic uses a standard native title bar, including macOS and Windows, so the OS supplies window dragging and controls without consuming mouse interaction on diagnostic text. Its content uses the existing selectable-content style contract to allow status and source selection. Normal mode retains its existing platform chrome. Offline tests verify the actual BrowserWindow options and renderer selection contract; physical dragging and text selection remain controlled-launch acceptance.
+
+Trusted main injects a restrictive CSP into only the exact packaged main-frame response before loading. Scripts, styles and bundled fonts use local sources; inline style is allowed for existing font/theme tokens. Inline/eval scripts, network connections, workers, frames, objects, base changes and form submission are denied. Existing response CSP headers are replaced case-insensitively, unrelated headers retained. Network/permission denial remains an independent guard. Offline composition tests verify response injection, local-font allowance, remote-font denial and unchanged normal wiring; actual Chromium enforcement/visual fonts remain controlled-launch acceptance.
+
+Offline acceptance covers real trusted-main wiring, existing AuthService/credential store with synthetic fixtures, two-hour fake-clock zero network/timer behavior, expiry/decryption/init rejection, sender/payload validation, isolated renderer import/mount behavior, and unchanged default normal wiring. Electron/OS APIs and one rejecting local-profile read are test boundaries. Tests do not read retained credentials.
+
+Surface scope: Electron Desktop only. Web Desktop, Web Canvas, Web Mobile and Native Mobile do not host the native main/preload startup flag. They still require their own ordinary product acceptance; this checkpoint substitutes for none of them. Recommend native/runtime-owner review before an operator launch. No public user journey or account capability changes.
+
+Documentation deliverable: a companion developer-reference update in the private `FinnaAI/matrix-os-site` repository must describe the default-off local checkpoint, profile backup/ownership requirements and its limits. Constitution X and its documentation workflow cover this internal mode too. That site PR remains deferred to the coordinated delivery phase; this local source window does not authorize an independent publish or CI dispatch. This spec is not a replacement for that deliverable.
+
+Before any future real diagnostic launch: verify exclusive Electron ownership through an allowed method, cold-backup the whole selected profile, use the same macOS user's Keychain, and verify new exact package/source. Retained-profile login validity and visual capture remain unverified until that controlled launch. Current app launch, paid calls, Main deployment/config/access/funding changes and public release are deferred. One final candidate build is coordinated with the native stack owner; old ASAR cannot be reused.
