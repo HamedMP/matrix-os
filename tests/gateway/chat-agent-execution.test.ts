@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { z } from "zod/v4";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
@@ -52,7 +52,7 @@ describe("Hermes Agent invocation through canonical Chat", () => {
       await writeFile(join(recipeSkillsRoot, directory, "SKILL.md"),
         `---\nname: ${id}\ndescription: Recipe fixture.\nauthor: Matrix OS\n---\n${body}\n`);
     }
-    repository = new ChatRepository((await KyselyPGlite.create()).dialect);
+    repository = new ChatRepository((await createTestPGlite()).dialect);
     await repository.bootstrap();
     botChats = undefined;
     enabled = true; jevAdmission = undefined; failBeforeCheckpoint = undefined; failHermes = false; calls = []; release = undefined; hold = undefined;
