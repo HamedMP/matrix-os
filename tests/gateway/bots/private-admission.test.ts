@@ -96,6 +96,38 @@ describe("private bot admission", () => {
     expect(client.createRuntime).not.toHaveBeenCalled();
   });
 
+  it("verifies a personal active nonshared direct chat before exposing owner identity", async () => {
+    const { admission, client } = setup();
+    expect(await admission.ownsDirectChat(request)).toBe(true);
+    await db.updateTable("chats").set({ collaboration: JSON.stringify({ sharedScopeId: "shared_test" }) }).where("id", "=", request.chatId).execute();
+    expect(await admission.ownsDirectChat(request)).toBe(false);
+    await expect(admission.admit(request)).rejects.toEqual(new BotAdmissionError("not_found"));
+    await db.updateTable("chats").set({ collaboration: null, lifecycle: "archived" }).where("id", "=", request.chatId).execute();
+    expect(await admission.ownsDirectChat(request)).toBe(false);
+    expect(client.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each(["shared", "archived", "removed"])("does not publish a runtime when its direct chat becomes %s during provisioning", async changed => {
+    let resume!: () => void;
+    const pending = new Promise<void>(resolve => { resume = resolve; });
+    const createRuntime = vi.fn(async () => {
+      await pending;
+      return { runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const };
+    });
+    const { admission, client, registry } = setup({ createRuntime });
+    const outcome = admission.admit(request).then(value => ({ value }), error => ({ error }));
+    try {
+      await vi.waitFor(() => expect(createRuntime).toHaveBeenCalledOnce());
+      if (changed === "removed") await createBotBindingsRepository(db).remove({ ownerId: OWNER, botId: BOT, chatId: request.chatId, now: NOW });
+      else await db.updateTable("chats").set(changed === "shared"
+        ? { collaboration: JSON.stringify({ sharedScopeId: "shared_race" }) }
+        : { lifecycle: "archived" }).where("id", "=", request.chatId).execute();
+    } finally { resume(); }
+    expect(await outcome).toEqual({ error: new BotAdmissionError("not_found") });
+    expect(registry.lookup({ runtimeHandle: RUNTIME, executionGeneration: "5" })).toBeNull();
+    expect(client.stopRuntime).toHaveBeenCalledWith({ runtimeHandle: RUNTIME });
+  });
+
   it("blocks on a missing or drifted workspace and when the host is down", async () => {
     const { admission } = setup();
     await expect(admission.admit({ ...request, expectedRootFingerprint: "0".repeat(64) })).rejects.toEqual(new BotAdmissionError("root_changed"));

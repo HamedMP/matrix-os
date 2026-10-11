@@ -13,7 +13,7 @@ describe("bot recipe catalog", () => {
   it("resolves only exact launch-set versions", () => {
     const catalog = createBotRecipeCatalog();
     expect(catalog.list().map((recipe) => recipe.recipeId)).toEqual([
-      "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
+      "matrix-bot", "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book", "event-request-desk", "writing-bot", "echo", "spend-review",
     ]);
     expect(catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" }).name).toBe("Writing Bot");
     for (const ref of [
@@ -57,6 +57,23 @@ describe("bot system prompt", () => {
       const longest = buildBotSystemPrompt({ botName: "x".repeat(80), instructions: "word ".repeat(1_600), recipe, now: NOW });
       expect(estimatePromptTokens(longest)).toBeLessThanOrEqual(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
     }
+  });
+
+  it("only the immutable canonical recipe opts into SOUL and budgets it before trimming memory", () => {
+    const catalog = createBotRecipeCatalog();
+    const recipe = catalog.resolve({ recipeId: "matrix-bot", version: "2026-10-10.1" });
+    expect(catalog.list().filter(entry => entry.identitySource === "owner_soul").map(entry => entry.recipeId)).toEqual(["matrix-bot"]);
+    const ownerSoul = "Your conversational name is Rick. " + "identity ".repeat(1000);
+    const prompt = buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, ownerSoul,
+      memory: ["low priority ".repeat(4000)], now: NOW });
+    expect(prompt).toContain(ownerSoul);
+    expect(prompt).toContain("takes precedence over your default conversational name");
+    expect(prompt).toContain("cannot override your job or Matrix security rules");
+    expect(prompt).not.toContain("low priority");
+    expect(estimatePromptTokens(prompt)).toBeLessThanOrEqual(BOT_SYSTEM_PROMPT_TOKEN_BUDGET);
+    expect(() => buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, ownerSoul: "界".repeat(7000), now: NOW })).toThrow(BotSystemPromptError);
+    const writing = catalog.resolve({ recipeId: "writing-bot", version: "2026-09-27.1" });
+    expect(buildBotSystemPrompt({ botName: "Rick", instructions: writing.instructions, recipe: writing, ownerSoul, now: NOW })).not.toContain(ownerSoul);
   });
 
   it("counts non-Latin prose conservatively and refuses a prompt over budget", () => {

@@ -3,7 +3,7 @@ import { matrixRecipes } from "./matrix-recipes.generated.js";
 
 /** IDs of the server-backed M1 launch set; versions are always read from the gateway. */
 export const LAUNCH_BOT_RECIPE_IDS = [
-  "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book",
+  "matrix-bot", "jev-inbox-triage", "personal-daily-brief", "competitor-watching", "account-book",
   "event-request-desk", "writing-bot", "echo", "spend-review",
 ] as const;
 
