@@ -43,6 +43,7 @@ const BotInferenceBodySchema = z.object({
 }).passthrough();
 
 export interface BotInferenceDependencies {
+  isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
@@ -110,6 +111,8 @@ export async function forwardBotInference(
     }
     return failure(request.requestId, "invalid_request");
   }
+  const isolated = deps.isolatedChat?.targets(binding) === true;
+  if (isolated && !validIsolatedInference(request, binding)) return failure(request.requestId, "invalid_request");
   const lifecycle = deps.runSignal ? AbortSignal.any([deps.lifetime, deps.runSignal]) : deps.lifetime;
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
@@ -145,7 +148,7 @@ export async function forwardBotInference(
     const current = authorize(modelId);
     return current.allowed && current.accessSourceId === accessSourceId && current.allowedModelIds.includes(modelId);
   };
-  const funded = accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
+  const funded = !isolated && accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
@@ -176,6 +179,7 @@ export async function forwardBotInference(
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!stillAuthorized()) return "denied";
+      if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !stillAuthorized())) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
@@ -227,5 +231,40 @@ export async function forwardBotInference(
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");
+  }
+}
+
+
+const IsolatedTextBlock = z.object({ type: z.literal("text"), text: z.string(),
+  cache_control: z.object({ type: z.literal("ephemeral"), ttl: z.enum(["5m", "1h"]).optional() }).strict().optional() }).strict();
+const IsolatedText = z.union([z.string(), z.array(IsolatedTextBlock).min(1).max(8)]);
+const IsolatedInferenceSchema = z.object({
+  model: z.string(), stream: z.literal(true),
+  messages: z.array(z.object({ role: z.enum(["system", "developer", "user"]), content: IsolatedText }).strict()).min(1).max(4),
+  system: IsolatedText.optional(),
+  max_tokens: z.literal(256).optional(), max_completion_tokens: z.literal(256).optional(),
+  tools: z.array(z.never()).max(0).optional(), tool_choice: z.literal("none").optional(),
+  stream_options: z.object({ include_usage: z.literal(true) }).strict().optional(),
+  reasoning_effort: z.literal("low").optional(), thinking: z.object({ type: z.literal("disabled") }).strict().optional(),
+  temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
+  n: z.literal(1).optional(), store: z.literal(false).optional(),
+}).strict();
+function validIsolatedInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding): boolean {
+  if (Buffer.byteLength(request.body, "utf8") > 131072 || binding.accessSourceId !== "matrix_included"
+    || binding.route.maxOutputTokens !== 256) return false;
+  try {
+    const value = IsolatedInferenceSchema.safeParse(JSON.parse(request.body));
+    if (!value.success || value.data.model !== binding.route.modelId
+      || (value.data.max_tokens === undefined) === (value.data.max_completion_tokens === undefined)
+      || value.data.messages.at(-1)?.role !== "user") return false;
+    return binding.route.api === "anthropic-messages"
+      ? request.action === "inference.messages" && request.path === "/v1/messages?beta=true"
+        && value.data.max_tokens === 256 && value.data.max_completion_tokens === undefined
+        && !value.data.stream_options && !value.data.reasoning_effort
+      : binding.route.api === "openai-completions" && request.action === "inference.chat_completions"
+        && request.path === "/v1/chat/completions" && value.data.system === undefined && value.data.thinking === undefined;
+  } catch (error: unknown) {
+    console.warn("[bots] Isolated inference refused:", error instanceof Error ? error.name : "UnknownError");
+    return false;
   }
 }
