@@ -31,6 +31,27 @@ class PreparedCacheContracts(unittest.TestCase):
   self.assertFalse((self.destination/'v10/links').exists())
   image=next((self.store/'files').glob('*/*'));copy=self.destination/'v10/files'/image.relative_to(self.store/'files')
   self.assertNotEqual(image.stat().st_ino,copy.stat().st_ino);copy.write_bytes(b'private');self.assertNotEqual(image.read_bytes(),b'private')
+ def test_captured_pnpm_10_33_4_store_selects_actual_browser_layout(self):
+  import shutil
+  captured=json.loads((Path(__file__).parent/'fixtures/pnpm-10.33.4-browser-store.json').read_text())
+  self.assertEqual(captured['pnpmVersion'],'10.33.4')
+  self.assertEqual(captured['liveQualifications']['cacheSelection'],'store-browsers')
+  self.assertEqual(captured['liveQualifications']['freshExecutions'],2)
+  shutil.rmtree(self.store);self.store.mkdir();shutil.rmtree(self.browsers);self.browsers.mkdir()
+  self.lock=captured['lockEntries'].encode();self.lockfile.write_bytes(self.lock)
+  self.inv={'lockSha256':digest(self.lock)};(self.image/'prepared-lock.sha256').write_text(digest(self.lock)+'\n')
+  for row in captured['packages']:
+   package=row['package'];content=row['browsersJson'].encode();content_hash=hashlib.sha512(content).hexdigest()
+   self.assertEqual(content_hash,row['browsersSha512'])
+   self.assertEqual(sri_hash := prepared.sri(package['files']['browsers.json']['integrity']).hex(),content_hash)
+   index=self.image/'pnpm-store'/row['indexPath'];index.parent.mkdir(parents=True,exist_ok=True);index.write_text(json.dumps(package))
+   path=self.store/'files'/sri_hash[:2]/sri_hash[2:];path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(content)
+   for browser in json.loads(content)['browsers']:
+    if browser['name'] not in ('chromium','chromium-headless-shell','ffmpeg'):continue
+    revision=browser.get('revisionOverrides',{}).get('ubuntu24.04-x64',browser['revision'])
+    path=self.browsers/(browser['name'].replace('-','_')+'-'+revision);path.mkdir(exist_ok=True);(path/'INSTALLATION_COMPLETE').touch()
+  self.assertEqual(self.select(),'store-browsers')
+  self.assertTrue((self.destination/'v10/index').is_dir())
  def test_changed_image_pin_is_cold_without_copy(self):
   (self.image/'prepared-lock.sha256').write_text('f'*64+'\n');self.assertEqual(self.select(),'cold');self.assertFalse(self.destination.exists())
  def test_candidate_lock_alone_is_never_authority(self):
