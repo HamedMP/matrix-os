@@ -397,3 +397,40 @@ describe("bot agent loop", () => {
     expect(saved).not.toContain("removed to fit saved history");
   });
 });
+
+
+describe("server-issued isolated ordinary turn", () => {
+  const isolated = () => ({ ...command(), route: { ...command().route, maxOutputTokens: 256 },
+    limits: { maxToolActions: 1 }, isolatedTurn: { phaseId: "phase_one", maxInputBytes: 131072 } } as BotRunCommand);
+  it("exposes no tools, refuses steering and makes one explicit retry-free provider call", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    let steered: boolean | undefined;
+    const result = await run({ command: isolated(), broker, route, onControl: control => { steered = control.steer("Again"); } });
+    expect(steered).toBe(false);
+    expect(result.status).toBe("completed");
+    expect(tools).toEqual([]);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(stream.mock.calls[0]![1].tools ?? []).toEqual([]);
+    expect(stream).toHaveBeenCalledWith(route.model, expect.anything(),
+      expect.objectContaining({ maxTokens: 256, maxRetries: 0 }));
+  });
+  it("never executes a hallucinated tool or continues after its reply", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxToolCall("read_artifact", { path: "x" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("second forbidden"))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    await run({ command: isolated(), broker, route });
+    expect(tools).toEqual([]);
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+  it("rejects continuation and nonempty history before inference or summary", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("forbidden"))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    expect((await run({ command: { ...isolated(), turn: { kind: "continue" } }, broker: memoryBroker().broker, route })).status).toBe("failed");
+    const history = [{ role: "user", content: "old".repeat(50000), timestamp: 1 }];
+    expect((await run({ command: isolated(), broker: memoryBroker({ messages: history }).broker, route })).status).toBe("failed");
+    expect(stream).not.toHaveBeenCalled();
+  });
+});
