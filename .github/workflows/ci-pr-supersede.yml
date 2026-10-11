@@ -1,0 +1,75 @@
+name: Supersede PR CI
+
+# This runs trusted base-branch code only. Never check out or execute PR contents
+# in a workflow with the Actions cancellation permission.
+on:
+  pull_request_target:
+    branches: [main, "stack/**", "codex/**"]
+    types: [synchronize, ready_for_review, labeled]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  supersede:
+    name: Cancel obsolete PR CI heads
+    if: >-
+      github.event.action == 'ready_for_review' ||
+      contains(github.event.pull_request.labels.*.name, 'ready-for-ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          retries: 2
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+            const shaPattern = /^[0-9a-f]{40}$/i;
+            if (!Number.isSafeInteger(pr?.number) || !shaPattern.test(pr?.head?.sha ?? '')) {
+              throw new Error('Invalid PR supersession event');
+            }
+            const request = { owner, repo, pull_number: pr.number, request: { timeout: 10000 } };
+            const { data: live } = await github.rest.pulls.get(request);
+            if (live.state !== 'open' || live.head.sha !== pr.head.sha) {
+              core.info('A newer PR head superseded this event; skipping cancellation.');
+              return;
+            }
+            const active = new Set(['in_progress', 'pending', 'queued', 'requested', 'waiting']);
+            let cancelled = 0;
+            // Three pages bound work; this optimization never changes the CI gate.
+            for (let page = 1; page <= 3; page++) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: 'ci.yml', event: 'pull_request',
+                per_page: 100, page, request: { timeout: 10000 },
+              });
+              if (!Array.isArray(data.workflow_runs) || data.workflow_runs.length > 100) {
+                throw new Error('Invalid CI run list');
+              }
+              for (const run of data.workflow_runs) {
+                const associated = run.pull_requests?.find(candidate =>
+                  candidate.number === pr.number && candidate.base?.repo?.id === live.base.repo.id);
+                if (run.event !== 'pull_request' || !active.has(run.status) ||
+                    !Number.isSafeInteger(run.id) || run.id <= 0 ||
+                    !shaPattern.test(run.head_sha ?? '') ||
+                    !shaPattern.test(associated?.head?.sha ?? '') ||
+                    associated.head.sha === live.head.sha ||
+                    run.head_sha === live.head.sha || run.head_sha === live.merge_commit_sha) continue;
+                // Events can arrive out of order. Stop immediately if the PR moved.
+                const { data: latest } = await github.rest.pulls.get(request);
+                if (latest.state !== 'open' || latest.head.sha !== pr.head.sha) return;
+                try {
+                  await github.rest.actions.cancelWorkflowRun({
+                    owner, repo, run_id: run.id, request: { timeout: 10000 },
+                  });
+                  cancelled++;
+                } catch (error) {
+                  if (error.status !== 409) throw error; // Already completed.
+                  core.info(`CI run ${run.id} already completed before cancellation; skipping completion race.`);
+                }
+              }
+              if (data.workflow_runs.length < 100) break;
+            }
+            core.info(`Cancelled ${cancelled} obsolete PR CI runs.`);

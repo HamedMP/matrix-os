@@ -381,7 +381,7 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
       workflow.indexOf('  changes:'),
-      workflow.indexOf('  # ── Gate 1: Mechanical checks'),
+      workflow.indexOf('\n  typecheck:'),
     );
 
     expect(changesJob).toContain('timeout-minutes: 3');
@@ -455,7 +455,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('name: Run required MAT-335 Desktop regression');
     expect(workflow).toContain('MATRIX_DESKTOP_E2E_REQUIRED: "1"');
     expect(workflow).toContain(
-      'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
+      'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
     );
   });
 
@@ -466,14 +466,14 @@ describe('CI workflows', () => {
     const input = steps.findIndex((step: { name?: string }) => step.name === 'Run required Desktop Chat input regression');
     expect(input).toBeGreaterThan(build);
     expect(steps[input].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
-    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts');
+    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts');
   });
 
   it('requires download E2E after the Electron build under a virtual display', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const steps = workflow.jobs.e2e.steps;
     const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
-    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts');
+    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/file-download.e2e.test.ts');
     expect(build).toBeGreaterThanOrEqual(0);
     expect(download).toBeGreaterThan(build);
     expect(steps[download].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
