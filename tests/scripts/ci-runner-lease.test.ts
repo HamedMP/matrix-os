@@ -121,3 +121,8 @@ with tempfile.TemporaryDirectory() as td:
  finally:owned.cancel(grace=.1)
 `));
 });
+
+it('keeps direct branchbase plus actual native merge parents in the authenticated tuple',()=>python(`${fixture}
+request['mergeParents']=['0'*40,request['headSha']]
+assert validate_envelope(envelope,config)==envelope
+`));

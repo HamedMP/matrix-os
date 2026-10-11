@@ -45,7 +45,8 @@ with tempfile.TemporaryDirectory() as td:
  def wrong(args,**kw):return subprocess.CompletedProcess(args,0,json.dumps([{'Id':'0'*64,'Config':{'Labels':{'matrix-ci.lease':'9'*32}}}]).encode(),b'')
  host.execute=wrong;assert host.cleanup() is False
 `));
-  it.each([[42,true,0],[0,false,0],[0,true,42]])("measures icons independently and remains failed for benchmark=%i web=%s smoke=%i",(benchmarkStatus,webReady,smokeStatus)=>python(`${fixture}
+  it.each([[42,true,0,false],[0,false,0,false],[0,true,42,false],[0,true,42,true]])("measures icons independently and remains failed for benchmark=%i web=%s smoke=%i",(benchmarkStatus,webReady,smokeStatus,native)=>python(`${fixture}
+${native ? "request['mergeParents'][0]='0'*40" : ""}
 import types,datetime
 from qualification_host import write_json,utc
 manifest=dict(source=request['mergeSha'],tree='0'*40,parents=request['mergeParents'],lockSha256='0'*64,tracked='x'*(1024*1024+200))
@@ -63,7 +64,7 @@ with tempfile.TemporaryDirectory() as td:
   calls.append(args);output=b'';status=0
   if args[1]=='create':output=b'0'*64+b'\\n'
   elif '--prepare-public' in args:
-   assert kw['cap']>=2*1024*1024;output=json.dumps(manifest).encode()
+   assert kw['cap']>=2*1024*1024;assert args[-3:]==[request['mergeSha'],request['mergeParents'][0],request['headSha']];output=json.dumps(manifest).encode()
   elif '/usr/bin/tee' in args:output=kw['data']
   elif '/opt/matrix-ci/qualification/benchmark.sh' in args:status=${benchmarkStatus};output=b'unit diagnostic'
   elif '/opt/matrix-ci/qualification/smoke.mjs' in args:status=${smokeStatus};output=b'{}'

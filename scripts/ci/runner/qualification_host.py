@@ -237,7 +237,7 @@ class QualificationHost:
             # objects/checkouts stay in capped UID10001 tmpfs, never host root.
             prepared = self.execute(['docker','exec','--user','10001:10001',self.name,
                 '/usr/bin/python3','-I','/opt/matrix-ci/qualification/manifest.py','--prepare-public',
-                self.request['mergeSha'],self.request['baseSha'],self.request['headSha']], timeout=120, cap=MAX_MANIFEST+65536)
+                self.request['mergeSha'],self.request['mergeParents'][0],self.request['headSha']], timeout=120, cap=MAX_MANIFEST+65536)
             if prepared.returncode:
                 raise ValueError('Trusted public source inventory unavailable')
             manifest = check_manifest(json.loads(prepared.stdout), self.request)

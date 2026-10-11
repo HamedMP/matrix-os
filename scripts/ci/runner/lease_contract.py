@@ -50,8 +50,8 @@ def validate_envelope(value, config):
             raise ValueError('Invalid requesting/controller identity')
     if not all(hex_value(request[key], 40) for key in ('headSha', 'baseSha', 'mergeSha', 'controllerSha')):
         raise ValueError('Invalid exact source identity')
-    if request['headSha'] == request['baseSha'] or request['mergeParents'] != [request['baseSha'], request['headSha']]:
-        raise ValueError('Merge parents do not bind the exact head and base')
+    if request['headSha'] == request['baseSha'] or not isinstance(request['mergeParents'],list) or len(request['mergeParents'])!=2 or not all(hex_value(v,40) for v in request['mergeParents']) or request['mergeParents'][1]!=request['headSha'] or request['mergeParents'][0]==request['headSha']:
+        raise ValueError('Merge parents do not bind the exact source head')
     if not branch(request['baseRef']):
         raise ValueError('Invalid parent ref')
     if (request['controllerRef'] != 'refs/heads/main'
