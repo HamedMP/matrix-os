@@ -109,6 +109,7 @@ describe("protected funded host disposable root CI", () => {
     expect(root["timeout-minutes"]).toBe(10);
     expect(root.permissions).toEqual({ contents: "read" });
     expect(root.steps[0].with["persist-credentials"]).toBe(false);
+    expect(root.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const run = root.steps.find((step: { run?: string }) => step.run)?.run;
     expect(run).toContain("--network none");
     expect(run).toContain("--cpus 2 --memory 2g --pids-limit 256");

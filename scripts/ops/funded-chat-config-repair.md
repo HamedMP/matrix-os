@@ -31,7 +31,8 @@ them or enables funding.
 
 Routing actions additionally require `expectedRelease: { version, gitCommit }`
 with a full 40-character source SHA. The anchored, root-owned 0644
-`/opt/matrix/release.json` must match before preparation, immediately before
+`/opt/matrix/release.json` supports both root:matrix and legacy root:root group
+ownership. Its version and commit must match before preparation, immediately before
 rename and after commit. This is a local installed-metadata guard, not an
 independent artifact attestation or proof of loaded Gateway source. Fresh normal
 owner inventory, loaded source/config, registry/slot/epoch, authority compatibility

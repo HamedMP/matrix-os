@@ -58,6 +58,23 @@ function routingRequest(action = 'align-routing') {
 }
 const aligned = routingInitial.replace('https://old---relay.example.com', 'https://relay.example.com')
   .replace('https://old---platform.example.com', 'https://platform.example.com');
+// Older protected releases are root:root even when matrix has a nonzero gid.
+chownSync(releasePath, 0, 0);
+result = run({ ...routingRequest(), rolloutId: 'linux-old-root-release' }); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), aligned);
+result = run({ ...routingRequest('rollback-routing'), rolloutId: 'linux-old-root-release' }); assert.equal(result.status, 0, result.stderr);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2002);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2001);
+chmodSync(releasePath, 0o664);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chmodSync(releasePath, 0o644); chownSync(releasePath, 1, 2001);
+result = run(routingRequest()); assert.equal(result.status, 1);
+assert.equal(readFileSync(path, 'utf8'), routingInitial);
+chownSync(releasePath, 0, 2001);
 result = run(routingRequest()); assert.equal(result.status, 0, result.stderr); assert.equal(readFileSync(path, 'utf8'), aligned);
 result = run(routingRequest()); assert.equal(result.status, 0, result.stderr); assert.equal(JSON.parse(result.stdout).changed, false);
 writeFileSync(path, aligned + 'UNRELATED_LATER=preserved\n');
@@ -96,4 +113,4 @@ result = run(attackRequest, attackedSource); assert.equal(result.status, 1); ass
 assert(lstatSync('/opt/matrix/env').isSymbolicLink(), 'The attack must actually reach the rebind branch: ' + (existsSync('/tmp/activity-calls') ? readFileSync('/tmp/activity-calls','utf8') : 'no helper activity'));
 rmSync('/opt/matrix/env');
 // Container is removed by --rm; no customer configuration was touched.
-console.log(JSON.stringify({ supportedLayout: '0770/0750/0640', apply: 'passed', noOp: 'passed', rollback: 'passed', routing: 'passed', routingNoOp: 'passed', routingRollbackPreservesLaterEdits: 'passed', staleRoutingSource: 'rejected', routingUnknownCommit: 'rejected-with-journal', staleRoutingReplay: 'rejected', sealedInterpreter: 'passed', writableRuntimeReplacement: 'rejected', wrongPin: 'rejected', ancestorRebind: 'rejected', inheritedEnvFd: 3, sanitizedEnvironment: 'passed' }));
+console.log(JSON.stringify({ supportedLayout: '0770/0750/0640', releaseRootGroup: 'passed', releaseMatrixGroup: 'passed', releaseOtherGroupWritableOrWrongOwner: 'rejected', apply: 'passed', noOp: 'passed', rollback: 'passed', routing: 'passed', routingNoOp: 'passed', routingRollbackPreservesLaterEdits: 'passed', staleRoutingSource: 'rejected', routingUnknownCommit: 'rejected-with-journal', staleRoutingReplay: 'rejected', sealedInterpreter: 'passed', writableRuntimeReplacement: 'rejected', wrongPin: 'rejected', ancestorRebind: 'rejected', inheritedEnvFd: 3, sanitizedEnvironment: 'passed' }));

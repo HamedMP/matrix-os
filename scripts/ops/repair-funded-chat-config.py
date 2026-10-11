@@ -292,7 +292,9 @@ def rollback_image(directory, name, data, values, identity, uid, private_gid, ho
 def verify_release(anchor, expected, uid, gid):
     require(isinstance(anchor, Environment), "source_conflict")
     anchor.verify()
-    raw, _ = read_file(anchor.fds[-2], "release.json", uid, gid, 0o644)
+    release_gid = os.stat("release.json", dir_fd=anchor.fds[-2], follow_symlinks=False).st_gid
+    require(release_gid in (0, gid), "unsafe_file")
+    raw, _ = read_file(anchor.fds[-2], "release.json", uid, release_gid, 0o644)
     release = json.loads(raw, object_pairs_hook=unique_object)
     require(isinstance(release, dict) and all(release.get(key) == value
             for key, value in expected.items()), "source_conflict")
