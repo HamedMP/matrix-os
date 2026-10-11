@@ -67,7 +67,7 @@ fi
 cat "$result_dir/output.log"
 # Stream only bounded, named regular files; never extract container paths/links.
 for file in unit-cold.json unit-warm.json timing.tsv; do
-  timeout --signal=TERM --kill-after=5s 30s docker cp "$container:/work/results/$file" - 2>/dev/null \
+  timeout --signal=TERM --kill-after=5s 30s docker exec --user 10001:10001 "$container" /usr/bin/tar -cf - -C /work/results -- "$file" 2>/dev/null \
     | python3 "$script_dir/copy-artifact.py" "$result_dir/$file" "$file" 2>/dev/null || true
 done
 # Successful execution without accepted evidence is not a usable benchmark.

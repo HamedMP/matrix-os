@@ -28,17 +28,18 @@ function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "ti
 [[ "$FAIL_READ" != 1 ]] || mkdir -p "$CALLS"
 printf '%s\\n' "$*" >> "$CALLS"
 if [[ "$1" == create ]]; then echo test-container; fi
-if [[ "$1" == exec && "$FAIL_TIMEOUT" == 1 ]]; then exit 124; fi
-if [[ "$1" == exec && "$FAIL_START" == 1 ]]; then exit 42; fi
-if [[ "$1" == cp ]]; then
+if [[ "$1" == exec && "$5" == /usr/bin/tar ]]; then
   [[ "$FAIL_ARTIFACT" != 1 ]] || exit 1
-  python3 - "\${2##*/}" <<'PYTAR'
+  python3 - "\${11}" <<'PYTAR'
 import io,sys,tarfile
 with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as archive:
     entry=tarfile.TarInfo(sys.argv[1]);entry.size=4
     archive.addfile(entry,io.BytesIO(b'unit'))
 PYTAR
+  exit "$?"
 fi
+if [[ "$1" == exec && "$FAIL_TIMEOUT" == 1 ]]; then exit 124; fi
+if [[ "$1" == exec && "$FAIL_START" == 1 ]]; then exit 42; fi
 `);
   chmodSync(resolve(dir, "docker"), 0o755);
   writeFileSync(resolve(dir, "flock"), "#!/bin/bash\nexit 0\n");
@@ -117,12 +118,17 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     const { result, calls } = invoke([sha, "unit", "8"]);
     expect(result.status).toBe(0);
     const execute = calls.indexOf("exec --user 10001:10001 test-container");
-    const copy = calls.indexOf("cp test-container:/work/results/unit-cold.json -");
+    const copy = calls.indexOf("exec --user 10001:10001 test-container /usr/bin/tar -cf - -C /work/results -- unit-cold.json");
     const remove = calls.indexOf("rm --force test-container");
     expect(execute).toBeGreaterThan(0);
     expect(copy).toBeGreaterThan(execute);
     expect(remove).toBeGreaterThan(copy);
     expect(calls).not.toContain("wait test-container");
+    expect(calls).not.toContain("cp test-container:");
+    const script = readFileSync(resolve(root, "start-ephemeral.sh"), "utf8");
+    expect(script).toContain('timeout --signal=TERM --kill-after=5s 30s docker exec --user 10001:10001 "$container" /usr/bin/tar -cf - -C /work/results -- "$file"');
+    for (const file of ["unit-cold.json", "unit-warm.json", "timing.tsv"])
+      expect(calls).toContain(`exec --user 10001:10001 test-container /usr/bin/tar -cf - -C /work/results -- ${file}`);
     expect(readFileSync(resolve(root, "Dockerfile"), "utf8")).toContain('ENTRYPOINT ["/usr/bin/sleep", "2100"]');
   });
   it("fails closed when a successful benchmark has no accepted timing evidence", () => {
@@ -135,11 +141,12 @@ describe("disposable manual CI benchmark admission and isolation", () => {
     const { result, calls } = invoke([sha, "unit", "8"], "timeout");
     expect(result.status).toBe(124);
     expect(calls).toContain("rm --force test-container");
-    expect(calls).not.toContain("cp test-container:");
+    expect(calls).not.toContain("/usr/bin/tar");
   });
   it("propagates job failures and removes the container", () => {
     const { result, calls } = invoke([sha, "unit", "8"], true);
     expect(result.status).toBe(42);
+    expect(calls).toContain("exec --user 10001:10001 test-container /usr/bin/tar -cf - -C /work/results -- timing.tsv");
     expect(calls).toContain("rm --force test-container");
   });
   it("never registers an open GitHub runner or accepts a registration token", () => {
