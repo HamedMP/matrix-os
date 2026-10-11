@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { UpgradeWebSocket, WSEvents } from "hono/ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CollaborationGrantSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
+import { CollaborationGrantSchema, CollaborationProjectAccessPresentationSchema, CollaborationReadinessSchema } from "@matrix-os/contracts";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
@@ -15,6 +15,7 @@ import { createCollaborationTestDatabase, type CollaborationTestDatabase } from 
 
 const ownerId = "user_capability_owner";
 const memberId = "user_capability_member";
+const secondMemberId = "user_capability_second_member";
 const outsiderId = "user_capability_outsider";
 const organizationId = "org_capability_routes";
 const scopeId = "10000000-0000-4000-8000-00000000a915";
@@ -35,16 +36,29 @@ describe("collaboration capability HTTP routes", () => {
   let resourceDriver: ReturnType<typeof createOwnerResourceDriver>;
   /** The board app's registry identity, reassigned when a test re-registers the app. */
   let appRegistration: string;
+  let membershipDelayMs: number;
+  let activeMembershipChecks: number;
+  let maxActiveMembershipChecks: number;
 
   beforeEach(async () => {
+    membershipDelayMs = 0;
+    activeMembershipChecks = 0;
+    maxActiveMembershipChecks = 0;
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     runtime = await createGatewayCollaboration({
       organizationMembershipSource: {
         async assertMembership({ actorId, organizationId: requested }) {
-          return requested === organizationId && actorId !== outsiderId
-            ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
-            : { member: false };
+          activeMembershipChecks += 1;
+          maxActiveMembershipChecks = Math.max(maxActiveMembershipChecks, activeMembershipChecks);
+          try {
+            if (membershipDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, membershipDelayMs));
+            return requested === organizationId && actorId !== outsiderId
+              ? { member: true, expiresAt: new Date(Date.now() + 20_000).toISOString(), membershipEpoch: "1", aiSubmission: "owner_only" as const }
+              : { member: false };
+          } finally {
+            activeMembershipChecks -= 1;
+          }
         },
       },
       db: fixture.db,
@@ -137,6 +151,122 @@ describe("collaboration capability HTTP routes", () => {
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual([created]);
     expect((await signed({ actorId: outsiderId, method: "GET", path })).status).toBe(404);
+  });
+
+  it("projects activated and explicit project access for the owner with inherited precedence", async () => {
+    const now = new Date();
+    const organizationGrantId = randomUUID();
+    const directGrantId = randomUUID();
+    await fixture.db.insertInto("collaboration_grants").values([{
+      id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }, {
+      id: directGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member", audience_actor_id: memberId, preset: "contributor", state: "pending",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }, {
+      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member", audience_actor_id: secondMemberId, preset: "contributor", state: "active",
+      policy_version: "v1", source_id: null, legacy_ceiling: null,
+      expires_at: new Date(now.getTime() - 1_000), revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }]).execute();
+    await fixture.db.insertInto("collaboration_grant_activations").values({
+      grant_id: organizationGrantId, actor_id: memberId, state: "active", decided_at: now,
+      membership_evidence_epoch: 1,
+    }).execute();
+
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const response = await signed({ actorId: ownerId, method: "GET", path });
+    expect(response.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json())).toMatchObject({
+      owner: { actorId: ownerId },
+      generalAccess: { grantId: organizationGrantId, preset: "viewer" },
+      people: [{ actor: { actorId: memberId }, status: "active", effectivePreset: "viewer", inherited: true,
+        directGrant: { grantId: directGrantId, preset: "contributor" } }],
+    });
+    expect((await signed({ actorId: memberId, method: "GET", path })).status).toBe(403);
+  });
+
+  it("bounds parallel access checks while presenting larger project audiences", async () => {
+    const now = new Date();
+    const memberIds = Array.from({ length: 12 }, (_, index) => `user_capability_batch_${index}`);
+    await fixture.db.insertInto("collaboration_grants").values(memberIds.map((actorId) => ({
+      id: randomUUID(), scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member" as const, audience_actor_id: actorId, preset: "viewer" as const, state: "active" as const,
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }))).execute();
+    membershipDelayMs = 10;
+
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const response = await signed({ actorId: ownerId, method: "GET", path });
+
+    expect(response.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).people).toHaveLength(memberIds.length);
+    expect(maxActiveMembershipChecks).toBeGreaterThan(1);
+    expect(maxActiveMembershipChecks).toBeLessThanOrEqual(8);
+    expect(activeMembershipChecks).toBe(0);
+  });
+
+  it("bounds a full activation audience while retaining every manageable direct grant", async () => {
+    const now = new Date();
+    const organizationGrantId = randomUUID();
+    const directGrantId = randomUUID();
+    const directActorId = "user_capability_direct_beyond_activation_cap";
+    const activatedActorIds = Array.from({ length: 1_000 }, (_, index) => `user_capability_activation_${index}`);
+    await fixture.db.insertInto("collaboration_grants").values([{
+      id: organizationGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "organization", audience_actor_id: null, preset: "viewer", state: "active",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }, {
+      id: directGrantId, scope_id: scopeId, organization_id: organizationId,
+      audience_kind: "member", audience_actor_id: directActorId, preset: "contributor", state: "pending",
+      policy_version: "v1", source_id: null, legacy_ceiling: null, expires_at: null, revision: 1,
+      created_by: ownerId, created_at: now, updated_at: now, revoked_at: null,
+    }]).execute();
+    await fixture.db.insertInto("collaboration_grant_activations").values(activatedActorIds.map((actorId) => ({
+      grant_id: organizationGrantId, actor_id: actorId, state: "active" as const, decided_at: now,
+      membership_evidence_epoch: 1,
+    }))).execute();
+
+    const path = `/api/collaboration/scopes/${scopeId}/project/access`;
+    const response = await signed({ actorId: ownerId, method: "GET", path });
+
+    expect(response.status).toBe(200);
+    const presentation = CollaborationProjectAccessPresentationSchema.parse(await response.json());
+    expect(presentation.people).toHaveLength(1_000);
+    expect(presentation.people).toContainEqual(expect.objectContaining({
+      actor: expect.objectContaining({ actorId: directActorId }),
+      status: "pending",
+      directGrant: expect.objectContaining({ grantId: directGrantId }),
+    }));
+  });
+
+  it("rejects every new standalone live scope", async () => {
+    const prefix = `/api/collaboration/runtimes/${runtimeId}`;
+    for (const kind of ["chat", "terminal", "file", "folder", "app"] as const) {
+      const response = await signed({
+        actorId: ownerId,
+        method: "POST",
+        path: `${prefix}/scopes`,
+        scopeId: null,
+        body: {
+          kind,
+          resourceId: kind === "file" || kind === "folder" || kind === "app" ? randomUUID() : `${kind}_new`,
+          organizationId,
+          clientRequestId: randomUUID(),
+          expectedRevision: "0",
+          confirmationToken: "a".repeat(64),
+        },
+      });
+      expect(response.status, `${kind} should be safely unavailable`).toBe(403);
+      expect(await response.json()).toMatchObject({ code: "forbidden" });
+    }
   });
 
   it("patches and revokes an owner grant with expected scope and grant revisions", async () => {
@@ -309,7 +439,7 @@ describe("collaboration capability HTTP routes", () => {
     expect((await app.request(path, { method: "POST", headers, body })).status).toBe(403);
   });
 
-  it("requires an exact catalog UUID on the encoded owner-runtime preflight and create routes", async () => {
+  it("requires an exact catalog UUID and denies encoded standalone creation routes", async () => {
     const catalog = await signed({ actorId: ownerId, method: "POST",
       path: `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`, scopeId: null,
       body: { kind: "file", path: "notes.txt", organizationId },
@@ -332,13 +462,20 @@ describe("collaboration capability HTTP routes", () => {
     const preflight = await app.request(`${prefix}/scopes/preflight`, { method: "POST", headers,
       body: JSON.stringify({ kind: "file", resourceId: entry.id, organizationId }) });
     expect(preflight.status).toBe(200);
-    const preview = await preflight.json() as { resourceRevision: string; confirmationToken: string };
+    const preview = await preflight.json() as {
+      eligible: boolean;
+      reason: string;
+      resourceRevision: string;
+      confirmationToken?: string;
+    };
+    expect(preview).toMatchObject({ eligible: false, reason: "unsupported" });
+    expect(preview.confirmationToken).toBeUndefined();
     const created = await app.request(`${prefix}/scopes`, { method: "POST", headers,
       body: JSON.stringify({ kind: "file", resourceId: entry.id, organizationId,
         clientRequestId: randomUUID(), expectedRevision: preview.resourceRevision,
-        confirmationToken: preview.confirmationToken }) });
-    expect(created.status).toBe(201);
-    expect(await created.json()).toMatchObject({ resourceId: entry.id, lifecycle: "shared" });
+        confirmationToken: "a".repeat(64) }) });
+    expect(created.status).toBe(403);
+    expect(await created.json()).toMatchObject({ code: "forbidden" });
     expect(authenticate).toHaveBeenCalledTimes(3);
   });
 
@@ -393,7 +530,7 @@ describe("collaboration capability HTTP routes", () => {
     expect((await app.json() as { incarnation: string }).incarnation).toBe(boardAppIncarnation);
   });
 
-  it("preflights and shares only the exact catalog-bound standalone file", async () => {
+  it("preflights an exact catalog-bound file but safely denies standalone creation", async () => {
     const catalogPath = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
     const catalog = await signed({ actorId: ownerId, method: "POST", path: catalogPath, scopeId: null,
       body: { kind: "file", path: "notes.txt", organizationId },
@@ -405,23 +542,23 @@ describe("collaboration capability HTTP routes", () => {
       body: { kind: "file", resourceId: entry.id, organizationId },
     });
     expect(preflight.status).toBe(200);
-    const preview = await preflight.json() as { eligible: boolean; resourceRevision: string; confirmationToken: string };
-    expect(preview).toMatchObject({ eligible: true, resourceRevision: entry.revision });
+    const preview = await preflight.json() as {
+      eligible: boolean;
+      reason: string;
+      resourceRevision: string;
+      confirmationToken?: string;
+    };
+    expect(preview).toMatchObject({ eligible: false, reason: "unsupported", resourceRevision: entry.revision });
+    expect(preview.confirmationToken).toBeUndefined();
     const createPath = `/api/collaboration/runtimes/${runtimeId}/scopes`;
     const body = { kind: "file", resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
-      expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken };
+      expectedRevision: preview.resourceRevision, confirmationToken: "a".repeat(64) };
     const created = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null, body });
-    expect(created.status).toBe(201);
-    const scope = await created.json() as { id: string; kind: string; resourceId: string; lifecycle: string };
-    expect(scope).toMatchObject({ kind: "file", resourceId: entry.id, lifecycle: "shared" });
-    const replay = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null, body });
-    expect(replay.status).toBe(201);
-    expect((await replay.json() as { id: string }).id).toBe(scope.id);
-    expect(await fixture.db.selectFrom("collaboration_events").select("event_id")
-      .where("scope_id", "=", scope.id).execute()).toHaveLength(1);
+    expect(created.status).toBe(403);
+    expect(await created.json()).toMatchObject({ code: "forbidden" });
   });
 
-  it("shares standalone folders and apps by catalog identity, then rejects a replaced app registration", async () => {
+  it("keeps standalone folder and app identities readable but denies new live scopes", async () => {
     const catalogPath = `/api/collaboration/runtimes/${runtimeId}/catalog/resolve`;
     const preflightPath = `/api/collaboration/runtimes/${runtimeId}/scopes/preflight`;
     const createPath = `/api/collaboration/runtimes/${runtimeId}/scopes`;
@@ -435,13 +572,22 @@ describe("collaboration capability HTTP routes", () => {
         body: { kind, resourceId: entry.id, organizationId },
       });
       expect(preflight.status).toBe(200);
-      const preview = await preflight.json() as { resourceRevision: string; confirmationToken: string };
+      const preview = await preflight.json() as {
+        eligible: boolean;
+        reason: string;
+        resourceRevision: string;
+        confirmationToken?: string;
+      };
+      expect(preview).toMatchObject({ eligible: false, reason: "unsupported" });
+      expect(preview.confirmationToken).toBeUndefined();
+      const denied = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
+        body: { kind, resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
+          expectedRevision: preview.resourceRevision, confirmationToken: "a".repeat(64) },
+      });
+      expect(denied.status).toBe(403);
+      expect(await denied.json()).toMatchObject({ code: "forbidden" });
       if (kind === "app") {
         appRegistration = "b".repeat(64);
-        expect((await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
-          body: { kind, resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
-            expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken },
-        })).status).toBe(409);
         const rotated = await signed({ actorId: ownerId, method: "POST", path: catalogPath, scopeId: null,
           body: { kind, path: resourcePath, organizationId },
         });
@@ -456,21 +602,22 @@ describe("collaboration capability HTTP routes", () => {
           body: { kind, resourceId: newEntry.id, organizationId },
         });
         expect(refreshed.status).toBe(200);
-        const currentPreview = await refreshed.json() as { resourceRevision: string; confirmationToken: string };
+        const currentPreview = await refreshed.json() as {
+          eligible: boolean;
+          reason: string;
+          resourceRevision: string;
+          confirmationToken?: string;
+        };
+        expect(currentPreview).toMatchObject({ eligible: false, reason: "unsupported" });
+        expect(currentPreview.confirmationToken).toBeUndefined();
         const shared = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
           body: { kind, resourceId: newEntry.id, organizationId, clientRequestId: randomUUID(),
-            expectedRevision: currentPreview.resourceRevision, confirmationToken: currentPreview.confirmationToken },
+            expectedRevision: currentPreview.resourceRevision, confirmationToken: "a".repeat(64) },
         });
-        expect(shared.status).toBe(201);
-        expect(await shared.json()).toMatchObject({ kind, resourceId: newEntry.id, lifecycle: "shared" });
+        expect(shared.status).toBe(403);
+        expect(await shared.json()).toMatchObject({ code: "forbidden" });
         continue;
       }
-      const created = await signed({ actorId: ownerId, method: "POST", path: createPath, scopeId: null,
-        body: { kind, resourceId: entry.id, organizationId, clientRequestId: randomUUID(),
-          expectedRevision: preview.resourceRevision, confirmationToken: preview.confirmationToken },
-      });
-      expect(created.status).toBe(201);
-      expect(await created.json()).toMatchObject({ kind, resourceId: entry.id, lifecycle: "shared" });
     }
     expect((await signed({ actorId: ownerId, method: "POST", path: preflightPath, scopeId: null,
       body: { kind: "app", resourceId: "board", organizationId },

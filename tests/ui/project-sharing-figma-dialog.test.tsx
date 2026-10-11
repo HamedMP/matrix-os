@@ -1,0 +1,459 @@
+// @vitest-environment jsdom
+import React from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import type { CollaborationProjectInventory, CollaborationScope } from "@matrix-os/contracts";
+import { ProjectAccessManager } from "../../packages/ui/src/collaboration/ProjectAccessManager";
+import { ProjectSharingButton } from "../../packages/ui/src/collaboration/ProjectSharingButton";
+import { ProjectSharingDialog } from "../../packages/ui/src/collaboration/ProjectSharingDialog";
+
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+  HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
+});
+
+const scope: CollaborationScope = {
+  id: "10000000-0000-4000-8000-000000000601",
+  ownerId: "user_owner",
+  organizationId: "org_acme",
+  kind: "project",
+  resourceId: "proj_launch",
+  membershipMode: "direct",
+  lifecycle: "private",
+  revision: "1",
+  authEpoch: "1",
+  authorityGeneration: "1",
+  role: "owner",
+  capabilities: { read: false, discuss: false, manageMembers: true, requestAi: false,
+    observeTerminal: false, controlTerminal: false, stopTerminal: false },
+};
+
+const inventory: CollaborationProjectInventory = {
+  scopeId: scope.id,
+  projectId: "proj_launch",
+  projectRevision: "3",
+  scopeRevision: "1",
+  ownedItems: [{ kind: "chat", id: "Launch Chat", revision: "1", compatibility: "ready" }],
+  externalReferences: [],
+  blockers: [],
+  membershipEffects: [],
+  inventoryHash: "a".repeat(64),
+  membershipHash: "b".repeat(64),
+  inventoryToken: "c".repeat(64),
+  expiresAt: "2026-10-07T13:00:00.000Z",
+};
+
+describe("Figma-aligned project access dialog", () => {
+  it("uses the compact Figma dialog composition without restoring deferred copy-link UI", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [] };
+        if (path.endsWith("/project/inventory")) return inventory;
+        if (path.endsWith("/grants")) return [];
+        return scope;
+      }),
+      post: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "3", confirmationToken: "p".repeat(64) };
+        if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) return {
+          id: "40000000-0000-4000-8000-000000000609", scopeId: scope.id, organizationId: "org_acme",
+          audience: body.audience, preset: body.preset, state: "active", policyVersion: "v1", revision: "1",
+          createdAt: "2026-10-07T12:00:00.000Z", updatedAt: "2026-10-07T12:00:00.000Z",
+        };
+        if (path.endsWith("/policy/preflight")) return undefined;
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+    render(<ProjectSharingButton api={api} runtimeId="vps:owner" organizationId="org_acme" organizationName="Acme Research"
+      projectId="proj_launch" projectName="Launch plan" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Share Launch plan" });
+    expect(dialog.querySelector('[data-slot="project-share-dialog"]')).toHaveClass("max-w-[480px]");
+    expect(screen.getByRole("button", { name: "Close share dialog" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Share “Launch plan”" })).toBeVisible();
+    expect(screen.getByText("Members activate access when they open the project.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /copy link/i })).toBeNull();
+  });
+
+  it("renders Figma-style people rows, organization identity, and descriptive role menus", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    let directPreset = "viewer" as const | "contributor";
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [
+          { actorId: "user_owner", displayName: "Alex Rivera", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          { actorId: "user_editor", displayName: "Maya Chen", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+        ] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Alex Rivera" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000610", preset: "viewer", revision: "3" },
+          people: [{
+            actor: { actorId: "user_editor", displayName: "Maya Chen" }, status: "active",
+            effectivePreset: directPreset, inherited: false,
+            directGrant: { grantId: "40000000-0000-4000-8000-000000000611", preset: directPreset, revision: "2" },
+          }],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(),
+      patch: vi.fn(async (_path: string, body: Record<string, unknown>) => {
+        directPreset = body.preset as "viewer" | "contributor";
+        return {};
+      }),
+      delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" popoverZIndex={11_000} />);
+
+    expect(await screen.findByText("Alex Rivera (you)")).toBeVisible();
+    expect(screen.getByText("Created this · lives on Alex Rivera’s computer")).toBeVisible();
+    expect(screen.getByText("Members can find and open it")).toBeVisible();
+    expect(screen.getByLabelText("Acme Research organization")).toHaveTextContent("A");
+    const role = screen.getByRole("button", { name: "Access for Maya Chen: Viewer" });
+    fireEvent.pointerDown(role, { button: 0, ctrlKey: false });
+    const editorItem = await screen.findByRole("menuitem", { name: /Editor Change files and request AI/ });
+    expect(editorItem.closest('[role="menu"]')).toHaveStyle({ zIndex: "11000" });
+    expect(screen.getByRole("menuitem", { name: /Viewer View project activity only/ })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Remove access" })).toBeVisible();
+    fireEvent.click(editorItem);
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants/40000000-0000-4000-8000-000000000611`,
+      expect.objectContaining({ expectedRevision: "7", expectedGrantRevision: "2", preset: "contributor" }),
+    ));
+  });
+
+  it("keeps owner AI source and consent controls inside the published access dialog", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7",
+      capabilities: { ...scope.capabilities, read: true, requestAi: true } };
+    const source = { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" as const };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [
+          { actorId: "user_owner", displayName: "Alex Rivera", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+        ] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id, revision: "7", owner: { actorId: "user_owner", displayName: "Alex Rivera" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000610", preset: "contributor", revision: "3" },
+          people: [],
+        };
+        if (path.endsWith("/execution-policy/options")) return {
+          organizationAiSubmission: "members",
+          policy: null,
+          options: [{ source, sourceLabel: "Owner Claude account", sourceKind: "owner_account",
+            available: true, modelIds: ["claude-sonnet-5"], defaultModelId: "claude-sonnet-5" }],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => ({})),
+      put: vi.fn(async () => ({
+        scope: { kind: "project", scopeId: scope.id, projectId: scope.resourceId },
+        ownerId: scope.ownerId, source, submitMode: "follow_organization", organizationAiSubmission: "members",
+        effectiveSubmitMode: "members", providerTermsAcknowledgedAt: "2026-10-09T00:00:00.000Z",
+        allowedModelIds: ["claude-sonnet-5"], revision: "1", updatedAt: "2026-10-09T00:00:00.000Z",
+      })),
+      patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectSharingDialog api={api} scope={sharedScope} projectName="Launch plan"
+      organizationName="Acme Research" refreshInventory={async () => inventory} onClose={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "Editor AI" })).toBeVisible();
+    const enable = screen.getByRole("button", { name: "Use this AI source for Editors" });
+    expect(enable).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /may incur charges/i }));
+    fireEvent.click(enable);
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/execution-policy`,
+      expect.objectContaining({ acknowledgeProviderTerms: true, allowedModelIds: ["claude-sonnet-5"] }),
+    ));
+  });
+
+  it("uses the selected organization's real name and defaults first sharing to Everyone · Editor", async () => {
+    let grants: unknown[] = [];
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [] };
+        if (path.endsWith("/project/inventory")) return inventory;
+        if (path.endsWith("/grants")) return grants;
+        return scope;
+      }),
+      post: vi.fn(async (path: string, body: Record<string, unknown>) => {
+        if (path.endsWith("/scopes/preflight")) return { eligible: true, resourceRevision: "3", confirmationToken: "p".repeat(64) };
+        if (path.endsWith("/scopes")) return scope;
+        if (path.endsWith("/grants")) {
+          const grant = {
+          id: "40000000-0000-4000-8000-000000000601", scopeId: scope.id, organizationId: "org_acme",
+          audience: body.audience, preset: body.preset, state: "active", policyVersion: "v1", revision: "1",
+          createdAt: "2026-10-07T12:00:00.000Z", updatedAt: "2026-10-07T12:00:00.000Z",
+          };
+          grants = [...grants, grant];
+          return grant;
+        }
+        if (path.endsWith("/policy/preflight")) return undefined;
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+    render(<ProjectSharingButton api={api} runtimeId="vps:owner" organizationId="org_acme" organizationName="Acme Research"
+      projectId="proj_launch" projectName="Launch plan" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+    expect(await screen.findByRole("dialog", { name: "Share Launch plan" })).toBeVisible();
+    expect(await screen.findByText("Everyone in Acme Research")).toBeVisible();
+    expect(screen.getByRole("button", { name: "General access: Editor" })).toBeVisible();
+    expect(screen.getByText(/all current and future project contents share together/i)).toBeVisible();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants`,
+      expect.objectContaining({ audience: { kind: "organization" }, preset: "contributor" }),
+    ));
+  });
+
+  it("preserves a selected audience when reopening an unpublished project", async () => {
+    const directGrant = {
+      id: "40000000-0000-4000-8000-000000000600", scopeId: scope.id, organizationId: "org_acme",
+      audience: { kind: "member", actorId: "user_ada" }, preset: "viewer", state: "pending",
+      policyVersion: "v1", revision: "1", createdAt: "2026-10-07T12:00:00.000Z",
+      updatedAt: "2026-10-07T12:00:00.000Z",
+    };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [{
+          actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z",
+        }] };
+        if (path.endsWith("/project/inventory")) return inventory;
+        if (path.endsWith("/grants")) return [directGrant];
+        return scope;
+      }),
+      post: vi.fn(async (path: string) => {
+        if (path.endsWith("/scopes/preflight")) return {
+          eligible: true, resourceRevision: "3", confirmationToken: "p".repeat(64),
+          existingScopeId: scope.id, existingLifecycle: "private",
+        };
+        if (path.endsWith("/policy/preflight")) return undefined;
+        throw new Error(`unexpected POST ${path}`);
+      }),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+    render(<ProjectSharingButton api={api} runtimeId="vps:owner" organizationId="org_acme" organizationName="Acme Research"
+      projectId="proj_launch" projectName="Launch plan" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+    expect(await screen.findByRole("dialog", { name: "Share Launch plan" })).toBeVisible();
+    expect(await screen.findByText("Ada")).toBeVisible();
+    expect(screen.getByRole("button", { name: "General access: Restricted" })).toBeVisible();
+    expect(api.post).not.toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants`,
+      expect.objectContaining({ audience: { kind: "organization" } }),
+    );
+  });
+
+  it("changes a direct member between Viewer and Editor with revision checks", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    let directPreset = "viewer" as const | "contributor";
+    let directRevision = "2";
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations") {
+          return { complete: true, organizations: [{
+            organizationId: "org_acme", name: "Acme Research", slug: "acme-research", role: "org:member",
+            memberCount: 2, aiSubmission: "members", membershipEpoch: 1,
+          }] };
+        }
+        if (path.endsWith("/members")) {
+          return { members: [
+            { actorId: "user_owner", displayName: "Owner", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+            { actorId: "user_editor", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ] };
+        }
+        if (path.endsWith("/project/access")) {
+          return {
+            scopeId: scope.id,
+            revision: "7",
+            owner: { actorId: "user_owner", displayName: "Owner" },
+            generalAccess: { grantId: "40000000-0000-4000-8000-000000000610", preset: "viewer", revision: "3" },
+            people: [{
+              actor: { actorId: "user_editor", displayName: "Ada" }, status: "active",
+              effectivePreset: directPreset, inherited: false,
+              directGrant: { grantId: "40000000-0000-4000-8000-000000000611", preset: directPreset, revision: directRevision },
+            }],
+          };
+        }
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(),
+      patch: vi.fn(async (_path: string, body: Record<string, unknown>) => {
+        directPreset = body.preset as "viewer" | "contributor";
+        directRevision = "3";
+        return {};
+      }),
+      delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} />);
+
+    expect(await screen.findByText("Everyone in Acme Research")).toBeVisible();
+    const role = await screen.findByRole("button", { name: "Access for Ada: Viewer" });
+    fireEvent.pointerDown(role, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Editor Change files and request AI/ }));
+
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants/40000000-0000-4000-8000-000000000611`,
+      expect.objectContaining({ expectedRevision: "7", expectedGrantRevision: "2", preset: "contributor" }),
+    ));
+    expect(await screen.findByRole("button", { name: "Access for Ada: Editor" })).toBeVisible();
+  });
+
+  it("lets an inherited Viewer receive a direct Editor grant", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [
+          { actorId: "user_owner", displayName: "Owner", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          { actorId: "user_viewer", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+        ] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000620", preset: "viewer", revision: "3" },
+          people: [{ actor: { actorId: "user_viewer", displayName: "Ada" }, status: "active",
+            effectivePreset: "viewer", inherited: true }],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(async () => ({})),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    expect(await screen.findByRole("combobox", { name: "Add person" })).toHaveValue("user_viewer");
+    fireEvent.change(screen.getByRole("combobox", { name: "Role" }), { target: { value: "contributor" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants`,
+      expect.objectContaining({ audience: { kind: "member", actorId: "user_viewer" }, preset: "contributor" }),
+    ));
+  });
+
+  it("loads later organization-member pages before adding direct access", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations/org_acme/members") return {
+          members: [
+            { actorId: "user_owner", displayName: "Owner", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+          nextCursor: "page_2",
+        };
+        if (path === "/api/organizations/org_acme/members?cursor=page_2") return {
+          members: [
+            { actorId: "user_later", displayName: "Later member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+        };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000630", preset: "viewer", revision: "3" },
+          people: [],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Load more members" }));
+    expect(await screen.findByRole("option", { name: "Later member" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Add person" })).toHaveValue("user_later");
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    expect(api.get).toHaveBeenCalledWith("/api/organizations/org_acme/members?cursor=page_2");
+  });
+
+  it("prevents grant mutations while a later member page is loading", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    let resolveLaterPage!: (value: unknown) => void;
+    const laterPage = new Promise((resolve) => { resolveLaterPage = resolve; });
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations/org_acme/members") return {
+          members: [
+            { actorId: "user_first", displayName: "First member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          ],
+          nextCursor: "page_2",
+        };
+        if (path === "/api/organizations/org_acme/members?cursor=page_2") return laterPage;
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000631", preset: "viewer", revision: "3" },
+          people: [],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    expect(await screen.findByRole("button", { name: "Add" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Load more members" }));
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(api.post).not.toHaveBeenCalled();
+
+    resolveLaterPage({ members: [
+      { actorId: "user_later", displayName: "Later member", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+    ] });
+    expect(await screen.findByRole("option", { name: "Later member" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+  });
+
+  it("retries a transient access load failure in place", async () => {
+    let memberAttempts = 0;
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) {
+          memberAttempts += 1;
+          if (memberAttempts === 1) throw new Error("temporary");
+          return { members: [] };
+        }
+        if (path.endsWith("/grants")) return [];
+        return scope;
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={scope} organizationName="Acme Research" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Access is unavailable/);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));
+    expect(await screen.findByText("Everyone in Acme Research")).toBeVisible();
+    expect(memberAttempts).toBe(2);
+  });
+});

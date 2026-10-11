@@ -14,7 +14,6 @@ import type { Hono } from "hono";
 import {
   CollaborationAuthorizationError,
 } from "./authority.js";
-import type { StandaloneResourceScopeService } from "./standalone-resource-scope.js";
 import {
   createInvitationCreationHandler,
 } from "./invitation-creation-route.js";
@@ -51,6 +50,12 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // The owner must be a current member of the organization the share is scoped to (S20 / T101).
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
+    const unsupported = {
+      eligible: false as const,
+      reason: "unsupported" as const,
+      resourceRevision: 0,
+      confirmationToken: undefined,
+    };
     const result = input.kind === "chat"
       ? await options.chatScope.preflight({
           ownerId: proof.ownerId,
@@ -58,24 +63,26 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
           chatId: input.resourceId,
         })
       : input.kind === "terminal"
-        ? await requireTerminalAdapter(options.terminalAdapter).preflight({
+        ? options.terminalAdapter ? await options.terminalAdapter.preflight({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             terminalId: input.resourceId,
-          })
+          }) : unsupported
         : input.kind === "project" ? await requireProjectScope(options.projectScope).preflight({
             ownerId: proof.ownerId,
             organizationId: input.organizationId,
             projectId: input.resourceId,
-          }) : await requireStandaloneScope(options).preflight({ ownerId: proof.ownerId,
-            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId });
+          }) : options.standaloneScope ? await options.standaloneScope.preflight({ ownerId: proof.ownerId,
+            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId }) : unsupported;
+    const projectCreation = input.kind === "project";
     return c.json(CollaborationScopePreflightResponseSchema.parse({
-      eligible: result.eligible,
-      ...("reason" in result && result.reason ? { reason: result.reason } : {}),
+      eligible: projectCreation && result.eligible,
+      ...(!projectCreation ? { reason: "unsupported" as const }
+        : "reason" in result && result.reason ? { reason: result.reason } : {}),
       resourceRevision: String("chatRevision" in result
         ? result.chatRevision
         : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
-      ...(result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
+      ...(projectCreation && result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
       ...("existingScopeId" in result && result.existingScopeId
         ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
         : {}),
@@ -89,38 +96,18 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // Membership is proven before any write; the confirmation token also binds this organization.
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
-    const scope = input.kind === "chat"
-      ? await options.chatScope.shareChat({
-          ownerId: proof.ownerId,
-          organizationId: input.organizationId,
-          chatId: input.resourceId,
-          clientRequestId: input.clientRequestId,
-          payloadHash: digest(bytes),
-          expectedChatRevision: Number(input.expectedRevision),
-          confirmationToken: input.confirmationToken,
-        })
-      : input.kind === "terminal"
-        ? await requireTerminalAdapter(options.terminalAdapter).shareTerminal({
-            ownerId: proof.ownerId,
-            organizationId: input.organizationId,
-            terminalId: input.resourceId,
-            clientRequestId: input.clientRequestId,
-            payloadHash: digest(bytes),
-            expectedResourceRevision: Number(input.expectedRevision),
-            confirmationToken: input.confirmationToken,
-          })
-        : input.kind === "project" ? await requireProjectScope(options.projectScope).prepare({
-            ownerId: proof.ownerId,
-            organizationId: input.organizationId,
-            projectId: input.resourceId,
-            clientRequestId: input.clientRequestId,
-            payloadHash: digest(bytes),
-            expectedProjectRevision: Number(input.expectedRevision),
-            confirmationToken: input.confirmationToken,
-          }) : await requireStandaloneScope(options).create({ ownerId: proof.ownerId,
-            organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId,
-            clientRequestId: input.clientRequestId, payloadHash: digest(bytes),
-            expectedRevision: Number(input.expectedRevision), confirmationToken: input.confirmationToken });
+    if (input.kind !== "project") {
+      throw new CollaborationAuthorizationError("forbidden", "New standalone collaboration scopes are unavailable");
+    }
+    const scope = await requireProjectScope(options.projectScope).prepare({
+      ownerId: proof.ownerId,
+      organizationId: input.organizationId,
+      projectId: input.resourceId,
+      clientRequestId: input.clientRequestId,
+      payloadHash: digest(bytes),
+      expectedProjectRevision: Number(input.expectedRevision),
+      confirmationToken: input.confirmationToken,
+    });
     if (scope.kind === "project") {
       await notifyScope(options, scope.id);
       return c.json(projectPreparationProjection(scope), 201);
@@ -285,9 +272,4 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
     await notifyScope(options, scopeId);
     return c.json(result);
   }));
-}
-
-function requireStandaloneScope(options: CollaborationRouteOptions): StandaloneResourceScopeService {
-  if (!options.standaloneScope) throw new CollaborationAuthorizationError("unavailable", "Shared resources are unavailable");
-  return options.standaloneScope;
 }

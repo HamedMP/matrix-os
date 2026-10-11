@@ -110,29 +110,36 @@ describe("SessionAccessControl", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it("uses the refreshed scope revision for preset grants", async () => {
+  it("keeps legacy standalone management read-only for new grants while preserving AI maintenance and revocation", async () => {
     const currentScope = { ...scope, revision: "3" };
+    const directGrant = {
+      id: "20000000-0000-4000-8000-000000000001", scopeId: scope.id,
+      organizationId: scope.organizationId, audience: { kind: "member" as const, actorId: "user_ada" },
+      preset: "contributor" as const, state: "active" as const, policyVersion: "v1", revision: "2",
+      createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
+    };
     const collaborationApi = api();
-    collaborationApi.get.mockImplementation(async (path: string) => path.startsWith("/api/organizations/")
-      ? { members: [{ actorId: "user_ada", displayName: "Ada", role: "org:member", joinedAt: "2026-09-17T12:00:00.000Z" }] }
-      : path.endsWith("/grants") ? [] : path.endsWith("/members") ? { members } : currentScope);
-    collaborationApi.post.mockImplementation(async (path: string, body: { audience?: unknown; preset?: string }) =>
-      path.endsWith("/policy/preflight") ? undefined : {
-        id: "20000000-0000-4000-8000-000000000001", scopeId: scope.id,
-        organizationId: scope.organizationId, audience: body.audience, preset: body.preset,
-        state: "pending", policyVersion: "v1", revision: "1",
-        createdAt: "2026-09-17T12:00:00.000Z", updatedAt: "2026-09-17T12:00:00.000Z",
-      });
+    collaborationApi.get.mockImplementation(async (path: string) => path.endsWith("/execution-policy/options")
+      ? { organizationAiSubmission: "members", policy: null, options: [{
+        source: { accessSourceId: "owner_anthropic", providerInstanceId: "claude_owner", harness: "claude_code" },
+        sourceLabel: "Owner Claude account", sourceKind: "owner_account", available: true,
+        modelIds: ["claude-sonnet-5"], defaultModelId: "claude-sonnet-5",
+      }] }
+      : path.endsWith("/grants") ? [directGrant] : path.endsWith("/members") ? { members } : currentScope);
     render(<SessionAccessControl api={collaborationApi} scope={scope} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Collaboration access" }));
     fireEvent.click(await screen.findByRole("button", { name: "Manage access" }));
-    fireEvent.change(await screen.findByLabelText("Share with"), { target: { value: "user_ada" } });
-    fireEvent.click(screen.getByRole("button", { name: "Grant access" }));
+    expect(await screen.findByText("Existing live access")).toBeVisible();
+    expect(screen.queryByLabelText("Share with")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Grant access" })).toBeNull();
+    expect(await screen.findByRole("region", { name: "Editor AI" })).toBeVisible();
+    expect(screen.getByLabelText("Owner AI source")).toHaveValue(JSON.stringify(["owner_anthropic", "claude_owner"]));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
 
-    await waitFor(() => expect(collaborationApi.post).toHaveBeenCalledWith(
-      `/api/collaboration/scopes/${scope.id}/grants`,
-      expect.objectContaining({ expectedRevision: "3", audience: { kind: "member", actorId: "user_ada" }, preset: "contributor" }),
+    await waitFor(() => expect(collaborationApi.delete).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants/${directGrant.id}`,
+      expect.objectContaining({ expectedRevision: "3", expectedMemberRevision: "2" }),
     ));
   });
 });

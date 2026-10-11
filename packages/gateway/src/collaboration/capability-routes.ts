@@ -4,7 +4,9 @@ import {
   CollaborationGrantSchema,
   CollaborationIdSchema,
   CollaborationPatchGrantRequestSchema,
+  CollaborationProjectAccessPresentationSchema,
   CollaborationReadinessSchema,
+  type CollaborationProjectAccessPresentation,
 } from "@matrix-os/contracts";
 import type { Context, Hono } from "hono";
 import { z } from "zod/v4";
@@ -13,7 +15,11 @@ import { DirectAuthError } from "./direct-auth.js";
 import { CollaborationAuthorizationError } from "./authority-error.js";
 import type { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { evaluateCollaborationReadiness } from "./readiness-evaluator.js";
-import type { CollaborationCapabilityRepository, GrantRecord } from "./capability-repository.js";
+import {
+  MAX_LISTED_PARTICIPANTS,
+  type CollaborationCapabilityRepository,
+  type GrantRecord,
+} from "./capability-repository.js";
 import {
   authenticateOwnerProject, authorize, deleteConditions, digest, digestDeleteConditions, handle, notifyScope, readJson,
   requireScope, verifyHttp, type CollaborationRouteOptions,
@@ -23,10 +29,12 @@ import { PRESET_POLICY_VERSION } from "./repository-shared.js";
 
 const GRANTS_PATH = "/api/collaboration/scopes/:scopeId/grants";
 const OWNER_RUNTIME_HEADER = "x-matrix-collaboration-owner-runtime";
+const ACCESS_PRESENTATION_CONCURRENCY = 8;
 
 type CapabilityRouteOptions = Pick<
   CollaborationRouteOptions,
   "verifier" | "directSessions" | "onScopeCommitted" | "repository" | "readinessProbes" | "ownerRuntimeSessions" | "runtimeId"
+  | "resolveParticipant"
 > & {
   capabilities?: CollaborationCapabilityRepository;
   capabilityEvaluator?: CollaborationCapabilityEvaluator;
@@ -68,6 +76,75 @@ async function grantManager(
 }
 
 export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteOptions): void {
+  routes.get("/api/collaboration/scopes/:scopeId/project/access", async (c) => handle(c, async () => {
+    const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
+    await grantManager(options, c, new Uint8Array(), "manage_members", scopeId);
+    const scope = await requireScope(options.repository, scopeId);
+    if (scope.kind !== "project") throw new CollaborationAuthorizationError("not_found", "Project scope not found");
+    const { grants, evaluator } = requireCapabilities(options);
+    const now = Date.now();
+    const live = (await grants.listGrants(scopeId)).filter((grant) =>
+      (grant.state === "active" || grant.state === "pending")
+      && (grant.expiresAt === undefined || Date.parse(grant.expiresAt) > now));
+    const organizationGrant = live.find((grant) => grant.audience.kind === "organization") ?? null;
+    const activations = organizationGrant ? (await grants.listActivations(organizationGrant.grantId))
+      .filter((activation) => activation.state === "active") : [];
+    const byActor = new Map<string, {
+      organizationActivated: boolean;
+      directGrant?: GrantRecord;
+    }>();
+    for (const activation of activations) {
+      if (activation.actorId === scope.ownerId || !organizationGrant) continue;
+      byActor.set(activation.actorId, { organizationActivated: true });
+    }
+    for (const grant of live) {
+      if (grant.audience.kind !== "member" || grant.audience.actorId === scope.ownerId) continue;
+      byActor.set(grant.audience.actorId, {
+        organizationActivated: byActor.get(grant.audience.actorId)?.organizationActivated ?? false,
+        directGrant: grant,
+      });
+    }
+    const people: CollaborationProjectAccessPresentation["people"] = [];
+    // Direct grants must remain manageable even when organization activations fill the bounded
+    // presentation. Grant count is capped separately, so prioritizing them cannot exceed this cap.
+    const candidates = [...byActor.entries()].sort(([leftActorId, left], [rightActorId, right]) => {
+      const directPriority = Number(Boolean(right.directGrant)) - Number(Boolean(left.directGrant));
+      return directPriority || leftActorId.localeCompare(rightActorId);
+    }).slice(0, MAX_LISTED_PARTICIPANTS);
+    for (let offset = 0; offset < candidates.length; offset += ACCESS_PRESENTATION_CONCURRENCY) {
+      const batch = await Promise.all(candidates.slice(offset, offset + ACCESS_PRESENTATION_CONCURRENCY)
+        .map(async ([actorId, candidate]): Promise<CollaborationProjectAccessPresentation["people"][number] | null> => {
+          const effective = await evaluator.evaluateEffectiveAccess({ scopeId, actorId });
+          if (effective.preset === null && !candidate.directGrant) return null;
+          const directIsEffective = candidate.directGrant?.state === "active" && effective.preset !== null;
+          const inherited = candidate.organizationActivated && effective.preset !== null
+            && (!directIsEffective || organizationGrant?.preset === "contributor" || candidate.directGrant?.preset === "viewer");
+          return {
+            actor: await options.resolveParticipant(actorId),
+            status: effective.preset === null ? "pending" : "active",
+            effectivePreset: effective.preset ?? candidate.directGrant?.preset ?? "viewer",
+            inherited,
+            ...(candidate.directGrant ? { directGrant: {
+              grantId: candidate.directGrant.grantId,
+              preset: candidate.directGrant.preset,
+              revision: String(candidate.directGrant.grantRevision),
+            } } : {}),
+          };
+        }));
+      people.push(...batch.filter((person): person is NonNullable<typeof person> => person !== null));
+    }
+    return c.json(CollaborationProjectAccessPresentationSchema.parse({
+      scopeId,
+      revision: String(scope.revision),
+      owner: await options.resolveParticipant(scope.ownerId),
+      generalAccess: organizationGrant ? {
+        grantId: organizationGrant.grantId,
+        preset: organizationGrant.preset,
+        revision: String(organizationGrant.grantRevision),
+      } : null,
+      people,
+    }));
+  }));
   routes.post(`${GRANTS_PATH}/:grantId/accept`, async (c) => handle(c, async () => {
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const grantId = CollaborationIdSchema.parse(c.req.param("grantId"));

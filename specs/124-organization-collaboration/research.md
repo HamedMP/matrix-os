@@ -1,6 +1,6 @@
 # Research and decisions — direct member-computer collaboration
 
-Inspected 2026-09-20 against main `94985f02e`. These are source findings and design decisions; no deployment or provider spike was run. The previous central-proxy/pooled-org-runtime delivery plan is superseded by this revision.
+This file preserves the 2026-09-20 implementation research behind the shipped collaboration architecture. The 2026-10-07 product boundary in `spec.md` is authoritative where this historical research differs: only projects create new live collaboration; product copy says Editor for wire preset `contributor`; all project-owned Chats inherit the project audience; and public Chat snapshots remain a separate read-only feature.
 
 ## R1 — Reuse authority; replace transport
 
@@ -56,7 +56,7 @@ Use private service-only Matrix group text through fresh org/group authorization
 
 ## R10 — Group Chat and Git owner are opinionated defaults
 
-Idempotently create one default project group Chat and root. Join reuses both; per-Chat worktrees are deferred and joining creates no new root. Everyone has a named Matrix actor; read-only viewers cannot post, normal Contributor includes discussion. Human discussion is separate from AI submission. The project owner controls the selected source and Git identity. New local commits use configured owner author/committer; pushes and PRs use the owner's configured forge account. Imported commit history is untouched; requestor attribution lives in Matrix audit, not fabricated Git authorship.
+Every project-owned Chat is an inherited group Chat. Join reuses its canonical timeline and root; per-Chat worktrees are deferred and joining creates no new root. Everyone has a named Matrix actor; Viewers cannot post, while Editors (wire preset `contributor`) include discussion and may request AI when the project capability and runtime allow it. Human discussion is separate from AI submission. The project owner controls the selected source and Git identity. New local commits use configured owner author/committer; pushes and PRs use the owner's configured forge account. Imported commit history is untouched; requester attribution lives in Matrix audit, not fabricated Git authorship.
 
 V1 drops per-operation owner approval (product decision 2026-09-20): the credential-holding Git broker executes member commit/push/PR operations under the owner identity and audits the requesting member. Approval bound to an exact tree/ref remains the documented later policy. Collaborators contribute without GitHub/AI onboarding.
 

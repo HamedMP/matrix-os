@@ -100,4 +100,20 @@ describe("shared Chat client state", () => {
       composerExplanation: "Viewers can read this Chat but cannot post messages.",
     });
   });
+
+  it("enables AI presentation only for an Editor with the requestAi capability", () => {
+    expect(deriveChatPermissions({
+      ...scope,
+      capabilities: { ...scope.capabilities, requestAi: true },
+    })).toMatchObject({
+      roleLabel: "Editor",
+      canRequestAi: true,
+      aiExplanation: "Editors can request AI when the owner runtime is available.",
+    });
+    expect(deriveChatPermissions({
+      ...scope,
+      role: "viewer",
+      capabilities: { ...scope.capabilities, requestAi: true },
+    }).canRequestAi).toBe(false);
+  });
 });

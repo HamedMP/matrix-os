@@ -5,9 +5,12 @@ import {
   type CollaborationDirectApi,
 } from "@matrix-os/ui";
 import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { DesktopCollaborationOrganization, useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
+
+const PROJECT_SHARING_LAYERS = { popover: DESKTOP_Z_INDEX.popover };
 
 export function DesktopProjectSharing({ projectId, projectName }: { projectId: string; projectName: string }) {
   const gatewayApi = useConnection((state) => state.api);
@@ -17,7 +20,8 @@ export function DesktopProjectSharing({ projectId, projectName }: { projectId: s
   const runtimeId = useCollaborationRuntimeId(organizationStatus !== "none" ? gatewayApi : null);
   return collaborationApi && runtimeId
     ? <DesktopCollaborationOrganization>{(organizationId) => <ProjectSharingButton api={collaborationApi}
-      runtimeId={runtimeId} organizationId={organizationId} projectId={projectId} projectName={projectName} />}</DesktopCollaborationOrganization>
+      runtimeId={runtimeId} organizationId={organizationId} projectId={projectId} projectName={projectName}
+      layers={PROJECT_SHARING_LAYERS} />}</DesktopCollaborationOrganization>
     : null;
 }
 
@@ -67,6 +71,7 @@ export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName
     organizationId: sharing.organizationId,
     projectId,
     projectName,
+    layers: PROJECT_SHARING_LAYERS,
     onClose,
   });
   useImperativeHandle(ref, () => ({ start: flow.start }));

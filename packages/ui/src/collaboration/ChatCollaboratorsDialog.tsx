@@ -53,10 +53,10 @@ function accessCoverage(kind: Scope["kind"], resourceLabel: string): string {
 }
 
 function presetMeaning(kind: Scope["kind"]): string {
-  if (kind === "terminal") return "Viewers watch only. Contributors may request input control. Owners may take over control.";
-  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Contributors may make changes within its exact scope.";
-  if (kind === "project") return "Contributors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
-  return "Contributors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
+  if (kind === "terminal") return "Viewers watch only. Editors may request input control. Owners may take over control.";
+  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Editors may make changes within its exact scope.";
+  if (kind === "project") return "Editors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
+  return "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
 }
 
 function useScopeReadiness(api: CollaborationApi, scope: Scope, refreshVersion: number): CollaborationReadiness | null {
@@ -137,12 +137,12 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         {currentMembers.length === 0 ? <div className="rounded-xl border p-5 text-center">
           <div aria-hidden className="text-xl">◇</div>
           <p className="mt-1 font-medium">No collaborators yet</p>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Contributor above.</p>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Editor above.</p>
         </div> : currentMembers.map((member) => <div key={member.actor.actorId} className="flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{member.actor.displayName}</p>
             <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>{member.status === "pending"
-              ? "Access pending" : member.role === "editor" ? "Contributor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
+              ? "Access pending" : member.role === "editor" ? "Editor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
           </div>
         </div>)}
       </div>

@@ -5,6 +5,7 @@ import {
   CollaborationActorIdSchema,
   CollaborationIdSchema,
   CollaborationOrganizationIdSchema,
+  CollaborationParticipantSchema,
   CollaborationRevisionSchema,
   CollaborationSafeErrorCodeSchema,
 } from "#collaboration";
@@ -105,6 +106,27 @@ export const CollaborationGrantActivationSchema = z.object({
   state: CollaborationGrantActivationStateSchema,
   decidedAt: IsoTimestampSchema,
   membershipEvidenceEpoch: CollaborationRevisionSchema,
+}).strict();
+
+const CollaborationProjectAccessGrantSchema = z.object({
+  grantId: CollaborationIdSchema,
+  preset: CollaborationPresetSchema,
+  revision: CollaborationRevisionSchema,
+}).strict();
+
+/** Owner-only presentation for the unified project Share/access dialog. */
+export const CollaborationProjectAccessPresentationSchema = z.object({
+  scopeId: CollaborationIdSchema,
+  revision: CollaborationRevisionSchema,
+  owner: CollaborationParticipantSchema,
+  generalAccess: CollaborationProjectAccessGrantSchema.nullable(),
+  people: z.array(z.object({
+    actor: CollaborationParticipantSchema,
+    status: z.enum(["pending", "active"]),
+    effectivePreset: CollaborationPresetSchema,
+    inherited: z.boolean(),
+    directGrant: CollaborationProjectAccessGrantSchema.optional(),
+  }).strict()).max(1_000),
 }).strict();
 
 export const CollaborationCreateGrantRequestSchema = z.object({
@@ -275,6 +297,7 @@ export type CollaborationAudience = z.infer<typeof CollaborationAudienceSchema>;
 export type CollaborationGrantState = z.infer<typeof CollaborationGrantStateSchema>;
 export type CollaborationGrant = z.infer<typeof CollaborationGrantSchema>;
 export type CollaborationGrantActivation = z.infer<typeof CollaborationGrantActivationSchema>;
+export type CollaborationProjectAccessPresentation = z.infer<typeof CollaborationProjectAccessPresentationSchema>;
 export type CollaborationCreateGrantRequest = z.infer<typeof CollaborationCreateGrantRequestSchema>;
 export type CollaborationPatchGrantRequest = z.infer<typeof CollaborationPatchGrantRequestSchema>;
 export type CollaborationAccessReason = z.infer<typeof CollaborationAccessReasonSchema>;

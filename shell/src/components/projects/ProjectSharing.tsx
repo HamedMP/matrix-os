@@ -7,6 +7,9 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
 import { CollaborationOrganization, useShellCollaborationApi } from "@/lib/collaboration-organization";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+
+const PROJECT_SHARING_LAYERS = { popover: SHELL_Z_INDEX.popover };
 
 export function ProjectSharing({ projectId, projectName }: { projectId: string; projectName: string }) {
   const platformHost = useBrowserOrigin();
@@ -32,7 +35,8 @@ export function ProjectSharing({ projectId, projectName }: { projectId: string; 
     return () => { active = false; };
   }, [organizationStatus]);
   return api && runtimeId
-    ? <CollaborationOrganization>{(organizationId) => <ProjectSharingButton api={api} runtimeId={runtimeId}
-      organizationId={organizationId} projectId={projectId} projectName={projectName} />}</CollaborationOrganization>
+    ? <CollaborationOrganization>{(organizationId, organizationName) => <ProjectSharingButton api={api} runtimeId={runtimeId}
+      organizationId={organizationId} organizationName={organizationName} projectId={projectId} projectName={projectName}
+      layers={PROJECT_SHARING_LAYERS} />}</CollaborationOrganization>
     : null;
 }

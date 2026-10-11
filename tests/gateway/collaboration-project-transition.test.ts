@@ -504,6 +504,35 @@ describe("project collaboration transition journal", () => {
       .where("scope_id", "=", SCOPE_ID).execute()).toEqual([{ id: existingGrantId, preset: "viewer" }]);
   });
 
+  it("preserves an explicitly Restricted audience through publication", async () => {
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",
+      invitation_id: null, invited_by: OWNER_ID, accepted_at: NOW, expires_at: null, revision: 1,
+      joined_at: NOW, updated_at: NOW,
+    } as never).execute();
+    const revokedGrantId = "60000000-0000-4000-8000-000000000053";
+    await fixture.db.insertInto("collaboration_grants").values({
+      id: revokedGrantId, scope_id: SCOPE_ID, organization_id: "org_matrix_team", audience_kind: "organization",
+      audience_actor_id: null, preset: "contributor", state: "revoked", policy_version: "v1", source_id: null,
+      legacy_ceiling: null, expires_at: null, revision: 2, created_by: OWNER_ID, created_at: NOW, updated_at: NOW, revoked_at: NOW,
+    } as never).execute();
+    const transitions = journal();
+    await prepare();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID, sourceFenceEpoch: 8, currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH, currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+    await transitions.activate(TRANSITION_ID);
+
+    expect(await fixture.db.selectFrom("collaboration_grants").select(["id", "state"])
+      .where("scope_id", "=", SCOPE_ID).where("audience_kind", "=", "organization").execute())
+      .toEqual([{ id: revokedGrantId, state: "revoked" }]);
+  });
+
   it("shares with exactly the members the owner chose before sharing, published at activation", async () => {
     await fixture.db.insertInto("collaboration_members").values({
       scope_id: SCOPE_ID, actor_id: OWNER_ID, role: "owner", status: "accepted", organization_id: "org_matrix_team",

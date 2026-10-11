@@ -7,11 +7,13 @@ export type OrganizationMembershipStatus = "loading" | "none" | "member" | "unav
 export interface OrganizationMembershipState {
   status: OrganizationMembershipStatus;
   organizationId: string | null;
+  organizationName?: string | null;
 }
 
 const OrganizationStateContext = createContext<OrganizationMembershipState>({
   status: "loading",
   organizationId: null,
+  organizationName: null,
 });
 
 export function OrganizationStateProvider({ value, children }: {
