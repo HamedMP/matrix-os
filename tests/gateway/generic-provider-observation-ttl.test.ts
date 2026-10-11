@@ -17,8 +17,14 @@ const cases = (["pi", "opencode"] as const).flatMap(kind => [
   { kind, waitLayer: "canonical", delay: 4_000, removeAuth: false, expectedEnabled: true },
   { kind, waitLayer: "canonical", delay: 6_001, removeAuth: true, expectedEnabled: false },
   { kind, waitLayer: "canonical", delay: 13_001, removeAuth: false, expectedEnabled: false },
-]);
-it.each(cases)("$kind native observation across $waitLayer delay=$delay revoked=$removeAuth", async ({ kind, waitLayer, delay, removeAuth, expectedEnabled }) => {
+]).map(value => ({ ...value, queueDelay: 0, readBudget: 13_000 }));
+cases.push(...(["pi", "opencode"] as const).map(kind => ({
+  kind, waitLayer: "canonical", delay: 6_000, queueDelay: 8_000, readBudget: 13_000, removeAuth: false, expectedEnabled: false,
+})));
+cases.push(...(["pi", "opencode"] as const).map(kind => ({
+  kind, waitLayer: "canonical", delay: 6_001, queueDelay: 0, readBudget: 6_000, removeAuth: false, expectedEnabled: false,
+})));
+it.each(cases)("$kind native observation across $waitLayer queue=$queueDelay budget=$readBudget delay=$delay revoked=$removeAuth", async ({ kind, waitLayer, delay, queueDelay, readBudget, removeAuth, expectedEnabled }) => {
   const homePath = await mkdtemp(join(tmpdir(), "provider-observation-ttl-"));
   let clock = +PROVIDER_SETTINGS_NOW;
   const now = () => new Date(clock);
@@ -34,6 +40,11 @@ it.each(cases)("$kind native observation across $waitLayer delay=$delay revoked=
     kind === "pi" ? { type: "api_key", key: "synthetic-test-only" } : { type: "api", key: "synthetic-test-only" } }));
   const observed = Promise.withResolvers<void>();
   const funded = Promise.withResolvers<void>();
+  const recoveryEntered = Promise.withResolvers<void>();
+  const recoveryGate = Promise.withResolvers<void>();
+  let recovered = !queueDelay;
+  const canonicalEntered = Promise.withResolvers<void>();
+  let canonicalReads = 0;
   const run = vi.fn(async () => ({ stdout: kind === "pi"
     ? "provider model context max-out thinking images\nnative working-model 200000 32000 yes no"
     : "native/working-model", stderr: "" }));
@@ -47,7 +58,10 @@ it.each(cases)("$kind native observation across $waitLayer delay=$delay revoked=
     env: { MATRIX_PLATFORM_KEY: "synthetic-runtime", MATRIX_FUNDED_AI_ENABLED: "true" },
     fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
       getCredential: async () => { throw new Error("No credentials during catalog reads"); }, invalidate: () => undefined, close: () => undefined },
-    fundedReadinessReader: { read: async () => { if (waitLayer === "canonical") await funded.promise; return {
+    fundedReadinessReader: { read: async () => {
+      canonicalReads += 1;
+      if (canonicalReads === 2) canonicalEntered.resolve();
+      if (waitLayer === "canonical") await funded.promise; return {
       readiness: { state: "ready", checkedAt: now().toISOString(), staleAfter: new Date(clock + 30_000).toISOString(), action: "none", safeReason: null },
       allowedModelIds: ["claude-sonnet-5"],
     }; } },
@@ -55,16 +69,29 @@ it.each(cases)("$kind native observation across $waitLayer delay=$delay revoked=
     nativeHarnessCatalogReader: { ...nativeReader, getCatalog },
   });
   const store = new ProviderSettingsStore({ homePath, now, providerSnapshotReader: producer,
+    runtimeCoordinator: {
+      supportedActions: [], isRecoveryReady: () => recovered,
+      reconcilePending: async () => { recoveryEntered.resolve(); await recoveryGate.promise; recovered = true; },
+      applyConfiguration: async () => undefined, rollbackConfiguration: async () => undefined,
+    },
     fundingSummaryReader: { getFundingSummary: async () => { await funded.promise; return providerSettingsFundingSummaryFixture(); } },
   });
   try {
-    const request = store.getSnapshot();
+    // A prior serialized recovery holds the real Settings queue. The second
+    // request owns its budget before it waits; Service must not restart it.
+    const priorRead = queueDelay ? store.getSnapshot({ refresh: true }) : undefined;
+    if (priorRead) await recoveryEntered.promise;
+    const request = store.getSnapshot({ nativeObservationDeadline: clock + readBudget });
+    clock += queueDelay;
+    recoveryGate.resolve();
     await observed.promise;
+    if (queueDelay) await canonicalEntered.promise;
     // Native evidence is fresh at discovery but expires while unrelated funding settles.
     clock += delay;
     if (removeAuth) await rm(join(authDir, "auth.json"));
     funded.resolve();
     const settings = await request;
+    await priorRead;
     const harness = settings.harnesses.find(row => row.harness === kind)!;
     expect(harness.enabled).toBe(expectedEnabled);
     const source = settings.accessSources.find(row => row.harness === kind)!;
@@ -86,5 +113,5 @@ it.each(cases)("$kind native observation across $waitLayer delay=$delay revoked=
     const instance = (await catalog.getCatalog({ userId: "synthetic_owner", source: "jwt" })).instances.find(row => row.driverKind === kind)!;
     if (expectedEnabled) expect(instance).toMatchObject({ availability: "available", defaultSelection: { model: "native:working-model" } });
     else expect(instance.availability).not.toBe("available");
-  } finally { funded.resolve(); producer.close(); await rm(homePath, { recursive: true, force: true }); }
+  } finally { recoveryGate.resolve(); funded.resolve(); producer.close(); await rm(homePath, { recursive: true, force: true }); }
 });

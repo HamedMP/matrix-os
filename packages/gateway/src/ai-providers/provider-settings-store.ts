@@ -160,9 +160,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     try { return await operation(); } finally { release(); }
   }
 
-  async #canonical(refresh = false, suppressFundedProbes = false, ownerKeyPreflight?: ProviderSnapshotReadOptions["ownerKeyPreflight"], signal?: AbortSignal, admissionScope?: ProviderSnapshotReadOptions["admissionScope"]): Promise<AiProviderSnapshotV3> {
+  async #canonical(options: ProviderSnapshotReadOptions = {}): Promise<AiProviderSnapshotV3> {
     try {
-      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh, ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}), ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}), ...(admissionScope ? { admissionScope } : {}) }));
+      const { refresh = false, suppressFundedProbes, ownerKeyPreflight, signal, admissionScope, nativeObservationDeadline } = options;
+      const snapshot = AiProviderSnapshotV3Schema.parse(await this.#reader.getSnapshot({ refresh,
+        ...(suppressFundedProbes ? { suppressFundedProbes: true } : {}),
+        ...(ownerKeyPreflight ? { ownerKeyPreflight } : {}), ...(signal ? { signal } : {}),
+        ...(admissionScope ? { admissionScope } : {}),
+        ...(nativeObservationDeadline !== undefined ? { nativeObservationDeadline } : {}),
+      }));
       const age = this.#now().getTime() - Date.parse(snapshot.refreshedAt);
       if (!Number.isFinite(age) || age < -60_000 || age > this.#maxProjectionAgeMs) {
         throw new Error("Stale canonical provider projection");
@@ -267,8 +273,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     // Use the same write generation and cheap fences as ordinary Settings reads.
     // Partial native inventory must never initialize or reconcile saved owner intent.
     const generation = await this.#serialize(async () => this.#mutationGeneration);
-    const inventory = this.#canonical(options.refresh === true, options.suppressFundedProbes === true,
-      options.ownerKeyPreflight, options.signal, options.admissionScope);
+    const inventory = this.#canonical(options);
     const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({
       canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
       refresh: options.refresh === true, catalogFailureHarnesses: [],
@@ -303,7 +308,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     if (this.#observationScope?.() === "canonical_matrix") options = { ...options, admissionScope: "canonical_matrix" };
     if (options.admissionScope === "managed_matrix" || options.admissionScope === "canonical_matrix") return await this.#managedMatrixSnapshot(options);
     const refresh = options.refresh === true;
-    const observationScope = { signal: options.signal, deadline: +this.#now() + 13000 };
+    const observationScope = { signal: options.signal, deadline: Math.min(+this.#now() + 13000,
+      Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity) };
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
     // All inventory, funding, catalog and native probes run outside mutation
     // admission. Only configuration reconciliation and the final cheap fence
@@ -313,7 +319,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       // Sample only after prior admissions drain, never in the middle of one.
       const generation = await this.#serialize(async () => this.#mutationGeneration);
       const read = async () => {
-        const inventory = this.#canonical(refresh && attempt === 0, options.suppressFundedProbes === true, options.ownerKeyPreflight, options.signal);
+        const inventory = this.#canonical({ ...options, refresh: refresh && attempt === 0,
+          nativeObservationDeadline: observationScope.deadline });
         const [canonical, enrichment] = await Promise.all([inventory, readProviderSettingsEnrichment({
           canonical: inventory, fundingSummary: options.suppressFundedProbes === true ? undefined : this.#fundingSummary,
           genericModelCatalog: this.#genericModelCatalog, refresh: refresh && attempt === 0, catalogFailureHarnesses: ["pi", "opencode"],
@@ -604,7 +611,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           throw new ProviderSettingsStoreError("runtime_unavailable", 503);
         }
         try {
-          canonical = await this.#canonical(true);
+          canonical = await this.#canonical({ refresh: true });
         } catch (error) {
           await this.#rollbackRuntime(runtimeMutation);
           throw error;
@@ -632,7 +639,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
-          canonical = await this.#canonical(true);
+          canonical = await this.#canonical({ refresh: true });
           if (nativeClaudeLifecycle) {
             claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false));
             if (!claudeMetadata) claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
@@ -661,7 +668,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           await this.#deleteSecret(mutation.accountId);
           config.accountProfiles = config.accountProfiles.filter((profile) => profile.id !== mutation.accountId);
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
-          canonical = await this.#canonical(true);
+          canonical = await this.#canonical({ refresh: true });
           if (nativeClaudeLifecycle) claudeMetadata = await verifyNativeAccountMetadata(await this.#claudeAccountMetadata?.(false));
           break;
         }

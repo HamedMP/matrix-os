@@ -8,6 +8,8 @@ export interface ProviderSnapshotReadOptions {
   /** Foreground login completion verifies identity independently of quota. */
   includeNativeAccountUsage?: boolean;
   signal?: AbortSignal;
+  /** Original server request deadline (epoch ms), including Settings queue time; cannot extend renewal budgets. */
+  nativeObservationDeadline?: number;
   /** Recipe-only exact selected key/model; never accepted from renderer input. */
   ownerKeyPreflight?: { modelId: string; credentialFingerprint: string };
   /** Recipe preflight must not pay generic funded probes before identity/catalog gates. */

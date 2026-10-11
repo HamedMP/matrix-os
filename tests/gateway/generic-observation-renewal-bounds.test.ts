@@ -66,3 +66,29 @@ it("observes coding metadata after slow Hermes renewal so a second sibling canno
   expect(Date.parse(result.profiles.find(profile => profile.harness === "pi")!.localObservation.staleAfter!)).toBeGreaterThan(clock);
   expect(renewObservations).toHaveBeenCalledOnce();
 });
+
+it.each([50, 2_000])("rejects late metadata before a delayed timer callback with %ims scope remaining", async remaining => {
+  vi.useFakeTimers();
+  let clock = start;
+  const held = Promise.withResolvers<GenericHarnessModelCatalog>();
+  const started = Promise.withResolvers<void>();
+  const renewObservations = vi.fn(() => { started.resolve(); return held.promise; });
+  const reader = createCanonicalNativeHarnessCatalogReader({ getCatalog: async () => fixture(), renewObservations },
+    { now: () => new Date(clock) });
+  const original = await reader(false);
+  clock += 6_001;
+  const deadline = clock + remaining;
+  const renewalDeadline = clock + Math.min(1_000, remaining);
+  const request = reader.renewStale(original, { deadline });
+  await started.promise;
+  // Wall-clock passes the budget while the timeout callback is still queued.
+  // Resolving the metadata promise first reproduces event-loop timer lateness.
+  clock = renewalDeadline + 1;
+  const late = fixture();
+  late.accessSources[0]!.localObservation = { state: "present_unverified", checkedAt: new Date(clock).toISOString(),
+    staleAfter: new Date(clock + 5_000).toISOString() };
+  held.resolve(late);
+  expect(await request).toBe(original);
+  expect(original.profiles[0]!.localObservation.checkedAt).toBe(new Date(start).toISOString());
+  expect(vi.getTimerCount()).toBe(0);
+});

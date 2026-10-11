@@ -44,12 +44,13 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
       && Date.parse(profile.localObservation.staleAfter) <= +now());
     const coding = async (): Promise<Catalog> => {
       if (!expired || !reader.renewObservations || scope.deadline <= +now()) return catalog;
+      const renewalDeadline = Math.min(scope.deadline, +now() + 1000);
       let timer: ReturnType<typeof setTimeout> | undefined;
       let onAbort: (() => void) | undefined;
       try {
         const renewed = await Promise.race([
           reader.renewObservations(projectCanonicalNativeHarnessCatalog(catalog)).then(canonicalCatalog),
-          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.min(1000, scope.deadline - +now())); }),
+          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.max(0, renewalDeadline - +now())); }),
           new Promise<never>((_, reject) => {
             onAbort = () => reject(scope.signal?.reason);
             scope.signal?.addEventListener("abort", onAbort, { once: true });
@@ -57,7 +58,7 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
           }),
         ]);
         scope.signal?.throwIfAborted();
-        if (!renewed) return catalog;
+        if (!renewed || renewalDeadline <= +now()) return catalog;
         return { profiles: [...catalog.profiles.filter(profile => profile.harness !== "pi" && profile.harness !== "opencode"), ...renewed.profiles],
           failures: catalog.failures };
       } catch (error: unknown) {
