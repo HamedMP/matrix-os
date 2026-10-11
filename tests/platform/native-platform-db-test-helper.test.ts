@@ -58,6 +58,105 @@ function fakeNative(options: { startupFailure?: Error; cleanupFailure?: Error; b
 }
 
 describe('native platform fixture admission and lifecycle', () => {
+  it.each(['clone', 'template'])('keeps admin ownership and retries a failed %s drop with singleflight shutdown', async kind => {
+    const { manager, databases, pools } = fakeNative();
+    await manager.createTestPlatformDb(fixtureUrl);
+    const admin = pools[0];
+    const query = admin.query as unknown as ReturnType<typeof vi.fn>;
+    const execute = query.getMockImplementation()!;
+    const failure = new Error(`Synthetic ${kind} drop failure`);
+    let fail = true;
+    query.mockImplementation(async (statement: string) => {
+      if (fail && statement.startsWith('DROP DATABASE') && statement.includes(`_${kind}`)) { fail = false; throw failure; }
+      return execute(statement);
+    });
+    try {
+      const first = manager.shutdown();
+      expect(manager.shutdown()).toBe(first);
+      await expect(first).rejects.toThrow();
+      expect(databases.size).toBe(1);
+      expect(admin.end).not.toHaveBeenCalled();
+      await expect(manager.createTestPlatformDb(fixtureUrl)).rejects.toThrow(/closed/i);
+      const retry = manager.shutdown();
+      expect(retry).not.toBe(first);
+      expect(manager.shutdown()).toBe(retry);
+      await retry;
+      expect(databases.size).toBe(0);
+      expect(admin.end).toHaveBeenCalledOnce();
+      expect(manager.shutdown()).toBe(retry);
+    } finally { managers.splice(managers.indexOf(manager), 1); }
+  });
+
+  it('preserves the usable admin pool when final database verification fails and retries verification', async () => {
+    const { manager, databases, pools } = fakeNative();
+    await manager.createTestPlatformDb(fixtureUrl);
+    const admin = pools[0];
+    const query = admin.query as unknown as ReturnType<typeof vi.fn>;
+    const execute = query.getMockImplementation()!;
+    let fail = true;
+    query.mockImplementation(async (statement: string) => {
+      if (fail && statement.startsWith('SELECT datname')) { fail = false; throw new Error('Synthetic verification failure'); }
+      return execute(statement);
+    });
+    try {
+      await expect(manager.shutdown()).rejects.toThrow('Synthetic verification failure');
+      expect(databases.size).toBe(0);
+      expect(admin.end).not.toHaveBeenCalled();
+      await manager.shutdown();
+      expect(admin.end).toHaveBeenCalledOnce();
+    } finally { managers.splice(managers.indexOf(manager), 1); }
+  });
+
+  it('retains timed-out drop ownership for a subsequent shutdown cleanup attempt', async () => {
+    const { manager, databases, pools } = fakeNative();
+    await manager.createTestPlatformDb(fixtureUrl);
+    const admin = pools[0];
+    const query = admin.query as unknown as ReturnType<typeof vi.fn>;
+    const execute = query.getMockImplementation()!;
+    let unblock!: () => void;
+    const gate = new Promise<void>(resolve => { unblock = resolve; });
+    let blocked = false;
+    query.mockImplementation(async (statement: string) => {
+      if (!blocked && statement.startsWith('DROP DATABASE') && statement.includes('_clone_')) { blocked = true; await gate; }
+      return execute(statement);
+    });
+    vi.useFakeTimers();
+    try {
+      const first = manager.shutdown().then(() => undefined, error => error);
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(await first).toBeInstanceOf(AggregateError);
+      expect(databases.size).toBe(1);
+      expect(admin.end).not.toHaveBeenCalled();
+      unblock();
+      await vi.advanceTimersByTimeAsync(0);
+      await manager.shutdown();
+      expect(databases.size).toBe(0);
+      expect(admin.end).toHaveBeenCalledOnce();
+    } finally { unblock(); vi.useRealTimers(); managers.splice(managers.indexOf(manager), 1); }
+  });
+
+  it('awaits an in-flight admin close on shutdown retry instead of ending or querying that pool again', async () => {
+    const { manager, pools } = fakeNative();
+    await manager.createTestPlatformDb(fixtureUrl);
+    const admin = pools[0];
+    let unblock!: () => void;
+    vi.mocked(admin.end).mockImplementationOnce(() => new Promise<void>(resolve => { unblock = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const first = manager.shutdown().then(() => undefined, error => error);
+      await vi.advanceTimersByTimeAsync(10_001);
+      expect(await first).toMatchObject({ message: expect.stringMatching(/admin closure deadline/i) });
+      const queryCount = vi.mocked(admin.query).mock.calls.length;
+      const retry = manager.shutdown().then(() => undefined, error => error);
+      await vi.advanceTimersByTimeAsync(0);
+      unblock();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await retry).toBeUndefined();
+      expect(admin.end).toHaveBeenCalledOnce();
+      expect(vi.mocked(admin.query).mock.calls).toHaveLength(queryCount);
+    } finally { unblock(); vi.useRealTimers(); managers.splice(managers.indexOf(manager), 1); }
+  });
+
   it('uses the original cached PGlite helper unchanged when the distinct URL is unset', async () => {
     const fallback = vi.spyOn(original, 'createTestPlatformDb');
     const destroy = vi.spyOn(original, 'destroyTestPlatformDb');

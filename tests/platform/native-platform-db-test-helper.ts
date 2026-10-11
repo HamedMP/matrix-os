@@ -80,6 +80,7 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
   let draining = false;
   let drainPromise: Promise<void> | undefined;
   let shutdownPromise: Promise<void> | undefined;
+  let adminClosure: Promise<void> | undefined;
 
   function identifier(name: string): string {
     if (!allowedNames.includes(name)) throw new Error('Native platform fixture database is outside its fixed allowlist');
@@ -270,16 +271,36 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
       if (template) {
         try { await cleanup(template); } catch (error) { log('Shutdown template cleanup failed', error); errors.push(...flattened(error)); }
       }
-      if (admin) {
+      if (admin && !adminClosure) {
         try {
           const remaining = await query('SELECT datname FROM pg_database WHERE datname=ANY($1::text[])', [allowedNames]);
           if (remaining.rows.length) throw new Error('Native platform fixture databases remain after shutdown');
         } catch (error) { log('Shutdown database verification failed', error); errors.push(error); }
-        try { await deadline('admin closure', admin.end(), 10_000); }
+      }
+      // Failed drops and uncertain verification retain their owner connection
+      // and registry entries. A rejected shutdown is retryable, not terminal.
+      if (!errors.length && (resources.size || pending.size || fallbackDbs.size)) {
+        errors.push(new Error('Native platform fixture resources remain after shutdown'));
+      }
+      if (admin && !errors.length) {
+        const owner = admin;
+        // Keep the actual close promise when only its waiting deadline expires.
+        // pg rejects a second end(), and an ending pool cannot verify databases.
+        adminClosure ??= Promise.resolve().then(() => owner.end()).then(() => {
+          if (admin === owner) admin = undefined;
+        }).catch(error => {
+          adminClosure = undefined;
+          if (owner.ended && admin === owner) admin = undefined;
+          throw error;
+        });
+        try { await deadline('admin closure', adminClosure, 10_000); }
         catch (error) { log('Shutdown admin cleanup failed', error); errors.push(error); }
       }
       throwErrors(errors, 'Native platform fixture shutdown failed');
-    })();
+    })().catch(error => {
+      shutdownPromise = undefined;
+      throw error;
+    });
     return shutdownPromise;
   }
   return { createTestPlatformDb: create, destroyTestPlatformDb: destroy, drainClones, shutdown };
