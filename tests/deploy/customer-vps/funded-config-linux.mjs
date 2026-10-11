@@ -1,4 +1,4 @@
-// Manual Linux integration fixture, exclusively inside a disposable container.
+// Linux integration fixture, exclusively inside a disposable container.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -8,6 +8,9 @@ import { buildFundedConfigRepairCommand } from '../../../scripts/ops/funded-conf
 assert(process.platform === 'linux' && process.getuid() === 0 && existsSync('/.dockerenv')
   && process.env.MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST === '1' && !existsSync('/opt/matrix'),
 'This fixture requires a fresh disposable Linux container; never run on a VPS.');
+if (process.env.MATRIX_FUNDED_REPAIR_EXPECT_ARCH !== undefined)
+  assert.equal(process.arch, process.env.MATRIX_FUNDED_REPAIR_EXPECT_ARCH);
+console.log(JSON.stringify({ fixture: 'funded-config-linux', platform: process.platform, architecture: process.arch }));
 const group = spawnSync('/usr/sbin/groupadd', ['-g', '2001', 'matrix']);
 assert.equal(group.status, 0);
 for (const [path, mode] of [['/opt/matrix', 0o770], ['/opt/matrix/env', 0o750], ['/opt/matrix/runtime', 0o755],
