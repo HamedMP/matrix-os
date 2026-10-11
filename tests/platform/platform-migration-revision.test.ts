@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { FUNDED_PROBE_CACHE_REVISION } from "../../packages/platform/src/database/funded-probe-cache-revision.js";
 import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/migration-revision.js";
 
 describe("platform schema revision", () => {
+  it("binds the independent shared probe cache schema to its own revision", async () => {
+    const source = await readFile("packages/platform/src/database/funded-probe-cache-migration.ts");
+    expect(FUNDED_PROBE_CACHE_REVISION.fingerprint).toBe(createHash("sha256").update(source).digest("hex"));
+  });
   it("changes whenever the ordered schema migrations change", async () => {
     const base = "packages/platform/src/database";
     const files = ["migrate.ts", "../ai-funded-reservation-indexes.ts", "../ai-funded-recovery-audit.ts", "../ai-funded-usage-waiver-audit.ts", ...(await readdir(`${base}/migrations`))
