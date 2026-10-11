@@ -1,3 +1,4 @@
+import { acceptanceMachineSql, assertAcceptanceIdentityMember, assertFundedAcceptanceIdentity, assertAcceptanceTransactionCurrent, denyAcceptanceOperatorWrite, readAcceptanceMachine, validateFundedAcceptanceScope, type FundedAcceptanceScope } from "./ai-funded-acceptance-scope.js";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import {
   FUNDED_AI_AUDIENCE,
@@ -44,6 +45,7 @@ const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A
 
 export interface AiFundedPolicyRepositoryOptions {
   db: PlatformDB;
+  acceptanceScope?: FundedAcceptanceScope;
   credentialHashSecret: string;
   now?: () => Date;
   tokenIdFactory?: () => string;
@@ -86,6 +88,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     throw new Error("Funded AI credential hash secret must be at least 32 characters");
   }
   const now = options.now ?? (() => new Date());
+  const acceptanceScope = options.acceptanceScope ? validateFundedAcceptanceScope(options.acceptanceScope, now()) : undefined;
   const tokenIdFactory = options.tokenIdFactory ?? randomUUID;
   const tokenSecretFactory = options.tokenSecretFactory ?? (() => randomBytes(32).toString("base64url"));
   const credentialTtlMs = options.credentialTtlMs ?? 15 * 60_000;
@@ -116,10 +119,12 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
 
   async function getRuntimePolicy(identityInput: FundedAiIdentity) {
     const identity = IdentitySchema.parse(identityInput);
+    assertAcceptanceIdentityMember(acceptanceScope, identity, now());
     await options.db.ready;
     const row = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
       .innerJoin("user_machines as machine", "machine.machine_id", "runtime.machine_id")
       .select([
+        "machine.runtime_token_epoch",
         "runtime.enabled",
         "runtime.revision",
         "runtime.allowed_model_ids",
@@ -137,6 +142,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       .where("machine.deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw new AiFundedPolicyError("identity_mismatch");
+    assertFundedAcceptanceIdentity(acceptanceScope, identity, row.runtime_token_epoch, now());
     return {
       identity,
       enabled: row.enabled,
@@ -153,6 +159,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     enabled: boolean;
     allowedModelIds: string[];
   }): Promise<FundedAiGlobalPolicy> {
+    denyAcceptanceOperatorWrite(acceptanceScope);
     const parsed = GlobalPolicyUpdateSchema.parse(input);
     const allowedModelIds = parsed.allowedModelIds;
     const updatedAt = now().toISOString();
@@ -174,6 +181,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
   }
 
   async function setRuntimePolicy(input: SetRuntimePolicyInput) {
+    denyAcceptanceOperatorWrite(acceptanceScope);
     const parsed = RuntimePolicyUpdateSchema.parse(input);
     const identity = parsed.identity;
     const allowedModelIds = parsed.allowedModelIds;
@@ -247,6 +255,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const cooldownColumn = requestClass === "background" ? "next_background_issue_at" : "next_issue_at";
     const identity = IdentitySchema.parse(identityInput);
     await options.db.ready;
+    assertAcceptanceIdentityMember(acceptanceScope, identity, now());
     const checked = now();
     const checkedAt = checked.toISOString();
     const nextIssueAt = new Date(checked.getTime() + issueCooldownMs).toISOString();
@@ -263,7 +272,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       monthly_budget_microusd: number;
       token_id: string;
     };
-    const issued = await sql<IssuedRow>`
+    const issueStatement = sql<IssuedRow>`
       WITH eligible AS (
         SELECT
           runtime.machine_id,
@@ -283,6 +292,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND machine.status = 'running'
           AND machine.activation_state = 'authorized'
           AND machine.deleted_at IS NULL
+          AND ${acceptanceMachineSql(acceptanceScope)}
           AND runtime.enabled = TRUE
           AND global_policy.enabled = TRUE
           AND (runtime.expires_at IS NULL OR runtime.expires_at > ${checkedAt})
@@ -292,6 +302,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
             JOIN jsonb_array_elements_text(runtime.allowed_model_ids::jsonb) runtime_model(value)
               ON runtime_model.value = global_model.value
           )
+        ${acceptanceScope ? sql`FOR SHARE OF machine` : sql``}
       ), leased AS (
         ${probe ? sql`
           SELECT eligible.* FROM eligible
@@ -317,9 +328,15 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         RETURNING token_id
       )
       SELECT leased.*, inserted.token_id FROM leased CROSS JOIN inserted
-    `.execute(options.db.executor);
+    `;
+    const issued = acceptanceScope ? await options.db.transaction(async trx => {
+      const result = await issueStatement.execute(trx.executor);
+      await assertAcceptanceTransactionCurrent(trx, acceptanceScope, now);
+      return result;
+    }) : await issueStatement.execute(options.db.executor);
     const row = issued.rows[0];
     if (!row) {
+      if (acceptanceScope) await readAcceptanceMachine(options.db, acceptanceScope, identity, now);
       const policy = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
         .innerJoin("ai_funded_global_policy as global_policy", (join) => join.onRef("global_policy.policy_id", "=", "global_policy.policy_id"))
         .select(["runtime.next_issue_at", "runtime.next_background_issue_at", "runtime.enabled as runtime_enabled", "runtime.expires_at",
@@ -365,6 +382,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
 
   const metering = createAiFundedMeteringRepository({
     db: options.db,
+    acceptanceScope,
     credentialHashSecret: options.credentialHashSecret,
     now,
     policyFreshnessMs,
@@ -383,7 +401,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     // probe service; this must not consume the VPS persistent issuance cooldown.
     issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
-    releaseExecutionAdmission: createFundedExecutionRecovery({ db: options.db, now }),
+    releaseExecutionAdmission: acceptanceScope ? async () => { throw new AiFundedPolicyError("access_disabled"); } : createFundedExecutionRecovery({ db: options.db, now }),
     ...metering,
   };
 }

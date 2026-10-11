@@ -1,3 +1,4 @@
+import { assertAcceptanceIdentityMember, assertFundedAcceptanceIdentity, type FundedAcceptanceScope } from "./ai-funded-acceptance-scope.js";
 import { sql } from "kysely";
 import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 import type { PlatformDB } from "./db.js";
@@ -5,7 +6,7 @@ import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
 
 type CheckoutRow = {
-  clerk_user_id: string; machine_runtime_slot: string; status: string; activation_state: string; deleted_at: string | null;
+  runtime_token_epoch: number; clerk_user_id: string; machine_runtime_slot: string; status: string; activation_state: string; deleted_at: string | null;
   owner_id: string; policy_runtime_slot: string; runtime_enabled: boolean; runtime_allowed_model_ids: string;
   monthly_budget_microusd: unknown; expires_at: string | null; runtime_revision: number;
   global_enabled: boolean; global_allowed_model_ids: string; global_revision: number;
@@ -19,12 +20,15 @@ type CheckoutRow = {
  * writes or row lock. A DB-side statement deadline bounds the single query. */
 export async function readCheckoutFundingSnapshot(input: {
   db: PlatformDB;
+  acceptanceScope?: FundedAcceptanceScope;
+  now?: () => Date;
   identity: { ownerId: string; machineId: string; runtimeSlot: string };
   checked: Date;
   policyFreshnessMs: number;
   deadlineAtMs: number;
 }) {
   const { db, identity, checked, deadlineAtMs } = input;
+  assertAcceptanceIdentityMember(input.acceptanceScope, identity, (input.now ?? (() => checked))());
   const checkedAt = checked.toISOString();
   const currentPeriod = utcMonthStart(checked);
   await db.ready;
@@ -36,7 +40,7 @@ export async function readCheckoutFundingSnapshot(input: {
     await readUnknownUsageWaivers(trx.executor, identity.ownerId);
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const result = await sql<CheckoutRow>`
-      select machine.clerk_user_id, machine.runtime_slot as machine_runtime_slot,
+      select machine.runtime_token_epoch, machine.clerk_user_id, machine.runtime_slot as machine_runtime_slot,
         machine.status, machine.activation_state, machine.deleted_at,
         runtime.owner_id, runtime.runtime_slot as policy_runtime_slot,
         runtime.enabled as runtime_enabled, runtime.allowed_model_ids as runtime_allowed_model_ids,
@@ -63,6 +67,7 @@ export async function readCheckoutFundingSnapshot(input: {
       || row.owner_id !== identity.ownerId || row.policy_runtime_slot !== identity.runtimeSlot) {
         throw new AiFundedPolicyError("identity_mismatch");
       }
+      assertFundedAcceptanceIdentity(input.acceptanceScope, identity, row.runtime_token_epoch, (input.now ?? (() => checked))());
       if (row.restriction_frozen === true || exactInteger(row.restriction_debt_microusd ?? 0) > 0) {
         throw new AiFundedPolicyError("access_disabled");
       }
@@ -76,6 +81,7 @@ export async function readCheckoutFundingSnapshot(input: {
       ...row, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
     return {
+      ...(input.acceptanceScope ? { runtimeTokenEpoch: row.runtime_token_epoch } : {}),
       funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
       policy: {
         enabled: enabled && allowedModelIds.length > 0,

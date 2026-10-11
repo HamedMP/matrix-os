@@ -1,3 +1,4 @@
+import { assertFundedAcceptanceIdentity, readAcceptanceMachine, validateFundedAcceptanceScope, type FundedAcceptanceScope } from "./ai-funded-acceptance-scope.js";
 import { sql } from "kysely";
 import { FUNDED_AI_READINESS_TIMEOUTS, IsoTimestampSchema, JEV_MODEL_ID } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -15,7 +16,7 @@ const pendingBudgetOperations = new Set<Promise<boolean>>();
 const ReadyEvidenceSchema = z.object({ ready: z.literal(true), priceValidThrough: IsoTimestampSchema }).strict();
 
 export interface FundedModelProbeResult { ready: boolean; checkedAt: string; staleAfter: string }
-export interface FundedModelProbeCall { signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime }
+export interface FundedModelProbeCall { signal?: AbortSignal; deadlineAtMs?: number; runtime?: JevProbeRuntime & { runtimeTokenEpoch?: number } }
 export interface FundedModelProbeService { probe(modelId: string, call?: FundedModelProbeCall): Promise<FundedModelProbeResult> }
 
 export function loadFundedModelProbeLimits(env: NodeJS.ProcessEnv): { dailyLimit: number; minuteLimit: number } | undefined {
@@ -116,6 +117,7 @@ async function readPriceValidThrough(response: Response, signal: AbortSignal): P
 /** A bounded, operator-funded route probe. Owner policy and ledger are never cached. */
 export function createFundedModelProbeService(input: {
   db: PlatformDB;
+  acceptanceScope?: FundedAcceptanceScope;
   relayBaseUrl?: string;
   relayControlToken?: string;
   dailyLimit?: number;
@@ -127,6 +129,25 @@ export function createFundedModelProbeService(input: {
   credentials?: JevProbeCredentials;
 }): FundedModelProbeService {
   const now = input.now ?? (() => new Date());
+  const acceptanceScope = input.acceptanceScope ? validateFundedAcceptanceScope(input.acceptanceScope, now()) : undefined;
+  let pendingAcceptanceReads = 0; // capped at8; settlement, including abandoned reads, releases the slot.
+  const admissionCurrent = async (call: FundedModelProbeCall): Promise<boolean> => {
+    if (!acceptanceScope) return true;
+    try {
+      if (!call.runtime) return false;
+      assertFundedAcceptanceIdentity(acceptanceScope, call.runtime.identity, call.runtime.runtimeTokenEpoch, now());
+      const remaining = Math.min(1500, (call.deadlineAtMs ?? Date.now() + 1500) - Date.now());
+      if (remaining <= 0 || call.signal?.aborted || pendingAcceptanceReads >= 8) return false;
+      pendingAcceptanceReads += 1;
+      const operation = readAcceptanceMachine(input.db, acceptanceScope, call.runtime.identity, now);
+      void operation.then(() => { pendingAcceptanceReads -= 1; }, () => { pendingAcceptanceReads -= 1; });
+      await probeWithSignal(() => operation, AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(remaining)]));
+      return true;
+    } catch (error: unknown) {
+      console.warn("[funded-ai] Acceptance probe unavailable:", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  };
   const MAX_KEYS = 128;
   const cache = new Map<string, FundedModelProbeResult>();
   interface PendingProbe {
@@ -192,23 +213,28 @@ export function createFundedModelProbeService(input: {
   }
   return {
     async probe(modelId, call = {}) {
-      const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
+      if (acceptanceScope && !await admissionCurrent(call)) return unavailable();
+      // Epoch is internal probe context; the existing strict Jev credential shape is unchanged.
+      const { runtimeTokenEpoch: _runtimeTokenEpoch, ...jevContext } = call.runtime ?? {};
+      void _runtimeTokenEpoch; // Only this new internal metadata is outside the strict Jev lease shape.
+      const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(jevContext).data : undefined;
       if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
         : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
-        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;
+        runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision, ...(acceptanceScope ? [acceptanceScope.runtimeTokenEpoch] : [])]) : acceptanceScope ? JSON.stringify([modelId, acceptanceScope]) : modelId;
       const windowMs = runtime ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
       const cached = cache.get(model);
       if (cached && Date.parse(cached.staleAfter) > now().getTime()) return cached;
       const pending = inFlight.get(model);
-      if (pending) return join(model, pending, call, windowMs);
+      if (pending) { const result = await join(model, pending, call, windowMs); return !acceptanceScope || await admissionCurrent(call) ? result : unavailable(); }
       if (inFlight.size >= MAX_KEYS) return unavailable();
       const entry: PendingProbe = {
         controller: new AbortController(), waiters: new Map(), promise: undefined as unknown as Promise<FundedModelProbeResult>,
       };
       inFlight.set(model, entry);
       entry.promise = (async (): Promise<FundedModelProbeResult> => {
+        if (acceptanceScope && !await admissionCurrent(call)) return unavailable();
         const admitted = await (input.reserveProbe ?? reserveFundedModelProbe)({ db: input.db,
           dailyLimit: input.dailyLimit!, minuteLimit: input.minuteLimit!, deadlineMs: input.budgetDeadlineMs });
         if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
@@ -217,6 +243,7 @@ export function createFundedModelProbeService(input: {
           remember(model, result);
           return result;
         }
+        if (acceptanceScope && !await admissionCurrent(call)) return unavailable();
         let priceValidThrough: string | undefined;
         try {
           if (runtime) {
@@ -226,7 +253,7 @@ export function createFundedModelProbeService(input: {
               fetchFn: input.fetchFn ?? fetch, readReady: response => readPriceValidThrough(response, signal) });
           } else {
             const signal = AbortSignal.any([entry.controller.signal, AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs)]);
-            const url = new URL(`/ready?model=${encodeURIComponent(model)}`, base!);
+            const url = new URL(`/ready?model=${encodeURIComponent(modelId)}`, base!);
             const response = await (input.fetchFn ?? fetch)(url.toString(), {
               headers: { authorization: `Bearer ${input.relayControlToken}` },
               redirect: "error", signal,
@@ -238,6 +265,7 @@ export function createFundedModelProbeService(input: {
         }
         const checked = now().getTime();
         if (entry.controller.signal.aborted || !hasActiveWaiter(entry)) return unavailable();
+        if (acceptanceScope && !await admissionCurrent(call)) return unavailable();
         const priceExpiry = Date.parse(priceValidThrough ?? "");
         const ready = Number.isFinite(priceExpiry) && priceExpiry > checked;
         const result = { ready, checkedAt: new Date(checked).toISOString(),
@@ -246,7 +274,8 @@ export function createFundedModelProbeService(input: {
         remember(model, result);
         return result;
       })().finally(() => { if (inFlight.get(model) === entry) inFlight.delete(model); });
-      return join(model, entry, call, windowMs);
+      const result = await join(model, entry, call, windowMs);
+      return !acceptanceScope || await admissionCurrent(call) ? result : unavailable();
     },
   };
 }
