@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBillingRoutes, type StripeBillingClient } from '../../packages/platform/src/billing-routes.js';
 import { upsertBillingCustomer, upsertBillingOverride, type PlatformDB } from '../../packages/platform/src/db.js';
 import { MatrixBillingStatusSchema } from '@matrix-os/contracts';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const timestamp = '2026-09-01T00:00:00.000Z';
 describe('account billing portal access', () => {

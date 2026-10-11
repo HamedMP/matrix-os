@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
-import { KyselyPGlite } from "kysely-pglite";
-import { createPlatformDb, type PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { createTestIntegrationDb } from "./native-integration-db-test-helper.js";
+import { type PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import { getService } from "../../packages/gateway/src/integrations/registry.js";
@@ -36,15 +36,12 @@ const WEBHOOK_SECRET = "whsec_test_secret_123";
 
 describe("Integration Routes", () => {
   let db: PlatformDb;
-  let pglite: InstanceType<typeof KyselyPGlite>;
   let pipedream: ReturnType<typeof mockPipedream>;
   let app: Hono;
   let userId: string;
 
   beforeEach(async () => {
-    pglite = await KyselyPGlite.create();
-    db = createPlatformDb({ dialect: pglite.dialect });
-    await db.migrate();
+    ({ db } = await createTestIntegrationDb());
 
     pipedream = mockPipedream();
 

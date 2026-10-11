@@ -7,7 +7,7 @@ import { createFundedHostConfigRoutes, loadFundedHostConfig, FundedHostConfigRes
 import { registerFundedHostConfigRoutes } from "../../packages/platform/src/funded-host-config-registration.js";
 import { buildPlatformSyncVerificationToken, buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const machineId = "12345678-1234-4234-8234-123456789abc";
 const secret = "strong-platform-secret-for-test-only";

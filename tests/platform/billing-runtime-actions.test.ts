@@ -9,7 +9,7 @@ import {
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { dispatchBillingRuntimeActions } from '../../packages/platform/src/billing-runtime-actions.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('billing runtime actions', () => {
   let db: PlatformDB;

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiCreditHistoryHandler } from "../../packages/platform/src/billing/ai-credit-history-route.js";
 import { createBillingRoutes, type StripeBillingClient } from "../../packages/platform/src/billing-routes.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 describe("Matrix AI credit history", () => {
   let db: PlatformDB;

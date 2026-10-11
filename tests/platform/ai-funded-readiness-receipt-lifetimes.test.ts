@@ -6,7 +6,7 @@ import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-fund
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { buildPlatformRuntimeVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type { FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const now = "2026-08-30T20:00:00.000Z";
 const modelId = "anthropic/claude-sonnet-5";

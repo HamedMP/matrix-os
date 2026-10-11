@@ -6,7 +6,7 @@ import {
 } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { ensureSpeechMonthlyAllowance } from "../../packages/platform/src/speech/allowance.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const modelId = "anthropic/claude-sonnet-5";
 const otherModelId = "anthropic/claude-opus-5";

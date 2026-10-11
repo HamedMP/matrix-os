@@ -15,7 +15,7 @@ import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 // Phase A (spec 092): provisioning reliability — stuck rows fail automatically,
 // failed rows never block retries, retries are bounded, retired rows cannot register.

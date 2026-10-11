@@ -28,7 +28,7 @@ import {
   buildPlatformRuntimeVerificationToken,
   buildPlatformSpeechRuntimeVerificationToken,
 } from "../../packages/platform/src/platform-token.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 import type { FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
