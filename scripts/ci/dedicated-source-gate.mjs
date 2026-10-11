@@ -92,6 +92,11 @@ export async function reconcileSourceQualification(github,repo,controller,option
   const recovery=!admitted&&previouslyAdmitted;
   if(recovery)snapshot.executionMode='hosted-only';
   const evidence={schemaVersion:1,admittedPreviously:previouslyAdmitted||admitted,...snapshot,controllerSha:controller.sha,controllerRef:controller.ref,controllerAttempt:options.runAttempt};
+  const old=prior?.evidence;
+  const sameRecovery=recovery&&old?.executionMode==='hosted-only'&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha&&Number.isFinite(Date.parse(old.recoveryStartedAt))&&Number.isSafeInteger(old.recoveryAfterRunId)&&old.recoveryAfterRunId>=0;
+  // Keep the authenticated generation while source/API validation fails closed.
+  // Otherwise its already-running hosted replacement becomes older than itself.
+  if(sameRecovery){evidence.recoveryStartedAt=old.recoveryStartedAt;evidence.recoveryAfterRunId=old.recoveryAfterRunId;}
   const write=async(conclusion,title,extra={})=>{
    const args={...repo,details_url:`https://github.com/${repo.owner}/${repo.repo}/actions/runs/${options.runId}`,status:'completed',conclusion,request,output:{title,summary:JSON.stringify({...evidence,...extra})}};
    const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
@@ -104,8 +109,6 @@ export async function reconcileSourceQualification(github,repo,controller,option
   let requester;
   try{
    if(recovery){
-    const old=prior?.evidence;
-    const sameRecovery=old?.executionMode==='hosted-only'&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha&&Number.isFinite(Date.parse(old.recoveryStartedAt))&&Number.isSafeInteger(old.recoveryAfterRunId)&&old.recoveryAfterRunId>=0;
     const latest=await currentRequester(github,repo,snapshot,{allModes:true});
     const delegatedAgain=latest&&!latest.display_title.startsWith('CI hosted-refresh-v1 ')&&latest.id>(sameRecovery?old.recoveryAfterRunId:0);
     evidence.recoveryStartedAt=sameRecovery&&!delegatedAgain?old.recoveryStartedAt:new Date(Math.floor(Date.now()/1000)*1000).toISOString();
