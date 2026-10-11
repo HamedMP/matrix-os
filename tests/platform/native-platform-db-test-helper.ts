@@ -201,19 +201,19 @@ export function createNativeFixtureManager<DB extends FixtureDatabase>(dependenc
   async function waitForTemplateConnections(): Promise<void> {
     // Client close may finish before PostgreSQL removes its backend. Deny new
     // connections first, then retain the exact zero-session publication guard.
-    const expires = Date.now() + 5_000;
+    const expires = performance.now() + 5_000;
     for (;;) {
-      const remaining = expires - Date.now();
+      const remaining = expires - performance.now();
       if (remaining <= 0) throw new Error('Native platform fixture template connection drain deadline exceeded');
       const result = await deadline('template connection drain',
         query('SELECT count(*) AS count FROM pg_stat_activity WHERE datname=$1', [templateName]), remaining);
       const count = Number(result.rows[0]?.count);
       if (count === 0) return;
       if (!Number.isSafeInteger(count) || count < 0) throw new Error('Native platform fixture template session count is invalid');
-      if (Date.now() >= expires) {
+      if (performance.now() >= expires) {
         throw new Error(`Native platform fixture template connection drain deadline exceeded (${count} sessions remain)`);
       }
-      await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, expires - Date.now())));
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, expires - performance.now())));
     }
   }
   function trackTask(task: Promise<{ db: DB }>): Promise<{ db: DB }> {
