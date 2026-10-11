@@ -17,11 +17,70 @@ async function fixture() {
   return directory;
 }
 
-async function subprocessBuild(directory: string, timeout = 2000) {
+interface LockObservation {
+  observedPath: string;
+  startupDelayMs?: number;
+  startupTimeoutMs?: number;
+}
+async function subprocessBuild(directory: string, timeout = 2000, observation?: LockObservation) {
   const script = new URL("../../scripts/build-typescript.mjs", import.meta.url).href;
-  const source = `import { buildTypescript } from ${JSON.stringify(script)};
-    process.exitCode = await buildTypescript(${JSON.stringify(directory)}, async () => 0);`;
-  return await subprocess(source, timeout);
+  if (!observation) {
+    const source = `import { buildTypescript } from ${JSON.stringify(script)};
+      process.exitCode = await buildTypescript(${JSON.stringify(directory)}, async () => 0);`;
+    return await subprocess(source, timeout);
+  }
+  const source = `import fs from "node:fs/promises";
+    import { syncBuiltinESMExports } from "node:module";
+    await new Promise(resolve => setTimeout(resolve, ${observation.startupDelayMs ?? 0}));
+    let observed = false;
+    // Observe successful real acquire I/O, never merely entry into the wrapper.
+    for (const method of ["lstat", "readFile"]) {
+      const original = fs[method];
+      fs[method] = async (path, ...args) => {
+        const value = await original(path, ...args);
+        if (!observed && String(path) === ${JSON.stringify(observation.observedPath)} &&
+            method === ${JSON.stringify(observation.observedPath.endsWith('/owner') ? 'readFile' : 'lstat')}) {
+          observed = true;
+          process.send({ type: "lock-observed", path: String(path) });
+        }
+        return value;
+      };
+    }
+    syncBuiltinESMExports();
+    const { buildTypescript } = await import(${JSON.stringify(script)});
+    try { process.exitCode = await buildTypescript(${JSON.stringify(directory)}, async () => 0); }
+    finally { if (process.connected) process.disconnect(); }`;
+  return await new Promise<{ code: number | null; signal: NodeJS.Signals | null; lockObserved: boolean }>((accept, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    let lockObserved = false;
+    let failure: Error | undefined;
+    let waiting: ReturnType<typeof setTimeout> | undefined;
+    let escalation: ReturnType<typeof setTimeout> | undefined;
+    const stop = () => {
+      child.kill("SIGTERM");
+      escalation ??= setTimeout(() => child.kill("SIGKILL"), 1000);
+    };
+    const startup = setTimeout(() => {
+      failure = new Error("Lock observation startup deadline"); stop();
+    }, observation.startupTimeoutMs ?? 5000);
+    child.once("error", error => { failure = error; stop(); });
+    child.on("message", message => {
+      const event = message as { type?: string; path?: string };
+      if (failure || lockObserved || event.type !== "lock-observed" || event.path !== observation.observedPath) return;
+      lockObserved = true;
+      clearTimeout(startup);
+      waiting = setTimeout(stop, timeout);
+    });
+    // Await close after either deadline, so no child outlives temporary fixtures.
+    child.once("close", (code, signal) => {
+      clearTimeout(startup); clearTimeout(waiting); clearTimeout(escalation);
+      if (failure) reject(failure);
+      else if (!lockObserved) reject(new Error("Child exited before actual lock observation"));
+      else accept({ code, signal, lockObserved });
+    });
+  });
 }
 
 async function subprocess(source: string, timeout = 2000) {
@@ -98,13 +157,41 @@ describe("incremental shared TypeScript builds", () => {
     expect(await subprocessBuild(directory)).toEqual({ code: 0, signal: null });
   });
 
+  it.each(["primary", "reaper"])("waits for the actual %s lock observation before timing a delayed child", async kind => {
+    const directory = await fixture();
+    const lock = join(directory, ".matrix-build-cache/.matrix-build.lock");
+    await mkdir(lock, { recursive: true });
+    await writeFile(join(lock, "owner"), kind === "primary" ? String(process.pid) : "2147483647");
+    if (kind === "reaper") {
+      await mkdir(`${lock}.reap`);
+      await writeFile(join(`${lock}.reap`, "owner"), String(process.pid));
+    }
+    const observedPath = kind === "primary" ? join(lock, "owner") : `${lock}.reap`;
+    const started = performance.now();
+    const result = await subprocessBuild(directory, 250, { observedPath, startupDelayMs: 400 });
+    expect(result).toMatchObject({ signal: "SIGTERM", lockObserved: true });
+    expect(performance.now() - started).toBeGreaterThanOrEqual(650);
+    expect(await readFile(join(lock, "owner"), "utf8")).toBe(kind === "primary" ? String(process.pid) : "2147483647");
+  });
+
+  it("fails startup separately when a child has not reached the lock observation", async () => {
+    const directory = await fixture();
+    const lock = join(directory, ".matrix-build-cache/.matrix-build.lock");
+    await mkdir(lock, { recursive: true });
+    await writeFile(join(lock, "owner"), String(process.pid));
+    await expect(subprocessBuild(directory, 250, {
+      observedPath: join(lock, "owner"), startupDelayMs: 400, startupTimeoutMs: 50,
+    })).rejects.toThrow("Lock observation startup deadline");
+    expect(await readFile(join(lock, "owner"), "utf8")).toBe(String(process.pid));
+  });
+
   it("does not reclaim an aged lock whose owner is still alive", async () => {
     const directory = await fixture();
     const lock = join(directory, ".matrix-build-cache/.matrix-build.lock");
     await mkdir(lock, { recursive: true });
     await writeFile(join(lock, "owner"), String(process.pid));
     await utimes(lock, new Date(0), new Date(0));
-    expect((await subprocessBuild(directory, 250)).signal).toBe("SIGTERM");
+    expect(await subprocessBuild(directory, 250, { observedPath: join(lock, "owner") })).toMatchObject({ signal: "SIGTERM", lockObserved: true });
     expect(await readFile(join(lock, "owner"), "utf8")).toBe(String(process.pid));
   });
 
@@ -116,7 +203,7 @@ describe("incremental shared TypeScript builds", () => {
     await mkdir(`${lock}.reap`);
     await writeFile(join(`${lock}.reap`, "owner"), String(pid));
     await utimes(`${lock}.reap`, new Date(0), new Date(0));
-    expect((await subprocessBuild(directory, 250)).signal).toBe("SIGTERM");
+    expect(await subprocessBuild(directory, 250, { observedPath: `${lock}.reap` })).toMatchObject({ signal: "SIGTERM", lockObserved: true });
     expect(await readFile(join(lock, "owner"), "utf8")).toBe("2147483647");
     expect(await readFile(join(`${lock}.reap`, "owner"), "utf8")).toBe(String(pid));
   });
