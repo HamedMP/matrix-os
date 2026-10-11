@@ -1,5 +1,5 @@
 import { Kysely, sql } from 'kysely';
-import { KyselyPGlite } from 'kysely-pglite';
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { describe, expect, it } from 'vitest';
 import type { PlatformDB, PlatformDatabase } from '../../packages/platform/src/db.js';
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
@@ -8,7 +8,7 @@ import { bootstrapPlatformOrganizationDatabase } from '../../packages/platform/s
 import { assertDeletionOwnershipSafe, eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 
 async function fixture() {
-  const instance = await KyselyPGlite.create();
+  const instance = await createTestPGlite();
   const kysely = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
   await migratePlatformSchema(kysely);
   await bootstrapPlatformCollaborationDatabase(kysely as never);

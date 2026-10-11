@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createAppDb, type AppDb } from "../../packages/gateway/src/app-db.js";
 import { createAppRegistry } from "../../packages/gateway/src/app-db-registry.js";
 import { createQueryEngine, type QueryEngine } from "../../packages/gateway/src/app-db-query.js";
-import { KyselyPGlite } from "kysely-pglite";
+import type { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 
 describe("QueryEngine", () => {
   let db: AppDb;
@@ -10,7 +11,7 @@ describe("QueryEngine", () => {
   let instance: InstanceType<typeof KyselyPGlite>;
 
   beforeEach(async () => {
-    instance = await KyselyPGlite.create();
+    instance = await createTestPGlite();
     const created = createAppDb({ dialect: instance.dialect });
     db = created.db;
     await db.bootstrap();
