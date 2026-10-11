@@ -3,7 +3,7 @@ import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { createFundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 // The mocked observation stays valid relative to this test run, never a calendar cutoff.
 const priceValidThrough = new Date(Date.now() + 86_400_000).toISOString();
 let db: PlatformDB;
