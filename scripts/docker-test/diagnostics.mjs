@@ -4,7 +4,10 @@ import { spawnSync } from "node:child_process";
 import { constants, closeSync, fchmodSync, lstatSync, mkdirSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const [composeFile, overrideFile, service, directory] = process.argv.slice(2);
+const [composeFile, overrideFile, service, directory, scenario] = process.argv.slice(2);
+// Fixed scenario names keep filenames safe and retained artifacts bounded.
+const scenarios = ["fresh-install", "upgrade", "customized-files", "multi-user", "channels", "recovery", "resource-limits"];
+const scenarioPrefix = scenario === undefined ? "" : `${scenario}-`;
 const limit = 256 * 1024;
 const compose = ["compose", "-f", composeFile];
 if (overrideFile) compose.push("-f", overrideFile);
@@ -25,7 +28,7 @@ function capture(args) {
 }
 
 function save(name, body) {
-  const descriptor = openSync(join(directory, `pre-cleanup-${service}-${name}.log`), constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
+  const descriptor = openSync(join(directory, `pre-cleanup-${scenarioPrefix}${service}-${name}.log`), constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
   try {
     fchmodSync(descriptor, 0o600);
     writeFileSync(descriptor, body);
@@ -35,7 +38,7 @@ function save(name, body) {
 }
 
 try {
-  if (!composeFile || !directory || !/^[a-z][a-z0-9-]{0,63}$/.test(service ?? "")) throw new Error("Invalid diagnostics arguments");
+  if (!composeFile || !directory || (scenario !== undefined && !scenarios.includes(scenario)) || !/^[a-z][a-z0-9-]{0,63}$/.test(service ?? "")) throw new Error("Invalid diagnostics arguments");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (!lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink()) throw new Error("Invalid diagnostics directory");
   save("compose", capture([...compose, "logs", "--no-color", "--tail", "200", service]));
