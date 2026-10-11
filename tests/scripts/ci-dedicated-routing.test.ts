@@ -96,3 +96,10 @@ it('requires shadow qualification in the real aggregate while retaining every ho
  const step=ci.jobs['ci-results'].steps[0];expect(step.env.DEDICATED_REQUIRED).toContain('needs.changes.outputs.dedicated_required');
  expect(step.run).toContain('"$DEDICATED_REQUIRED" = "true"');
 });
+it.each(['true','false'])('runs all hosted lanes and no Linux waiter for hosted-only rollback with routing=%s',enabled=>{
+ const dir=mkdtempSync(resolve(tmpdir(),'matrix-hosted-recovery-route-'));
+ try{writeFileSync(resolve(dir,'event.json'),'{}');const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
+ const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\n');
+ const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps[0];for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
