@@ -23,3 +23,5 @@ Renew expired Pi/OpenCode observations through the same owner-bound local reader
 3. Run existing generic catalog, generated-default, canonical projection, Settings loading and Hermes renewal suites; gateway typecheck.
 4. Separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/` documenting local observation lifetime and unavailable/retry semantics, coordinated with ENG-258 to avoid duplicate pages.
 5. Deferred: exact-head Preview VPS and Electron Desktop/Web Desktop/Web Canvas acceptance through the sole publication coordinator. Local fixtures are not real provider-call acceptance. No Main deploy, paid inference, login mutation or credit grant occurs in this PR.
+
+Public documentation companion: [site PR #232](https://github.com/FinnaAI/matrix-os-site/pull/232), covering native observation refresh and independent model health without changing frozen site PR #219. It is prepared and validated, not published.
