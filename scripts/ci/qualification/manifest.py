@@ -87,7 +87,7 @@ def prepare_manifest(source,request,api=None):
  sha(source);api=api or public_api
  if not isinstance(request,dict) or request.get('repository')!=REPOSITORY or request.get('mergeSha')!=source:raise ValueError('Wrong qualification request')
  parents=request.get('mergeParents')
- if not isinstance(parents,list) or len(parents)!=2 or parents!=[request.get('baseSha'),request.get('headSha')]:raise ValueError('Wrong ordered merge parents')
+ if not isinstance(parents,list) or len(parents)!=2 or parents[1]!=request.get('headSha') or parents[0]==parents[1]:raise ValueError('Wrong ordered merge parents')
  for parent in parents:sha(parent)
  commit=api('commits/'+source,1024*1024)
  if not isinstance(commit,dict) or commit.get('sha')!=source or [p.get('sha') for p in commit.get('parents',[])]!=parents:raise ValueError('Public merge commit differs')
@@ -130,7 +130,7 @@ def prepare_manifest(source,request,api=None):
 def check_manifest(value,request=None):
  if not isinstance(value,dict) or value.get('schemaVersion')!=1 or value.get('repository')!=REPOSITORY:raise ValueError('Invalid manifest')
  sha(value.get('source'));sha(value.get('tree'))
- if not isinstance(value.get('parents'),list) or len(value['parents'])!=2:raise ValueError('Manifest parents differ')
+ if not isinstance(value.get('parents'),list) or len(value['parents'])!=2 or value['parents'][0]==value['parents'][1]:raise ValueError('Manifest parents differ')
  for parent in value['parents']:sha(parent)
  for key in ('unit','general'):
   names=value.get(key)
@@ -150,7 +150,7 @@ def check_manifest(value,request=None):
   if not isinstance(entry,dict) or entry.get('mode')!=0o644 or not re.fullmatch('[a-f0-9]{64}',entry.get('sha256','')):raise ValueError('Readonly source digest/mode differs')
  tools=value.get('tools')
  if not isinstance(tools,dict) or set(tools)!={'pnpm','nativeTypeScript','next','icons'} or any(not isinstance(x,str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',x) for x in tools.values()):raise ValueError('Pinned tool manifest differs')
- if request is not None and (request.get('repository')!=REPOSITORY or request.get('mergeSha')!=value['source'] or request.get('mergeParents')!=value['parents'] or [request.get('baseSha'),request.get('headSha')]!=value['parents']):raise ValueError('Request/source manifest differs')
+ if request is not None and (request.get('repository')!=REPOSITORY or request.get('mergeSha')!=value['source'] or request.get('mergeParents')!=value['parents'] or request.get('headSha')!=value['parents'][1]):raise ValueError('Request/source manifest differs')
  if len(canonical(value))>MAX_MANIFEST:raise ValueError('Manifest exceeds bound')
  return value
 
@@ -175,7 +175,7 @@ def prepare_manifest_from_git(source,request,root,run=None):
  metadata=run(['show','-s','--format=%H%n%T%n%P',source],1024*1024).strip().splitlines()
  if len(metadata)!=3 or metadata[0]!=source:raise ValueError('Git commit metadata differs')
  tree=sha(metadata[1]);parents=metadata[2].split(' ')
- if parents!=request.get('mergeParents') or parents!=[request.get('baseSha'),request.get('headSha')]:raise ValueError('Git ordered parents differ')
+ if parents!=request.get('mergeParents') or parents[1]!=request.get('headSha') or parents[0]==parents[1]:raise ValueError('Git ordered parents differ')
  raw=run(['ls-tree','-r','-l','-z',source],8*1024*1024)
  if not raw.endswith('\0'):raise ValueError('Truncated Git tree output')
  rows=raw.split('\0')[:-1]
@@ -202,8 +202,8 @@ def prepare_manifest_from_git(source,request,root,run=None):
  return prepare_manifest(source,request,api)
 
 
-def prepare_public(source,base,head,root=Path('/work/manifest-source')):
- for value in (source,base,head):sha(value)
+def prepare_public(source,first_parent,head,root=Path('/work/manifest-source')):
+ for value in (source,first_parent,head):sha(value)
  if os.getuid()!=10001:raise ValueError('Source preparation requires isolated UID')
  started=time.monotonic();root.mkdir(mode=0o700,parents=False,exist_ok=False)
  def run(args,cap=1024*1024):
@@ -211,7 +211,7 @@ def prepare_public(source,base,head,root=Path('/work/manifest-source')):
   if remaining<=0:raise ValueError('Source preparation deadline')
   return git_command(root,args,output_limit=cap,deadline_seconds=remaining)
  run(['init','--quiet']);run(['remote','add','origin','https://github.com/'+REPOSITORY+'.git']);run(['fetch','--depth=2','origin',source+':refs/ci/source'])
- request=dict(repository=REPOSITORY,mergeSha=source,baseSha=base,headSha=head,mergeParents=[base,head])
+ request=dict(repository=REPOSITORY,mergeSha=source,headSha=head,mergeParents=[first_parent,head])
  return prepare_manifest_from_git(source,request,root,run)
 
 

@@ -55,3 +55,14 @@ class PublicAPIContracts(unittest.TestCase):
   for key,value in [('source','main'),('unit',['../x.test.ts']),('general',[]),('requiredElectron',{}),('icons',['one']),('unitImports',{}),('lockSha256','x'),('tools',{})]:
    wrong=copy.deepcopy(good);wrong[key]=value
    with self.assertRaises(ValueError):manifest.check_manifest(wrong)
+
+ def test_authenticated_native_actual_pair_is_independent_of_branch_base(self):
+  req=request();req['baseSha']='9'*40
+  value=manifest.prepare_manifest(SOURCE,req,api_fixture()[0])
+  self.assertEqual(value['parents'],req['mergeParents'])
+  self.assertEqual(manifest.check_manifest(value,req),value)
+ def test_actual_parent_proof_cannot_change_head_pair_or_shape(self):
+  for parents in ([],['3'*40],['3'*40,'4'*40,'5'*40],['4'*40,'3'*40],['4'*40,'4'*40]):
+   req=request();req['mergeParents']=parents
+   with self.assertRaises(ValueError):manifest.prepare_manifest(SOURCE,req,api_fixture()[0])
+   with self.assertRaises(ValueError):manifest.check_manifest(inventory(),req)

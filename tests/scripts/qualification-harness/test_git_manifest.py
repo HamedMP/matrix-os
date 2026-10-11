@@ -19,6 +19,14 @@ class TrustedGitManifest(unittest.TestCase):
    value=manifest.prepare_manifest_from_git(source,req,root)
    self.assertEqual(value['source'],source);self.assertEqual(value['parents'],req['mergeParents']);self.assertEqual(value['unit'],['tests/a.test.ts','tests/a.test.tsx']);self.assertEqual(len(value['general']),14)
    self.assertEqual(value['lockSha256'],common.digest((root/'pnpm-lock.yaml').read_bytes()))
+ def test_real_native_two_level_actual_parents_are_independent_of_branch_base(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);_,req=self.seed(root)
+   def git(*args):return subprocess.check_output(['git','-C',str(root),*args],text=True).strip()
+   base,head=req['baseSha'],req['headSha'];parent_merge=git('commit-tree',git('rev-parse',base+'^{tree}'),'-p',base,'-p',head,'-m','native parent')
+   source=git('commit-tree',git('rev-parse',head+'^{tree}'),'-p',parent_merge,'-p',head,'-m','native child')
+   req.update(mergeSha=source,mergeParents=[parent_merge,head])
+   value=manifest.prepare_manifest_from_git(source,req,root);self.assertEqual(value['parents'],[parent_merge,head]);self.assertNotEqual(value['parents'][0],req['baseSha']);manifest.check_manifest(value,req)
  def test_wrong_order_and_truncated_tree_fail_closed(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);source,req=self.seed(root);wrong=dict(req);wrong['mergeParents']=list(reversed(req['mergeParents']));wrong['baseSha'],wrong['headSha']=wrong['mergeParents']
