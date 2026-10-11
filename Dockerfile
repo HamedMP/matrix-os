@@ -30,6 +30,7 @@ RUN echo "shamefully-hoist=true" > .npmrc
 # Copy postinstall helper before install (package.json postinstall references it)
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 COPY scripts/build-default-apps.mjs scripts/build-default-apps.mjs
+COPY scripts/build-typescript.mjs scripts/build-typescript.mjs
 COPY scripts/install-hermes-matrix-skills.sh scripts/install-hermes-matrix-skills.sh
 COPY scripts/sync-matrix-agent-skills.sh scripts/sync-matrix-agent-skills.sh
 
