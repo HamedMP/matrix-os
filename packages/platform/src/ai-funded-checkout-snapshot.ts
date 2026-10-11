@@ -1,5 +1,8 @@
+import { FundedAiChatAvailabilitySchema } from "@matrix-os/contracts";
+import { fundingSourceAvailability } from "./ai-funded-reservation-sources.js";
 import { sql } from "kysely";
 import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
+import { projectExpiredPromotionalCredit } from "./ai-funded-expiry-projection.js";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
@@ -23,6 +26,8 @@ export async function readCheckoutFundingSnapshot(input: {
   checked: Date;
   policyFreshnessMs: number;
   deadlineAtMs: number;
+  includeChatAvailability?: true;
+  projectExpiredCredit?: true;
 }) {
   const { db, identity, checked, deadlineAtMs } = input;
   const checkedAt = checked.toISOString();
@@ -30,6 +35,7 @@ export async function readCheckoutFundingSnapshot(input: {
   await db.ready;
   if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
   return db.transaction(async (trx) => {
+    if (input.includeChatAvailability || input.projectExpiredCredit) await sql`set transaction isolation level repeatable read, read only`.execute(trx.executor);
     const remainingMs = deadlineAtMs - Date.now();
     if (remainingMs <= 0) throw new Error("Checkout funding read timed out");
     await sql`select set_config('statement_timeout', ${`${remainingMs}ms`}, true)`.execute(trx.executor);
@@ -72,11 +78,20 @@ export async function readCheckoutFundingSnapshot(input: {
     const allowedModelIds = enabled
       ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
       : [];
-    const balance = row.month_period_start === currentPeriod ? row : {
-      ...row, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
+    const currentBalance = input.projectExpiredCredit
+      ? await projectExpiredPromotionalCredit(trx.executor, identity, row, checkedAt) : row;
+    const balance = currentBalance.month_period_start === currentPeriod ? currentBalance : {
+      ...currentBalance, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
+    const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+    const sources = input.includeChatAvailability ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt, { readOnly: true }) : undefined;
+    if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
+    const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({ contractVersion: 1, asOf: checkedAt,
+      eligibleBalanceMicrousd: Math.min(sources.ceilingMicrousd, Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))),
+      availableBalanceMicrousd: Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd),
+    }) : undefined;
     return {
-      funding: fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+      funding, ...(chatAvailability ? { chatAvailability } : {}),
       policy: {
         enabled: enabled && allowedModelIds.length > 0,
         globalRevision: row.global_revision,

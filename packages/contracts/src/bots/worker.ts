@@ -2,6 +2,8 @@ import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 import { z } from "zod/v4";
 import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
+import { BotIdSchema } from "#bots/ids";
+import { BotRecipeRefSchema } from "#bots/bot";
 import { BotBlockedReasonSchema } from "#bots/tasks";
 
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
@@ -20,8 +22,15 @@ export const BotImageInputSchema = z.object({
   data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(BOT_IMAGE_MAX_BASE64_CHARS),
 }).strict();
 
+const CanonicalIsolatedBotTargetSchema = z.object({
+  kind: z.literal("canonical_bot"), botId: BotIdSchema, recipeRef: BotRecipeRefSchema,
+}).strict();
+
 /** Server composition only; never a Chat selection option or owner profile. */
 export const IsolatedChatEnvelopeSchema = z.object({
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("managed_chat") }).strict(), CanonicalIsolatedBotTargetSchema,
+  ]).optional(),
   phaseId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
   ownerId: z.string().min(1).max(160), machineId: z.string().min(1).max(160),
   runtimeSlot: MatrixComputerRuntimeSlotSchema,
@@ -54,6 +63,11 @@ export function isolatedChatModelMatches(expected: IsolatedChatEnvelope["modelId
 export const IsolatedBotTurnSchema = z.object({
   phaseId: IsolatedChatEnvelopeSchema.shape.phaseId,
   maxInputBytes: z.literal(131072),
+  target: CanonicalIsolatedBotTargetSchema.extend({
+    chatId: IsolatedChatEnvelopeSchema.shape.chatId,
+    taskId: z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/),
+    runId: z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/),
+  }).strict().optional(),
 }).strict();
 
 export const BotRunLimitsSchema = z.object({

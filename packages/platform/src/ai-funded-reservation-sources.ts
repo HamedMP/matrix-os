@@ -3,7 +3,7 @@ import { sql } from "kysely";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import type { AiFundedRuntimeBalancesTable, PlatformDB } from "./db.js";
 
-const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
+export const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
 const ACTIVE_RESERVATION_STATUSES = ["reserved", "starting", "in_flight"] as const;
 
 export interface FundedAiRuntimeIdentity {
@@ -68,6 +68,7 @@ interface AllowedFundingSources {
   promotional: boolean;
   addon: boolean;
   promotionalGrantNamespace?: "general" | "speech_monthly";
+  readOnly?: true;
 }
 
 // Call under the admission transaction's owner/balance locks. Discovery and
@@ -91,11 +92,11 @@ async function readFundingSources(
   grantsQuery = allowedSources.promotionalGrantNamespace === "speech_monthly"
     ? grantsQuery.where("grant_entry_id", "like", "speech-monthly:%")
     : grantsQuery.where("grant_entry_id", "not like", "speech-monthly:%");
-  const grants = allowedSources.promotional ? await grantsQuery
+  grantsQuery = grantsQuery
     .orderBy(sql<number>`CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END`)
     .orderBy("expires_at").orderBy("created_at").orderBy("grant_entry_id")
-    .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1)
-    .forUpdate().execute() : [];
+    .limit(MAX_PROMOTIONAL_GRANTS_PER_RUNTIME + 1);
+  const grants = allowedSources.promotional ? await (allowedSources.readOnly ? grantsQuery : grantsQuery.forUpdate()).execute() : [];
   if (grants.length > MAX_PROMOTIONAL_GRANTS_PER_RUNTIME) {
     throw new Error("Funded AI promotional grant limit invariant violated");
   }
@@ -123,8 +124,9 @@ export async function fundingSourceAvailability(
   identity: FundedAiRuntimeIdentity,
   balance: FundedAiReservationBalance,
   checkedAt: string,
+  options: { readOnly?: true } = {},
 ): Promise<{ ceilingMicrousd: number; availableMicrousd: number }> {
-  const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true });
+  const sources = await readFundingSources(executor, identity, balance, checkedAt, { promotional: true, addon: true, ...options });
   return {
     ceilingMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.total, sources.addonTotal)),
     availableMicrousd: exactInteger(sources.eligibleGrants.reduce((sum, grant) => sum + grant.available, sources.addonAvailable)),

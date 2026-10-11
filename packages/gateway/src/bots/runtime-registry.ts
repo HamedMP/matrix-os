@@ -10,6 +10,7 @@ import { RuntimeHandleSchema } from "@matrix-os/scope-runtime";
 import type { ScopeRuntimeBrokerRequest } from "@matrix-os/scope-runtime/broker-protocol";
 import {
   BotModelRouteSchema,
+  BotRecipeRefSchema,
   BotToolCapabilitySchema,
   ChatAgentIdSchema,
   type BotModelRoute,
@@ -42,6 +43,7 @@ export interface BotRuntimeBinding {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
   managedDefinitionRevision?: number;
+  recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
@@ -78,6 +80,7 @@ const BindingSchema = z.object({
   rootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   route: BotModelRouteSchema,
   accessSourceId: BotCredentialAccessSourceIdSchema,
+  recipeRef: BotRecipeRefSchema.optional(),
   managedDefinitionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),

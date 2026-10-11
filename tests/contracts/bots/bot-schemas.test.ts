@@ -218,3 +218,17 @@ it("accepts only complete trusted isolated phase configuration and preserves def
     expect(() => parseIsolatedChatEnvelope(JSON.stringify(invalid))).toThrow("configuration");
   }
 });
+
+
+it("pins a canonical isolated target to an exact bot and recipe while legacy managed phases stay valid", () => {
+  const base = { phaseId: "phase_bot", ownerId: "owner", machineId: "machine", runtimeSlot: "primary",
+    runtimeTokenEpoch: 2, runtimeCredentialSha256: "a".repeat(64), chatId: "chat_one", modelId: "@cf/zai-org/glm-5.3-flash",
+    sourceSha: "b".repeat(40), startsAt: "2026-10-10T12:00:00.000Z", expiresAt: "2026-10-10T12:20:00.000Z" };
+  const target = { kind: "canonical_bot", botId: "bot_0123456789abcdef", recipeRef: { recipeId: "matrix-bot", version: "2026-10-10.1" } };
+  expect(parseIsolatedChatEnvelope(JSON.stringify({ ...base, target }))).toEqual({ ...base, target });
+  expect(IsolatedChatEnvelopeSchema.safeParse(base).success).toBe(true);
+  for (const bad of [{ ...target, botId: "chat_one" }, { ...target, recipeRef: "matrix-bot@2026-10-10.1" },
+    { ...target, kind: "managed_chat" }, { ...target, widened: true }]) {
+    expect(IsolatedChatEnvelopeSchema.safeParse({ ...base, target: bad }).success).toBe(false);
+  }
+});

@@ -25,7 +25,7 @@ export function createBotModelRouteResolver(options: {
       if (!options.chatgptPlan || !options.ownerId) throw new BotRouteError("model_unavailable");
       return options.chatgptPlan.resolve(selection, options.ownerId, "interactive");
     }
-    if (selection) return resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
+    if (selection) return resolveManagedPiRoute(await options.providers.getSnapshot({ admissionScope: "managed_matrix" }), selection);
     if (options.codexModel !== undefined) throw new BotRouteError("model_unavailable");
     return resolveBotRoute(await options.providers.getSnapshot());
   };

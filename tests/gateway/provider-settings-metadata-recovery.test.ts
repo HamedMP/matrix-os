@@ -9,6 +9,11 @@ import { projectProviderSettings } from '../../packages/gateway/src/ai-providers
 import { initialProviderSettingsConfiguration } from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from './provider-settings-test-support.js';
 import type { CodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+import * as codexMetadata from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+import { createRuntimeProviderSettings } from '../../packages/gateway/src/server/provider-discovery-composition.js';
+import { createHash } from 'node:crypto';
+import { createCanonicalPhaseDiscovery } from '../../packages/gateway/src/server/canonical-phase-discovery.js';
+import * as settingsPersistence from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 function codexFixture() {
   const canonical = providerSettingsCanonicalFixture();
   canonical.accessSources.push({ ...canonical.accessSources[1]!, id: 'owner_openai_profile', vendor: 'openai', accountLabel: 'Codex', state: 'unknown', action: 'retry', safeReason: 'unknown' });
@@ -26,6 +31,48 @@ const metadata: CodexNativeAccountMetadata = { accountLabel: 'old@example.test',
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 describe('metadata recovery boundaries', () => {
+  it.each(['configuration', 'dependencies', 'final_file'].flatMap(stage =>
+    ['expiry', 'source'].map(drift => ({ stage, drift }))))(
+    'rejects standalone canonical Settings after $drift during $stage', async ({ stage, drift }) => {
+      const homePath = await mkdtemp(join(tmpdir(), 'canonical-settings-fence-')); homes.push(homePath);
+      const token = 'fixture-phase-token', sourceSha = 'a'.repeat(40);
+      let clock = now, actualSource = sourceSha, savedReads = 0;
+      const phase = { phaseId: 'phase_settings', ownerId: 'fixture_owner', machineId: 'fixture_machine', runtimeSlot: 'primary',
+        runtimeTokenEpoch: 1, runtimeCredentialSha256: createHash('sha256').update(token).digest('hex'), sourceSha,
+        chatId: 'chat_settings', modelId: '@cf/zai-org/glm-5.3-flash', startsAt: now.toISOString(),
+        expiresAt: new Date(+now + 60000).toISOString(),
+        target: { kind: 'canonical_bot', botId: 'bot_settings1', recipeRef: { recipeId: 'matrix-bot', version: '1.0.0' } } };
+      const scope = createCanonicalPhaseDiscovery(undefined, phase.ownerId, {
+        env: { MATRIX_ISOLATED_CHAT_ENVELOPE: JSON.stringify(phase), MATRIX_MACHINE_ID: phase.machineId,
+          MATRIX_RUNTIME_SLOT: phase.runtimeSlot, MATRIX_RUNTIME_TOKEN_EPOCH: '1', MATRIX_FUNDED_AI_RUNTIME_TOKEN: token },
+        sourceSha: () => actualSource, now: () => clock,
+      });
+      const invalidate = () => { if (drift === 'expiry') clock = new Date(phase.expiresAt); else actualSource = 'b'.repeat(40); };
+      const originalRead = settingsPersistence.readSavedProviderSettingsConfiguration;
+      const savedRead = vi.spyOn(settingsPersistence, 'readSavedProviderSettingsConfiguration').mockImplementation(async path => {
+        const saved = await originalRead(path);
+        savedReads += 1;
+        if (stage === 'configuration' && savedReads === 1 || stage === 'final_file' && savedReads === 2) invalidate();
+        return saved;
+      });
+      const dependencies = vi.fn(async () => {
+        await Promise.resolve();
+        if (stage === 'dependencies') invalidate();
+        return { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 };
+      });
+      const canonicalReader = vi.fn(async () => providerSettingsCanonicalFixture());
+      const native = vi.fn(async () => metadata);
+      const store = new ProviderSettingsStore({ homePath, now: () => now, observationScope: scope.observationScope,
+        providerSnapshotReader: { getSnapshot: canonicalReader }, codexNativeAccountMetadataReader: native,
+        dependencyCoordinator: { getAccountDependencies: dependencies, reassignDependencies: async () => undefined } });
+      try {
+        await expect(store.getSnapshot({ includeNativeAccountMetadata: true })).rejects.toThrow('Matrix AI route readiness unavailable');
+        expect(canonicalReader).toHaveBeenCalledTimes(1);
+        expect(savedReads).toBe(2);
+        if (stage === 'dependencies') expect(dependencies).toHaveBeenCalled();
+        expect(native).not.toHaveBeenCalled();
+      } finally { savedRead.mockRestore(); }
+    });
   it('does not copy private verification authority through a cloned public observation', async () => {
     const observed = bindNativeAccountMetadata({ ...metadata }, async () => true);
     expect(await verifyNativeAccountMetadata(observed)).toBe(observed);
@@ -55,8 +102,23 @@ describe('metadata recovery boundaries', () => {
     } finally { warning.mockRestore(); }
   });
   it('wires the same selected CODEX_HOME as canonical observation', async () => {
+    const homePath = await mkdtemp(join(tmpdir(), 'metadata-recovery-')); homes.push(homePath);
+    const selectedCodexHome = join(homePath, 'selected-codex-profile');
+    const reader = vi.fn(async () => null);
+    const factory = vi.spyOn(codexMetadata, 'createCodexNativeAccountMetadataReader').mockReturnValue(reader);
+    vi.stubEnv('CODEX_HOME', selectedCodexHome);
+    try {
+      const store = createRuntimeProviderSettings({ homePath, codexExecutable: '/fixture/bin/codex',
+        providerSnapshotReader: { getSnapshot: async () => codexFixture() } });
+      expect(store).toBeInstanceOf(ProviderSettingsStore);
+      expect(factory).toHaveBeenCalledExactlyOnceWith({ executable: '/fixture/bin/codex', cwd: homePath,
+        environment: expect.objectContaining({ HOME: homePath, MATRIX_HOME: homePath, CODEX_HOME: selectedCodexHome }) });
+      expect(reader).not.toHaveBeenCalled();
+    } finally { factory.mockRestore(); vi.unstubAllEnvs(); }
+    // The server wires this tested composition and selects the same profile for canonical authority.
     const server = await readFile(new URL('../../packages/gateway/src/server.ts', import.meta.url), 'utf8');
-    expect(server).toMatch(/createCodexNativeAccountMetadataReader\(\{[\s\S]*?environment: \{[\s\S]*?CODEX_HOME: process\.env\.CODEX_HOME/);
+    expect(server).toMatch(/providerSettingsStore = createRuntimeProviderSettings\(\{\s*codexExecutable,/);
+    expect(server).toMatch(/observeCodexLocalCredential\(\{\s*executable: codexExecutable,\s*runtimeHome: homePath,\s*codexHome: process\.env\.CODEX_HOME,/);
   });
   it('reconciles only exact native API-key presentation without changing canonical authority', async () => {
     const canonical = codexFixture();

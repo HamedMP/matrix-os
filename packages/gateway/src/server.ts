@@ -1,12 +1,11 @@
+import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
+import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
+import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
-import { createClaudeNativeAccountMetadataReader } from "./ai-providers/claude-native-account-metadata.js";
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
-import { createHermesNativeAccountMetadataReader } from "./ai-providers/hermes-native-account-metadata.js";
-import { createCodexNativeAccountMetadataReader } from "./ai-providers/codex-native-account-metadata.js";
-import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
@@ -217,7 +216,7 @@ import {
   reconcileProviderRuntimeAtStartup,
 } from "./ai-providers/provider-generic-harness-coordinator.js";
 import type { CanonicalProviderSnapshotReader } from "./ai-providers/provider-settings-coordinators.js";
-import { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
+import type { ProviderSettingsStore } from "./ai-providers/provider-settings-store.js";
 import { createProviderTerminalLoginCoordinator } from "./ai-providers/provider-terminal-login-coordinator.js";
 import { createProviderTerminalLoginHandoff } from "./ai-providers/provider-terminal-login-handoff.js";
 import { AiProviderService } from "./ai-providers/service.js";
@@ -304,13 +303,14 @@ export async function createGateway(config: GatewayConfig) {
   const { homePath: rawHomePath, port = 4000, syncReport } = config;
   const homePath = resolve(rawHomePath);
   const fundedAiRuntimeConfig = loadFundedAiRuntimeConfig(process.env);
+  const canonicalPhaseDiscovery = createCanonicalPhaseDiscovery(fundedAiRuntimeConfig, process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID);
   const fundedCredentialProvider = fundedAiRuntimeConfig
     ? createFundedAiCredentialManager(fundedAiRuntimeConfig)
     : undefined;
   // Orders this gateway's own funded retries; the platform enforces owner-wide priority.
   const fundedAdmission = fundedCredentialProvider ? createFundedAdmissionQueue() : undefined;
   const fundedAiFundingSummaryReader = fundedAiRuntimeConfig
-    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig)
+    ? createFundedAiFundingSummaryClient(fundedAiRuntimeConfig, canonicalPhaseDiscovery.routeOptions)
     : undefined;
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
@@ -1442,6 +1442,7 @@ export async function createGateway(config: GatewayConfig) {
     ? { ownerId: terminalRuntimeOwnerId, authority: botServices.chatgptPlanPeers }
     : undefined;
   const aiProviderService = new AiProviderService({
+    observationScope: canonicalPhaseDiscovery.observationScope,
     chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
     matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
     exposeClaudeProfileAccount: true,
@@ -1455,7 +1456,7 @@ export async function createGateway(config: GatewayConfig) {
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
         summary: fundedAiFundingSummaryReader,
-        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig),
+        routes: createFundedAiRouteReadinessClient(fundedAiRuntimeConfig, fetch, canonicalPhaseDiscovery.routeOptions),
       })
       : undefined,
     driverInventory: createProviderDriverInventoryReader({
@@ -1492,13 +1493,10 @@ export async function createGateway(config: GatewayConfig) {
     ),
   });
   await reconcileProviderRuntimeAtStartup(providerGenericHarnessCoordinator);
-  providerSettingsStore = new ProviderSettingsStore({
+  providerSettingsStore = createRuntimeProviderSettings({
+    codexExecutable,
+    observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
-    claudeNativeAccountMetadataReader: createClaudeNativeAccountMetadataReader({ executable: "claude", cwd: homePath, environment: buildSettingsAccountEnvironment(homePath) }),
-    hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
-    ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({
-      executable: codexExecutable, cwd: homePath, environment: { ...buildSettingsAccountEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) },
-    }) } : {}),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
@@ -1514,32 +1512,14 @@ export async function createGateway(config: GatewayConfig) {
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     chatGptPlanSource: appSubscriptionSource,
   });
-  const canonicalExecutableDriverKinds: import("@matrix-os/contracts").CanonicalProviderDriverKind[] = [
-    "kernel" as const,
-    "hermes" as const,
-    "openclaw" as const,
-    ...(codingAgentProviders.some((provider) => provider.providerId === "claude")
-      ? ["claude_code" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "codex")
-      ? ["codex" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "pi")
-      ? ["pi" as const]
-      : []),
-    ...(codingAgentThreadStore
-      && codingAgentProviders.some((provider) => provider.providerId === "opencode")
-      ? ["opencode" as const]
-      : []),
-  ];
+  const canonicalExecutableDriverKinds = executableChatDrivers(codingAgentProviders, Boolean(codingAgentThreadStore));
   const chatDriveContext = createProductionChatDriveContext({repository:chatRepository,collaborationReady:gatewayCollaboration !== null});
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
     catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
+    observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
     codexExecutable,
     fundedCredentialProvider,
@@ -1586,14 +1566,14 @@ export async function createGateway(config: GatewayConfig) {
       ...(fundedCredentialProvider ? { fundedCredentialProvider } : {}),
       ...(fundedAdmission ? { fundedAdmission } : {}),
     });
-    const sourceCatalog = matrixAnthropicRuntime.service
-      ? withMatrixAnthropicProviderInstances(baseCanonicalChatProviderCatalog, aiProviderService,
-        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : baseCanonicalChatProviderCatalog;
-    const enhanced = botServices?.chatgptPlanPeers
-      ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
-        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
-    canonicalChatProviderCatalog = { ...baseCanonicalChatProviderCatalog, getCatalog: enhanced.getCatalog,
-      refresh: async (principal, readOptions) => { await baseCanonicalChatProviderCatalog.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
+    canonicalChatProviderCatalog = composePhaseCatalog(baseCanonicalChatProviderCatalog, canonicalPhaseDiscovery.canonical, base => {
+      const sourceCatalog = matrixAnthropicRuntime?.service
+        ? withMatrixAnthropicProviderInstances(base, aiProviderService,
+          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : base;
+      return botServices?.chatgptPlanPeers
+        ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
+          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
+    });
     const canonicalAdapters: CanonicalChatProviderAdapter[] = [
       createKernelChatProviderAdapter({ dispatcher }),
       createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
