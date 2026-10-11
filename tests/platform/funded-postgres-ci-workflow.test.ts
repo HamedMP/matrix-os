@@ -81,6 +81,46 @@ describe("funded PostgreSQL CI coverage", () => {
     const result = executeSettlementStep(undefined);
     expect(result, result.diagnostics).toMatchObject({ status: 1, args: [] });
   });
+  it("prepares funded test prerequisites once before all four lanes and stops at a missing database URL", () => {
+    const selected = job.steps.filter(step => step.name === "Build test prerequisites once"
+      || step.run?.includes("pnpm exec vitest run"));
+    expect(selected).toHaveLength(5);
+    const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
+    try {
+      const log = join(directory, "commands");
+      for (const name of ["bun", "pnpm"]) {
+        const executable = join(directory, name);
+        writeFileSync(executable, `#!/usr/bin/env bash
+printf '%s' '${name}' >> "$WAIVER_CI_COMMANDS_PATH"
+printf ' %s' "$@" >> "$WAIVER_CI_COMMANDS_PATH"
+printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
+`);
+        chmodSync(executable, 0o700);
+      }
+      const execute = (url: string | undefined) => {
+        writeFileSync(log, "");
+        const result = spawnSync("bash", ["-eu", "-c", selected.map(step => step.run).join("\n")], {
+          encoding: "utf8", timeout: 5_000,
+          env: { PATH: `${directory}:${process.env.PATH}`, MATRIX_TEST_POSTGRES_URL: url,
+            WAIVER_CI_COMMANDS_PATH: log },
+        });
+        return { ...result, commands: readFileSync(log, "utf8").trim().split("\n") };
+      };
+      const valid = execute(job.env.MATRIX_TEST_POSTGRES_URL);
+      expect(valid.status, valid.stderr).toBe(0);
+      expect(valid.commands).toHaveLength(5);
+      expect(valid.commands[0]).toBe("bun run test:prepare");
+      expect(valid.commands.slice(1).every(command => command.startsWith("pnpm exec vitest run "))).toBe(true);
+      expect(valid.commands[1]).toContain("tests/platform/ai-funded-model-probes-postgres.test.ts");
+      expect(valid.commands[2]).toContain("tests/platform/account-deletion-");
+      expect(valid.commands[3]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
+      expect(valid.commands[4]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
+      const absent = execute(undefined);
+      expect(absent.status).toBe(1);
+      expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");
+      expect(absent.commands).toEqual(["bun run test:prepare"]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
   it("keeps the existing scoped service credentials, trigger and ten-minute limit", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("needs.changes.outputs.should_run == 'true'");
