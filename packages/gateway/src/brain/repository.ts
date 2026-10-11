@@ -33,6 +33,7 @@ import {
   applyRevise,
   applyUpsert,
   loadCapacity,
+  recordSourceUpdatedAt,
   type BrainCapacityLimits,
   type BrainWriteContext,
 } from "./documents.js";
@@ -283,7 +284,7 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
     return this.withScopeWrite(key, async (trx, now) => {
       await requireActiveSource(trx, key, batch.sourceId);
       const context = await this.writeContext(trx, key, now);
-      const counts = { created: 0, updated: 0, unchanged: 0, deleted: 0 };
+      const counts = { created: 0, updated: 0, unchanged: 0, refsChanged: 0, restamped: 0, deleted: 0 };
       const rejected: string[] = [];
       for (const { refs, ...content } of batch.upserts) {
         const result = await applyUpsert(
@@ -294,7 +295,10 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
           continue;
         }
         counts[result.outcome] += 1;
-        await syncDocumentRefs(trx, key, content.documentId, refs);
+        if (result.outcome === "unchanged"
+          && await recordSourceUpdatedAt(context, result.document, content.sourceUpdatedAt)) counts.restamped += 1;
+        const refsChanged = await syncDocumentRefs(trx, key, content.documentId, refs);
+        if (refsChanged && result.outcome === "unchanged") counts.refsChanged += 1;
       }
       for (const documentId of batch.deletions) {
         const tombstone = await applyDelete(context, { documentId }, { ownedBySourceId: batch.sourceId });

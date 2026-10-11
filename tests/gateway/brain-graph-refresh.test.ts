@@ -84,6 +84,19 @@ describe("brain graph refresh", { timeout: 60_000 }, () => {
     });
   });
 
+  it("re-derives a document when a sync moves only its source time, so link and entity dates follow", async () => {
+    await harness.sync("linear", [FIXTURE.issue]);
+    await harness.refresh();
+    const later = "2026-09-20T10:00:00.000Z";
+    await harness.sync("linear", [{ ...FIXTURE.issue, sourceUpdatedAt: later }]);
+    expect(await harness.repository.getDocument(SCOPE, id("issue"))).toMatchObject({ revision: 1, sourceUpdatedAt: later });
+    expect(await harness.refresh()).toMatchObject({ processed: 1, caughtUp: true });
+    const links = await sql<{ at: Date }>`SELECT DISTINCT at FROM brain_graph_links WHERE document_id = ${id("issue")}`
+      .execute(harness.db);
+    expect(links.rows.map((row) => new Date(row.at).toISOString())).toEqual([later]);
+    expect(await harness.graph.service.getEntity(OWNER, PROJECT, "issue:ENG-42")).toMatchObject({ lastSeenAt: later });
+  });
+
   it("re-derives every child of a removed parent, past one hundred", async () => {
     const comments = Array.from({ length: 101 }, (_, index) => ({
       ...FIXTURE.comment, documentId: brainDocumentId(`comment-${index}`), title: `Comment ${index}`,
