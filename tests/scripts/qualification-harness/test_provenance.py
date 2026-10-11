@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from fixtures import ROOT
+from fixtures import ROOT,tracked_fixture
+from common import canonical,digest
 HERE=ROOT/'scripts'/'ci'/'qualification'
 
 def load():
@@ -18,11 +19,14 @@ def load():
 class SourceProvenance(unittest.TestCase):
  def repo(self,root):
   subprocess.run(['git','init','-q',str(root)],check=True)
+  subprocess.run(['git','-C',str(root),'config','core.ignorecase','false'],check=True)
   (root/'pnpm-lock.yaml').write_text('fixed lock\n');(root/'.gitignore').write_text('/output/\n/node_modules/\n')
   subprocess.run(['git','-C',str(root),'add','.'],check=True)
   subprocess.run(['git','-C',str(root),'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture'],check=True)
+  self.tracked=tracked_fixture(root)
   return subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
  def inspect(self,m,root,out):
+  m.TRACKED=self.tracked;m.TRACKED_DIGEST=digest(canonical(self.tracked))
   return m.check_source(root,out,'postinstall',lane='e2e')
  def test_lane_clones_have_independent_files_and_git_object_stores(self):
   m=load()

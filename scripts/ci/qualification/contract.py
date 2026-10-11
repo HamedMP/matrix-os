@@ -23,7 +23,8 @@ PHASES = {
 }
 PROVENANCE = tuple('source-'+lane+'-'+stage+'.json' for lane in LANES for stage in ('postinstall','after-prerequisites','after-lane'))+('source-e2e-before-desktop.json','source-e2e-before-release.json')
 REPORTS = ('unit','general',*ELECTRON)
-ARTIFACTS = (*PROVENANCE,'qualification.json','source-sha','image-id','inventory-sha256','exit-code','benchmark-exit-code','smoke-exit-code','smoke.json','smoke.stderr.log','trace','coverage.json','output.log','tools.json',*(f'timing-{lane}.tsv' for lane in PHASES),*(f'{phase}.json' for phase in REPORTS))
+HOST_PROVENANCE = tuple('host-source-'+lane+'.json' for lane in LANES)
+ARTIFACTS = (*PROVENANCE,*HOST_PROVENANCE,'qualification.json','source-sha','image-id','inventory-sha256','exit-code','benchmark-exit-code','smoke-exit-code','smoke.json','smoke.stderr.log','trace','coverage.json','output.log','tools.json',*(f'timing-{lane}.tsv' for lane in PHASES),*(f'{phase}.json' for phase in REPORTS))
 CONFIGS = ('vitest.config.ts','vitest.e2e.config.ts','.github/workflows/ci.yml')
 MAX_FILE = 50*1024*1024
 MAX_TOTAL = 150*1024*1024

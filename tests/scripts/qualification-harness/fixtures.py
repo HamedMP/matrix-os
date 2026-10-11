@@ -2,7 +2,7 @@ import base64,copy,hashlib,json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'scripts/ci/qualification'))
-from contract import ELECTRON,CONFIGS,ARTIFACTS,PHASES,PROVENANCE,LANES
+from contract import ELECTRON,CONFIGS,ARTIFACTS,PHASES,PROVENANCE,HOST_PROVENANCE,LANES
 import manifest
 from common import canonical,digest
 
@@ -32,8 +32,10 @@ def evidence(directory):
  for name,value in [('source-sha',SOURCE),('image-id',req['imageDigest']),('inventory-sha256',ms)]:(directory/name).write_text(value)
  metadata=dict(source=SOURCE,image=req['imageDigest'],harnessDigest=req['harnessDigest'],tree=TREE,parents=PARENTS,lockSha256=inv['lockSha256'],inventorySha256=ms,status=0,checkoutRoots={l:'/work/'+l for l in LANES},installCount=4,unitWorkers=16,generalWorkers=2,gridWorkers=1,clipboardWorkers=1,wallSeconds=10,queueSeconds=0,queueStartedUtc='2026-10-11T00:00:00Z',startedUtc='2026-10-11T00:00:00Z',finishedUtc='2026-10-11T00:00:10Z')
  (directory/'qualification.json').write_text(json.dumps(metadata));(directory/'tools.json').write_text(json.dumps(dict(node='v24.13.1',pnpm=inv['tools']['pnpm'],nativeTypeScript=inv['tools']['nativeTypeScript'],bun='1.3.13')))
- for name in PROVENANCE:
-  lane,stage=name.removeprefix('source-').removesuffix('.json').split('-',1);(directory/name).write_text(json.dumps(dict(source=SOURCE,actualSource=SOURCE,lane=lane,stage=stage,clean=True,lockSha256=inv['lockSha256'],lockMatches=True,tracked=[],untracked=[],trackedPathsSha256=empty,untrackedPathsSha256=empty)))
+ for name in (*PROVENANCE,*HOST_PROVENANCE):
+  lane,stage=(name.removeprefix('host-source-').removesuffix('.json'),'host-final') if name in HOST_PROVENANCE else name.removeprefix('source-').removesuffix('.json').split('-',1)
+  integrity=dict(inventorySha256=ms,trackedInventorySha256=inv['trackedInventorySha256'],actualTrackedInventorySha256=inv['trackedInventorySha256'],trackedFilesChecked=len(inv['tracked']),trackedBytesChecked=sum(e[2] for e in inv['tracked'].values()),trackedIntegrityClean=True,indexMatches=True,indexFlagsClean=True,ignorePolicyClean=True)
+  (directory/name).write_text(json.dumps(dict(**integrity,source=SOURCE,actualSource=SOURCE,lane=lane,stage=stage,clean=True,lockSha256=inv['lockSha256'],lockMatches=True,tracked=[],untracked=[],trackedPathsSha256=empty,untrackedPathsSha256=empty)))
  for lane,phases in PHASES.items():(directory/('timing-'+lane+'.tsv')).write_text(''.join(p+'\t1\t0\n' for p in phases))
  for phase in ('unit','general',*ELECTRON):(directory/(phase+'.json')).write_text(json.dumps(report(inv[phase] if phase in ('unit','general') else ELECTRON[phase],phase)))
  (directory/'coverage.json').write_text(json.dumps(dict(source=SOURCE,tree=TREE,inventorySha256=ms,files=len(inv['unit']),total=len(inv['unit']),passed=len(inv['unit']),skipped=0,failed=0)))
@@ -41,3 +43,11 @@ def evidence(directory):
  (directory/'smoke.json').write_text(json.dumps(dict(nextVersion=inv['tools']['next'],iconsVersion=inv['tools']['icons'],comparedExports=len(inv['icons']),svgRenderComparisons=len(inv['icons']),distinctIconModules=2,negativeAliasControl='rejected',missingExportControl='rejected',trace=trace)))
  (directory/'trace').write_text(json.dumps([dict(name='build-module',tags=dict(name='/node_modules/@hugeicons/core-free-icons/__barrel_optimize__')),dict(name='build-module',tags=dict(name='/node_modules/@hugeicons/core-free-icons/AlphaIcon.js'))]))
  return inv,req
+
+
+def tracked_fixture(root,commit='HEAD'):
+ import subprocess
+ tracked={}
+ for row in subprocess.check_output(['git','-C',str(root),'ls-tree','-rlz',commit]).decode().split('\0')[:-1]:
+  metadata,name=row.split('\t');mode,kind,sha,size=metadata.split();tracked[name]=[mode,sha,int(size)]
+ return tracked

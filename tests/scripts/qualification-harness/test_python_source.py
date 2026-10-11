@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import test_provenance as provenance
+from fixtures import tracked_fixture
+from common import canonical,digest
 load=provenance.load
 
 class PythonSourceImmutability(unittest.TestCase):
@@ -41,6 +43,7 @@ print(json.dumps({'ignore_environment':sys.flags.ignore_environment,'prefix':sys
    self.assertEqual(json.loads(result.stdout),{'ignore_environment':1,'prefix':None})
    self.assertEqual(len(list((ops/'__pycache__').glob('*.pyc'))),2)
    with patch.object(m,'SOURCE',sha),patch.object(m,'LOCK',hashlib.sha256((root/'pnpm-lock.yaml').read_bytes()).hexdigest()),self.assertRaisesRegex(ValueError,'Source provenance'):
+    m.TRACKED=self.tracked;m.TRACKED_DIGEST=digest(canonical(self.tracked))
     m.check_source(root,Path(td)/'dirty.json','after-lane','unit')
  def test_readonly_ops_preserves_imports_bytes_modes_and_git_cleanliness(self):
   m=load()
@@ -55,6 +58,7 @@ print(json.dumps({'ignore_environment':sys.flags.ignore_environment,'prefix':sys
     with self.assertRaises(PermissionError):(ops/'unexpected.pyc').write_bytes(b'write')
     self.assertEqual({p.name:(p.read_bytes(),p.stat().st_mode) for p in ops.iterdir()},original)
     with patch.object(m,'SOURCE',sha),patch.object(m,'LOCK',hashlib.sha256((root/'pnpm-lock.yaml').read_bytes()).hexdigest()):
+     m.TRACKED=tracked_fixture(root,sha);m.TRACKED_DIGEST=digest(canonical(m.TRACKED))
      self.assertTrue(m.check_source(root,Path(td)/'clean.json','after-lane','unit')['clean'])
    finally:ops.chmod(0o755) # Own fixture teardown only; runtime never restores.
  def test_symlink_directory_is_rejected_without_changing_target(self):
