@@ -17,6 +17,7 @@ def coverage(report,expected,phase):
   elif not path.startswith('tests/e2e/') or not path.endswith('.e2e.test.ts'):raise ValueError('Unexpected E2E path')
   paths.add(path);assertions=file.get('assertionResults')
   if not isinstance(assertions,list) or len(assertions)>100000:raise ValueError('Invalid assertion count')
+  passed=0
   for assertion in assertions:
    if not isinstance(assertion,dict) or assertion.get('status') not in ('passed','skipped') or assertion.get('failureMessages'):raise ValueError('Assertion did not pass')
    if file['status']=='skipped' and assertion['status']!='skipped':raise ValueError('Skipped file contains active assertion')
@@ -24,7 +25,9 @@ def coverage(report,expected,phase):
    ancestry=assertion.get('ancestorTitles')
    if not isinstance(ancestry,list) or len(ancestry)>100 or any(not isinstance(title,str) or len(title)>16384 for title in ancestry):raise ValueError('Invalid ancestry')
    counts[assertion['status']]+=1
+   if assertion['status']=='passed':passed+=1
    if sum(counts.values())>100000:raise ValueError('Case count exceeds bound')
+  if phase in ('grid','electron') and passed==0:raise ValueError('Required file has no passed assertion')
  if paths!=set(expected):raise ValueError('Full source file inventory differs')
  if report.get('numTotalTests')!=sum(counts.values()) or report.get('numPassedTests')!=counts['passed'] or report.get('numPendingTests')!=counts['skipped']:raise ValueError('Report counts differ from assertions')
  return dict(files=len(paths),total=sum(counts.values()),passed=counts['passed'],skipped=counts['skipped'],failed=0)

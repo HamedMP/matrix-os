@@ -34,6 +34,7 @@ def report_counts(report,phase,inventory,diagnostic=False):
   elif not relative.startswith('tests/e2e/') or not relative.endswith('.e2e.test.ts'): raise ValueError('Unexpected E2E file')
   paths.add(relative);assertions=file.get('assertionResults')
   if not isinstance(assertions,list) or len(assertions)>100000: raise ValueError('Invalid assertions')
+  passed=0
   for assertion in assertions:
    if not isinstance(assertion,dict) or assertion.get('status') not in statuses or (not diagnostic and assertion.get('failureMessages')): raise ValueError('Failed assertion')
    if file['status']=='skipped' and assertion['status']!='skipped': raise ValueError('Skipped file contains active assertion')
@@ -43,7 +44,9 @@ def report_counts(report,phase,inventory,diagnostic=False):
    messages=assertion.get('failureMessages',[])
    if not isinstance(messages,list) or len(messages)>100 or any(not isinstance(m,str) or len(m)>1024*1024 for m in messages):raise ValueError('Invalid failure evidence')
    counts[assertion['status']]+=1
+   if assertion['status']=='passed':passed+=1
    if sum(counts.values())>100000: raise ValueError('Case count cap exceeded')
+  if not diagnostic and phase in REPORT_FILES and passed==0:raise ValueError('Required file has no passed assertion')
  if phase in REPORT_FILES and paths!=set(REPORT_FILES[phase]): raise ValueError('Required E2E report file identity differs')
  if report.get('numTotalTests')!=sum(counts.values()) or report.get('numPassedTests')!=counts['passed'] or report.get('numPendingTests')!=counts['skipped'] or report.get('numFailedTests')!=counts['failed']: raise ValueError('Counts differ from assertions')
  expected=REPORT_FILES.get(phase) or inventory[phase]
