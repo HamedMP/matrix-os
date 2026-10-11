@@ -38,7 +38,7 @@ function buildGatedElectronSuites() {
   }).sort();
 }
 
-function invoke(suite: string, failLane = "", historical = false, workers = "12", prepared: "none" | "match" | "mismatch" = "none") {
+function invoke(suite: string, failLane = "", historical = false, workers = "12", prepared: "none" | "match" | "mismatch" = "none", webParallelProbe = false) {
   const dir = realpathSync(mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-")));
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
@@ -105,10 +105,12 @@ await_peer() {
 printf 'bun %s\\n' "$*" >> "$CALLS"
 if [[ "$2" == typecheck || "$2" == typecheck:run ]]; then
   if [[ "$REQUIRE_CONCURRENT" == 1 ]]; then await_peer checks unit; fi
+  if [[ "$REQUIRE_WEB_CONCURRENT" == 1 ]]; then await_peer checks web; fi
   [[ "$FAIL_LANE" != checks ]] || exit 42
 fi
 case "$2" in
   build:shell:production)
+    if [[ "$REQUIRE_WEB_CONCURRENT" == 1 ]]; then await_peer web checks; fi
     [[ "$FAIL_LANE" != shell ]] || exit 42
     ;;
   build:desktop)
@@ -173,6 +175,7 @@ fi`);
         HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, MATRIX_TEST_PROFILE_SORT: "0", REAL_NODE: process.execPath,
         DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: ["full", "qualification"].includes(suite) ? "1" : "0",
+        REQUIRE_WEB_CONCURRENT: webParallelProbe ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
         TYPECHECK_BUILD: fixtureScripts["typecheck:build-kernel"],
         TYPECHECK_RUN: fixtureScripts["typecheck:run"] ?? "exit 127",
@@ -399,5 +402,29 @@ describe("bare-metal qualification worker budget",()=>{
     expect(result.status,result.stderr).toBe(0);
     expect(calls.filter(call=>call.includes("--maxWorkers=16 --reporter=default"))).toHaveLength(1);
     expect(calls.some(call=>call.includes("--config vitest.e2e.config.ts --maxWorkers=2"))).toBe(true);
+  });
+});
+
+
+describe("independent Web build scheduling",()=>{
+  it.each(["full","qualification"])("%s starts the Web build before mechanical checks finish",suite=>{
+    const {result,calls,timings}=invoke(suite,"",false,"12","none",true);
+    expect(result.status,result.stderr).toBe(0);
+    const passes=suite === "full" ? ["cold","warm"] : ["cold"];
+    for(const pass of passes) {
+      expect(timings).toContainEqual([`typecheck-${pass}`,expect.any(String),"0"]);
+      expect(timings).toContainEqual([`shell-${pass}`,expect.any(String),"0"]);
+    }
+    expect(calls.filter(call=>call === "bun run build:shell:production")).toHaveLength(passes.length);
+  });
+  it("preserves standalone checks Web builds after SDK, sync, and parity",()=>{
+    const {result,timings}=invoke("checks");
+    expect(result.status,result.stderr).toBe(0);
+    for(const pass of ["cold","warm"]) {
+      const shell=timings.findIndex(([label])=>label === `shell-${pass}`);
+      for(const lane of ["typecheck","sync-publish","sdk","docs-parity"])
+        expect(shell).toBeGreaterThan(timings.findIndex(([label])=>label === `${lane}-${pass}`));
+      expect(timings.filter(([label])=>label === `shell-${pass}`)).toHaveLength(1);
+    }
   });
 });

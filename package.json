@@ -123,7 +123,8 @@
     "overrides": {
       "@earendil-works/pi-ai": "1.0.0",
       "@earendil-works/chord": "1.0.0",
-      "@earendil-works/pi-telemetry": "1.0.0"
+      "@earendil-works/pi-telemetry": "1.0.0",
+      "electron-vite>vite": "npm:rolldown-vite@7.3.1"
     }
   },
   "devDependencies": {
