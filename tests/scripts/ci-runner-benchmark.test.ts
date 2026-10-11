@@ -77,11 +77,12 @@ if (process.env.FAIL_LANE === "native-platform" && relative(process.env.FIXTURE_
   writeFileSync(resolve(dir,"pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   const preparedDir=resolve(dir,"prepared");
   mkdirSync(preparedDir);
-  const fixtureInitdb = resolve(dir,"fixture-initdb");
-  writeFileSync(fixtureInitdb,"#!/bin/bash\nexit 0\n");
-  chmodSync(fixtureInitdb,0o755);
+  const fixtureInitdb = resolve(dir, "fixture-initdb");
+  writeFileSync(fixtureInitdb, "#!/bin/bash\nexit 0\n");
+  chmodSync(fixtureInitdb, 0o755);
   writeFileSync(resolve(preparedDir,"fixture-postgres.sh"),"start_fixture_postgres() { echo fixture-start >> \"$CALLS\"; }\nstop_fixture_postgres() { echo fixture-stop >> \"$CALLS\"; }\n");
-  if(prepared !== "none") { mkdirSync(resolve(preparedDir,"browsers")); mkdirSync(resolve(preparedDir,"pnpm-store"));
+  if(prepared !== "none") {
+    mkdirSync(resolve(preparedDir,"browsers")); mkdirSync(resolve(preparedDir,"pnpm-store"));
     writeFileSync(resolve(preparedDir,"prepared-lock.sha256"), prepared === "match" ? createHash("sha256").update("lockfileVersion: '9.0'\n").digest("hex") : "0".repeat(64));
   }
   writeFileSync(resolve(dir, "displays"), "");
@@ -113,7 +114,7 @@ if (process.env.FAIL_LANE === "native-platform" && relative(process.env.FIXTURE_
   };
   // Use the production script unchanged except its container-local /work path.
   const script = resolve(dir, "benchmark.sh");
-  writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir).replaceAll("/usr/lib/postgresql/16/bin/initdb",fixtureInitdb));
+  writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir).replaceAll("/usr/lib/postgresql/16/bin/initdb", fixtureInitdb));
   executable("git", `
 case "$1" in
   init) mkdir -p "$2/scripts/ci"; cp -R "$HARNESS_DIR/seed/." "$2/"; cp "$HARNESS_DIR/qualification-coverage.mjs" "$2/scripts/ci/qualification-coverage.mjs"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
@@ -409,6 +410,12 @@ describe("eight-core full benchmark budget", () => {
     expect(timings).toContainEqual(["docs-parity-proof-cold",expect.any(String),"1"]);
     for(const lane of ["unit","shell","e2e-general","e2e-electron","e2e-clipboard","terminal-grid"])
       expect(timings.some(([label])=>label === `${lane}-cold`)).toBe(true);
+  });
+  it.each(["", "unit"])("models Postgres admission and cleanup even when the qualification lane fails: %s", (fail) => {
+    const { result, calls } = invoke("qualification", fail);
+    expect(result.status, result.stderr).toBe(fail ? 1 : 0);
+    expect(calls.filter((call) => call === "fixture-start")).toHaveLength(1);
+    expect(calls.filter((call) => call === "fixture-stop")).toHaveLength(1);
   });
   it("runs every full lane once and fails when any required lane fails", () => {
     for (const fail of ["", "unit", "checks", "shell", "general", "electron", "clipboard", "desktop-build"]) {
