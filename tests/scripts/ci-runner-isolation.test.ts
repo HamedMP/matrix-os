@@ -63,6 +63,11 @@ if [[ "$1" == exec && "$FAIL_START" == 1 ]]; then exit 42; fi
 }
 
 describe("disposable manual CI benchmark admission and isolation", () => {
+  it("makes the copied trusted qualification entrypoint executable in the immutable image", () => {
+    const image = readFileSync(resolve(root, "Dockerfile"), "utf8");
+    expect(image).toContain("RUN chmod 0555 /opt/matrix-ci/benchmark.sh /opt/matrix-ci/qualification/benchmark.sh");
+    expect(image.indexOf("COPY scripts/ci/qualification")).toBeLessThan(image.indexOf("RUN chmod 0555"));
+  });
   it.each([["main", "unit", "8"], [sha, "unit;id", "8"], [sha, "unit", "17"], [sha, "unit", "0"]])(
     "rejects invalid request before allocating a container: %s %s %s", (...args) => {
       const { result, calls } = invoke(args);
@@ -195,18 +200,24 @@ describe("disposable manual CI benchmark admission and isolation", () => {
       expect(result.status).toBe(64);
     },
   );
-  it.each([[8, "8"], [16, "12"], [32, "16"]])("forced SSH dispatch fits %s cores with fixed arguments", (cores, workers) => {
+  it.each(["run", "cancel"])("forced SSH accepts only the bound lease %s command", (action) => {
     const dir = mkdtempSync(resolve(tmpdir(), "matrix-dispatch-test-"));
-    writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${cores}\n`);
-    writeFileSync(resolve(dir, "meminfo"), "MemTotal:       130023424 kB\n");
-    chmodSync(resolve(dir, "nproc"), 0o755);
     writeFileSync(resolve(dir, "sudo"), '#!/bin/bash\nprintf "%s\\n" "$@"\n');
     chmodSync(resolve(dir, "sudo"), 0o755);
     try {
-      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, MATRIX_CI_MEMINFO_PATH: resolve(dir,"meminfo"), SSH_ORIGINAL_COMMAND: `run ${sha} unit` } });
+      const lease = "a".repeat(32);
+      const result = spawnSync("bash", [resolve(root, "dispatch.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, SSH_ORIGINAL_COMMAND: `lease-v1 ${action} ${lease}` } });
       expect(result.status).toBe(0);
-      expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/start-ephemeral.sh", sha, "unit", workers, ""]);
+      expect(result.stdout.split("\n")).toEqual(["--non-interactive", "--", "/usr/local/libexec/matrix-ci/lease.py", action, lease, ""]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("denies legacy SHA dispatch and grants no generic benchmark sudo", () => {
+    const result = spawnSync("bash", [resolve(root,"dispatch.sh")], {encoding:"utf8",env:{...process.env,SSH_ORIGINAL_COMMAND:`run ${sha} unit`}});
+    expect(result.status).toBe(64);
+    const installed=readFileSync(resolve(root,"install-dispatch.sh"),"utf8");
+    expect(installed).toContain("/usr/local/libexec/matrix-ci/lease.py run *");
+    expect(installed).toContain("/usr/local/libexec/matrix-ci/lease.py cancel *");
+    expect(installed).not.toContain("NOPASSWD: /usr/local/libexec/matrix-ci/start-ephemeral.sh");
   });
   it("requires the private-egress firewall before a container is created", () => {
     const script = readFileSync(resolve(root, "start-ephemeral.sh"), "utf8");
