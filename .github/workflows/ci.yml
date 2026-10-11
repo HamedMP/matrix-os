@@ -526,6 +526,10 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@matrix-os.com"
 
+      - name: Install ripgrep for pattern scanner tests
+        if: needs.changes.outputs.should_run == 'true'
+        run: sudo apt-get install -y ripgrep
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
