@@ -88,6 +88,20 @@ describe('authenticated stdin funding repair transport', () => {
     expect(result.stdout + result.stderr).not.toContain(runtimeToken);
   });
 
+  it('fits routing commands with realistic noncompressible CAS and two service origins', () => {
+    const actual = readFileSync(resolve('scripts/ops/repair-funded-chat-config.py'), 'utf8');
+    const input = { ...request, action: 'align-routing',
+      identity: { ...identity, machineId: '01234567-89ab-4cde-8fab-0123456789ab', ownerId: 'user_0123456789abcdefghijklmnopq' },
+      expectedFile: { sha256: 'de876b2c41ba7852b83c15d03cafd35d211917a5c32f37b02183c898c0fae768', inode: 123456789, device: 16777232 },
+      expectedRelease: { version: 'v2026.10.11-pr2503-38113907071-1-007c4e5', gitCommit: '007c4e560986ed0432ee7c385d21ca071f63ebed' },
+      config: { relayUrl: 'https://matrix-ai-relay-production-abcdefghij-ey.a.run.app', platformUrl: 'https://matrix-platform-abcdefghij-ey.a.run.app' } };
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const command = buildFundedConfigRepairCommand(input, actual, authToken, 'e'.repeat(64));
+      expect(command.every((arg: string) => arg.length <= 4096)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify({ command, timeoutMs: 15_000 }))).toBeLessThanOrEqual(16_384);
+    }
+  });
+
   it('rejects canonical env rebinding and writable target directories with no secret output', () => {
     const a = supportedFixture(); chmodSync(join(a.root, 'opt/matrix/env'), 0o770);
     expect(bridge(sealFundedConfigRepair(request, source, authToken), a.path, true).status).toBe(1);

@@ -1,9 +1,5 @@
 #!/usr/bin/python3 -I
-"""Operator-only repair. Bounded stdin JSON; no secrets in argv or receipts.
-
-No restart, network call, user-home write, grant, epoch rotation or installation.
-A coordinated writer/idle window is REQUIRED: this lock covers only this tool.
-"""
+"""Host-local operator repair; see funded-chat-config-repair.md."""
 import base64
 import fcntl
 import hashlib

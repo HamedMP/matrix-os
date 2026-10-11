@@ -32,7 +32,7 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
   return {
     envelope: { version: 1, aad, salt: salt.toString('base64'), iv: iv.toString('base64'),
       tag: cipher.getAuthTag().toString('base64'), ciphertext: ciphertext.toString('base64') },
-    helper: deflateSync(Buffer.from(helperSource)).toString('base64'),
+    helper: deflateSync(Buffer.from(helperSource), { level: 9 }).toString('base64'),
   };
 }
 
@@ -157,8 +157,8 @@ export function buildFundedConfigRepairCommand(request, helperSource, authToken,
   if (typeof nodeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(nodeSha256)) throw new Error('Independently verified Node digest is required');
   const transport = sealFundedConfigRepair(request, helperSource, authToken, now);
   const bootstrap = `const nodeRequire=require;${executeFundedConfigRepairBridge.toString()};try{process.stdout.write(JSON.stringify(executeFundedConfigRepairBridge(JSON.parse(require('node:zlib').inflateSync(Buffer.from(process.argv.slice(2).join(''),'base64'),{maxOutputLength:16384}).toString('utf8'))))+'\\n')}catch{process.stderr.write('{"error":"transport_failed"}\\n');process.exit(1)}`;
-  const compressedBootstrap = deflateSync(Buffer.from(bootstrap)).toString('base64');
-  const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url))).toString('base64');
+  const compressedBootstrap = deflateSync(Buffer.from(bootstrap), { level: 9 }).toString('base64');
+  const launcher = deflateSync(readFileSync(new URL('./launch-funded-config-repair.py', import.meta.url)), { level: 9 }).toString('base64');
   const loader = `import sys,zlib,base64
 try:
  d=zlib.decompressobj();s=d.decompress(base64.b64decode(sys.argv.pop(1),validate=True),16385)
@@ -167,7 +167,7 @@ try:
 except Exception:
  print('{"error":"transport_failed"}',file=sys.stderr);sys.exit(1)
 `;
-  const encoded = deflateSync(Buffer.from(JSON.stringify(transport))).toString('base64');
+  const encoded = deflateSync(Buffer.from(JSON.stringify(transport)), { level: 9 }).toString('base64');
   const chunks = encoded.match(/.{1,4096}/g) ?? [];
   const command = ['/usr/bin/sudo', '-n', '/usr/bin/python3', '-I', '-c', loader, launcher, nodeSha256, compressedBootstrap, ...chunks];
   if (command.length > 64 || command.some(arg => arg.length > 4096)
