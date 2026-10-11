@@ -10,6 +10,12 @@ import {
 
 const MAX_CLONES = 4;
 const MAX_TEMPLATE_BYTES = 64 * 1024 * 1024;
+function parseFixtureInt8(value: string): number | bigint {
+  const integer = BigInt(value);
+  // Match the existing PGlite fixture: safe integers are numbers; all other
+  // scalar INT8 values retain exact bigint precision. Never change global pg.
+  return integer >= Number.MIN_SAFE_INTEGER && integer <= Number.MAX_SAFE_INTEGER ? Number(integer) : integer;
+}
 interface Dependencies {
   createPool(config: PoolConfig): Pool;
   createPlatformDb(options: { dialect: unknown }): PlatformDB;
@@ -89,7 +95,9 @@ export function createNativePlatformFixtureManager(overrides: Partial<Dependenci
   function pool(url: string): Pool {
     const value = dependencies.createPool({ connectionString: url, max: 1,
       connectionTimeoutMillis: 2000, idleTimeoutMillis: 1000,
-      statement_timeout: 5000, query_timeout: 7000, options: '-c lock_timeout=2000' });
+      statement_timeout: 5000, query_timeout: 7000, options: '-c lock_timeout=2000',
+      types: { getTypeParser: (oid, format = 'text') => oid === pg.types.builtins.INT8 && format === 'text'
+        ? parseFixtureInt8 : pg.types.getTypeParser(oid, format) } });
     value.on('error', error => log('Idle pool failure', error));
     return value;
   }
