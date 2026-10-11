@@ -52,7 +52,7 @@ The fixed SSH commands are `lease-v1 run <32-lowercase-hex-lease>` and
 `lease-v1 cancel <same-lease>`. A random 256-bit owner capability travels only
 through bounded stdin JSONL. It is never an argument, log, result or child
 input. The public request binds repository/PR/head/base/ref/exact ordered
-`[base,head]` merge parents, requesting and controller run IDs/attempts,
+actual ordered public merge parents (second parent equals the PR head), requesting and controller run IDs/attempts,
 controller SHA/ref/workflow, approved image/harness, mode, suite and limits.
 Canonical request identity is SHA256 of recursively key-sorted UTF8 JSON.
 
@@ -63,7 +63,7 @@ host rejects leftover disposable containers and sends a one-use random
 challenge. The trusted controller revalidates current PR/run/config APIs
 **after this lock**, then grants that exact challenge. No candidate container
 exists before the grant. Both `ci-linux` and `ready-for-ci` are required;
-stack-parent base branches are supported while the controller remains main.
+stack-parent base branches are supported while the controller remains main. The live direct branch `baseSha` stays separate from the actual first parent. GitHub native cumulative merges are accepted only by the protected controller's bounded official stack-membership, adjacent predecessor/current-ref and tree-equivalence proof, revalidated at admission, grant, renewal and settlement. The host independently checks the signed actual public parent pair; it does not authorize stack membership.
 
 Fresh challenges require authenticated renewal every 60 seconds and
 expire after 120 seconds. The initial after-lock grant expires after 30 seconds.

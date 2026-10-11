@@ -21,20 +21,27 @@ export async function resolveRequestingSource(github,repo,context,inputs){
  if(!id(prNumber)||prNumber>999999||String(prNumber)!==String(inputs.pr_number)||![inputs.head_sha,inputs.base_sha,inputs.source_sha].every(v=>sha.test(v||'')))throw new Error('Invalid exact requesting source inputs');
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:prNumber,request});
  const snapshot={prNumber,headSha:inputs.head_sha,baseSha:inputs.base_sha,sourceSha:inputs.source_sha,baseRef:pull.base?.ref,headRef:pull.head?.ref};
- await verifyCurrentDedicatedSource(github,repo,snapshot);
- const {data:merge}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request});
- if(merge.sha!==snapshot.sourceSha||merge.parents?.length!==2||merge.parents[0].sha!==snapshot.baseSha||merge.parents[1].sha!==snapshot.headSha)throw new Error('Fresh requesting merge parents changed');
+ const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
+ snapshot.mergeParents=current.mergeParents;
  return snapshot;
 }
 
+// Match the protected workflow's execution predicate; reconciliation events
+// may refresh the required gate but must not supersede an executing lease.
+export function refreshExecutionRequested(action,run){
+ const title=run?.display_title;
+ if(typeof title!=='string')return false;
+ return (action==='requested'&&title.startsWith('CI refresh-v1 '))||
+  (action==='in_progress'&&(title.startsWith('CI coverage-v1 · ')||(id(run.run_attempt)&&run.run_attempt>1&&title.startsWith('CI refresh-v1 '))));
+}
 export function authenticatedControllerRun(run,repo,value,workflow,headRef){
  if(!id(run.id)||run.workflow_id!==workflow.id||!['.github/workflows/ci-dedicated.yml','.github/workflows/ci-dedicated.yml@main','.github/workflows/ci-dedicated.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))return false;
- if(run.event==='workflow_run')return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v1 request=${value.requestingRunId} title=${title}`);
+ if(run.event==='workflow_run')return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
  return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&run.display_title===`dedicated-ci-v2 pr=${value.prNumber} head=${value.headSha} base=${value.baseSha} requested=true`;
 }
 export async function admitRefreshController(github,repo,event){
  const candidate=event.workflow_run;
- if(!['requested','in_progress'].includes(event.action)||!id(candidate?.id)||(event.action==='requested'&&!parseRefreshMarker(candidate.display_title)))return null;
+ if(!refreshExecutionRequested(event.action,candidate)||!id(candidate?.id))return null;
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
@@ -48,8 +55,7 @@ export async function admitRefreshController(github,repo,event){
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
  snapshot.baseRef=pull.base.ref;
- await verifyCurrentDedicatedSource(github,repo,snapshot);
- const {data:commit}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request});
- if(commit.sha!==snapshot.sourceSha||commit.parents?.length!==2||commit.parents[0].sha!==snapshot.baseSha||commit.parents[1].sha!==snapshot.headSha)throw new Error('Refresh controller merge parents changed');
+ const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
+ snapshot.mergeParents=current.mergeParents;
  return snapshot;
 }

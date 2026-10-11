@@ -50,3 +50,9 @@ it('revokes a lease when its authenticated API cycle stalls before a grant',asyn
  emit(c,'queued');emit(c,'locked',{challenge:'5'.repeat(64),deadlineUnixMs:Date.now()+30000});await vi.advanceTimersByTimeAsync(11);await expect(pending).rejects.toThrow(/API cycle/);expect(c.stdin.writableEnded).toBe(true);expect(c.kill).toHaveBeenCalledWith('SIGTERM');c.emit('close',1);
  }finally{vi.useRealTimers();}
 });
+
+it('binds actual native merge parent bytes separately from branch base in request shape',async()=>{
+ const {nativePins}=await import('./helpers/native-stack-fixture');const value={...request,headSha:nativePins.head,baseSha:nativePins.base,mergeSha:nativePins.merge,mergeParents:[nativePins.parentMerge,nativePins.head]};
+ expect((helpers as any).validateLeaseRequest(value)).toEqual(value);
+ expect(canonical(value)).toContain(nativePins.base);expect(canonical(value)).toContain(nativePins.parentMerge);
+});

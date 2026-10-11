@@ -27,7 +27,7 @@ it('reuses only authenticated source gate ownership and revokes parent-only old 
 function completeFixture(){
  const f=fixture();f.pull.labels=[{name:'ci-linux'},{name:'ready-for-ci'}];
  const ci={id:321,run_attempt:1,workflow_id:98,event:'workflow_dispatch',path:'.github/workflows/ci.yml',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},status:'completed',conclusion:'success',pull_requests:[],display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`};
- const controller={...ci,id:124,workflow_id:99,event:'workflow_run',path:'.github/workflows/ci-dedicated.yml',display_title:`dedicated-refresh-v1 request=321 title=${ci.display_title}`};
+ const controller={...ci,id:124,workflow_id:99,event:'workflow_run',path:'.github/workflows/ci-dedicated.yml',display_title:`dedicated-refresh-v2 execution=true request=321 title=${ci.display_title}`};
  const check={id:12,name:'Dedicated CI Results',head_sha:head,app:{slug:'github-actions'},status:'completed',conclusion:'success',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124',output:{summary:JSON.stringify({schemaVersion:3,prNumber:2454,suite:'qualification',headSha:head,baseSha:base,baseRef:'stack/parent',sourceSha:merge,controllerSha:main,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',controllerAttempt:1,requestingRunId:321,requestingRunAttempt:1,mode:'shadow',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),receiptVerified:true,requestDigest:'9'.repeat(64),leaseId:'8'.repeat(32)})}};
  f.github.rest.actions.listWorkflowRuns.mockImplementation(async(args?:unknown)=>({data:{workflow_runs:(args as {workflow_id:number}).workflow_id===98?[ci]:[controller]}}));
  f.github.rest.actions.getWorkflowRun.mockResolvedValue({data:controller});f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check]}});
@@ -49,4 +49,19 @@ it.each(['ordinary','fork'])('establishes %s N/A before any protected execution 
 it('fails an admitted PR before dispatch when the protected reviewed pins are missing',async()=>{
  const f=fixture();f.pull.labels=[{name:'ci-linux'},{name:'ready-for-ci'}];f.github.rest.actions.listRepoVariables.mockResolvedValue({data:{total_count:1,variables:[{name:'MATRIX_CI_DEDICATED_SHADOW',value:'true'}]}});
  await reconcile(f);expect(f.github.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'failure'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
+});
+
+it('dispatches fresh native source proof retaining direct branchbase and cumulative mergeSHA',async()=>{
+ const {nativeStackFixture}=await import('./helpers/native-stack-fixture');const native=nativeStackFixture(),f=fixture(),g:any=f.github;
+ g.request=native.github.request;g.rest.pulls=native.github.rest.pulls;g.rest.git=native.github.rest.git;g.rest.repos=native.github.rest.repos;
+ await gate.reconcileSourceQualification(g,repo,origin,{runId:123,runAttempt:1,prNumber:native.pull.number,gateAppId:777,gateGithub:f.gateGithub});
+ expect(g.rest.actions.createWorkflowDispatch).toHaveBeenCalledWith(expect.objectContaining({inputs:{pr_number:String(native.pull.number),head_sha:native.snapshot.headSha,base_sha:native.snapshot.baseSha,source_sha:native.snapshot.sourceSha}}));
+});
+
+it('retains ordinary completed source gate success after a newer reconciliation-only controller',async()=>{
+ const f=completeFixture();Object.assign(f.ci,{event:'pull_request',head_sha:head,head_branch:'child',display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]});
+ Object.assign(f.controller,{event:'pull_request_target',head_sha:head,head_branch:'child',display_title:`dedicated-ci-v2 pr=2454 head=${head} base=${base} requested=true`});
+ const extra={...f.controller,id:125,event:'workflow_run',head_branch:'main',head_sha:main,display_title:`dedicated-refresh-v2 execution=false request=321 title=${f.ci.display_title}`};
+ f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===98?[f.ci]:[extra,f.controller]}}));
+ await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'success'}));
 });

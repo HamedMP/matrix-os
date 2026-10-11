@@ -353,7 +353,9 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('ci-results:');
-    expect(workflow).toContain('name: CI Results');
+    const aggregate = parse(workflow).jobs['ci-results'];
+    const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
     expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
     expect(workflow).toContain('### CI Results');

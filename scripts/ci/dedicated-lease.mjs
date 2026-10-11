@@ -31,9 +31,7 @@ export async function verifyDedicatedLeaseGrant(github,repo,controller,value){
  for(const [name,expected] of [['MATRIX_CI_RUNNER_IMAGE_DIGEST',value.imageDigest],['MATRIX_CI_RUNNER_HARNESS_DIGEST',value.harnessDigest],[value.mode==='delegated'?'MATRIX_CI_DEDICATED_ENABLED':'MATRIX_CI_DEDICATED_SHADOW','true']]){
   if(configuration[name]!==expected)throw new Error('Reviewed Linux configuration changed or mode disabled');
  }
- const pull=await verifyCurrentDedicatedSource(github,repo,{prNumber:value.prNumber,headSha:value.headSha,baseSha:value.baseSha,baseRef:value.baseRef,sourceSha:value.mergeSha});
- const {data:merge}=await github.rest.repos.getCommit({...repo,ref:value.mergeSha,request});
- if(merge.sha!==value.mergeSha||merge.parents?.length!==2||merge.parents[0].sha!==value.baseSha||merge.parents[1].sha!==value.headSha||value.mergeParents?.length!==2||value.mergeParents[0]!==value.baseSha||value.mergeParents[1]!==value.headSha)throw new Error('Current ordered merge parents do not bind the grant');
+ const pull=await verifyCurrentDedicatedSource(github,repo,{prNumber:value.prNumber,headSha:value.headSha,baseSha:value.baseSha,baseRef:value.baseRef,sourceSha:value.mergeSha,mergeParents:value.mergeParents});
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
  if(!id(workflow.id)||workflow.path!==workflowPath('ci-dedicated.yml'))throw new Error('Unexpected controller definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:value.controllerRunId,request});

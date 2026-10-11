@@ -2,7 +2,7 @@ name: Dedicated CI Benchmark
 # Data-only identity is available in the API even while the controller is queued.
 # Exact ref/merge/attempt provenance is still verified after admission.
 run-name: >-
-  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v1 request={0} title={1}', github.event.workflow_run.id, github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
+  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v2 execution={0} request={1} title={2}', ((github.event.action == 'requested' && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')) || (github.event.action == 'in_progress' && (startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ') || (github.event.workflow_run.run_attempt > 1 && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 '))))) && 'true' || 'false', github.event.workflow_run.id, github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
 
 # This controller comes from the default branch and never executes PR code.
 # Parent-only moves fail CI Source Qualification and dispatch fresh main-defined CI.
@@ -105,7 +105,7 @@ jobs:
               head_sha:headSha,status:'in_progress',request:{timeout:10000},
               details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               output:{title:'Isolated Linux qualification pending',summary:JSON.stringify(summary)}});
-            for(const [key,value] of Object.entries({sha,head_sha:headSha,base_sha:baseSha,base_ref:baseRef,
+            for(const [key,value] of Object.entries({sha,head_sha:headSha,base_sha:baseSha,base_ref:baseRef,merge_parent_sha:admission.mergeParents?.[0] || '',
               pr_number:prNumber,check_id:check.id,admitted:true,mode,
               requesting_run_id:requesting?.runId || 0,requesting_run_attempt:requesting?.runAttempt || 0}))core.setOutput(key,String(value));
 
@@ -122,7 +122,7 @@ jobs:
             const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
             await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
-              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number)});
+              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(Number(data.pr_number)>0?{mergeParents:[data.merge_parent_sha,data.head_sha]}:{})});
             core.setOutput('current','true');
 
       - name: Dispatch authenticated PR qualification lease
@@ -148,7 +148,7 @@ jobs:
             const data=JSON.parse(process.env.SNAPSHOT);
             const request={repository:`${context.repo.owner}/${context.repo.repo}`,prNumber:Number(data.pr_number),
               headSha:data.head_sha,baseSha:data.base_sha,baseRef:data.base_ref,mergeSha:data.sha,
-              mergeParents:[data.base_sha,data.head_sha],requestingRunId:Number(data.requesting_run_id),
+              mergeParents:[data.merge_parent_sha,data.head_sha],requestingRunId:Number(data.requesting_run_id),
               requestingRunAttempt:Number(data.requesting_run_attempt),controllerRunId:context.runId,
               controllerRunAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerSha:process.env.CONTROLLER_SHA,
               controllerRef:context.ref,controllerWorkflow:'.github/workflows/ci-dedicated.yml',
@@ -179,6 +179,7 @@ jobs:
         env:
           CHECK_ID: ${{ steps.admit.outputs.check_id }}
           HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
+          MERGE_PARENT_SHA: ${{ steps.admit.outputs.merge_parent_sha }}
           BASE_SHA: ${{ steps.admit.outputs.base_sha }}
           BASE_REF: ${{ steps.admit.outputs.base_ref }}
           PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
@@ -209,7 +210,7 @@ jobs:
                 {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},JSON.parse(process.env.LEASE_REQUEST));
               await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:process.env.SOURCE_SHA,
                 headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
-                prNumber:Number(process.env.PR_NUMBER)});
+                prNumber:Number(process.env.PR_NUMBER),...(Number(process.env.PR_NUMBER)>0?{mergeParents:[process.env.MERGE_PARENT_SHA,process.env.HEAD_SHA]}:{})});
             } catch(error) {
               core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
               core.setFailed('Current PR revision could not be revalidated');

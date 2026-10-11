@@ -11,8 +11,8 @@ function fixture(baseRef='main') {
 describe('trusted default controller admits exact stacked merge candidates',()=>{
  it.each(['main','stack/parent','codex/parent','release/other','feature/arbitrary-parent'])('accepts same-repo base %s',async ref=>{
   const {github,input}=fixture(ref);const value=await admitDedicatedSource(github,input);
-  expect(value).toEqual({sourceSha:merge,headSha:head,baseSha:base,baseRef:ref,prNumber:2440});
-  expect(github.rest.repos.getCommit).toHaveBeenCalledWith(expect.objectContaining({ref:merge,request:{timeout:10000}}));
+  expect(value).toEqual({sourceSha:merge,headSha:head,baseSha:base,baseRef:ref,prNumber:2440,mergeParents:[base,head]});
+  expect(github.rest.repos.getCommit).toHaveBeenCalledWith(expect.objectContaining({ref:merge,request:expect.objectContaining({timeout:10000,signal:expect.any(AbortSignal)})}));
  });
  it.each(['refs/heads/stack/parent','refs/heads/codex/parent','refs/pull/2440/merge'])('rejects controller ref %s before API access',async ref=>{
   const {github,input}=fixture('stack/parent');input.controller.ref=ref;
@@ -107,4 +107,11 @@ it('rejects a moved parent ref even before the pull API refreshes its snapshot',
  const {github,input}=fixture('stack/parent');github.rest.git.getRef.mockResolvedValue({data:{object:{sha:moved}}});
  await expect(admitDedicatedSource(github,input)).rejects.toThrow(/parent ref|base ref/);
  await expect(verifyCurrentDedicatedSource(github,repo,{prNumber:2440,headSha:head,baseSha:base,baseRef:'stack/parent',sourceSha:merge})).rejects.toThrow(/parent ref|base ref/);
+});
+
+it('admits the native cumulative merge while keeping its direct live branch base',async()=>{
+ const {nativeStackFixture,nativePins}=await import('./helpers/native-stack-fixture');const f=nativeStackFixture();
+ await expect(admitDedicatedSource(f.github,f.input)).resolves.toMatchObject(f.snapshot);
+ await expect(verifyCurrentDedicatedSource(f.github,repo,f.snapshot)).resolves.toBeDefined();
+ expect(f.snapshot.baseSha).toBe(nativePins.base);expect(f.snapshot.mergeParents[0]).not.toBe(f.snapshot.baseSha);
 });

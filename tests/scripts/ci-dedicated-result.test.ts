@@ -1,4 +1,5 @@
 import {describe,expect,it,vi} from "vitest";
+import {nativeStackFixture,nativePins} from './helpers/native-stack-fixture';
 import {waitForDedicatedResult} from "../../scripts/ci/dedicated-result.mjs";
 const headSha="a".repeat(40),baseSha="b".repeat(40),sourceSha="c".repeat(40),controllerSha="d".repeat(40);
 const expected={requestingRunId:321,requestingRunAttempt:1,imageDigest:"sha256:"+"e".repeat(64),harnessDigest:"f".repeat(64),mode:"delegated",owner:"HamedMP",repo:"matrix-os",headSha,baseSha,sourceSha,prNumber:2440,baseRef:"main",headRef:"feature/source",serverUrl:"https://github.com"};
@@ -6,7 +7,7 @@ function fixture(change:Record<string,unknown>={}) {
   const summary={schemaVersion:3,requestingRunId:321,requestingRunAttempt:1,imageDigest:expected.imageDigest,harnessDigest:expected.harnessDigest,mode:expected.mode,receiptVerified:true,requestDigest:"9".repeat(64),leaseId:"8".repeat(32),baseRef:"main",controllerAttempt:1,suite:"qualification",headSha,baseSha,sourceSha,prNumber:2440,controllerSha,controllerRef:"refs/heads/main",controllerWorkflow:".github/workflows/ci-dedicated.yml",...change};
   const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
   const run={id:123,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
-  const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:baseSha}}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"ci-linux"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
+  const github={rest:{repos:{getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},git:{getRef:vi.fn(async()=>({data:{object:{sha:baseSha}}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"ci-linux"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
   return {github,check,run};
 }
 const options={maxAttempts:2,delay:async()=>{}};
@@ -193,4 +194,23 @@ it('accepts established newest provenance without rejecting total retained histo
 it('settles current result without rejecting unrelated retained run history',async()=>{
  const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[f.run,...Array.from({length:99},(_,i)=>({...f.run,id:i+1,display_title:'unrelated retained schedule',event:'schedule'}))]}});
  await expect(waitForDedicatedResult(f.github,expected,{maxAttempts:1})).resolves.toEqual({runId:123,sourceSha});
+});
+
+it('authenticates the native current public cumulative source through final waiter settlement',async()=>{
+ const f=fixture(),native=nativeStackFixture();
+ Object.assign(f.github.rest,{repos:native.github.rest.repos,git:native.github.rest.git,pulls:native.github.rest.pulls});
+ const github={...f.github,request:native.github.request};
+ const scope={...expected,...native.snapshot};
+ Object.assign(f.run,{head_sha:nativePins.head,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=2491 head=${nativePins.head} base=${nativePins.base} requested=true`});
+ f.check.head_sha=nativePins.head;
+ f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...native.snapshot});
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${nativePins.head}-${nativePins.merge}-${nativePins.base}-pr2491-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ await expect(waitForDedicatedResult(github,scope,options)).resolves.toEqual({runId:123,sourceSha:nativePins.merge});
+ expect(native.github.request).toHaveBeenCalledTimes(4); // initial and final independent native proofs
+});
+
+it.each(['completed','in_progress'])('ignores newer reconciliation-only %s controller during accepted ordinary settlement',async status=>{
+ const f=fixture();const extra={...f.run,id:124,event:'workflow_run',head_branch:'main',head_sha:controllerSha,status,display_title:`dedicated-refresh-v2 execution=false request=321 title=CI coverage-v1 · ${sourceSha}`};
+ f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[extra,f.run]}});
+ await expect(waitForDedicatedResult(f.github,expected,options)).resolves.toEqual({runId:123,sourceSha});
 });

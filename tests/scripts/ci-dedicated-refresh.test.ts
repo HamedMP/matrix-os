@@ -11,7 +11,7 @@ function fixture(){
 }
 describe('trusted same-head parent refresh',()=>{
  it('resolves a precise new merge under main CI definition without executing candidate helpers',async()=>{
-  const f=fixture();expect(await helpers.resolveRequestingSource(f.github,repo,f.context,f.inputs)).toEqual({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,baseRef:'stack/parent',headRef:'child'});
+  const f=fixture();expect(await helpers.resolveRequestingSource(f.github,repo,f.context,f.inputs)).toEqual({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,baseRef:'stack/parent',headRef:'child',mergeParents:[base,head]});
  });
  it.each(['origin','head','base','merge','ref','labels','fork','parents','input'])('fails closed for %s mismatch',async kind=>{
   const f=fixture();if(kind==='origin')f.context.ref='refs/heads/child';if(kind==='head')f.pull.head.sha=main;if(kind==='base')f.pull.base.sha=main;if(kind==='merge')f.pull.merge_commit_sha=main;if(kind==='ref')f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:main}}});if(kind==='labels')f.pull.labels=[];if(kind==='fork')f.pull.head.repo.full_name='other/repo';if(kind==='parents')f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:base}]}});if(kind==='input')f.inputs.source_sha='main';
@@ -55,4 +55,29 @@ it('starts initial non-main CI through the default-main workflow_run bridge',asy
  expect(admits(vars,github,(text:string,prefix:string)=>text.startsWith(prefix))).toBe(true);
  expect(admits(vars,{...github,ref:'refs/heads/stack/parent'},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
  expect(admits(vars,{...github,event:{...github.event,workflow_run:{run_attempt:1,display_title:`CI metadata-v1 · ${merge}`}}},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
+});
+
+it('refreshes actual native merge parents without replacing direct branch base',async()=>{
+ const {nativeStackFixture}=await import('./helpers/native-stack-fixture');const f=nativeStackFixture();
+ const context={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main'};
+ await expect(helpers.resolveRequestingSource(f.github,repo,context,{pr_number:String(f.pull.number),head_sha:f.snapshot.headSha,base_sha:f.snapshot.baseSha,source_sha:f.snapshot.sourceSha})).resolves.toMatchObject(f.snapshot);
+});
+
+it.each([['requested',1,'refresh',true],['in_progress',1,'refresh',false],['in_progress',2,'refresh',true],['completed',1,'refresh',false],['completed',2,'coverage',false],['in_progress',1,'coverage',true],['requested',1,'coverage',false]])('authenticates only execution requests %s attempt=%s title=%s',async(action,attempt,kind,expected)=>{
+ const {readFileSync}=await import('node:fs'),{parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const scope={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321};
+ const source={id:321,run_attempt:attempt,display_title:kind==='refresh'?helpers.refreshMarker(scope):`CI coverage-v1 · ${merge}`};
+ const github={event_name:'workflow_run',ref:'refs/heads/main',event:{action,workflow_run:source}};
+ const startsWith=(text:string,prefix:string)=>text.startsWith(prefix),format=(text:string,...args:any[])=>text.replace(/\{([0-9]+)\}/g,(_,i)=>String(args[Number(i)]));
+ const marker=Function('github','format','startsWith',`return (${w['run-name'].trim().slice(3,-2)});`)(github,format,startsWith);
+ const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:marker};
+ expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(expected);
+ expect(helpers.refreshExecutionRequested(action,source)).toBe(expected);
+ const admitted=Function('vars','github','startsWith',`return (${w.jobs.benchmark.if});`)({MATRIX_CI_DEDICATED_ENABLED:'true'},github,startsWith);
+ expect(admitted).toBe(expected);
+});
+it('does not authenticate ambiguous legacy refresh controller markers',()=>{
+ const scope={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321};
+ const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`dedicated-refresh-v1 request=321 title=${helpers.refreshMarker(scope)}`};
+ expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(false);
 });

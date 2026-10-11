@@ -33,7 +33,7 @@ afterEach(()=>vi.unstubAllEnvs());
 describe('dedicated CI trusted dispatcher integration',()=>{
  it('attaches pending tuple provenance to the exact admitted source head',async()=>{
   const {outputs,github}=await admit();
-  expect(outputs).toEqual({sha:merge,head_sha:head,base_sha:base,base_ref:'main',pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
+  expect(outputs).toEqual({sha:merge,head_sha:head,base_sha:base,base_ref:'main',merge_parent_sha:base,pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
   const args=github.rest.checks.create.mock.calls[0][0];
   expect(args).toMatchObject({head_sha:head,status:'in_progress',name:'Dedicated CI Results'});
   expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerAttempt:1});
@@ -72,13 +72,13 @@ describe('dedicated CI trusted dispatcher integration',()=>{
  });
  it.each(['success','failure','skipped'])('settles dispatch %s without treating skipped work as success',async outcome=>{
   const {outputs,github,context,core}=await admit();
-  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:outcome,SUITE:'qualification'}))vi.stubEnv(key,value);
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:outcome,SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure'); // Exit-only or missing receipt evidence can never qualify.
  });
  it('fails settlement and logs revalidation failure when successful execution became stale',async()=>{
   const {outputs,github,pull,context,core}=await admit();pull.base.ref='another-parent';
-  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(core.warning).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure');
  });

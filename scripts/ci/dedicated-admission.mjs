@@ -1,5 +1,6 @@
 // Data-only decisions. The privileged controller loads this file only from its
 // authenticated default-branch SHA; never load it from a PR or parent checkout.
+import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
 const shaPattern = /^[a-f0-9]{40}$/;
 const request = {timeout: 10_000};
@@ -60,14 +61,9 @@ export async function admitDedicatedSource(github, input) {
       pull.base.ref !== eventPull.base.ref) return null;
   if(await liveParentRefSha(github,repo,pull.base.ref)!==pull.base.sha)throw new Error('Current parent ref has changed');
   const snapshot = {sourceSha: pull.merge_commit_sha, headSha: pull.head.sha,
-    baseSha: pull.base.sha, baseRef: pull.base.ref, prNumber: pull.number};
+    baseSha: pull.base.sha, baseRef: pull.base.ref, prNumber: pull.number,...(typeof pull.head.ref==='string'?{headRef:pull.head.ref}:{})};
   if (!validSnapshot(snapshot)) throw new Error('Current merge commit unavailable');
-  const {data: merge} = await github.rest.repos.getCommit({...repo, ref: snapshot.sourceSha, request});
-  const parents = merge.parents?.map(parent => parent.sha) || [];
-  if (merge.sha !== snapshot.sourceSha || parents.length !== 2 ||
-      parents[0]!==snapshot.baseSha || parents[1]!==snapshot.headSha) {
-    throw new Error('Merge commit does not bind the current PR head and base');
-  }
+  snapshot.mergeParents=await resolveDedicatedMergeParents(github,repo,pull);
   return snapshot;
 }
 
@@ -85,7 +81,9 @@ export async function verifyCurrentDedicatedSource(github, repo, snapshot) {
     throw new Error('Dedicated qualification revision or admission is stale');
   }
   if(await liveParentRefSha(github,repo,snapshot.baseRef)!==snapshot.baseSha)throw new Error('Current parent ref has changed');
-  return pull;
+  const mergeParents=await resolveDedicatedMergeParents(github,repo,pull);
+  if(snapshot.mergeParents!==undefined&&JSON.stringify(snapshot.mergeParents)!==JSON.stringify(mergeParents))throw new Error('Current ordered merge parents are stale');
+  return {...pull,mergeParents};
 }
 
 export {reconcileDedicatedChildren} from './dedicated-reconcile.mjs';

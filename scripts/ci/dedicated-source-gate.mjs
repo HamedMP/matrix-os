@@ -70,7 +70,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','ci-linux'].every(label=>pull.labels?.some(value=>value.name===label));
   if(!admitted){await write('success','Dedicated source qualification: not admitted',{notApplicable:true});continue;}
   if(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||'')){await write('failure','Reviewed execution configuration is incomplete');continue;}
-  try{await verifyCurrentDedicatedSource(github,repo,snapshot);const {data:commit}=await github.rest.repos.getCommit({...repo,ref:snapshot.sourceSha,request});if(commit.sha!==snapshot.sourceSha||commit.parents?.length!==2||commit.parents[0].sha!==snapshot.baseSha||commit.parents[1].sha!==snapshot.headSha)throw new Error('Merge source not current');}
+  try{const current=await verifyCurrentDedicatedSource(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
   catch(error){await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
   const requester=await currentRequester(github,repo,snapshot);
   if(!requester){

@@ -50,9 +50,9 @@ it('rejects an unrelated controller marker and never admits a different newest r
 
 it('allows a main-definition refresh requester and its authenticated workflow_run controller',async()=>{
  const f=fixture();Object.assign(f.ciRun,{event:'workflow_dispatch',head_sha:controller,head_branch:'main',display_title:`CI refresh-v1 pr=2454 head=${head} base=${base} merge=${merge}`,pull_requests:[]});
- Object.assign(f.controllerRun,{event:'workflow_run',head_sha:controller,head_branch:'main',display_title:`dedicated-refresh-v1 request=321 title=${f.ciRun.display_title}`});
+ Object.assign(f.controllerRun,{event:'workflow_run',head_sha:controller,head_branch:'main',display_title:`dedicated-refresh-v2 execution=true request=321 title=${f.ciRun.display_title}`});
  await verify(f);
- f.controllerRun.display_title=`dedicated-refresh-v1 request=322 title=${f.ciRun.display_title}`;await expect(verify(f)).rejects.toThrow(/controller/);
+ f.controllerRun.display_title=`dedicated-refresh-v2 execution=true request=322 title=${f.ciRun.display_title}`;await expect(verify(f)).rejects.toThrow(/controller/);
 });
 it('keeps reviewed helper pin stable across unrelated main commits but denies pin changes or nonancestor source',async()=>{
  const f=fixture();await verify(f);
@@ -65,4 +65,21 @@ it('denies a reviewed pin that is no longer an ancestor of the live main ref',as
 it('finds the newest relevant leases despite three hundred retained unrelated runs',async()=>{
  const f=fixture();f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:[args.workflow_id===99?f.controllerRun:f.ciRun,...Array.from({length:99},(_,i)=>({...f.controllerRun,id:1+i,display_title:'unrelated retained schedule',event:'schedule'}))]}}));
  await verify(f);expect(f.github.rest.actions.listWorkflowRuns.mock.calls.every(([args]:any[])=>args.page===1)).toBe(true);
+});
+
+it('binds native actual merge parents at lock and every later renewal',async()=>{
+ const {nativeStackFixture}=await import('./helpers/native-stack-fixture');const native=nativeStackFixture(),f=fixture();
+ Object.assign(f.request,{prNumber:native.pull.number,headSha:native.snapshot.headSha,baseSha:native.snapshot.baseSha,baseRef:native.snapshot.baseRef,mergeSha:native.snapshot.sourceSha,mergeParents:native.snapshot.mergeParents});
+ const g:any=f.github;g.request=native.github.request;g.rest.pulls=native.github.rest.pulls;g.rest.git=native.github.rest.git;g.rest.repos.getCommit=native.github.rest.repos.getCommit;
+ Object.assign(f.controllerRun,{head_sha:f.request.headSha,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=${f.request.prNumber} head=${f.request.headSha} base=${f.request.baseSha} requested=true`});
+ Object.assign(f.ciRun,{head_sha:f.request.headSha,head_branch:native.pull.head.ref,display_title:`CI coverage-v1 · ${f.request.mergeSha}`,pull_requests:[{number:f.request.prNumber,head:{sha:f.request.headSha,ref:native.pull.head.ref},base:{sha:f.request.baseSha,ref:f.request.baseRef}}]});
+ await verify(f);await verify(f);native.parent.merge_commit_sha='0'.repeat(40);await expect(verify(f)).rejects.toThrow();
+});
+
+it.each(['completed','in_progress'])('reconcile-only newer %s controller cannot revoke an executing lease',async status=>{
+ const f=fixture();const extra={...f.controllerRun,id:124,event:'workflow_run',head_branch:'main',head_sha:controller,status,display_title:`dedicated-refresh-v2 execution=false request=321 title=CI coverage-v1 · ${merge}`};
+ f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===99?[extra,f.controllerRun]:[f.ciRun]}}));
+ await verify(f);
+ extra.display_title=`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${merge}`;
+ await expect(verify(f)).rejects.toThrow(/superseded/);
 });
