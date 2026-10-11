@@ -1,10 +1,9 @@
 name: Supersede PR CI
 
-# This runs trusted base-branch code only. Never check out or execute PR contents
+# This runs the authenticated default-branch workflow only. Never check out or execute PR contents
 # in a workflow with the Actions cancellation permission.
 on:
   pull_request_target:
-    branches: [main, "stack/**", "codex/**"]
     types: [synchronize, ready_for_review, labeled]
 
 permissions:
