@@ -1,4 +1,5 @@
 import { createChatProviderCatalogService, validateChatProviderSelection } from "../../packages/gateway/src/chat/provider-catalog.js";
+import { resolveManagedPiSelection } from "../../packages/gateway/src/chat/managed-pi-route.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -178,7 +179,7 @@ describe("AiProviderService", () => {
     service.close();
   });
 
-  it("keeps selected Matrix admission fresh without unrelated native discovery", async () => {
+  it("resolves ordinary Matrix Chat without waiting for unrelated native discovery", async () => {
     const held = Promise.withResolvers<AiProviderSnapshotV3["drivers"]>();
     const driverInventory = vi.fn(() => held.promise);
     const codexLocalObservation = vi.fn(async () => ({ accessSourceId: "owner_openai_profile", state: "absent" as const, checkedAt: null, staleAfter: null }));
@@ -186,16 +187,17 @@ describe("AiProviderService", () => {
     const codexNativeKeyReadiness = vi.fn(async () => null);
     const service = createService({ platformKey: "platform-test", driverInventory, codexLocalObservation,
       codexNativeKeyReadiness, nativeHarnessCatalogReader: { getCatalog } });
-    const request = service.getSnapshot({ admissionScope: "managed_matrix" });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(NOW.getTime());
+    const request = resolveManagedPiSelection({ instanceId: "matrix_pi_default", model: "claude-sonnet-5" }, "owner", { providers: service });
     try {
       const result = await Promise.race([request, new Promise<null>(resolve => setTimeout(() => resolve(null), 100))]);
       expect(result).not.toBeNull();
-      expect(result!.accessSources.find(source => source.id === "matrix_included")?.state).toBe("ready");
+      expect(result).toMatchObject({ accessSourceId: "matrix_included",
+        route: { api: "anthropic-messages", modelId: "claude-sonnet-5" } });
       expect(driverInventory).not.toHaveBeenCalled(); expect(codexLocalObservation).not.toHaveBeenCalled();
       expect(getCatalog).not.toHaveBeenCalled();
       expect(codexNativeKeyReadiness).not.toHaveBeenCalled();
-      expect(AiProviderSnapshotV3Schema.safeParse(result).success).toBe(true);
-    } finally { held.resolve([]); await request; service.close(); }
+    } finally { held.resolve([]); await request; service.close(); clock.mockRestore(); }
   });
 
   it("retains native OpenAI key observation in a complete Settings snapshot", async () => {
@@ -226,14 +228,20 @@ describe("AiProviderService", () => {
       executableDriverKinds: ["matrix_pi"], now: () => NOW });
     const principal = { userId: "owner_policy", source: "jwt" as const };
     const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(NOW.getTime());
     try {
       expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(true);
+      await expect(resolveManagedPiSelection(selection, principal.userId, { providers: service }))
+        .resolves.toMatchObject({ accessSourceId: "matrix_included", route: { modelId: selection.model } });
       allowedModelIds = [];
       expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(false);
+      await expect(resolveManagedPiSelection(selection, principal.userId, { providers: service })).rejects.toThrow("model_unavailable");
       read.mockRejectedValueOnce(new Error("private readiness failure"));
       expect(validateChatProviderSelection({ catalog: await catalog.getCatalog(principal, selection), selection }).ok).toBe(false);
-      expect(read).toHaveBeenCalledTimes(3);
-    } finally { service.close(); }
+      read.mockRejectedValueOnce(new Error("private readiness failure"));
+      await expect(resolveManagedPiSelection(selection, principal.userId, { providers: service })).rejects.toThrow();
+      expect(read).toHaveBeenCalledTimes(6);
+    } finally { service.close(); clock.mockRestore(); }
   });
 
   it("checks funded readiness without waiting for slow CLI inventory", async () => {
