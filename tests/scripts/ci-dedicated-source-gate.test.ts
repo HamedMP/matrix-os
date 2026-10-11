@@ -175,7 +175,7 @@ it('retains ordinary completed source gate success after a newer reconciliation-
  Object.assign(f.controller,{event:'pull_request_target',head_sha:head,head_branch:'child',display_title:`dedicated-ci-v2 pr=2454 head=${head} base=${base} requested=true`});
  const extra={...f.controller,id:125,event:'workflow_run',head_branch:'main',head_sha:main,display_title:`dedicated-refresh-v2 execution=false request=321 title=${f.ci.display_title}`};
  f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===98?[f.ci]:[extra,f.controller]}}));
- await reconcile(f);expect(f.github.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'success'}));
+ await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({conclusion:'success'}));
 });
 
 
