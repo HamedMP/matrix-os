@@ -138,6 +138,7 @@ class LeaseManager:
             # Never print an envelope, capability, raw candidate text or private path.
             print('Lease manager rejected operation: ' + type(error).__name__, file=__import__('sys').stderr)
         finally:
+            cleaned = not acquired # A queued lease has allocated no candidate CPU.
             try:
                 if acquired:
                     cleaned = self._cleanup_owned()
@@ -151,12 +152,18 @@ class LeaseManager:
                         self._tick()
                         if not isinstance(receipt, dict) or receipt.get('qualified') is not True:
                             raise ValueError('Evidence rejected')
-                if reserved:
-                    self.store.complete(self.protocol.lease)
             except Exception as error:
                 print('Lease completion failed: ' + type(error).__name__, file=__import__('sys').stderr)
                 status, kind, reason = 70, 'failed', 'evidence_failed'
             finally:
+                # Receipt/revocation failure cannot retain proven-clean queue
+                # ownership. Uncertain cleanup must keep its replay owner.
+                try:
+                    if reserved and cleaned:
+                        self.store.complete(self.protocol.lease)
+                except Exception as error:
+                    print('Lease ownership completion failed: ' + type(error).__name__, file=__import__('sys').stderr)
+                    status, kind, reason = 70, 'failed', 'evidence_failed'
                 # Removal/reaping and root verification finish before CPU admission lock release.
                 if fd is not None:
                     os.close(fd)

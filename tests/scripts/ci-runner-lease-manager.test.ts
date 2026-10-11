@@ -131,6 +131,40 @@ with tempfile.TemporaryDirectory() as td:
  manager=LeaseManager(envelope,config,root,[sys.executable,'-c','pass'],cleanup=lambda:True,verify=verify,pipe=pipe,protocol=protocol)
  assert manager.run()!=0
  assert pipe.records[-1]['type']=='failed' and not any(r['type']=='completed' for r in pipe.records)
+ assert manager.store.read(envelope['leaseId'])['status']=='completed'
+`));
+  it.each(['final-tick','verify-error','invalid-receipt','success'])('terminalizes proven-clean ownership for %s',failure=>python(`${fixture}
+from lease_manager import LeaseManager
+from lease_protocol import LeaseProtocol
+protocol=LeaseProtocol(envelope)
+class Pipe:
+ def __init__(self):self.eof=False;self.records=[];self.granted=False
+ def emit(self,value):self.records.append(value)
+ def poll(self):
+  if protocol.pending and not self.granted:
+   self.granted=True
+   return [dict(protocolVersion=1,type='grant',leaseId=envelope['leaseId'],requestDigest=canonical_digest(request),challenge=protocol.pending,capability=envelope['capability'])]
+  time.sleep(.005);return []
+failure=${JSON.stringify(failure)}
+with tempfile.TemporaryDirectory() as td:
+ root=Path(td);pipe=Pipe();cleanup_calls=[]
+ def cleaned():
+  cleanup_calls.append(True)
+  if failure=='final-tick':pipe.eof=True
+  return True
+ def verify():
+  if failure=='verify-error':raise ValueError('rejected evidence')
+  return dict(qualified=failure=='success')
+ manager=LeaseManager(envelope,config,root,[sys.executable,'-c','pass'],cleanup=cleaned,verify=verify,pipe=pipe,protocol=protocol)
+ status=manager.run()
+ assert (status==0)==(failure=='success') and manager.child.process.poll() is not None
+ assert len(cleanup_calls)==2
+ assert manager.store.read(envelope['leaseId'])['status']=='completed'
+ if failure=='success':assert pipe.records[-1]['type']=='completed' and pipe.records[-1]['receipt']['qualified'] is True
+ else:assert pipe.records[-1]['type']=='failed' and 'receipt' not in pipe.records[-1]
+ replacement=dict(envelope,leaseId='3'*32,capability='4'*64,request=dict(request,controllerRunId=203))
+ manager.store.reserve(replacement)
+ assert manager.store.is_first(replacement['leaseId']), 'clean failed lease still owns queue'
 `));
   it("rechecks owned container cleanup after its wrapper has been reaped", () => python(`${fixture}
 from lease_manager import LeaseManager
@@ -153,6 +187,7 @@ with tempfile.TemporaryDirectory() as td:
   record(proc);locked=record(proc);grant(proc,locked);record(proc);proc.stdin.close();proc.wait(timeout=8)
   terminal=record(proc);assert terminal['type']=='failed' and terminal['reason']=='cleanup_failed'
   assert (root/'cleanup.blocked').is_file()
+  assert LeaseStore(root/'leases').read(envelope['leaseId'])['status']=='queued'
  finally:cleanup(proc)
 `));
 });

@@ -52,10 +52,22 @@ def main():
         raise ValueError('Lease command does not bind envelope')
     # Imported only after all fixed installed inputs match the root approval.
     from qualification_host import QualificationHost
-    host = QualificationHost(STATE, lease, value['request'])
+    host = None
+    def preflight():
+        nonlocal host
+        # The manager reserves ownership and acquires the shared CPU lock
+        # before this callback can allocate any qualification outputs.
+        host = QualificationHost(STATE, lease, value['request'])
+        return host.preflight()
+    def cleanup():
+        return True if host is None else host.cleanup()
+    def verify():
+        if host is None:
+            raise ValueError('Qualification outputs not allocated')
+        return host.receipt()
     return LeaseManager(value, config, STATE,
         ['/usr/bin/python3', '-I', str(INSTALL / 'qualification_host.py'), 'run', lease],
-        cleanup=host.cleanup, verify=host.receipt, preflight=host.preflight, pipe=pipe).run()
+        cleanup=cleanup, verify=verify, preflight=preflight, pipe=pipe).run()
 
 
 if __name__ == '__main__':
