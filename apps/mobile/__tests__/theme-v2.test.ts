@@ -60,6 +60,15 @@ describe("theme-v2 design tokens", () => {
     expect(semanticColorsByMode.light.scrim).toBe("rgba(0, 0, 0, 0.3)");
   });
 
+  it("fills loading placeholders with a neutral grey and sweeps a lighter band across them", () => {
+    const { light, dark } = semanticColorsByMode;
+    expect(light.skeleton).toBe("#F2F2F0");
+    expect(light.skeletonHighlight).toBe("rgba(255, 255, 255, 0.7)");
+    // On a dark ground the fill is the card grey and the band only lifts it a little.
+    expect(dark.skeleton).toBe("#242323");
+    expect(dark.skeletonHighlight).toBe("rgba(255, 255, 255, 0.06)");
+  });
+
   it("gives dark mode a value for every light token", () => {
     const lightKeys = Object.keys(semanticColorsByMode.light).sort();
     const darkKeys = Object.keys(semanticColorsByMode.dark).sort();

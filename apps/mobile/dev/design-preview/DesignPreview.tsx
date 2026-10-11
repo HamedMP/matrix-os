@@ -17,6 +17,7 @@ import {
 import { ChatHomeFrame, ChatInProgressFrame, ChatTypingFrame } from "./chat/ChatFrames";
 import { ModelSheetFrame } from "./chat/ModelSheetFrame";
 import { ComponentsGallery } from "./ComponentsGallery";
+import { LoadingFrame } from "./LoadingFrame";
 import { SidePanelOverScreen } from "./panel";
 import { NewProjectFrame, ProjectFrame, ProjectMenuFrame, ProjectsListFrame, RenameProjectFrame } from "./projects";
 
@@ -33,6 +34,7 @@ function SidePanelOverChatFrame() {
 // __DEV__, so nothing here reaches a production bundle.
 const FRAMES: { name: string; Frame: ComponentType }[] = [
   { name: "components", Frame: ComponentsGallery },
+  { name: "loading", Frame: LoadingFrame },
   { name: "C1", Frame: ChatHomeFrame },
   { name: "C1b", Frame: ChatInProgressFrame },
   { name: "C1c", Frame: ChatTypingFrame },

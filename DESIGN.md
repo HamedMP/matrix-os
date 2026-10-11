@@ -112,6 +112,8 @@ semanticColors:
   mutedForeground: "#635F5F"
   tertiaryForeground: "#8A8686"
   scrim: "rgba(0, 0, 0, 0.3)"
+  skeleton: "#F2F2F0"
+  skeletonHighlight: "rgba(255, 255, 255, 0.7)"
 
 # Brand and marketing scale, plus the machine style used on every surface.
 typography:
@@ -413,6 +415,7 @@ values below.
 - Default border: Neutral 100 `#F3F2F2`. Screens that draw outlines may use the
   stronger Neutral 300 `#C8C6C6`.
 - Scrim behind sheets, side panels, and alerts: `rgba(0, 0, 0, 0.3)`.
+- Loading placeholders: `#F2F2F0` fill with a lighter band (`rgba(255, 255, 255, 0.7)`) sweeping across it. No tint and no outline.
 - Default focus ring: Gold `#F1C379` with a visible offset.
 
 Brand and marketing surfaces such as the brand card use brand paper `#FCFCF8`,

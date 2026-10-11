@@ -102,7 +102,7 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 ### Design preview gallery (development only)
 
 `matrixos://design-preview/<frame>` draws a presentational screen with sample
-content, inside real safe-area insets. Frames: `components`, `C1`, `C1b`,
+content, inside real safe-area insets. Frames: `components`, `loading`, `C1`, `C1b`,
 `C1c`, `C2`, `C3`, `P1`, `P1b`, `P2`, `P3`, `P4`, `A1`, `A2`, `A3`, `A4`, `A5`,
 `A5b`. Any other name shows the list of frames.
 

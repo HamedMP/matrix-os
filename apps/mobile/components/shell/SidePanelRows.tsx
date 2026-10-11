@@ -159,11 +159,11 @@ const styles = StyleSheet.create((theme) => ({
     width: CHAT_TILE_SIZE,
     height: CHAT_TILE_SIZE,
     borderRadius: theme.v2.radius.full,
-    backgroundColor: theme.v2.colors.accentSurface,
+    backgroundColor: theme.v2.colors.skeleton,
   },
   skeletonText: {
     height: theme.v2.text.label.fontSize,
     borderRadius: theme.v2.radius.full,
-    backgroundColor: theme.v2.colors.accentSurface,
+    backgroundColor: theme.v2.colors.skeleton,
   },
 }));

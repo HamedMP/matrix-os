@@ -53,6 +53,18 @@ describe("design preview gallery", () => {
     });
   });
 
+  it("shows every loading placeholder in the loading frame", () => {
+    render(<DesignPreview frame="loading" />);
+
+    for (const heading of ["List rows", "Grid tiles", "Chat rows", "A single value"]) {
+      expect(screen.getByRole("header", { name: heading })).toBeTruthy();
+    }
+    expect(screen.getAllByTestId("list-row-skeleton")).toHaveLength(2);
+    expect(screen.getAllByTestId("grid-tile-skeleton")).toHaveLength(3);
+    expect(screen.getAllByTestId("recent-chat-skeleton-row")).toHaveLength(3);
+    expect(screen.getByTestId("loading-frame-value")).toBeTruthy();
+  });
+
   it("lists the available frames for a frame it does not know", () => {
     render(<DesignPreview frame="nope" />);
 

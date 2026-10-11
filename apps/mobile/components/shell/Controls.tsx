@@ -326,8 +326,6 @@ const styles = StyleSheet.create((theme) => ({
   skeletonTile: {
     width: "31.5%",
     aspectRatio: 0.9,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
     borderRadius: 18,
   },
   tileLabel: {
@@ -384,8 +382,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   skeletonRow: {
     height: 66,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
     paddingHorizontal: 13,
   },

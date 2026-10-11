@@ -113,8 +113,8 @@ describe("SidePanel chats", () => {
       const row = screen.getAllByTestId("recent-chat-skeleton-row")[0];
       expect(flat(row)).toMatchObject({ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 });
       const [circle, bar] = row.children as Parameters<typeof flat>[0][];
-      expect(flat(circle)).toMatchObject({ width: 40, height: 40, borderRadius: 9999, backgroundColor: "#EEF7F2" });
-      expect(flat(bar)).toMatchObject({ height: 14, width: "72%", borderRadius: 9999, backgroundColor: "#EEF7F2" });
+      expect(flat(circle)).toMatchObject({ width: 40, height: 40, borderRadius: 9999, backgroundColor: "#F2F2F0" });
+      expect(flat(bar)).toMatchObject({ height: 14, width: "72%", borderRadius: 9999, backgroundColor: "#F2F2F0" });
       expect(flat(screen.getByTestId("recent-chat-skeleton")).gap).toBe(4);
     });
 
