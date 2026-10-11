@@ -43,6 +43,16 @@ it('admits a rerun through in_progress because GitHub requested events do not fi
  const f=fixture();const run={id:321,run_attempt:2,status:'in_progress',workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',head_sha:head,head_branch:'child',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};
  const github={rest:{...f.github.rest,actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun:vi.fn(async()=>({data:run}))}}};
  await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toMatchObject({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge});
- run.run_attempt=1;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toBeNull();
+ run.run_attempt=1;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).resolves.toMatchObject({prNumber:2454,baseRef:'stack/parent',sourceSha:merge});
  run.run_attempt=2;run.display_title=`CI coverage-v1 · ${main}`;await expect(helpers.admitRefreshController(github,repo,{action:'in_progress',workflow_run:run})).rejects.toThrow(/stale|admission/);
+});
+it('starts initial non-main CI through the default-main workflow_run bridge',async()=>{
+ const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');const w=parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));
+ const condition=w.jobs.benchmark.if;expect(condition).toContain("startsWith(github.event.workflow_run.display_title, 'CI coverage-v1");
+ expect(condition).not.toContain("github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1");
+ const admits=Function('vars','github','startsWith',`return (${condition});`);
+ const vars={MATRIX_CI_DEDICATED_ENABLED:'true'};const github={ref:'refs/heads/main',event_name:'workflow_run',event:{action:'in_progress',workflow_run:{run_attempt:1,display_title:`CI coverage-v1 · ${merge}`}}};
+ expect(admits(vars,github,(text:string,prefix:string)=>text.startsWith(prefix))).toBe(true);
+ expect(admits(vars,{...github,ref:'refs/heads/stack/parent'},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
+ expect(admits(vars,{...github,event:{...github.event,workflow_run:{run_attempt:1,display_title:`CI metadata-v1 · ${merge}`}}},(text:string,prefix:string)=>text.startsWith(prefix))).toBe(false);
 });

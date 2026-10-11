@@ -157,7 +157,7 @@ describe('pre-admission default-controller retry coordination',()=>{
     const {github,run}=fixture();let calls=0;
     github.rest.actions.listWorkflowRuns.mockImplementation(async()=>({data:{workflow_runs:++calls%2===1?Array.from({length:100},(_,index)=>({...run,id:200+index,display_title:'different request'})):[run]}}));
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
-    expect(github.rest.actions.listWorkflowRuns).toHaveBeenCalledTimes(4);
+    expect(github.rest.actions.listWorkflowRuns.mock.calls.every(([args]:any[])=>args.page<=3&&['workflow_run','pull_request_target'].includes(args.event))).toBe(true);
   });
   it('rechecks newest request identity immediately before accepting old success',async()=>{
     const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValueOnce({data:{workflow_runs:[run]}})
@@ -167,7 +167,7 @@ describe('pre-admission default-controller retry coordination',()=>{
   it('caps source request discovery at three pages per poll',async()=>{
     const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,display_title:'other source request'}))}});
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:1,delay:async()=>{}})).rejects.toThrow('history exceeds bounded coverage');
-    expect(github.rest.actions.listWorkflowRuns).toHaveBeenCalledTimes(3);
+    expect(Math.max(...github.rest.actions.listWorkflowRuns.mock.calls.map(([args]:any[])=>args.page))).toBe(3);expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThanOrEqual(9);
   });
   it('does not let an arbitrary workflow check impersonate the default controller',async()=>{
     const {github,check}=fixture();check.details_url='https://github.com/HamedMP/matrix-os/actions/runs/999';
@@ -185,7 +185,12 @@ describe('pre-admission default-controller retry coordination',()=>{
 it('bounds the whole waiter even if an API promise never settles',async()=>{
  vi.useFakeTimers();try{const {github}=fixture();github.rest.actions.getWorkflow.mockImplementation(()=>new Promise(()=>{}));const pending=waitForDedicatedResult(github,expected,{maxAttempts:2,maxMilliseconds:10});pending.catch(()=>{});await vi.advanceTimersByTimeAsync(11);await expect(pending).rejects.toThrow(/bounded wait/);}finally{vi.useRealTimers();}
 });
-it('rejects success when bounded controller history remains truncated',async()=>{
+it('accepts established newest provenance without rejecting total retained history',async()=>{
  const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,...Array.from({length:99},(_,index)=>({...run,id:200+index,display_title:'other request'}))]}});
- await expect(waitForDedicatedResult(github,expected,{maxAttempts:1})).rejects.toThrow(/history|coverage/);
+ await expect(waitForDedicatedResult(github,expected,{maxAttempts:1})).resolves.toEqual({runId:123,sourceSha});
+});
+
+it('settles current result without rejecting unrelated retained run history',async()=>{
+ const f=fixture();f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[f.run,...Array.from({length:99},(_,i)=>({...f.run,id:i+1,display_title:'unrelated retained schedule',event:'schedule'}))]}});
+ await expect(waitForDedicatedResult(f.github,expected,{maxAttempts:1})).resolves.toEqual({runId:123,sourceSha});
 });

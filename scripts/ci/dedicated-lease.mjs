@@ -4,31 +4,17 @@ import {assertDefaultController,verifyCurrentDedicatedSource} from './dedicated-
 import {authenticatedRequestingRun,authenticatedControllerRun} from './dedicated-refresh.mjs';
 import {verifyControllerPin} from './dedicated-pin.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
+import {newestWorkflowRun} from './dedicated-history.mjs';
 const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const workflowPath=name=>`.github/workflows/${name}`;
 const active=run=>['queued','requested','waiting','pending','in_progress'].includes(run.status);
 async function requestingRuns(github,repo,value,workflow){
- const runs=[];
- for(let page=1;page<=3;page++){
-  const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:workflow.id,per_page:100,page,request});
-  if(!Array.isArray(data.workflow_runs)||data.workflow_runs.length>100)throw new Error('Invalid bounded requesting CI runs');
-  runs.push(...data.workflow_runs.filter(run=>authenticatedRequestingRun(run,repo,value,workflow)));
-  if(data.workflow_runs.length<100)break;
-  if(page===3)throw new Error('Requesting CI history exceeds bounded coverage');
- }
- return runs.sort((a,b)=>b.id-a.id||b.run_attempt-a.run_attempt);
+ const run=await newestWorkflowRun(github,repo,workflow,run=>authenticatedRequestingRun(run,repo,value,workflow),{kind:'requester',headSha:value.headSha,headRef:value.headRef});
+ return run?[run]:[];
 }
 async function newestControllerRun(github,repo,value,workflow,headRef){
- const runs=[];
- for(let page=1;page<=3;page++){
-  const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:workflow.id,per_page:100,page,request});
-  if(!Array.isArray(data.workflow_runs)||data.workflow_runs.length>100)throw new Error('Invalid bounded controller run list');
-  runs.push(...data.workflow_runs.filter(run=>authenticatedControllerRun(run,repo,value,workflow,headRef)));
-  if(data.workflow_runs.length<100)break;
-  if(page===3)throw new Error('Controller history exceeds bounded coverage');
- }
- return runs.sort((a,b)=>b.id-a.id||b.run_attempt-a.run_attempt)[0];
+ return newestWorkflowRun(github,repo,workflow,run=>authenticatedControllerRun(run,repo,value,workflow,headRef),{kind:'controller',headSha:value.headSha,headRef});
 }
 export async function newestRequestingCiRun(github,repo,value,mode){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});

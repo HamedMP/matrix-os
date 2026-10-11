@@ -17,10 +17,9 @@ describe("Agent SDK compatibility CI gate", () => {
     };
 
     const compatibility = workflow.jobs["agent-sdk-compatibility"];
-    expect(
-      ((workflow as unknown as { on: { pull_request: { branches: string[] } } }).on
-        .pull_request.branches),
-    ).toContain("codex/**");
+    const triggers = (workflow as unknown as { on: { pull_request: { branches?: string[]; "branches-ignore"?: string[] } } }).on.pull_request;
+    expect(triggers.branches).toBeUndefined();
+    expect(triggers["branches-ignore"]).toBeUndefined();
     expect(compatibility?.name).toBe("Agent SDK 0.3.251 Compatibility");
     const installStep = compatibility?.steps?.find(
       (step) => step.name === "Install exact Agent SDK",

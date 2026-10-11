@@ -2,6 +2,7 @@
 import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
 import {authenticatedControllerRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
+import {newestWorkflowRun} from './dedicated-history.mjs';
 const workflowPath = '.github/workflows/ci-dedicated.yml';
 const trustedRunPath = value => [workflowPath, `${workflowPath}@main`, `${workflowPath}@refs/heads/main`].includes(value);
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -42,21 +43,8 @@ function trustedController(run, expected, workflow) {
   return positiveId(run.run_attempt)&&authenticatedControllerRun(run,{owner:expected.owner,repo:expected.repo},expected,workflow,expected.headRef);
 }
 
-async function newestRequest(github, repo, expected, workflow) {
-  // Run identity exists before environment approval/runner admission creates a
-  // check. A queued retry must prevent an older result from settling this PR.
-  const candidates=[];
-  for(let page=1;page<=3;page++) {
-    const {data}=await github.rest.actions.listWorkflowRuns({...repo,workflow_id:workflow.id,
-      per_page:100,page,request});
-    const runs=data.workflow_runs;
-    if(!Array.isArray(runs) || runs.length>100)throw new Error('Invalid bounded controller run list');
-    candidates.push(...runs.filter(run=>trustedController(run,expected,workflow)));
-    if(runs.length<100)break;
-    if(page===3)throw new Error('Controller history exceeds bounded coverage');
-  }
-  candidates.sort((a,b)=>b.id-a.id || b.run_attempt-a.run_attempt);
-  return candidates[0];
+async function newestRequest(github,repo,expected,workflow){
+ return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',headSha:expected.headSha,headRef:expected.headRef});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -65,14 +53,14 @@ async function newestController(github, repo, expected, workflow, latest) {
   // check for the newest source request, then discard the scoped array.
   const candidates=[];
   for(let page=1;page<=3;page++) {
-    const {data}=await github.rest.checks.listForRef({...repo,ref:expected.headSha,per_page:100,page,filter:'all',request});
+    const {data}=await github.rest.checks.listForRef({...repo,ref:expected.headSha,per_page:100,page,filter:'all',check_name:'Dedicated CI Results',request});
     const checks=data.check_runs ?? [];
     if(!Array.isArray(checks) || checks.length>100)throw new Error('Invalid bounded check list');
     for(const check of checks) {
       const evidence=parseEvidence(check,expected);
       if(evidence?.runId===latest.id && evidence.controllerAttempt===latest.run_attempt)candidates.push({check,evidence});
     }
-    if(checks.length<100)break;
+    if(candidates.length||checks.length<100)break;
     if(page===3)throw new Error('Source check history exceeds bounded coverage');
   }
   candidates.sort((a,b)=>b.check.id-a.check.id);

@@ -41,11 +41,11 @@ it('revokes an active controller when a newer matching controller is still queue
  const f=fixture();f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===99?[f.controllerRun,{...f.controllerRun,id:124,status:'queued'}]:[f.ciRun]}}));
  await expect(verify(f)).rejects.toThrow(/newer controller|superseded/);
 });
-it('rejects an unrelated controller event marker and fails closed on truncated controller history',async()=>{
+it('rejects an unrelated controller marker and never admits a different newest run',async()=>{
  const f=fixture();f.controllerRun.display_title='wrong controller source';await expect(verify(f)).rejects.toThrow(/controller/);
  f.controllerRun.display_title=`dedicated-ci-v2 pr=2454 head=${head} base=${base} requested=true`;
  f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:args.workflow_id===99?Array.from({length:100},(_,i)=>({...f.controllerRun,id:1+i})):[f.ciRun]}}));
- await expect(verify(f)).rejects.toThrow(/bounded|history/);
+ await expect(verify(f)).rejects.toThrow(/superseded|bounded|history/);
 });
 
 it('allows a main-definition refresh requester and its authenticated workflow_run controller',async()=>{
@@ -61,3 +61,8 @@ it('keeps reviewed helper pin stable across unrelated main commits but denies pi
 });
 
 it('denies a reviewed pin that is no longer an ancestor of the live main ref',async()=>{const f=fixture();f.github.rest.repos.compareCommitsWithBasehead.mockResolvedValue({data:{status:'diverged',merge_base_commit:{sha:base}}});await expect(verify(f)).rejects.toThrow(/ancestor/);});
+
+it('finds the newest relevant leases despite three hundred retained unrelated runs',async()=>{
+ const f=fixture();f.github.rest.actions.listWorkflowRuns.mockImplementation(async args=>({data:{workflow_runs:[args.workflow_id===99?f.controllerRun:f.ciRun,...Array.from({length:99},(_,i)=>({...f.controllerRun,id:1+i,display_title:'unrelated retained schedule',event:'schedule'}))]}}));
+ await verify(f);expect(f.github.rest.actions.listWorkflowRuns.mock.calls.every(([args]:any[])=>args.page===1)).toBe(true);
+});

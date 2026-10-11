@@ -38,11 +38,11 @@ export async function admitRefreshController(github,repo,event){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
- if(event.action==='in_progress'&&run.run_attempt===1)return null;
  let snapshot=parseRefreshMarker(run.display_title);
- if(!snapshot&&event.action==='in_progress'&&run.run_attempt>1){
+ if(!snapshot&&event.action==='in_progress'){
   const source=typeof run.display_title==='string'&&run.display_title.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);
   const row=run.pull_requests?.length===1?run.pull_requests[0]:null;
+  if(!source||!row)return null;
   if(source&&row)snapshot={prNumber:row.number,headSha:row.head?.sha,baseSha:row.base?.sha,baseRef:row.base?.ref,sourceSha:source[1]};
  }
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');

@@ -39,7 +39,7 @@ export async function reconcileDedicatedChildren(github,repo,controller,options=
   if(!id(listed?.number)||!same(listed.head?.repo?.full_name,repo)||!same(listed.base?.repo?.full_name,repo)||!sha.test(listed.head.sha))continue;
   const checks=[];
   for(let page=1;page<=3;page++){
-   const {data}=await github.rest.checks.listForRef({...repo,ref:listed.head.sha,filter:'all',per_page:100,page,request});
+   const {data}=await github.rest.checks.listForRef({...repo,ref:listed.head.sha,filter:'latest',check_name:'Dedicated CI Results',per_page:100,page,request});
    if(!Array.isArray(data.check_runs)||data.check_runs.length>100)throw new Error('Invalid bounded child check list');
    checks.push(...data.check_runs);if(data.check_runs.length<100)break;
    if(page===3)throw new Error('Child check reconciliation exceeds bounded coverage');

@@ -1,6 +1,6 @@
 name: CI
 run-name: >-
-  ${{ inputs.pr_number && format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI coverage-v1 · {0}', github.sha) }}
+  ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && format('CI metadata-v1 · {0}', github.sha) || inputs.pr_number && format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI coverage-v1 · {0}', github.sha) }}
 
 on:
   workflow_dispatch:
@@ -890,9 +890,11 @@ jobs:
             core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
 
   ci-results:
-    name: CI Results
+    # Metadata events must neither replace a real failed gate with skipped success
+    # nor supersede a requesting source run. Their run-name is distinct above.
+    name: ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && 'CI Metadata (ignored)' || 'CI Results' }}
     needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
-    if: always()
+    if: always() && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   benchmark:
-    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && ((github.event.action == 'requested' && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1 && startsWith(github.event.workflow_run.display_title, 'CI ')))))
+    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && ((github.event.action == 'requested' && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')) || (github.event.action == 'in_progress' && (startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ') || (github.event.workflow_run.run_attempt > 1 && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')))))))
     concurrency:
       group: matrix-ci-linux-dispatch
       queue: max
