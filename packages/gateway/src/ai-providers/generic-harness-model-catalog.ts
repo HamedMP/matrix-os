@@ -267,6 +267,11 @@ export function createGenericHarnessModelCatalogReader(options: {
     }) };
   }
   return {
+    /** Reobserve owner-local metadata without rerunning model discovery. */
+    async renewObservations(value: GenericHarnessModelCatalog): Promise<GenericHarnessModelCatalog> {
+      const env = buildPiChildEnvironment(buildAgentRuntimeEnvironment(options.homePath));
+      return observe(value, env);
+    },
     async getCatalog(input: { refresh?: boolean } = {}): Promise<GenericHarnessModelCatalog> {
       const currentTime = now();
       const runtimeEnv = buildAgentRuntimeEnvironment(options.homePath);
@@ -342,4 +347,5 @@ export function createGenericHarnessModelCatalogReader(options: {
   };
 }
 
-export type GenericHarnessModelCatalogReader = ReturnType<typeof createGenericHarnessModelCatalogReader>;
+export type GenericHarnessModelCatalogReader = Pick<ReturnType<typeof createGenericHarnessModelCatalogReader>, "getCatalog">
+  & Partial<Pick<ReturnType<typeof createGenericHarnessModelCatalogReader>, "renewObservations">>;

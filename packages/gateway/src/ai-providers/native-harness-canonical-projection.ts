@@ -34,7 +34,40 @@ export function createCanonicalNativeHarnessCatalogReader(reader: GenericHarness
 ): CanonicalNativeHarnessCatalogReader {
   let pending: { coding: Promise<Catalog>; hermes: Promise<Catalog>; openclaw: Promise<Catalog> } | null = null;
   const now = options.now ?? (() => new Date());
-  const renewStale = (catalog: Catalog, scope: NativeObservationReadScope) => renewStaleHermesObservation(catalog, options.hermesRuntimeSource, now, scope);
+  const renewStale = async (catalog: Catalog, scope: NativeObservationReadScope): Promise<Catalog> => {
+    scope.signal?.throwIfAborted();
+    // Coding metadata has a five-second lifetime; collect it after the slower
+    // runtime renewal, within the same request budget, rather than aging it again.
+    catalog = await renewStaleHermesObservation(catalog, options.hermesRuntimeSource, now, scope);
+    const expired = catalog.profiles.some(profile => (profile.harness === "pi" || profile.harness === "opencode")
+      && profile.localObservation.staleAfter !== null
+      && Date.parse(profile.localObservation.staleAfter) <= +now());
+    const coding = async (): Promise<Catalog> => {
+      if (!expired || !reader.renewObservations || scope.deadline <= +now()) return catalog;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      try {
+        const renewed = await Promise.race([
+          reader.renewObservations(projectCanonicalNativeHarnessCatalog(catalog)).then(canonicalCatalog),
+          new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), Math.min(1000, scope.deadline - +now())); }),
+          new Promise<never>((_, reject) => {
+            onAbort = () => reject(scope.signal?.reason);
+            scope.signal?.addEventListener("abort", onAbort, { once: true });
+            if (scope.signal?.aborted) onAbort();
+          }),
+        ]);
+        scope.signal?.throwIfAborted();
+        if (!renewed) return catalog;
+        return { profiles: [...catalog.profiles.filter(profile => profile.harness !== "pi" && profile.harness !== "opencode"), ...renewed.profiles],
+          failures: catalog.failures };
+      } catch (error: unknown) {
+        scope.signal?.throwIfAborted();
+        console.warn("[ai-providers] Coding native observation unavailable", { errorClass: error instanceof Error ? error.name : "Unknown" });
+        return catalog;
+      } finally { if (timer) clearTimeout(timer); if (onAbort) scope.signal?.removeEventListener("abort", onAbort); }
+    };
+    return coding();
+  };
   const read = async (refresh: boolean, scope: NativeObservationReadScope = { deadline: +now() + 13000 }) => {
     scope.signal?.throwIfAborted();
     if (!pending) {
