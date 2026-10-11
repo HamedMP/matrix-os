@@ -51,7 +51,16 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
   async function select(name: string) {
     const row = feature().locator(".matrix-ap-rail-item").filter({ hasText: name }).first();
     if (await row.getAttribute("aria-expanded") !== "true") await row.click();
-    await expect.poll(() => row.getAttribute("aria-expanded"), { timeout: 5_000 }).toBe("true");
+    await expect.poll(() => row.evaluate(trigger => {
+      const id = trigger.getAttribute("aria-controls");
+      const details = id ? document.getElementById(id) : null;
+      // Lazy disclosure exposes the button before its clipping transition ends.
+      // Wait for the actual interaction surface, rather than just the toggle state.
+      return trigger.getAttribute("aria-expanded") === "true" && details !== null
+        && details.getBoundingClientRect().height > 0
+        && getComputedStyle(details).opacity === "1"
+        && !details.getAnimations().some(animation => animation.playState === "running");
+    }), { timeout: 5_000 }).toBe(true);
   }
   it("animates the first lazy disclosure, reverses without jumping, and respects reduced motion", async () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
