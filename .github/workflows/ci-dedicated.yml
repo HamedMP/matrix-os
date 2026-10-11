@@ -312,7 +312,9 @@ jobs:
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
-            const gateGithub=require('@actions/github').getOctokit(process.env.GATE_TOKEN);
+            if(!process.env.GATE_TOKEN)throw new Error('Protected gate App token is required');
+            // GitHub Script bundles Octokit; external @actions packages are not installed.
+            const gateGithub=new github.constructor({auth:process.env.GATE_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
             const gate=await reconcileSourceQualification(github,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
               {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
