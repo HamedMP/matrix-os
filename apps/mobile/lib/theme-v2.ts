@@ -190,6 +190,9 @@ const semanticColorsLight = {
   chip: palette.paper[100],
   grabber: palette.paper[300],
   scrim: "rgba(0, 0, 0, 0.3)",
+  // Loading placeholders: a neutral fill and the lighter band that sweeps across it.
+  skeleton: palette.paper[100],
+  skeletonHighlight: "rgba(255, 255, 255, 0.7)",
 } as const;
 
 // Dark semantics — on-brand, built from the same palette families as light,
@@ -227,6 +230,8 @@ const semanticColorsDark = {
   chip: palette.neutral[800],
   grabber: palette.neutral[600],
   scrim: "rgba(0, 0, 0, 0.5)",
+  skeleton: palette.neutral[800],
+  skeletonHighlight: "rgba(255, 255, 255, 0.06)",
 } as const;
 
 export const semanticColorsByMode = {

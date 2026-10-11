@@ -44,7 +44,7 @@ import { fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
 import TerminalScreen from "../app/(drawer)/(tabs)/terminal";
-import { appColors, palette } from "@/lib/theme-v2";
+import { palette } from "@/lib/theme-v2";
 
 const WORKSPACE = "tws_00000000000000000000000000000001";
 
@@ -151,7 +151,7 @@ describe("drawer terminal screen", () => {
     expect(skeletons).toHaveLength(3);
     expect(NativeStyleSheet.flatten(skeletons[0].props.style)).toMatchObject({
       height: 66,
-      backgroundColor: appColors.light.soft,
+      backgroundColor: "#F2F2F0",
     });
     expect(screen.getAllByTestId("terminal-skeleton-shimmer")).toHaveLength(3);
   });
