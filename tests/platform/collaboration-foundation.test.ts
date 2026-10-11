@@ -6,6 +6,7 @@ import {
   PLATFORM_MIGRATION_STEPS,
   migratePlatformSchema,
 } from '../../packages/platform/src/database/migrate.js';
+import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import * as userMachineRecords from '../../packages/platform/src/database/user-machine-records.js';
 import * as userMachines from '../../packages/platform/src/database/user-machines.js';
 import * as userMachineLifecycle from '../../packages/platform/src/database/user-machine-lifecycle.js';
@@ -104,6 +105,9 @@ describe('platform schema registration (S01 foundation)', () => {
   it('re-runs idempotently through the extracted entrypoint', async () => {
     await migratePlatformSchema(fixture.db.executor);
     await migratePlatformSchema(fixture.db.executor);
+    // Independently versioned additive scopes must also remain idempotent.
+    await runPlatformStartupMigrations(fixture.db.kysely);
+    await runPlatformStartupMigrations(fixture.db.kysely);
     expect(await capturePublicSchema(fixture.db)).toEqual(baseline);
   });
 });
