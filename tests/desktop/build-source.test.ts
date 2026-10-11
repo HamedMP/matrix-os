@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -43,6 +43,43 @@ describe("automatic build provenance", () => {
     writeFileSync(join(root, "source.txt"), "uncommitted change");
     expect(readBuildSource(root)).toBeNull();
     expect(() => readBuildSource(root, current)).toThrow(/uncommitted/i);
+  });
+  it("ignores only generated CI evidence while rejecting unrelated untracked source", () => {
+    const artifactPaths = [
+      "output/chat-dock-badge/last-state.png",
+      "output/chat-subagent-activity/last-state.png",
+      "output/chat-tool-details/last-state.png",
+      "output/eng203/client-provenance.json",
+      "output/mat524/header.png",
+      "output/ci/unit-1.json",
+    ];
+    const artifactRules = artifactPaths.map((path) => `/${path.split("/").slice(0, 2).join("/")}/`);
+    const ignore = readFileSync(".gitignore", "utf8");
+    writeFileSync(join(root, ".gitignore"), ignore.split("\n").filter((line) => !artifactRules.includes(line)).join("\n"));
+    git("add", ".gitignore");
+    const before = commit("test: source before artifact ignores");
+    for (const path of artifactPaths) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), "generated evidence");
+    }
+    expect(git("ls-files", "--others", "--exclude-standard").split("\n").sort()).toEqual([...artifactPaths].sort());
+    expect(readBuildSource(root)).toBeNull();
+    expect(() => readBuildSource(root, before)).toThrow(/uncommitted/i);
+
+    // Commit the actual repository rules; changing .gitignore itself must not
+    // be mistaken for a clean checkout merely because artifacts are ignored.
+    writeFileSync(join(root, ".gitignore"), ignore);
+    expect(readBuildSource(root)).toBeNull();
+    expect(() => readBuildSource(root, before)).toThrow(/uncommitted/i);
+    git("add", ".gitignore");
+    const after = commit("test: committed artifact ignores");
+    expect(git("ls-files", "--others", "--exclude-standard")).toBe("");
+    expect(readBuildSource(root, after)?.commit).toBe(after);
+
+    writeFileSync(join(root, "output/unreviewed-source.ts"), "export const changed = true;");
+    expect(git("ls-files", "--others", "--exclude-standard")).toBe("output/unreviewed-source.ts");
+    expect(readBuildSource(root)).toBeNull();
+    expect(() => readBuildSource(root, after)).toThrow(/uncommitted/i);
   });
   it("allows release version stamping but rejects other package modifications", () => {
     mkdirSync(join(root, "desktop"));
