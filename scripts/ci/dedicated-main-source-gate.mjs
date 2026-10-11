@@ -3,6 +3,7 @@
 import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
+import {verifyMainCiDecision} from './main-ci-decision.mjs';
 const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
  const {data:ref}=await github.rest.git.getRef({...repo,ref:'heads/main',request});
@@ -27,7 +28,9 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   if(!requester||requester.status!=='completed'||requester.conclusion!=='success'){
    await write('failure','Current exact-main requesting CI is pending or failed',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt}:{});return 1;
   }
-  const result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});
+  const decision=await verifyMainCiDecision(github,repo,requester);
+  const result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};
+  if(result.docsOnly)Object.assign(evidence,{docsOnly:true,selectedHostedLaneCount:decision.selectedHostedLaneCount});
   if(result.infrastructure){
    const coverage=await verifyFullHostedCoverage(github,repo,requester);
    Object.assign(evidence,{infrastructureFallback:true,infrastructure:result.infrastructure,...coverage});
@@ -35,7 +38,7 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
   await verifyMainSource(github,repo,snapshot);
   const latest=await currentRequester(github,repo,snapshot);
   if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.status!=='completed'||latest.conclusion!=='success')throw new Error('New main requesting attempt superseded coverage');
-  await write('success',result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
+  await write('success',result.docsOnly?'Current exact-main selected documentation coverage passed':result.infrastructure?'Current exact-main full hosted infrastructure recovery passed':'Current exact-main Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});
  }catch(error){
   if(!(error instanceof Error))throw error;
   await write('failure','Fresh exact-main qualification evidence is missing or stale');
