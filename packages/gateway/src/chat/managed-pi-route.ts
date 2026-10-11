@@ -37,5 +37,5 @@ export async function resolveManagedPiSelection(selection: CanonicalChatModelSel
   if (selection.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID) return resolveManagedPiPlan(selection, ownerId, deps.chatgptPlan);
   if (selection.instanceId === MATRIX_PI_ANTHROPIC_API_INSTANCE_ID) return resolveManagedPiAnthropic(selection, ownerId, deps.matrixAnthropic);
   if (selection.instanceId !== MANAGED_PI_INSTANCE_ID) throw new BotRouteError("model_unavailable");
-  return resolveManagedPiRoute(await deps.providers.getSnapshot(), selection);
+  return resolveManagedPiRoute(await deps.providers.getSnapshot({ admissionScope: "managed_matrix" }), selection);
 }
