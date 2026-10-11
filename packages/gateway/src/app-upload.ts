@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";
 import { AppManifestSchema } from "./app-manifest.js";
+import { hasReservedAppIdentity, isReservedAppSlug, RESERVED_APP_INSTALL_ERROR } from "./app-runtime/reserved-apps.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 const writeFileNow = fs.writeFileSync as (
@@ -78,6 +79,10 @@ export function handleAppUpload(
 
   if (!SLUG_RE.test(slug)) {
     return { success: false, error: `Invalid slug: '${slug}' must match ${SLUG_RE}` };
+  }
+
+  if (isReservedAppSlug(slug) || hasReservedAppIdentity(manifestData)) {
+    return { success: false, error: RESERVED_APP_INSTALL_ERROR };
   }
 
   const appsDir = join(homePath, "apps");

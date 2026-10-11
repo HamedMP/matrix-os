@@ -32,6 +32,7 @@ import {
   sandboxCapabilities,
 } from "./distribution-policy.js";
 import type { AckStore } from "./ack-store.js";
+import { isReservedAppSlug, RESERVED_APP_INSTALL_ERROR } from "./reserved-apps.js";
 
 export const RUNTIME_VERSION = "1.0.0";
 
@@ -143,6 +144,10 @@ export async function installApp(opts: InstallOptions): Promise<InstallResult> {
     return result;
   }
   const manifest = result.manifest;
+
+  if (isReservedAppSlug(manifest.slug)) {
+    return { ok: false, error: new ManifestError("install_blocked_by_policy", RESERVED_APP_INSTALL_ERROR) };
+  }
 
   // Verify slug matches directory name
   const dirName = basename(sourceDir);
@@ -302,6 +307,10 @@ export async function installVerifiedApp(
     return parseResult;
   }
   const manifest = parseResult.manifest;
+
+  if (isReservedAppSlug(manifest.slug)) {
+    return { ok: false, error: new ManifestError("install_blocked_by_policy", RESERVED_APP_INSTALL_ERROR) };
+  }
 
   // Verify slug matches directory name
   const dirName = basename(sourceDir);
