@@ -18,7 +18,7 @@ envelope=dict(protocolVersion=1,leaseId='1'*32,capability='2'*64,request=request
 config=dict(repository='HamedMP/matrix-os',controllerShas=['d'*40],imageDigest=request['imageDigest'],harnessDigest=request['harnessDigest'],modes=['shadow','delegated'])
 clock=[1767225600.0]
 def command(args,**kw):
- data=b'32' if args==['nproc'] else request['imageDigest'].encode() if args[:3]==['docker','image','inspect'] else b''
+ data=b'32' if args==['nproc'] else request['imageDigest'].encode() if args[:3]==['docker','image','inspect'] else b'root-daemon-id' if args[:2]==['docker','info'] else b''
  return subprocess.CompletedProcess(args,0,data,b'')
 real_host=qualification_host.QualificationHost
 def host(*args,**kw):return real_host(*args,execute=command,**kw)
@@ -67,6 +67,7 @@ request=dict(repository='HamedMP/matrix-os',prNumber=2454,headSha='a'*40,baseSha
 envelope=dict(protocolVersion=1,leaseId='1'*32,capability='2'*64,request=request)
 config=dict(repository='HamedMP/matrix-os',controllerShas=['d'*40],imageDigest=request['imageDigest'],harnessDigest=request['harnessDigest'],modes=['shadow','delegated'])
 class Pipe:
+ eof=False
  def emit(self,value):pass
 kind=${JSON.stringify(kind)}
 with tempfile.TemporaryDirectory() as td:

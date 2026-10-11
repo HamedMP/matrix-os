@@ -1,7 +1,8 @@
 # Immutable Linux qualification
 
-The protected controller supplies a current public PR merge SHA and its ordered
-base/head parents. The root lease manager pins the approved image and harness,
+The protected controller supplies a current public PR merge SHA and its exact
+ordered parents, or an explicitly identified current main push and its actual
+one or two public parents. The root lease manager pins the approved image and harness,
 checks admission after its host lock, and runs candidate code only as UID10001 in
 a bounded disposable container. This directory contains immutable image tools;
 source code never selects root commands, Docker resources, or evidence paths.
@@ -11,12 +12,26 @@ source code never selects root commands, Docker resources, or evidence paths.
 Before application code runs, the host invokes:
 
 ```sh
-python3 -I /opt/matrix-ci/qualification/manifest.py --prepare-public MERGE_SHA BASE_SHA HEAD_SHA
+python3 -I /opt/matrix-ci/qualification/manifest.py --prepare-public MERGE_SHA ACTUAL_FIRST_PARENT HEAD_SHA
 ```
+
+For a main push, the host uses the separate source-kind-aware entrypoint:
+
+```sh
+python3 -I /opt/matrix-ci/qualification/manifest.py --prepare-public-main MAIN_SHA ACTUAL_PARENTS_JSON
+```
+
+`ACTUAL_PARENTS_JSON` is one quoted compact JSON array containing the main
+commit's exact one or two parent SHAs, rather than a comma-separated shell list.
+
+The live direct branch base may differ from a native stack's actual first parent.
+Only the protected controller authorizes native membership and tree equivalence;
+the immutable preparer verifies the signed public commit and actual parents.
+A non-equivalent generated tree requires rebase/fresh source and fails closed.
 
 The preparer fetches only `HamedMP/matrix-os` into fresh
 `/work/manifest-source`, with depth two and a 120-second total Git deadline. Git
-plumbing verifies the merge, tree, and exactly two ordered parents; it reads
+plumbing verifies the merge, tree, and the exact ordered parents for the declared source kind; it reads
 bounded tracked configuration, lockfile, tests, icon imports and Python imports.
 The version-two manifest also retains every tracked blob path, Git mode, blob
 digest and byte size, limited to 30,000 paths, 50 MiB per file and 512 MiB total.
@@ -99,9 +114,28 @@ The host adds verified `containerGone` to the compact authenticated receipt.
 
 Focused tests use real Git/process/Python fixtures and complete synthetic evidence
 without a host workload. A live ordinary PR and stack canary are still required
-before label-only routing is enabled.
+before routing is enabled. PRs require `fast-ci` plus current-head `ready-for-ci`;
+main pushes select the private backend by default only when the global switch
+is enabled. The switch remains disabled during validation.
 
 These checks detect ordinary source mutations and Git metadata hiding. They do
 not certify arbitrary hostile test-report honesty or prove which transient bytes
 a test executed between guards. Protected review/admission and sandbox isolation
 remain the trust boundary; no source is restored or ignored to obtain a pass.
+
+## Queue and hosted recovery
+
+One full workload owns the host at a time. Main priority permits at most two
+consecutive admitted main workloads before the oldest waiting PR, without
+preempting active work. FIFO order is retained within each class and queue wait
+is measured separately, with an 1800-second bound.
+
+Complete hosted recovery requires a recognized authenticated pre-workload
+availability result, proved owned cleanup and fresh exact-source/run checks.
+The narrow no-grant transport exception accepts only known pinned-endpoint
+timeout/refusal before any control bytes, within 20 seconds, followed by fresh
+API validation. Unknown or mid-run errors, authentication failures, failed tests
+or evidence, stale source, cancellation and uncertain cleanup remain red.
+Every required hosted lane and the independent App coverage inventory must pass
+for the same source and requesting attempt. A manual diagnostic result or an
+older green run cannot satisfy this recovery.

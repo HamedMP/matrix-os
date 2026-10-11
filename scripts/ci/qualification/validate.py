@@ -151,6 +151,7 @@ def validate(directory,inventory,request):
  inventory_sha=digest(canonical(inventory)+b'\n')
  if read(directory/'source-sha',128).decode().strip()!=inventory['source'] or read(directory/'image-id',128).decode().strip()!=request['imageDigest'] or read(directory/'inventory-sha256',128).decode().strip()!=inventory_sha:raise ValueError('Wrong source/image/manifest')
  metadata=decode_json(read(directory/'qualification.json',65536))
+ if not isinstance(metadata,dict) or metadata.get('sourceKind')!=request.get('sourceKind'):raise ValueError('Host source kind differs')
  exact={'source':inventory['source'],'image':request['imageDigest'],'harnessDigest':request['harnessDigest'],'tree':inventory['tree'],'parents':inventory['parents'],'lockSha256':inventory['lockSha256'],'inventorySha256':inventory_sha,'status':0,'checkoutRoots':{lane:'/work/'+lane for lane in LANES},'installCount':4,'unitWorkers':16,'generalWorkers':2,'gridWorkers':1,'clipboardWorkers':1}
  if not isinstance(metadata,dict) or any(metadata.get(k)!=v for k,v in exact.items()) or type(metadata.get('status')) is not int:raise ValueError('Root qualification metadata differs')
  if type(metadata.get('wallSeconds')) is not int or not 0<metadata['wallSeconds']<=1900 or type(metadata.get('queueSeconds')) is not int or not 0<=metadata['queueSeconds']<=1800:raise ValueError('Invalid elapsed metadata')

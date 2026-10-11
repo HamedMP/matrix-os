@@ -84,12 +84,20 @@ def icon_names(source):
  if not 1<len(names)<=2000 or any(not re.fullmatch(r'[A-Za-z_$][A-Za-z0-9_$]*',name) for name in names):raise ValueError('Invalid icon inventory')
  return names
 
-def prepare_manifest(source,request,api=None):
- sha(source);api=api or public_api
+def request_parents(source,request):
+ sha(source)
  if not isinstance(request,dict) or request.get('repository')!=REPOSITORY or request.get('mergeSha')!=source:raise ValueError('Wrong qualification request')
  parents=request.get('mergeParents')
- if not isinstance(parents,list) or len(parents)!=2 or parents[1]!=request.get('headSha') or parents[0]==parents[1]:raise ValueError('Wrong ordered merge parents')
- for parent in parents:sha(parent)
+ if not isinstance(parents,list) or not 1<=len(parents)<=2 or any(sha(p)==source for p in parents) or len(set(parents))!=len(parents):raise ValueError('Wrong actual source parents')
+ if 'sourceKind' in request:
+  if request['sourceKind']!='main' or type(request.get('prNumber')) is not int or request['prNumber']!=0 or request.get('baseRef')!='main' or request.get('headSha')!=source or request.get('baseSha')!=parents[0]:raise ValueError('Explicit main source differs')
+ else:
+  if len(parents)!=2 or parents[1]!=request.get('headSha') or request.get('prNumber')==0:raise ValueError('Wrong ordered PR parents')
+ return parents
+
+
+def prepare_manifest(source,request,api=None):
+ parents=request_parents(source,request);api=api or public_api
  commit=api('commits/'+source,1024*1024)
  if not isinstance(commit,dict) or commit.get('sha')!=source or [p.get('sha') for p in commit.get('parents',[])]!=parents:raise ValueError('Public merge commit differs')
  tree_sha=sha(commit['commit']['tree']['sha']);tree=api('git/trees/'+tree_sha+'?recursive=1',8*1024*1024)
@@ -127,6 +135,7 @@ def prepare_manifest(source,request,api=None):
  tracked={n:[e['mode'],e['sha'],e.get('size')] for n,e in entries.items() if e['type']!='tree'}
  check_tracked(tracked)
  result={'tracked':tracked,'trackedInventorySha256':digest(canonical(tracked)),'schemaVersion':2,'repository':REPOSITORY,'source':source,'tree':tree_sha,'parents':parents,'lockSha256':digest(lock),'configBlobs':{n:entries[n]['sha'] for n in CONFIGS},'configSha256':{n:digest(v) for n,v in configs.items()},'unit':unit,'general':general,'requiredElectron':ELECTRON,'icons':icons,'unitImports':imports,'tools':tools}
+ if request.get('sourceKind')=='main':result['sourceKind']='main'
  if len(canonical(result))>MAX_MANIFEST:raise ValueError('Manifest exceeds bound')
  return check_manifest(result,request)
 
@@ -135,8 +144,10 @@ def check_manifest(value,request=None):
  check_tracked(value.get('tracked'))
  if value.get('trackedInventorySha256')!=digest(canonical(value['tracked'])):raise ValueError('Immutable tracked metadata digest differs')
  sha(value.get('source'));sha(value.get('tree'))
- if not isinstance(value.get('parents'),list) or len(value['parents'])!=2 or value['parents'][0]==value['parents'][1]:raise ValueError('Manifest parents differ')
- for parent in value['parents']:sha(parent)
+ parents=value.get('parents');kind=value.get('sourceKind')
+ if kind not in (None,'main') or ('sourceKind' in value and kind is None) or not isinstance(parents,list) or not 1<=len(parents)<=2:raise ValueError('Manifest source kind/parents differ')
+ for parent in parents:sha(parent)
+ if len(set(parents))!=len(parents) or value['source'] in parents or (kind is None and len(parents)!=2):raise ValueError('Manifest parents differ')
  for key in ('unit','general'):
   names=value.get(key)
   if not isinstance(names,list) or not 0<len(names)<=10000 or names!=sorted(set(names)):raise ValueError('Invalid source inventory')
@@ -155,7 +166,8 @@ def check_manifest(value,request=None):
   if not isinstance(entry,dict) or entry.get('mode')!=0o644 or not re.fullmatch('[a-f0-9]{64}',entry.get('sha256','')):raise ValueError('Readonly source digest/mode differs')
  tools=value.get('tools')
  if not isinstance(tools,dict) or set(tools)!={'pnpm','nativeTypeScript','next','icons'} or any(not isinstance(x,str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',x) for x in tools.values()):raise ValueError('Pinned tool manifest differs')
- if request is not None and (request.get('repository')!=REPOSITORY or request.get('mergeSha')!=value['source'] or request.get('mergeParents')!=value['parents'] or request.get('headSha')!=value['parents'][1]):raise ValueError('Request/source manifest differs')
+ if request is not None:
+  if request_parents(value['source'],request)!=value['parents'] or request.get('sourceKind')!=value.get('sourceKind'):raise ValueError('Request/source manifest differs')
  if len(canonical(value))>MAX_MANIFEST:raise ValueError('Manifest exceeds bound')
  return value
 
@@ -180,7 +192,7 @@ def prepare_manifest_from_git(source,request,root,run=None):
  metadata=run(['show','-s','--format=%H%n%T%n%P',source],1024*1024).strip().splitlines()
  if len(metadata)!=3 or metadata[0]!=source:raise ValueError('Git commit metadata differs')
  tree=sha(metadata[1]);parents=metadata[2].split(' ')
- if parents!=request.get('mergeParents') or parents[1]!=request.get('headSha') or parents[0]==parents[1]:raise ValueError('Git ordered parents differ')
+ if parents!=request_parents(source,request):raise ValueError('Git ordered parents differ')
  raw=run(['ls-tree','-r','-l','-z',source],8*1024*1024)
  if not raw.endswith('\0'):raise ValueError('Truncated Git tree output')
  rows=raw.split('\0')[:-1]
@@ -207,8 +219,8 @@ def prepare_manifest_from_git(source,request,root,run=None):
  return prepare_manifest(source,request,api)
 
 
-def prepare_public(source,first_parent,head,root=Path('/work/manifest-source')):
- for value in (source,first_parent,head):sha(value)
+def prepare_public_request(source,request,root):
+ request_parents(source,request)
  if os.getuid()!=10001:raise ValueError('Source preparation requires isolated UID')
  started=time.monotonic();root.mkdir(mode=0o700,parents=False,exist_ok=False)
  def run(args,cap=1024*1024):
@@ -216,13 +228,26 @@ def prepare_public(source,first_parent,head,root=Path('/work/manifest-source')):
   if remaining<=0:raise ValueError('Source preparation deadline')
   return git_command(root,args,output_limit=cap,deadline_seconds=remaining)
  run(['init','--quiet']);run(['remote','add','origin','https://github.com/'+REPOSITORY+'.git']);run(['fetch','--depth=2','origin',source+':refs/ci/source'])
- request=dict(repository=REPOSITORY,mergeSha=source,headSha=head,mergeParents=[first_parent,head])
  return prepare_manifest_from_git(source,request,root,run)
+
+def prepare_public(source,first_parent,head,root=Path('/work/manifest-source')):
+ request=dict(repository=REPOSITORY,mergeSha=source,headSha=head,mergeParents=[first_parent,head])
+ return prepare_public_request(source,request,root)
+
+def prepare_public_main(source,encoded_parents,root=Path('/work/manifest-source')):
+ sha(source)
+ if not isinstance(encoded_parents,str) or len(encoded_parents.encode('utf8'))>128:raise ValueError('Main parents transport exceeds bound')
+ parents=decode_json(encoded_parents.encode('utf8'))
+ if not isinstance(parents,list) or not 1<=len(parents)<=2:raise ValueError('Main actual parents differ')
+ request=dict(repository=REPOSITORY,sourceKind='main',prNumber=0,baseRef='main',mergeSha=source,headSha=source,baseSha=parents[0],mergeParents=parents)
+ return prepare_public_request(source,request,root)
 
 
 if __name__=='__main__':
  try:
-  if len(sys.argv)!=5 or sys.argv[1]!='--prepare-public':raise ValueError('Invalid manifest invocation')
-  sys.stdout.buffer.write(manifest_bytes(prepare_public(*sys.argv[2:])))
+  if len(sys.argv)==5 and sys.argv[1]=='--prepare-public':value=prepare_public(*sys.argv[2:])
+  elif len(sys.argv)==4 and sys.argv[1]=='--prepare-public-main':value=prepare_public_main(*sys.argv[2:])
+  else:raise ValueError('Invalid manifest invocation')
+  sys.stdout.buffer.write(manifest_bytes(value))
  except (ValueError,RuntimeError,OSError,ExceptionGroup,KeyError,TypeError):
   print('Trusted public source preparation failed',file=sys.stderr);sys.exit(1)

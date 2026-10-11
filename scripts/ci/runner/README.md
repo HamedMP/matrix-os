@@ -1,7 +1,8 @@
 # Priority Linux qualification
 
 The dedicated host accepts authenticated leases from a reviewed main-branch
-controller. It does not register a GitHub runner or accept SHA-only SSH jobs.
+controller for opted-in PRs and exact main pushes. Routing remains disabled
+until current-head review, required CI and live canaries pass. It does not register a GitHub runner or accept SHA-only SSH jobs.
 Root installs the harness and approves immutable image/controller/harness pins;
 PR source executes only as UID10001 in a disposable container.
 
@@ -51,19 +52,27 @@ Funded/root/Postgres service contracts and Node 20 compatibility remain hosted.
 The fixed SSH commands are `lease-v1 run <32-lowercase-hex-lease>` and
 `lease-v1 cancel <same-lease>`. A random 256-bit owner capability travels only
 through bounded stdin JSONL. It is never an argument, log, result or child
-input. The public request binds repository/PR/head/base/ref/exact ordered
-actual ordered public merge parents (second parent equals the PR head), requesting and controller run IDs/attempts,
+input. The public request binds repository/source kind/head/base/ref and exact public
+parents: a PR has two ordered parents with its head second; a main request
+explicitly identifies the current pushed main commit and its one or two actual
+parents. PR requests bind their PR number; main has no fabricated PR identity.
+Both bind requesting and controller run IDs/attempts,
 controller SHA/ref/workflow, approved image/harness, mode, suite and limits.
 Canonical request identity is SHA256 of recursively key-sorted UTF8 JSON.
 
-The controller owns the global FIFO queue and separately cancels obsolete
-attempts for each PR. Host admission preserves FIFO leases and a shared
-`benchmark.lock`, each with a 1800-second wait. After acquiring the lock, the
+The host serializes leases under the shared `benchmark.lock`, with an
+1800-second queue deadline. Main requests have priority, but at most two
+consecutive admitted main workloads run before the oldest waiting PR. Requests
+remain FIFO within each class; priority never preempts an active owner. The
+controller cancels obsolete attempts only for their own source, preserving
+unrelated PR work. After acquiring the lock, the
 host rejects leftover disposable containers and sends a one-use random
 challenge. The trusted controller revalidates current PR/run/config APIs
 **after this lock**, then grants that exact challenge. No candidate container
-exists before the grant. Both `ci-linux` and `ready-for-ci` are required;
-stack-parent base branches are supported while the controller remains main. The live direct branch `baseSha` stays separate from the actual first parent. GitHub native cumulative merges are accepted only by the protected controller's bounded official stack-membership, adjacent predecessor/current-ref and tree-equivalence proof, revalidated at admission, grant, renewal and settlement. The host independently checks the signed actual public parent pair; it does not authorize stack membership.
+exists before the grant. PRs require both `fast-ci` and current-head
+`ready-for-ci`; `ci-linux` is no longer an admission label. When the global
+routing switch is enabled, main pushes select private Linux by default without
+PR labels. Stack-parent base branches are supported while the controller remains main. The live direct branch `baseSha` stays separate from the actual first parent. GitHub native cumulative merges are accepted only by the protected controller's bounded official stack-membership, adjacent predecessor/current-ref and tree-equivalence proof, revalidated at admission, grant, renewal and settlement. The host independently checks the signed actual public parent pair; it does not authorize stack membership.
 
 Fresh challenges require authenticated renewal every 60 seconds and
 expire after 120 seconds. The initial after-lock grant expires after 30 seconds.
@@ -96,8 +105,9 @@ lease records and cleanup block. Never clear uncertain state during a live build
 ## Workload and evidence
 
 An immutable-image preparer fetches only the fixed public repository and
-requested merge SHA as UID10001. It reads bounded Git objects as data and
-verifies the exact two parents before candidate scripts run. Root retains a
+requested source SHA as UID10001. It reads bounded Git objects as data and
+verifies the exact ordered PR pair or the explicit main commit's one or two
+public parents before candidate scripts run. Root retains a
 validated inventory bounded at 2 MiB, including canonical JSON and its newline,
 and injects its exact hashed bytes into the job. Every tracked file byte/mode
 is independently checked against the trusted pre-workload inventory. Candidate
@@ -131,8 +141,33 @@ Recurring cleanup protects active leases, rejects symlinks and retains bounded
 completed evidence. Root-only `start-ephemeral.sh` remains available for manual
 partial diagnostics; it cannot satisfy automatic qualification.
 
-Keep rollout off until review and live canaries pass. Main/fork/protected lanes
-remain hosted, and `CI Results` aggregates the exact current requesting attempt.
-Disabling opt-in routing restores hosted execution. A successful old receipt or
+## Availability fallback and rollout
+
+A recognized root pre-workload availability result may select complete hosted
+execution only with authenticated source/run binding, `workloadStarted=false`,
+proved owned cleanup and fresh live source/run validation. Queue capacity or
+the 1800-second queue deadline, missing host capacity, unavailable approved image
+and daemon availability have fixed classifications. A daemon failure with
+unproved cleanup remains red. After wrapper allocation is attempted, Docker,
+source, test and evidence failures cannot become availability fallback.
+
+The separate controller transport exception is limited to a pinned-endpoint
+connection refusal or timeout: exact recognized client diagnostics, exit 255,
+no control bytes or grant, and at most 20 seconds, followed by fresh source/run
+API validation. Generic SSH failures, authentication/host-key errors, banners,
+disconnects after a grant and ambiguous transport remain red. Neither path can
+restore a stale, cancelled, failed or incompletely cleaned-up qualification.
+
+Fallback runs every required hosted lane, including lanes otherwise filtered
+for a small change. The independent App verifies complete hosted coverage for
+the exact source and requesting attempt before restoring the freshness gate.
+Unknown failures never choose hosted recovery or adopt an older green run.
+
+Keep rollout off until review, required CI and live canaries pass. Once enabled,
+main and opted-in PRs use private Linux; forks, unsupported events and protected
+platform/security lanes keep hosted coverage. `CI Results` aggregates the exact
+current requesting attempt. Disabling routing requires fresh complete hosted
+checks for previously admitted sources; flipping the switch alone does not
+restore skipped coverage. A successful old receipt or
 similarly named check cannot qualify another attempt. Public testing docs ship
 in the companion site documentation PR.

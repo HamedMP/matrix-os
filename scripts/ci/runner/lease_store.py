@@ -8,7 +8,8 @@ from pathlib import Path
 import secrets
 import stat
 import time
-from lease_contract import canonical_digest, hex_value, MAX_RECORD
+from lease_contract import canonical_digest, hex_value, MAX_RECORD, source_kind
+from lease_outcome import InfrastructureUnavailable
 
 RETENTION_SECONDS = 7 * 86400
 
@@ -124,20 +125,23 @@ class LeaseStore:
         return records
 
     def reserve(self, envelope):
+        kind = source_kind(envelope['request'])
         digest = canonical_digest(envelope['request'])
         cap = hashlib.sha256(envelope['capability'].encode()).hexdigest()
         request = envelope['request']
         attempt = canonical_digest({k: request[k] for k in ('requestingRunId', 'requestingRunAttempt', 'controllerRunId', 'controllerRunAttempt')})
         with self.locked():
             records = self.records()
-            if sum(r['status'] != 'completed' for r in records) >= 32 or sum(r['status'] == 'completed' for r in records) >= 256:
-                raise ValueError('Lease registry capacity reached')
+            # A full registry must not turn replay/auth rejection into an
+            # availability result eligible for hosted fallback.
             if any(r['leaseId'] == envelope['leaseId'] or r['capabilityHash'] == cap or r['attempt'] == attempt for r in records):
                 raise ValueError('Lease/capability/attempt replay rejected')
+            if sum(r['status'] != 'completed' for r in records) >= 32 or sum(r['status'] == 'completed' for r in records) >= 256:
+                raise InfrastructureUnavailable('queue_capacity')
             order = max((r['queueOrder'] for r in records), default=0) + 1
             if order > 9007199254740991:
                 raise ValueError('Queue order exhausted')
-            self._write(envelope['leaseId'], dict(leaseId=envelope['leaseId'], queueOrder=order, requestDigest=digest,
+            self._write(envelope['leaseId'], dict(sourceKind=kind, leaseId=envelope['leaseId'], queueOrder=order, requestDigest=digest,
                 capabilityHash=cap, attempt=attempt, status='queued', cancelled=False, created=time.time()), create=True)
 
     def cancel(self, lease, capability, digest):
@@ -160,7 +164,58 @@ class LeaseStore:
             record['status'] = 'completed'
             self._write(lease, record)
 
+    def winner(self, records):
+        active = [r for r in records if r['status'] != 'completed' and not r['cancelled']]
+        if any(r.get('sourceKind', 'pull-request') not in ('pull-request', 'main') for r in records):
+            raise ValueError('Invalid stored priority kind')
+        claimed = [r for r in active if r.get('lockClaimed') is True]
+        if len(claimed) > 1:
+            raise ValueError('Multiple CPU admissions require operator recovery')
+        if claimed:
+            return claimed[0]['leaseId'] # Never preempt a granted/claimed owner.
+        mains = [r for r in active if r.get('sourceKind') == 'main']
+        prs = [r for r in active if r.get('sourceKind', 'pull-request') == 'pull-request']
+        admitted = [r for r in records if 'admissionOrder' in r]
+        orders = [r['admissionOrder'] for r in admitted]
+        if any(type(n) is not int or not 0 < n <= 9007199254740991 for n in orders) or len(set(orders)) != len(orders):
+            raise ValueError('Invalid bounded admission history')
+        burst = 0
+        for record in sorted(admitted, key=lambda r: r['admissionOrder'], reverse=True)[:2]:
+            if record.get('sourceKind') != 'main':
+                break
+            burst += 1
+        eligible = prs if prs and burst == 2 else mains or prs
+        return min(eligible, key=lambda r: r['queueOrder'])['leaseId'] if eligible else None
+
     def is_first(self, lease):
         with self.locked():
-            active = [r for r in self.records() if r['status'] != 'completed' and not r['cancelled']]
-            return bool(active) and min(active, key=lambda r: r['queueOrder'])['leaseId'] == lease
+            return self.winner(self.records()) == lease
+
+    def claim(self, lease):
+        # Called only after the caller owns benchmark.lock. Recompute under the
+        # registry lock: a main request could arrive between poll and flock.
+        with self.locked():
+            if self.winner(self.records()) != lease:
+                return False
+            record = self.read(lease)
+            if record['cancelled'] or record['status'] == 'completed':
+                return False
+            record['lockClaimed'] = True
+            self._write(lease, record)
+            return True
+
+    def admit(self, lease):
+        # Count priority only after the one-use API-validated grant, before
+        # allocating the wrapper. Failed/stale pre-grants consume no burst.
+        with self.locked():
+            records = self.records()
+            record = self.read(lease)
+            if record['cancelled'] or record['status'] == 'completed':
+                raise InterruptedError('Claimed lease revoked')
+            if record.get('lockClaimed') is not True or 'admissionOrder' in record:
+                raise ValueError('CPU admission is unclaimed or replayed')
+            order = max((r.get('admissionOrder', 0) for r in records), default=0) + 1
+            if order > 9007199254740991:
+                raise ValueError('Admission history exhausted')
+            record['admissionOrder'] = order
+            self._write(lease, record)

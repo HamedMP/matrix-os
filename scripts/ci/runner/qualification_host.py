@@ -17,6 +17,7 @@ from host_command import host_command as command
 from lease_config import read_owned, read_owned_json
 from lease_contract import canonical_digest, hex_value, LIMITS
 from lease_store import LeaseStore
+from lease_outcome import InfrastructureUnavailable
 
 MAX_FILE = 50 * 1024 * 1024
 MAX_TOTAL = 150 * 1024 * 1024
@@ -124,15 +125,24 @@ class QualificationHost:
         with open('/proc/meminfo') as info:
             memory = info.read(65536)
         match = re.search(r'^MemTotal:\s+([0-9]+) kB$', memory, re.M)
-        if cores.returncode or not cores.stdout.strip().isdigit() or int(cores.stdout) < 32 or not match or int(match[1]) < 120000000:
-            raise ValueError('Approved CPU/memory capacity unavailable')
+        if cores.returncode or not cores.stdout.strip().isdigit() or not match:
+            raise ValueError('Approved CPU/memory capacity cannot be verified')
+        if int(cores.stdout) < 32 or int(match[1]) < 120000000:
+            raise InfrastructureUnavailable('host_capacity_unavailable')
         for args in (['iptables','-C','DOCKER-USER','-i','matrix-ci0','-j','MATRIX-CI-EGRESS'],
                      ['iptables','-C','INPUT','-i','matrix-ci0','-j','REJECT']):
             if self.execute(args, timeout=5).returncode:
                 raise ValueError('Required private-egress isolation unavailable')
+        daemon = self.execute(['docker','info','--format','{{.ID}}'], timeout=10, cap=1024)
+        if daemon.returncode:
+            raise InfrastructureUnavailable('docker_unavailable')
+        if not daemon.stdout.strip():
+            raise ValueError('Docker daemon identity unavailable')
         image = self.execute(['docker','image','inspect','--format','{{.Id}}',self.request['imageDigest']], timeout=10, cap=1024)
-        if image.returncode or image.stdout.decode().strip() != self.request['imageDigest']:
-            raise ValueError('Approved immutable image unavailable')
+        if image.returncode:
+            raise InfrastructureUnavailable('image_unavailable')
+        if image.stdout.decode().strip() != self.request['imageDigest']:
+            raise ValueError('Approved immutable image identity differs')
         self.no_leftovers()
         queued = read_owned_json(self.lease_dir / 'queued.json', os.getuid())
         started = time.time()
@@ -215,6 +225,17 @@ class QualificationHost:
                         inventorySha256=inventory_sha,error='host_probe_failed'))
         return clean
 
+    def source_prepare_args(self):
+        args = ['docker','exec','--user','10001:10001',self.name,
+            '/usr/bin/python3','-I','/opt/matrix-ci/qualification/manifest.py']
+        if self.request.get('sourceKind') == 'main':
+            args += ['--prepare-public-main', self.request['mergeSha'],
+                json.dumps(self.request['mergeParents'], separators=(',', ':'))]
+        else:
+            args += ['--prepare-public', self.request['mergeSha'],
+                self.request['mergeParents'][0], self.request['headSha']]
+        return args
+
     def run(self):
         self.modules()
         from manifest import check_manifest
@@ -235,9 +256,7 @@ class QualificationHost:
                 raise ValueError('Disposable container startup rejected')
             # Trusted immutable preparer runs before any candidate code. Git
             # objects/checkouts stay in capped UID10001 tmpfs, never host root.
-            prepared = self.execute(['docker','exec','--user','10001:10001',self.name,
-                '/usr/bin/python3','-I','/opt/matrix-ci/qualification/manifest.py','--prepare-public',
-                self.request['mergeSha'],self.request['mergeParents'][0],self.request['headSha']], timeout=120, cap=MAX_MANIFEST+65536)
+            prepared = self.execute(self.source_prepare_args(), timeout=120, cap=MAX_MANIFEST+65536)
             if prepared.returncode:
                 raise ValueError('Trusted public source inventory unavailable')
             manifest = check_manifest(json.loads(prepared.stdout), self.request)
@@ -295,6 +314,8 @@ class QualificationHost:
                 checkoutRoots={lane:'/work/'+lane for lane in ('unit','mechanical','web','e2e')},installCount=4,unitWorkers=16,generalWorkers=2,gridWorkers=1,clipboardWorkers=1,
                 queueStartedUtc=started['queueStartedUtc'],startedUtc=started['startedUtc'],finishedUtc=utc(),
                 queueSeconds=started['queueSeconds'],wallSeconds=int(time.time()-started['startedEpoch']))
+            if self.request.get('sourceKind') == 'main':
+                metadata['sourceKind'] = 'main'
             write_json(self.result / 'qualification.json', metadata)
             exclusive(self.result / 'exit-code', (str(status)+'\n').encode())
             if not cleaned:

@@ -33,6 +33,30 @@ def branch(value):
         or any(part.startswith('.') or part.endswith('.lock') for part in value.split('/')))
 
 
+def source_kind(request):
+    if 'sourceKind' in request:
+        parents = request.get('mergeParents')
+        if (request['sourceKind'] != 'main' or type(request.get('prNumber')) is not int
+                or request['prNumber'] != 0 or request.get('baseRef') != 'main'
+                or not hex_value(request.get('mergeSha'), 40)
+                or request.get('headSha') != request['mergeSha']
+                or not isinstance(parents, list) or not 1 <= len(parents) <= 2
+                or not all(hex_value(v, 40) for v in parents)
+                or len(set(parents)) != len(parents) or request['mergeSha'] in parents
+                or request.get('baseSha') != parents[0]):
+            raise ValueError('Explicit main source identity differs')
+        return 'main'
+    if type(request.get('prNumber')) is not int or not 0 < request['prNumber'] <= 9007199254740991:
+        raise ValueError('Legacy requests require a positive PR identity')
+    if (request.get('headSha') == request.get('baseSha')
+            or not isinstance(request.get('mergeParents'), list) or len(request['mergeParents']) != 2
+            or not all(hex_value(v, 40) for v in request['mergeParents'])
+            or request['mergeParents'][1] != request.get('headSha')
+            or request['mergeParents'][0] == request.get('headSha')):
+        raise ValueError('Merge parents do not bind the exact source head')
+    return 'pull-request'
+
+
 def validate_envelope(value, config):
     if not isinstance(value, dict) or set(value) != {'protocolVersion', 'leaseId', 'capability', 'request'}:
         raise ValueError('Invalid lease envelope')
@@ -41,17 +65,16 @@ def validate_envelope(value, config):
     if not hex_value(value['leaseId'], 32) or not hex_value(value['capability'], 64):
         raise ValueError('Invalid lease ownership')
     request = value['request']
-    if not isinstance(request, dict) or set(request) != REQUEST_KEYS:
+    if not isinstance(request, dict) or set(request) not in (REQUEST_KEYS, REQUEST_KEYS | {'sourceKind'}):
         raise ValueError('Unbound lease tuple')
     if request['repository'] != 'HamedMP/matrix-os' or request['repository'] != config['repository']:
         raise ValueError('Repository not approved')
-    for key in ('prNumber', 'requestingRunId', 'requestingRunAttempt', 'controllerRunId', 'controllerRunAttempt'):
+    source_kind(request)
+    for key in ('requestingRunId', 'requestingRunAttempt', 'controllerRunId', 'controllerRunAttempt'):
         if type(request[key]) is not int or not 0 < request[key] <= 9007199254740991:
             raise ValueError('Invalid requesting/controller identity')
     if not all(hex_value(request[key], 40) for key in ('headSha', 'baseSha', 'mergeSha', 'controllerSha')):
         raise ValueError('Invalid exact source identity')
-    if request['headSha'] == request['baseSha'] or not isinstance(request['mergeParents'],list) or len(request['mergeParents'])!=2 or not all(hex_value(v,40) for v in request['mergeParents']) or request['mergeParents'][1]!=request['headSha'] or request['mergeParents'][0]==request['headSha']:
-        raise ValueError('Merge parents do not bind the exact source head')
     if not branch(request['baseRef']):
         raise ValueError('Invalid parent ref')
     if (request['controllerRef'] != 'refs/heads/main'

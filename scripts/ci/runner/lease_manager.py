@@ -12,6 +12,7 @@ from lease_io import ControlPipe
 from lease_process import OwnedProcess
 from lease_protocol import LeaseProtocol
 from lease_store import LeaseStore
+from lease_outcome import InfrastructureUnavailable
 
 
 class LeaseManager:
@@ -28,6 +29,7 @@ class LeaseManager:
         self.preflight = preflight
         self.child = None
         self.signalled = False
+        self.workload_started = False
 
     def _tick(self, queue=False):
         records = self.pipe.poll()
@@ -44,16 +46,20 @@ class LeaseManager:
         deadline = time.monotonic() + 1800
         while True:
             self._tick(queue=True)
+            if time.monotonic() >= deadline:
+                raise InfrastructureUnavailable('queue_timeout')
             if not self.store.is_first(self.protocol.lease):
                 if time.monotonic() >= deadline:
-                    raise TimeoutError('Queue deadline')
+                    raise InfrastructureUnavailable('queue_timeout')
                 continue
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
+                if self.store.claim(self.protocol.lease):
+                    return
+                fcntl.flock(fd, fcntl.LOCK_UN)
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError('Queue deadline')
+                    raise InfrastructureUnavailable('queue_timeout')
 
     def _execute(self):
         if (self.root / 'cleanup.blocked').exists() or not self.preflight():
@@ -62,10 +68,14 @@ class LeaseManager:
         while not self.protocol.running:
             self._tick()
         self._tick()
+        self.store.admit(self.protocol.lease)
         # No capability or controller environment enters the owned child.
         log_path = self.root / (self.protocol.lease + '.log')
         fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, 'wb') as log:
+            # Conservative boundary: once wrapper allocation is attempted,
+            # Docker/source/test failures can never become an infra fallback.
+            self.workload_started = True
             self.child = OwnedProcess(self.command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'LANG': 'C.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1'})
             self.pipe.emit(self.protocol.record('running'))
@@ -118,6 +128,7 @@ class LeaseManager:
         status, kind, reason = 70, 'failed', 'execution_failed'
         previous = {}
         receipt = None
+        infrastructure = None
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[sig] = signal.signal(sig, lambda *_: setattr(self, 'signalled', True))
         try:
@@ -132,6 +143,9 @@ class LeaseManager:
             acquired = True
             self._execute()
             status, kind, reason = 0, 'completed', None
+        except InfrastructureUnavailable as error:
+            infrastructure = error
+            status, kind, reason = 76, 'infrastructure-unavailable', error.reason
         except InterruptedError:
             status, kind, reason = 75, 'cancelled', 'lease_revoked'
         except (ValueError, RuntimeError, TimeoutError, OSError) as error:
@@ -152,6 +166,15 @@ class LeaseManager:
                         self._tick()
                         if not isinstance(receipt, dict) or receipt.get('qualified') is not True:
                             raise ValueError('Evidence rejected')
+                # Only root-created availability errors before wrapper allocation
+                # and proven cleanup may request hosted coverage. Unknown failures,
+                # revocation, source/evidence errors and runtime failures stay red.
+                if kind == 'infrastructure-unavailable':
+                    revoked = self.signalled or self.pipe.eof or (reserved and self.store.is_cancelled(self.protocol.lease))
+                    if revoked:
+                        status, kind, reason = 75, 'cancelled', 'lease_revoked'
+                    elif self.workload_started or not cleaned:
+                        status, kind, reason = 70, 'failed', 'execution_failed'
             except Exception as error:
                 print('Lease completion failed: ' + type(error).__name__, file=__import__('sys').stderr)
                 status, kind, reason = 70, 'failed', 'evidence_failed'
@@ -171,6 +194,8 @@ class LeaseManager:
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)
             fields = {'status': status}
+            if kind == 'infrastructure-unavailable':
+                fields.update(stage=infrastructure.stage, workloadStarted=False, containerGone=True)
             if receipt is not None and status == 0:
                 fields['receipt'] = receipt
             if reason:
