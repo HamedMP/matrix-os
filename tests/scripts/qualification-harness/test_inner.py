@@ -10,16 +10,20 @@ from contract import ELECTRON as REPORT_FILES,PHASES
 HERE=ROOT/'scripts'/'ci'/'qualification'
 
 class InnerContracts(unittest.TestCase):
- def invoke(self,fail=''):
+ def invoke(self,fail='',cache='cold'):
   with tempfile.TemporaryDirectory() as path:
    root=Path(path);work=root/'work';work.mkdir();binary=root/'bin';binary.mkdir()
+   prepared_browsers=root/'prepared-browsers';prepared_browsers.mkdir()
    pg=root/'fixture-postgres.sh';pg.write_text('start_fixture_postgres() { pgmock start; export MATRIX_PLATFORM_FIXTURE_POSTGRES_URL=postgresql://fixture@127.0.0.1:5432/matrix_ci_platform_fixture_admin; }; stop_fixture_postgres() { pgmock stop; }\n')
-   script=root/'benchmark.sh';script.write_text((HERE/'benchmark.sh').read_text().replace('/work',str(work)).replace('/opt/matrix-ci/fixture-postgres.sh',str(pg)))
+   script=root/'benchmark.sh';script.write_text((HERE/'benchmark.sh').read_text().replace('/work',str(work)).replace('/opt/matrix-ci/fixture-postgres.sh',str(pg)).replace('/opt/matrix-ci/browsers',str(prepared_browsers)))
    helper='''#!PYTHON
 import json,os,sys
 from pathlib import Path
 name=Path(sys.argv[0]).name;args=sys.argv[1:];work=Path(os.environ['MOCK_WORK'])
-with open(os.environ['MOCK_LOG'],'a') as output:output.write(json.dumps(dict(cmd=name,args=args,pg=os.environ.get('MATRIX_PLATFORM_FIXTURE_POSTGRES_URL'),provider=os.environ.get('MATRIX_PROVIDER_AUTH_ELECTRON'),required=os.environ.get('MATRIX_DESKTOP_E2E_REQUIRED'),store=os.environ.get('npm_config_store_dir'),cwd=os.getcwd(),cache=os.environ.get('XDG_CACHE_HOME'),browsers=os.environ.get('PLAYWRIGHT_BROWSERS_PATH'),pythoncache=os.environ.get('PYTHONPYCACHEPREFIX')))+'\\n')
+with open(os.environ['MOCK_LOG'],'a') as output:output.write(json.dumps(dict(cmd=name,args=args,pg=os.environ.get('MATRIX_PLATFORM_FIXTURE_POSTGRES_URL'),provider=os.environ.get('MATRIX_PROVIDER_AUTH_ELECTRON'),required=os.environ.get('MATRIX_DESKTOP_E2E_REQUIRED'),store=os.environ.get('npm_config_store_dir'),import_method=os.environ.get('npm_config_package_import_method'),cwd=os.getcwd(),cache=os.environ.get('XDG_CACHE_HOME'),browsers=os.environ.get('PLAYWRIGHT_BROWSERS_PATH'),pythoncache=os.environ.get('PYTHONPYCACHEPREFIX')))+'\\n')
+if name=='python3' and any(a.endswith('/prepared.py') for a in args):
+ print(os.environ['MOCK_CACHE'])
+ if os.environ.get('MOCK_FAIL')=='prepared':sys.exit(1)
 if name=='python3' and '--prepare' in args:
  for lane in ('unit','mechanical','web','e2e'):(work/lane).mkdir()
 if name=='python3' and '--source-check' in args:
@@ -38,7 +42,7 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
 '''.replace('#!PYTHON','#!'+sys.executable)
    for name in ('python3','git','node','pnpm','bun','xvfb-run','pgmock'):
     p=binary/name;p.write_text(helper);p.chmod(0o755)
-   env=dict(os.environ,PATH=str(binary)+':'+os.environ['PATH'],MOCK_WORK=str(work),MOCK_LOG=str(root/'log'),MOCK_FAIL=fail)
+   env=dict(os.environ,PATH=str(binary)+':'+os.environ['PATH'],MOCK_WORK=str(work),MOCK_LOG=str(root/'log'),MOCK_FAIL=fail,MOCK_CACHE=cache)
    result=subprocess.run(['bash',str(script),'1'*40,str(work/'qualification-input.json'),'2'*64],env=env,capture_output=True,text=True,timeout=20)
    calls=[json.loads(line) for line in (root/'log').read_text().splitlines()]
    times={p.name:dict((f[0],int(f[2])) for line in p.read_text().splitlines() for f in [line.split('\t')]) for p in (work/'results').glob('timing-*.tsv')}
@@ -50,6 +54,27 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   installs=[c for c in calls if c['cmd']=='pnpm' and c['args']==['install','--frozen-lockfile']];self.assertEqual(len(installs),4);self.assertEqual({Path(c['cwd']).name for c in installs},{'unit','mechanical','web','e2e'})
   unit=next(c for c in calls if c['cmd']=='pnpm' and '--maxWorkers=16' in c['args']);self.assertTrue(unit['pg'].startswith('postgresql://'));self.assertIn('/work/pnpm-store',unit['store'])
   self.assertFalse(any('--exclude' in arg or '--shard' in arg or '--testNamePattern' in arg for c in calls for arg in c['args']))
+ def test_prepared_browser_hit_preserves_all_phases_four_installs_and_source_pins(self):
+  result,calls,times=self.invoke(cache='store-browsers');self.assertEqual(result.returncode,0,result.stderr)
+  downloads=[c for c in calls if c['cmd']=='pnpm' and 'playwright' in c['args'] and 'install' in c['args']]
+  self.assertEqual(downloads,[])
+  cache=next(c for c in calls if c['cmd']=='python3' and any(a.endswith('/prepared.py') for a in c['args']))
+  self.assertEqual(cache['args'][-3:],['1'*40,next(a for a in cache['args'] if a.endswith('/qualification-input.json')),'2'*64])
+  installs=[c for c in calls if c['cmd']=='pnpm' and c['args']==['install','--frozen-lockfile']];self.assertEqual(len(installs),4)
+  self.assertTrue(all(c['browsers'].endswith('/prepared-browsers') for c in installs));self.assertTrue(all(c['import_method']=='copy' for c in installs))
+  self.assertEqual(list(times['timing-setup.tsv']),list(PHASES['setup']))
+ def test_store_only_preserves_both_normal_browser_installs_and_all_guards(self):
+  result,calls,times=self.invoke(cache='store');self.assertEqual(result.returncode,0,result.stderr)
+  self.assertEqual(sum(c['cmd']=='pnpm' and 'playwright' in c['args'] and 'install' in c['args'] for c in calls),2)
+  self.assertEqual(sum(c['cmd']=='python3' and '--source-check' in c['args'] for c in calls),14)
+  self.assertEqual(list(times['timing-setup.tsv']),list(PHASES['setup']))
+ def test_unknown_cache_selector_output_fails_closed(self):
+  result,calls,times=self.invoke(cache='arbitrary');self.assertEqual(result.returncode,64)
+  self.assertEqual(times['timing-setup.tsv']['checkout'],64);self.assertFalse(any(c['cmd'] in ('pnpm','bun') for c in calls))
+ def test_prepared_selection_failure_blocks_installs_and_is_measured(self):
+  result,calls,times=self.invoke('prepared');self.assertNotEqual(result.returncode,0)
+  self.assertEqual(times['timing-setup.tsv']['checkout'],1)
+  self.assertFalse(any(c['cmd'] in ('pnpm','bun') for c in calls))
  def test_general_grid_before_desktop_and_exact_required_electron_groups(self):
   result,calls,_=self.invoke();self.assertEqual(result.returncode,0)
   general=next(i for i,c in enumerate(calls) if c['cmd']=='pnpm' and 'general.json' in ' '.join(c['args']))

@@ -9,7 +9,7 @@ unset MATRIX_TEST_POSTGRES_URL MATRIX_PLATFORM_FIXTURE_POSTGRES_URL
 export PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_CHROMIUM_CHANNEL=chromium NEXT_TELEMETRY_DISABLED=1
 export MATRIX_TEST_WORKERS=16 MATRIX_TEST_PROFILE_SORT=1
 export npm_config_store_dir=/work/pnpm-store XDG_CACHE_HOME=/work/cache XDG_DATA_HOME=/work/share
-export PLAYWRIGHT_BROWSERS_PATH=/work/browsers
+export PLAYWRIGHT_BROWSERS_PATH=/work/browsers npm_config_package_import_method=copy
 export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_Y2ktc2FmZS5leGFtcGxlLmNvbSQ=
 export NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 export NEXT_PUBLIC_POSTHOG_KEY=phc_ci_shell_build NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=phc_ci_shell_build
@@ -22,7 +22,16 @@ measure() {
  printf '%s\t%s\t%s\n' "$label" "$(( $(date +%s)-start ))" "$status" >>"/work/results/timing-$lane.tsv"
  return "$status"
 }
-measure setup checkout "${proof[@]}" --prepare
+prepare_checkout() {
+ "${proof[@]}" --prepare || return
+ cache_selection=$(python3 -I /opt/matrix-ci/qualification/prepared.py "$source_sha" "$manifest_file" "$manifest_sha") || return
+ case "$cache_selection" in
+  store-browsers) export PLAYWRIGHT_BROWSERS_PATH=/opt/matrix-ci/browsers;;
+  cold|store) ;;
+  *) return 64;;
+ esac
+}
+measure setup checkout prepare_checkout
 # Four independent Git checkouts; install mutations are checked before any app code.
 for lane in unit mechanical web e2e;do
  cd "/work/$lane"
@@ -53,8 +62,13 @@ node --input-type=module -e '
 failed=0
 step() { measure "$@" || failed=1; }
 cd /work/e2e
-step setup browsers pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
-step setup shell-browsers pnpm --filter shell exec playwright install chromium
+if [[ $cache_selection == store-browsers ]];then
+ step setup browsers test -d /opt/matrix-ci/browsers
+ step setup shell-browsers test -d /opt/matrix-ci/browsers
+else
+ step setup browsers pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
+ step setup shell-browsers pnpm --filter shell exec playwright install chromium
+fi
 source /opt/matrix-ci/fixture-postgres.sh
 step setup postgres-start start_fixture_postgres
 unit_lane() {
