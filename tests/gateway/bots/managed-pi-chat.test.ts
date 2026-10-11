@@ -318,3 +318,40 @@ it("executes owner integration and Custom MCP tools through actual Pi loop/broke
   expect(checkpoints.filter(row => row.effect_class === "write")).toHaveLength(2);
   expect(registry.size).toBe(0); expect(revoke).toHaveBeenCalledExactlyOnceWith(admitted.run.id);
 });
+
+it.each([false, true])("preserves root admission/capabilities while composing isolated bounds (enabled=%s)", async enabled => {
+  const snapshot = makeAiProviderSnapshot(), selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
+  const resolved = resolveManagedPiRoute(snapshot, selection);
+  const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: OWNER, chatId: "chat_envelope",
+    runId: "run_envelope", runtimeHandle: `runtime_${"f".repeat(32)}`, executionGeneration: "1",
+    workspace: { kind: "chat_workspace" }, rootFingerprint: "f".repeat(64), ...resolved,
+    route: { ...resolved.route, maxOutputTokens: enabled ? 256 : 8192 },
+    capabilities: ["artifact.read", "artifact.write"], requestClass: "interactive" };
+  const release = vi.fn(async () => undefined), open = vi.fn(async () => undefined);
+  const admit = vi.fn(async () => binding), claim = vi.fn(async () => ({ phaseId: "phase_envelope", maxInputBytes: 131072 as const }));
+  const runtime = createManagedPiRuntime({ admission: { admit, release, workspace: async () => "/owned/chat",
+    toolAuthority: async () => ({ permissionMode: "full_access" }) },
+    ...(enabled ? { isolatedChat: { select: () => true, targets: () => true, claim, consume: async () => true } } : {}),
+    ownerTools: { open, closeRun: async () => undefined } as never,
+    providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
+    forgetRun: () => undefined, cancelInference: () => undefined,
+    host: { client: { runBot: async () => {
+      const spec = await runtime.runs.loadRunSpec(binding);
+      expect(spec.capabilities).toEqual(binding.capabilities);
+      expect(spec.route.maxOutputTokens).toBe(enabled ? 256 : 8192);
+      expect(spec.limits.maxToolActions).toBe(enabled ? 1 : 60);
+      expect(spec.isolatedTurn).toEqual(enabled ? { phaseId: "phase_envelope", maxInputBytes: 131072 } : undefined);
+      if (enabled) await expect(runtime.adapter.steer!({ owner: { type: "personal", ownerId: OWNER },
+        chatId: binding.chatId, runId: binding.runId, prompt: "another generation" } as never)).rejects.toThrow("unavailable");
+      return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 0 } };
+    } } } as unknown as ScopeRuntimeHost });
+  const events = [];
+  for await (const event of runtime.adapter.start({ owner: { type: "personal", ownerId: OWNER }, chatId: binding.chatId,
+    turnId: "cturn_envelope", runId: binding.runId, prompt: "Hello", parts: [{ type: "text", text: "Hello" }],
+    selection, interactionMode: "default", permissionMode: "full_access", signal: new AbortController().signal })) events.push(event);
+  expect(events.at(-1)).toMatchObject({ outcome: "completed" });
+  expect(admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ownerId: OWNER, chatId: binding.chatId,
+    runId: binding.runId, resolved: expect.objectContaining({ route: expect.objectContaining({ maxOutputTokens: enabled ? 256 : 8192 }) }) }));
+  expect(claim).toHaveBeenCalledTimes(enabled ? 1 : 0); expect(open).toHaveBeenCalledTimes(enabled ? 0 : 1);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+});
