@@ -10,6 +10,8 @@ import stat
 import time
 from lease_contract import canonical_digest, hex_value, MAX_RECORD
 
+RETENTION_SECONDS = 7 * 86400
+
 
 class LeaseStore:
     def __init__(self, root):
@@ -71,7 +73,32 @@ class LeaseStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def records(self):
+    def has_retained_outputs(self, lease):
+        # Ownership must outlive result/log cleanup, including uncertain links.
+        results = self.root.parent / 'results'
+        try:
+            info = results.lstat()
+        except FileNotFoundError:
+            info = None # Explicit expected absence before any result was created.
+        if info is not None:
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
+                return True
+            try:
+                (results / ('lease.' + lease)).lstat()
+            except FileNotFoundError:
+                result_present = False # This exact owned result was removed.
+            else:
+                result_present = True
+            if result_present:
+                return True
+        try:
+            (self.root.parent / (lease + '.log')).lstat()
+        except FileNotFoundError:
+            return False # No owned outputs remain; replay expiry is now safe.
+        return True
+
+    def records(self, now=None):
+        now = time.time() if now is None else now
         entries = list(self.root.iterdir())
         if len(entries) > 300:
             raise ValueError('Lease registry directory cap')
@@ -89,7 +116,8 @@ class LeaseStore:
             if path.suffix != '.json' or not hex_value(path.stem, 32):
                 raise ValueError('Unexpected registry entry')
             record = self.read(path.stem)
-            if record['status'] == 'completed' and record['created'] < time.time() - 7 * 86400:
+            if (record['status'] == 'completed' and record['created'] < now - RETENTION_SECONDS
+                    and not self.has_retained_outputs(path.stem)):
                 path.unlink()
             else:
                 records.append(record)
