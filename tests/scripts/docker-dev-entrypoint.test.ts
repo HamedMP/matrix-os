@@ -4,6 +4,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  existsSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +15,72 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 
+function buildOutputFixture() {
+  const fixture = mkdtempSync(join(tmpdir(), "matrix-build-ownership-"));
+  mkdirSync(join(fixture, "distro"));
+  mkdirSync(join(fixture, "bin"));
+  writeFileSync(join(fixture, "distro/docker-dev-entrypoint.sh"), readFileSync(join(root, "distro/docker-dev-entrypoint.sh")));
+  for (const name of ["brand", "observability", "terminal-runtime", "kernel"]) {
+    mkdirSync(join(fixture, "packages", name, "src"), { recursive: true });
+    writeFileSync(join(fixture, "packages", name, "src", "unchanged.ts"), "owner source");
+  }
+  writeFileSync(join(fixture, "bin/chown"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\nexit "${CHOWN_EXIT:-0}"\n');
+  chmodSync(join(fixture, "bin/chown"), 0o755);
+  // An unsupported preparation flag must stop before the dev startup path.
+  writeFileSync(join(fixture, "bin/pnpm"), "#!/bin/sh\nexit 23\n");
+  chmodSync(join(fixture, "bin/pnpm"), 0o755);
+  const run = (extra: Record<string, string> = {}) => spawnSync("bash", [join(fixture, "distro/docker-dev-entrypoint.sh"), "--prepare-build-outputs"], {
+    env: { ...process.env, PATH: `${join(fixture, "bin")}:${process.env.PATH}`, CALL_LOG: join(fixture, "calls"), ...extra },
+    encoding: "utf8", timeout: 5_000,
+  });
+  return { fixture, run };
+}
+
 describe("Docker development entrypoint dependency layout", () => {
+  it("prepares writable compiler outputs and caches without changing source ownership", () => {
+    const { fixture, run } = buildOutputFixture();
+    try {
+      const existingCache = join(fixture, "packages/brand/.matrix-build-cache");
+      mkdirSync(existingCache);
+      writeFileSync(join(existingCache, ".matrix.tsbuildinfo"), "existing incremental data");
+      const result = run();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      const calls = readFileSync(join(fixture, "calls"), "utf8").trim().split("\n");
+      expect(calls).toHaveLength(4);
+      for (const name of ["brand", "observability", "terminal-runtime", "kernel"]) {
+        const base = join(fixture, "packages", name);
+        expect(existsSync(join(base, "dist"))).toBe(true);
+        expect(existsSync(join(base, ".matrix-build-cache"))).toBe(true);
+        expect(calls).toContain(`-hR matrixos:matrixos ${base}/dist ${base}/.matrix-build-cache`);
+        expect(readFileSync(join(base, "src/unchanged.ts"), "utf8")).toBe("owner source");
+      }
+      expect(readFileSync(join(existingCache, ".matrix.tsbuildinfo"), "utf8")).toBe("existing incremental data");
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+
+  it("rejects symlinked generated directories before ownership changes", () => {
+    const { fixture, run } = buildOutputFixture();
+    try {
+      const external = join(fixture, "owner-data");
+      mkdirSync(external);
+      writeFileSync(join(external, "identity"), "preserve me");
+      symlinkSync(external, join(fixture, "packages/brand/.matrix-build-cache"));
+      const result = run();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Refusing symlinked build output");
+      expect(existsSync(join(fixture, "calls"))).toBe(false);
+      expect(readFileSync(join(external, "identity"), "utf8")).toBe("preserve me");
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+
+  it("does not continue when generated-output ownership fails", () => {
+    const { fixture, run } = buildOutputFixture();
+    try {
+      expect(run({ CHOWN_EXIT: "19" }).status).toBe(19);
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+
   it("keeps the global virtual store for host worktrees", () => {
     const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
 
