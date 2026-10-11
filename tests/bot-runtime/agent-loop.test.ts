@@ -92,7 +92,7 @@ describe("bot agent loop", () => {
     expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
   });
 
-  it("honors a smaller trusted generation cap while preserving tools, history and 8192 output", async () => {
+  it.each([2, 12])("honors trusted generation cap %i while preserving tools, history and 8192 output", async maxInferenceCalls => {
     const { route } = scripted([
       fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: "call_write" }), { stopReason: "toolUse" }),
       ...Array.from({ length: 14 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
@@ -101,11 +101,11 @@ describe("bot agent loop", () => {
     const stream = vi.spyOn(route.provider, "streamSimple");
     const { broker, tools, saves } = memoryBroker({ messages: [{ role: "user", content: "Keep my earlier requirement.", timestamp: 1 }] });
     const outcome = await run({ broker, route, command: command({
-      limits: { maxToolActions: 60, maxInferenceCalls: 12 },
+      limits: { maxToolActions: 60, maxInferenceCalls },
       route: { ...command().route, maxOutputTokens: 8192 },
     }), onAgent: agent => expect(agent.state.tools.map(tool => tool.name)).toContain("write_artifact") });
     expect(outcome).toMatchObject({ status: "failed", toolActions: 1 });
-    expect(stream).toHaveBeenCalledTimes(12);
+    expect(stream).toHaveBeenCalledTimes(maxInferenceCalls);
     expect(tools).toHaveLength(1);
     expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0 && options?.maxTokens === 8192)).toBe(true);
     expect(JSON.stringify(saves[0]!.messages)).toContain("Keep my earlier requirement.");
