@@ -72,6 +72,8 @@ export const IsolatedBotTurnSchema = z.object({
 
 export const BotRunLimitsSchema = z.object({
   maxToolActions: z.number().int().min(1).max(60),
+  /** Gateway-owned downward ceiling; includes generation and compaction calls. */
+  maxInferenceCalls: z.number().int().min(1).max(63).optional(),
 }).strict();
 
 const RunIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/);

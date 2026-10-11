@@ -18,6 +18,7 @@ import { recipeCoordinatorSelection } from "./coordinator-selection.js";
  * a runtime. Active runs are bounded by the runtime registry's capacity.
  */
 import {
+  BotRunLimitsSchema,
   BotRunOutcomeSchema,
   BotRunSpecSchema,
   type BotEvent,
@@ -112,6 +113,12 @@ export function createBotTaskOrchestrator(deps: {
   /** Test hook; 10 seconds, and never longer. */
   cancelGraceMs?: number;
 }) {
+  // Host-controlled only: canonical Chat/recipe input cannot expand this allowance.
+  // Invalid configuration must not silently fall back to the larger default.
+  const configuredCalls = process.env.MATRIX_BOT_MAX_INFERENCE_CALLS;
+  if (configuredCalls !== undefined && !/^[1-9]\d?$/.test(configuredCalls)) throw new Error("Invalid Bot inference limit");
+  const limits = BotRunLimitsSchema.parse({ maxToolActions: MAX_TOOL_ACTIONS,
+    ...(configuredCalls !== undefined ? { maxInferenceCalls: Number(configuredCalls) } : {}) });
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   const activeDeadlineMs = Math.max(1, Math.min(Math.trunc(deps.activeDeadlineMs ?? ACTIVE_DEADLINE_MS), ACTIVE_DEADLINE_MS));
   const cancelGraceMs = Math.max(1, Math.min(Math.trunc(deps.cancelGraceMs ?? CANCEL_GRACE_MS), CANCEL_GRACE_MS));
@@ -277,7 +284,7 @@ export function createBotTaskOrchestrator(deps: {
         route: resolved.route,
         systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, now: new Date(now()) }),
         capabilities,
-        limits: { maxToolActions: isolatedModel ? 1 : MAX_TOOL_ACTIONS },
+        limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: input.text },
       });
     } catch (error: unknown) {

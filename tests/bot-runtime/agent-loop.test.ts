@@ -73,7 +73,7 @@ describe("bot agent loop", () => {
     const { route } = scripted([...replies, fauxAssistantMessage(fauxText("Stopped."))]);
     const stream = vi.spyOn(route.provider, "streamSimple");
     const { broker, tools } = memoryBroker();
-    const outcome = await run({ broker, route, command: command({ limits: { maxToolActions: 2 } }) });
+    const outcome = await run({ broker, route, command: command({ limits: { maxToolActions: 2, maxInferenceCalls: 63 } }) });
     // Two tool rounds, a final response and at most two compaction requests.
     expect(stream.mock.calls.length).toBeLessThanOrEqual(5);
     expect(tools).toHaveLength(0);
@@ -90,6 +90,25 @@ describe("bot agent loop", () => {
     expect((await run({ broker, route })).status).toBe("failed");
     expect(stream).toHaveBeenCalledTimes(63);
     expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
+  });
+
+  it("honors a smaller trusted generation cap while preserving tools, history and 8192 output", async () => {
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: "call_write" }), { stopReason: "toolUse" }),
+      ...Array.from({ length: 14 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Must not run.")),
+    ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools, saves } = memoryBroker({ messages: [{ role: "user", content: "Keep my earlier requirement.", timestamp: 1 }] });
+    const outcome = await run({ broker, route, command: command({
+      limits: { maxToolActions: 60, maxInferenceCalls: 12 },
+      route: { ...command().route, maxOutputTokens: 8192 },
+    }), onAgent: agent => expect(agent.state.tools.map(tool => tool.name)).toContain("write_artifact") });
+    expect(outcome).toMatchObject({ status: "failed", toolActions: 1 });
+    expect(stream).toHaveBeenCalledTimes(12);
+    expect(tools).toHaveLength(1);
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0 && options?.maxTokens === 8192)).toBe(true);
+    expect(JSON.stringify(saves[0]!.messages)).toContain("Keep my earlier requirement.");
   });
 
   it("passes the bridge placeholder key to Pi for every model stream", async () => {
@@ -379,7 +398,7 @@ describe("bot agent loop", () => {
     expect(saved.length).toBeLessThan(512 * 1024);
   });
 
-  it.each([4, 5])("shares the remaining inference allowance with both compaction paths after %i main calls", async mainCalls => {
+  it.each([{ mainCalls: 4, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 5, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 11, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }, { mainCalls: 12, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }])("shares the remaining inference allowance with both compaction paths after $mainCalls main calls", async ({ mainCalls, limits, expected }) => {
     const { route } = scripted([
       ...Array.from({ length: mainCalls - 1 }, (_, index) => fauxAssistantMessage(
         fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" },
@@ -395,9 +414,9 @@ describe("bot agent loop", () => {
       { ...fauxAssistantMessage(fauxText("r".repeat(166 * 1024))), timestamp: turn * 10 + 1 },
     ]) as unknown as Record<string, unknown>[];
     const { broker, saves, tools } = memoryBroker({ messages: history });
-    const outcome = await run({ broker, route, command: command({ limits: { maxToolActions: 2 }, turn: { kind: "prompt", text: "And a fourth?" } }) });
+    const outcome = await run({ broker, route, command: command({ limits, turn: { kind: "prompt", text: "And a fourth?" } }) });
     expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
-    expect(stream).toHaveBeenCalledTimes(5);
+    expect(stream).toHaveBeenCalledTimes(expected);
     expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
     expect(tools).toHaveLength(0);
     expect(JSON.stringify(saves[0]!.messages)).toContain("And a fourth?");

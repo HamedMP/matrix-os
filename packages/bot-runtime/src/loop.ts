@@ -95,7 +95,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
   // Unknown/invalid/truncated tools bypass beforeToolCall. Bound model work
   // itself: tool rounds, a final response and at most two session summaries.
-  const maxInferenceCalls = isolated ? 1 : command.limits.maxToolActions + 3;
+  const maxInferenceCalls = isolated ? 1 : Math.min(command.limits.maxToolActions + 3, command.limits.maxInferenceCalls ?? 63);
   let inferenceCalls = 0;
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
