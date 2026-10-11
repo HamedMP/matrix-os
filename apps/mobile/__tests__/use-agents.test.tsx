@@ -1,5 +1,5 @@
 import React, { type ReactNode } from "react";
-import { CancelledError, QueryClient, QueryClientProvider, notifyManager, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, notifyManager, useQuery } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useAgents, useArchiveAgent, useEnsureAgentChat } from "../lib/queries/use-agents";
@@ -281,11 +281,6 @@ describe("agent hooks", () => {
         queryKey: agentsKey,
         queryFn: () => new Promise((resolve) => { answerEarlierRead = resolve; }),
       });
-      // The request cancels this read. Any other failure is a real one, and
-      // fails the test where it is awaited below.
-      const earlierReadDone = earlierRead.catch((error: unknown) => {
-        if (!(error instanceof CancelledError)) throw error;
-      });
       await waitFor(() => expect(client.isFetching({ queryKey: agentsKey })).toBe(1));
 
       await act(async () => {
@@ -294,7 +289,9 @@ describe("agent hooks", () => {
       await act(async () => {
         answerEarlierRead({ enabled: true, agents: [inbox, brief] });
       });
-      await earlierReadDone;
+      // The request cancels that read, which then settles with what the list
+      // held before it. Were it to fail in any other way, it would reject here.
+      await earlierRead;
 
       expect(client.getQueryData(agentsKey)).toEqual({ enabled: true, agents: [brief] });
       // Still due a fresh read the next time a screen shows the list.

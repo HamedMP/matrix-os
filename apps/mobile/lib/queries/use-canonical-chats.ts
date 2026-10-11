@@ -1,5 +1,5 @@
 import type { CanonicalChatListResponse, CanonicalChatRecord } from "@matrix-os/contracts";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -91,8 +91,12 @@ export function useCanonicalChatPages() {
   const firstItems = first.page?.items ?? EMPTY_CHATS;
   const firstCursor = first.page ? first.page.nextCursor ?? null : undefined;
 
+  const olderQueryKey = useMemo(
+    () => mobileQueryKeys.canonicalChatsOlder(first.userId, first.computerKey),
+    [first.userId, first.computerKey],
+  );
   const older = useInfiniteQuery({
-    queryKey: mobileQueryKeys.canonicalChatsOlder(first.userId, first.computerKey),
+    queryKey: olderQueryKey,
     // Read only when asked for (`loadMore`), and again whenever the first page is.
     enabled: false,
     initialPageParam: null as string | null,
@@ -117,17 +121,33 @@ export function useCanonicalChatPages() {
   const firstReadAt = first.readAt;
   const refetchOlder = older.refetch;
 
+  const olderFetching = older.isFetching;
+  // When a read of the older pages last ended, whichever way it went.
+  const olderSettledAt = Math.max(older.dataUpdatedAt, older.errorUpdatedAt);
+  // The read of the first page that the older pages were last read again for.
+  const followedFirstReadAt = useRef(0);
+
   // Older pages follow the first page: whenever it is read again (a chat
   // event, a sent message, a refresh), so are they. Two things would go stale
   // otherwise. A new chat or new activity moves the end of the first page, and
   // pages read from the old end would skip or repeat a chat. And a chat
   // renamed or deleted further down changes nothing on the first page, so it
-  // would linger here. A read already in flight is not restarted; when it
-  // lands older than the first page, this runs again.
+  // would linger here.
+  //
+  // It waits for a read that is already on its way, a page being loaded or an
+  // earlier re-read, because asking again then would be answered by that read
+  // and not start a new one. Each read of the first page gets one attempt, so
+  // a re-read that fails is not repeated until the first page is read again.
   useEffect(() => {
     if (!olderLoaded || firstReadAt === 0 || olderFirstReadAt === firstReadAt) return;
+    if (followedFirstReadAt.current === firstReadAt) return;
+    // Asked of the cache, not of the last render: a read may have started since.
+    if (queryClient.isFetching({ queryKey: olderQueryKey, exact: true }) > 0) return;
+    followedFirstReadAt.current = firstReadAt;
     void refetchOlder({ cancelRefetch: false });
-  }, [olderLoaded, firstReadAt, olderFirstReadAt, refetchOlder]);
+    // `olderFetching` and `olderSettledAt` are listed so that this runs again
+    // once a read that was in the way has ended.
+  }, [olderLoaded, firstReadAt, olderFirstReadAt, olderFetching, olderSettledAt, refetchOlder, queryClient, olderQueryKey]);
 
   const chats = useMemo(
     () => olderPages ? mergeChatPages([firstItems, ...olderPages.map((page) => page.items)]) : firstItems,

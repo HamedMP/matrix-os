@@ -235,6 +235,80 @@ describe("useCanonicalChatPages", () => {
     expect(mockFetchChats).toHaveBeenCalledTimes(4);
   });
 
+  it("still reads the older pages again when the first page was read while more were loading", async () => {
+    const { result } = renderPages();
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]));
+
+    // The next page is asked for and does not answer yet.
+    let answerNextPage: () => void = () => {};
+    let renamed = false;
+    mockFetchChats.mockImplementation(async (_token: string, _url: string, options?: { cursor?: string }) => {
+      if (options?.cursor === `${CURSOR}d` && !renamed) {
+        await new Promise<void>((resolve) => { answerNextPage = resolve; });
+      }
+      const page = pageOf(serverChats, options?.cursor);
+      return renamed ? { ...page, items: page.items.map((item) => record(item.chat.id, "renamed")) } : page;
+    });
+    let loading!: Promise<void>;
+    act(() => {
+      loading = result.current.loadMore();
+    });
+    await waitFor(() => expect(result.current.isLoadingMore).toBe(true));
+
+    // Meanwhile every chat is renamed elsewhere and an event reads the first page again.
+    renamed = true;
+    await act(async () => {
+      await result.current.invalidate();
+    });
+    // The first page is on screen again while the next page is still on its way.
+    await waitFor(() => expect(result.current.chats[0]!.chat.title).toBe("renamed"));
+    expect(result.current.isLoadingMore).toBe(true);
+    await act(async () => {
+      answerNextPage();
+      await loading;
+    });
+
+    // The read of the older pages that was owed is made once that page has landed.
+    await waitFor(() => expect(result.current.chats.map((entry) => entry.chat.title))
+      .toEqual(["renamed", "renamed", "renamed", "renamed", "renamed"]));
+  });
+
+  it("does not retry a failed read of the older pages until the first page is read again", async () => {
+    const { result } = renderPages();
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]));
+
+    let offline = true;
+    mockFetchChats.mockImplementation(async (_token: string, _url: string, options?: { cursor?: string }) => {
+      if (options?.cursor && offline) throw new Error("offline");
+      return pageOf(serverChats, options?.cursor);
+    });
+    await act(async () => {
+      await result.current.invalidate();
+    });
+    await waitFor(() => expect(mockFetchChats).toHaveBeenCalledTimes(4));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // One attempt, and the chats already loaded stay on screen.
+    expect(mockFetchChats).toHaveBeenCalledTimes(4);
+    expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]);
+
+    offline = false;
+    await act(async () => {
+      await result.current.invalidate();
+    });
+    await waitFor(() => expect(mockFetchChats).toHaveBeenCalledTimes(6));
+    expect(cursorsRequested().slice(4)).toEqual([undefined, `${CURSOR}b`]);
+  });
+
   it("reads every loaded page again on a refresh, even when the first page ends where it did", async () => {
     const { result } = renderPages();
     await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
