@@ -48,6 +48,50 @@ case "$suite" in
     measure shell-browsers pnpm --filter shell exec playwright install chromium
     ;;
 esac
+# Hosted general CI runs before Desktop exists. Full benchmarks retain that
+# scope even after a cold pass leaves Desktop build output for the warm pass.
+# These exact files gate their entire native suite on the Desktop build; browser
+# and flag-gated suites remain discoverable. The contract test verifies the list.
+general_native_suites=(
+  agents-providers-figma
+  bot-visual
+  canonical-input
+  chat-dock-badge
+  chat-onboarding
+  chat-picker-responsive
+  chat-provider-background-cache
+  chat-status-quota
+  chat-subagent-activity
+  chat-title-layout
+  chat-tool-details
+  file-download
+  files-handoff
+  getting-started
+  hermes-conversations-responsive
+  hermes-conversations
+  operator
+  organization-management
+  project-chat-inspector
+  project-folder-picker-layout
+  provider-auth-terminal
+  provider-settings-idle
+  release-alignment
+  shared-chat
+  signin-brand
+  speech-input
+  terminal-clipboard
+  terminal-containment
+  terminal-file-drop
+  terminal-handoff
+  terminal-links
+  terminal-sessions
+  terminal-snapshot
+  update-experience
+)
+general_exclusions=()
+for name in "${general_native_suites[@]}"; do
+  general_exclusions+=("--exclude=tests/e2e/desktop/$name.e2e.test.ts")
+done
 run_suite() {
   local pass=$1 desktop_prepared=${2:-false} failure=0
   local shard=()
@@ -83,7 +127,7 @@ run_suite() {
       step "shell-$pass" bun run build:shell:production
       ;;
     e2e|e2e-general)
-      step "e2e-general-$pass" xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2
+      step "e2e-general-$pass" xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2 "${general_exclusions[@]}"
       ;;
     e2e-electron)
       if [[ $desktop_prepared != true ]]; then step "desktop-build-$pass" bun run build:desktop; fi
@@ -115,8 +159,8 @@ for pass in cold warm; do
     suite=checks workers=2 run_suite "$pass" & pids+=("$!")
     (
       desktop_status=0 general_status=0 electron_status=0
-      # General E2E also discovers build-gated Desktop suites. Prepare both
-      # passes before discovery so cold/warm select the same tests.
+      # Build once per pass for the required Electron lane. General explicitly
+      # excludes build-gated native suites so both passes match hosted CI.
       measure "desktop-build-$pass" bun run build:desktop || desktop_status=$?
       suite=e2e-general workers=2 run_suite "$pass" || general_status=$?
       suite=e2e-electron workers=2 run_suite "$pass" true || electron_status=$?

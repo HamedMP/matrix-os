@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,20 @@ const electronSuites = [
   "tests/e2e/desktop/release-alignment.e2e.test.ts",
   "tests/e2e/desktop/chat-title-layout.e2e.test.ts",
 ];
+
+function buildGatedElectronSuites() {
+  return readdirSync("tests/e2e/desktop").filter((file) => file.endsWith(".e2e.test.ts")).flatMap((file) => {
+    const path = `tests/e2e/desktop/${file}`;
+    const source = readFileSync(path, "utf8");
+    const guard = source.match(/const suite = (.+?) \? describe : describe\.skip;/)?.[1];
+    if (!guard) return [];
+    const initializer = source.match(new RegExp(`const ${guard} = ([^;]+);`))?.[1];
+    if (!(guard.includes("existsSync(") || initializer?.includes("existsSync("))) return [];
+    expect(source, path).toContain("_electron");
+    expect(source, path).toContain("out/main/index.js");
+    return [path];
+  }).sort();
+}
 
 function invoke(suite: string, failLane = "", historical = false, workers = "12") {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-"));
@@ -92,11 +106,15 @@ if [[ "$*" == *"exec vitest run"* ]]; then
     if [[ "$REQUIRE_CONCURRENT" == 1 ]]; then await_peer unit checks; fi
     [[ "$FAIL_LANE" != unit ]] || exit 42
   elif [[ "$*" == *"--config vitest.e2e.config.ts"* ]]; then
-    if [[ "$*" != *"tests/e2e/"* ]]; then
+    if [[ "$*" != *"tests/e2e/"* || "$*" == *"--exclude="* ]]; then
       # Simulate the real describe.skip gate in the general desktop suites,
       # including suites absent from the explicit Electron regression list.
-      selection=web
-      if [[ -f desktop/out/main/index.js ]]; then selection=web,desktop,file-download,chat-picker,getting-started; fi
+      selection=web,browser-download,shared-rail-states,chat-onboarding-live
+      if [[ -f desktop/out/main/index.js ]]; then
+        for name in file-download chat-picker-responsive getting-started operator hermes-conversations; do
+          if [[ "$*" != *"--exclude=tests/e2e/desktop/$name.e2e.test.ts"* ]]; then selection="$selection,$name"; fi
+        done
+      fi
       printf 'general-selection %s\\n' "$selection" >> "$CALLS"
       [[ "$FAIL_LANE" != general ]] || exit 42
     elif [[ "$*" == *"tests/e2e/desktop/file-download.e2e.test.ts"* ]]; then
@@ -126,13 +144,13 @@ fi`);
 }
 
 describe("isolated cold and warm benchmark execution", () => {
-  it("prepares desktop before both full general passes and builds once per pass", () => {
+  it("preserves hosted general selection after Desktop builds on both full passes", () => {
     const { result, calls, timings } = invoke("full");
     expect(result.status, result.stderr).toBe(0);
     const selections = calls.filter((call) => call.startsWith("general-selection "));
     expect(selections).toEqual([
-      "general-selection web,desktop,file-download,chat-picker,getting-started",
-      "general-selection web,desktop,file-download,chat-picker,getting-started",
+      "general-selection web,browser-download,shared-rail-states,chat-onboarding-live",
+      "general-selection web,browser-download,shared-rail-states,chat-onboarding-live",
     ]);
     expect(calls.filter((call) => call === "bun run build:desktop")).toHaveLength(2);
     for (const pass of ["cold", "warm"]) {
@@ -140,6 +158,41 @@ describe("isolated cold and warm benchmark execution", () => {
       expect(build).toBeGreaterThan(-1);
       expect(build).toBeLessThan(timings.findIndex(([label]) => label === `e2e-general-${pass}`));
     }
+  });
+
+  it("excludes exactly the native build-gated suites and preserves every hosted Electron regression", () => {
+    const { result, calls } = invoke("full");
+    expect(result.status, result.stderr).toBe(0);
+    const gated = buildGatedElectronSuites();
+    expect(gated).toHaveLength(34);
+    const general = calls.filter((call) => call.includes("--config vitest.e2e.config.ts") && call.includes("--exclude="));
+    expect(general).toHaveLength(2);
+    for (const call of general) {
+      const excluded = Array.from(call.matchAll(/--exclude=(\S+)/g), (match) => match[1]).sort();
+      expect(excluded).toEqual(gated);
+    }
+    const electron = calls.filter((call) => call.includes("tests/e2e/desktop/file-download.e2e.test.ts") && !call.includes("--exclude="));
+    expect(electron).toHaveLength(2);
+    const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
+    const hosted = workflow.split("\n").filter((line) => line.includes("run: xvfb-run") && line.includes("tests/e2e/"))
+      .flatMap((line) => line.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? [])
+      .filter((file) => !file.endsWith("terminal-soft-grid.e2e.test.ts"));
+    expect(hosted).toEqual(electronSuites);
+    for (const call of electron) {
+      expect(call.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g)).toEqual(hosted);
+      expect(call).not.toContain("operator.e2e.test.ts");
+      expect(call).not.toContain("hermes-conversations.e2e.test.ts");
+    }
+  });
+
+  it.each(["e2e", "e2e-general"])("%s preserves the same general scope without building Desktop", (suite) => {
+    const { result, calls } = invoke(suite);
+    expect(result.status, result.stderr).toBe(0);
+    expect(calls.filter((call) => call === "bun run build:desktop")).toHaveLength(0);
+    const general = calls.filter((call) => call.includes("--exclude="));
+    expect(general).toHaveLength(2);
+    for (const call of general)
+      expect(Array.from(call.matchAll(/--exclude=(\S+)/g), (match) => match[1]).sort()).toEqual(buildGatedElectronSuites());
   });
 
   it("keeps standalone Electron builds and every explicit Electron regression", () => {
