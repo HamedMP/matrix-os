@@ -1,0 +1,161 @@
+/**
+ * Stale data on demand, with bounded scans: claims of an older revision, sources with no success for
+ * BRAIN_STALE_SOURCE_DAYS or a failed newest receipt, commitments past due; plus the brief's open-commitments scan.
+ */
+import { sql, type Kysely } from "kysely";
+import type { BrainClaimKind } from "../claims/types.js";
+import {
+  BRAIN_STALE_KINDS, BRAIN_STALE_SOURCE_DAYS, type BrainStaleItemView, type BrainStaleKind,
+} from "../contracts.js";
+import type { BrainDatabase, BrainScopeKey } from "../types.js";
+import { loadBrainCites as loadCites } from "../cite.js";
+import {
+  commitmentDue, commitmentTerms, currentClaims, documentStatus, sourceStates, uniqueClaims,
+} from "./reads.js";
+import { CLOSED_STATUSES, commitmentState, lineText } from "./text.js";
+import { DAY_MS, iso, parseUtcDate, utcDate } from "./time.js";
+import { BRIEF_SCANS, type BriefClaimRow } from "./types.js";
+
+/** An item plus what the brief needs: the document a source line cites, a claim's kind, due and assignee. */
+export interface StaleItem extends BrainStaleItemView {
+  /** The claim or source id: the tie-break of the order and part of the brief line id. */
+  readonly key: string; readonly anchor: string | null; readonly claimKind: BrainClaimKind | null;
+  readonly due: string | null; readonly assignee: string | null;
+}
+
+/**
+ * The first `limit` open commitments: current, not stated done and not on a done or canceled document; due first,
+ * then newest. `before`: as of then (a past brief, see documentsAsOf). Closed documents are filtered in SQL; a
+ * statement that says done is only known once read, so pages of `limit` rows are read until `limit` open ones are
+ * found, at most BRIEF_SCANS.commitmentPages pages.
+ */
+export async function openCommitments(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey,
+  options: { readonly dueBefore?: string; readonly before: Date | null; readonly limit: number },
+): Promise<BriefClaimRow[]> {
+  const due = commitmentDue();
+  const status = documentStatus();
+  let query = currentClaims(db, scope, options.before).where("c.kind", "=", "commitment")
+    .where((eb) => eb.or([eb(status, "is", null), eb(status, "not in", CLOSED_STATUSES)]));
+  if (options.dueBefore !== undefined) query = query.where(due, "<", options.dueBefore);
+  const ordered = query.orderBy(due, (order) => order.asc().nullsLast())
+    .orderBy("a.dated", "desc").orderBy("d.document_id", "desc").orderBy("c.claim_id");
+  const open: BriefClaimRow[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < BRIEF_SCANS.commitmentPages && open.length < options.limit; page += 1) {
+    const rows = await ordered.limit(options.limit).offset(page * options.limit).execute();
+    for (const row of rows) {
+      if (seen.has(row.claim_id)) continue;
+      seen.add(row.claim_id);
+      if (commitmentState(row.statement, row.status) !== "done") open.push(row);
+    }
+    if (rows.length < options.limit) break;
+  }
+  return open.slice(0, options.limit);
+}
+
+interface OutdatedRow {
+  readonly claim_id: string; readonly kind: BrainClaimKind; readonly statement: string; readonly document_id: string;
+  readonly since: Date | string;
+}
+
+async function outdatedClaims(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: { readonly from: Date; readonly to: Date } | null,
+): Promise<StaleItem[]> {
+  const window = range === null ? sql`TRUE` : sql`x.since >= ${range.from} AND x.since < ${range.to}`;
+  const { rows } = await sql<OutdatedRow>`
+    SELECT * FROM (
+      SELECT c.claim_id, c.kind, c.statement, c.document_id, COALESCE(v.superseded_at, d.updated_at) AS since
+      FROM brain_claims c
+      JOIN brain_documents d ON d.owner_id = c.owner_id AND d.scope_id = c.scope_id AND d.document_id = c.document_id
+      LEFT JOIN brain_document_revisions v ON v.owner_id = c.owner_id AND v.scope_id = c.scope_id
+        AND v.document_id = c.document_id AND v.incarnation = c.incarnation AND v.revision = c.revision
+      WHERE c.owner_id = ${scope.ownerId} AND c.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL
+        AND (c.revision <> d.revision OR c.incarnation <> d.incarnation)
+    ) x WHERE ${window}
+    ORDER BY x.since DESC, x.claim_id LIMIT ${BRIEF_SCANS.staleItems}`.execute(db);
+  return uniqueClaims(rows).map((row) => ({
+    kind: "claim_outdated", text: lineText(`Outdated ${row.kind}: ${row.statement}`), since: iso(row.since),
+    cite: null, sourceId: null, claimId: row.claim_id, key: row.claim_id, anchor: row.document_id,
+    claimKind: row.kind, due: null, assignee: null,
+  }));
+}
+
+async function overdueCommitments(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { overdueBefore, before }: StaleOptions,
+): Promise<StaleItem[]> {
+  const rows = await openCommitments(db, scope, { dueBefore: overdueBefore, before, limit: BRIEF_SCANS.staleItems });
+  return rows.flatMap((row) => {
+    const { due, assignee } = commitmentTerms(row);
+    const day = due === null ? null : parseUtcDate(due);
+    if (day === null) return [];
+    return [{
+      kind: "commitment_overdue" as const, text: lineText(`Overdue (due ${due}): ${row.statement}`),
+      since: iso(new Date(day.getTime() + DAY_MS)), cite: null, sourceId: null,
+      claimId: row.claim_id, key: row.claim_id, anchor: row.document_id, claimKind: "commitment" as const, due,
+      assignee,
+    }];
+  });
+}
+
+async function staleSources(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, { now, before }: StaleOptions,
+): Promise<StaleItem[]> {
+  const items: StaleItem[] = [];
+  for (const source of await sourceStates(db, scope, before)) {
+    const base = {
+      cite: null, sourceId: source.source_id, claimId: null, key: source.source_id,
+      anchor: source.newest_document, claimKind: null, due: null, assignee: null,
+    } as const;
+    if (source.last_status === "failed" && source.last_finished !== null) {
+      const code = source.last_error === null ? "" : ` (${source.last_error})`;
+      items.push({ ...base, kind: "source_failing", since: iso(source.last_finished),
+        text: lineText(`Source "${source.label}" failed its last sync${code}`) });
+    }
+    const last = new Date(source.last_success ?? source.created_at);
+    const staleAt = last.getTime() + BRAIN_STALE_SOURCE_DAYS * DAY_MS;
+    if (staleAt <= (before ?? now).getTime()) {
+      const what = source.last_success === null ? "since it was connected on" : "since";
+      items.push({ ...base, kind: "source_sync_old", since: iso(new Date(staleAt)),
+        text: lineText(`Source "${source.label}" has not synced successfully ${what} ${utcDate(last)}`) });
+    }
+  }
+  return items;
+}
+
+export interface StaleOptions {
+  readonly kinds: readonly BrainStaleKind[]; readonly now: Date;
+  /** commitment_overdue: due before this YYYY-MM-DD. `before`: a past brief's end (the brain then), else null. */
+  readonly overdueBefore: string; readonly before: Date | null;
+  /** claim_outdated: only claims that became outdated in this range. */
+  readonly outdatedIn?: { readonly from: Date; readonly to: Date };
+}
+
+const kindOrder = (kind: BrainStaleKind): number => BRAIN_STALE_KINDS.indexOf(kind);
+
+/** Newest `since` first, then kind order, then claim or source id. Claim items carry the live document's cite. */
+export async function computeStale(
+  db: Kysely<BrainDatabase>, scope: BrainScopeKey, options: StaleOptions,
+): Promise<StaleItem[]> {
+  const items: StaleItem[] = [];
+  const { kinds } = options;
+  if (kinds.includes("claim_outdated")) items.push(...await outdatedClaims(db, scope, options.outdatedIn ?? null));
+  if (kinds.includes("commitment_overdue")) items.push(...await overdueCommitments(db, scope, options));
+  if (kinds.some((kind) => kind === "source_sync_old" || kind === "source_failing")) {
+    items.push(...(await staleSources(db, scope, options)).filter((item) => kinds.includes(item.kind)));
+  }
+  const claimItems = items.filter((item) => item.claimId !== null);
+  const cites = await loadCites(db, scope, claimItems.map((item) => item.anchor!));
+  return items.flatMap((item) => {
+    if (item.claimId === null) return [item];
+    const cite = cites.get(item.anchor!);
+    return cite === undefined ? [] : [{ ...item, cite }];
+  }).sort((x, y) => y.since.localeCompare(x.since) || kindOrder(x.kind) - kindOrder(y.kind)
+    || x.key.localeCompare(y.key));
+}
+
+/** The public view of an item. */
+export function staleView(item: StaleItem): BrainStaleItemView {
+  const { kind, text, since, cite, sourceId, claimId } = item;
+  return { kind, text, since, cite, sourceId, claimId };
+}
