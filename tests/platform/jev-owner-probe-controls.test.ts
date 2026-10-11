@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { sql } from "kysely";
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { createFundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
@@ -96,4 +97,15 @@ it("revokes the temporary token when a relay body stalls past caller cancellatio
   expect((await pending).ready).toBe(false);
   await vi.waitFor(() => expect(f.revoke).toHaveBeenCalledOnce());
   expect(cancelled).toHaveBeenCalledOnce();
+});
+
+it("keeps owner-specific Jev observations at thirty seconds and outside the shared provider cache", async () => {
+  const f = await fixture();
+  const observed = await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") });
+  expect(Date.parse(observed.staleAfter) - Date.parse(observed.checkedAt)).toBe(30_000);
+  expect((await sql`select count(*)::int as count from ai_funded_model_probe_cache`.execute(db.executor)).rows[0]).toEqual({ count: 0 });
+  vi.setSystemTime(new Date(Date.now() + 30_000));
+  expect((await f.service.probe(JEV_MODEL_ID, { runtime: f.runtime("a") })).ready).toBe(true);
+  expect(f.fetchFn).toHaveBeenCalledTimes(2);
+  expect(f.issue).toHaveBeenCalledTimes(2);
 });

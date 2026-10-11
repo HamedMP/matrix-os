@@ -288,7 +288,7 @@ function readHostBootstrapAttestation(): HostBootstrapAttestation | undefined {
   }
 }
 
-function readReleaseInfo(): HostBundleRelease | undefined {
+export function readReleaseInfo(): HostBundleRelease | undefined {
   const candidates = [process.env.MATRIX_RELEASE_FILE ?? "/opt/matrix/release.json"];
 
   for (const file of candidates) {

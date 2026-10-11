@@ -39,12 +39,47 @@ probed models; Jev requires its own priced, exact-wire readiness path.
 The authenticated relay `GET /ready?model=<canonical-id>` success response is
 `{ "ready": true, "priceValidThrough": "<ISO timestamp>" }`. The timestamp
 comes from the same local model price table used for admission. Platform accepts
-only this bounded success shape and caps positive cache freshness at both 30
-seconds and `priceValidThrough`; a missing timestamp or a price that expires
-during the probe fails closed. Runtime route-readiness and checkout pass their
+only this bounded success shape. For fixed GLM Flash and Sonnet routes, provider
+health is shared across Platform replicas for at most five minutes, capped by
+`priceValidThrough`. The original health observation and expiry are retained;
+reuse never restamps or extends them. Jev's owner-specific credential/policy
+probe remains isolated with its existing 30-second positive validity. A missing
+price timestamp or a price that expires during the probe fails closed.
+
+This provider-health interval is separate from owner authorization. Every
+runtime route-readiness request rechecks the exact owner/runtime policy and
+ledger before and after the probe. Its composite receipt remains valid for at
+most 30 seconds and no later than policy or provider-health expiry. Every
+execution still performs current funded admission; shared provider health grants
+no credit or authority and cannot defeat the global/runtime kill switches. A
+provider outage after a successful probe can leave the model advertised available
+until the five-minute health expiry; an actual failed request remains subject to
+normal error and financially conservative settlement handling.
+
+Shared fixed-model evidence uses a bounded PostgreSQL cache with fenced, expiring
+leases and cross-replica coalescing. Keys bind the exact Relay origin, model and
+hashed control-credential/configuration identity; credential bytes and owner
+policy/ledger snapshots are never stored in the shared cache. Database failure,
+stale evidence or exhausted count budget fail closed. No live probe-count limit,
+Gateway spend fuse or customer enablement changes are implied by this contract.
+In a continuously healthy two-model deployment, the five-minute interval needs
+approximately 576 paid readiness calls per day; failures, cancellations and Jev
+may consume remaining budget, so this is not an availability or dollar-cost
+guarantee.
+
+An explicitly configured [isolated ordinary Chat phase](../isolated-ordinary-chat.md)
+uses cache-only fixed-model readiness for its exact runtime. Missing or expired
+health remains unavailable without a probe, lease or count reservation. This mode
+does not change ordinary runtime defaults, authorize paid work or create credit.
+
+Runtime route-readiness and checkout pass their
 request deadlines into the shared probe service. It cancels an abandoned probe
-when its last caller expires; a second active caller may continue the same
-coalesced probe. Deploy the relay response before Platform requires the new
+when its last caller in the probing process expires; a second active caller in
+that same process may continue the coalesced probe. Remote replicas wait for the
+fenced shared result but do not prolong another process's caller lifetime. If
+the probing process loses all callers, remote waiters fail closed on its short
+negative receipt rather than immediately repeating a potentially spent probe.
+Deploy the relay response before Platform requires the new
 field: the old Platform ignores the extra field, while the new Platform safely
 rejects a bare `{"ready":true}` from an old relay.
 

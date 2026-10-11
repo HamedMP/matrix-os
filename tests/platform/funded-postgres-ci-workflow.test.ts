@@ -47,6 +47,7 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status).toBe(0);
     expect(result.args).toEqual(expect.arrayContaining([
       "run", "test", "--", "tests/platform/ai-funded-usage-postgres.test.ts",
+      "tests/platform/ai-funded-model-probes-postgres.test.ts",
       "tests/platform/ai-funded-recovery-migration.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",

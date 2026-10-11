@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   FundedAiFundingSummaryClientError,
@@ -147,4 +149,25 @@ describe("funded AI route readiness client", () => {
       readyModelIds: ["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5"] })));
     await expect(invalid.getRouteReadiness()).rejects.toThrow();
   });
+});
+
+it("binds only trusted exact-runtime ordinary readiness to its configured phase", async () => {
+  const config = runtimeConfig();
+  const isolatedChat = { ...config.identity, phaseId: "phase_readiness", chatId: "chat_readiness",
+    modelId: "anthropic/claude-sonnet-5" as const, runtimeTokenEpoch: 1,
+    runtimeCredentialSha256: createHash("sha256").update(config.runtimeAuthToken).digest("hex"),
+    sourceSha: "a".repeat(40), startsAt: NOW, expiresAt: "2026-08-30T10:20:00.000Z" };
+  const receipt = { contractVersion: 1, globalRevision: 1, runtimeRevision: 1, checkedAt: NOW,
+    staleAfter: "2026-08-30T10:00:30.000Z", readyModelIds: [] };
+  const fetchFn = vi.fn<typeof fetch>(async () => Response.json(receipt));
+  const client = createFundedAiRouteReadinessClient({ ...config, isolatedChat }, fetchFn);
+  await client.getRouteReadiness();
+  expect(fetchFn.mock.calls[0]![1]).toMatchObject({ body: "{}", headers: { "x-matrix-isolated-chat-phase": isolatedChat.phaseId } });
+  await client.getRouteReadiness({ modelId: JEV_MODEL_ID });
+  expect(fetchFn.mock.calls[1]![1]!.headers).not.toHaveProperty("x-matrix-isolated-chat-phase");
+  await createFundedAiRouteReadinessClient({ ...config, isolatedChat: { ...isolatedChat, ownerId: "other" } }, fetchFn).getRouteReadiness();
+  expect(fetchFn.mock.calls[2]![1]!.headers).not.toHaveProperty("x-matrix-isolated-chat-phase");
+  fetchFn.mockClear();
+  await expect(createFundedAiRouteReadinessClient({ ...config, isolatedChat: { ...isolatedChat, runtimeCredentialSha256: "b".repeat(64) } }, fetchFn).getRouteReadiness()).rejects.toThrow("unavailable");
+  expect(fetchFn).not.toHaveBeenCalled();
 });
