@@ -118,8 +118,9 @@ describe("drawer terminal screen", () => {
     expect(screen.getByText("review-pr-42")).toBeTruthy();
     expect(screen.getByText("notes")).toBeTruthy();
     expect(screen.queryByText("solar-vale")).toBeNull();
+    // A running session's tile is the same neutral as an idle one: only waiting is coloured.
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-main").props.style).backgroundColor)
-      .toBe(palette.green[100]);
+      .toBe(palette.neutral[200]);
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-review-pr-42").props.style).backgroundColor)
       .toBe(palette.gold[100]);
     expect(NativeStyleSheet.flatten(screen.getByTestId("list-row-icon-notes").props.style).backgroundColor)
@@ -133,6 +134,8 @@ describe("drawer terminal screen", () => {
     expect(screen.getByTestId("terminal-session-agent-logo-image-claude")).toBeTruthy();
     expect(screen.getAllByTestId("terminal-session-agent-separator")).toHaveLength(2);
     expect(screen.getByTestId("terminal-session-agent-logo-codex")).toBeTruthy();
+    expect(NativeStyleSheet.flatten(screen.getByTestId("terminal-session-agent-logo-codex").props.style).backgroundColor)
+      .toBe("#171717");
     expect(screen.queryByTestId("terminal-session-agent-logo-notes")).toBeNull();
   });
 
