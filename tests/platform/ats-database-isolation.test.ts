@@ -7,7 +7,7 @@ import {
 } from '../../packages/platform/src/ats-db.js';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
 import { createTestAtsDb, destroyTestAtsDb } from './ats-db-test-helper.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('ATS database isolation', () => {
   let atsDb: AtsDB | undefined;

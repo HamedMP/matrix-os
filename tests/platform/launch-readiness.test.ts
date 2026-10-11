@@ -13,7 +13,7 @@ import {
   upsertHostBundleRelease,
 } from '../../packages/platform/src/db.js';
 import { createLaunchReadinessRoutes } from '../../packages/platform/src/launch-readiness-routes.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const nowIso = '2026-05-23T12:00:00.000Z';
 

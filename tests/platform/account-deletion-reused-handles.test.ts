@@ -2,7 +2,7 @@ import { sql } from 'kysely';
 import { describe, expect, it, vi } from 'vitest';
 import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
-import { createTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const owner = 'user_historical';
 const other = 'user_current';
