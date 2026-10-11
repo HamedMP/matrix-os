@@ -2,6 +2,7 @@
 // CI Results remains the genuine Actions aggregate and is never modified here.
 import {assertDefaultController,verifyCurrentDedicatedSource,verifyCurrentHostedSource} from './dedicated-admission.mjs';
 import {authenticatedRequestingRun} from './dedicated-refresh.mjs';
+import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {readReviewedConfiguration} from './dedicated-api.mjs';
 import {newestWorkflowRun} from './dedicated-history.mjs';
@@ -86,7 +87,7 @@ export async function reconcileSourceQualification(github,repo,controller,option
   examined++;
   const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
   const snapshot={prNumber:pull.number,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,sourceSha:pull.merge_commit_sha};
-  const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','ci-linux'].every(label=>pull.labels?.some(value=>value.name===label));
+  const admitted=config.admitted&&same(pull.head?.repo?.full_name,repo)&&pull.state==='open'&&pull.draft===false&&['ready-for-ci','fast-ci'].every(label=>pull.labels?.some(value=>value.name===label));
   const previouslyAdmitted=history||Boolean(prior&&(prior.evidence.admittedPreviously===true||prior.evidence.notApplicable!==true));
   const recovery=!admitted&&previouslyAdmitted;
   if(recovery)snapshot.executionMode='hosted-only';
@@ -121,13 +122,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(requester.status!=='completed'||requester.conclusion!=='success'){await write('failure','Current requesting CI is pending or failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
-   else await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1});
+   else {const result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}}
    const currentPull=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
-   if(recovery&&(await settings(github,repo)).admitted&&['ci-linux','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
+   if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
    if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
    if(recovery){const newest=await currentRequester(github,repo,snapshot,{allModes:true});if(newest?.id!==requester.id||newest.run_attempt!==requester.run_attempt)throw new Error('A newer admission superseded hosted recovery');}
-   await write('success',recovery?'Current exact-source hosted replacement passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
+   await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
  return{examined,dispatched};

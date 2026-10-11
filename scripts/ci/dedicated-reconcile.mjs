@@ -5,7 +5,7 @@ const workflowPath='.github/workflows/ci-dedicated.yml';
 const sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const same=(value,repo)=>typeof value==='string'&&value.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
-const eligible=pull=>pull.state==='open'&&pull.draft===false&&['ci-linux','ready-for-ci'].every(name=>pull.labels?.some(label=>label.name===name));
+const eligible=pull=>pull.state==='open'&&pull.draft===false&&['fast-ci','ready-for-ci'].every(name=>pull.labels?.some(label=>label.name===name));
 function evidence(check,pull,repo,serverUrl){
  if(!id(check.id)||check.name!=='Dedicated CI Results'||check.app?.slug!=='github-actions'||check.head_sha!==pull.head.sha||check.status!=='completed'||check.conclusion!=='success')return null;
  const prefix=`${serverUrl}/${repo.owner}/${repo.repo}/actions/runs/`;

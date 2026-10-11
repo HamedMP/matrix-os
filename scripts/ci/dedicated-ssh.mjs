@@ -1,3 +1,5 @@
+import {classifyUnavailableTransport,transportOutcome} from './dedicated-transport.mjs';
+import {verifyInfrastructureRecord} from './dedicated-outcome.mjs';
 import {createHash,randomBytes} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
@@ -17,8 +19,12 @@ export function canonicalRequest(value){
  return JSON.stringify(value);
 }
 export function validateLeaseRequest(value){
+ const main=value?.sourceKind==='main';
  const keys=['repository','prNumber','headSha','baseSha','baseRef','mergeSha','mergeParents','requestingRunId','requestingRunAttempt','controllerRunId','controllerRunAttempt','controllerSha','controllerRef','controllerWorkflow','imageDigest','harnessDigest','mode','suite','limits'];
- if(!value||canonicalRequest(Object.keys(value).sort())!==canonicalRequest(keys.sort())||value.repository!=='HamedMP/matrix-os'||value.suite!=='qualification'||!['shadow','delegated'].includes(value.mode)||value.controllerRef!=='refs/heads/main'||value.controllerWorkflow!=='.github/workflows/ci-dedicated.yml'||![value.headSha,value.baseSha,value.mergeSha,value.controllerSha].every(v=>sha.test(v||''))||![value.prNumber,value.requestingRunId,value.requestingRunAttempt,value.controllerRunId,value.controllerRunAttempt].every(v=>integer(v)&&v>0)||value.prNumber>1_000_000||typeof value.baseRef!=='string'||value.baseRef.length>1024||!value.baseRef||/[\x00-\x20\x7f~^:?*\[\\]/.test(value.baseRef)||value.baseRef.includes('..')||value.baseRef.includes('@{')||value.baseRef.endsWith('/')||value.baseRef.endsWith('.')||!/^sha256:[a-f0-9]{64}$/.test(value.imageDigest||'')||!hash.test(value.harnessDigest||'')||(!Array.isArray(value.mergeParents)||value.mergeParents.length!==2||!value.mergeParents.every(v=>sha.test(v||''))||value.mergeParents[1]!==value.headSha||value.mergeParents[0]===value.headSha)||canonicalRequest(value.limits)!==canonicalRequest(limits))throw new Error('Invalid exact Linux lease request');
+ if(main)keys.push('sourceKind');
+ const parents=Array.isArray(value?.mergeParents)&&value.mergeParents.every(v=>sha.test(v||''))&&new Set(value.mergeParents).size===value.mergeParents.length;
+ const source=main?value.prNumber===0&&value.headSha===value.mergeSha&&value.baseRef==='main'&&parents&&[1,2].includes(value.mergeParents.length)&&value.baseSha===value.mergeParents[0]&&!value.mergeParents.includes(value.mergeSha):integer(value?.prNumber)&&value.prNumber>0&&parents&&value.mergeParents.length===2&&value.mergeParents[1]===value.headSha&&value.mergeParents[0]!==value.headSha;
+ if(!value||!source||canonicalRequest(Object.keys(value).sort())!==canonicalRequest(keys.sort())||value.repository!=='HamedMP/matrix-os'||value.suite!=='qualification'||!['shadow','delegated'].includes(value.mode)||value.controllerRef!=='refs/heads/main'||value.controllerWorkflow!=='.github/workflows/ci-dedicated.yml'||![value.headSha,value.baseSha,value.mergeSha,value.controllerSha].every(v=>sha.test(v||''))||![value.requestingRunId,value.requestingRunAttempt,value.controllerRunId,value.controllerRunAttempt].every(v=>integer(v)&&v>0)||value.prNumber>1_000_000||typeof value.baseRef!=='string'||value.baseRef.length>1024||!value.baseRef||/[\x00-\x20\x7f~^:?*\[\\]/.test(value.baseRef)||value.baseRef.includes('..')||value.baseRef.includes('@{')||value.baseRef.endsWith('/')||value.baseRef.endsWith('.')||!/^sha256:[a-f0-9]{64}$/.test(value.imageDigest||'')||!hash.test(value.harnessDigest||'')||canonicalRequest(value.limits)!==canonicalRequest(limits))throw new Error('Invalid exact Linux lease request');
  return value;
 }
 export function verifyLeaseReceipt(receipt,envelope){
@@ -38,9 +44,11 @@ export async function runDedicatedLeaseSession(child,envelope,options){
  const digest=createHash('sha256').update(canonicalRequest(envelope.request)).digest('hex');
  const timeout=options.maxMilliseconds??3_900_000;if(!integer(timeout)||timeout<1||timeout>3_900_000)throw new Error('Invalid lease session deadline');
  return new Promise((resolve,reject)=>{
-  let buffer='',bytes=0,state='initial',terminal=null,ended=false,failed=false;
+  let buffer='',bytes=0,state='initial',terminal=null,ended=false,failed=false,grantSent=false,stderr='',stderrBytes=0;
+  const handshakeStarted=Date.now();let handshakeTimer;
+  if(options.transportHost)handshakeTimer=setTimeout(()=>finish(new Error('Pinned SSH handshake deadline exceeded')),20000);
   const challenges=new Set();let chain=Promise.resolve(),killTimer;const decoder=new TextDecoder('utf-8',{fatal:true});
-  const finish=error=>{if(failed)return;failed=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);child.stdin.end();child.kill('SIGTERM');if(!ended){killTimer=setTimeout(()=>child.kill('SIGKILL'),5000);killTimer.unref?.();}reject(error);};
+  const finish=error=>{if(failed)return;failed=true;clearTimeout(timer);clearTimeout(handshakeTimer);options.signal?.removeEventListener('abort',abort);child.stdin.end();child.kill('SIGTERM');if(!ended){killTimer=setTimeout(()=>child.kill('SIGKILL'),5000);killTimer.unref?.();}reject(error);};
   const abort=()=>finish(new Error('Controller cancelled its Linux lease'));
   const timer=setTimeout(()=>finish(new Error('Linux lease session deadline exceeded')),timeout);timer.unref?.();
   options.signal?.addEventListener('abort',abort,{once:true});
@@ -62,25 +70,37 @@ export async function runDedicatedLeaseSession(child,envelope,options){
     challenges.add(record.challenge);
     await revalidate(record,record.type==='locked');
     if(failed||ended||record.deadlineUnixMs<=Date.now())throw new Error('Lease challenge expired before authenticated revalidation');
-    child.stdin.write(JSON.stringify({protocolVersion:1,type:record.type==='locked'?'grant':'renew',leaseId:envelope.leaseId,requestDigest:digest,challenge:record.challenge,capability:envelope.capability})+'\n');
+    grantSent=true;child.stdin.write(JSON.stringify({protocolVersion:1,type:record.type==='locked'?'grant':'renew',leaseId:envelope.leaseId,requestDigest:digest,challenge:record.challenge,capability:envelope.capability})+'\n');
     if(record.type==='locked')state='granted';return;
    }
    if(record.type==='running'&&state==='granted'){state='running';return;}
    if(record.type==='completed'&&state==='running'&&record.status===0){terminal=verifyLeaseReceipt(record.receipt,envelope);await revalidate(record,true);return;}
+   if(record.type==='infrastructure-unavailable'&&['initial','queued'].includes(state)){const proof=verifyInfrastructureRecord(record,envelope,digest);await revalidate(record,true);terminal=proof;return;}
    if(['failed','cancelled'].includes(record.type))throw new Error('Owned Linux qualification did not complete');
    throw new Error('Unexpected Linux lease control transition');
   };
   child.stdout.on('data',data=>{
-   if(failed)return;bytes+=data.length;if(bytes>1024*1024){finish(new Error('Linux control stream exceeds bound'));return;}
+   if(failed)return;clearTimeout(handshakeTimer);bytes+=data.length;if(bytes>1024*1024){finish(new Error('Linux control stream exceeds bound'));return;}
    try{buffer+=decoder.decode(data,{stream:true});}catch(error){finish(new Error('Invalid UTF-8 Linux control stream'));return;}
    if(buffer.split('\n').some(line=>Buffer.byteLength(line)>32768)){finish(new Error('Linux control record exceeds bound'));return;}
    let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);chain=chain.then(()=>{let record;try{record=JSON.parse(line);}catch(error){if(error instanceof SyntaxError)throw new Error('Malformed Linux control record');throw error;}return processRecord(record);}).catch(finish);}
   });
-  child.stderr.on('data',()=>{}); // Never expose raw SSH/provider output or capability material.
+  child.stderr.on('data',data=>{stderrBytes+=data.length;if(stderrBytes<=8192)stderr+=data.toString('utf8');}); // Never publish SSH/provider output.
   child.on('error',()=>finish(new Error('Pinned SSH connection failed')));
-  child.stdin.on('error',()=>finish(new Error('Linux lease control input closed')));
+  child.stdin.on('error',()=>{if(state!=='initial'||bytes>0||!options.transportHost)finish(new Error('Linux lease control input closed'));}); // Startup EPIPE is classified only when the process closes; the handshake deadline still bounds it.
   child.on('close',code=>{
-   ended=true;clearTimeout(killTimer);try{buffer+=decoder.decode();}catch(error){finish(new Error('Incomplete UTF-8 Linux control stream'));return;}chain.then(()=>{if(failed)return;if(code!==0||buffer||!terminal){finish(new Error('Linux disconnected without a complete trusted receipt'));return;}clearTimeout(timer);options.signal?.removeEventListener('abort',abort);child.stdin.end();resolve(terminal);}).catch(finish);
+   ended=true;clearTimeout(killTimer);clearTimeout(handshakeTimer);
+   try{buffer+=decoder.decode();}catch(error){finish(new Error('Incomplete UTF-8 Linux control stream'));return;}
+   chain.then(async()=>{
+    if(failed)return;
+    const reason=code===255&&state==='initial'&&bytes===0&&!grantSent&&stderrBytes<=8192?
+     classifyUnavailableTransport(options.transportHost,stderr,Date.now()-handshakeStarted):null;
+    if(reason){await revalidate({type:'transport-unavailable'},true);terminal=transportOutcome(envelope,digest,reason);}
+    const unavailable=(code===76&&terminal?.outcome==='infrastructure-unavailable')||
+     (code===255&&terminal?.outcome==='transport-unavailable');
+    if((code!==0&&!unavailable)||buffer||!terminal){finish(new Error('Linux disconnected without a complete trusted receipt'));return;}
+    clearTimeout(timer);options.signal?.removeEventListener('abort',abort);child.stdin.end();resolve(terminal);
+   }).catch(finish);
   });
   child.stdin.write(JSON.stringify(envelope)+'\n');
  });
@@ -96,14 +116,14 @@ export async function dispatchDedicatedLease(github,input,options={}){
  const stop=()=>aborter.abort();process.once('SIGTERM',stop);process.once('SIGINT',stop);
  try{
   await writeFile(join(directory,'key'),key,{mode:0o600,flag:'wx'});await writeFile(join(directory,'hosts'),knownHosts,{mode:0o600,flag:'wx'});
-  const args=['-i',join(directory,'key'),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o',`UserKnownHostsFile=${join(directory,'hosts')}`,'-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3',`matrixci@${host}`];
-  const child=spawn('ssh',[...args,`lease-v1 run ${envelope.leaseId}`],{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
-  try{return await runDedicatedLeaseSession(child,envelope,{signal:aborter.signal,revalidate:(request,cycle)=>cycle.unconditional?api.runUnconditional(()=>verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)):verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)});}
+  const args=['-F','/dev/null','-p','22','-o','ProxyCommand=none','-o','ProxyJump=none','-i',join(directory,'key'),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','GlobalKnownHostsFile=/dev/null','-o','StrictHostKeyChecking=yes','-o',`UserKnownHostsFile=${join(directory,'hosts')}`,'-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3',`matrixci@${host}`];
+  const child=spawn('/usr/bin/ssh',[...args,`lease-v1 run ${envelope.leaseId}`],{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
+  try{return await runDedicatedLeaseSession(child,envelope,{signal:aborter.signal,transportHost:host,revalidate:(request,cycle)=>cycle.unconditional?api.runUnconditional(()=>verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)):verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)});}
   catch(error){
    aborter.abort();
    // EOF already revokes the streamed lease. Also authenticate exact-owner
    // cancellation over an independent bounded SSH session when available.
-   await new Promise(resolve=>{const cancel=spawn('ssh',[...args,`lease-v1 cancel ${envelope.leaseId}`],{stdio:['pipe','ignore','ignore'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});const timer=setTimeout(()=>{cancel.kill('SIGKILL');resolve();},20000);cancel.on('error',()=>{clearTimeout(timer);resolve();});cancel.on('close',()=>{clearTimeout(timer);resolve();});cancel.stdin.on('error',()=>{});cancel.stdin.end(JSON.stringify({protocolVersion:1,leaseId:envelope.leaseId,requestDigest:digest,capability:envelope.capability})+'\n');});
+   await new Promise(resolve=>{const cancel=spawn('/usr/bin/ssh',[...args,`lease-v1 cancel ${envelope.leaseId}`],{stdio:['pipe','ignore','ignore'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});const timer=setTimeout(()=>{cancel.kill('SIGKILL');resolve();},20000);cancel.on('error',()=>{clearTimeout(timer);resolve();});cancel.on('close',()=>{clearTimeout(timer);resolve();});cancel.stdin.on('error',()=>{});cancel.stdin.end(JSON.stringify({protocolVersion:1,leaseId:envelope.leaseId,requestDigest:digest,capability:envelope.capability})+'\n');});
    throw error;
   }
  }finally{options.metrics?.(api.metrics());process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);await rm(directory,{recursive:true,force:true});}

@@ -28,8 +28,8 @@ it('binds actual ordered parents through admission, signed dispatch and final se
  const dispatch=job.steps.find((s:{id?:string})=>s.id==='dispatch');
  const settlement=job.steps.find((s:{name?:string})=>s.name==='Settle source-head check');
  expect(admission.with.script).toContain("merge_parent_sha:admission.mergeParents?.[0]");
- expect(dispatch.with.script).toContain('mergeParents:[data.merge_parent_sha,data.head_sha]');
+ expect(dispatch.with.script).toContain('mergeParents:JSON.parse(data.merge_parents)' );
  expect(settlement.env.MERGE_PARENT_SHA).toContain('steps.admit.outputs.merge_parent_sha');
- expect(settlement.with.script).toContain('mergeParents:[process.env.MERGE_PARENT_SHA,process.env.HEAD_SHA]');
+ expect(settlement.with.script).toContain("mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]')");
  expect(JSON.stringify(job)).not.toContain('mergeParents:[data.base_sha,data.head_sha]');
 });

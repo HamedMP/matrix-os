@@ -18,7 +18,7 @@ interface GitHubFixture {
 }
 const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', event: {} };
 function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
-  const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.ci-backend', 'needs["ci-backend"]');
   // Evaluate the actual trusted workflow expression with explicit GHA contexts.
   return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', `return (${body});`)(
     needs, github, {}, {}, () => true, () => true,
@@ -27,7 +27,9 @@ function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixt
 function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, parityChanges = false, github = mainPush) {
   const expression = workflow.jobs[jobId].if ?? 'success()';
   const needs = {
+    'ci-backend':{result:'success',outputs:{provider:'hosted',infrastructure_fallback:'false'}},
     changes: {
+      result:'success',
       outputs: {
         should_run: String(sourceChanges),
         docs_contract_tests: String(docsChanges),

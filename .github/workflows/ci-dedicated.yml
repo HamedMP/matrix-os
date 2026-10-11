@@ -40,16 +40,12 @@ permissions:
 
 concurrency:
   # Irrelevant edits/label changes must not cancel an admitted qualification.
-  group: dedicated-ci-${{ github.event.pull_request.number || github.run_id }}-${{ ((github.event.action == 'edited' && github.event.changes.base == null) || (github.event.action == 'unlabeled' && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'ci-linux')) && github.run_id || 'shared' }}
+  group: dedicated-ci-${{ github.event.pull_request.number || github.run_id }}-${{ ((github.event.action == 'edited' && github.event.changes.base == null) || (github.event.action == 'unlabeled' && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'fast-ci')) && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
   benchmark:
     if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && ((github.event.action == 'requested' && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')) || (github.event.action == 'in_progress' && (startsWith(github.event.workflow_run.display_title, 'CI coverage-v1 · ') || (github.event.workflow_run.run_attempt > 1 && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')))))))
-    concurrency:
-      group: matrix-ci-linux-dispatch
-      queue: max
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: matrix-ci
     timeout-minutes: 70
@@ -94,18 +90,18 @@ jobs:
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
-            const requesting=prNumber>0?await newestRequestingCiRun(github,context.repo,admission,mode):null;
+            const requesting=prNumber>0||admission.sourceKind==='main'?await newestRequestingCiRun(github,context.repo,admission,mode):null;
             const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
               ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),
               mode,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               ...admission,controllerSha:process.env.CONTROLLER_SHA,controllerRef:context.ref,
               controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerWorkflow:'.github/workflows/ci-dedicated.yml'};
             const {data:check}=await github.rest.checks.create({
-              ...context.repo, name:prNumber>0 ? 'Dedicated CI Results' : 'Dedicated CI Benchmark',
+              ...context.repo, name:prNumber>0||admission.sourceKind==='main' ? 'Dedicated CI Results' : 'Dedicated CI Benchmark',
               head_sha:headSha,status:'in_progress',request:{timeout:10000},
               details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               output:{title:'Isolated Linux qualification pending',summary:JSON.stringify(summary)}});
-            for(const [key,value] of Object.entries({sha,head_sha:headSha,base_sha:baseSha,base_ref:baseRef,merge_parent_sha:admission.mergeParents?.[0] || '',
+            for(const [key,value] of Object.entries({sha,source_kind:admission.sourceKind || '',merge_parents:JSON.stringify(admission.mergeParents || []),head_sha:headSha,base_sha:baseSha,base_ref:baseRef,merge_parent_sha:admission.mergeParents?.[0] || '',
               pr_number:prNumber,check_id:check.id,admitted:true,mode,
               requesting_run_id:requesting?.runId || 0,requesting_run_attempt:requesting?.runAttempt || 0}))core.setOutput(key,String(value));
 
@@ -122,12 +118,12 @@ jobs:
             const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
             await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
-              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(Number(data.pr_number)>0?{mergeParents:[data.merge_parent_sha,data.head_sha]}:{})});
+              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)});
             core.setOutput('current','true');
 
       - name: Dispatch authenticated PR qualification lease
         id: dispatch
-        if: steps.admit.outputs.admitted == 'true' && steps.admit.outputs.pr_number != '0' && steps.current.outputs.current == 'true'
+        if: steps.admit.outputs.admitted == 'true' && (steps.admit.outputs.pr_number != '0' || steps.admit.outputs.source_kind == 'main') && steps.current.outputs.current == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
@@ -148,7 +144,7 @@ jobs:
             const data=JSON.parse(process.env.SNAPSHOT);
             const request={repository:`${context.repo.owner}/${context.repo.repo}`,prNumber:Number(data.pr_number),
               headSha:data.head_sha,baseSha:data.base_sha,baseRef:data.base_ref,mergeSha:data.sha,
-              mergeParents:[data.merge_parent_sha,data.head_sha],requestingRunId:Number(data.requesting_run_id),
+              mergeParents:JSON.parse(data.merge_parents),...(data.source_kind==='main'?{sourceKind:'main'}:{}),requestingRunId:Number(data.requesting_run_id),
               requestingRunAttempt:Number(data.requesting_run_attempt),controllerRunId:context.runId,
               controllerRunAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerSha:process.env.CONTROLLER_SHA,
               controllerRef:context.ref,controllerWorkflow:'.github/workflows/ci-dedicated.yml',
@@ -164,11 +160,11 @@ jobs:
             core.setOutput('request',JSON.stringify(request));
             core.setOutput('request_digest',receipt.requestDigest);
             core.setOutput('lease_id',receipt.leaseId);
-            core.setOutput('verified','true');
+            core.setOutput('verified',String(receipt.qualified===true));core.setOutput('infrastructure_proof',['infrastructure-unavailable','transport-unavailable'].includes(receipt.outcome)?JSON.stringify({...(receipt.outcome==='transport-unavailable'?{proofOrigin:receipt.proofOrigin,grantSent:receipt.grantSent,controlBytes:receipt.controlBytes,handshakeBoundSeconds:receipt.handshakeBoundSeconds}:{}),outcome:receipt.outcome,status:76,reason:receipt.reason,stage:receipt.stage,workloadStarted:receipt.workloadStarted,containerGone:receipt.containerGone}):'');
 
       - name: Manual isolated benchmark unavailable
         id: manual
-        if: steps.admit.outputs.admitted == 'true' && steps.admit.outputs.pr_number == '0'
+        if: steps.admit.outputs.admitted == 'true' && steps.admit.outputs.pr_number == '0' && steps.admit.outputs.source_kind != 'main'
         run: |
           echo "::error::SHA-only SSH benchmarks are unavailable. Use authenticated PR qualification; private operator benchmarks remain separate."
           exit 64
@@ -180,6 +176,9 @@ jobs:
           CHECK_ID: ${{ steps.admit.outputs.check_id }}
           HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
           MERGE_PARENT_SHA: ${{ steps.admit.outputs.merge_parent_sha }}
+          MERGE_PARENTS: ${{ steps.admit.outputs.merge_parents }}
+          SOURCE_KIND: ${{ steps.admit.outputs.source_kind }}
+          INFRASTRUCTURE_PROOF: ${{ steps.dispatch.outputs.infrastructure_proof }}
           BASE_SHA: ${{ steps.admit.outputs.base_sha }}
           BASE_REF: ${{ steps.admit.outputs.base_ref }}
           PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
@@ -201,32 +200,36 @@ jobs:
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
-            let success=Number(process.env.PR_NUMBER)===0?process.env.MANUAL_OUTCOME==='success':process.env.DISPATCH_OUTCOME === 'success' && process.env.QUALIFICATION_VERIFIED === 'true';
+            const main=process.env.SOURCE_KIND==='main';
+            let infrastructure=false;let proof={};
+            let success=Number(process.env.PR_NUMBER)===0&&!main?process.env.MANUAL_OUTCOME==='success':process.env.DISPATCH_OUTCOME === 'success' && process.env.QUALIFICATION_VERIFIED === 'true';
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {verifyCurrentDedicatedSource,verifyDedicatedLeaseGrant}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             try {
-              if(success && Number(process.env.PR_NUMBER)>0)await verifyDedicatedLeaseGrant(github,context.repo,
+              const {validInfrastructureProof}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-outcome.mjs')).href);
+              proof=process.env.INFRASTRUCTURE_PROOF?JSON.parse(process.env.INFRASTRUCTURE_PROOF):{};infrastructure=process.env.DISPATCH_OUTCOME==='success'&&validInfrastructureProof(proof);
+              if((success||infrastructure) && (Number(process.env.PR_NUMBER)>0||main))await verifyDedicatedLeaseGrant(github,context.repo,
                 {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},JSON.parse(process.env.LEASE_REQUEST));
               await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:process.env.SOURCE_SHA,
                 headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
-                prNumber:Number(process.env.PR_NUMBER),...(Number(process.env.PR_NUMBER)>0?{mergeParents:[process.env.MERGE_PARENT_SHA,process.env.HEAD_SHA]}:{})});
+                prNumber:Number(process.env.PR_NUMBER),...(main?{sourceKind:'main'}:{}),mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]')});
             } catch(error) {
               core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
               core.setFailed('Current PR revision could not be revalidated');
-              success=false;
+              success=false;infrastructure=false;
             }
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
-              status: 'completed', conclusion: success ? 'success' : 'failure',
+              status: 'completed', conclusion: success ? 'success' : infrastructure ? 'neutral' : 'failure',
               output: {
-                title: success ? 'Isolated Linux suite passed' : 'Isolated Linux suite failed',
-                summary: JSON.stringify({schemaVersion: 3, requestingRunId:Number(process.env.REQUESTING_RUN_ID),
+                title: success ? 'Isolated Linux suite passed' : infrastructure ? 'Linux infrastructure unavailable; full hosted coverage required' : 'Isolated Linux suite failed',
+                summary: JSON.stringify({schemaVersion: 3,...(main?{sourceKind:'main'}:{}),...(infrastructure?proof:{}), requestingRunId:Number(process.env.REQUESTING_RUN_ID),
                   requestingRunAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),
                   imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
                   mode:process.env.MODE,receiptVerified:success,requestDigest:process.env.REQUEST_DIGEST,
                   leaseId:process.env.LEASE_ID, suite: process.env.SUITE,
-                  sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA,
+                  sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA, mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]'),
                   baseSha: process.env.BASE_SHA, baseRef:process.env.BASE_REF, prNumber: Number(process.env.PR_NUMBER),
                   controllerSha: process.env.CONTROLLER_SHA, controllerRef: context.ref,
                   controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),
@@ -235,7 +238,7 @@ jobs:
             });
 
       - name: Upload immutable qualification provenance
-        if: always() && steps.dispatch.outputs.verified == 'true'
+        if: always() && (steps.dispatch.outputs.verified == 'true' || steps.dispatch.outputs.infrastructure_proof != '')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}-request${{ steps.admit.outputs.requesting_run_id }}-${{ steps.admit.outputs.requesting_run_attempt }}-attempt${{ github.run_attempt }}

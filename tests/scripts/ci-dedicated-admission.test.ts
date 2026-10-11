@@ -3,7 +3,7 @@ import {admitDedicatedSource,verifyCurrentDedicatedSource,selectDedicatedRoute} 
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),controller='d'.repeat(40),moved='e'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'};
 function fixture(baseRef='main') {
- const pull={number:2440,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'ci-linux'}],base:{ref:baseRef,sha:base,repo:{full_name:'HamedMP/matrix-os'}},head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
+ const pull={number:2440,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],base:{ref:baseRef,sha:base,repo:{full_name:'HamedMP/matrix-os'}},head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
  const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
  const input={repo,controller:{sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'},eventName:'pull_request_target',payload:{action:'synchronize',pull_request:structuredClone(pull)},inputSha:''};
  return{pull,github,input};
@@ -76,7 +76,7 @@ describe('trusted default controller admits exact stacked merge candidates',()=>
   const value=await admitDedicatedSource(github,input);
   expect(value).toEqual({sourceSha:merge,headSha:merge,baseSha:'',baseRef:'',prNumber:0});
   expect(github.rest.pulls.get).not.toHaveBeenCalled();
-  await verifyCurrentDedicatedSource(github,repo,value);
+  await expect(verifyCurrentDedicatedSource(github,repo,value)).rejects.toThrow();
   expect(github.rest.pulls.get).not.toHaveBeenCalled();
  });
  it('rejects a nonexact manual input before consulting the commit API',async()=>{
@@ -93,7 +93,7 @@ describe('trusted default controller admits exact stacked merge candidates',()=>
 });
 
 describe('explicit Linux label admission',()=>{
- it.each(['ready-for-ci','ci-linux'])('requires %s before controller, routing and every live revalidation',async missing=>{
+ it.each(['ready-for-ci','fast-ci'])('requires %s before controller, routing and every live revalidation',async missing=>{
   const {github,input,pull}=fixture('stack/parent');const snapshot={sourceSha:merge,headSha:head,baseSha:base,baseRef:pull.base.ref,prNumber:pull.number};
   pull.labels=pull.labels.filter(label=>label.name!==missing);
   expect(selectDedicatedRoute({repository:'HamedMP/matrix-os',eventName:'pull_request',enabled:'true',shouldRun:'true',pull})).toBe(false);
@@ -114,4 +114,9 @@ it('admits the native cumulative merge while keeping its direct live branch base
  await expect(admitDedicatedSource(f.github,f.input)).resolves.toMatchObject(f.snapshot);
  await expect(verifyCurrentDedicatedSource(f.github,repo,f.snapshot)).resolves.toBeDefined();
  expect(f.snapshot.baseSha).toBe(nativePins.base);expect(f.snapshot.mergeParents[0]).not.toBe(f.snapshot.baseSha);
+});
+
+it('does not route the retired ci-linux label alone',()=>{
+ const f=fixture();f.pull.labels=[{name:'ci-linux'},{name:'ready-for-ci'}];
+ expect(selectDedicatedRoute({repository:'HamedMP/matrix-os',eventName:'pull_request',enabled:'true',shouldRun:'true',pull:f.pull})).toBe(false);
 });

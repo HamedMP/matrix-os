@@ -1,4 +1,7 @@
 // Read-only GitHub API evidence verification. Never execute controller artifacts.
+import {downloadControllerReceipt} from './dedicated-artifact.mjs';
+import {verifyControllerArtifact} from './dedicated-artifact-proof.mjs';
+import {validInfrastructureProof} from './dedicated-outcome.mjs';
 import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
 import {authenticatedControllerRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
@@ -25,12 +28,12 @@ function parseEvidence(check, expected) {
   if (!evidence || evidence.schemaVersion !== 3 || evidence.suite !== 'qualification' ||
       evidence.sourceSha !== expected.sourceSha || evidence.headSha !== expected.headSha ||
       evidence.baseSha !== expected.baseSha || evidence.baseRef !== expected.baseRef ||
-      evidence.prNumber !== expected.prNumber || !positiveId(evidence.controllerAttempt) ||
+      evidence.sourceKind !== expected.sourceKind || (expected.sourceKind==='main'&&JSON.stringify(evidence.mergeParents)!==JSON.stringify(expected.mergeParents)) || evidence.prNumber !== expected.prNumber || !positiveId(evidence.controllerAttempt) ||
       !shaPattern.test(evidence.controllerSha || '') || evidence.controllerRef !== 'refs/heads/main' ||
       evidence.controllerWorkflow !== workflowPath || evidence.requestingRunId!==expected.requestingRunId ||
       evidence.requestingRunAttempt!==expected.requestingRunAttempt || evidence.imageDigest!==expected.imageDigest ||
       evidence.harnessDigest!==expected.harnessDigest || evidence.mode!==expected.mode ||
-      (check.status==='completed'&&(evidence.receiptVerified!==true || !/^[a-f0-9]{64}$/.test(evidence.requestDigest||'') || !/^[a-f0-9]{32}$/.test(evidence.leaseId||'')))) return null;
+      (check.status==='completed'&&((evidence.receiptVerified!==true&&!validInfrastructureProof(evidence)) || !/^[a-f0-9]{64}$/.test(evidence.requestDigest||'') || !/^[a-f0-9]{32}$/.test(evidence.leaseId||'')))) return null;
   return {...evidence, runId:Number(id)};
 }
 
@@ -44,7 +47,7 @@ function trustedController(run, expected, workflow) {
 }
 
 async function newestRequest(github,repo,expected,workflow){
- return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',headSha:expected.headSha,headRef:expected.headRef});
+ return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -83,7 +86,7 @@ async function waitWithinDeadline(github, expected, options={}) {
   if(![expected.requestingRunId,expected.requestingRunAttempt].every(positiveId)||
       !/^sha256:[a-f0-9]{64}$/.test(expected.imageDigest||'')||!/^[a-f0-9]{64}$/.test(expected.harnessDigest||'')||!['shadow','delegated'].includes(expected.mode)||
       ![expected.headSha,expected.baseSha,expected.sourceSha].every(sha=>shaPattern.test(sha || '')) ||
-      !positiveId(expected.prNumber) || typeof expected.baseRef!=='string' || !expected.baseRef ||
+      (!(expected.sourceKind==='main'&&expected.prNumber===0)&&!positiveId(expected.prNumber)) || typeof expected.baseRef!=='string' || !expected.baseRef ||
       typeof expected.headRef!=='string' || !expected.headRef) {
     throw new Error('Invalid dedicated qualification revision');
   }
@@ -95,7 +98,7 @@ async function waitWithinDeadline(github, expected, options={}) {
   const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
   if(workflow.path!==workflowPath)throw new Error('Unexpected dedicated controller workflow');
   for(let attempt=0;attempt<maxAttempts;attempt++) {
-    await verifyCurrentDedicatedSource(github,repo,expected);
+    const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
     const latest=await newestRequest(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
       throw new Error('Verified dedicated Linux qualification failed');
@@ -103,7 +106,7 @@ async function waitWithinDeadline(github, expected, options={}) {
     const selected=await newestController(github,repo,expected,workflow,latest);
     if(selected?.run.status==='completed') {
       const {check,evidence,run}=selected;
-      if(run.conclusion!=='success' || (check.status==='completed' && check.conclusion!=='success')) {
+      if(run.conclusion!=='success' || (check.status==='completed' && check.conclusion!=='success'&&!(check.conclusion==='neutral'&&validInfrastructureProof(evidence)))) {
         throw new Error('Verified dedicated Linux qualification failed');
       }
       if(check.status==='completed') {
@@ -116,6 +119,8 @@ async function waitWithinDeadline(github, expected, options={}) {
           const dispatch=jobData.jobs?.find(job=>job.name==='benchmark');
           if(dispatch?.status==='completed') {
             if(dispatch.conclusion!=='success')throw new Error('Verified dedicated Linux qualification failed');
+            const receipt=await downloadControllerReceipt(github,repo,provenance);
+            const infrastructure=verifyControllerArtifact(receipt,evidence,expected,run,currentSource.mergeParents,check);
             const current=await newestRequest(github,repo,expected,workflow);
             if(current?.status==='completed' && current.conclusion!=='success') {
               throw new Error('Verified dedicated Linux qualification failed');
@@ -125,6 +130,7 @@ async function waitWithinDeadline(github, expected, options={}) {
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
               await verifyCurrentDedicatedSource(github,repo,expected);
               options.metrics?.(api.metrics());
+              if(infrastructure){if(options.allowInfrastructureFallback!==true)throw new Error('Linux infrastructure unavailable; hosted coverage required');return {runId:evidence.runId,sourceSha:expected.sourceSha,infrastructure};}
               return {runId:evidence.runId,sourceSha:expected.sourceSha};
             }
           }

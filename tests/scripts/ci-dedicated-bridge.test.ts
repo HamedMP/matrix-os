@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import * as outcomeHelpers from '../../scripts/ci/dedicated-outcome.mjs';
 import * as admissionHelpers from '../../scripts/ci/dedicated-admission.mjs';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {parse} from 'yaml';
@@ -12,15 +13,15 @@ async function execute(name:string,github:unknown,context:unknown,core:unknown) 
  const source=workflow().jobs.benchmark.steps.find((step:{name:string})=>step.name===name).with.script;
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
- const script=source.replace('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{expect(url).toBe(pathToFileURL(resolve(process.cwd(),'scripts/ci/dedicated-admission.mjs')).href);return admissionHelpers;};
+ const script=source.replaceAll('await import(', 'await loadHelper(');
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
 async function admit(overrides:Record<string,unknown>={},ref='refs/heads/main') {
  vi.stubEnv('CONTROLLER_SHA',controller);vi.stubEnv('INPUT_SHA','');vi.stubEnv('GITHUB_WORKSPACE',process.cwd());vi.stubEnv('CONTROLLER_ATTEMPT','1');vi.stubEnv('MATRIX_CI_DEDICATED_ENABLED','true');vi.stubEnv('IMAGE_DIGEST','sha256:'+'e'.repeat(64));vi.stubEnv('HARNESS_DIGEST','f'.repeat(64));
  vi.stubEnv('CONTROLLER_WORKFLOW_REF','HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main');
- const original={number:2440,base:{ref:'main',sha:base,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'ci-linux'}],head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}}};
+ const original={number:2440,base:{ref:'main',sha:base,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}}};
  const pull={...structuredClone(original),...overrides};
  const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[{id:77,run_attempt:1,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',head_sha:head,status:'in_progress',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2440,head:{sha:head},base:{sha:base,ref:'main'}}]}]}}))},checks:{create:vi.fn(async(_args:{output:{summary:string}})=>({data:{id:123}})),update:vi.fn(async(_args:{conclusion:string})=>({data:{}}))}}};
  const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
@@ -33,7 +34,7 @@ afterEach(()=>vi.unstubAllEnvs());
 describe('dedicated CI trusted dispatcher integration',()=>{
  it('attaches pending tuple provenance to the exact admitted source head',async()=>{
   const {outputs,github}=await admit();
-  expect(outputs).toEqual({sha:merge,head_sha:head,base_sha:base,base_ref:'main',merge_parent_sha:base,pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
+  expect(outputs).toEqual({sha:merge,source_kind:'',merge_parents:JSON.stringify([base,head]),head_sha:head,base_sha:base,base_ref:'main',merge_parent_sha:base,pr_number:'2440',check_id:'123',admitted:'true',mode:'delegated',requesting_run_id:'77',requesting_run_attempt:'1'});
   const args=github.rest.checks.create.mock.calls[0][0];
   expect(args).toMatchObject({head_sha:head,status:'in_progress',name:'Dedicated CI Results'});
   expect(JSON.parse(args.output.summary)).toMatchObject({schemaVersion:3,baseRef:'main',controllerSha:controller,controllerRef:'refs/heads/main',controllerAttempt:1});
@@ -58,7 +59,7 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   expect(JSON.stringify(checkouts)).not.toContain('pull_request');
   const ssh=job.steps.find((step:{id?:string})=>step.id==='dispatch');
   expect(ssh.if).toContain("steps.current.outputs.current == 'true'");
-  expect(ssh.with.script).toContain('dispatchDedicatedLease');const client=readFileSync('scripts/ci/dedicated-ssh.mjs','utf8');expect(client).toContain('StrictHostKeyChecking=yes');expect(client).toContain('IdentitiesOnly=yes');expect(client).toContain('lease-v1 run');
+  expect(ssh.with.script).toContain('dispatchDedicatedLease');const client=readFileSync('scripts/ci/dedicated-ssh.mjs','utf8');expect(client).toContain('StrictHostKeyChecking=yes');expect(client).toContain('IdentitiesOnly=yes');expect(client).toContain('lease-v1 run');expect([...client.matchAll(/spawn\('([^']+)'/g)].map(match=>match[1])).toEqual(['/usr/bin/ssh','/usr/bin/ssh']);
  });
  it('subscribes to retarget/reopen and gate invalidation without claiming remote cancellation',()=>{
   const value=workflow();expect(value.on.pull_request_target.types).toEqual(expect.arrayContaining(['edited','reopened','closed','unlabeled','converted_to_draft']));
@@ -72,13 +73,13 @@ describe('dedicated CI trusted dispatcher integration',()=>{
  });
  it.each(['success','failure','skipped'])('settles dispatch %s without treating skipped work as success',async outcome=>{
   const {outputs,github,context,core}=await admit();
-  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:outcome,SUITE:'qualification'}))vi.stubEnv(key,value);
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:outcome,SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure'); // Exit-only or missing receipt evidence can never qualify.
  });
  it('fails settlement and logs revalidation failure when successful execution became stale',async()=>{
   const {outputs,github,pull,context,core}=await admit();pull.base.ref='another-parent';
-  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(core.warning).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure');
  });
@@ -111,11 +112,11 @@ describe('dedicated CI trusted dispatcher integration',()=>{
  });
 });
 
-it('keeps independent shadow canaries hosted while globally queueing all Linux dispatches',()=>{
+it('keeps shadow canaries hosted and leaves priority admission to the host queue',()=>{
  const value=workflow(),job=value.jobs.benchmark;
  expect(job.if).toContain("vars.MATRIX_CI_DEDICATED_SHADOW == 'true'");
- expect(job.concurrency).toEqual({group:'matrix-ci-linux-dispatch',queue:'max','cancel-in-progress':false});
- expect(value.concurrency.group).toContain("github.event.label.name != 'ci-linux'");
+ expect(job.concurrency).toBeUndefined();
+ expect(value.concurrency.group).toContain("github.event.label.name != 'fast-ci'");
 });
 
 it('dispatches PR qualification through the two-phase authenticated lease and never settles exit-only evidence',()=>{

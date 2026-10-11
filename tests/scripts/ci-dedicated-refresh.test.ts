@@ -3,7 +3,7 @@ import * as helpers from '../../scripts/ci/dedicated-refresh.mjs';
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),main='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'};
 function fixture(){
- const pull={number:2454,state:'open',draft:false,labels:[{name:'ci-linux'},{name:'ready-for-ci'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
+ const pull={number:2454,state:'open',draft:false,labels:[{name:'fast-ci'},{name:'ready-for-ci'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
  const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
  const context={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main'};
  const inputs={pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge};

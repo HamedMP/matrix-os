@@ -4,7 +4,7 @@ const head='a'.repeat(40),oldBase='b'.repeat(40),base='c'.repeat(40),merge='d'.r
 const repo={owner:'HamedMP',repo:'matrix-os'};
 const origin={sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
 function fixture(){
- const pull={number:2454,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'ci-linux'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
+ const pull={number:2454,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
  const summary={schemaVersion:2,suite:'qualification',headSha:head,baseSha:oldBase,baseRef:'stack/parent',sourceSha:oldBase,prNumber:2454,controllerSha:controller,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',controllerAttempt:1};
  const check={id:10,name:'Dedicated CI Results',head_sha:head,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify(summary)}};
  const run={id:123,workflow_id:99,event:'pull_request_target',path:'.github/workflows/ci-dedicated.yml',head_sha:head,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};

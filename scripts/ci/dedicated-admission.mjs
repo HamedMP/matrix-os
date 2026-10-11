@@ -1,5 +1,6 @@
 // Data-only decisions. The privileged controller loads this file only from its
 // authenticated default-branch SHA; never load it from a PR or parent checkout.
+import {verifyMainSource} from './dedicated-main.mjs';
 import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -9,7 +10,7 @@ const branchRef = value => typeof value === 'string' && value.length > 0 && valu
 const repository = repo => `${repo.owner}/${repo.repo}`;
 const admittedPull = (pull, fullName) => pull?.state === 'open' && pull.draft === false &&
   sameRepo(pull.head?.repo?.full_name, fullName) && sameRepo(pull.base?.repo?.full_name, fullName) &&
-  ['ready-for-ci','ci-linux'].every(name => pull.labels?.some(label => label.name === name));
+  ['ready-for-ci','fast-ci'].every(name => pull.labels?.some(label => label.name === name));
 const validSnapshot = value => Number.isSafeInteger(value?.prNumber) && value.prNumber > 0 &&
   [value.headSha, value.baseSha, value.sourceSha].every(sha => shaPattern.test(sha || '')) && branchRef(value.baseRef);
 
@@ -20,7 +21,8 @@ export async function liveParentRefSha(github,repo,baseRef) {
   return data.object.sha;
 }
 
-export function selectDedicatedRoute({repository: fullName, eventName, enabled, shouldRun, pull}) {
+export function selectDedicatedRoute({repository: fullName, eventName, enabled, shouldRun, pull,ref}) {
+  if(eventName==='push')return enabled==='true'&&shouldRun==='true'&&ref==='refs/heads/main'&&fullName?.toLowerCase()==='hamedmp/matrix-os';
   return enabled === 'true' && shouldRun === 'true' && eventName === 'pull_request' &&
     typeof fullName === 'string' && admittedPull(pull, fullName) === true && branchRef(pull.base.ref);
 }
@@ -73,7 +75,8 @@ export async function admitDedicatedSource(github, input) {
 export async function verifyCurrentDedicatedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,true);}
 export async function verifyCurrentHostedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,false);}
 async function verifyCurrentSource(github, repo, snapshot,requireLabels) {
-  if (snapshot?.prNumber === 0) return;
+  if(snapshot?.sourceKind==='main')return verifyMainSource(github,repo,snapshot);
+  if(snapshot?.sourceKind!==undefined)throw new Error('Unsupported source kind');
   if (!validSnapshot(snapshot)) throw new Error('Invalid dedicated qualification revision');
   const {data: pull} = await github.rest.pulls.get({...repo, pull_number: snapshot.prNumber, request});
   if (pull.number !== snapshot.prNumber || pull.state!=='open'||pull.draft!==false||!sameRepo(pull.head?.repo?.full_name,repository(repo))||!sameRepo(pull.base?.repo?.full_name,repository(repo))||(requireLabels&&!admittedPull(pull,repository(repo))) ||

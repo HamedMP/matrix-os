@@ -4,7 +4,7 @@ const request={timeout:10_000};
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const newer=(a,b)=>!b||a.id>b.id||(a.id===b.id&&a.run_attempt>b.run_attempt);
 export async function newestWorkflowRun(github,repo,workflow,accept,scope){
- const filters=scope.kind==='controller'?
+ const filters=scope.sourceKind==='main'?(scope.kind==='controller'?[{event:'workflow_run',branch:'main',head_sha:scope.headSha}]:[{event:'push',branch:'main',head_sha:scope.headSha}]):scope.kind==='controller'?
   [{event:'pull_request_target',branch:scope.headRef,head_sha:scope.headSha},
    {event:'workflow_run',branch:scope.headRef},{event:'workflow_run',branch:'main'}]:
   [{event:'pull_request',branch:scope.headRef,head_sha:scope.headSha},{event:'workflow_dispatch',branch:'main'}];

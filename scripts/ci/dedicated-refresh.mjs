@@ -1,5 +1,6 @@
 // Main-definition CI dispatch provides fresh same-head/new-parent coverage.
 // Only data is taken from input; privileged helpers never come from the PR.
+import {resolveMainSource} from './dedicated-main.mjs';
 import {verifyCurrentDedicatedSource,verifyCurrentHostedSource} from './dedicated-admission.mjs';
 const sha=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
@@ -12,6 +13,7 @@ export function parseRefreshMarker(title){
 }
 export function authenticatedRequestingRun(run,repo,value,workflow){
  if(!id(run.id)||run.workflow_id!==workflow.id||![ '.github/workflows/ci.yml','.github/workflows/ci.yml@main','.github/workflows/ci.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))return false;
+ if(value.sourceKind==='main')return run.event==='push'&&run.head_branch==='main'&&run.head_sha===value.headSha&&value.headSha===(value.sourceSha??value.mergeSha)&&run.display_title===`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`;
  if(run.event==='workflow_dispatch')return run.head_branch==='main'&&sha.test(run.head_sha||'')&&run.display_title===refreshMarker(value);
  // A delegated PR aggregate can be genuinely green with hosted lanes skipped.
  // Rollback requires an explicit main dispatch that forces every hosted lane.
@@ -40,6 +42,7 @@ export function refreshExecutionRequested(action,run){
 }
 export function authenticatedControllerRun(run,repo,value,workflow,headRef){
  if(!id(run.id)||run.workflow_id!==workflow.id||!['.github/workflows/ci-dedicated.yml','.github/workflows/ci-dedicated.yml@main','.github/workflows/ci-dedicated.yml@refs/heads/main'].includes(run.path)||!same(run.repository?.full_name,repo)||!same(run.head_repository?.full_name,repo))return false;
+ if(value.sourceKind==='main')return run.event==='workflow_run'&&run.head_branch==='main'&&run.head_sha===value.headSha&&run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=CI coverage-v1 · ${value.sourceSha??value.mergeSha}`;
  if(run.event==='workflow_run')return ((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_branch===headRef&&run.head_sha===value.headSha))&&[refreshMarker(value),`CI coverage-v1 · ${value.sourceSha??value.mergeSha}`].some(title=>run.display_title===`dedicated-refresh-v2 execution=true request=${value.requestingRunId} title=${title}`);
  return run.event==='pull_request_target'&&run.head_sha===value.headSha&&run.head_branch===headRef&&run.display_title===`dedicated-ci-v2 pr=${value.prNumber} head=${value.headSha} base=${value.baseSha} requested=true`;
 }
@@ -50,7 +53,7 @@ export async function admitRefreshController(github,repo,event){
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(workflow.id)||workflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected refreshing workflow definition');
  const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:candidate.id,request});
- let snapshot=parseRefreshMarker(run.display_title);
+ let snapshot=run.event==='push'&&run.head_branch==='main'&&event.action==='in_progress'?await resolveMainSource(github,repo,run.head_sha):parseRefreshMarker(run.display_title);
  if(!snapshot&&event.action==='in_progress'){
   const source=typeof run.display_title==='string'&&run.display_title.match(/^CI coverage-v1 · ([a-f0-9]{40})$/);
   const row=run.pull_requests?.length===1?run.pull_requests[0]:null;
@@ -59,8 +62,7 @@ export async function admitRefreshController(github,repo,event){
  }
  if(snapshot?.executionMode==='hosted-only')return null;
  if(!snapshot||!authenticatedRequestingRun(run,repo,snapshot,workflow)||!['queued','requested','waiting','pending','in_progress'].includes(run.status))throw new Error('Refresh requester is not currently admitted');
- const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});
- snapshot.baseRef=pull.base.ref;
+ if(snapshot.sourceKind!=='main'){const {data:pull}=await github.rest.pulls.get({...repo,pull_number:snapshot.prNumber,request});snapshot.baseRef=pull.base.ref;}
  const current=await verifyCurrentDedicatedSource(github,repo,snapshot);
  snapshot.mergeParents=current.mergeParents;
  return snapshot;

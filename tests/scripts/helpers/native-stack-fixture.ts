@@ -6,7 +6,7 @@ export function nativeStackFixture(){
  const p=nativePins,repository={full_name:'HamedMP/matrix-os',id:1157069949};
  const stackMeta={id:1990425,number:2492,base:{ref:'main',sha:p.trunk},size:2};
  const parent:any={number:2490,state:'open',draft:false,labels:[],head:{sha:p.base,ref:'codex/ci-linux-prepared-cache-reuse',repo:repository},base:{sha:p.trunk,ref:'main',repo:repository},merge_commit_sha:p.parentMerge,stack:{...stackMeta,position:1}};
- const pull:any={number:2491,state:'open',draft:false,labels:[{name:'ci-linux'},{name:'ready-for-ci'}],head:{sha:p.head,ref:'codex/ci-linux-sdk-stack-contract',repo:repository},base:{...parent.head},merge_commit_sha:p.merge,stack:{...stackMeta,position:2}};
+ const pull:any={number:2491,state:'open',draft:false,labels:[{name:'fast-ci'},{name:'ready-for-ci'}],head:{sha:p.head,ref:'codex/ci-linux-sdk-stack-contract',repo:repository},base:{...parent.head},merge_commit_sha:p.merge,stack:{...stackMeta,position:2}};
  const row=(value:any)=>({number:value.number,state:value.state,draft:value.draft,merged_at:null,head:structuredClone(value.head),base:structuredClone(value.base)});
  const stack:any={id:stackMeta.id,number:stackMeta.number,base:{ref:'main'},open:true,pull_requests:[row(parent),row(pull)]};
  const commits:any={

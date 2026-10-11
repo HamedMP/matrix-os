@@ -3,7 +3,7 @@ import * as helpers from '../../scripts/ci/dedicated-admission.mjs';
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),controller='d'.repeat(40);
 const repo={owner:'HamedMP',repo:'matrix-os'};
 function fixture(){
- const pull={number:2454,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'ci-linux'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
+ const pull={number:2454,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
  const request={repository:'HamedMP/matrix-os',prNumber:2454,headSha:head,baseSha:base,baseRef:'stack/parent',mergeSha:merge,mergeParents:[base,head],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:controller,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'delegated',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
  const controllerRun={id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'pull_request_target',run_attempt:1,status:'in_progress',conclusion:null as string|null,head_sha:head,head_branch:'child',display_title:`dedicated-ci-v2 pr=2454 head=${head} base=${base} requested=true`,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
  const ciRun={...controllerRun,display_title:`CI coverage-v1 · ${merge}`,id:321,workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',pull_requests:[{number:2454,head:{sha:head,ref:'child'},base:{sha:base,ref:'stack/parent'}}]};
@@ -15,7 +15,7 @@ function fixture(){
 async function verify(f:ReturnType<typeof fixture>){const fn=(helpers as Record<string,unknown>).verifyDedicatedLeaseGrant as Function;expect(fn).toBeTypeOf('function');return fn(f.github,repo,f.origin,f.request);}
 describe('authenticated post-lock grants and renewals',()=>{
  it('allows an exact live stacked tuple only after authenticated requesting/controller run checks',async()=>{const f=fixture();await verify(f);expect(f.github.rest.repos.getCommit).toHaveBeenCalled();expect(f.github.rest.actions.getWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:321,request:{timeout:10000}}));});
- it.each(['ready-for-ci','ci-linux'])('denies removed %s before a grant',async label=>{const f=fixture();f.pull.labels=f.pull.labels.filter(x=>x.name!==label);await expect(verify(f)).rejects.toThrow(/stale|admission/);});
+ it.each(['ready-for-ci','fast-ci'])('denies removed %s before a grant',async label=>{const f=fixture();f.pull.labels=f.pull.labels.filter(x=>x.name!==label);await expect(verify(f)).rejects.toThrow(/stale|admission/);});
  it.each(['head','base','merge','ref','draft','closed'])('denies stale %s after host lock',async field=>{const f=fixture();if(field==='head')f.pull.head.sha=merge;if(field==='base')f.pull.base.sha=merge;if(field==='merge')f.pull.merge_commit_sha=head;if(field==='ref')f.pull.base.ref='retargeted';if(field==='draft')f.pull.draft=true;if(field==='closed')f.pull.state='closed';await expect(verify(f)).rejects.toThrow(/stale|admission/);});
  it('denies wrong ordered merge parents even with matching API SHA',async()=>{const f=fixture();f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:base}]}});await expect(verify(f)).rejects.toThrow(/parents/);});
  it.each(['attempt','cancelled','definition','candidate','snapshot'])('denies requesting CI %s mismatch',async kind=>{const f=fixture();if(kind==='attempt')f.ciRun.run_attempt=2;if(kind==='cancelled'){f.ciRun.status='completed';f.ciRun.conclusion='cancelled';}if(kind==='definition')f.ciRun.workflow_id=99;if(kind==='candidate')f.ciRun.head_sha=base;if(kind==='snapshot')f.ciRun.pull_requests[0].base.sha=merge;await expect(verify(f)).rejects.toThrow(/requesting|CI/);});
@@ -82,4 +82,15 @@ it.each(['completed','in_progress'])('reconcile-only newer %s controller cannot 
  await verify(f);
  extra.display_title=`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${merge}`;
  await expect(verify(f)).rejects.toThrow(/superseded/);
+});
+
+it.each([[base],[base,head]])('attests explicit main at lock, renewal and final source checks with parents %j',async (...args:any[])=>{
+ const parents=args.length===1&&Array.isArray(args[0])?args[0]:args;const f=fixture();
+ Object.assign(f.request,{sourceKind:'main',prNumber:0,headSha:merge,mergeSha:merge,baseSha:parents[0],baseRef:'main',mergeParents:parents});
+ f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:merge}}});
+ f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:parents.map((sha:string)=>({sha})),commit:{tree:{sha:head}}}} as any);
+ Object.assign(f.ciRun,{event:'push',head_sha:merge,head_branch:'main',pull_requests:[],display_title:`CI coverage-v1 · ${merge}`});
+ Object.assign(f.controllerRun,{event:'workflow_run',head_sha:merge,head_branch:'main',display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${merge}`});
+ await verify(f);await verify(f);expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
+ f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:head}}});await expect(verify(f)).rejects.toThrow(/stale|ancestor|moved/);
 });

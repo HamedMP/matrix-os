@@ -8,7 +8,7 @@ function expression(text:string,github:any,inputs={}){if(!text.startsWith('${{')
 const sha='a'.repeat(40),head='b'.repeat(40),base='c'.repeat(40),repo={owner:'HamedMP',repo:'matrix-os'};
 describe('metadata-only PR events cannot replace required coverage',()=>{
  it.each(['title','body'])('isolates ready %s edits from CI Results and requesting provenance',field=>{
-  const github={event_name:'pull_request',sha,event:{action:'edited',changes:{[field]:{from:'before'}},pull_request:{number:2454,labels:[{name:'ready-for-ci'},{name:'ci-linux'}]}}};
+  const github={event_name:'pull_request',sha,event:{action:'edited',changes:{[field]:{from:'before'}},pull_request:{number:2454,labels:[{name:'ready-for-ci'},{name:'fast-ci'}]}}};
   const title=expression(ci['run-name'],github);expect(title).toContain('CI metadata-v1');
   expect(expression(ci.jobs['ci-results'].name,github)).not.toBe('CI Results');
   expect(expression(ci.jobs['ci-results'].if,github)).toBe(false);

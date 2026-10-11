@@ -140,18 +140,58 @@ jobs:
           if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
           const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
-            shouldRun:process.env.SHOULD_RUN, pull:event.pull_request});
+            shouldRun:process.env.SHOULD_RUN, ref:process.env.GITHUB_REF, pull:event.pull_request});
           const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
-            shouldRun:process.env.SHOULD_RUN,pull:event.pull_request});
+            shouldRun:process.env.SHOULD_RUN,ref:process.env.GITHUB_REF,pull:event.pull_request});
           appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
           NODE
 
-  # Independent validation jobs share only the change-classification dependency.
+  ci-backend:
+    name: CI Backend Decision
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      provider: ${{ steps.backend.outputs.provider }}
+      infrastructure_fallback: ${{ steps.backend.outputs.infrastructure_fallback }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: needs.changes.outputs.dedicated_eligible == 'true'
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Decide exact-source execution backend
+        id: backend
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+        with:
+          script: |
+            if(process.env.DEDICATED_ELIGIBLE!=='true'){core.setOutput('provider','hosted');core.setOutput('infrastructure_fallback','false');return;}
+            const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
+            const {requestingSnapshot,decideCiBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
+            const result=await decideCiBackend(github,{...context.repo,...snapshot,requestingRunId:context.runId,
+              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:'delegated',imageDigest:process.env.IMAGE_DIGEST,
+              harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl});
+            core.setOutput('provider',result.provider);core.setOutput('infrastructure_fallback',String(result.infrastructureFallback));
+
   typecheck:
     name: Type Check
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -185,8 +225,8 @@ jobs:
 
   shell-production-build:
     name: Shell Production Build
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -406,8 +446,8 @@ jobs:
   # Tests run alongside mechanical checks; CI Results collects every result.
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -446,8 +486,8 @@ jobs:
 
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
@@ -561,66 +601,66 @@ jobs:
 
   docs-contract:
     name: Docs Contract Tests
-    needs: changes
-    if: needs.changes.outputs.docs_contract_tests == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Skip docs contract tests
-        if: needs.changes.outputs.docs_contract_tests != 'true'
+        if: needs.changes.outputs.docs_contract_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: pnpm/action-setup@v6
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: actions/setup-node@v6
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - name: Run docs contract tests
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         run: pnpm exec vitest run tests/repository/site-extraction.test.ts
 
   os-view-parity:
     name: OS View Parity
-    needs: changes
-    if: needs.changes.outputs.os_view_parity_tests == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - name: Skip OS-view parity tests
-        if: needs.changes.outputs.os_view_parity_tests != 'true'
+        if: needs.changes.outputs.os_view_parity_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No shared OS-view surface changes detected; skipping parity tests."
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - name: Run shared OS-view parity contract
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         run: |
           pnpm exec vitest run \
             tests/contracts/os-view.test.ts \
@@ -635,9 +675,9 @@ jobs:
             tests/gateway/os-view-state-repository.test.ts
 
   e2e:
-    name: E2E Tests
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    name: E2E Tests (${{ matrix.lane }})
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -855,7 +895,7 @@ jobs:
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
     needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     permissions:
@@ -880,17 +920,12 @@ jobs:
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
-            const snapshot=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
-            const pull=context.payload.pull_request;
+            const {requestingSnapshot}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
             const result=await waitForDedicatedResult(github,{
-              ...context.repo, sourceSha: snapshot?.sourceSha || context.sha, requestingRunId:context.runId,
+              ...context.repo,...snapshot,requestingRunId:context.runId,
               requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
-              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
-              headSha: snapshot?.headSha || pull.head.sha,
-              headRef: snapshot?.headRef || pull.head.ref,
-              baseSha: snapshot?.baseSha || pull.base.sha,
-              baseRef: snapshot?.baseRef || pull.base.ref,
-              prNumber: snapshot?.prNumber || pull.number, serverUrl: context.serverUrl
+              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
             },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
             core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
 
@@ -898,7 +933,7 @@ jobs:
     # Metadata events must neither replace a real failed gate with skipped success
     # nor supersede a requesting source run. Their run-name is distinct above.
     name: ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && 'CI Metadata (ignored)' || 'CI Results' }}
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
     if: always() && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null)
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -909,6 +944,9 @@ jobs:
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
           DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
           DEDICATED_REQUIRED: ${{ needs.changes.outputs.dedicated_required }}
+          CI_BACKEND_RESULT: ${{ needs.ci-backend.result }}
+          CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
+          INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
@@ -979,8 +1017,21 @@ jobs:
             failed=true
           fi
 
-          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
             failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_ELIGIBLE" = "true" ]; then
+            if [ "${CI_BACKEND_RESULT:-unknown}" != "success" ]; then failed=true; fi
+            case "${CI_BACKEND_PROVIDER:-unknown}" in
+              linux) [ "${INFRASTRUCTURE_FALLBACK:-false}" = "false" ] || failed=true ;;
+              hosted)
+                [ "${INFRASTRUCTURE_FALLBACK:-false}" = "true" ] || failed=true
+                for result in "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+                  [ "$result" = "success" ] || failed=true
+                done ;;
+              *) failed=true ;;
+            esac
           fi
 
           if [ "$failed" = "true" ]; then

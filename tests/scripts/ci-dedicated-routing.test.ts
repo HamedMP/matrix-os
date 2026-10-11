@@ -25,7 +25,7 @@ describe('dedicated Linux routing preserves protected hosted contracts',()=>{
     expect(job.permissions).toEqual({actions:'read',checks:'read',contents:'read'});
     expect(job.if).toContain("dedicated_required == 'true'");
     const text=JSON.stringify(job);
-    expect(text).toContain('sourceSha: snapshot?.sourceSha || context.sha'); expect(text).toContain('baseSha: snapshot?.baseSha || pull.base.sha');
+    expect(text).toContain('requestingSnapshot(github,context'); expect(text).toContain('...context.repo,...snapshot,requestingRunId:context.runId');
     expect(text).not.toContain('secrets.'); expect(text).toContain('waitForDedicatedResult');
   });
   it('requires successful verified Linux result in CI Results whenever hosted lanes delegate',()=>{
@@ -48,7 +48,7 @@ describe('executable delegation and aggregate admission',()=>{
   ])('routes optin=%s source=%s event=%s base=%s repo=%s correctly',(enabled,source,event,base,repo,expected)=>{
     const dir=mkdtempSync(resolve(tmpdir(),'matrix-linux-route-'));
     try{
-      writeFileSync(resolve(dir,'event.json'),JSON.stringify({pull_request:{base:{ref:base,repo:{full_name:'HamedMP/matrix-os'}},head:{repo:{full_name:repo}},state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'ci-linux'}]}}));
+      writeFileSync(resolve(dir,'event.json'),JSON.stringify({pull_request:{base:{ref:base,repo:{full_name:'HamedMP/matrix-os'}},head:{repo:{full_name:repo}},state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}]}}));
       const script=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run;
       const body=script.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
       const env={...process.env,MATRIX_CI_DEDICATED_ENABLED:enabled,SHOULD_RUN:source,GITHUB_EVENT_NAME:event,GITHUB_REPOSITORY:'HamedMP/matrix-os',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')};
@@ -81,7 +81,7 @@ describe('executable delegation and aggregate admission',()=>{
       const step=ci.jobs['ci-results'].steps[0];
       const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};
       for(const key of Object.keys(step.env))env[key]='success';
-      Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:outcome});
+      Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:outcome,CI_BACKEND_PROVIDER:'linux',INFRASTRUCTURE_FALLBACK:'false'});
       for(const key of ['TYPECHECK_RESULT','SHELL_PRODUCTION_BUILD_RESULT','AGENT_SDK_COMPATIBILITY_RESULT','UNIT_RESULT','DOCS_CONTRACT_RESULT','OS_VIEW_PARITY_RESULT','E2E_RESULT'])env[key]='skipped';
       const result=spawnSync('bash',['-c',step.run],{encoding:'utf8',env,timeout:10000});
       expect(result.status,result.stderr).toBe(outcome==='success'?0:1);
@@ -101,5 +101,12 @@ it.each(['true','false'])('runs all hosted lanes and no Linux waiter for hosted-
  try{writeFileSync(resolve(dir,'event.json'),'{}');const body=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
  const result=spawnSync(process.execPath,['--input-type=module','-e',body],{env:{...process.env,REFRESH_SNAPSHOT:JSON.stringify({executionMode:'hosted-only'}),MATRIX_CI_DEDICATED_ENABLED:enabled,MATRIX_CI_DEDICATED_SHADOW:'true',SHOULD_RUN:'true',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')},encoding:'utf8',timeout:10000});expect(result.status,result.stderr).toBe(0);expect(readFileSync(resolve(dir,'output'),'utf8')).toBe('eligible=false\nrequired=false\n');
  const env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')},step=ci.jobs['ci-results'].steps[0];for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_LINUX_RESULT:'skipped',DOCS_CONTRACT_RESULT:'skipped'});expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(0);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+it.each(['success','skipped','failure','cancelled'])('hosted infrastructure recovery aggregate requires every delegated lane: %s',outcome=>{
+ const dir=mkdtempSync(resolve(tmpdir(),'matrix-ci-infra-aggregate-'));
+ try{const step=ci.jobs['ci-results'].steps[0],env:Record<string,string>={PATH:process.env.PATH!,GITHUB_STEP_SUMMARY:resolve(dir,'summary')};for(const key of Object.keys(step.env))env[key]='success';Object.assign(env,{CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'true',DEDICATED_ELIGIBLE:'true',DEDICATED_REQUIRED:'true',DEDICATED_LINUX_RESULT:'skipped',CI_BACKEND_RESULT:'success',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'true',E2E_RESULT:outcome});
+ expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(outcome==='success'?0:1);
+ env.INFRASTRUCTURE_FALLBACK='false';expect(spawnSync('bash',['-c',step.run],{env,encoding:'utf8',timeout:10000}).status).toBe(1);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

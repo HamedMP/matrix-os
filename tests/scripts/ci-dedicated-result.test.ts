@@ -1,4 +1,5 @@
 import {describe,expect,it,vi} from "vitest";
+import {pinArtifactFixture} from './helpers/dedicated-artifact-fixture';
 import {nativeStackFixture,nativePins} from './helpers/native-stack-fixture';
 import {waitForDedicatedResult} from "../../scripts/ci/dedicated-result.mjs";
 const headSha="a".repeat(40),baseSha="b".repeat(40),sourceSha="c".repeat(40),controllerSha="d".repeat(40);
@@ -7,7 +8,8 @@ function fixture(change:Record<string,unknown>={}) {
   const summary={schemaVersion:3,requestingRunId:321,requestingRunAttempt:1,imageDigest:expected.imageDigest,harnessDigest:expected.harnessDigest,mode:expected.mode,receiptVerified:true,requestDigest:"9".repeat(64),leaseId:"8".repeat(32),baseRef:"main",controllerAttempt:1,suite:"qualification",headSha,baseSha,sourceSha,prNumber:2440,controllerSha,controllerRef:"refs/heads/main",controllerWorkflow:".github/workflows/ci-dedicated.yml",...change};
   const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
   const run={id:123,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
-  const github={rest:{repos:{getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},git:{getRef:vi.fn(async()=>({data:{object:{sha:baseSha}}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"ci-linux"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
+  const github={rest:{repos:{getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},git:{getRef:vi.fn(async()=>({data:{object:{sha:baseSha}}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"fast-ci"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
+  pinArtifactFixture(github,check,run);if(Object.hasOwn(change,'requestDigest'))check.output.summary=JSON.stringify({...JSON.parse(check.output.summary),requestDigest:change.requestDigest});
   return {github,check,run};
 }
 const options={maxAttempts:2,delay:async()=>{}};
@@ -49,7 +51,7 @@ describe("exact merge revision dedicated qualification evidence",()=>{
 });
 
 it('rejects checksummary spoofing without immutable same-run revision provenance',async()=>{
-  for(const artifact of [undefined,{name:'wrong',expired:false,size_in_bytes:1024,workflow_run:{id:123}},{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:true,size_in_bytes:1024,workflow_run:{id:123}},{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:999}}]) {
+  for(const artifact of [undefined,{name:'wrong',id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}},{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:true,size_in_bytes:1024,workflow_run:{id:123}},{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:999}}]) {
     const {github}=fixture(); github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:artifact?[artifact]:[]}});
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
   }
@@ -66,8 +68,8 @@ describe('stack lifecycle and retry evidence',()=>{
     const {github,check,run}=fixture();check.conclusion='failure';run.run_attempt=2;run.status='in_progress';
     const delay=vi.fn(async()=>{
       check.output.summary=JSON.stringify({...JSON.parse(check.output.summary),controllerAttempt:2});
-      check.conclusion='success';run.status='completed';
-      github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+      check.conclusion='success';run.status='completed';pinArtifactFixture(github,check,run);
+      github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
     });
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:2,delay})).resolves.toEqual({runId:123,sourceSha});
     expect(delay).toHaveBeenCalledOnce();
@@ -92,7 +94,8 @@ describe('stack lifecycle and retry evidence',()=>{
     github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{...check,conclusion:'failure'},pending]}});
     github.rest.actions.listWorkflowRuns.mockImplementation(async()=>({data:{workflow_runs:[run,{...run,id:124,status:pending.status==='completed'?'completed':'in_progress'}]}}));
     github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:run_id===123?{...run,conclusion:'failure'}:{...run,id:124,status:pending.status==='completed'?'completed':'in_progress'}}));
-    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
+    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
+    pinArtifactFixture(github,pending,{...run,id:124});
     const delay=vi.fn(async()=>{pending.status='completed';});
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:2,delay})).resolves.toEqual({runId:124,sourceSha});
     expect(delay).toHaveBeenCalledOnce();
@@ -105,8 +108,8 @@ describe('stack lifecycle and retry evidence',()=>{
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/failed/);
   });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
-    const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;
-    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+    const {github,check,run}=fixture({controllerAttempt:2});run.run_attempt=2;pinArtifactFixture(github,check,run);
+    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt2`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
     run.run_attempt=3;
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
@@ -125,9 +128,9 @@ describe('pre-admission default-controller retry coordination',()=>{
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,queued]}});
     github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?queued:run}));
     const delay=vi.fn(async()=>{
-      queued.status='completed';
-      github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check,{...check,id:11,conclusion:'success',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'}]}});
-      github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
+      queued.status='completed';const latest={...check,id:11,conclusion:'success',output:{...check.output},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};pinArtifactFixture(github,latest,queued);
+      github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check,latest]}});
+      github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
     });
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:2,delay})).resolves.toEqual({runId:124,sourceSha});
     expect(delay).toHaveBeenCalledOnce();
@@ -203,8 +206,8 @@ it('authenticates the native current public cumulative source through final wait
  const scope={...expected,...native.snapshot};
  Object.assign(f.run,{head_sha:nativePins.head,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=2491 head=${nativePins.head} base=${nativePins.base} requested=true`});
  f.check.head_sha=nativePins.head;
- f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...native.snapshot});
- f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${nativePins.head}-${nativePins.merge}-${nativePins.base}-pr2491-request321-1-attempt1`,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...native.snapshot});pinArtifactFixture(f.github,f.check,f.run);
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${nativePins.head}-${nativePins.merge}-${nativePins.base}-pr2491-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
  await expect(waitForDedicatedResult(github,scope,options)).resolves.toEqual({runId:123,sourceSha:nativePins.merge});
  expect(native.github.request).toHaveBeenCalledTimes(4); // initial and final independent native proofs
 });
@@ -213,4 +216,40 @@ it.each(['completed','in_progress'])('ignores newer reconciliation-only %s contr
  const f=fixture();const extra={...f.run,id:124,event:'workflow_run',head_branch:'main',head_sha:controllerSha,status,display_title:`dedicated-refresh-v2 execution=false request=321 title=CI coverage-v1 · ${sourceSha}`};
  f.github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[extra,f.run]}});
  await expect(waitForDedicatedResult(f.github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+});
+
+describe('authenticated pre-workload infrastructure handoff',()=>{
+ const proof={outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true,receiptVerified:false};
+ it('returns a typed recovery only after same-source controller/artifact/job and fresh API proof',async()=>{
+  const f=fixture(proof);f.check.conclusion='neutral';
+  await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).resolves.toMatchObject({runId:123,sourceSha,infrastructure:{outcome:proof.outcome,status:76,reason:proof.reason,stage:proof.stage,workloadStarted:false,containerGone:true}});
+  await expect(waitForDedicatedResult(f.github,expected,options)).rejects.toThrow(/hosted coverage required/);
+ });
+ it.each([{workloadStarted:true},{containerGone:false},{reason:'test_failed'},{stage:'workload'},{status:1},{sourceSha:'e'.repeat(40)},{requestDigest:''}])('rejects unsafe recovery proof %j',async change=>{
+  const f=fixture({...proof,...change});f.check.conclusion='neutral';
+  await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).rejects.toThrow();
+ });
+});
+it('accepts exact current main only with explicit kind and actual ordered parent evidence',async()=>{
+ const main={...expected,sourceKind:'main',prNumber:0,headSha:sourceSha,headRef:'main',mergeParents:[baseSha]};const f=fixture({sourceKind:'main',prNumber:0,headSha:sourceSha,mergeParents:[baseSha]});f.check.head_sha=sourceSha;
+ Object.assign(f.run,{event:'workflow_run',head_branch:'main',head_sha:sourceSha,display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${sourceSha}`});
+ f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:sourceSha}}});f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:sourceSha,parents:[{sha:baseSha}],commit:{tree:{sha:headSha}}}} as any);
+ f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${sourceSha}-${sourceSha}-${baseSha}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ await expect(waitForDedicatedResult(f.github,main,options)).resolves.toEqual({runId:123,sourceSha});
+ f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),mergeParents:['e'.repeat(40)]});
+ await expect(waitForDedicatedResult(f.github,main,options)).rejects.toThrow();
+});
+it.each([false,true])('authenticates controller-only before-grant transport evidence with complete proof=%s',async complete=>{
+ const proof:any={receiptVerified:false,outcome:'transport-unavailable',proofOrigin:'controller-transport-v1',status:76,reason:'connection_refused',stage:'handshake',grantSent:false,controlBytes:0,handshakeBoundSeconds:20,workloadStarted:false,containerGone:true};
+ if(!complete)delete proof.grantSent;const f=fixture(proof);f.check.conclusion='neutral';
+ const pending=waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true});
+ if(complete)await expect(pending).resolves.toMatchObject({infrastructure:{outcome:'transport-unavailable',grantSent:false,controlBytes:0}});else await expect(pending).rejects.toThrow();
+});
+it('rejects a check summary contradicting the actual immutable infrastructure receipt',async()=>{
+ const {receiptFor,receiptZip,artifactDownloadApi}=await import('./helpers/dedicated-artifact-fixture');
+ const f=fixture({receiptVerified:false,outcome:'infrastructure-unavailable',status:76,reason:'queue_timeout',stage:'admission',workloadStarted:false,containerGone:true});f.check.conclusion='neutral';
+ const stored=receiptFor(JSON.parse(f.check.output.summary));
+ (f.github.rest.actions as any).downloadArtifact=vi.fn(artifactDownloadApi(receiptZip(stored)));
+ const evidence=JSON.parse(f.check.output.summary);for(const key of ['outcome','status','reason','stage','workloadStarted','containerGone'])delete evidence[key];evidence.receiptVerified=true;f.check.conclusion='success';f.check.output.summary=JSON.stringify(evidence);
+ await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).rejects.toThrow();
 });
