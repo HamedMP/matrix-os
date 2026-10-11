@@ -147,6 +147,7 @@ run_suite() {
       fi
       export MATRIX_AGENT_SDK_PACKAGE_DIR=/work/sdk/node_modules/@anthropic-ai/claude-agent-sdk
       step "sdk-$pass" pnpm exec vitest run tests/scripts/agent-sdk-real-runtime-spike.test.ts --maxWorkers=2
+      if [[ ${qualification:-false} != true ]]; then
       step "docs-parity-$pass" pnpm exec vitest run --maxWorkers=2 \
         tests/repository/site-extraction.test.ts tests/contracts/os-view.test.ts \
         tests/shell/desktop-mode-parity.test.ts tests/shell/desktop-launcher-mode.test.tsx \
@@ -154,6 +155,7 @@ run_suite() {
         tests/desktop/app-launcher.test.tsx tests/desktop/native-desktop-shell.test.tsx \
         tests/desktop/os-view-state-client.test.ts tests/desktop/native-os-view-persistence.test.ts \
         tests/gateway/os-view-state-repository.test.ts
+      fi
       step "shell-$pass" bun run build:shell:production
       ;;
     e2e|e2e-general)
@@ -207,6 +209,11 @@ for pass in "${passes[@]}"; do
       (( desktop_status == 0 && electron_status == 0 ))
     ) & pids+=("$!")
     for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+    if [[ $qualification == true ]]; then
+      # The complete unit report must prove every parity assertion passed.
+      # Wait for all lanes before consuming JSON; missing/partial evidence fails.
+      measure "docs-parity-proof-$pass" node scripts/ci/qualification-coverage.mjs "/work/results/unit-$pass.json" || failed=1
+    fi
   else
     run_suite "$pass" || failed=1
   fi

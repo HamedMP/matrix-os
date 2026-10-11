@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -39,7 +39,7 @@ function buildGatedElectronSuites() {
 }
 
 function invoke(suite: string, failLane = "", historical = false, workers = "12", prepared: "none" | "match" | "mismatch" = "none") {
-  const dir = mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-"));
+  const dir = realpathSync(mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-")));
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
   mkdirSync(bin);
@@ -56,6 +56,22 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
     delete fixtureScripts["typecheck:run"];
   }
   writeFileSync(resolve(dir, "package.json"), JSON.stringify({ scripts: fixtureScripts }));
+  writeFileSync(resolve(dir, "qualification-coverage.mjs"), readFileSync("scripts/ci/qualification-coverage.mjs", "utf8"));
+  const parityMinimums = [
+    ["tests/repository/site-extraction.test.ts",2], ["tests/contracts/os-view.test.ts",12],
+    ["tests/shell/desktop-mode-parity.test.ts",3], ["tests/shell/desktop-launcher-mode.test.tsx",21],
+    ["tests/shell/web-desktop-surface.test.tsx",10], ["tests/shell/os-view-state-client.test.ts",6],
+    ["tests/desktop/app-launcher.test.tsx",13], ["tests/desktop/native-desktop-shell.test.tsx",47],
+    ["tests/desktop/os-view-state-client.test.ts",4], ["tests/desktop/native-os-view-persistence.test.ts",4],
+    ["tests/gateway/os-view-state-repository.test.ts",12],
+  ] as const;
+  const report = {success:true,numFailedTests:0,testResults:parityMinimums.map(([path,count])=>({
+    name:resolve(work,"repo",path),status:"passed",assertionResults:Array.from({length:count},()=>({status:"passed"})),
+  }))};
+  if(failLane === "coverage-skipped") report.testResults[0].assertionResults[0].status="skipped";
+  if(failLane === "coverage-duplicate") report.testResults.push(report.testResults[0]);
+  if(failLane === "coverage-under-count") report.testResults[0].assertionResults.pop();
+  writeFileSync(resolve(dir,"unit-report.json"),JSON.stringify(report));
   const executable = (name: string, source: string) => {
     writeFileSync(resolve(bin, name), `#!/bin/bash\nset -euo pipefail\n${source}\n`);
     chmodSync(resolve(bin, name), 0o755);
@@ -65,10 +81,11 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir));
   executable("git", `
 case "$1" in
-  init) mkdir -p "$2"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
+  init) mkdir -p "$2/scripts/ci"; cp "$HARNESS_DIR/qualification-coverage.mjs" "$2/scripts/ci/qualification-coverage.mjs"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
   rev-parse) echo "$REVIEWED_SHA" ;;
 esac`);
   executable("timeout", 'shift; exec "$@"');
+  executable("node", 'if [[ "$1" == scripts/ci/qualification-coverage.mjs ]]; then printf "node %s\\n" "$*" >> "$CALLS"; fi; exec "$REAL_NODE" "$@"');
   executable("xvfb-run", 'printf "%s\\n" "$*" >> "$DISPLAYS"; shift; exec "$@"');
   const barrier = `
 await_peer() {
@@ -115,6 +132,11 @@ if [[ "$*" == *"exec vitest run"* ]]; then
   if [[ "$*" != *"--config vitest.e2e.config.ts"* && "$*" == *"--outputFile="* ]]; then
     if [[ "$REQUIRE_CONCURRENT" == 1 ]]; then await_peer unit checks; fi
     [[ "$FAIL_LANE" != unit ]] || exit 42
+    for argument in "$@"; do
+      if [[ "$argument" == --outputFile=* && "$FAIL_LANE" != coverage-missing ]]; then
+        cp "$HARNESS_DIR/unit-report.json" "\${argument#--outputFile=}"
+      fi
+    done
   elif [[ "$*" == *"--config vitest.e2e.config.ts"* ]]; then
     if [[ "$*" != *"tests/e2e/"* || "$*" == *"--exclude="* ]]; then
       # Simulate the real describe.skip gate in the general desktop suites,
@@ -143,7 +165,7 @@ fi`);
       encoding: "utf8", timeout: 10_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
-        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane,
+        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, REAL_NODE: process.execPath,
         DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: ["full", "qualification"].includes(suite) ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
@@ -310,6 +332,24 @@ describe("eight-core full benchmark budget", () => {
 });
 
  describe("single-pass Linux qualification", () => {
+  it("proves the unit-collected parity once while historical full keeps both dedicated parity runs",()=>{
+    const qualified=invoke("qualification");
+    expect(qualified.result.status,qualified.result.stderr).toBe(0);
+    expect(qualified.calls.filter(call=>call.startsWith("node scripts/ci/qualification-coverage.mjs "))).toHaveLength(1);
+    expect(qualified.calls.some(call=>call.startsWith("pnpm exec vitest run --maxWorkers=2 tests/repository/site-extraction.test.ts"))).toBe(false);
+    expect(qualified.timings).toContainEqual(["docs-parity-proof-cold",expect.any(String),"0"]);
+    const historical=invoke("full");
+    expect(historical.result.status,historical.result.stderr).toBe(0);
+    expect(historical.calls.filter(call=>call.startsWith("pnpm exec vitest run --maxWorkers=2 tests/repository/site-extraction.test.ts"))).toHaveLength(2);
+    expect(historical.calls.some(call=>call.startsWith("node scripts/ci/qualification-coverage.mjs "))).toBe(false);
+  });
+  it.each(["coverage-missing","coverage-skipped","coverage-duplicate","coverage-under-count"])("rejects %s unit coverage after collecting every required lane",fail=>{
+    const {result,timings}=invoke("qualification",fail);
+    expect(result.status,result.stderr).toBe(1);
+    expect(timings).toContainEqual(["docs-parity-proof-cold",expect.any(String),"1"]);
+    for(const lane of ["unit","shell","e2e-general","e2e-electron","e2e-clipboard","terminal-grid"])
+      expect(timings.some(([label])=>label === `${lane}-cold`)).toBe(true);
+  });
   it("runs every full lane once and fails when any required lane fails", () => {
     for (const fail of ["", "unit", "checks", "shell", "general", "electron", "clipboard", "desktop-build"]) {
       const {result,calls,timings} = invoke("qualification", fail);
