@@ -2,7 +2,14 @@
 import {createHash} from 'node:crypto';
 import {inflateRawSync} from 'node:zlib';
 const MAX=16384;
-const bad=()=>{throw new Error('Controller receipt archive rejected');};
+class ReceiptArchiveError extends Error {}
+const bad=()=>{throw new ReceiptArchiveError('Controller receipt archive rejected');};
+function rejectCaught(stage,error,expected,message){
+ const errorKind=error instanceof Error&&expected(error)?'invalid-input':'unexpected-error';
+ // Never include receipt bytes, signed URLs, credentials or raw exception text.
+ console.warn('Controller artifact rejected',{stage,errorKind});
+ throw new Error(message);
+}
 function crc32(bytes){let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;}
 function extras(bytes){for(let offset=0;offset<bytes.length;){if(offset+4>bytes.length||bytes.readUInt16LE(offset)===1)bad();const size=bytes.readUInt16LE(offset+2);offset+=4+size;if(offset>bytes.length)bad();}}
 export function decodeReceiptArchive(input){
@@ -24,12 +31,12 @@ export function decodeReceiptArchive(input){
   if(zip.readUInt32LE(offset)!==crc||zip.readUInt32LE(offset+4)!==compressed||zip.readUInt32LE(offset+8)!==expanded)bad();
   for(const [offset,wanted]of [[14,crc],[18,compressed],[22,expanded]])if(![0,wanted].includes(zip.readUInt32LE(offset)))bad();
  }else if(finish!==directory||zip.readUInt32LE(14)!==crc||zip.readUInt32LE(18)!==compressed||zip.readUInt32LE(22)!==expanded)bad();
- let bytes;try{if(method===0)bytes=zip.subarray(start,finish);else{const result=inflateRawSync(zip.subarray(start,finish),{maxOutputLength:MAX,info:true});if(result.engine.bytesWritten!==compressed)bad();bytes=result.buffer;}}catch(error){throw new Error('Bounded controller receipt expansion rejected');}
+ let bytes;try{if(method===0)bytes=zip.subarray(start,finish);else{const result=inflateRawSync(zip.subarray(start,finish),{maxOutputLength:MAX,info:true});if(result.engine.bytesWritten!==compressed)bad();bytes=result.buffer;}}catch(error){rejectCaught('expansion',error,value=>value instanceof ReceiptArchiveError||['Z_DATA_ERROR','Z_BUF_ERROR','ERR_BUFFER_TOO_LARGE'].includes(value.code),'Bounded controller receipt expansion rejected');}
  if(bytes.length!==expanded||crc32(bytes)!==crc)bad();
- try{const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));if(!value||Array.isArray(value)||typeof value!=='object')bad();return value;}catch(error){throw new Error('Controller receipt JSON rejected');}
+ try{const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));if(!value||Array.isArray(value)||typeof value!=='object')bad();return value;}catch(error){rejectCaught('json',error,value=>value instanceof SyntaxError||value instanceof ReceiptArchiveError||(value instanceof TypeError&&value.code==='ERR_ENCODING_INVALID_ENCODED_DATA'),'Controller receipt JSON rejected');}
 }
 function signedLocation(value){
- let url;try{url=new URL(value);}catch(error){throw new Error('Controller artifact redirect rejected');}
+ let url;try{url=new URL(value);}catch(error){rejectCaught('redirect',error,value=>value instanceof TypeError&&value.code==='ERR_INVALID_URL','Controller artifact redirect rejected');}
  if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!/^productionresultssa[a-z0-9]*\.blob\.core\.windows\.net$/.test(url.hostname)||url.href.length>8192)throw new Error('Controller artifact redirect rejected');
  return url;
 }

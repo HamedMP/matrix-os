@@ -30,3 +30,37 @@ it('requires the API artifact digest when supplied and rejects unsupported unbou
 
 it.each([false,true])('reads bounded compressed JSON with streaming descriptor %s',descriptor=>{const value={schemaVersion:1,proof:'a'.repeat(500)};expect(decodeReceiptArchive(receiptZip(value,'receipt.json',{deflate:true,descriptor}))).toEqual(value);});
 it('rejects compressed JSON whose expanded content exceeds the bound',()=>{expect(()=>decodeReceiptArchive(receiptZip({proof:'a'.repeat(20000)},'receipt.json',{deflate:true,descriptor:true}))).toThrow();});
+
+it.each([
+ [new SyntaxError('private receipt token'), 'invalid-input'],
+ [new Error('private operator path'), 'unexpected-error'],
+ [{message:'private receipt token'}, 'unexpected-error'],
+])('records only a safe category when receipt JSON parsing fails', (error, errorKind)=>{
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ const parse=vi.spyOn(JSON,'parse').mockImplementationOnce(()=>{throw error;});
+ try{
+  expect(()=>decodeReceiptArchive(receiptZip({schemaVersion:1}))).toThrow('Controller receipt JSON rejected');
+  expect(warn).toHaveBeenCalledExactlyOnceWith('Controller artifact rejected',{stage:'json',errorKind});
+  expect(JSON.stringify(warn.mock.calls)).not.toContain('private');
+ }finally{parse.mockRestore();warn.mockRestore();}
+});
+it('records a safe category for invalid compressed receipt bytes',()=>{
+ const zip=receiptZip({schemaVersion:1},'receipt.json',{deflate:true});
+ zip[42]=0xff;
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ try{
+  expect(()=>decodeReceiptArchive(zip)).toThrow('Bounded controller receipt expansion rejected');
+  expect(warn).toHaveBeenCalledExactlyOnceWith('Controller artifact rejected',{stage:'expansion',errorKind:'invalid-input'});
+ }finally{warn.mockRestore();}
+});
+it('does not log a malformed signed URL or its credentials',async()=>{
+ const warn=vi.spyOn(console,'warn').mockImplementation(()=>undefined);
+ const fetcher=vi.fn(async()=>new Response(null,{status:302,headers:{location:'private-invalid-url?token=secret'}}));vi.stubGlobal('fetch',fetcher);
+ const github={rest:{actions:{downloadArtifact:vi.fn(async(args:any)=>({data:await args.request.fetch('https://api.github.com/repos/HamedMP/matrix-os/actions/artifacts/10/zip',{})}))}}};
+ try{
+  await expect(downloadControllerReceipt(github,repo,{id:10,size_in_bytes:100,expired:false})).rejects.toThrow('Controller artifact redirect rejected');
+  expect(warn).toHaveBeenCalledExactlyOnceWith('Controller artifact rejected',{stage:'redirect',errorKind:'invalid-input'});
+  expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private|secret|token/);
+  expect(fetcher).toHaveBeenCalledOnce();
+ }finally{vi.unstubAllGlobals();warn.mockRestore();}
+});
