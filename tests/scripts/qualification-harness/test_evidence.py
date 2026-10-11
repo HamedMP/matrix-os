@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from fixtures import ROOT,inventory,SOURCE,TREE
+from fixtures import ROOT,inventory,SOURCE,TREE,evidence
 import validate as v
 INVENTORY=inventory();LOCK=INVENTORY['lockSha256']
 
@@ -36,10 +36,10 @@ class EvidenceContracts(unittest.TestCase):
  def test_all_source_guard_artifacts_required_and_content_validated(self):
   import hashlib
   with tempfile.TemporaryDirectory() as td:
-   path=Path(td);empty=hashlib.sha256(b'[]').hexdigest()
+   path=Path(td);evidence(path);empty=hashlib.sha256(b'[]').hexdigest()
    for name in v.PROVENANCE:
     lane,stage=name.removeprefix('source-').removesuffix('.json').split('-',1)
-    value=dict(source=SOURCE,actualSource=SOURCE,lane=lane,stage=stage,clean=True,lockSha256=LOCK,lockMatches=True,tracked=[],untracked=[],trackedPathsSha256=empty,untrackedPathsSha256=empty)
+    value=json.loads((path/name).read_text());value.update(dict(source=SOURCE,actualSource=SOURCE,lane=lane,stage=stage,clean=True,lockSha256=LOCK,lockMatches=True,tracked=[],untracked=[],trackedPathsSha256=empty,untrackedPathsSha256=empty))
     (path/name).write_text(json.dumps(value))
    self.assertTrue(v.validate_provenance(path,INVENTORY))
    name=v.PROVENANCE[0];value=json.loads((path/name).read_text());value['clean']=False;(path/name).write_text(json.dumps(value))

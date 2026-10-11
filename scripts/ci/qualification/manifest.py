@@ -5,8 +5,9 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 from pathlib import PurePosixPath
 from common import canonical,digest,read_regular,decode_json,git_command
 from contract import REPOSITORY,CONFIGS,ELECTRON
+from integrity import check_tracked
 MAX_TREE=30000
-MAX_MANIFEST=1024*1024
+MAX_MANIFEST=2*1024*1024
 OPS=('scripts/ops/launch-funded-config-repair.py','scripts/ops/repair-funded-chat-config.py')
 
 def sha(value):
@@ -123,12 +124,16 @@ def prepare_manifest(source,request,api=None):
  if len(versions)!=1:raise ValueError('Ambiguous frozen icon version')
  tools={'pnpm':packages['package.json'].get('packageManager','').removeprefix('pnpm@'),'nativeTypeScript':native.rsplit('@',1)[1],'next':packages['shell/package.json']['dependencies']['next'],'icons':next(iter(versions))}
  if any(not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+',v) for v in tools.values()):raise ValueError('Unpinned runtime dependency')
- result={'schemaVersion':1,'repository':REPOSITORY,'source':source,'tree':tree_sha,'parents':parents,'lockSha256':digest(lock),'configBlobs':{n:entries[n]['sha'] for n in CONFIGS},'configSha256':{n:digest(v) for n,v in configs.items()},'unit':unit,'general':general,'requiredElectron':ELECTRON,'icons':icons,'unitImports':imports,'tools':tools}
+ tracked={n:[e['mode'],e['sha'],e.get('size')] for n,e in entries.items() if e['type']!='tree'}
+ check_tracked(tracked)
+ result={'tracked':tracked,'trackedInventorySha256':digest(canonical(tracked)),'schemaVersion':2,'repository':REPOSITORY,'source':source,'tree':tree_sha,'parents':parents,'lockSha256':digest(lock),'configBlobs':{n:entries[n]['sha'] for n in CONFIGS},'configSha256':{n:digest(v) for n,v in configs.items()},'unit':unit,'general':general,'requiredElectron':ELECTRON,'icons':icons,'unitImports':imports,'tools':tools}
  if len(canonical(result))>MAX_MANIFEST:raise ValueError('Manifest exceeds bound')
  return check_manifest(result,request)
 
 def check_manifest(value,request=None):
- if not isinstance(value,dict) or value.get('schemaVersion')!=1 or value.get('repository')!=REPOSITORY:raise ValueError('Invalid manifest')
+ if not isinstance(value,dict) or value.get('schemaVersion')!=2 or value.get('repository')!=REPOSITORY:raise ValueError('Invalid manifest')
+ check_tracked(value.get('tracked'))
+ if value.get('trackedInventorySha256')!=digest(canonical(value['tracked'])):raise ValueError('Immutable tracked metadata digest differs')
  sha(value.get('source'));sha(value.get('tree'))
  if not isinstance(value.get('parents'),list) or len(value['parents'])!=2 or value['parents'][0]==value['parents'][1]:raise ValueError('Manifest parents differ')
  for parent in value['parents']:sha(parent)

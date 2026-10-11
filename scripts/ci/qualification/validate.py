@@ -4,7 +4,7 @@ from pathlib import Path,PurePosixPath
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from common import canonical,digest,read_regular,decode_json
 from manifest import check_manifest
-from contract import ARTIFACTS,PHASES as LANE_PHASES,PROVENANCE,REPORTS,LANES,MAX_FILE,MAX_TOTAL
+from contract import ARTIFACTS,PHASES as LANE_PHASES,PROVENANCE,HOST_PROVENANCE,REPORTS,LANES,MAX_FILE,MAX_TOTAL
 
 def read(path,limit=50*1024*1024):
  with os.fdopen(os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK),'rb') as f:
@@ -127,7 +127,10 @@ def validate_provenance(directory,inventory,names=PROVENANCE):
  SOURCE,LOCK=inventory['source'],inventory['lockSha256']
  for name in names:
   value=decode_json(read(Path(directory)/name,256*1024))
-  lane,stage=name.removeprefix('source-').removesuffix('.json').split('-',1)
+  if name.startswith('host-source-'):lane,stage=name.removeprefix('host-source-').removesuffix('.json'),'host-final'
+  else:lane,stage=name.removeprefix('source-').removesuffix('.json').split('-',1)
+  exact={'inventorySha256':digest(canonical(inventory)+b'\n'),'trackedInventorySha256':inventory['trackedInventorySha256'],'actualTrackedInventorySha256':inventory['trackedInventorySha256'],'trackedFilesChecked':len(inventory['tracked']),'trackedBytesChecked':sum(e[2] for e in inventory['tracked'].values()),'trackedIntegrityClean':True,'indexMatches':True,'indexFlagsClean':True,'ignorePolicyClean':True}
+  if not isinstance(value,dict) or any(type(value.get(k)) is not type(expected) or value.get(k)!=expected for k,expected in exact.items()):raise ValueError('Actual tracked source integrity proof differs')
   empty=hashlib.sha256(b'[]').hexdigest()
   if not isinstance(value,dict) or value.get('source')!=SOURCE or value.get('actualSource')!=SOURCE or value.get('lane')!=lane or value.get('stage')!=stage or value.get('clean') is not True or value.get('lockSha256')!=LOCK or value.get('lockMatches') is not True or value.get('tracked')!=[] or value.get('untracked')!=[] or value.get('trackedPathsSha256')!=empty or value.get('untrackedPathsSha256')!=empty or value.get('error') is not None:raise ValueError('Lane provenance failed')
  return True
@@ -160,10 +163,11 @@ def validate(directory,inventory,request):
  tools=decode_json(read(directory/'tools.json',65536))
  if not isinstance(tools,dict) or not str(tools.get('node','')).startswith('v24.') or tools.get('pnpm')!=inventory['tools']['pnpm'] or tools.get('nativeTypeScript')!=inventory['tools']['nativeTypeScript'] or not isinstance(tools.get('bun'),str):raise ValueError('Runtime tools differ')
  validate_provenance(directory,inventory)
+ validate_provenance(directory,inventory,HOST_PROVENANCE)
  times=phase_times(directory)
  smoke=validate_smoke(decode_json(read(directory/'smoke.json',65536)),inventory)
  trace_summary(directory,smoke)
  reports={phase:report_counts(decode_json(read(directory/(phase+'.json'))),phase,inventory) for phase in REPORTS}
  proof=decode_json(read(directory/'coverage.json',65536))
  if not isinstance(proof,dict) or proof.get('source')!=inventory['source'] or proof.get('tree')!=inventory['tree'] or proof.get('inventorySha256')!=inventory_sha or any(proof.get(k)!=reports['unit'][k] for k in ('files','total','passed','skipped','failed')):raise ValueError('Source coverage proof differs')
- return {'qualified':True,'source':inventory['source'],'image':request['imageDigest'],'wallSeconds':metadata['wallSeconds'],'queueSeconds':metadata['queueSeconds'],'phaseCount':sum(len(v) for v in LANE_PHASES.values()),'guardCount':len(PROVENANCE),'allPhasesPassed':True,'allGuardsClean':True,'phasesSeconds':times,'reports':reports,'requiredElectronFiles':sorted({n for phase,names in inventory['requiredElectron'].items() if phase!='grid' for n in names}),'tools':tools,'smoke':smoke,'lockSha256':inventory['lockSha256'],'inventorySha256':inventory_sha}
+ return {'qualified':True,'source':inventory['source'],'image':request['imageDigest'],'wallSeconds':metadata['wallSeconds'],'queueSeconds':metadata['queueSeconds'],'phaseCount':sum(len(v) for v in LANE_PHASES.values()),'guardCount':len(PROVENANCE),'independentHostSourceChecks':len(HOST_PROVENANCE),'allPhasesPassed':True,'allGuardsClean':True,'phasesSeconds':times,'reports':reports,'requiredElectronFiles':sorted({n for phase,names in inventory['requiredElectron'].items() if phase!='grid' for n in names}),'tools':tools,'smoke':smoke,'lockSha256':inventory['lockSha256'],'inventorySha256':inventory_sha}
