@@ -1,9 +1,23 @@
 name: Dedicated CI Benchmark
+# Data-only identity is available in the API even while the controller is queued.
+# Exact ref/merge/attempt provenance is still verified after admission.
+run-name: >-
+  ${{ github.event_name == 'workflow_run' && format('dedicated-refresh-v1 request={0} title={1}', github.event.workflow_run.id, github.event.workflow_run.display_title) || format('dedicated-ci-v2 pr={0} head={1} base={2} requested={3}', github.event.pull_request.number || 0, github.event.pull_request.head.sha || github.sha, github.event.pull_request.base.sha || 'manual', github.event_name == 'pull_request_target' && (github.event.action == 'opened' || github.event.action == 'labeled' || github.event.action == 'ready_for_review' || github.event.action == 'synchronize' || github.event.action == 'reopened' || (github.event.action == 'edited' && github.event.changes.base != null)) && 'true' || 'false') }}
 
 # This controller comes from the default branch and never executes PR code.
+# Parent-only moves fail CI Source Qualification and dispatch fresh main-defined CI.
+# Old reruns retain old snapshots and cannot refresh hosted qualification.
+# PR cancellation closes the leased SSH session; the root lease kills owned CPU.
 # Enable only after configuring the main-only `matrix-ci` environment and
 # installing the root-owned forced-command dispatcher on a dedicated host.
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [requested, in_progress, completed]
+  schedule:
+    - cron: "*/5 * * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       source_sha:
@@ -16,108 +30,148 @@ on:
         default: qualification
         options: [qualification, full, unit, checks, e2e-general, e2e-electron]
   pull_request_target:
-    branches: [main]
-    types: [labeled, ready_for_review, synchronize]
+    types: [opened, labeled, ready_for_review, synchronize, reopened, edited, unlabeled, converted_to_draft, closed]
 
 permissions:
+  actions: write
   contents: read
   checks: write
   pull-requests: read
 
 concurrency:
-  group: dedicated-ci-${{ github.event.pull_request.number || github.run_id }}
+  # Irrelevant edits/label changes must not cancel an admitted qualification.
+  group: dedicated-ci-${{ github.event.pull_request.number || github.run_id }}-${{ ((github.event.action == 'edited' && github.event.changes.base == null) || (github.event.action == 'unlabeled' && github.event.label.name != 'ready-for-ci' && github.event.label.name != 'ci-linux')) && github.run_id || 'shared' }}
   cancel-in-progress: true
 
 jobs:
   benchmark:
-    if: vars.MATRIX_CI_DEDICATED_ENABLED == 'true'
+    if: (vars.MATRIX_CI_DEDICATED_ENABLED == 'true' || vars.MATRIX_CI_DEDICATED_SHADOW == 'true') && github.ref == 'refs/heads/main' && (github.event_name == 'pull_request_target' || (github.event_name == 'workflow_run' && ((github.event.action == 'requested' && startsWith(github.event.workflow_run.display_title, 'CI refresh-v1 ')) || (github.event.action == 'in_progress' && github.event.workflow_run.run_attempt > 1 && startsWith(github.event.workflow_run.display_title, 'CI ')))))
+    concurrency:
+      group: matrix-ci-linux-dispatch
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: matrix-ci
     timeout-minutes: 70
     steps:
+      - name: Authenticate reviewed controller pin before helper or secret use
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const pin=process.env.CONTROLLER_SHA;
+            if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
+            const {data:main}=await github.rest.git.getRef({...context.repo,ref:'heads/main',request:{timeout:10000}});
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.object.sha}`,request:{timeout:10000}});
+            if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
+      - name: Checkout reviewed default-controller helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
       - name: Admit current source head
         id: admit
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           INPUT_SHA: ${{ inputs.source_sha }}
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
           script: |
-            let sha = process.env.INPUT_SHA || context.sha;
-            let headSha = sha, baseSha = "", prNumber = 0;
-            if (context.eventName === 'pull_request_target') {
-              const {data: pull} = await github.rest.pulls.get({
-                ...context.repo, pull_number: context.payload.pull_request.number, request: {timeout: 10000}
-              });
-              if (pull.state !== 'open' || pull.draft || pull.base.ref !== "main" ||
-                  pull.head.sha !== context.payload.pull_request.head.sha ||
-                  pull.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-                  !pull.labels.some(label => label.name === 'ready-for-ci')) {
-                core.setOutput('admitted', 'false');
-                return;
-              }
-              headSha = pull.head.sha;
-              baseSha = pull.base.sha;
-              prNumber = pull.number || context.payload.pull_request.number;
-              sha = pull.merge_commit_sha;
-              if (!/^[a-f0-9]{40}$/.test(sha || "")) throw new Error("Current merge commit unavailable");
-              const {data: merge} = await github.rest.repos.getCommit({...context.repo, ref: sha, request: {timeout: 10000}});
-              const parents = merge.parents?.map(parent => parent.sha) || [];
-              if (merge.sha !== sha || parents.length !== 2 || !parents.includes(headSha) || !parents.includes(baseSha)) {
-                throw new Error("Merge commit does not bind the current PR head and base");
-              }
-            }
-            if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Exact commit SHA required');
-            await github.rest.repos.getCommit({...context.repo, ref: sha, request: {timeout: 10000}});
-            const {data: check} = await github.rest.checks.create({
-              ...context.repo, name: context.eventName === 'pull_request_target' || context.payload.inputs?.suite === 'qualification' || !context.payload.inputs?.suite ? 'Dedicated CI Results' : 'Dedicated CI Benchmark', head_sha: headSha, request: {timeout: 10000},
-              status: 'in_progress', details_url:
-                `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            });
-            core.setOutput('sha', sha);
-            core.setOutput('head_sha', headSha);
-            core.setOutput('base_sha', baseSha);
-            core.setOutput('pr_number', String(prNumber));
-            core.setOutput('check_id', String(check.id));
-            core.setOutput('admitted', 'true');
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {admitDedicatedSource,newestRequestingCiRun}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const admission=await admitDedicatedSource(github,{
+              repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
+              eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA});
+            if (!admission) { core.setOutput('admitted','false'); return; }
+            const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
+            const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
+            const requesting=prNumber>0?await newestRequestingCiRun(github,context.repo,admission,mode):null;
+            const summary={schemaVersion:3,suite:context.payload.inputs?.suite || 'qualification',
+              ...(requesting?{requestingRunId:requesting.runId,requestingRunAttempt:requesting.runAttempt}:{}),
+              mode,imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
+              ...admission,controllerSha:process.env.CONTROLLER_SHA,controllerRef:context.ref,
+              controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerWorkflow:'.github/workflows/ci-dedicated.yml'};
+            const {data:check}=await github.rest.checks.create({
+              ...context.repo, name:prNumber>0 ? 'Dedicated CI Results' : 'Dedicated CI Benchmark',
+              head_sha:headSha,status:'in_progress',request:{timeout:10000},
+              details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output:{title:'Isolated Linux qualification pending',summary:JSON.stringify(summary)}});
+            for(const [key,value] of Object.entries({sha,head_sha:headSha,base_sha:baseSha,base_ref:baseRef,
+              pr_number:prNumber,check_id:check.id,admitted:true,mode,
+              requesting_run_id:requesting?.runId || 0,requesting_run_attempt:requesting?.runAttempt || 0}))core.setOutput(key,String(value));
 
-      - name: Dispatch isolated benchmark
-        id: dispatch
+      - name: Revalidate exact PR snapshot before dispatch
+        id: current
         if: steps.admit.outputs.admitted == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
-          SOURCE_SHA: ${{ steps.admit.outputs.sha }}
-          SUITE: ${{ inputs.suite || 'qualification' }}
+          SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const data=JSON.parse(process.env.SNAPSHOT);
+            await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
+              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number)});
+            core.setOutput('current','true');
+
+      - name: Dispatch authenticated PR qualification lease
+        id: dispatch
+        if: steps.admit.outputs.admitted == 'true' && steps.admit.outputs.pr_number != '0' && steps.current.outputs.current == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
           CI_SSH_KEY: ${{ secrets.CI_RUNNER_SSH_KEY }}
           CI_SSH_HOST: ${{ secrets.CI_RUNNER_HOST }}
           CI_KNOWN_HOSTS: ${{ secrets.CI_RUNNER_KNOWN_HOSTS }}
-        run: |
-          set -euo pipefail
-          set +x
-          [[ $SOURCE_SHA =~ ^[a-f0-9]{40}$ ]]
-          [[ $CI_SSH_HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
-          case "$SUITE" in qualification|full|unit|checks|e2e-general|e2e-electron) ;; *) exit 64 ;; esac
-          : "${CI_SSH_KEY:?CI SSH key required}"
-          : "${CI_KNOWN_HOSTS:?Pinned host key required}"
-          key_dir=$(mktemp -d)
-          trap 'rm -rf "$key_dir"' EXIT
-          umask 077
-          printf '%s\n' "$CI_SSH_KEY" > "$key_dir/id_ed25519"
-          printf '%s\n' "$CI_KNOWN_HOSTS" > "$key_dir/known_hosts"
-          mkdir -p output/ci-dedicated
-          timeout --signal=TERM --kill-after=15s 3900s ssh \
-            -i "$key_dir/id_ed25519" -o BatchMode=yes -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$key_dir/known_hosts" \
-            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-            "matrixci@$CI_SSH_HOST" "run $SOURCE_SHA $SUITE" \
-            > output/ci-dedicated/benchmark.log 2>&1
-
-      - name: Upload isolated benchmark log
-        if: always() && steps.admit.outputs.admitted == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: dedicated-ci-${{ steps.admit.outputs.sha }}
-          path: output/ci-dedicated/benchmark.log
-          retention-days: 7
-          if-no-files-found: warn
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {mkdir,writeFile}=require('node:fs/promises');
+            const {dispatchDedicatedLease}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const data=JSON.parse(process.env.SNAPSHOT);
+            const request={repository:`${context.repo.owner}/${context.repo.repo}`,prNumber:Number(data.pr_number),
+              headSha:data.head_sha,baseSha:data.base_sha,baseRef:data.base_ref,mergeSha:data.sha,
+              mergeParents:[data.base_sha,data.head_sha],requestingRunId:Number(data.requesting_run_id),
+              requestingRunAttempt:Number(data.requesting_run_attempt),controllerRunId:context.runId,
+              controllerRunAttempt:Number(process.env.CONTROLLER_ATTEMPT),controllerSha:process.env.CONTROLLER_SHA,
+              controllerRef:context.ref,controllerWorkflow:'.github/workflows/ci-dedicated.yml',
+              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
+              mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
+                workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
+            const receipt=await dispatchDedicatedLease(github,{repo:context.repo,
+              controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
+              ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
+              {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});
+            await mkdir('output/ci-dedicated',{recursive:true});
+            await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(receipt),{flag:'wx'});
+            core.setOutput('request',JSON.stringify(request));
+            core.setOutput('request_digest',receipt.requestDigest);
+            core.setOutput('lease_id',receipt.leaseId);
+            core.setOutput('verified','true');
+
+      - name: Manual isolated benchmark unavailable
+        id: manual
+        if: steps.admit.outputs.admitted == 'true' && steps.admit.outputs.pr_number == '0'
+        run: |
+          echo "::error::SHA-only SSH benchmarks are unavailable. Use authenticated PR qualification; private operator benchmarks remain separate."
+          exit 64
 
       - name: Settle source-head check
         if: always() && steps.admit.outputs.check_id != ''
@@ -126,48 +180,112 @@ jobs:
           CHECK_ID: ${{ steps.admit.outputs.check_id }}
           HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
           BASE_SHA: ${{ steps.admit.outputs.base_sha }}
+          BASE_REF: ${{ steps.admit.outputs.base_ref }}
           PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
           DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
+          MANUAL_OUTCOME: ${{ steps.manual.outcome }}
+          QUALIFICATION_VERIFIED: ${{ steps.dispatch.outputs.verified }}
+          LEASE_REQUEST: ${{ steps.dispatch.outputs.request }}
+          REQUEST_DIGEST: ${{ steps.dispatch.outputs.request_digest }}
+          LEASE_ID: ${{ steps.dispatch.outputs.lease_id }}
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          REQUESTING_RUN_ID: ${{ steps.admit.outputs.requesting_run_id }}
+          REQUESTING_RUN_ATTEMPT: ${{ steps.admit.outputs.requesting_run_attempt }}
+          MODE: ${{ steps.admit.outputs.mode }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
           SOURCE_SHA: ${{ steps.admit.outputs.sha }}
           SUITE: ${{ inputs.suite || 'qualification' }}
+          CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
         with:
           script: |
-            const success = process.env.DISPATCH_OUTCOME === 'success';
+            let success=Number(process.env.PR_NUMBER)===0?process.env.MANUAL_OUTCOME==='success':process.env.DISPATCH_OUTCOME === 'success' && process.env.QUALIFICATION_VERIFIED === 'true';
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {verifyCurrentDedicatedSource,verifyDedicatedLeaseGrant}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            try {
+              if(success && Number(process.env.PR_NUMBER)>0)await verifyDedicatedLeaseGrant(github,context.repo,
+                {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},JSON.parse(process.env.LEASE_REQUEST));
+              await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:process.env.SOURCE_SHA,
+                headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
+                prNumber:Number(process.env.PR_NUMBER)});
+            } catch(error) {
+              core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
+              core.setFailed('Current PR revision could not be revalidated');
+              success=false;
+            }
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
               status: 'completed', conclusion: success ? 'success' : 'failure',
               output: {
                 title: success ? 'Isolated Linux suite passed' : 'Isolated Linux suite failed',
-                summary: JSON.stringify({schemaVersion: 1, suite: process.env.SUITE,
+                summary: JSON.stringify({schemaVersion: 3, requestingRunId:Number(process.env.REQUESTING_RUN_ID),
+                  requestingRunAttempt:Number(process.env.REQUESTING_RUN_ATTEMPT),
+                  imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
+                  mode:process.env.MODE,receiptVerified:success,requestDigest:process.env.REQUEST_DIGEST,
+                  leaseId:process.env.LEASE_ID, suite: process.env.SUITE,
                   sourceSha: process.env.SOURCE_SHA, headSha: process.env.HEAD_SHA,
-                  baseSha: process.env.BASE_SHA, prNumber: Number(process.env.PR_NUMBER),
-                  controllerSha: context.sha, controllerRef: context.ref,
+                  baseSha: process.env.BASE_SHA, baseRef:process.env.BASE_REF, prNumber: Number(process.env.PR_NUMBER),
+                  controllerSha: process.env.CONTROLLER_SHA, controllerRef: context.ref,
+                  controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT),
                   controllerWorkflow: '.github/workflows/ci-dedicated.yml'})
               }
             });
 
-      - name: Create immutable qualification provenance
-        if: always() && steps.admit.outputs.admitted == 'true' && (inputs.suite == 'qualification' || inputs.suite == '')
-        env:
-          SOURCE_SHA: ${{ steps.admit.outputs.sha }}
-          HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
-          BASE_SHA: ${{ steps.admit.outputs.base_sha }}
-          PR_NUMBER: ${{ steps.admit.outputs.pr_number }}
-          DISPATCH_OUTCOME: ${{ steps.dispatch.outcome }}
-        run: |
-          node --input-type=module <<'NODE'
-          import {writeFileSync} from 'node:fs';
-          const {SOURCE_SHA,HEAD_SHA,BASE_SHA,PR_NUMBER,DISPATCH_OUTCOME}=process.env;
-          writeFileSync('output/ci-dedicated/provenance.json',JSON.stringify({
-            schemaVersion:1,sourceSha:SOURCE_SHA,headSha:HEAD_SHA,baseSha:BASE_SHA,
-            prNumber:Number(PR_NUMBER),dispatchOutcome:DISPATCH_OUTCOME
-          }),{flag:'wx'});
-          NODE
       - name: Upload immutable qualification provenance
-        if: always() && steps.admit.outputs.admitted == 'true' && (inputs.suite == 'qualification' || inputs.suite == '')
+        if: always() && steps.dispatch.outputs.verified == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}
-          path: output/ci-dedicated/provenance.json
+          name: dedicated-qualification-${{ steps.admit.outputs.head_sha }}-${{ steps.admit.outputs.sha }}-${{ steps.admit.outputs.base_sha }}-pr${{ steps.admit.outputs.pr_number }}-request${{ steps.admit.outputs.requesting_run_id }}-${{ steps.admit.outputs.requesting_run_attempt }}-attempt${{ github.run_attempt }}
+          path: output/ci-dedicated/receipt.json
           if-no-files-found: error
           retention-days: 7
+
+  reconcile:
+    name: Revoke stale stacked qualification
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: matrix-ci-stack-reconciliation
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Authenticate default-main reconciliation source
+        id: origin
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const pin=process.env.CONTROLLER_SHA || context.sha;
+            if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
+            const {data:main}=await github.rest.git.getRef({...context.repo,ref:'heads/main',request:{timeout:10000}});
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.object.sha}`,request:{timeout:10000}});
+            if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
+            core.setOutput('controller_sha',pin);
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.origin.outputs.controller_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Reconcile completed child source checks
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          CONTROLLER_SHA: ${{ steps.origin.outputs.controller_sha }}
+          CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {reconcileDedicatedChildren,reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            const result=await reconcileDedicatedChildren(github,context.repo,
+              {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
+              {serverUrl:context.serverUrl,...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
+            const gate=await reconcileSourceQualification(github,context.repo,
+              {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
+              {runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
+            core.info(`Examined ${result.examined} children; revoked ${result.invalidated} stale qualifications; refreshed ${gate.dispatched} source requests.`);

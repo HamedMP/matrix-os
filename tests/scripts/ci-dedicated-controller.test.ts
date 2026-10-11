@@ -7,12 +7,13 @@ describe("dedicated controller timeout budgets", () => {
     const host = readFileSync("scripts/ci/runner/start-ephemeral.sh", "utf8");
     const workflow = parse(readFileSync(".github/workflows/ci-dedicated.yml", "utf8"));
     const job = workflow.jobs.benchmark;
-    const dispatch = job.steps.find((step: { id?: string }) => step.id === "dispatch").run;
+    const client = readFileSync("scripts/ci/dedicated-ssh.mjs", "utf8");
     const lockWait = Number(host.match(/flock -w (\d+) /)![1]);
     const [, executionKill, executionWait] = host.match(/--kill-after=(\d+)s (\d+)s[\s\\]+docker exec/)!.map(Number);
     const [, transferKill, transferWait] = host.match(/--kill-after=(\d+)s (\d+)s docker exec --user 10001:10001 "\$container" \/usr\/bin\/tar /)!.map(Number);
     const artifactCount = host.match(/for file in ([^;]+); do/)![1].trim().split(/\s+/).length;
-    const [, sshKill, sshWait] = dispatch.match(/--kill-after=(\d+)s (\d+)s ssh/)!.map(Number);
+    const sshWait = Number(client.match(/maxMilliseconds\?\?([0-9_]+)/)![1].replaceAll("_", "")) / 1000;
+    const sshKill = 20;
     const boundedHostPhases = lockWait + executionWait + executionKill + artifactCount * (transferWait + transferKill);
     // Leave room for SSH setup and bounded log collection, then for artifact
     // upload and the API call settling the source-head check.

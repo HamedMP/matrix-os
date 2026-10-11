@@ -1,14 +1,27 @@
 name: CI
-run-name: CI coverage-v1 · ${{ github.sha }}
+run-name: >-
+  ${{ inputs.pr_number && format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI coverage-v1 · {0}', github.sha) }}
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Trusted same-head stack refresh PR (blank runs ordinary manual CI)
+        type: string
+      head_sha:
+        description: Exact PR head for refresh
+        type: string
+      base_sha:
+        description: Exact parent head for refresh
+        type: string
+      source_sha:
+        description: Exact two-parent merge for refresh
+        type: string
   merge_group:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "stack/**", "codex/**"]
-    types: [labeled, ready_for_review, synchronize]
+    types: [labeled, ready_for_review, synchronize, reopened, edited]
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
@@ -17,6 +30,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   changes:
@@ -24,6 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
+      source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
+      snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
       trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
@@ -31,16 +47,41 @@ jobs:
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
       os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
+      dedicated_required: ${{ steps.route.outputs.required }}
     steps:
+      - name: Checkout trusted main refresh helpers
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Resolve trusted exact-source refresh
+        id: refresh
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {resolveRequestingSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-refresh.mjs')).href);
+            const source=await resolveRequestingSource(github,context.repo,
+              {sha:context.sha,ref:context.ref,workflowRef:process.env.CI_WORKFLOW_REF},context.payload.inputs);
+            core.setOutput('snapshot',JSON.stringify(source));core.setOutput('sourceSha',source.sourceSha);
       - name: Checkout with bounded retry
         env:
           CHECKOUT_BACKOFF_SECONDS: "5"
           CHECKOUT_MAX_ATTEMPTS: "3"
           CHECKOUT_TIMEOUT_SECONDS: "30"
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.refresh.outputs.sourceSha || github.sha }}
         run: |
           set -euo pipefail
 
+          SOURCE_SHA="${SOURCE_SHA:-$GITHUB_SHA}"
+          rm -rf .git
           git init .
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           git config --local gc.auto 0
@@ -51,8 +92,8 @@ jobs:
             if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
               git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
                 fetch --no-tags --prune --no-recurse-submodules \
-                origin "$GITHUB_SHA" \
-              && git checkout --force --detach "$GITHUB_SHA"; then
+                origin "$SOURCE_SHA" \
+              && git checkout --force --detach "$SOURCE_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
               exit 0
             fi
@@ -72,88 +113,33 @@ jobs:
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
+          PR_BASE_EDIT: ${{ github.event.action == 'edited' && github.event.changes.base != null }}
           PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}
           PR_LABEL_NAME: ${{ github.event.label.name || '' }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          # Main runs are admitted through the queue. Plan from the last
-          # successful coverage-aware ancestor so failed or cancelled work is
-          # automatically absorbed by the next run.
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-            node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Manual and merge-queue runs must execute CI regardless of changed paths.
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
-            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
-            echo "CI relevant changes: true ($GITHUB_EVENT_NAME always runs)"
-            exit 0
-          fi
-
-          should_run_trigger=true
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && { [ "$PR_LABEL_NAME" = "ready-for-ci" ] || [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
-              should_run_trigger=true
-            fi
-          fi
-
-          if [ "$should_run_trigger" != "true" ]; then
-            echo "trigger_requested=false" >> "$GITHUB_OUTPUT"
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
-            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually. Later commits rerun automatically while ready-for-ci remains applied."
-            exit 0
-          fi
-
-          echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-          git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
-          changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
-          os_view_parity_tests="$(printf '%s\n' "$changed_files" | node scripts/ci/os-view-parity-plan.mjs)"
-
-          should_run=false
-          docs_contract_tests=false
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            case "$file" in
-              docs/*|specs/*|*.md) docs_contract_tests=true ;;
-              *) should_run=true ;;
-            esac
-          done <<EOF
-          $changed_files
-          EOF
-
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-          echo "docs_contract_tests=$docs_contract_tests" >> "$GITHUB_OUTPUT"
-          echo "os_view_parity_tests=$os_view_parity_tests" >> "$GITHUB_OUTPUT"
-          echo "CI relevant changes: $should_run"
-          echo "Docs contract tests: $docs_contract_tests"
-          echo "OS-view parity tests: $os_view_parity_tests"
+        run: node scripts/ci/dedicated-changes.mjs
 
       - name: Select guarded Linux delegation
         id: route
         env:
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
           SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
+          REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
         run: |
           node --input-type=module <<'NODE'
           import {readFileSync, appendFileSync} from 'node:fs';
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
-          const pull=event.pull_request;
-          const eligible=process.env.SHOULD_RUN === 'true' && process.env.MATRIX_CI_DEDICATED_ENABLED === 'true' &&
-            process.env.GITHUB_EVENT_NAME === 'pull_request' && pull?.base?.ref === 'main' &&
-            pull.head.repo?.full_name?.toLowerCase() === process.env.GITHUB_REPOSITORY.toLowerCase() &&
-            pull.state === 'open' && !pull.draft && pull.labels?.some(label=>label.name === 'ready-for-ci');
-          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\n`);
+          const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
+          const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
+          if(refresh){appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=true\n`);process.exit(0);}
+          const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
+            shouldRun:process.env.SHOULD_RUN, pull:event.pull_request});
+          const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
+            shouldRun:process.env.SHOULD_RUN,pull:event.pull_request});
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
           NODE
 
   # Independent validation jobs share only the change-classification dependency.
@@ -169,6 +155,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping typecheck."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -202,6 +190,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping shell production build."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -254,6 +244,7 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Install ripgrep
@@ -311,6 +302,7 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v6
@@ -324,7 +316,7 @@ jobs:
           COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ needs.changes.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -378,6 +370,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping sync-client checks."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
@@ -417,6 +411,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping Agent SDK compatibility."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
@@ -463,6 +459,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping unit shard."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -523,6 +521,8 @@ jobs:
       MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
       - uses: oven-sh/setup-bun@v2
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -566,6 +566,8 @@ jobs:
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.docs_contract_tests == 'true'
 
       - uses: pnpm/action-setup@v6
@@ -596,6 +598,8 @@ jobs:
         run: echo "No shared OS-view surface changes detected; skipping parity tests."
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.os_view_parity_tests == 'true'
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -641,6 +645,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping e2e tests."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -823,6 +829,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           persist-credentials: false
       - name: Execute isolated root fixtures without skipped cases
         run: |
@@ -843,7 +850,7 @@ jobs:
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
     needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_eligible == 'true'
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     permissions:
@@ -853,20 +860,33 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Verify exact merge revision Linux outcome
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
+            const snapshot=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
+            const pull=context.payload.pull_request;
             const result=await waitForDedicatedResult(github,{
-              ...context.repo, sourceSha: context.sha,
-              headSha: context.payload.pull_request.head.sha,
-              baseSha: context.payload.pull_request.base.sha,
-              prNumber: context.payload.pull_request.number, serverUrl: context.serverUrl
-            });
+              ...context.repo, sourceSha: snapshot?.sourceSha || context.sha, requestingRunId:context.runId,
+              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
+              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
+              headSha: snapshot?.headSha || pull.head.sha,
+              headRef: snapshot?.headRef || pull.head.ref,
+              baseSha: snapshot?.baseSha || pull.base.sha,
+              baseRef: snapshot?.baseRef || pull.base.ref,
+              prNumber: snapshot?.prNumber || pull.number, serverUrl: context.serverUrl
+            },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
             core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
 
   ci-results:
@@ -881,6 +901,7 @@ jobs:
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
           DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          DEDICATED_REQUIRED: ${{ needs.changes.outputs.dedicated_required }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
@@ -898,6 +919,7 @@ jobs:
         run: |
           set -euo pipefail
           DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
+          DEDICATED_REQUIRED=${DEDICATED_REQUIRED:-$DEDICATED_ELIGIBLE}
           DEDICATED_LINUX_RESULT=${DEDICATED_LINUX_RESULT:-skipped}
 
           {
@@ -950,7 +972,7 @@ jobs:
             failed=true
           fi
 
-          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_ELIGIBLE" = "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
             failed=true
           fi
 
