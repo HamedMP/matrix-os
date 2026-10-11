@@ -22,5 +22,7 @@ This small PR stacks on the latter to preserve its reviewed isolated phase bindi
 
 1. RED/GREEN authenticated route with real isolated PGlite runtime binding and deterministic summary/probe deadlines: GLM/Sonnet partial error and timeout, policy change, exhausted budget, stale health, all stalled and cancellation.
 2. Existing cache-only, receipt lifetime, cold-start, probe-budget and Gateway readiness suites; Platform typecheck.
-3. Public docs deliverable in `FinnaAI/matrix-os-site/content/docs/`, coordinated with ENG-257: extend existing site PR [#219](https://github.com/FinnaAI/matrix-os-site/pull/219) rather than duplicate its shared-health guide. The proposed local-observation and sibling-isolation wording is prepared for the documentation owner; it has not been applied to that frozen head.
+3. Public docs deliverable in `FinnaAI/matrix-os-site/content/docs/`, coordinated with ENG-257: narrow companion [site PR #232](https://github.com/FinnaAI/matrix-os-site/pull/232) covers local-observation and sibling-isolation recovery, complementing existing [#219](https://github.com/FinnaAI/matrix-os-site/pull/219) without changing its frozen head. The companion is prepared and validated, not published.
 4. Deferred exact-source publication, Preview VPS and Electron Desktop/Web Desktop/Web Canvas acceptance. PGlite and mocked inference are not real Postgres/provider, user Main or paid settlement acceptance. Greptile, CI and merge remain in the sole publication queue.
+
+Review regression: a delayed final funding read starts at 10.5 seconds and completes at 11.5 seconds within the original 12-second budget. Changing the reserve to 1 millisecond makes this assertion fail; restoring production behavior passes all 10 sibling-isolation cases.

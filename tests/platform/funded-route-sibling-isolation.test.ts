@@ -87,3 +87,40 @@ it.each(["policy", "budget", "stale_health", "all_stalled", "cancel"] as const)(
     expect(f.read).toHaveBeenCalledTimes(2);
   }
 });
+
+it("reserves 1.5 seconds for a delayed final funding read within the original deadline", async () => {
+  const f = await fixture();
+  const started = Promise.withResolvers<void>();
+  let finalReadAt: number | undefined;
+  f.read.mockImplementationOnce(async () => structuredClone(f.current)).mockImplementation(async () => {
+    finalReadAt = Date.now();
+    await new Promise<void>(resolve => setTimeout(resolve, 1_000));
+    return structuredClone(f.current);
+  });
+  const probe = vi.fn(async (model: string) => {
+    started.resolve();
+    if (model === models[1]) return await new Promise<never>(() => undefined);
+    return { ready: true, checkedAt: start, staleAfter: new Date(Date.parse(start) + 30_000).toISOString() };
+  });
+  vi.useFakeTimers(); vi.setSystemTime(new Date(start));
+  const app = new Hono().route("/runtime/:handle", createAiFundedRuntimeRoutes({ db: db!, platformSecret: secret,
+    repository: f.repository, routeProbes: { probe }, now: () => new Date() }));
+  const token = buildPlatformRuntimeVerificationToken({ handle: "fixture", machineId: identity.machineId, runtimeSlot: "primary" }, secret);
+  let completed = false;
+  const request = app.request("/runtime/fixture/route-readiness?runtimeSlot=primary", { method: "POST", body: "{}",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } }).then(response => { completed = true; return response; });
+  await started.promise;
+  const observationMs = FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs - 1_500;
+  await vi.advanceTimersByTimeAsync(observationMs);
+  expect(finalReadAt).toBe(Date.parse(start) + observationMs);
+  expect(completed).toBe(false);
+  await vi.advanceTimersByTimeAsync(999);
+  expect(completed).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  const response = await request;
+  expect(response.status).toBe(200);
+  expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual([models[0]]);
+  expect(Date.now()).toBe(Date.parse(start) + observationMs + 1_000);
+  expect(Date.now()).toBeLessThan(Date.parse(start) + FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs);
+  expect(f.read).toHaveBeenCalledTimes(2);
+});
