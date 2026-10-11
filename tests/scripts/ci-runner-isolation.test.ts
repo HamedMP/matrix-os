@@ -19,10 +19,10 @@ function readOptionalEvidence(read: () => string): string {
   }
 }
 
-function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false, hostCores = 16) {
+function invoke(args: string[], failure: boolean | "firewall" | "artifact" | "timeout" | "read" = false, hostCores = 16, memoryKiB = hostCores >= 32 ? 130023424 : 67108864) {
   const dir = mkdtempSync(resolve(tmpdir(), "matrix-runner-test-"));
   const log = resolve(dir, "calls");
-  writeFileSync(resolve(dir, "meminfo"), `MemTotal:       ${hostCores >= 32 ? 130023424 : 67108864} kB\n`);
+  writeFileSync(resolve(dir, "meminfo"), `MemTotal:       ${memoryKiB} kB\n`);
   writeFileSync(resolve(dir, "nproc"), `#!/bin/bash\necho ${hostCores}\n`);
   chmodSync(resolve(dir, "nproc"), 0o755);
   writeFileSync(resolve(dir, "docker"), `#!/bin/bash
@@ -70,6 +70,14 @@ describe("disposable manual CI benchmark admission and isolation", () => {
       expect(calls).toBe("");
     },
   );
+  it.each([[4, 67108864], [16, 20000000]])("reports both measured admission resources before allocation", (cpu, memory) => {
+    const { result, calls } = invoke([sha, "unit", "8"], false, cpu, memory);
+    expect(result.status).toBe(64);
+    expect(result.stderr).toContain(`host CPUs=${cpu}`);
+    expect(result.stderr).toContain(`memory KiB=${memory}`);
+    expect(result.stderr).toContain("minimum CPUs=8, memory KiB=30000000");
+    expect(calls).toBe("");
+  });
   it("surfaces unexpected test evidence read failures", () => {
     expect(() => invoke([sha, "unit", "8"], "read")).toThrow();
   });

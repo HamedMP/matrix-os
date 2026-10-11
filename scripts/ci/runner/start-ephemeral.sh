@@ -20,7 +20,7 @@ elif (( host_cpus >= 16 && host_memory_kib >= 60000000 )); then
 elif (( host_cpus >= 8 && host_memory_kib >= 30000000 )); then
   cpu_limit=8 memory_limit=28g work_limit=16g
 else
-  echo 'Requires at least eight host CPUs' >&2
+  printf 'Insufficient benchmark capacity: host CPUs=%s, memory KiB=%s; minimum CPUs=8, memory KiB=30000000\n' "$host_cpus" "$host_memory_kib" >&2
   exit 64
 fi
 state_dir=${MATRIX_CI_STATE_DIR:-/var/lib/matrix-ci}
