@@ -26,13 +26,13 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
   const pins = () => db.selectFrom("bot_chatgpt_plan_devices").selectAll().orderBy("owner_id").orderBy("computer_id").execute();
   const concurrentStarts = () => Promise.all(Array.from({length:12},()=>bootstrapBotDatabase(db)));
 
-  it("applies v6 exactly once across twelve pooled startups and leaves v5 authorization and execution bindings intact",async () => {
+  it("applies v6 and additive phases exactly once across twelve pooled startups and leaves v5 authorization and execution bindings intact",async () => {
     await sql`INSERT INTO bot_provider_authorizations VALUES (${OWNER}, 'computer_saved', 'claude_code_tasks', 'saved-fingerprint', true, true, 7)`.execute(db);
     await sql`INSERT INTO bot_execution_bindings VALUES (${OWNER}, 'computer_saved', ${BOT}, 'claude_code_tasks', 'sonnet', 7, 'native_saved', 4)`.execute(db);
     const authorizations=await sql`SELECT * FROM bot_provider_authorizations`.execute(db);
     const bindings=await sql`SELECT * FROM bot_execution_bindings`.execute(db);
     const starts=await concurrentStarts();
-    expect(starts.flatMap(result=>result.applied)).toEqual([6]);
+    expect(starts.flatMap(result=>result.applied)).toEqual([6,7,8]);
     expect(await db.selectFrom("bot_schema_migrations").select(["version","name"]).where("version","=",6).execute()).toEqual([{version:6,name:"bot_chatgpt_plan_devices"}]);
     expect(await pins()).toEqual([]);
     expect((await sql`SELECT * FROM bot_provider_authorizations`.execute(db)).rows).toEqual(authorizations.rows);
@@ -49,6 +49,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
       {owner_id:"other_owner",computer_id:"computer_saved",device_id:"c".repeat(64),public_key:"fixture-public-key-c".repeat(3)}];
     await db.insertInto("bot_chatgpt_plan_devices").values(saved).execute();
     const before=await pins();
+    expect((await concurrentStarts()).flatMap(result=>result.applied)).toEqual([7,8]);
     expect((await concurrentStarts()).every(result=>result.applied.length===0)).toBe(true);
     expect(await pins()).toEqual(before);
   });
