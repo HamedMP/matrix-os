@@ -15,7 +15,7 @@ import { mintCustomMcpApprovalProof } from "../../packages/platform/src/custom-m
 import { APP_SESSION_COOKIE } from "../../packages/platform/src/session-cookies.js";
 import { resolveAppDomainIdentity } from "../../packages/platform/src/session-routing-identity.js";
 import { issueSyncJwt } from "../../packages/platform/src/sync-jwt.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const handle = "pr-1234";
 const actorId = "user_drive_owner";

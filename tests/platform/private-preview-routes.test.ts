@@ -17,7 +17,7 @@ import { createOrganizationMembershipProjection } from '../../packages/platform/
 import { PlatformOrganizationRepository } from '../../packages/platform/src/organizations/repository.js';
 import { membershipCheckFromProjection } from '../../packages/platform/src/private-preview-access.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { JWT_SECRET, stubOrchestrator } from './proxy-routing-test-utils.js';
 
 const secret = 'platform-secret-123';

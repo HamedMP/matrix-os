@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { insertUserMachine, upsertBillingSubscription, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createMcpRuntimeContext } from '../../packages/platform/src/mcp-runtime-context.js';
 import { verifySyncJwt } from '../../packages/platform/src/sync-jwt.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret = 'mcp-internal-runtime-test-secret-32-chars';
 const expiresAt = Math.floor(Date.now() / 1000) + 3600;

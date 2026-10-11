@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 import { loadPlatformSpeechConfig } from "../../packages/platform/src/speech/config.js";
 import { createConfiguredPlatformSpeechService } from "../../packages/platform/src/speech/wiring.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 function oneSecondWav(): Uint8Array {
   const samples = 16_000;
