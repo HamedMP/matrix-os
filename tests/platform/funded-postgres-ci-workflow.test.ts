@@ -23,8 +23,8 @@ function executeSettlementStep(url: string | undefined, step = settlementStep) {
     const pnpm = join(directory, "pnpm");
     writeFileSync(pnpm, '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$WAIVER_CI_ARGUMENTS_PATH"\n');
     chmodSync(pnpm, 0o700);
-    // Fail safely if a workflow regresses to the old prerequisite wrapper.
     const bun = join(directory, "bun");
+    // Fail safely if a workflow regresses to the old prerequisite wrapper.
     writeFileSync(bun, '#!/usr/bin/env bash\nprintf "Unexpected bun escaped the command stub\\n" >&2\nexit 73\n');
     chmodSync(bun, 0o700);
     const result = spawnSync("bash", ["-eu", "-c", step.run!], {
@@ -47,7 +47,20 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "--maxWorkers=1", "--no-file-parallelism",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "--maxWorkers=1", "--no-file-parallelism",
+    ]);
+    const absentUrl = executeSettlementStep(undefined, step);
+    expect(absentUrl, absentUrl.diagnostics).toMatchObject({ status: 1, args: [] });
+  });
+  it("executes isolated pre-send races under the disposable PostgreSQL environment", () => {
+    const step = job.steps.find(candidate => candidate.run?.includes("tests/gateway/bots/integration-grant-source-postgres.test.ts"))!;
+    const result = executeSettlementStep(job.env.MATRIX_TEST_POSTGRES_URL, step);
+    expect(result.status, result.diagnostics).toBe(0);
+    expect(result.args).toEqual([
+      "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
     expect(absentUrl, absentUrl.diagnostics).toMatchObject({ status: 1, args: [] });
@@ -57,6 +70,7 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/platform/ai-funded-usage-postgres.test.ts",
+      "tests/platform/ai-funded-model-probes-postgres.test.ts",
       "tests/platform/ai-funded-recovery-migration.test.ts",
       "tests/platform/ai-funded-usage-waiver.test.ts", "tests/platform/ai-funded-usage-waiver-cli.test.ts",
       "tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts",
