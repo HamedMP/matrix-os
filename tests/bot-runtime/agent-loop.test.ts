@@ -65,6 +65,33 @@ const run = (input: {
 });
 
 describe("bot agent loop", () => {
+  it.each(["unknown", "invalid", "truncated"])("bounds model calls when %s tools never consume an action", async kind => {
+    const replies = Array.from({ length: 8 }, (_, index) => fauxAssistantMessage(
+      fauxToolCall(kind === "unknown" ? "missing_tool" : "write_artifact", {}, { id: `bad_${index}` }),
+      { stopReason: kind === "truncated" ? "length" : "toolUse" },
+    ));
+    const { route } = scripted([...replies, fauxAssistantMessage(fauxText("Stopped."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    const outcome = await run({ broker, route, command: command({ limits: { maxToolActions: 2 } }) });
+    // Two tool rounds, a final response and at most two compaction requests.
+    expect(stream.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(tools).toHaveLength(0);
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("bounds the normal sixty-action run without replacing its tools or output route", async () => {
+    const { route } = scripted([
+      ...Array.from({ length: 70 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Stopped.")),
+    ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker } = memoryBroker();
+    expect((await run({ broker, route })).status).toBe("failed");
+    expect(stream).toHaveBeenCalledTimes(63);
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
+  });
+
   it("passes the bridge placeholder key to Pi for every model stream", async () => {
     const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
     const streamSimple = vi.spyOn(route.provider, "streamSimple");

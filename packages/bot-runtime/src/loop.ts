@@ -92,8 +92,11 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
     return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
   }
-  let inferenceCalls = 0;
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
+  // Unknown/invalid/truncated tools bypass beforeToolCall. Bound model work
+  // itself: tool rounds, a final response and at most two session summaries.
+  const maxInferenceCalls = isolated ? 1 : command.limits.maxToolActions + 3;
+  let inferenceCalls = 0;
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;
@@ -110,14 +113,16 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       messages: history,
     },
     streamFn: (streamModel, context, options) => {
-      if (isolated && inferenceCalls++ > 0) throw new Error("Isolated turn ended");
+      if (inferenceCalls >= maxInferenceCalls) throw new Error("Model action budget ended");
+      inferenceCalls += 1;
       return provider.streamSimple(streamModel, context, {
       ...options,
       // A Provider does not resolve auth itself. The worker only carries this
       // inert value; the loopback broker owns the funded credential.
       apiKey: BROKER_PLACEHOLDER_KEY,
       maxTokens: command.route.maxOutputTokens,
-      ...(isolated ? { maxRetries: 0, reasoning: undefined } : {}),
+      maxRetries: 0,
+      ...(isolated ? { reasoning: undefined } : {}),
     }); },
     toolExecution: "sequential",
     // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
@@ -212,12 +217,13 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     // Summaries are best effort: a cancelled run skips them, and a failed call
     // falls back to storage fitting so the turn is still saved.
     const summarize = async (transcript: string) => {
-      if (input.signal?.aborted) return "";
+      if (input.signal?.aborted || inferenceCalls >= maxInferenceCalls) return "";
       try {
+        inferenceCalls += 1;
         const reply = await provider.streamSimple(model, normalizeContext({
           systemPrompt: SUMMARY_PROMPT,
           messages: [{ role: "user", content: transcript, timestamp: now() }],
-        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: SUMMARY_MAX_TOKENS,
+        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: Math.min(SUMMARY_MAX_TOKENS, command.route.maxOutputTokens), maxRetries: 0,
           ...(input.signal ? { signal: input.signal } : {}) }).result();
         return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
       } catch (error: unknown) {

@@ -40,6 +40,8 @@ const BotInferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
   stream: z.literal(true),
   tools: z.array(z.unknown()).max(MAX_BOT_TOOLS).optional(),
+  max_tokens: z.number().int().positive().optional(),
+  max_completion_tokens: z.number().int().positive().optional(),
 }).passthrough();
 
 export interface BotInferenceDependencies {
@@ -103,8 +105,10 @@ export async function forwardBotInference(
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
+  let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
-    modelId = BotInferenceBodySchema.parse(JSON.parse(request.body)).model;
+    parsedBody = BotInferenceBodySchema.parse(JSON.parse(request.body));
+    modelId = parsedBody.model;
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
       console.warn("[bots] inference validation failed:", error instanceof Error ? error.name : "UnknownError");
@@ -141,6 +145,18 @@ export async function forwardBotInference(
   if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
     return failure(request.requestId, "provider_unavailable");
   }
+
+  // The registry's resolved route is the output authority. Omission must not
+  // let an upstream default widen it; preserve smaller explicit limits (for
+  // example session summaries) and reject conflicting/oversized limits.
+  if ((parsedBody.max_tokens !== undefined && parsedBody.max_completion_tokens !== undefined)
+    || (request.action === "inference.messages" && parsedBody.max_completion_tokens !== undefined)) {
+    return failure(request.requestId, "invalid_request");
+  }
+  const outputTokens = parsedBody.max_tokens ?? parsedBody.max_completion_tokens ?? binding.route.maxOutputTokens;
+  if (outputTokens > binding.route.maxOutputTokens) return failure(request.requestId, "invalid_request");
+  const inferenceBody = parsedBody.max_tokens === undefined && parsedBody.max_completion_tokens === undefined
+    ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
 
   const accessSourceId = authorization.accessSourceId;
   const stillAuthorized = () => {
@@ -184,7 +200,7 @@ export async function forwardBotInference(
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
-        body: request.body,
+        body: inferenceBody,
         redirect: "error",
         signal: AbortSignal.any([lifecycle, AbortSignal.timeout(
           accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
