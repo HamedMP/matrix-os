@@ -97,6 +97,7 @@ def parse(data):
 
 def service_url(value, origin=False):
     require(isinstance(value, str) and 1 <= len(value) <= 512)
+    require(all(not character.isspace() and 32 <= ord(character) < 127 for character in value))
     parsed = urlsplit(value)
     host = parsed.hostname or ""
     require(parsed.scheme == "https" and re.fullmatch(r"[a-z0-9.-]+", host)
@@ -329,6 +330,7 @@ def _execute(request, root, uid, gid, activity):
             verify_release(anchor, release, uid, gid)
             require(values.get("MATRIX_FUNDED_AI_ENABLED") in ("true", "false", "1", "0")
                     and re.fullmatch(r"[a-f0-9]{64}", values.get("MATRIX_FUNDED_AI_RUNTIME_TOKEN", "")), "funding_conflict")
+            require(ROUTING_KEYS <= values.keys(), "funding_conflict")
         name = backup_name(request["rolloutId"])
         if request["action"] in ("apply", "align-routing"):
             service_url(patch.get("MATRIX_FUNDED_AI_PLATFORM_URL",

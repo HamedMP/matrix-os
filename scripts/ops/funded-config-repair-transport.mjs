@@ -96,7 +96,8 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
     if (!match || !watched.has(match[1])) continue;
     requireCondition(!(match[1] in values) && line.startsWith(match[1] + '=')
-      && /^[A-Za-z0-9_-]+$/.test(line.slice(match[1].length + 1)));
+      && (match[1] === 'MATRIX_FUNDED_AI_RUNTIME_TOKEN' ? /^[A-Za-z0-9_-]*$/ : /^[A-Za-z0-9_-]+$/)
+        .test(line.slice(match[1].length + 1)));
     values[match[1]] = line.slice(match[1].length + 1);
   }
   const envelope = transport.envelope;

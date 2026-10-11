@@ -118,6 +118,14 @@ describe('authenticated stdin funding repair transport', () => {
     expect(result.stdout + result.stderr).not.toContain(runtimeToken);
   });
 
+  it('preserves legacy apply transport when the installed funded token is empty', () => {
+    const { path, contents } = fixture();
+    writeFileSync(path, contents + 'MATRIX_FUNDED_AI_RUNTIME_TOKEN=\n');
+    const result = bridge(sealFundedConfigRepair(request, source, authToken), path);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'apply', changed: false });
+  });
+
   it.each(['ciphertext', 'tag', 'salt', 'iv'])('rejects tampered %s before executing', field => {
     const { path } = fixture();
     const transport = sealFundedConfigRepair(request, source, authToken);

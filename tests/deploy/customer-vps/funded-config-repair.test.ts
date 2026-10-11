@@ -90,6 +90,23 @@ describe('operator funded Chat configuration repair', () => {
     expect(readFileSync(path, 'utf8')).toBe(contents);
   });
 
+  it.each(['relayUrl', 'platformUrl'] as const)('refuses raw whitespace/control characters in %s without writing', field => {
+    for (const character of ['\r\n', '\n', '\t', ' ', '\u0000', '\u007f']) {
+      const { root, path } = supported(routingContents);
+      const input = routingRequest(path);
+      input.config![field] += character;
+      expect(run(root, input, '', 'lambda: None', true).status).toBe(1);
+      expect(readFileSync(path, 'utf8')).toBe(routingContents);
+    }
+  });
+
+  it.each(['MATRIX_FUNDED_AI_RELAY_URL', 'MATRIX_FUNDED_AI_PLATFORM_URL'])('refuses a missing %s assignment without repairing it', key => {
+    const contents = routingContents.replace(new RegExp(`^${key}=.*\\n`, 'm'), '');
+    const { root, path } = supported(contents);
+    expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(contents);
+  });
+
   it('keeps routing no-op inode and rolls back only its URLs while preserving later excluded assignments', () => {
     const { root, path } = supported(routingContents);
     expect(run(root, routingRequest(path), '', 'lambda: None', true).status).toBe(0);
