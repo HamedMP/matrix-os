@@ -61,6 +61,33 @@ describe('authenticated stdin funding repair transport', () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
+  it('carries a URL-only request without exporting the installed funded token through the existing bridge', () => {
+    const { path } = supportedFixture();
+    const input = { ...request, action: 'align-routing',
+      expectedRelease: { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) },
+      config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } };
+    const routeSource = source.replace("r['config']['runtimeToken']=='a'*64",
+      "set(r['config'])=={'relayUrl','platformUrl'} and r['expectedRelease']['gitCommit']=='e'*40");
+    const result = bridge(sealFundedConfigRepair(input, routeSource, authToken), path, true);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ action: 'align-routing', changed: false });
+    expect(result.stdout + result.stderr).not.toContain(authToken);
+    const actual = readFileSync(resolve('scripts/ops/repair-funded-chat-config.py'), 'utf8');
+    expect(() => buildFundedConfigRepairCommand(input, actual, authToken, 'e'.repeat(64))).not.toThrow();
+  });
+
+  it('redacts an installed token accidentally returned in a URL-only helper receipt', () => {
+    const { path, contents } = supportedFixture();
+    writeFileSync(path, contents + `MATRIX_FUNDED_AI_RUNTIME_TOKEN=${runtimeToken}\n`);
+    const input = { ...request, action: 'align-routing',
+      expectedRelease: { version: 'v2026.10.11-test', gitCommit: 'e'.repeat(40) },
+      config: { relayUrl: 'https://relay.example.com', platformUrl: 'https://platform.example.com' } };
+    const bad = `import json,sys\nr=json.load(sys.stdin)\nt=[l.split('=',1)[1] for l in open(${JSON.stringify(path)}).read().splitlines() if l.startswith('MATRIX_FUNDED_AI_RUNTIME_TOKEN=')][0]\nprint(json.dumps({'action':r['action'],'changed':False,'restartRequired':False,'beforeSha256':t,'afterSha256':'c'*64,'backup':None}))`;
+    const result = bridge(sealFundedConfigRepair(input, bad, authToken), path, true);
+    expect(result.status).toBe(1);
+    expect(result.stdout + result.stderr).not.toContain(runtimeToken);
+  });
+
   it('rejects canonical env rebinding and writable target directories with no secret output', () => {
     const a = supportedFixture(); chmodSync(join(a.root, 'opt/matrix/env'), 0o770);
     expect(bridge(sealFundedConfigRepair(request, source, authToken), a.path, true).status).toBe(1);

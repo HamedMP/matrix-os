@@ -14,7 +14,7 @@ export function sealFundedConfigRepair(request, helperSource, authToken, now = D
   }
   const plaintext = Buffer.from(JSON.stringify(request));
   if (plaintext.length > 4096 || !request?.identity || !request?.expectedFile
-    || !['apply', 'rollback'].includes(request.action)) throw new Error('Invalid repair request');
+    || !['apply', 'rollback', 'align-routing', 'rollback-routing'].includes(request.action)) throw new Error('Invalid repair request');
   if (helperSource.includes(authToken) || (typeof request.config?.runtimeToken === 'string'
     && helperSource.includes(request.config.runtimeToken))) throw new Error('Secrets must not be embedded in helper source');
   const aad = {
@@ -90,7 +90,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   } finally { fs.closeSync(fd); }
   const names = { machineId: 'MATRIX_MACHINE_ID', ownerId: 'MATRIX_CLERK_USER_ID',
     handle: 'MATRIX_HANDLE', runtimeSlot: 'MATRIX_RUNTIME_SLOT', epoch: 'MATRIX_RUNTIME_TOKEN_EPOCH' };
-  const watched = new Set([...Object.values(names), 'MATRIX_AUTH_TOKEN']);
+  const watched = new Set([...Object.values(names), 'MATRIX_AUTH_TOKEN', 'MATRIX_FUNDED_AI_RUNTIME_TOKEN']);
   const values = {};
   for (const line of bytes.toString('utf8').split('\n')) {
     const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
@@ -141,6 +141,7 @@ export function executeFundedConfigRepairBridge(transport, options = {}) {
   const receipt = JSON.parse(result.stdout);
   const rendered = JSON.stringify(receipt);
   requireCondition(!rendered.includes(values.MATRIX_AUTH_TOKEN)
+    && !(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN && rendered.includes(values.MATRIX_FUNDED_AI_RUNTIME_TOKEN))
     && !(typeof request.config?.runtimeToken === 'string' && rendered.includes(request.config.runtimeToken)));
   requireCondition(Object.keys(receipt).sort().join() === ['action', 'afterSha256', 'backup', 'beforeSha256', 'changed', 'restartRequired'].sort().join()
     && receipt.action === aad.action && typeof receipt.changed === 'boolean'
