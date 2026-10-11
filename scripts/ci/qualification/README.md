@@ -43,6 +43,19 @@ shared prerequisite builds and explicit brand builds are measured; caches,
 browsers, native PostgreSQL and the SDK compatibility installation remain
 outside source checkouts.
 
+Checkout timing includes prepared-cache selection and copy before application
+code runs. The immutable helper revalidates the trusted manifest digest and
+source lockfile, then compares its SHA256 with the root-owned image preparation
+pin. An exact match copies only image package content/index into a disposable
+run-private store; frozen installs still run in all four clones with package
+imports copied into independent node_modules. Image files are never written.
+The helper reads bounded readonly pnpm10 metadata, verifies browsers.json against
+its SHA512 content digest, and requires each pinned Chromium, headless-shell and
+FFmpeg revision for Ubuntu24.04 x64 to have an installation marker. Only then do
+both measured browser setup phases use the readonly image browser directory.
+Missing or mismatched cache data uses normal frozen installs/browser downloads;
+copy failures fail setup. No SDK build cache or timing improvement is assumed.
+
 The reviewed contract is 55 measured phases and 14 source guards: full unit tests
 with 16 workers and JSON/docs/source coverage proofs; blocking native typechecks;
 sync build, tests and publish checks; real SDK compatibility; production Web
