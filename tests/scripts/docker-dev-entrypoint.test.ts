@@ -26,6 +26,9 @@ function buildOutputFixture() {
   }
   writeFileSync(join(fixture, "bin/chown"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALL_LOG"\nexit "${CHOWN_EXIT:-0}"\n');
   chmodSync(join(fixture, "bin/chown"), 0o755);
+  // An unsupported preparation flag must stop before the dev startup path.
+  writeFileSync(join(fixture, "bin/pnpm"), "#!/bin/sh\nexit 23\n");
+  chmodSync(join(fixture, "bin/pnpm"), 0o755);
   const run = (extra: Record<string, string> = {}) => spawnSync("bash", [join(fixture, "distro/docker-dev-entrypoint.sh"), "--prepare-build-outputs"], {
     env: { ...process.env, PATH: `${join(fixture, "bin")}:${process.env.PATH}`, CALL_LOG: join(fixture, "calls"), ...extra },
     encoding: "utf8", timeout: 5_000,
