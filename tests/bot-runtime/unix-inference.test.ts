@@ -1,9 +1,13 @@
+import { runBotTurn } from "../../packages/bot-runtime/src/loop.js";
+import type { BotBrokerClient } from "../../packages/bot-runtime/src/broker-client.js";
+import { forwardBotInference } from "../../packages/gateway/src/bots/broker-inference.js";
+import type { ManagedPiRuntimeBinding } from "../../packages/gateway/src/bots/runtime-registry.js";
 import { createServer, type RequestListener } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeContext } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeModel, BROKER_PLACEHOLDER_KEY } from "../../packages/bot-runtime/src/providers.js";
 import { createBotBridgeFetch } from "../../packages/bot-runtime/src/bridge-fetch.js";
 import { MAX_BRIDGE_REQUEST_BYTES, MAX_BRIDGE_RESPONSE_BYTES, inferenceActionForPath, startInferenceBridge } from "../../packages/scope-runtime/src/inference-bridge.js";
@@ -15,8 +19,14 @@ import { serializeFundedOpenAiRequest } from "../../packages/proxy/src/funded-re
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
+function isolatedBroker(): BotBrokerClient {
+  return { loadSession: vi.fn(async () => ({ revision: 0, needsRecompaction: false, messages: [] })),
+    saveSession: vi.fn(async () => ({ revision: 1 })), event: vi.fn(async () => undefined),
+    tool: vi.fn(async () => { throw new Error("Isolated tool must not execute"); }) };
+}
+
 describe("Pi inference without TCP access", () => {
-  it.each(["text", "tool"] as const)("completes installed GLM %s SSE through Unix bridge, EOF broker and funded serializer", async (mode) => {
+  it.each(["text", "tool", "isolated"] as const)("completes installed GLM %s SSE through Unix bridge, EOF broker and funded serializer", async (mode) => {
     const dir = await mkdtemp(join(tmpdir(), "glm-unix-"));
     const brokerSocket = join(dir, "broker.sock");
     const socketPath = join(dir, "inference.sock");
@@ -25,7 +35,7 @@ describe("Pi inference without TCP access", () => {
       id: "chatcmpl_unix_qa", object: "chat.completion.chunk", created: 1, model: FUNDED_GLM_FLASH,
       choices: [{ index: 0, delta, finish_reason }],
     });
-    const events = mode === "text"
+    const events = mode !== "tool"
       ? [chunk({ role: "assistant" }), chunk({ content: "GLM_UNIX_PASS" }), chunk({}, "stop")]
       : [chunk({ role: "assistant" }), chunk({ tool_calls: [{ index: 0, id: "call_read_qa", type: "function",
         function: { name: "read_artifact", arguments: '{"path":' } }] }),
@@ -43,8 +53,9 @@ describe("Pi inference without TCP access", () => {
         expect(frame.headers).toEqual({});
         expect(Buffer.byteLength(frame.body)).toBeLessThanOrEqual(MAX_BRIDGE_REQUEST_BYTES);
         const body = JSON.parse(frame.body);
+        const outputLimit = mode === "isolated" ? 256 : 8192;
         expect(body).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
-          max_completion_tokens: 8192, store: false, stream_options: { include_usage: true } });
+          max_completion_tokens: outputLimit, store: false, stream_options: { include_usage: true } });
         // The pinned Pi SDK marks this bridge non-reasoning and omits effort.
         // The managed GLM adapter must not let that omission select provider max.
         expect(body).not.toHaveProperty("reasoning_effort");
@@ -52,11 +63,11 @@ describe("Pi inference without TCP access", () => {
         const serialized = serializeFundedOpenAiRequest(body);
         const upstream = JSON.parse(serialized.body);
         expect(upstream).toMatchObject({ model: FUNDED_GLM_FLASH, stream: true,
-          max_tokens: 8192, reasoning_effort: "low", store: false, stream_options: { include_usage: true },
-          messages: expect.arrayContaining([{ role: "user", content: "GLM_UNIX_QA" }]) });
+          max_tokens: outputLimit, reasoning_effort: "low", store: false, stream_options: { include_usage: true },
+          messages: expect.arrayContaining([{ role: "user", content: mode === "isolated" ? [{ type: "text", text: "GLM_UNIX_QA" }] : "GLM_UNIX_QA" }]) });
         expect(upstream).not.toHaveProperty("max_completion_tokens");
-        const { max_completion_tokens: outputLimit, ...sdkFields } = body;
-        expect(upstream).toEqual({ ...sdkFields, max_tokens: outputLimit, reasoning_effort: "low" });
+        const { max_completion_tokens: serializedLimit, ...sdkFields } = body;
+        expect(upstream).toEqual({ ...sdkFields, max_tokens: serializedLimit, reasoning_effort: "low" });
         if (mode === "tool") {
           expect(upstream.tool_choice).toBe("auto");
           expect(upstream.tools).toEqual(body.tools);
@@ -66,6 +77,21 @@ describe("Pi inference without TCP access", () => {
           }]);
         }
         expect(Buffer.byteLength(sse)).toBeLessThan(MAX_BRIDGE_RESPONSE_BYTES);
+        if (mode === "isolated") {
+          expect(body.tools ?? []).toEqual([]);
+          const bound: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "owner", chatId: "chat_sdk", runId: "run_sdk",
+            runtimeHandle: frame.runtimeHandle, executionGeneration: frame.executionGeneration, workspace: { kind: "chat_workspace" },
+            rootFingerprint: "a".repeat(64), capabilities: ["artifact.read"], requestClass: "interactive", accessSourceId: "matrix_included",
+            route: { api: "openai-completions", modelId: FUNDED_GLM_FLASH, input: ["text"], contextWindow: 128000, maxOutputTokens: 256 } };
+          const fetchImpl = vi.fn<typeof fetch>(async () => new Response(sse, { headers: { "content-type": "text/event-stream" } }));
+          const reply = await forwardBotInference(frame, bound, () => ({ allowed: true, accessSourceId: "matrix_included",
+            allowedModelIds: [FUNDED_GLM_FLASH], allowedEgressOrigins: [] }), { homePath: "/tmp", lifetime: new AbortController().signal,
+            isolatedChat: { select: () => true, targets: () => true, claim: async () => undefined, consume: async () => true },
+            resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "fixture", ANTHROPIC_BASE_URL: "https://relay.example.invalid" } }), fetchImpl });
+          expect(fetchImpl).toHaveBeenCalledTimes(1);
+          expect(reply.ok).toBe(true);
+          return reply;
+        }
         return { version: 1, requestId: frame.requestId, ok: true, status: 200,
           headers: { "content-type": "text/event-stream" }, body: sse };
       },
@@ -78,7 +104,19 @@ describe("Pi inference without TCP access", () => {
     expect(bridge.port).toBe(0);
     expect(bridge.server.address()).toBe(socketPath);
     const route = createBridgeModel({ api: "openai-completions", modelId: FUNDED_GLM_FLASH,
-      input: ["text"], contextWindow: 128_000, maxOutputTokens: 8192 }, "http://127.0.0.1:1", socketPath);
+      input: ["text"], contextWindow: 128_000, maxOutputTokens: mode === "isolated" ? 256 : 8192 }, "http://127.0.0.1:1", socketPath);
+    if (mode === "isolated") {
+      const brokerClient = isolatedBroker();
+      const reply = await runBotTurn({ command: { version: 1, kind: "bot.run", runId: "run_sdk", route: {
+        api: "openai-completions", modelId: FUNDED_GLM_FLASH, input: ["text"], contextWindow: 128000, maxOutputTokens: 256 },
+        systemPrompt: "Unix QA", capabilities: ["artifact.read"], limits: { maxToolActions: 1 },
+        isolatedTurn: { phaseId: "phase_sdk", maxInputBytes: 131072 }, turn: { kind: "prompt", text: "GLM_UNIX_QA" } },
+        broker: brokerClient, bridgeOrigin: "http://127.0.0.1:1", bridgeSocket: socketPath, route, signal: AbortSignal.timeout(5000) });
+      expect(reply).toMatchObject({ status: "completed", toolActions: 0 });
+      expect(frames).toHaveLength(1); expect(brokerClient.tool).not.toHaveBeenCalled();
+      expect(brokerClient.saveSession).toHaveBeenCalled();
+      return;
+    }
     const result = await route.provider.streamSimple(route.model, normalizeContext({ systemPrompt: "Unix QA",
       messages: [{ role: "user", content: "GLM_UNIX_QA", timestamp: 1 }],
       ...(mode === "tool" ? { tools: [{ name: "read_artifact", description: "Read an authorized QA artifact",
@@ -87,9 +125,46 @@ describe("Pi inference without TCP access", () => {
       maxTokens: 8192, maxRetries: 0, signal: AbortSignal.timeout(5000) }).result();
     expect(frames).toHaveLength(1);
     expect(result.usage).toMatchObject({ input: 7, output: 3 });
-    expect(result.stopReason).toBe(mode === "text" ? "stop" : "toolUse");
-    expect(result.content).toContainEqual(mode === "text" ? { type: "text", text: "GLM_UNIX_PASS" }
+    expect(result.stopReason).toBe(mode !== "tool" ? "stop" : "toolUse");
+    expect(result.content).toContainEqual(mode !== "tool" ? { type: "text", text: "GLM_UNIX_PASS" }
       : expect.objectContaining({ type: "toolCall", id: "call_read_qa", name: "read_artifact", arguments: { path: "proof.txt" } }));
+  });
+
+  it("validates pinned Sonnet serialized text bounds through the actual Unix broker before a final mocked refusal", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "sonnet-isolated-"));
+    const brokerSocket = join(dir, "broker.sock"), socketPath = join(dir, "inference.sock");
+    const modelId = "claude-sonnet-5";
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response("fixture final refusal", { status: 503 }));
+    let parsedBody: Record<string, unknown> | undefined;
+    const broker = createScopeRuntimeBrokerServer({ socketPath: brokerSocket,
+      broker: { handle: async () => { throw new Error("wrong route"); }, close: async () => undefined },
+      routeFrame: async raw => {
+        const frame = ScopeRuntimeBotInferenceRequestSchema.parse(raw);
+        parsedBody = JSON.parse(frame.body);
+        const bound: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "owner", chatId: "chat_sdk", runId: "run_sdk",
+          runtimeHandle: frame.runtimeHandle, executionGeneration: frame.executionGeneration, workspace: { kind: "chat_workspace" },
+          rootFingerprint: "a".repeat(64), capabilities: ["artifact.read"], requestClass: "interactive", accessSourceId: "matrix_included",
+          route: { api: "anthropic-messages", modelId, input: ["text"], contextWindow: 128000, maxOutputTokens: 256 } };
+        return forwardBotInference(frame, bound, () => ({ allowed: true, accessSourceId: "matrix_included", allowedModelIds: [modelId], allowedEgressOrigins: [] }), {
+          homePath: "/tmp", lifetime: new AbortController().signal,
+          isolatedChat: { select: () => true, targets: () => true, claim: async () => undefined, consume: async () => true },
+          resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "fixture", ANTHROPIC_BASE_URL: "https://relay.example.invalid" } }), fetchImpl });
+      } });
+    await broker.start();
+    const bridge = await startInferenceBridge({ brokerSocket, socketPath, runtimeHandle: `runtime_${"b".repeat(32)}`, executionGeneration: "3", actionFor: req => inferenceActionForPath(req.url) });
+    cleanup.push(async () => { await bridge.close(); await broker.close(); await rm(dir, { recursive: true, force: true }); });
+    const route = createBridgeModel({ api: "anthropic-messages", modelId, input: ["text"], contextWindow: 128000, maxOutputTokens: 256 }, "http://127.0.0.1:1", socketPath);
+    const brokerClient = isolatedBroker();
+    const result = await runBotTurn({ command: { version: 1, kind: "bot.run", runId: "run_sdk", route: {
+      api: "anthropic-messages", modelId, input: ["text"], contextWindow: 128000, maxOutputTokens: 256 },
+      systemPrompt: "QA", capabilities: ["artifact.read"], limits: { maxToolActions: 1 },
+      isolatedTurn: { phaseId: "phase_sdk", maxInputBytes: 131072 }, turn: { kind: "prompt", text: "QA" } },
+      broker: brokerClient, bridgeOrigin: "http://127.0.0.1:1", bridgeSocket: socketPath, route, signal: AbortSignal.timeout(5000) });
+    expect(parsedBody).toMatchObject({ model: modelId, max_tokens: 256, stream: true });
+    expect(parsedBody?.tools ?? []).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: "failed", toolActions: 0 });
+    expect(brokerClient.tool).not.toHaveBeenCalled();
   });
 
   it("routes the installed SDK through its private Unix HTTP socket", async () => {
