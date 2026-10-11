@@ -45,12 +45,16 @@ describe("Rolldown Electron builtin boundary", () => {
       writeFileSync(join(fixture, "preload.ts"), 'import { contextBridge } from "electron"; contextBridge.exposeInMainWorld("fixture", { ready: true });\n');
       writeFileSync(join(fixture, "config.mjs"), `
         import original from ${JSON.stringify(configPath)};
-        const base = original();
-        export default {
+        // Defer provenance evaluation until electron-vite removes its bundled
+        // config from the checkout, just like the production config callback.
+        export default () => {
+          const base = original();
+          return {
           main: { ...base.main, build: { ...base.main.build, outDir: ${JSON.stringify(join(fixture, "main"))},
             rollupOptions: { ...base.main.build.rollupOptions, input: { index: ${JSON.stringify(join(fixture, "main.ts"))} } } } },
           preload: { ...base.preload, build: { ...base.preload.build, outDir: ${JSON.stringify(join(fixture, "preload"))},
             rollupOptions: { ...base.preload.build.rollupOptions, input: ${JSON.stringify(join(fixture, "preload.ts"))} } } },
+          };
         };
       `);
       execFileSync(process.execPath, ["--input-type=module", "-e", `
