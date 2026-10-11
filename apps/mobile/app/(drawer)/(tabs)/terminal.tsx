@@ -318,7 +318,7 @@ function SwipeableTerminalRow({
             <Icon
               icon={PencilEdit02Icon}
               size={24}
-              color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
+              color={theme.v2.colors.textDefault}
             />
           </Pressable>
           <Pressable
@@ -475,9 +475,8 @@ function isMobileTerminalAgent(agent: TerminalSession["agent"]): agent is Mobile
 function sessionAccent(session: TerminalSession, theme: ReturnType<typeof useUnistyles>["theme"]): string {
   const p = theme.v2.palette;
   const dark = theme.v2.mode === "dark";
-  if (session.status === "exited") return dark ? p.neutral[700] : p.neutral[200];
-  if (session.visualStatus === "running") return dark ? p.green[800] : p.green[100];
-  if (session.visualStatus === "waiting") return dark ? p.gold[800] : p.gold[100];
+  // Only a session that is waiting for the person is coloured; the rest share one neutral.
+  if (session.status !== "exited" && session.visualStatus === "waiting") return dark ? p.gold[800] : p.gold[100];
   return dark ? p.neutral[700] : p.neutral[200];
 }
 
@@ -553,8 +552,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 14,
   },
   renameButton: {
-    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.green[900] : theme.v2.palette.green[100],
-    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.green[700] : theme.v2.palette.green[200],
+    backgroundColor: theme.v2.colors.chip,
+    borderColor: theme.v2.colors.controlOutlineBorder,
   },
   deleteButton: {
     backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[900] : theme.v2.palette.coral[50],
@@ -604,7 +603,7 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.v2.fonts.body,
     fontSize: 15,
     color: theme.v2.appColors.ink,
-    backgroundColor: theme.v2.palette.green[25],
+    backgroundColor: theme.v2.colors.background,
     borderWidth: 1,
     borderColor: theme.v2.palette.neutral[300],
     borderRadius: 12,

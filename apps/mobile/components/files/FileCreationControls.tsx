@@ -283,7 +283,7 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.v2.fonts.body,
     fontSize: 15,
     color: theme.v2.appColors.ink,
-    backgroundColor: theme.v2.palette.green[25],
+    backgroundColor: theme.v2.colors.background,
     borderWidth: 1,
     borderColor: theme.v2.palette.neutral[300],
     borderRadius: 12,

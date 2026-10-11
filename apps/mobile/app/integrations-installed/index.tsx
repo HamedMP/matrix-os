@@ -171,14 +171,14 @@ function SwipeableConnectionRow({
             {refreshing ? (
               <ActivityIndicator
                 size="small"
-                color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
+                color={theme.v2.colors.textDefault}
                 testID={`integration-refresh-spinner-${connection.id}`}
               />
             ) : (
               <Icon
                 icon={RefreshIcon}
                 size={24}
-                color={theme.v2.mode === "dark" ? theme.v2.palette.green[400] : theme.v2.palette.green[700]}
+                color={theme.v2.colors.textDefault}
                 testID={`integration-refresh-icon-${connection.id}`}
               />
             )}
@@ -350,8 +350,8 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 14,
   },
   refreshButton: {
-    backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.green[900] : theme.v2.palette.green[100],
-    borderColor: theme.v2.mode === "dark" ? theme.v2.palette.green[700] : theme.v2.palette.green[200],
+    backgroundColor: theme.v2.colors.chip,
+    borderColor: theme.v2.colors.controlOutlineBorder,
   },
   deleteButton: {
     backgroundColor: theme.v2.mode === "dark" ? theme.v2.palette.coral[900] : theme.v2.palette.coral[50],

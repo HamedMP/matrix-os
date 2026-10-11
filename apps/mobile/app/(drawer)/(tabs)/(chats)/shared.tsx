@@ -658,7 +658,7 @@ function SharedScreen() {
   const markdownTheme = useMemo(() => ({
     textStyle: { color: theme.v2.appColors.ink, fontFamily: theme.v2.fonts.body, fontSize: 15, lineHeight: 22 },
     mutedColor: theme.v2.appColors.muted, linkColor: theme.v2.colors.action,
-    codeBackground: theme.v2.appColors.soft, codeBorderColor: theme.v2.colors.borderSubtle,
+    codeBackground: theme.v2.colors.card, codeBorderColor: theme.v2.colors.borderSubtle,
     monoFontFamily: theme.v2.fonts.mono, boldFontFamily: theme.v2.fonts.semibold, headingFontFamily: theme.v2.fonts.display,
   }), [theme]);
 
@@ -962,12 +962,12 @@ const styles = StyleSheet.create((theme) => ({
   history: { flexGrow: 1, gap: 12, padding: 16 },
   emptyHistory: { paddingVertical: 48, textAlign: "center", fontFamily: theme.v2.fonts.body, color: theme.v2.appColors.muted },
   message: { maxWidth: "88%", gap: 6, padding: 14, borderRadius: 16 },
-  humanMessage: { alignSelf: "flex-end", backgroundColor: theme.v2.appColors.soft },
+  humanMessage: { alignSelf: "flex-end", backgroundColor: theme.v2.colors.card },
   aiMessage: { alignSelf: "flex-start", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, backgroundColor: theme.v2.appColors.surface },
   messageAuthor: { fontFamily: theme.v2.fonts.semibold, fontSize: 12, color: theme.v2.appColors.muted },
   invitationActions: { flexDirection: "row", gap: 8 },
-  action: { alignItems: "center", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, backgroundColor: theme.v2.palette.green[800] },
-  actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.textInverse },
+  action: { alignItems: "center", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, backgroundColor: theme.v2.colors.controlPrimary },
+  actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.onControlPrimary },
   secondaryAction: { alignItems: "center", borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
   compactAction: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: 10 },
   secondaryActionText: { fontFamily: theme.v2.fonts.semibold, fontSize: 13, color: theme.v2.appColors.ink },
