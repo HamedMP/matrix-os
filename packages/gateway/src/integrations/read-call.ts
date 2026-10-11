@@ -7,7 +7,9 @@ import { integrationActionFailure, integrationActionSuccess } from "./call-outco
 import { resolveIntegrationConnection } from "./connection-selection.js";
 import { validateActionParams } from "./parameter-validation.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
+import { BRAIN_INTEGRATION_RESPONSE_MAX_BYTES } from "../brain/contracts/sources.js";
 import { getAction, getService } from "./registry.js";
+import { isBrainReadAction } from "./registry-brain.js";
 import { executeJevBoundRead, JevBoundReadError, JevReadBindingSchema } from "./jev-bound-read.js";
 import type { ServiceDefinition } from "./types.js";
 
@@ -106,6 +108,10 @@ export function createIntegrationReadCallRoutes(options: {
           connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
         return integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data });
       }
+      // A Company Brain read is a byte-capped raw read that a dropped caller cancels: an oversized answer is refused
+      // here (502) instead of being buffered whole and sent on for the gateway to refuse.
+      const bounded = isBrainReadAction(service, action)
+        ? { signal: c.req.raw.signal, maxResponseBytes: BRAIN_INTEGRATION_RESPONSE_MAX_BYTES } : {};
       const { data, summary } = await executeIntegrationAction({
         pipedream: options.pipedream,
         externalUserId: user.pipedream_external_id,
@@ -115,6 +121,7 @@ export function createIntegrationReadCallRoutes(options: {
         serviceId: service,
         actionId: action,
         params,
+        ...bounded,
       });
       return integrationActionSuccess(c, {
         db: options.db,
