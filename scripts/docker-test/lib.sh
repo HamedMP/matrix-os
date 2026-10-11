@@ -182,7 +182,9 @@ wait_for_healthy() {
 }
 
 collect_docker_diagnostics() {
-  node "$SCRIPT_DIR/diagnostics.mjs" "$COMPOSE_FILE" "${COMPOSE_OVERRIDE_FILE:-}" "$1" "${DOCKER_TEST_LOG_DIR:-/tmp/docker-test-logs}" || return $?
+  local scenario="${0##*/}"
+  scenario="${scenario%.sh}"
+  node "$SCRIPT_DIR/diagnostics.mjs" "$COMPOSE_FILE" "${COMPOSE_OVERRIDE_FILE:-}" "$1" "${DOCKER_TEST_LOG_DIR:-/tmp/docker-test-logs}" "$scenario" || return $?
   DOCKER_DIAGNOSTICS_CAPTURED=true
 }
 

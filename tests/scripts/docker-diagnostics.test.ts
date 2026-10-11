@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -53,11 +53,64 @@ describe("Docker failure diagnostics before teardown", () => {
       expect(calls.slice(logs)).toContainEqual(expect.stringContaining("inspect --format {{json .State}} abcdef123456"));
       expect(calls.at(-1)).toContain("down -v --timeout 5");
       expect(calls.filter((call) => call.includes("logs --no-color"))).toHaveLength(1);
-      const savedLog = readFileSync(join(dir, "logs/pre-cleanup-dev-compose.log"));
+      const savedLog = readFileSync(join(dir, "logs/pre-cleanup-fresh-install-dev-compose.log"));
       expect(savedLog.byteLength).toBeLessThanOrEqual(262144);
       expect(savedLog.toString()).toContain("kernel build: EACCES mkdir .matrix-build-cache");
-      expect(readFileSync(join(dir, "logs/pre-cleanup-dev-state.log"), "utf8")).toContain('"ExitCode":1');
-      expect(readFileSync(join(dir, "logs/pre-cleanup-dev-containers.log"), "utf8")).toContain(`"State":"${state}"`);
+      expect(readFileSync(join(dir, "logs/pre-cleanup-fresh-install-dev-state.log"), "utf8")).toContain('"ExitCode":1');
+      expect(readFileSync(join(dir, "logs/pre-cleanup-fresh-install-dev-containers.log"), "utf8")).toContain(`"State":"${state}"`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("keeps each failed run-all scenario's bounded evidence in the shared artifact directory", () => {
+    const { dir, env } = fixture();
+    try {
+      const result = spawnSync("bash", [join(root, "scripts/docker-test/run-all.sh")], {
+        env: { ...env, SKIP_SCENARIOS: "customized-files multi-user channels recovery resource-limits", FAKE_STATE: "exited" },
+        encoding: "utf8", timeout: 10_000,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("Running: fresh-install");
+      expect(result.stdout).toContain("Running: upgrade");
+      const files = readdirSync(join(dir, "logs")).sort();
+      expect(files).toEqual(["fresh-install", "upgrade"].flatMap(scenario =>
+        ["compose", "containers", "state"].map(name => `pre-cleanup-${scenario}-dev-${name}.log`)).sort());
+      for (const file of files) {
+        expect(readFileSync(join(dir, "logs", file)).byteLength).toBeLessThanOrEqual(262144);
+      }
+      for (const scenario of ["fresh-install", "upgrade"]) {
+        expect(readFileSync(join(dir, "logs", `pre-cleanup-${scenario}-dev-compose.log`), "utf8"))
+          .toContain("kernel build: EACCES mkdir .matrix-build-cache");
+        expect(readFileSync(join(dir, "logs", `pre-cleanup-${scenario}-dev-state.log`), "utf8")).toContain('"ExitCode":1');
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("retains the bounded legacy collector API when no scenario is supplied", () => {
+    const { dir, env } = fixture();
+    try {
+      const result = spawnSync(process.execPath, [join(root, "scripts/docker-test/diagnostics.mjs"),
+        join(root, "docker-compose.dev.yml"), "", "dev", join(dir, "logs")], {
+        env, encoding: "utf8", timeout: 10_000,
+      });
+      expect(result.status).toBe(0);
+      expect(readdirSync(join(dir, "logs")).sort()).toEqual([
+        "pre-cleanup-dev-compose.log", "pre-cleanup-dev-containers.log", "pre-cleanup-dev-state.log",
+      ]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it.each(["../owner-data", "unknown-scenario"])("rejects unrecognized scenario names before writing diagnostics (%s)", scenario => {
+    const { dir, env } = fixture();
+    try {
+      mkdirSync(join(dir, "logs"));
+      const result = spawnSync(process.execPath, [join(root, "scripts/docker-test/diagnostics.mjs"),
+        join(root, "docker-compose.dev.yml"), "", "dev", join(dir, "logs"), scenario], {
+        env, encoding: "utf8", timeout: 10_000,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Could not preserve Docker diagnostics");
+      expect(readdirSync(join(dir, "logs"))).toEqual([]);
+      expect(existsSync(join(dir, "calls"))).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -71,7 +124,7 @@ describe("Docker failure diagnostics before teardown", () => {
       expect(result.status).toBe(42);
       expect(result.stderr).toContain("Could not preserve Docker diagnostics");
       expect(readFileSync(join(dir, "calls"), "utf8").trim().split("\n").at(-1)).toContain("down -v --timeout 5");
-      expect(existsSync(join(dir, "logs/pre-cleanup-dev-compose.log"))).toBe(false);
+      expect(existsSync(join(dir, "logs/pre-cleanup-fresh-install-dev-compose.log"))).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
@@ -81,7 +134,7 @@ describe("Docker failure diagnostics before teardown", () => {
       mkdirSync(join(dir, "logs"));
       const ownerFile = join(dir, "owner-data");
       writeFileSync(ownerFile, "preserved owner data");
-      symlinkSync(ownerFile, join(dir, "logs/pre-cleanup-dev-compose.log"));
+      symlinkSync(ownerFile, join(dir, "logs/pre-cleanup-fresh-install-dev-compose.log"));
       const result = spawnSync("bash", [join(root, "scripts/docker-test/fresh-install.sh")], {
         env: { ...env, UP_EXIT: "42" }, encoding: "utf8", timeout: 10_000,
       });
