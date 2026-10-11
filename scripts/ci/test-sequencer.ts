@@ -74,7 +74,9 @@ export class DurationSequencer extends BaseSequencer {
   }
 
   override async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
-    if (!this.ctx.config.shard) return super.sort(files);
+    const profileSort = process.env.MATRIX_TEST_PROFILE_SORT === "1"
+      && (["true", "1"].includes(process.env.CI ?? "") || process.env.MATRIX_TEST_BENCHMARK === "1");
+    if (!this.ctx.config.shard && !profileSort) return super.sort(files);
     return ranked(files, this.profile(), this.ctx.config.root).map(({ file }) => file);
   }
 }

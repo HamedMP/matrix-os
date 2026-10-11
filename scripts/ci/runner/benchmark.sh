@@ -7,6 +7,7 @@ workers=${3:?Missing worker count}
 [[ $sha =~ ^[a-f0-9]{40}$ && $workers =~ ^([1-9]|1[0-6])$ ]] || exit 64
 case "$suite" in unit|unit-shard-[1-4]|typecheck|shell|checks|e2e|e2e-general|e2e-electron|full|qualification) ;; *) exit 64 ;; esac
 export MATRIX_TEST_WORKERS=$workers
+if [[ $suite == qualification ]]; then export MATRIX_TEST_PROFILE_SORT=1; fi
 export PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_CHROMIUM_CHANNEL=chromium
 mkdir -p /work/results
 measure() {

@@ -45,8 +45,12 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   mkdirSync(bin);
   writeFileSync(resolve(dir,"pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   const preparedDir=resolve(dir,"prepared");
-  if(prepared !== "none") {
-    mkdirSync(preparedDir); mkdirSync(resolve(preparedDir,"browsers")); mkdirSync(resolve(preparedDir,"pnpm-store"));
+  mkdirSync(preparedDir);
+  const fixtureInitdb = resolve(dir,"fixture-initdb");
+  writeFileSync(fixtureInitdb,"#!/bin/bash\nexit 0\n");
+  chmodSync(fixtureInitdb,0o755);
+  writeFileSync(resolve(preparedDir,"fixture-postgres.sh"),"start_fixture_postgres() { echo fixture-start >> \"$CALLS\"; }\nstop_fixture_postgres() { echo fixture-stop >> \"$CALLS\"; }\n");
+  if(prepared !== "none") { mkdirSync(resolve(preparedDir,"browsers")); mkdirSync(resolve(preparedDir,"pnpm-store"));
     writeFileSync(resolve(preparedDir,"prepared-lock.sha256"), prepared === "match" ? createHash("sha256").update("lockfileVersion: '9.0'\n").digest("hex") : "0".repeat(64));
   }
   writeFileSync(resolve(dir, "displays"), "");
@@ -78,7 +82,7 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   };
   // Use the production script unchanged except its container-local /work path.
   const script = resolve(dir, "benchmark.sh");
-  writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir));
+  writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir).replaceAll("/usr/lib/postgresql/16/bin/initdb",fixtureInitdb));
   executable("git", `
 case "$1" in
   init) mkdir -p "$2/scripts/ci"; cp "$HARNESS_DIR/qualification-coverage.mjs" "$2/scripts/ci/qualification-coverage.mjs"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
@@ -131,6 +135,7 @@ fi
 if [[ "$*" == *"exec vitest run"* ]]; then
   if [[ "$*" != *"--config vitest.e2e.config.ts"* && "$*" == *"--outputFile="* ]]; then
     if [[ "$REQUIRE_CONCURRENT" == 1 ]]; then await_peer unit checks; fi
+    printf 'profile-sort %s\\n' "\${MATRIX_TEST_PROFILE_SORT:-0}" >> "$CALLS"
     [[ "$FAIL_LANE" != unit ]] || exit 42
     for argument in "$@"; do
       if [[ "$argument" == --outputFile=* && "$FAIL_LANE" != coverage-missing ]]; then
@@ -165,7 +170,7 @@ fi`);
       encoding: "utf8", timeout: 10_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
-        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, REAL_NODE: process.execPath,
+        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, MATRIX_TEST_PROFILE_SORT: "0", REAL_NODE: process.execPath,
         DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: ["full", "qualification"].includes(suite) ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
@@ -332,6 +337,20 @@ describe("eight-core full benchmark budget", () => {
 });
 
  describe("single-pass Linux qualification", () => {
+  it("models Linux PostgreSQL admission and cleanup in the mocked qualification",()=>{
+    const {result,calls}=invoke("qualification");
+    expect(result.status,result.stderr).toBe(0);
+    expect(calls.filter(call=>call === "fixture-start")).toHaveLength(1);
+    expect(calls.filter(call=>call === "fixture-stop")).toHaveLength(1);
+  });
+  it("enables measured profile ordering only for qualification",()=>{
+    const qualified=invoke("qualification");
+    expect(qualified.result.status,qualified.result.stderr).toBe(0);
+    expect(qualified.calls).toContain("profile-sort 1");
+    const historical=invoke("full");
+    expect(historical.result.status,historical.result.stderr).toBe(0);
+    expect(historical.calls.filter(call=>call === "profile-sort 0")).toHaveLength(2);
+  });
   it("proves the unit-collected parity once while historical full keeps both dedicated parity runs",()=>{
     const qualified=invoke("qualification");
     expect(qualified.result.status,qualified.result.stderr).toBe(0);
