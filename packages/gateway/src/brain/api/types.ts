@@ -226,6 +226,7 @@ export type BrainProjectLookup = Pick<
 >;
 
 export type BrainGitSync = (options: GitSyncOptions) => Promise<GitSyncResult>;
+export interface BrainGitSyncRun { readonly sourceId?: string; readonly signal?: AbortSignal }
 
 export interface BrainProjectServiceDeps {
   readonly repository: BrainRepository;
@@ -265,8 +266,11 @@ export interface BrainProjectService {
     projectRef: string,
     input: BrainRegisterGitSourceInput,
   ): Promise<BrainRegisterGitSourceResult>;
-  /** Exactly one bounded syncGitSource run. */
-  sync(ownerId: string, projectRef: string): Promise<BrainSyncView>;
+  /**
+   * Exactly one bounded syncGitSource run. run.sourceId: the source the caller means; another one is
+   * git_source_conflict. run.signal: the caller's stop, checked before each window; it kills a running git command.
+   */
+  sync(ownerId: string, projectRef: string, run?: BrainGitSyncRun): Promise<BrainSyncView>;
   listReceipts(ownerId: string, projectRef: string, limit: number): Promise<BrainReceiptsView>;
   /** Read-only; never syncs. */
   why(ownerId: string, projectRef: string, query: BrainWhyQuery): Promise<BrainWhyResult>;

@@ -4,10 +4,11 @@
  * ids from an identity tuple, a cursor advanced in the same transaction as each batch, one receipt per run, stable
  * error codes, no provider text past server logs. Types and constants only.
  */
-import type { BrainReceiptView } from "../api/types.js";
+import type { Kysely } from "kysely";
+import type { BrainGitSyncRun, BrainReceiptView } from "../api/types.js";
 import type { BrainRepository } from "../repository.js";
 import type {
-  BrainScopeKey, BrainSourceStatus, BrainSyncCounts, BrainSyncReceipt, BrainSyncUpsertInput,
+  BrainDatabase, BrainScopeKey, BrainSourceStatus, BrainSyncCounts, BrainSyncReceipt, BrainSyncUpsertInput,
 } from "../types.js";
 import type {
   BrainConnectableSourceKind, BrainProjectResolver, BrainResolvedProject, BrainSourceKind,
@@ -251,9 +252,9 @@ export const BRAIN_SOURCE_OPTIONS_MAX = 100;
 /**
  * Config rows live in the handler's own prefixed table keyed by (owner_id, scope_id, source_id), referencing
  * brain_sources ON DELETE CASCADE. parseConfig throws BrainFeatureError("source_config_invalid"). identify never
- * touches the network. createAdapter reads credentials per run and never keeps them. The sources service connects in
- * this order: parseConfig, checkConfig, createSource, saveConfig, and deleteSource when saveConfig still throws, so a
- * refused config never leaves a live brain_sources row.
+ * touches the network. createAdapter reads credentials per run and never keeps them. The sources service runs
+ * parseConfig and checkConfig, then saves inside the transaction that creates the source or moves its revision
+ * (saveConfig's `db`), so a source and its config commit together or not at all.
  */
 export interface BrainSourceKindHandler<TConfig> {
   readonly kind: BrainConnectableSourceKind;
@@ -261,7 +262,8 @@ export interface BrainSourceKindHandler<TConfig> {
   /** Refuses a config before the source row is created (for example source_conflict); never writes. */
   checkConfig?(scope: BrainScopeKey, config: TConfig): Promise<void>;
   identify(project: BrainResolvedProject, config: TConfig): { readonly externalRef: string; readonly label: string };
-  saveConfig(scope: BrainScopeKey, sourceId: string, config: TConfig): Promise<void>;
+  /** db: the open transaction to write in (the handler's lock is taken inside it); absent, its own transaction. */
+  saveConfig(scope: BrainScopeKey, sourceId: string, config: TConfig, db?: Kysely<BrainDatabase>): Promise<void>;
   loadConfig(scope: BrainScopeKey, sourceId: string): Promise<TConfig | null>;
   createAdapter(ownerId: string, project: BrainResolvedProject, config: TConfig): Promise<BrainSourceAdapterResolution<TConfig>>;
   viewConfig(config: TConfig): BrainSourceConfigView;
@@ -320,14 +322,14 @@ export const BRAIN_SOURCES_BODY_MAX_BYTES = { connect: 16 * 1024, update: 16 * 1
 /**
  * Built by sources/core createBrainSourcesService. gitSync: BrainProjectService.sync mapped to a sync view, used
  * when POST /sources/:sourceId/sync names the git source (absent: that request is source_kind_unsupported); the
- * service sets the view's sourceId to the source the client named. accounts: the owner's connection labels of a
+ * service passes that source and the caller's signal, and sets the view's sourceId to it. accounts: the owner's connection labels of a
  * service (no provider call); present, a connect pins one account (several and none named: source_config_invalid).
  */
 export interface BrainSourcesServiceDeps {
   readonly repository: BrainRepository; readonly resolver: BrainProjectResolver;
   readonly handlers: readonly BrainAnySourceKindHandler[]; readonly runner: BrainSourceSyncRunner;
   readonly hooks?: BrainChangeHooks; readonly limits?: Partial<BrainSourceSyncLimits>;
-  readonly gitSync?: (ownerId: string, projectRef: string) => Promise<BrainSourceSyncView>;
+  readonly gitSync?: (ownerId: string, projectRef: string, run: BrainGitSyncRun) => Promise<BrainSourceSyncView>;
   readonly accounts?: (ownerId: string, service: BrainIntegrationService) => Promise<readonly string[]>;
 }
 

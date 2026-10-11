@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Kysely, PostgresDialect, type KyselyPlugin } from "kysely";
+import { Kysely, PostgresDialect, sql, type KyselyPlugin } from "kysely";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -167,5 +167,81 @@ describe.skipIf(!databaseUrl)("brain store across independent PostgreSQL connect
     } finally {
       await readerDb.destroy();
     }
+  });
+
+  it("commits a source update with the write made alongside it, so no connection sees one without the other", async () => {
+    const { source } = await first.createSource(scopeA, natural);
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const written = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const update = first.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Renamed" }, async (trx) => {
+      await sql`INSERT INTO side_config VALUES (${source.sourceId}, 'new')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    // Until the update commits, another connection sees neither the new revision nor the write made alongside it.
+    expect((await second.getSource(scopeA, source.sourceId))?.revision).toBe(1);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM "${schema}".side_config`)).rows).toEqual([{ n: 0 }]);
+    const stale = second.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Stale" });
+    held.resolve();
+    expect(await update).toMatchObject({ revision: 2, label: "Renamed" });
+    await expect(stale).rejects.toMatchObject({ code: "conflict" });
+    expect((await admin.query(`SELECT value FROM "${schema}".side_config`)).rows).toEqual([{ value: "new" }]);
+    // A write alongside that fails takes the revision back with it.
+    await expect(first.updateSource(scopeA, { sourceId: source.sourceId, expectedRevision: 2, label: "Lost" }, async () => {
+      throw new Error("config refused");
+    })).rejects.toThrow("config refused");
+    expect(await second.getSource(scopeA, source.sourceId)).toMatchObject({ revision: 2, label: "Renamed" });
+  });
+
+  it("creates a source with the write made alongside it, so another gateway never finds one without the other", async () => {
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const [written, held] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    const create = first.createSource(scopeA, natural, async (trx, next) => {
+      await sql`INSERT INTO side_config VALUES (${next.sourceId}, 'first')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    expect((await second.listSources(scopeA)).items).toEqual([]);
+    // The other gateway's create of the same identity waits for this one, then finds it with its write.
+    const again = second.createSource(scopeA, natural, async () => { throw new Error("not a new source"); });
+    held.resolve();
+    expect([(await create).created, (await again).created]).toEqual([true, false]);
+    expect((await admin.query(`SELECT value FROM "${schema}".side_config`)).rows).toEqual([{ value: "first" }]);
+    // A write alongside that fails leaves no source.
+    const refused = async () => { throw new Error("config refused"); };
+    await expect(first.createSource(scopeA, { ...natural, externalRef: "T/D" }, refused)).rejects.toThrow("config refused");
+    expect((await second.listSources(scopeA)).items).toHaveLength(1);
+  });
+
+  it("commits a source's replacement with the write made alongside it, so no connection sees one without the other", async () => {
+    const { source } = await first.createSource(scopeA, natural);
+    await admin.query(`CREATE TABLE "${schema}".side_config (source_id TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    const written = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    const live = async () => (await second.listSources(scopeA)).items.map((item) => item.sourceId);
+    const replace = first.replaceSource(scopeA, { sourceId: source.sourceId, expectedRevision: 1, label: "Again" }, async (trx, next) => {
+      await sql`INSERT INTO side_config VALUES (${next.sourceId}, 'new')`.execute(trx);
+      written.resolve();
+      await held.promise;
+    });
+    await written.promise;
+    // Until the replacement commits, another connection sees the old source and neither its successor nor the write.
+    expect(await live()).toEqual([source.sourceId]);
+    expect((await admin.query(`SELECT count(*)::int AS n FROM "${schema}".side_config`)).rows).toEqual([{ n: 0 }]);
+    held.resolve();
+    const { removed, source: next } = await replace;
+    expect(removed).toMatchObject({ sourceId: source.sourceId, revision: 2, deletedAt: expect.any(String) });
+    expect(next).toMatchObject({ kind: natural.kind, externalRef: natural.externalRef, label: "Again", revision: 1 });
+    expect(await live()).toEqual([next.sourceId]);
+    expect((await admin.query(`SELECT source_id FROM "${schema}".side_config`)).rows).toEqual([{ source_id: next.sourceId }]);
+    // A write alongside that fails takes the removal back with it.
+    await expect(first.replaceSource(scopeA, { sourceId: next.sourceId, expectedRevision: 1, label: "Lost" }, async () => {
+      throw new Error("config refused");
+    })).rejects.toThrow("config refused");
+    expect(await second.getSource(scopeA, next.sourceId)).toMatchObject({ revision: 1, label: "Again" });
+    expect(await live()).toEqual([next.sourceId]);
   });
 });

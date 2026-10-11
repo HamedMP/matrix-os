@@ -92,11 +92,11 @@ function gitChildEnv(): NodeJS.ProcessEnv {
   return { PATH: childPath(), HOME: process.env.HOME ?? FALLBACK_HOME, ...GIT_ENV_OVERRIDES };
 }
 
-/** A non-zero exit resolves; only timeout, overflow ("fail") and spawn failures reject. */
+/** A non-zero exit resolves; only timeout (or the caller's stop), overflow ("fail") and spawn failures reject. */
 export const defaultGitRunner: GitRunner = (args, options) => new Promise<GitRunResult>((resolve, reject) => {
   execFile("git", [...args], {
     cwd: options.cwd, env: gitChildEnv(), timeout: options.timeoutMs, maxBuffer: options.maxBuffer,
-    encoding: "buffer", windowsHide: true,
+    encoding: "buffer", windowsHide: true, signal: options.signal,
   }, (error, stdout, stderr) => {
     const stderrText = stderrDecoder.decode(stderr.subarray(0, GIT_STDERR_MAX_BYTES));
     if (error === null) {
@@ -107,7 +107,7 @@ export const defaultGitRunner: GitRunner = (args, options) => new Promise<GitRun
       } else {
         reject(new GitRunnerError("output_too_large", { cause: error }));
       }
-    } else if (error.killed === true) {
+    } else if (error.killed === true || options.signal?.aborted === true) {
       reject(new GitRunnerError("timeout", { cause: error }));
     } else if (typeof error.code === "number") {
       resolve({ exitCode: error.code, stdout, stderr: stderrText, truncated: false });
@@ -121,6 +121,7 @@ interface ReaderContext {
   readonly runner: GitRunner;
   readonly root: string;
   readonly timeoutMs: number;
+  readonly signal: AbortSignal | undefined;
 }
 
 interface GitCall {
@@ -137,6 +138,7 @@ async function runGit(context: ReaderContext, sub: readonly string[], call: GitC
   try {
     result = await context.runner([...GIT_GLOBAL_ARGS, ...sub], {
       cwd: context.root, timeoutMs: context.timeoutMs, maxBuffer: call.maxBuffer, overflow: call.overflow ?? "fail",
+      signal: context.signal,
     });
   } catch (err: unknown) {
     if (!(err instanceof GitRunnerError)) throw err;
@@ -187,7 +189,7 @@ export async function openGitRepository(input: OpenGitRepositoryInput): Promise<
   const bounds = await homeBounds(input.homePath);
   const realRepo = await realDirectory(input.repoPath);
   if (!isStrictlyInside(bounds.realHome, realRepo)) throw new GitSourceError("not_a_repository");
-  const context: ReaderContext = { runner: input.runner, root: realRepo, timeoutMs };
+  const context: ReaderContext = { runner: input.runner, root: realRepo, timeoutMs, signal: input.signal };
   const version = parseGitVersion((await runGit(context, ["version"], SMALL)).stdout) ?? malformed();
   if (!isSupportedGitVersion(version)) throw new GitSourceError("git_version_unsupported");
   const info = await runGit(context, REPO_INFO_ARGS, { ...SMALL, okExits: [0, 128] });
