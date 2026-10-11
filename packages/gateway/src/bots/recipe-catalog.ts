@@ -33,6 +33,8 @@ export interface BotRecipe {
   capabilities: readonly BotToolCapability[];
   integrations: readonly BotRecipeIntegration[];
   output: string;
+  /** Server-owned opt-in; omitted on every task/custom recipe. */
+  identitySource?: "owner_soul";
 }
 
 const RecipeSchema = z.object({
@@ -49,6 +51,7 @@ const RecipeSchema = z.object({
     required: z.boolean(),
   }).strict()).max(8),
   output: z.string().min(1).max(1_000),
+  identitySource: z.literal("owner_soul").optional(),
 }).strict();
 
 const CONVERSATION: readonly BotToolCapability[] = ["interaction.create", "memory.search", "memory.propose"];
@@ -56,6 +59,17 @@ const ARTIFACTS: readonly BotToolCapability[] = ["artifact.read", "artifact.writ
 const INTEGRATIONS: readonly BotToolCapability[] = ["integration.inventory", "integration.call"];
 
 const RECIPES: readonly BotRecipe[] = [
+  {
+    recipeId: "matrix-bot",
+    version: "2026-10-10.1",
+    name: "Matrix Bot",
+    description: "Your personal Matrix assistant, using the identity and style you save in Settings.",
+    instructions: "Help the owner with questions, planning and writing. Use available tools only within this private chat's authorized workspace. Ask before actions that require approval, and report only results you can verify.",
+    capabilities: [...CONVERSATION, ...ARTIFACTS],
+    integrations: [],
+    output: "A useful answer or requested workspace artifact, with clear evidence and any limitations.",
+    identitySource: "owner_soul",
+  },
   {
     recipeId: "jev-inbox-triage",
     version: "2026-10-06.1",
