@@ -11,7 +11,7 @@ const pricedReady = { ready: true, priceValidThrough: "2026-09-30T23:59:59.999Z"
 describe("fleet funded model probe budget", () => {
   let db: PlatformDB;
   beforeEach(async () => { ({ db } = await createTestPlatformDb()); });
-  afterEach(async () => { await destroyTestPlatformDb(db); });
+  afterEach(async () => { await destroyTestPlatformDb(db); vi.restoreAllMocks(); });
 
   it("defaults disabled and never sends an upstream call without both operator limits", async () => {
     expect(loadFundedModelProbeLimits({})).toBeUndefined();
@@ -44,13 +44,20 @@ describe("fleet funded model probe budget", () => {
     const input = { db, relayBaseUrl: "https://relay.example.test", relayControlToken: "c".repeat(32),
       dailyLimit: 1, minuteLimit: 1, fetchFn, now: () => now };
     const first = createFundedModelProbeService(input);
-    const observations = await Promise.all(Array.from({ length: 5 }, () => first.probe(sonnet)));
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const receiptId = "12345678-1234-4123-8123-123456789abc";
+    const observations = await Promise.all(Array.from({ length: 5 }, () => first.probe(sonnet, { receiptId })));
     expect(observations.every((item) => item.ready)).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
+    const headers = fetchFn.mock.calls[0]![1]!.headers as Record<string, string>;
+    expect(headers["x-matrix-readiness-probe-id"]).toMatch(/^[a-f0-9-]{36}$/);
+    const joined = info.mock.calls.map(c => JSON.parse(String(c[0]))).filter(e => e.event === "funded_readiness_join");
+    expect(joined).toHaveLength(5);
+    expect(joined.every(e => e.receiptId === receiptId && e.probeId === headers["x-matrix-readiness-probe-id"] && e.modelId === sonnet && e.ready === true)).toBe(true);
     expect((await first.probe(sonnet)).ready).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const restarted = createFundedModelProbeService(input);
-    expect((await restarted.probe(sonnet)).ready).toBe(false);
+    expect((await restarted.probe(sonnet)).ready).toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -61,7 +68,7 @@ describe("fleet funded model probe budget", () => {
     const first = createFundedModelProbeService(input);
     const second = createFundedModelProbeService(input);
     const results = await Promise.all([first.probe(sonnet), second.probe(sonnet)]);
-    expect(results.filter((result) => result.ready)).toHaveLength(1);
+    expect(results.filter((result) => result.ready)).toHaveLength(2);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
