@@ -859,8 +859,18 @@ describe("PostHog error tracking", () => {
     );
     const devEntrypoint = await readFile("distro/docker-dev-entrypoint.sh", "utf8");
     expect(devEntrypoint).toContain("pnpm --filter @matrix-os/observability build");
-    expect(countOccurrences(devEntrypoint, "/app/packages/observability/dist"))
-      .toBeGreaterThanOrEqual(2);
+    // Output ownership is prepared by the package loop, before dropping to the
+    // service user. Its filesystem behavior is covered by docker-dev-entrypoint.
+    const prepareOutputs = devEntrypoint.lastIndexOf("\nprepare_build_outputs\n");
+    const dropPrivileges = devEntrypoint.indexOf("exec su-exec matrixos bash -c");
+    expect(devEntrypoint).toMatch(/for package in [^\n]*\bobservability\b/);
+    expect(devEntrypoint).toContain('mkdir -p "$base/dist" "$base/.matrix-build-cache"');
+    expect(devEntrypoint).toContain('chown -hR matrixos:matrixos "$base/dist" "$base/.matrix-build-cache"');
+    expect(prepareOutputs).toBeGreaterThanOrEqual(0);
+    expect(dropPrivileges).toBeGreaterThan(prepareOutputs);
+    const observabilityBuild = devEntrypoint.indexOf("pnpm --filter @matrix-os/observability build");
+    expect(observabilityBuild).toBeGreaterThanOrEqual(0);
+    expect(observabilityBuild).toBeLessThan(prepareOutputs);
   });
 
   it("wires shutdown for PostHog clients outside top-level Hono apps", async () => {

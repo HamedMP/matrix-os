@@ -11,10 +11,14 @@ const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'ut
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
-  it('starts independent unit, sync, build and E2E validation after classification', () => {
-    for (const id of ['unit', 'e2e', 'sync-client', 'shell-production-build']) {
-      expect(workflow.jobs[id].needs, id).toBe('changes');
+  it('starts independent hosted lanes after backend selection while sync starts after classification', () => {
+    expect(workflow.jobs['ci-backend'].needs).toBe('changes');
+    for (const id of ['unit', 'e2e', 'shell-production-build']) {
+      // Backend admission chooses Linux or hosted recovery; workload lanes still
+      // run in parallel rather than waiting for another workload's result.
+      expect(workflow.jobs[id].needs, id).toEqual(['changes', 'ci-backend']);
     }
+    expect(workflow.jobs['sync-client'].needs).toBe('changes');
     const gate = workflow.jobs['ci-results'];
     for (const id of ['unit', 'e2e', 'sync-client', 'shell-production-build', 'funded-postgres', 'funded-host-root']) {
       expect(gate.needs).toContain(id);

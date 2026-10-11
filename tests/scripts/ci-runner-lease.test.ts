@@ -108,10 +108,27 @@ import sys,tempfile,time,os
 from pathlib import Path
 with tempfile.TemporaryDirectory() as td:
  marker=Path(td)/'child'
- code="import subprocess,sys;child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)']);open(sys.argv[1],'w').write(str(child.pid))"
- owned=OwnedProcess([sys.executable,'-c',code,str(marker)])
+ # Publish readiness only after the descendant ignores TERM. This forces real
+ # KILL cleanup instead of racing Darwin's already-empty process-group state.
+ child_code="""import os,signal,sys,time
+signal.signal(signal.SIGTERM,signal.SIG_IGN)
+with open(sys.argv[1]+'.tmp','w') as output:output.write(str(os.getpid()))
+os.replace(sys.argv[1]+'.tmp',sys.argv[1])
+time.sleep(60)
+"""
+ code="""import os,subprocess,sys,time
+child=subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]])
+deadline=time.monotonic()+3
+while not os.path.exists(sys.argv[1]):
+ if child.poll() is not None:raise RuntimeError('descendant exited before readiness')
+ if time.monotonic()>=deadline:raise TimeoutError('descendant readiness')
+ time.sleep(.01)
+"""
+ owned=OwnedProcess([sys.executable,'-c',code,str(marker),child_code])
  try:
-  owned.process.wait(timeout=3);pid=int(marker.read_text());owned.cancel(grace=.1)
+  assert owned.process.wait(timeout=3)==0
+  pid=int(marker.read_text());assert os.getpgid(pid)==owned.pid
+  owned.cancel(grace=.1)
   deadline=time.monotonic()+3
   while time.monotonic()<deadline:
    try:os.kill(pid,0)
