@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -37,11 +37,42 @@ function buildGatedElectronSuites() {
   }).sort();
 }
 
+const nativeProjects = [
+  ["packages/observability", "tsconfig.json", true],
+  ["packages/integrations-mcp", "tsconfig.json", true],
+  ["packages/gateway", "tsconfig.json", true],
+  ["packages/platform", "tsconfig.typecheck.json", true],
+  ["packages/proxy", "tsconfig.json", true],
+  ["packages/edge-router", "tsconfig.json", false],
+  ["desktop", "tsconfig.json", false],
+  ["desktop", "tsconfig.node.json", false],
+] as const;
+function expectBothNativePasses(calls: string[]) {
+  const actual = calls.filter((call) => call.startsWith("native-check ")).map((call) => JSON.parse(call.slice("native-check ".length)));
+  const expected = nativeProjects.map(([directory, config, ambient]) => ({ directory, args: [
+    "--noEmit", "-p", config, ...(ambient ? ["--types", "*"] : []), "--noUncheckedSideEffectImports", "false",
+  ] }));
+  expect(actual).toEqual([...expected, ...expected]);
+}
+
 function invoke(suite: string, failLane = "", historical = false, workers = "12") {
-  const dir = mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-"));
+  const dir = realpathSync(mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-")));
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
   mkdirSync(bin);
+  // Run the production native dispatcher; only its compiler executable is doubled.
+  const seed = resolve(dir, "seed");
+  mkdirSync(resolve(seed, "scripts"), { recursive: true });
+  writeFileSync(resolve(seed, "scripts/typecheck.mjs"), readFileSync("scripts/typecheck.mjs", "utf8"));
+  for (const [directory] of nativeProjects) mkdirSync(resolve(seed, directory), { recursive: true });
+  const nativePackage = resolve(seed, "node_modules/@typescript/native");
+  mkdirSync(resolve(nativePackage, "bin"), { recursive: true });
+  writeFileSync(resolve(nativePackage, "package.json"), JSON.stringify({ name: "@typescript/native", type: "commonjs" }));
+  writeFileSync(resolve(nativePackage, "bin/tsc"), `const { appendFileSync } = require("node:fs");
+const { relative } = require("node:path");
+appendFileSync(process.env.CALLS, "native-check " + JSON.stringify({ directory: relative(process.env.FIXTURE_REPO, process.cwd()), args: process.argv.slice(2) }) + "\\n");
+if (process.env.FAIL_LANE === "native-platform" && relative(process.env.FIXTURE_REPO, process.cwd()) === "packages/platform") process.exit(42);
+`);
   writeFileSync(resolve(dir, "displays"), "");
   const fixtureScripts = { ...scripts };
   if (historical) {
@@ -58,9 +89,10 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work));
   executable("git", `
 case "$1" in
-  init) mkdir -p "$2"; cp "$HARNESS_DIR/package.json" "$2/package.json" ;;
+  init) mkdir -p "$2"; cp -R "$HARNESS_DIR/seed/." "$2/"; cp "$HARNESS_DIR/package.json" "$2/package.json" ;;
   rev-parse) echo "$REVIEWED_SHA" ;;
 esac`);
+  executable("node", 'exec "$REAL_NODE" "$@"');
   executable("timeout", 'shift; exec "$@"');
   executable("xvfb-run", 'printf "%s\\n" "$*" >> "$DISPLAYS"; shift; exec "$@"');
   const barrier = `
@@ -134,7 +166,7 @@ fi`);
       encoding: "utf8", timeout: 10_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
-        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane,
+        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, REAL_NODE: process.execPath, FIXTURE_REPO: resolve(work, "repo"),
         DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: suite === "full" ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
@@ -256,8 +288,7 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(calls.filter((call) => call === "prerequisites")).toHaveLength(1);
     expect(calls.filter((call) => call === "bun run typecheck:run")).toHaveLength(2);
-    expect(calls.filter((call) => call.includes(" exec tsc --noEmit"))).toHaveLength(12);
-    expect(calls.filter((call) => call === "pnpm --filter desktop run typecheck")).toHaveLength(2);
+    expectBothNativePasses(calls);
   });
 
   it.each(["typecheck", "checks", "full"])("historical %s preserves its original typecheck wrapper and every check", (suite) => {
@@ -266,21 +297,20 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(calls.filter((call) => call === "bun run typecheck:run")).toHaveLength(0);
     expect(calls.filter((call) => call === "bun run typecheck")).toHaveLength(2);
     expect(calls.filter((call) => call === "prerequisites")).toHaveLength(3);
-    expect(calls.filter((call) => call.includes(" exec tsc --noEmit"))).toHaveLength(12);
-    expect(calls.filter((call) => call === "pnpm --filter desktop run typecheck")).toHaveLength(2);
+    expectBothNativePasses(calls);
+  });
+
+  it("propagates a native compiler failure through both passes without dropping its config", () => {
+    const { result, calls, timings } = invoke("typecheck", "native-platform");
+    expect(result.status, result.stderr).toBe(1);
+    for (const pass of ["cold", "warm"]) expect(timings).toContainEqual([`typecheck-${pass}`, expect.any(String), "42"]);
+    const checked = calls.filter((call) => call.startsWith("native-check ")).map((call) => JSON.parse(call.slice("native-check ".length)).directory);
+    expect(checked).toEqual([...nativeProjects.slice(0, 4), ...nativeProjects.slice(0, 4)].map(([directory]) => directory));
   });
 
   it("preserves the developer typecheck prerequisite wrapper and every check", () => {
     expect(scripts.typecheck).toBe("bun run typecheck:build-kernel && bun run typecheck:run");
-    expect(scripts["typecheck:run"]).toBe([
-      "pnpm --filter '@matrix-os/observability' exec tsc --noEmit",
-      "pnpm --filter '@matrix-os/integrations-mcp' exec tsc --noEmit",
-      "pnpm --filter '@matrix-os/gateway' exec tsc --noEmit",
-      "pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json",
-      "pnpm --filter '@matrix-os/proxy' exec tsc --noEmit",
-      "pnpm --filter '@matrix-os/edge-router' exec tsc --noEmit",
-      "pnpm --filter desktop run typecheck",
-    ].join(" && "));
+    expect(scripts["typecheck:run"]).toBe("node scripts/typecheck.mjs");
   });
 
   it.each(["unit", "shell", "general", "electron", "clipboard", "desktop-build"])("propagates full %s failures after collecting both concurrent passes", (lane) => {
