@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 import { Alert, type AlertButton } from "react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
@@ -53,8 +53,8 @@ describe("project route options", () => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
   });
 
-  afterEach(() => {
-    cleanup();
+  afterEach(async () => {
+    await mockRoutes.cleanupProjectRoute();
     jest.restoreAllMocks();
   });
 

@@ -1,10 +1,11 @@
 import React, { type ReactNode } from "react";
-import { QueryClient, QueryClientProvider, notifyManager, useQuery } from "@tanstack/react-query";
+import { CancelledError, QueryClient, QueryClientProvider, notifyManager, useQuery } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useAgents, useArchiveAgent, useEnsureAgentChat } from "../lib/queries/use-agents";
 import { AgentRequestError } from "../lib/requests/bots";
 import { mobileQueryKeys } from "../lib/requests/query-keys";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const mockFetchActiveComputer = jest.fn();
 const mockFetchAgents = jest.fn();
@@ -39,10 +40,19 @@ notifyManager.setNotifyFunction((notify) => {
 });
 
 const mounted: (() => void)[] = [];
+const clients: QueryClient[] = [];
+
+// A mutation keeps a timer until it is collected, long after its test. Left
+// alone, those timers keep the test process from exiting.
+function testQueryClient(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  clients.push(client);
+  return client;
+}
 const readChats = jest.fn();
 
 function renderAgents() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const client = testQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -60,7 +70,7 @@ function renderAgents() {
 
 /** The archive action alone, as on a screen that does not itself show the list. */
 async function renderArchiveOnly() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const client = testQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -86,8 +96,9 @@ describe("agent hooks", () => {
     readChats.mockResolvedValue("chats v1");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     while (mounted.length > 0) mounted.pop()!();
+    await Promise.all(clients.splice(0).map(disposeTestQueryClient));
   });
 
   describe("useAgents", () => {
@@ -270,7 +281,11 @@ describe("agent hooks", () => {
         queryKey: agentsKey,
         queryFn: () => new Promise((resolve) => { answerEarlierRead = resolve; }),
       });
-      earlierRead.catch(() => {});
+      // The request cancels this read. Any other failure is a real one, and
+      // fails the test where it is awaited below.
+      const earlierReadDone = earlierRead.catch((error: unknown) => {
+        if (!(error instanceof CancelledError)) throw error;
+      });
       await waitFor(() => expect(client.isFetching({ queryKey: agentsKey })).toBe(1));
 
       await act(async () => {
@@ -279,6 +294,7 @@ describe("agent hooks", () => {
       await act(async () => {
         answerEarlierRead({ enabled: true, agents: [inbox, brief] });
       });
+      await earlierReadDone;
 
       expect(client.getQueryData(agentsKey)).toEqual({ enabled: true, agents: [brief] });
       // Still due a fresh read the next time a screen shows the list.

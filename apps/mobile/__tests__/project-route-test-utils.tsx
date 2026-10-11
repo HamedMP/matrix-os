@@ -1,6 +1,8 @@
 import type { ReactElement, ReactNode } from "react";
 import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react-native";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react-native";
+
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 // Shared by the suites that render the Projects routes over the real query
 // hooks. Each suite mocks the modules itself (jest.mock is per file) and points
@@ -199,8 +201,11 @@ export async function renderPortfolio(element: ReactElement) {
   return rendered;
 }
 
+const routeQueryClients: QueryClient[] = [];
+
 export function renderWithQueries(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  routeQueryClients.push(client);
   return { client, ...render(<QueryClientProvider client={client}>{element}</QueryClientProvider>) };
 }
 
@@ -213,4 +218,14 @@ export function pendingRequest<T>() {
     reject = onReject;
   });
   return { promise, resolve, reject };
+}
+
+/**
+ * Unmounts what a test rendered and lets go of its query clients. A mutation
+ * keeps a timer until it is collected, long after its test; left alone, those
+ * timers keep the test process from exiting.
+ */
+export async function cleanupProjectRoute() {
+  cleanup();
+  await Promise.all(routeQueryClients.splice(0).map(disposeTestQueryClient));
 }

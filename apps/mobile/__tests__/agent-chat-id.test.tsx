@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useAgentChatId } from "../components/agents/use-agent-chat-id";
 import { mobileQueryKeys } from "../lib/requests/query-keys";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const mockFetchActiveComputer = jest.fn();
 const mockEnsureAgentDirectChat = jest.fn();
@@ -24,9 +25,18 @@ notifyManager.setNotifyFunction((notify) => {
 });
 
 const mounted: (() => void)[] = [];
+const clients: QueryClient[] = [];
+
+// A mutation keeps a timer until it is collected, long after its test. Left
+// alone, those timers keep the test process from exiting.
+function testQueryClient(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  clients.push(client);
+  return client;
+}
 
 async function renderChatId(agentId: string, knownChatId: string | null) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const client = testQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -45,8 +55,9 @@ describe("finding an agent's chat", () => {
     mockFetchActiveComputer.mockResolvedValue({ handle: "alice", runtimeSlot: "primary", gatewayPath: "/vm/alice" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     while (mounted.length > 0) mounted.pop()!();
+    await Promise.all(clients.splice(0).map(disposeTestQueryClient));
   });
 
   it("uses the chat already known from the agents' statuses, without asking the server", async () => {

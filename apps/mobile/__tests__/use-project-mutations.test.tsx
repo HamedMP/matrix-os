@@ -1,11 +1,12 @@
 import React, { type ReactNode } from "react";
-import { QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
+import { CancelledError, QueryClient, QueryClientProvider, notifyManager } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useArchiveProject, useCreateProject, useRenameProject } from "../lib/queries/use-project-mutations";
 import { useProjects } from "../lib/queries/use-projects";
 import { ProjectRequestError } from "../lib/requests/projects";
 import { mobileQueryKeys } from "../lib/requests/query-keys";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const mockFetchActiveComputer = jest.fn();
 const mockFetchProjects = jest.fn();
@@ -45,9 +46,18 @@ notifyManager.setNotifyFunction((notify) => {
 });
 
 const mounted: (() => void)[] = [];
+const clients: QueryClient[] = [];
+
+// A mutation keeps a timer until it is collected, long after its test. Left
+// alone, those timers keep the test process from exiting.
+function testQueryClient(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  clients.push(client);
+  return client;
+}
 
 function createClient() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const client = testQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -90,8 +100,9 @@ describe("project mutations", () => {
     mockFetchProjects.mockImplementation(async () => serverProjects);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     while (mounted.length > 0) mounted.pop()!();
+    await Promise.all(clients.splice(0).map(disposeTestQueryClient));
   });
 
   describe("useCreateProject", () => {
@@ -182,7 +193,11 @@ describe("project mutations", () => {
         queryKey: projectsKey,
         queryFn: () => new Promise((resolve) => { answerEarlierRead = resolve; }),
       });
-      earlierRead.catch(() => {});
+      // The request cancels this read. Any other failure is a real one, and
+      // fails the test where it is awaited below.
+      const earlierReadDone = earlierRead.catch((error: unknown) => {
+        if (!(error instanceof CancelledError)) throw error;
+      });
       await waitFor(() => expect(client.isFetching({ queryKey: projectsKey })).toBe(1));
 
       await act(async () => {
@@ -191,6 +206,7 @@ describe("project mutations", () => {
       await act(async () => {
         answerEarlierRead([notes, site]);
       });
+      await earlierReadDone;
 
       expect(client.getQueryData(projectsKey)).toEqual([fresh, notes, site]);
       // Still due a fresh read the next time a screen shows the list.

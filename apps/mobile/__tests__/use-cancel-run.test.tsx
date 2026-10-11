@@ -4,6 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react-native";
 
 import { useCancelRun } from "../lib/queries/use-cancel-run";
 import { mobileQueryKeys } from "../lib/requests/query-keys";
+import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const mockFetchActiveComputer = jest.fn();
 const mockCancelChatRun = jest.fn();
@@ -35,11 +36,20 @@ notifyManager.setNotifyFunction((notify) => {
 });
 
 const mounted: (() => void)[] = [];
+const clients: QueryClient[] = [];
+
+// A mutation keeps a timer until it is collected, long after its test. Left
+// alone, those timers keep the test process from exiting.
+function testQueryClient(): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  clients.push(client);
+  return client;
+}
 const readDetail = jest.fn();
 const readChats = jest.fn();
 
 function renderCancel() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  const client = testQueryClient();
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -63,8 +73,9 @@ describe("useCancelRun", () => {
     readChats.mockResolvedValue("running");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     while (mounted.length > 0) mounted.pop()!();
+    await Promise.all(clients.splice(0).map(disposeTestQueryClient));
   });
 
   async function ready(result: { current: ReturnType<typeof renderCancel>["result"]["current"] }) {
