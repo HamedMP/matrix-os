@@ -85,6 +85,12 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   if (input.signal?.aborted) {
     return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
   }
+  const isolated = command.isolatedTurn !== undefined;
+  if (isolated && (command.turn.kind !== "prompt" || command.turn.images?.length || history.length
+    || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
+    return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
+  }
+  let inferenceCalls = 0;
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
@@ -98,22 +104,25 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       systemPrompt: command.systemPrompt,
       model,
       thinkingLevel: "off",
-      tools: createBotTools({ capabilities: command.capabilities, broker, state: tools }),
+      tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools }),
       messages: history,
     },
-    streamFn: (streamModel, context, options) => provider.streamSimple(streamModel, context, {
+    streamFn: (streamModel, context, options) => {
+      if (isolated && inferenceCalls++ > 0) throw new Error("Isolated turn ended");
+      return provider.streamSimple(streamModel, context, {
       ...options,
       // A Provider does not resolve auth itself. The worker only carries this
       // inert value; the loopback broker owns the funded credential.
       apiKey: BROKER_PLACEHOLDER_KEY,
       maxTokens: command.route.maxOutputTokens,
-    }),
+      ...(isolated ? { maxRetries: 0, reasoning: undefined } : {}),
+    }); },
     toolExecution: "sequential",
     // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
-    finishTurn: () => tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
+    finishTurn: () => isolated || tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
-      if (toolActions >= command.limits.maxToolActions) {
+      if (isolated || toolActions >= command.limits.maxToolActions) {
         budgetExhausted = true;
         return { block: true, reason: BUDGET_REASON, terminate: true };
       }
@@ -143,7 +152,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let steeringOpen = true;
   input.onControl?.({
     steer(text) {
-      if (!steeringOpen) return false;
+      if (isolated || !steeringOpen) return false;
       const message: AgentMessage = { role: "user", content: text, timestamp: now() };
       steered.push(message);
       agent.steer(message);
@@ -162,7 +171,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     }
     await agent.waitForIdle();
     // A steer can land after Pi's last poll; answer it before closing the turn.
-    while (!stopped() && agent.hasQueuedMessages()) {
+    while (!isolated && !stopped() && agent.hasQueuedMessages()) {
       await agent.continue();
       await agent.waitForIdle();
     }
@@ -214,18 +223,18 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
         return "";
       }
     };
-    if (needsCompaction(messages, command.route.contextWindow)) {
+    if (!isolated && needsCompaction(messages, command.route.contextWindow)) {
       messages = await compactSession({ messages, now, summarize });
     }
     // Summarize down to the latest turn before storage would have to drop earlier turns.
     // A cancelled run never drops turns: if it cannot save whole, the previous session stays.
-    if (!fitsWithToolPayloadCaps(messages)) {
+    if (!isolated && !fitsWithToolPayloadCaps(messages)) {
       messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
     const saved = await broker.saveSession({
       baseRevision: snapshot.revision,
       ...(snapshot.needsRecompaction ? { recompactionHandled: true as const } : {}),
-      messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })),
+      messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: !isolated && input.signal?.aborted !== true })),
     });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {
