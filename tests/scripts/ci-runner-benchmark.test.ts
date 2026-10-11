@@ -38,11 +38,42 @@ function buildGatedElectronSuites() {
   }).sort();
 }
 
+const nativeProjects = [
+  ["packages/observability", "tsconfig.json", true],
+  ["packages/integrations-mcp", "tsconfig.json", true],
+  ["packages/gateway", "tsconfig.json", true],
+  ["packages/platform", "tsconfig.typecheck.json", true],
+  ["packages/proxy", "tsconfig.json", true],
+  ["packages/edge-router", "tsconfig.json", false],
+  ["desktop", "tsconfig.json", false],
+  ["desktop", "tsconfig.node.json", false],
+] as const;
+function expectBothNativePasses(calls: string[]) {
+  const actual = calls.filter((call) => call.startsWith("native-check ")).map((call) => JSON.parse(call.slice("native-check ".length)));
+  const expected = nativeProjects.map(([directory, config, ambient]) => ({ directory, args: [
+    "--noEmit", "-p", config, ...(ambient ? ["--types", "*"] : []), "--noUncheckedSideEffectImports", "false",
+  ] }));
+  expect(actual).toEqual([...expected, ...expected]);
+}
+
 function invoke(suite: string, failLane = "", historical = false, workers = "12", prepared: "none" | "match" | "mismatch" = "none") {
   const dir = realpathSync(mkdtempSync(resolve(tmpdir(), "matrix-benchmark-test-")));
   const bin = resolve(dir, "bin");
   const work = resolve(dir, "work");
   mkdirSync(bin);
+  // Run the production native dispatcher; only its compiler executable is doubled.
+  const seed = resolve(dir, "seed");
+  mkdirSync(resolve(seed, "scripts"), { recursive: true });
+  writeFileSync(resolve(seed, "scripts/typecheck.mjs"), readFileSync("scripts/typecheck.mjs", "utf8"));
+  for (const [directory] of nativeProjects) mkdirSync(resolve(seed, directory), { recursive: true });
+  const nativePackage = resolve(seed, "node_modules/@typescript/native");
+  mkdirSync(resolve(nativePackage, "bin"), { recursive: true });
+  writeFileSync(resolve(nativePackage, "package.json"), JSON.stringify({ name: "@typescript/native", type: "commonjs" }));
+  writeFileSync(resolve(nativePackage, "bin/tsc"), `const { appendFileSync } = require("node:fs");
+const { relative } = require("node:path");
+appendFileSync(process.env.CALLS, "native-check " + JSON.stringify({ directory: relative(process.env.FIXTURE_REPO, process.cwd()), args: process.argv.slice(2) }) + "\\n");
+if (process.env.FAIL_LANE === "native-platform" && relative(process.env.FIXTURE_REPO, process.cwd()) === "packages/platform") process.exit(42);
+`);
   writeFileSync(resolve(dir,"pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   const preparedDir=resolve(dir,"prepared");
   mkdirSync(preparedDir);
@@ -54,7 +85,7 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
     writeFileSync(resolve(preparedDir,"prepared-lock.sha256"), prepared === "match" ? createHash("sha256").update("lockfileVersion: '9.0'\n").digest("hex") : "0".repeat(64));
   }
   writeFileSync(resolve(dir, "displays"), "");
-  const fixtureScripts = { ...scripts, "typecheck:run": "printf 'native typecheck mocked\\n'" };
+  const fixtureScripts = { ...scripts };
   if (historical) {
     fixtureScripts.typecheck = `bun run typecheck:build-kernel && ${fixtureScripts["typecheck:run"]}`;
     delete fixtureScripts["typecheck:run"];
@@ -85,7 +116,7 @@ function invoke(suite: string, failLane = "", historical = false, workers = "12"
   writeFileSync(script, readFileSync("scripts/ci/runner/benchmark.sh", "utf8").replaceAll("/work", work).replaceAll("/opt/matrix-ci", preparedDir).replaceAll("/usr/lib/postgresql/16/bin/initdb",fixtureInitdb));
   executable("git", `
 case "$1" in
-  init) mkdir -p "$2/scripts/ci"; cp "$HARNESS_DIR/qualification-coverage.mjs" "$2/scripts/ci/qualification-coverage.mjs"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
+  init) mkdir -p "$2/scripts/ci"; cp -R "$HARNESS_DIR/seed/." "$2/"; cp "$HARNESS_DIR/qualification-coverage.mjs" "$2/scripts/ci/qualification-coverage.mjs"; cp "$HARNESS_DIR/package.json" "$2/package.json"; cp "$HARNESS_DIR/pnpm-lock.yaml" "$2/pnpm-lock.yaml" ;;
   rev-parse) echo "$REVIEWED_SHA" ;;
 esac`);
   executable("timeout", 'shift; exec "$@"');
@@ -170,7 +201,7 @@ fi`);
       encoding: "utf8", timeout: 10_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`, CALLS: resolve(dir, "calls"),
-        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, MATRIX_TEST_PROFILE_SORT: "0", REAL_NODE: process.execPath,
+        HARNESS_DIR: dir, REVIEWED_SHA: sha, FAIL_LANE: failLane, MATRIX_TEST_PROFILE_SORT: "0", REAL_NODE: process.execPath, FIXTURE_REPO: resolve(work, "repo"),
         DISPLAYS: resolve(dir, "displays"),
         REQUIRE_CONCURRENT: ["full", "qualification"].includes(suite) ? "1" : "0",
         TYPECHECK_WRAPPER: fixtureScripts.typecheck,
@@ -293,6 +324,7 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(calls.filter((call) => call === "prerequisites")).toHaveLength(1);
     expect(calls.filter((call) => call === "bun run typecheck:run")).toHaveLength(2);
     expect(timings.filter(([label]) => label.startsWith("typecheck-"))).toHaveLength(2);
+    expectBothNativePasses(calls);
   });
 
   it.each(["typecheck", "checks", "full"])("historical %s preserves its original typecheck wrapper and every check", (suite) => {
@@ -302,6 +334,15 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(calls.filter((call) => call === "bun run typecheck")).toHaveLength(2);
     expect(calls.filter((call) => call === "prerequisites")).toHaveLength(3);
     expect(timings.filter(([label]) => label.startsWith("typecheck-"))).toHaveLength(2);
+    expectBothNativePasses(calls);
+  });
+
+  it("propagates a native compiler failure through both passes without dropping its config", () => {
+    const { result, calls, timings } = invoke("typecheck", "native-platform");
+    expect(result.status, result.stderr).toBe(1);
+    for (const pass of ["cold", "warm"]) expect(timings).toContainEqual([`typecheck-${pass}`, expect.any(String), "42"]);
+    const checked = calls.filter((call) => call.startsWith("native-check ")).map((call) => JSON.parse(call.slice("native-check ".length)).directory);
+    expect(checked).toEqual([...nativeProjects.slice(0, 4), ...nativeProjects.slice(0, 4)].map(([directory]) => directory));
   });
 
   it("preserves the developer typecheck prerequisite wrapper and every check", () => {
