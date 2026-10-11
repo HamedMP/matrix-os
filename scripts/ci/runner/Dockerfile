@@ -4,7 +4,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git jq ripgrep xz-utils unzip python3 python3-cryptography build-essential \
+    ca-certificates curl git openssh-client postgresql-16 jq ripgrep xz-utils unzip python3 python3-cryptography build-essential \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
     libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
     libgbm1 libdrm2 libxkbcommon0 libasound2t64 libcups2 libgtk-3-0 \
@@ -32,9 +32,15 @@ RUN curl --fail --location --retry 3 --connect-timeout 10 --max-time 120 \
 
 RUN groupadd -g 10001 runner && useradd -u 10001 -g 10001 -m -s /bin/bash runner \
     && mkdir /work && chown 10001:10001 /work
-COPY benchmark.sh /opt/matrix-ci/benchmark.sh
+COPY prepare-image.sh prepared-patches.mjs /opt/matrix-ci/
+# Preparation accepts only an exact public commit, never host credentials.
+# Its readonly cache is used only when the submitted lockfile matches.
+ARG SOURCE_SHA
+RUN /bin/bash /opt/matrix-ci/prepare-image.sh "$SOURCE_SHA"
+# Harness/scheduling edits reuse the immutable dependency/browser preparation.
+COPY benchmark.sh fixture-postgres.sh /opt/matrix-ci/
 RUN chmod 0555 /opt/matrix-ci/benchmark.sh
-ENV CI=true GIT_TERMINAL_PROMPT=0 PLAYWRIGHT_BROWSERS_PATH=/work/browsers \
+ENV CI=true GIT_TERMINAL_PROMPT=0 PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_CHROMIUM_CHANNEL=chromium PLAYWRIGHT_BROWSERS_PATH=/work/browsers \
     HOME=/home/runner XDG_CACHE_HOME=/work/cache XDG_DATA_HOME=/work/share \
     npm_config_store_dir=/work/pnpm-store
 USER 10001:10001
