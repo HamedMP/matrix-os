@@ -23,8 +23,10 @@ const STATUS_UNAVAILABLE_ERROR = "Agent status unavailable.";
 /**
  * A status for each of `agents`, derived as the web does it: from the agent's
  * own chat, that chat's unfinished tasks and its pending interactions. Never
- * more than four requests are in flight. There is no timer: a screen reads
- * again with `refetch` when it regains focus.
+ * more than four requests are in flight. There is no timer: the chat event
+ * stream reads them again when an agent asks for something or a task moves on
+ * (see `createCanonicalChatCacheSync`), and a screen does with `refetch` when
+ * it regains focus.
  *
  * An agent whose reads fail, or that was not made from a template (those have
  * no task or interaction reads), is "unavailable"; nothing here throws.

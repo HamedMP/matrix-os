@@ -44,6 +44,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   count: {
     ...theme.v2.text.microSemiBold,
-    color: theme.v2.colors.textInverse,
+    color: theme.v2.colors.onHighlight,
   },
 }));

@@ -115,6 +115,8 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
     const sync = createCanonicalChatCacheSync({
       queryClient,
       chatsKey: mobileQueryKeys.canonicalChats(userId ?? "signed-out", computerKey ?? "none"),
+      // The Agents tab's badge counts agents waiting on the person.
+      agentStatusesKey: mobileQueryKeys.agentStatusesAll(userId ?? "signed-out", computerKey ?? "none"),
     });
     cacheSyncRef.current = sync;
     const unsubscribe = source.subscribe(sync.handle);

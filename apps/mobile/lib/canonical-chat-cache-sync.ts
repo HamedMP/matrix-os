@@ -25,11 +25,12 @@ const BOT_EVENT = /^(bot|interaction)\./;
  * fetch of it is still in flight: however many times it is asked, a burst
  * costs one request now and one more once things settle.
  */
-function createCoalescedRefetch(queryClient: QueryClient, queryKey: QueryKey) {
+function createCoalescedRefetch(queryClient: QueryClient, queryKey: QueryKey, { exact = true } = {}) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dueAt = 0;
   let lastRunAt = Number.NEGATIVE_INFINITY;
-  const isInFlight = () => queryClient.isFetching({ queryKey, exact: true }) > 0;
+  // `exact: false` is for a key that several queries share the start of.
+  const isInFlight = () => queryClient.isFetching({ queryKey, exact }) > 0;
 
   function run() {
     timer = undefined;
@@ -103,16 +104,24 @@ export interface CanonicalChatCacheSync {
 /**
  * Keeps the React Query cache in step with the chat event stream: streamed
  * content is written straight into the open chat's detail, and everything
- * else becomes a refetch of the list, the detail or the bot status -- as few
- * of them as the events allow.
+ * else becomes a refetch of the list, the detail, the bot status or the
+ * agents' statuses -- as few of them as the events allow.
  */
 export function createCanonicalChatCacheSync(options: {
   queryClient: QueryClient;
   chatsKey: QueryKey;
+  /**
+   * The start of the key the agents' status queries share, when something
+   * shows which agents are waiting on the person.
+   */
+  agentStatusesKey?: QueryKey | null;
   activeChat?: CanonicalChatCacheSyncActiveChat | null;
 }): CanonicalChatCacheSync {
   const { queryClient, chatsKey } = options;
   const list = createCoalescedRefetch(queryClient, chatsKey);
+  const agentStatuses = options.agentStatusesKey
+    ? createCoalescedRefetch(queryClient, options.agentStatusesKey, { exact: false })
+    : null;
 
   function openChat({ chatId, detailKey, botKey = null }: CanonicalChatCacheSyncActiveChat) {
     const detail = createCoalescedRefetch(queryClient, detailKey);
@@ -176,6 +185,7 @@ export function createCanonicalChatCacheSync(options: {
     handle(event) {
       if (event.type === "chat.full_refresh") {
         list.request();
+        agentStatuses?.request();
         active?.refreshDetail();
         active?.refreshBot({ recheck: true });
         return;
@@ -183,6 +193,9 @@ export function createCanonicalChatCacheSync(options: {
       const highFrequency = HIGH_FREQUENCY_EVENTS.has(event.eventType);
       if (highFrequency) list.requestWithin(QUIET_LIST_REFRESH_MS);
       else list.request();
+      // An agent asking for something, or its task moving on, changes what
+      // that agent is waiting for, whichever chat is on screen.
+      if (BOT_EVENT.test(event.eventType)) agentStatuses?.request();
 
       if (!active || event.chatId !== active.chatId) return;
       if (event.content) active.applyFrame(event.content);
@@ -197,6 +210,7 @@ export function createCanonicalChatCacheSync(options: {
     },
     dispose() {
       list.dispose();
+      agentStatuses?.dispose();
       active?.close();
       active = null;
     },

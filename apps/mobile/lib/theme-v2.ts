@@ -174,6 +174,8 @@ const semanticColorsLight = {
   action: palette.coral[500],
   success: palette.teal[500],
   highlight: palette.gold[400],
+  // Text on the highlight fill, as in a count badge. White is about 2:1 there.
+  onHighlight: palette.gold[900],
   info: palette.blue[500],
   danger: palette.coral[500],
   disabledSurface: palette.neutral[300],
@@ -214,6 +216,7 @@ const semanticColorsDark = {
   action: palette.coral[400],
   success: palette.teal[400],
   highlight: palette.gold[400],
+  onHighlight: palette.gold[900],
   info: palette.blue[400],
   danger: palette.coral[400],
   disabledSurface: palette.neutral[700],

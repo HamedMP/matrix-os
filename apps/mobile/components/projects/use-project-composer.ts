@@ -30,7 +30,7 @@ interface ProjectComposerOptions {
  * The composer of a project screen: every message it sends starts a new chat
  * in the project, through the same request path as the chat screen. This
  * screen has no transcript to show a sent message in, so the text stays in the
- * box until the server has it.
+ * box until the server has it, and anything typed meanwhile is kept.
  */
 export function useProjectComposer({
   projectId,
@@ -67,7 +67,9 @@ export function useProjectComposer({
       turnRequestId: attempt.turnRequestId,
       onChatCreated: (chatId) => {
         failedSends.current = [];
-        setDraft("");
+        // The box stays editable while the server answers, so it may hold
+        // newer text by now. Only the text that was sent is cleared.
+        setDraft((current) => (current.trim() === text ? "" : current));
         onChatStarted(chatId, selection);
       },
     }, {

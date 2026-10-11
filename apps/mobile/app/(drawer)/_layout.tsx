@@ -146,6 +146,7 @@ export default function DrawerLayout() {
               onLoadMore={() => {
                 if (chatPages.hasMore && !chatPages.isLoadingMore) void chatPages.loadMore();
               }}
+              onRefresh={chatPages.refresh}
               onNewChat={() => {
                 startDraftChat();
                 showChatScreen();

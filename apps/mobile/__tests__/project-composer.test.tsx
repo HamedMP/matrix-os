@@ -84,6 +84,30 @@ describe("useProjectComposer", () => {
     expect(result.current.draft).toBe("");
   });
 
+  it("keeps what was typed while the message was on its way, instead of clearing the box", () => {
+    const { result, onChatStarted } = renderComposer();
+    act(() => result.current.setDraft("Draft the case study"));
+    act(() => result.current.send());
+
+    // The box stays editable while the server answers.
+    act(() => result.current.setDraft("Draft the case study, and a summary"));
+    act(() => sent().onChatCreated?.("chat_new"));
+
+    expect(onChatStarted).toHaveBeenCalledWith("chat_new", selection);
+    expect(result.current.draft).toBe("Draft the case study, and a summary");
+  });
+
+  it("clears the box when only the spacing around the sent text changed", () => {
+    const { result } = renderComposer();
+    act(() => result.current.setDraft("Draft the case study"));
+    act(() => result.current.send());
+
+    act(() => result.current.setDraft("Draft the case study  "));
+    act(() => sent().onChatCreated?.("chat_new"));
+
+    expect(result.current.draft).toBe("");
+  });
+
   it("says a send is in flight, and sends nothing more meanwhile", () => {
     mockPending = true;
     const { result } = renderComposer();

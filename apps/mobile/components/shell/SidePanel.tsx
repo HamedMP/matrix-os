@@ -40,6 +40,8 @@ export interface SidePanelProps {
   onSearchQueryChange: (query: string) => void;
   /** Called when the list nears its end, and from "Try again" after a failure. */
   onLoadMore?: () => void;
+  /** Reads the chats again. The list can be pulled down to refresh only when this is given. */
+  onRefresh?: () => Promise<unknown> | void;
   onNewChat: () => void;
   onSelectChat: (chatId: string) => void;
   onOpenProjects: () => void;
@@ -63,6 +65,7 @@ export function SidePanel({
   now,
   onSearchQueryChange,
   onLoadMore,
+  onRefresh,
   onNewChat,
   onSelectChat,
   onOpenProjects,
@@ -72,6 +75,23 @@ export function SidePanel({
   const { theme } = useUnistyles();
   const [searchText, setSearchText] = useState("");
   const pendingSearch = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshInFlight = useRef(false);
+
+  async function refresh() {
+    if (!onRefresh || refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } catch (error: unknown) {
+      // The list keeps what it had; its own states say when chats are unavailable.
+      console.warn("[mobile] chat list refresh failed", error instanceof Error ? error.name : "unknown");
+    } finally {
+      refreshInFlight.current = false;
+      setRefreshing(false);
+    }
+  }
 
   useEffect(() => () => {
     if (pendingSearch.current) clearTimeout(pendingSearch.current);
@@ -139,6 +159,8 @@ export function SidePanel({
       ItemSeparatorComponent={RowGap}
       onEndReached={searchShown || loadMoreFailed ? undefined : onLoadMore}
       onEndReachedThreshold={0.5}
+      refreshing={onRefresh ? refreshing : undefined}
+      onRefresh={onRefresh ? () => void refresh() : undefined}
       ListHeaderComponent={
         <View testID="side-panel-blocks" style={[styles.blocks, recentLabelShown ? styles.beforeRows : styles.beforeBlock]}>
           <View style={styles.titleRow}>

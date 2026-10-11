@@ -177,7 +177,7 @@ describe("useCanonicalChatPages", () => {
     expect(result.current.hasMore).toBe(false);
   });
 
-  it("leaves the older pages alone when the first page is read again and ends where it did", async () => {
+  it("reads the loaded older pages again whenever the first page is read again, even if it ends where it did", async () => {
     const { result } = renderPages();
     await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
     await act(async () => {
@@ -185,13 +185,54 @@ describe("useCanonicalChatPages", () => {
     });
     await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]));
 
+    // What a chat event does: it reads the first page again, and nothing else.
     await act(async () => {
       await result.current.invalidate();
     });
 
-    await waitFor(() => expect(mockFetchChats).toHaveBeenCalledTimes(3));
-    expect(cursorsRequested()).toEqual([undefined, `${CURSOR}b`, undefined]);
+    await waitFor(() => expect(mockFetchChats).toHaveBeenCalledTimes(4));
+    expect(cursorsRequested()).toEqual([undefined, `${CURSOR}b`, undefined, `${CURSOR}b`]);
     expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("drops a chat deleted further down, and shows one renamed there, once the list is read again", async () => {
+    const { result } = renderPages();
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b", "c", "d"]));
+
+    // Elsewhere, "c" is deleted and "d" renamed. The first page is as it was.
+    serverChats = ["a", "b", "d", "e"];
+    mockFetchChats.mockImplementation(async (_token: string, _url: string, options?: { cursor?: string }) => {
+      const page = pageOf(serverChats, options?.cursor);
+      return { ...page, items: page.items.map((item) => (item.chat.id === "d" ? record("d", "Renamed") : item)) };
+    });
+    await act(async () => {
+      await result.current.invalidate();
+    });
+
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b", "d", "e"]));
+    expect(result.current.chats.find((entry) => entry.chat.id === "d")?.chat.title).toBe("Renamed");
+  });
+
+  it("does not keep reading the older pages again once they are as fresh as the first page", async () => {
+    const { result } = renderPages();
+    await waitFor(() => expect(idsOf(result.current.chats)).toEqual(["a", "b"]));
+    await act(async () => {
+      await result.current.loadMore();
+    });
+    await act(async () => {
+      await result.current.invalidate();
+    });
+    await waitFor(() => expect(mockFetchChats).toHaveBeenCalledTimes(4));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(mockFetchChats).toHaveBeenCalledTimes(4);
   });
 
   it("reads every loaded page again on a refresh, even when the first page ends where it did", async () => {

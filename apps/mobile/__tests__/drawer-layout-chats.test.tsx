@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
 
 import * as mockLayout from "./drawer-layout-test-utils";
 import { C2_CHATS, chatRecord, chatRows, search } from "./side-panel-test-utils";
@@ -139,6 +139,18 @@ describe("side panel layout: the chats it lists", () => {
   });
 
   describe("older chats", () => {
+    it("reads every loaded chat again when the list is pulled down", async () => {
+      const pages = chatPages();
+      mocks.useCanonicalChatPages.mockReturnValue(pages);
+      render(<DrawerLayout />);
+
+      await act(async () => {
+        screen.getByTestId("side-panel").props.onRefresh();
+      });
+
+      expect(pages.refresh).toHaveBeenCalledTimes(1);
+    });
+
     it("loads the next page when the list nears its end", () => {
       const pages = chatPages({ hasMore: true });
       mocks.useCanonicalChatPages.mockReturnValue(pages);

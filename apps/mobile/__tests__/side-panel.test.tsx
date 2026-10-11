@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import UserMultiple02Icon from "@hugeicons/core-free-icons/UserMultiple02Icon";
@@ -78,6 +78,53 @@ describe("SidePanel", () => {
       renderPanel();
 
       expect(screen.getByLabelText("Search chats").props.placeholder).toBe("Search chats");
+    });
+  });
+
+  describe("pull to refresh", () => {
+    const panel = () => screen.getByTestId("side-panel");
+
+    it("reads the chats again when the list is pulled down, and shows that it is until they are read", async () => {
+      let finish: () => void = () => {};
+      const onRefresh = jest.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+      renderPanel({ onRefresh });
+      expect(panel().props.refreshing).toBe(false);
+
+      await act(async () => {
+        panel().props.onRefresh();
+      });
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+      expect(panel().props.refreshing).toBe(true);
+
+      // A second pull while the first is still reading asks for nothing more.
+      await act(async () => {
+        panel().props.onRefresh();
+      });
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+
+      await act(async () => finish());
+      expect(panel().props.refreshing).toBe(false);
+    });
+
+    it("stops showing the refresh when the read fails", async () => {
+      const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const onRefresh = jest.fn(async () => { throw new Error("offline"); });
+      renderPanel({ onRefresh });
+
+      await act(async () => {
+        panel().props.onRefresh();
+      });
+
+      expect(panel().props.refreshing).toBe(false);
+      expect(warn).toHaveBeenCalledWith("[mobile] chat list refresh failed", "Error");
+      warn.mockRestore();
+    });
+
+    it("offers no pull to refresh when it was given nothing to read again", () => {
+      renderPanel();
+
+      expect(panel().props.onRefresh).toBeUndefined();
+      expect(panel().props.refreshing).toBeUndefined();
     });
   });
 

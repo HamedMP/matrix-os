@@ -68,6 +68,14 @@ export const mobileQueryKeys = {
     userId,
     computerKey,
   ] as const,
+  /** The start every `agentStatuses` key shares, for refreshing them whichever agents they cover. */
+  agentStatusesAll: (userId: string, computerKey: string) => [
+    "mobile",
+    "agents",
+    "status",
+    userId,
+    computerKey,
+  ] as const,
   /** `agentIds` names the agents the statuses were read for, so a changed list reads again. */
   agentStatuses: (userId: string, computerKey: string, agentIds: string) => [
     "mobile",

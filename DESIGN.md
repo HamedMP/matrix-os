@@ -106,6 +106,7 @@ semanticColors:
   focus: "#F1C379"
   success: "#288A5B"
   warning: "#E0AA52"
+  warningForeground: "#251C0E"
   danger: "#BA5236"
   info: "#3B85BA"
   muted: "#F3F2F2"
@@ -568,7 +569,8 @@ no tracking. Machine text uses the Geist Mono machine style on every surface.
 - Green/Teal: active, connected, done. Status indicators use Teal 500
   `#288A5B`.
 - Gold: waiting, needs attention without failure. Status indicators use Gold
-  400 `#E0AA52`.
+  400 `#E0AA52`. Text on that fill, as in a count badge, uses Gold 900
+  `#251C0E`; white does not reach 4.5:1 there.
 - Coral: failed, destructive, urgent. Destructive text uses Coral 500
   `#BA5236`.
 - Blue: informational, syncing, neutral progress.

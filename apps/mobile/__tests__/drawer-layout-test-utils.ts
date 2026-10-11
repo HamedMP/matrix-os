@@ -83,6 +83,7 @@ export function chatPages(overrides: Record<string, unknown> = {}) {
     isError: false,
     hasMore: false,
     loadMore: jest.fn(async () => undefined),
+    refresh: jest.fn(async () => undefined),
     isLoadingMore: false,
     isLoadMoreError: false,
     ...overrides,

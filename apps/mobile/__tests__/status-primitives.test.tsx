@@ -3,6 +3,7 @@ import { cleanup, render, screen } from "@testing-library/react-native";
 import { CountBadge } from "../components/ui/CountBadge";
 import { SectionLabel } from "../components/ui/SectionLabel";
 import { StatusDot } from "../components/ui/StatusDot";
+import { semanticColorsByMode } from "../lib/theme-v2";
 
 import { flat } from "./ui-test-utils";
 
@@ -65,8 +66,15 @@ describe("CountBadge", () => {
       fontFamily: "Geist_600SemiBold",
       fontSize: 11,
       lineHeight: 15,
-      color: "#FFFFFF",
+      color: "#251C0E",
     });
+  });
+
+  it("writes the count in a dark colour that reads on the gold pill in both appearances", () => {
+    // White on #E0AA52 is about 2:1; the count is small text and needs 4.5:1.
+    expect(semanticColorsByMode.light.onHighlight).toBe("#251C0E");
+    expect(semanticColorsByMode.dark.onHighlight).toBe("#251C0E");
+    expect(semanticColorsByMode.dark.highlight).toBe(semanticColorsByMode.light.highlight);
   });
 
   it("adds a 1.5pt ring in the background colour outside the 16pt pill", () => {

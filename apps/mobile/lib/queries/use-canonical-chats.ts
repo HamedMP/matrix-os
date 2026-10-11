@@ -48,6 +48,8 @@ function useFirstChatPage<T>(select: (response: CanonicalChatListResponse) => T)
     computerKey,
     chatsQueryKey,
     page: chats.data,
+    /** When the page shown was read; 0 before there is one. */
+    readAt: chats.dataUpdatedAt,
     isPending: authEnabled && (
       activeComputer.isPending
       || (Boolean(computer) && chats.isPending)
@@ -74,6 +76,8 @@ interface OlderChatPage {
   nextCursor?: string;
   /** Where the first page ended when the older pages were read from its end. */
   after: string | null;
+  /** When the first page those pages continue from was read. */
+  firstReadAt: number;
 }
 
 /**
@@ -89,34 +93,41 @@ export function useCanonicalChatPages() {
 
   const older = useInfiniteQuery({
     queryKey: mobileQueryKeys.canonicalChatsOlder(first.userId, first.computerKey),
-    // Read only when asked for (`loadMore`), and again when the first page moves.
+    // Read only when asked for (`loadMore`), and again whenever the first page is.
     enabled: false,
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<OlderChatPage> => {
       // The first older page starts where the first page ends at the time of
       // this read, which need not be where it ended when the read was asked for.
       const after = queryClient.getQueryData<CanonicalChatListResponse>(chatsQueryKey)?.nextCursor ?? null;
+      const firstReadAt = queryClient.getQueryState(chatsQueryKey)?.dataUpdatedAt ?? 0;
       const cursor = pageParam ?? after;
-      if (!cursor) return { items: [], after };
+      if (!cursor) return { items: [], after, firstReadAt };
       const token = await getToken();
       if (!token || !computer) throw new Error("Chats unavailable.");
       const page = await fetchChats(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, { cursor });
-      return { items: page.items, nextCursor: page.nextCursor, after };
+      return { items: page.items, nextCursor: page.nextCursor, after, firstReadAt };
     },
     // An empty page that still has a cursor is not the end of the list.
     getNextPageParam: (last) => last.nextCursor,
   });
   const olderPages = older.data?.pages;
-  const olderAfter = olderPages?.[0]?.after;
+  const olderLoaded = olderPages !== undefined;
+  const olderFirstReadAt = olderPages?.[0]?.firstReadAt;
+  const firstReadAt = first.readAt;
   const refetchOlder = older.refetch;
 
-  // Older pages continue from the first page as it was when they were read.
-  // When a new chat or new activity moves the end of the first page, pages
-  // read from the old end would skip or repeat a chat, so they are read again.
+  // Older pages follow the first page: whenever it is read again (a chat
+  // event, a sent message, a refresh), so are they. Two things would go stale
+  // otherwise. A new chat or new activity moves the end of the first page, and
+  // pages read from the old end would skip or repeat a chat. And a chat
+  // renamed or deleted further down changes nothing on the first page, so it
+  // would linger here. A read already in flight is not restarted; when it
+  // lands older than the first page, this runs again.
   useEffect(() => {
-    if (olderAfter === undefined || firstCursor === undefined || olderAfter === firstCursor) return;
+    if (!olderLoaded || firstReadAt === 0 || olderFirstReadAt === firstReadAt) return;
     void refetchOlder({ cancelRefetch: false });
-  }, [firstCursor, olderAfter, refetchOlder]);
+  }, [olderLoaded, firstReadAt, olderFirstReadAt, refetchOlder]);
 
   const chats = useMemo(
     () => olderPages ? mergeChatPages([firstItems, ...olderPages.map((page) => page.items)]) : firstItems,
@@ -134,8 +145,9 @@ export function useCanonicalChatPages() {
     isError: first.isError,
     invalidate: first.invalidate,
     /**
-     * Reads everything on screen again, as for pull-to-refresh. `invalidate`
-     * reads the first page, and the older ones only if that moved it.
+     * Reads everything on screen again and waits for it, as for
+     * pull-to-refresh. `invalidate` does the same without waiting for the
+     * older pages.
      */
     refresh: async () => {
       await first.invalidate();
