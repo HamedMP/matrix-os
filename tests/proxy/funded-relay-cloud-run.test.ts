@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+afterEach(() => vi.restoreAllMocks());
 
 import {
   createFundedRelayService,
@@ -119,13 +120,20 @@ describe("funded relay Cloud Run service", () => {
     try {
       expect((await service.app.request(path)).status).toBe(401);
       expect(fetchFn).not.toHaveBeenCalled();
-      const headers = { authorization: `Bearer ${config.relayControlToken}` };
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      const headers = { authorization: `Bearer ${config.relayControlToken}`,
+        "x-matrix-readiness-probe-id": "12345678-1234-4123-8123-123456789abc",
+        "x-cloud-trace-context": `${"b".repeat(32)}/123;o=1` };
       expect((await service.app.request(path, { headers })).status).toBe(200);
       expect(fetchFn).toHaveBeenCalledWith(
         "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/zai-org/glm-5.3-flash",
         expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
           body: expect.stringContaining('"max_tokens":1') }),
       );
+      expect(JSON.parse(String(info.mock.calls[0]?.[0]))).toMatchObject({
+        probeId: headers["x-matrix-readiness-probe-id"], traceId: "b".repeat(32),
+        modelId: "@cf/zai-org/glm-5.3-flash", outcome: "ready",
+      });
       fetchFn.mockResolvedValueOnce(new Response(null, { status: 503 }));
       expect((await service.app.request(path, { headers })).status).toBe(503);
       fetchFn.mockResolvedValueOnce(Response.json({ success: true, result: [{ name: "@cf/zai-org/glm-5.3-flash" }] }));
