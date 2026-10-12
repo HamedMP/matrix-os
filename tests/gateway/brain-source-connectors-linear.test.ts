@@ -18,6 +18,7 @@ const config: BrainLinearSourceConfig = {
   teamKeys: ["ENG"], accountLabel: "work", include: { issues: true, comments: true, projectUpdates: true },
 };
 const WINDOW_START = "2025-10-01T10:00:00.000Z";
+const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
 
 function issue(n: number, extra: Record<string, unknown> = {}) {
   return {
@@ -131,7 +132,6 @@ describe("Linear source", () => {
       "linear.brain_issues": (params) => connection("issues", Array.from({ length: Number(params.first) },
         (_, index) => issue(1, { id: `issue-${index}`, identifier: `ENG-${index + 1}`, labels }))),
     });
-    const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
     expect(await run(issuesOnly, { refsPerPage: 2_000 })).toMatchObject({ status: "succeeded", counts: { written: 76 } });
     expect(integrations.calls[0]!.params.first).toBe(76);
   });
@@ -144,7 +144,6 @@ describe("Linear source", () => {
       integrations: fakeIntegrations({ "linear.brain_issues": () => connection("issues", [issue(1, { assignee: { id: assignee }, updatedAt })]) }),
     });
     const hooks = recordingHooks();
-    const issuesOnly = { teamKeys: ["ENG"], include: { issues: true, comments: false, projectUpdates: false } };
     const run = async () => {
       const created = await handler.createAdapter("owner_a", connectorProject, issuesOnly);
       if (!created.ok) throw new Error(created.code);
@@ -167,6 +166,24 @@ describe("Linear source", () => {
     updatedAt = "2026-09-25T00:00:00.000Z";
     expect((await run()).counts).toMatchObject({ written: 0, unchanged: 1 });
     expect(hooks.events.map((event) => event.type === "documents_changed" && event.documentIds)).toEqual([[id]]);
+  });
+
+  it("moves the cursor with every page it writes, so an older overlapping read cannot overwrite a newer one", async () => {
+    harness = await connectorHarness("linear");
+    const adapter = async (description: string) => {
+      const created = await createBrainLinearHandler({ kysely: harness!.db, isConnected: async () => true, integrations:
+        fakeIntegrations({ "linear.brain_issues": () => connection("issues", [issue(1, { description })]) }) })
+        .createAdapter("owner_a", connectorProject, issuesOnly);
+      if (!created.ok) throw new Error(created.code);
+      return created.adapter;
+    };
+    await harness.sync(await adapter("v0"), issuesOnly);
+    const settled = (await harness.repository.getSyncCursor(connectorScope, harness.sourceId))!.cursor;
+    // Two processes read the same cursor and see the issue at the saved watermark; the older one commits last.
+    const older = await harness.pageBatch(await adapter("v1"), issuesOnly, settled);
+    await harness.repository.applySyncBatch(connectorScope, await harness.pageBatch(await adapter("v2"), issuesOnly, settled));
+    await expect(harness.repository.applySyncBatch(connectorScope, older)).rejects.toMatchObject({ code: "conflict" });
+    expect((await harness.repository.getDocument(connectorScope, linearIssueDocumentId(harness.externalRef, "issue-1")))!.body).toMatch(/^v2\n/);
   });
 
   it("maps provider outcomes, refused output and timeouts to stable codes", async () => {

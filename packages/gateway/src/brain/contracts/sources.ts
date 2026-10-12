@@ -238,7 +238,7 @@ export type BrainSourceConfigView = Readonly<Record<string, string | number | bo
 
 export type BrainSourceAdapterResolution<TConfig> =
   | { readonly ok: true; readonly adapter: BrainSourceAdapter<TConfig> }
-  | { readonly ok: false; readonly code: "not_connected" | "auth_failed" | "config_invalid" };
+  | { readonly ok: false; readonly code: "not_connected" | "auth_failed" | "config_invalid" | "provider_unavailable" };
 
 export interface BrainSourceOptionsQuery { readonly q?: string; readonly cursor?: string }
 export interface BrainSourceOptionView { readonly id: string; readonly label: string; readonly detail: string | null }

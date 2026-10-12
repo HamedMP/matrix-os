@@ -73,6 +73,9 @@ describe("connector kind handlers", () => {
     expect(slack.identify(connectorProject, bridge)).toMatchObject({ label: "Slack threads" });
     expect(slack.viewConfig(bridge)).toEqual(bridge);
     expect(await linear.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
+    for (const handler of [linear, createBrainLinearHandler({ ...deps, isConnected: async () => true, isConfigured: () => false })]) {
+      expect(await handler.createAdapter("owner_a", connectorProject, plain)).toEqual({ ok: false, code: "provider_unavailable" });
+    }
   });
 
   it("run only the pinned account, never the first of several", async () => {
@@ -223,6 +226,19 @@ describe("snapshot adapter", () => {
     expect(kept.ok && kept.page.deletions).toEqual([id(3), id(5), id(6)]);
     const under = await setup([5], { retain: 3 }).read(null);
     expect(under.ok && under.page.deletions).toEqual([]);
+  });
+
+  it("frees the space of a page's retention deletions before writing its new documents", async () => {
+    harness = await connectorHarness("google_calendar", "google_calendar:test", { maxBytesPerScope: 15 });
+    const adapter = (listed: number) => createSnapshotAdapter<object, { documentId: string; stamp: string }>({
+      kind: "google_calendar", cursorPrefix: "t2", fingerprint: "f", buildsPerPage: 10, sweep: false, retain: 1,
+      list: async () => ({ ok: true, value: { items: [{ documentId: id(listed), stamp }], complete: true, gone: [], notices: [] } }),
+      build: async (item) => ({ ok: true, value: { notices: [], upsert: { documentId: item.documentId, title: "Event",
+        body: "Body", permalink: "", sourceUpdatedAt: item.stamp, provenance: "calendar_event", refs: [] } } }),
+    });
+    expect((await harness.sync(adapter(1), {})).counts.written).toBe(1);
+    expect(await harness.sync(adapter(2), {})).toMatchObject({ status: "succeeded", counts: { written: 1, deleted: 1 } });
+    expect(await harness.liveIds()).toEqual([id(2)]);
   });
 
   it("sweeps past retain on a config change once a listing is complete, keeping the re-render open until then", async () => {

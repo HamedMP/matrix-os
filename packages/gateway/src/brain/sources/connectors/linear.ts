@@ -5,8 +5,10 @@
  * trashed items become deletions.
  *
  * Cursor "lin1:" + base64url JSON: { v: 1, f: config fingerprint, w: per-phase watermark, p: the pass in progress
- * (phase, provider cursor, newest updatedAt seen, since) or null }. A different fingerprint starts over.
+ * (phase, provider cursor, newest updatedAt seen, since) or null, n: random token, new on every page that writes so an
+ * overlapping run fails its compare-and-set even when no watermark moved }. A different fingerprint starts over.
  */
+import { randomBytes } from "node:crypto";
 import { z } from "zod/v4";
 import {
   BRAIN_ISSUE_KEY_PATTERN, type BrainLinearSourceConfig, type BrainSourceAdapter, type BrainSourceNotice,
@@ -72,6 +74,7 @@ const CursorSchema = z.object({
   v: z.literal(1), f: z.string().max(64),
   w: z.object({ issues: instant.optional(), comments: instant.optional(), updates: instant.optional() }).strict(),
   p: z.object({ k: z.enum(PHASES), a: text(512).nullable(), m: instant.nullable(), s: instant }).strict().nullable(),
+  n: z.string().regex(/^[A-Za-z0-9_-]{16}$/).optional(),
 }).strict();
 type LinearCursor = z.output<typeof CursorSchema>;
 
@@ -215,6 +218,7 @@ async function readLinearPage(
     const start = following === undefined ? null : { k: following, a: null, m: null, s: watermarks[following] ?? windowStart };
     next = { ...cursor, w: watermarks, p: start };
   }
+  if (upserts.size > 0 || deletions.size > 0) next = { ...next, n: randomBytes(12).toString("base64url") };
   return {
     ok: true,
     page: {

@@ -91,11 +91,13 @@ function buildHandler<TConfig extends object>(
       return stored === null ? null : parseWith(spec.schema, stored);
     },
     async createAdapter(ownerId, _project, config) {
-      // Building an adapter is local and cheap; the account check decides whether it may run.
+      // Missing server wiring is provider_unavailable, never not_connected: reconnecting the account would not help.
       const adapter = spec.adapter(ownerId, config);
-      if (adapter === null || !(await spec.availability(ownerId)).available
-        || (spec.account !== undefined && !await spec.account(ownerId, config))) return { ok: false, code: "not_connected" };
-      return { ok: true, adapter };
+      const availability = await spec.availability(ownerId);
+      const unwired = adapter === null || (!availability.available && availability.reason === "not_configured");
+      if (unwired) return { ok: false, code: "provider_unavailable" };
+      const allowed = availability.available && (spec.account === undefined || await spec.account(ownerId, config));
+      return allowed ? { ok: true, adapter } : { ok: false, code: "not_connected" };
     },
     viewConfig: (config) => spec.view(config),
     availability: (ownerId) => spec.availability(ownerId),

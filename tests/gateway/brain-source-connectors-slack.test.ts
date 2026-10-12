@@ -113,14 +113,7 @@ describe("Slack bridge source", () => {
       const created = await createBrainSlackBridgeHandler({ kysely: harness!.db, capture: capturer })
         .createAdapter("owner_a", connectorProject, config);
       if (!created.ok) throw new Error(created.code);
-      const read = await created.adapter.readPage({
-        scope: connectorScope, sourceId: harness!.sourceId, externalRef: harness!.externalRef, config, cursor: settled,
-        limits: { maxUpserts: 10, maxDeletions: 10, maxRefs: 100 }, signal: new AbortController().signal,
-        documents: harness!.repository, now: () => harness!.now(),
-      });
-      if (!read.ok) throw new Error(read.code);
-      const { upserts, deletions, nextCursor } = read.page;
-      return { sourceId: harness!.sourceId, expectedCursor: settled, nextCursor, upserts, deletions };
+      return harness!.pageBatch(created.adapter, config, settled);
     };
     const older = await page(version("v1", "2026-09-21T10:00:00.000Z"));
     const newer = await page(version("v2", "2026-09-22T10:00:00.000Z"));
@@ -154,7 +147,7 @@ describe("Slack bridge source", () => {
     expect((await run(ignoring, config, {}, 1)).errorCode).toBe("provider_timeout");
     const handler = createBrainSlackBridgeHandler({ kysely: harness.db });
     expect(await handler.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
-    expect(await handler.createAdapter("owner_a", connectorProject, config)).toEqual({ ok: false, code: "not_connected" });
+    expect(await handler.createAdapter("owner_a", connectorProject, config)).toEqual({ ok: false, code: "provider_unavailable" });
     expect(handler.listOptions).toBeUndefined();
     const configured = createBrainSlackBridgeHandler({ kysely: harness.db, capture: reader(() => ({ status: "unavailable" })).capture });
     expect(await configured.availability("owner_a")).toEqual({ available: true });

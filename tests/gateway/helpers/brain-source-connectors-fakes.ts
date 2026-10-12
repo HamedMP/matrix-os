@@ -9,7 +9,7 @@ import type {
 import {
   bootstrapBrainConnectorDatabase, runBrainSourceSync,
 } from "../../../packages/gateway/src/brain/sources/connectors/index.js";
-import type { BrainScopeKey } from "../../../packages/gateway/src/brain/types.js";
+import type { BrainScopeKey, BrainSyncBatchInput } from "../../../packages/gateway/src/brain/types.js";
 import { createBrainHarness, type BrainHarness, type BrainHarnessOptions } from "./brain-store-helpers.js";
 
 export const connectorScope: BrainScopeKey = { ownerId: "owner_a", scopeId: "personal:project:proj_a" };
@@ -56,6 +56,8 @@ export interface ConnectorHarness extends BrainHarness {
   run<TConfig>(handler: BrainSourceKindHandler<TConfig>, config: TConfig, limits?: Partial<BrainSourceSyncLimits>):
     Promise<BrainSourceSyncResult>;
   liveIds(): Promise<string[]>;
+  /** One page read from `cursor`, as the batch a runner would commit (a second process's overlapping read). */
+  pageBatch<TConfig>(adapter: BrainSourceAdapter<TConfig>, config: TConfig, cursor: string): Promise<BrainSyncBatchInput>;
 }
 
 export async function connectorHarness(
@@ -78,6 +80,12 @@ export async function connectorHarness(
     async liveIds() {
       const page = await harness.repository.listDocuments(connectorScope, { sourceId: source.sourceId, limit: 100 });
       return page.items.map((item) => item.documentId).sort();
+    },
+    async pageBatch(adapter, config, cursor) {
+      const read = await adapter.readPage({ scope: connectorScope, sourceId: source.sourceId, externalRef, config, cursor,
+        limits: { maxUpserts: 10, maxDeletions: 10, maxRefs: 100 }, signal: new AbortController().signal, documents: harness.repository, now: () => harness.now() });
+      if (!read.ok) throw new Error(read.code);
+      return { sourceId: source.sourceId, expectedCursor: cursor, nextCursor: read.page.nextCursor, upserts: read.page.upserts, deletions: read.page.deletions };
     },
   };
 }

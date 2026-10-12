@@ -370,7 +370,7 @@ or behind the documents it describes.
 
 1. The source must exist live with `status = 'active'`: missing or tombstoned
    gives `not_found`; `paused` or `disabled` gives `conflict`.
-2. Capacity totals are loaded once, then tracked per item.
+2. Capacity totals are loaded once, then tracked per item; deletions (step 4) of ids not also upserted run first.
 3. Each upsert runs upsert steps 2 and 4-9 with `sourceId = batch.sourceId` and no
    `expectedRevision`. A live row owned by another source, or by manual
    publication (`source_id IS NULL`), is skipped and its id appended to
