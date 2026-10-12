@@ -94,6 +94,27 @@ describe("requestDeviceCode", () => {
     });
   });
 
+  it.each([
+    { error: new TypeError("connection closed while reading response"), code: "platform_unreachable" },
+    { error: new DOMException("response body aborted", "AbortError"), code: "request_timeout" },
+    { error: new DOMException("response body timed out", "TimeoutError"), code: "request_timeout" },
+    { error: new Error("unexpected response reader failure"), code: "login_failed" },
+  ])("maps response-body failures to a safe $code error", async ({ error, code }) => {
+    const response = new Response(JSON.stringify(validDeviceResponse));
+    const jsonSpy = vi.spyOn(response, "json").mockRejectedValue(error);
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestDeviceCode(config)).rejects.toMatchObject({
+      code,
+      message: "Request failed",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(jsonSpy).toHaveBeenCalledTimes(1);
+    expect(execFileMock).not.toHaveBeenCalled();
+  });
+
   it("accepts a configured public verification origin different from the API origin", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(validDeviceResponse))));
     await expect(requestDeviceCode(config)).resolves.toEqual(validDeviceResponse);
