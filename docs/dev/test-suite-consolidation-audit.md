@@ -23,7 +23,14 @@ One funded PostgreSQL workflow case is deleted because its callback, inputs,
 helper and assertions are identical to the retained case in the same suite.
 The real PostgreSQL settlement, grant, rollback, race and gate tests remain.
 
-Net: ten fewer test files and six fewer cases in the measured selection.
+The wider pass also deletes eight self-contained suites (107 cases): each imports
+only Vitest and exercises hardcoded values, copied functions, or test-local mocks.
+None runs the production feature it names. V8 reported zero covered production
+statements, functions, or branch arms across the shell and bundled-app source
+globs. These cases could keep passing after the actual feature broke.
+[Per-file removal proof and expanded measurements](test-suite-removal-evidence.json).
+
+Net from the base: **18 fewer test files and 113 fewer cases**.
 
 ## Inventory
 
@@ -49,7 +56,7 @@ timeouts, skips, labels and coverage thresholds are unchanged.
 | Zoom in/out and the duplicate Cmd+=/Cmd+- method calls | `canvas-transform.test.ts`: exact `ZOOM_STEP` and both bounds; responsive suite clicks the actual buttons |
 | Reset and duplicate Cmd+1 method call | Transform reset case; responsive suite clicks reset after changing the slider |
 | Slider exact value and min/max clamping | Transform exact/clamped values; actual toolbar slider checks its bounds and changes the store |
-| Cmd+0 method call | Responsive suite changes zoom, clicks **Fit all** and verifies zoom changed; both original geometry cases retained |
+| Cmd+0 method call | Responsive suite clicks **Fit all** for a fixed window and asserts exact zoom and pan; both original geometry cases retained |
 | Test-local percentage formatter | Five actual toolbar render cases preserve 100%, 50%, 200%, 10% and 300% |
 | Four auto-arrange cases | Identical inputs/assertions in the pure layout suite, which no longer starts jsdom or unrelated stores |
 
@@ -69,7 +76,42 @@ passed. Median command wall time fell from **1.149s to 0.737s**, saving **0.412s
 (156 cases) and three times after (150 cases). Its reported elapsed times vary;
 there is no claim of a measured full hosted CI speedup.
 
-This is a small cleanup. It does not explain or solve minute-scale CI latency.
+For the wider removal, three alternating pairs compared the first-pass selection
+plus the eight self-contained suites against the same selection alone: 19 files /
+257 passing cases versus 11 files / 150 passing cases. Median command wall time
+fell from **5.977s to 5.559s**, saving **0.418s (7.0%)** for this selection. This
+comparison predates the final assertion strengthening below. It is separate from
+the original consolidation benchmark; the two savings must not be added.
+
+This cleanup does not explain or solve minute-scale CI latency.
+
+## Removed self-contained suites
+
+| Suite under `tests/shell/` | Cases | What it actually exercised |
+|---|---:|---|
+| `ai-button.test.ts` | 7 | Local message strings, entry objects, array filtering |
+| `appearance-settings.test.ts` | 8 | Local props, arrays, regex and arithmetic; no component rendering |
+| `canvas-interaction-safety.test.ts` | 3 | A copied timeout and local visibility assignments |
+| `desktop-terminal-restore.test.ts` | 5 | A test-defined terminal-path filter |
+| `task-manager.test.ts` | 14 | Local tasks, copied display/grouping helpers and a fabricated manifest |
+| `voice-button.test.ts` | 15 | Copied conditional classes/titles and simulated local callbacks |
+| `voice.test.ts` | 16 | Test-defined media recorders, sockets, audio context and handlers |
+| `chat.test.ts` | 39 | Test-defined reducer, queue and message grouping |
+
+Existing production-connected tests remain intact: Task Manager app/model tests,
+canonical Chat state/content tests, platform speech input, appearance logging,
+terminal state and CanvasTransform interaction tests. They are validated in the
+expanded focused run; this does not claim every imagined case in the deleted
+simulations is covered elsewhere. Those simulations provided no production
+regression protection in the first place. Historical spec plans and duration
+profiles retain their historical references; current test discovery uses the
+filesystem and no CI routing is changed.
+
+The real toolbar wiring test now asserts zoom `2` and pan `(-75, 17)` for a
+400×200 window at `(100, 50)` in a 900×668 viewport. Two temporary production
+mutations—resetting instead of fitting, and fitting an empty window list—each
+fail exactly that test. Restoring the unchanged production source passes all 11
+toolbar cases. This addresses the initial Greptile finding.
 
 ## What the audit retained
 
@@ -99,6 +141,15 @@ sharing a fixture across distinct tests requires separate isolation proof.
 Hermes whitespace cases look alike but use different literal whitespace and
 protect separate streaming boundaries. None of those suites were deleted,
 skipped or weakened. Integration/E2E and exact-source provenance gates remain.
+
+## Final focused validation
+
+The final expanded run passes **254 tests across 19 files**, with zero failures
+and skips. It includes all retained selection files plus the production-connected
+app, Chat, speech, appearance, terminal and interaction suites listed above.
+Typechecking passes on a serial retry (the initial concurrent package build hit
+a sandbox process-liveness permission error). Patterns: zero violations, five
+existing warnings. Both AST retention proofs and diff whitespace checks pass.
 
 ## Broad local validation limit
 

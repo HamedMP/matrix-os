@@ -70,7 +70,11 @@ describe("responsive CanvasToolbar", () => {
   });
 
   it("wires zoom buttons, reset, slider and fit-all to the transform store", () => {
-    useWindowManager.getState().openWindow("A", "apps/a.html", 0);
+    const manager = useWindowManager.getState();
+    manager.openWindow("A", "apps/a.html", 0);
+    const windowId = useWindowManager.getState().windows[0].id;
+    manager.moveWindow(windowId, 100, 50);
+    manager.resizeWindow(windowId, 400, 200);
     render(<CanvasToolbar />);
 
     fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
@@ -88,7 +92,10 @@ describe("responsive CanvasToolbar", () => {
 
     fireEvent.change(slider, { target: { value: "2.5" } });
     fireEvent.click(screen.getByRole("button", { name: "Fit all" }));
-    expect(useCanvasTransform.getState().zoom).not.toBe(2.5);
+    const { zoom, panX, panY } = useCanvasTransform.getState();
+    expect(zoom).toBe(2);
+    expect(panX).toBe(-75);
+    expect(panY).toBe(17);
   });
 
   it.each([

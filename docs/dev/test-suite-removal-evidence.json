@@ -1,0 +1,267 @@
+{
+  "base": "11945b124f0c4c17d91769d95c88afe3463f9ace",
+  "firstPassHead": "71afad98f1b7516e398cc64b39ec2243e46753bb",
+  "removedFiles": [
+    {
+      "path": "tests/shell/ai-button.test.ts",
+      "sha256": "05554afd8c0803a09392a65348a2331d2119959b855131ef7e389f3771181325",
+      "cases": 7,
+      "reason": "Builds messages, filtering and entry objects entirely inside the test; no app customization, catalog, or schema code is loaded.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/appearance-settings.test.ts",
+      "sha256": "47ef0cb683c8eea01753108b182b228f770f5701da4b916261dde85d71c321ae",
+      "cases": 8,
+      "reason": "Asserts local props, arrays, regex and arithmetic; never renders ColorPicker, BackgroundEditor, DockEditor or AppearanceSection.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/canvas-interaction-safety.test.ts",
+      "sha256": "9992a643712d4fce965216a6234643ce551f59c8d331c431e76281074060929a",
+      "cases": 3,
+      "reason": "Defines its own safety timeout and visibility handler; does not mount CanvasTransform or dispatch visibility events to production.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/desktop-terminal-restore.test.ts",
+      "sha256": "5d735c1f54dee4b4fc34e599d01f68497ca302d1cf9e48e356c7c30058c33584",
+      "cases": 5,
+      "reason": "Defines its own getTerminalWindows filter; changes to production restore logic cannot affect the assertions.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/task-manager.test.ts",
+      "sha256": "43d7a895b8ec894d3dd5dc355c1613494092a0f0a76c5bcb24b8f7445079a464",
+      "cases": 14,
+      "reason": "Defines local task fixtures, grouping, parsing, priority and time helpers plus a local manifest; never loads the app or actual manifest.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/voice-button.test.ts",
+      "sha256": "4f04a5a02e01d36a0a9e3a807c435bfce2a5413ad85ec35e3c178475c2c23907",
+      "cases": 15,
+      "reason": "Computes class names, titles, disabled state and simulated clicks locally; never renders VoiceButton or InputBar.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/voice.test.ts",
+      "sha256": "4fcd09b59c819d5691d85ca0b998b8a779567e52572dc82f5a4fcb8f7cb9d515",
+      "cases": 16,
+      "reason": "Exercises test-local recorders, sockets, audio context and handlers; never imports or runs useVoice.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    },
+    {
+      "path": "tests/shell/chat.test.ts",
+      "sha256": "227a3b38b9f3b3dab457eca69daacd7383e00180a058a7ff4f6420c9eaed6a26",
+      "cases": 39,
+      "reason": "Defines its own reducer, queue and grouping implementations; never loads current Chat code, store or protocol contracts.",
+      "dependencyAudit": {
+        "imports": [
+          "vitest"
+        ],
+        "dynamicImports": 0,
+        "sourceReads": 0,
+        "externalExecutions": 0,
+        "testLocalImplementationOnly": true
+      }
+    }
+  ],
+  "totalRemovedCases": 107,
+  "coverage": {
+    "productionGlobs": [
+      "shell/src/**",
+      "home/apps/**"
+    ],
+    "reportedSourceFiles": 763,
+    "coveredStatements": 0,
+    "coveredFunctions": 0,
+    "coveredBranchArms": 0,
+    "exitCode": 1,
+    "limitation": "Partial run: unchanged global thresholds fail at 0%; source collection emitted parse warnings. AST import/execution audit independently proves these eight files have no production dependency."
+  },
+  "benchmark": {
+    "comparison": "First-pass selected 11 files plus eight self-contained suites versus the same 11 files alone, before final Fit all assertion strengthening.",
+    "node": "24.13.1",
+    "vitest": "4.0.18",
+    "workers": 2,
+    "medianWallSeconds": {
+      "before": 5.976975874975324,
+      "after": 5.558680457994342
+    },
+    "savedSeconds": 0.4182954169809818,
+    "percentSaved": 6.998445798189018,
+    "runs": [
+      {
+        "pair": 1,
+        "variant": "before",
+        "wallSeconds": 7.38811512500979,
+        "exitCode": 0,
+        "passedTests": 257,
+        "failedTests": 0,
+        "files": 19
+      },
+      {
+        "pair": 1,
+        "variant": "after",
+        "wallSeconds": 5.92299637501128,
+        "exitCode": 0,
+        "passedTests": 150,
+        "failedTests": 0,
+        "files": 11
+      },
+      {
+        "pair": 2,
+        "variant": "after",
+        "wallSeconds": 5.549521708977409,
+        "exitCode": 0,
+        "passedTests": 150,
+        "failedTests": 0,
+        "files": 11
+      },
+      {
+        "pair": 2,
+        "variant": "before",
+        "wallSeconds": 5.878192958072759,
+        "exitCode": 0,
+        "passedTests": 257,
+        "failedTests": 0,
+        "files": 19
+      },
+      {
+        "pair": 3,
+        "variant": "before",
+        "wallSeconds": 5.976975874975324,
+        "exitCode": 0,
+        "passedTests": 257,
+        "failedTests": 0,
+        "files": 19
+      },
+      {
+        "pair": 3,
+        "variant": "after",
+        "wallSeconds": 5.558680457994342,
+        "exitCode": 0,
+        "passedTests": 150,
+        "failedTests": 0,
+        "files": 11
+      }
+    ],
+    "limitation": "Local scoped timing; three pairs; no full-suite or hosted CI speedup claim."
+  },
+  "toolbarMutationProof": [
+    {
+      "variant": "reset_instead_of_fit",
+      "exitCode": 1,
+      "passedTests": 10,
+      "failedTests": 1,
+      "failures": [
+        "responsive CanvasToolbar wires zoom buttons, reset, slider and fit-all to the transform store"
+      ]
+    },
+    {
+      "variant": "empty_windows",
+      "exitCode": 1,
+      "passedTests": 10,
+      "failedTests": 1,
+      "failures": [
+        "responsive CanvasToolbar wires zoom buttons, reset, slider and fit-all to the transform store"
+      ]
+    },
+    {
+      "variant": "restored",
+      "exitCode": 0,
+      "passedTests": 11,
+      "failedTests": 0,
+      "failures": []
+    }
+  ],
+  "finalValidation": {
+    "files": [
+      "tests/shell/font-source-contracts.test.ts",
+      "tests/shell/chrome-style-source-contracts.test.ts",
+      "tests/default-apps/brand-source-contracts.test.ts",
+      "tests/observability/deployment-source-contracts.test.ts",
+      "tests/platform/golden-snapshot-wiring-contracts.test.ts",
+      "tests/platform/funded-postgres-ci-workflow.test.ts",
+      "tests/shell/canvas-auto-arrange.test.ts",
+      "tests/shell/canvas-transform.test.ts",
+      "tests/shell/canvas-toolbar-responsive.test.tsx",
+      "tests/shell/canvas-renderer.test.ts",
+      "tests/shell/desktop-modes.test.ts",
+      "tests/default-apps/task-manager-app.test.tsx",
+      "tests/default-apps/task-board-model.test.ts",
+      "tests/shell/canonical-chat-state.test.tsx",
+      "tests/shell/canonical-chat-content.test.tsx",
+      "tests/shell/terminal-session-state.test.ts",
+      "tests/shell/canvas-transform-interaction.test.tsx",
+      "tests/shell/appearance-section-logging.test.tsx",
+      "tests/shell/chat-platform-speech-input.test.tsx"
+    ],
+    "passedTests": 254,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "typecheck": "passed after serial retry; initial concurrent build hit sandbox process-liveness EPERM",
+    "patterns": {
+      "violations": 0,
+      "existingWarnings": 5
+    },
+    "fullUnitGate": "Not qualified locally; unchanged baseline macOS cleanup failures remain documented in the consolidation audit."
+  }
+}
