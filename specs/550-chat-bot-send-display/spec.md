@@ -91,7 +91,11 @@ only an authenticated configured personal-runtime owner viewing their matching
 private Chat receives decrypted `preview`/`previewKind`. Command paths and
 newlines are allowed up to4,000 UTF-16 units/16KiB. Recognized credential values,
 assignments and private keys suppress the entire preview before encryption.
-Legacy plaintext keeps the stricter1,000-character/4,000-byte safe label policy.
+Legacy plaintext keeps the stricter1,000-character/4,000-byte safe label policy
+at every provider ingestion boundary, using `PlaintextToolPreviewSchema`. This
+also governs historical plaintext fallback, legacy thread projection and export;
+Claude/Hermes must retain coarse fallback when a preview is unsafe. The wider
+output schema alone never authorizes raw provider arguments.
 Shared/nonowner/export/legacy thread views never receive the protected sidecar.
 Wire version0 omits previews incompatible with the older safe-label schema;
 version1 changes shape validation only and grants no authorization. Missing or
@@ -128,7 +132,8 @@ credential command, or wire-version flag alone cannot grant data access.
 Regression suites assert actual installed Pi worker image/file tool behavior,
 managed canonical admission and recipe adapter/orchestrator/broker flow, source
 and grant fencing, source-specific caps, cancellation and session save/load.
-Command suites assert runner start/completion, separate crypto AAD, private
+Command suites assert legacy Claude/Hermes coarse fallback and provider-ingress
+plaintext rejection alongside runner start/completion, separate crypto AAD, private
 projection, export/thread stripping, old/new HTTP/SSE negotiation and replay.
 Built Electron `chat-tool-details.e2e.test.ts` asserts path/multiline script
 expansion and exact clipboard text both before and after reload. Bot tests

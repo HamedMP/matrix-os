@@ -1,3 +1,4 @@
+import { projectPlaintextToolPreview } from "./plaintext-tool-preview.js";
 import { CanonicalChatCommandPreviewSchema, CanonicalChatToolOutputTextSchema, type CanonicalChatRunActivity, type CanonicalChatContent, type CanonicalOwnerScope } from "@matrix-os/contracts";
 import { openToolPreview, openToolOutput } from "../coding-agents/protected-tool-output.mjs";
 import { redactAssistantCredentialParts, redactAssistantCredentials, redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
@@ -33,7 +34,8 @@ export function createOwnerToolOutputProjection(key: Buffer | undefined, runtime
       ...(content.activities ? { activities: content.activities.flatMap((activity) => {
         if (shared && activity.type === "assistant.delta") return [];
         if (activity.type === "agent.activity") {
-          const { protectedPreview, ...coarse } = activity;
+          const { protectedPreview, ...storedCoarse } = activity;
+          const coarse = projectPlaintextToolPreview(storedCoarse);
           const visible = !allowed ? {
             ...coarse,
             ...(coarse.preview ? { preview: redactSharedAssistantText(coarse.preview) } : {}),
@@ -72,6 +74,6 @@ export function stripProtectedCommandPreviews(activities: CanonicalChatRunActivi
   return activities.map(activity => {
     if (activity.type !== "agent.activity") return activity;
     const { protectedPreview: _protectedPreview, ...coarse } = activity;
-    return coarse;
+    return projectPlaintextToolPreview(coarse);
   });
 }
