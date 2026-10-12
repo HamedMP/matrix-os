@@ -32,7 +32,7 @@ The three states were rendered at `1440×1200` (dialogs) and `1440×980` (Chat) 
 
 - Changed project-sharing, shared-Chat, and legacy-access UI suites: 61 tests passed.
 - Project publication transition suite: 23 tests passed and 1 environment-specific test skipped, including explicit **Restricted** preservation.
-- Gateway collaboration rerun: 47 tests passed serially after the parallel run hit test-hook resource timeouts.
+- Changed gateway and contract collaboration suites: 109 runnable tests passed serially; 1 environment-specific transition test skipped.
 - UI, Web Desktop, and Electron Desktop TypeScript checks passed.
 - Web production and Electron Desktop production builds passed.
 - React Doctor changed-scope score: 87/100, with only maintainability-complexity warnings.
