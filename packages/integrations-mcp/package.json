@@ -7,7 +7,7 @@
     ".": "./src/server.ts"
   },
   "scripts": {
-    "build": "tsc"
+    "build": "node ../../scripts/build-typescript.mjs"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

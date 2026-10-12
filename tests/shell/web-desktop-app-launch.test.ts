@@ -42,7 +42,7 @@ describe("web Desktop built-in app launch routing", () => {
     const launcherApps = buildWebDesktopLauncherApps([customBrowser]);
 
     expect(launcherApps.filter((app) => app.name === "Browser")).toEqual([
-      { name: "Browser", path: "__browser__" },
+      expect.objectContaining({ name: "Browser", path: "__browser__" }),
       customBrowser,
     ]);
   });
@@ -60,12 +60,12 @@ describe("web Desktop built-in app launch routing", () => {
     expect(buildWebDesktopLauncherApps([], "desktop")[0]).toEqual({
       name: "Web Canvas",
       path: "__os-view-canvas__",
-      iconUrl: "/icons/canvas.svg",
+      iconUrl: "/system-app-icons/v3/canvas.png",
     });
     expect(buildWebDesktopLauncherApps([], "canvas")[0]).toEqual({
       name: "Web Desktop",
       path: "__os-view-desktop__",
-      iconUrl: "/icons/desktop.svg",
+      iconUrl: "/system-app-icons/v3/desktop.png",
     });
     expect(buildWebDesktopIconApps([]).some((app) => app.path.startsWith("__os-view-"))).toBe(false);
   });

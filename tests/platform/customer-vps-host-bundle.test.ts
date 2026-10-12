@@ -118,7 +118,7 @@ describe('customer VPS host bundle', () => {
     expect(script).toContain('tar -xzf "$DIST_DIR/$ZELLIJ_ARCHIVE" -C "$STAGE_DIR/bin" zellij');
     expect(script).toContain('test -x "$STAGE_DIR/bin/zellij"');
     expect(script).toContain('rm -rf "$STAGE_DIR/app/shell/.next/cache" "$STAGE_DIR/app/shell/e2e" "$STAGE_DIR/app/shell/node_modules"');
-    expect(script).toContain('find "$STAGE_DIR/app/home/apps" -type d -name node_modules -prune -exec rm -rf {} +');
+    expect(script).toContain('find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +');
     expect(script).toContain('matrix-update');
     expect(script).toContain('cp -a "$ROOT_DIR/distro/customer-vps/systemd/." "$STAGE_DIR/systemd/"');
     expect(script).toContain('matrix-messaging-health');

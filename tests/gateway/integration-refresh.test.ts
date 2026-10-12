@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { Kysely } from "kysely";
 import { IntegrationRefreshRepository } from "../../packages/gateway/src/integrations/refresh/repository.js";
 import { IntegrationRefreshService } from "../../packages/gateway/src/integrations/refresh/service.js";
@@ -32,7 +32,7 @@ it("aborts a stalled provider read and clears the timeout after success", async 
 describe("owner database incremental refresh", () => {
   let db: Kysely<any>;
   let repository: IntegrationRefreshRepository;
-  beforeEach(async () => { const instance = await KyselyPGlite.create(); db = new Kysely({ dialect: instance.dialect }); repository = new IntegrationRefreshRepository(db); await repository.bootstrap(); });
+  beforeEach(async () => { const instance = await createTestPGlite(); db = new Kysely({ dialect: instance.dialect }); repository = new IntegrationRefreshRepository(db); await repository.bootstrap(); });
   afterEach(async () => { await db.destroy(); });
 
   async function claim(at: Date) {

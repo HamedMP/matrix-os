@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { WIN11_THEME } from "../../shell/src/lib/theme-presets.js";
+import { THEME_VAR_MAP } from "../../shell/src/lib/os-bridge.js";
 
 const globalsCssPath = fileURLToPath(new URL("../../shell/src/app/globals.css", import.meta.url));
 const sharedThemeCssPath = fileURLToPath(new URL("../../home/apps/_shared/theme.css", import.meta.url));
@@ -89,25 +90,29 @@ describe("other designs: no opaque-content regressions", () => {
 });
 
 describe("shared app theme (iframe apps): win11 opaque surfaces", () => {
-  it("uses opaque win11 surface tokens", () => {
-    const tokens = sharedThemeCss.match(/:root\[data-matrix-design="win11"\] \{([\s\S]*?)\n\}/);
-    expect(tokens).not.toBeNull();
-    expect(tokens![1]).toContain("--app-card: #fafafa");
-    expect(tokens![1]).toContain("--app-glass: #fafafa");
-    expect(tokens![1]).toContain("--app-glass-strong: #ffffff");
-    expect(tokens![1]).not.toContain("rgba(249,249,249,0.85)");
+  it("inherits the opaque win11 card through the host bridge in light and dark modes", () => {
+    expect(WIN11_THEME.colors.card).toBe("#FAFAFA");
+    expect(THEME_VAR_MAP["--card"]).toBe("--matrix-card");
+    const surfaces = [...sharedThemeCss.matchAll(/--app-card:\s*([^;]+);/g)];
+    expect(surfaces).toHaveLength(2);
+    for (const [, surface] of surfaces)
+      expect(surface).toMatch(/^var\(--matrix-card,\s*#[0-9a-f]{3,6}\)$/i);
   });
 
-  it("drops the backdrop blur from win11 app cards and toolbars", () => {
-    const card = sharedThemeCss.match(
-      /:root\[data-matrix-design="win11"\] \.card,\s*:root\[data-matrix-design="win11"\] \.metric \{([\s\S]*?)\n\}/,
-    );
-    expect(card).not.toBeNull();
-    expect(card![1]).not.toContain("backdrop-filter");
-    const toolbar = sharedThemeCss.match(
-      /:root\[data-matrix-design="win11"\] \.toolbar,\s*:root\[data-matrix-design="win11"\] \.segmented \{([\s\S]*?)\n\}/,
-    );
-    expect(toolbar).not.toBeNull();
-    expect(toolbar![1]).not.toContain("backdrop-filter");
+  it("keeps the shared timer and launcher surfaces opaque without backdrop blur", () => {
+    // The current shared apps use these surfaces; the old card/metric/toolbar
+    // classes and independent app-glass tokens were retired by the refresh.
+    for (const selector of [
+      ".focus-clock",
+      ".play-button",
+      '.focus-presets button[aria-pressed="true"]',
+    ]) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const rule = sharedThemeCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+      expect(rule, `${selector} must retain its content surface`).not.toBeNull();
+      expect(rule![1]).toContain("background: var(--app-card)");
+    }
+    expect(sharedThemeCss).not.toMatch(/(?:-webkit-)?backdrop-filter\s*:/);
+    expect(sharedThemeCss).not.toContain("--app-glass");
   });
 });

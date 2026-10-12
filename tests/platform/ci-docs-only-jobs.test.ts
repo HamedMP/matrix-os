@@ -11,10 +11,25 @@ const sourceJobs = [
   'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'funded-host-root', 'e2e',
 ];
 
-function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, parityChanges = false) {
+interface GitHubFixture {
+  event_name: string;
+  ref: string;
+  event: { action?: string; changes?: { base?: unknown; title?: unknown; body?: unknown } };
+}
+const mainPush: GitHubFixture = { event_name: 'push', ref: 'refs/heads/main', event: {} };
+function evaluateJobExpression(value: string, needs: unknown, github: GitHubFixture) {
+  const body = value.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replaceAll('needs.ci-backend', 'needs["ci-backend"]');
+  // Evaluate the actual trusted workflow expression with explicit GHA contexts.
+  return Function('needs', 'github', 'inputs', 'vars', 'success', 'always', `return (${body});`)(
+    needs, github, {}, {}, () => true, () => true,
+  );
+}
+function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, parityChanges = false, github = mainPush) {
   const expression = workflow.jobs[jobId].if ?? 'success()';
   const needs = {
+    'ci-backend':{result:'success',outputs:{provider:'hosted',infrastructure_fallback:'false'}},
     changes: {
+      result:'success',
       outputs: {
         should_run: String(sourceChanges),
         docs_contract_tests: String(docsChanges),
@@ -22,10 +37,7 @@ function schedules(jobId: string, sourceChanges: boolean, docsChanges = false, p
       },
     },
   };
-  // These workflow expressions use the same equality/boolean operators as JS.
-  return Boolean(Function('needs', 'success', 'always', `return (${expression});`)(
-    needs, () => true, () => true,
-  ));
+  return Boolean(evaluateJobExpression(expression, needs, github));
 }
 
 function aggregateStatus(docsResult: string) {
@@ -66,6 +78,28 @@ describe('CI job admission for documentation changes', () => {
     expect(schedules('os-view-parity', false, true, false)).toBe(false);
     expect(schedules('os-view-parity', false, true, true)).toBe(true);
     expect(schedules('ci-results', false, true, true)).toBe(true);
+  });
+
+  it.each([
+    ['main push', mainPush],
+    ['ordinary PR', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'synchronize' } }],
+    ['base edit', { event_name: 'pull_request', ref: 'refs/pull/1/merge', event: { action: 'edited', changes: { base: { ref: { from: 'stack/old' } } } } }],
+  ] satisfies Array<[string, GitHubFixture]>)('keeps genuine CI Results for docs-only %s coverage', (_, github) => {
+    expect(schedules('docs-contract', false, true, false, github)).toBe(true);
+    expect(schedules('os-view-parity', false, true, false, github)).toBe(false);
+    expect(schedules('ci-results', false, true, false, github)).toBe(true);
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Results');
+  });
+
+  it.each(['title', 'body'])('keeps %s-only edits from publishing a replacement required aggregate', field => {
+    const github: GitHubFixture = { event_name: 'pull_request', ref: 'refs/pull/1/merge',
+      event: { action: 'edited', changes: { [field]: { from: 'previous text' } } } };
+    expect(schedules('ci-results', false, false, false, github)).toBe(false);
+    // A skipped job named CI Results could clear a real failure. Both the
+    // suppression and the distinct check identity must remain in the workflow.
+    expect(evaluateJobExpression(workflow.jobs['ci-results'].name, {}, github)).toBe('CI Metadata (ignored)');
+    expect(schedules('docs-contract', false, false, false, github)).toBe(false);
+    expect(schedules('os-view-parity', false, false, false, github)).toBe(false);
   });
 
   it('accepts intentional source-job skips while keeping the aggregate check', () => {

@@ -25,3 +25,16 @@ describe('account deletion ingress', () => {
  it('captures native Apple authorization only for the bearer subject',async()=>{const registerAppleAuthorization=vi.fn(async()=>{});const {app}=fixture({registerAppleAuthorization});expect((await app.request('/api/account/apple-token',post({code:'apple-authorization-code'}))).status).toBe(200);expect(registerAppleAuthorization).toHaveBeenCalledWith(owner,'apple-authorization-code');expect((await app.request('/api/account/apple-token',post({code:'x',userId:'user_other'}))).status).toBe(422);expect((await app.request('/api/account/apple-token',post({code:'x'},'invalid'))).status).toBe(401);});
  it('serves the public deletion page with a restricted CSP and no-store',async()=>{const {app}=fixture();const response=await app.request('/account/delete');expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toContain('no-store');expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");const html=await response.text();expect(html).toContain('five days');expect(html).toContain('Download');expect(html).toContain('migration');expect(html).toContain('/api/account/delete');});
 });
+
+describe('account deletion indexing', () => {
+ for (const query of ['', '?promo=launch']) {
+  it(`excludes the utility page from indexing${query ? ' for query URLs' : ''}`, async () => {
+   const { app } = fixture();
+   const response = await app.request(`/account/delete${query}`);
+   expect(response.status).toBe(200);
+   const html = await response.text();
+   expect(html).toContain('<meta name="robots" content="noindex, follow">');
+   expect(html).toContain('<link rel="canonical" href="https://app.matrix-os.com/account/delete">');
+  });
+ }
+});

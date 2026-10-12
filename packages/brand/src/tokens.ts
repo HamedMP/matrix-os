@@ -51,6 +51,13 @@ export const desktopFonts = {
   mono: '"Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace',
 } as const;
 
+/** Apps surfaces from Desktop-app Figma 1734:5767 and 1741:107. */
+export const appGalleryPalette = {
+  paper: '#FFFEFC', canvas: '#FFFFFF', ink: '#242323', textMuted: '#635F5F',
+  subtle: '#827D7D', border: '#EBEAE6', surfaceMuted: '#FAF9F7', action: '#171717',
+  green: '#F3F7EC', gold: '#FCF5E8', teal: '#EEF7F2', blue: '#EDF4F8',
+} as const;
+
 /** Compact onboarding checklist tokens shared by landing-adjacent shells. */
 export const onboardingChecklist = {
   colors: {

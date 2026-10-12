@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #4565a5;
+  --game-wash: #edf1fc;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -55,6 +57,7 @@ button {
 }
 
 .ms-frame {
+  overflow-y: auto;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -221,14 +224,16 @@ button {
 
 .ms-board-area {
   flex: 1 1 auto;
-  min-height: 0;
+  /* Preserve a usable board viewport when Custom controls need more space. */
+  min-height: 160px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  align-items: safe center;
+  justify-content: safe center;
+  overflow: auto;
 }
 
 .ms-grid {
+  flex-shrink: 0;
   display: grid;
   gap: 0;
   padding: 6px;
@@ -353,4 +358,29 @@ button {
   .ms-reset:active {
     transform: none;
   }
+}
+
+.ms-frame { gap: 16px; padding: 20px; }
+.ms-title { font-size: 24px; }
+.ms-panel { border: 1px solid var(--app-border); padding: 12px 16px; }
+.ms-readout {
+  background: var(--app-card);
+  color: var(--app-fg);
+  text-shadow: none;
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  letter-spacing: -.02em;
+  padding: 8px 12px;
+}
+.ms-reset { border-radius: 16px; box-shadow: var(--game-relief); }
+.ms-grid { border: 1px solid var(--app-border); }
+.ms-cell { box-shadow: inset 0 1px 1px rgba(255, 255, 255, .45), 0 1px 3px rgba(38, 35, 70, .1); }
+.ms-footer { gap: 20px; line-height: 1.5; }
+@media (max-width: 760px) {
+  .ms-frame { gap: 12px; padding: 12px; }
+  .ms-header { gap: 10px; }
+  .ms-title { font-size: 22px; }
+  .ms-difficulty { width: 100%; gap: 2px; }
+  .ms-diff-btn { flex: 1 1 auto; padding: 6px 10px; }
+  .ms-footer { gap: 12px; }
 }

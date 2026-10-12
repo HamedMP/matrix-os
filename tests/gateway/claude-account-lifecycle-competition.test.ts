@@ -9,6 +9,12 @@ import { createDefaultProviderCliAccountLifecycleCoordinator } from "../../packa
 import { createOwnerAnthropicKeySaver, readOwnerAnthropicKey } from "../../packages/gateway/src/ai-providers/owner-anthropic-key.js";
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 
+// Executable discovery has separate contract tests. This credential competition
+// fixture must not depend on a Claude installation in the operator's PATH.
+vi.mock("../../packages/gateway/src/ai-providers/claude-native-executable.js", () => ({
+  resolveClaudeNativeExecutable: () => "/fixture/bin/claude",
+}));
+
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
 async function home() { const value = await mkdtemp(join(tmpdir(), "claude-lifecycle-competition-")); homes.push(value); return value; }
@@ -45,7 +51,7 @@ describe("Claude lifecycle credential competition", () => {
       }
     }
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith("claude", ["auth", "logout"], expect.any(Object));
+    expect(run).toHaveBeenCalledWith("/fixture/bin/claude", ["auth", "logout"], expect.any(Object));
   });
 
   it("revokes only the independent owner API key when native profile aliases coexist", async () => {

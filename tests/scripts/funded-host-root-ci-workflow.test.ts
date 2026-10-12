@@ -9,7 +9,7 @@ const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const root = workflow.jobs["funded-host-root"];
 const aggregate = workflow.jobs["ci-results"];
 
-function executeRootStep(pullFails = false) {
+function executeRootStep(pullFails: false | true | "primary" = false) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "funded-host-ci-images-")));
   try {
     const trace = join(dir, "docker-arguments");
@@ -19,6 +19,7 @@ function executeRootStep(pullFails = false) {
       'printf "%s\\0" "$@" >> "$DOCKER_TRACE"',
       'printf "\\0" >> "$DOCKER_TRACE"',
       'if [[ "$1" == pull && "$PULL_FAILS" == true ]]; then exit 42; fi',
+      'if [[ "$1" == pull && "$PULL_FAILS" == primary && "$2" == public.ecr.aws/* ]]; then exit 42; fi',
       "",
     ].join("\n"));
     writeFileSync(join(dir, "timeout"), '#!/usr/bin/env bash\nshift 2\nexec "$@"\n');
@@ -58,8 +59,23 @@ describe("protected funded host disposable root CI", () => {
   it("fails before root execution when the image pull fails and still cleans up", () => {
     const result = executeRootStep(true);
     expect(result.status).toBe(42);
-    expect(result.calls.map(call => call[0])).toEqual(["pull", "rm"]);
-    expect(result.calls[1]).toEqual(["rm", "-f", "funded-host-root-123-2"]);
+    expect(result.calls.map(call => call[0])).toEqual(["pull", "pull", "rm"]);
+    expect(result.calls[2]).toEqual(["rm", "-f", "funded-host-root-123-2"]);
+  });
+
+  it("runs the Docker Official Image fallback when ECR Public is rate limited", () => {
+    const result = executeRootStep("primary");
+    expect(result.status).toBe(0);
+    expect(result.calls.slice(0, 2)).toEqual([
+      ["pull", "public.ecr.aws/docker/library/node:24-bookworm"],
+      ["pull", "docker.io/library/node:24-bookworm"],
+    ]);
+    const run = result.calls.find(call => call[0] === "run")!;
+    expect(run).toContain("docker.io/library/node:24-bookworm");
+    expect(run).not.toContain("public.ecr.aws/docker/library/node:24-bookworm");
+    expect(run).toContain("none");
+    expect(run).toContain("MATRIX_DISPOSABLE_ROOT_TEST=true");
+    expect(run.at(-1)).toBe("/work/scripts/ci/run-funded-host-root-tests.py");
   });
 
   it("isolates root execution, resource limits and checkout credentials", () => {

@@ -7,7 +7,7 @@ import { insertContainer } from '../../packages/platform/src/db.js';
 import { registerInternalIntegrationRoutes } from '../../packages/platform/src/internal-integration-route-registration.js';
 import { registerCustomMcpRoutes } from '../../packages/platform/src/custom-mcp-route-registration.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 const owner = 'user_integrationguard123';
 const secret = 'integration-admission-secret-at-least-32';
 const env = { ACCOUNT_DELETION_SECRET: secret };

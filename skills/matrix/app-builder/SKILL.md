@@ -123,18 +123,15 @@ The launcher loads each app's icon from `~/system/icons/<icon>.svg` (or `.png`) 
 icon.** So always:
 
 1. Set `"icon": "<slug>"` in `matrix.json` (use the app slug unless you have a better concept name).
-2. Create `~/system/icons/<slug>.png` using the Matrix OS shipped-icon style:
-   light premium iOS/macOS skeuomorphic app icon artwork, refined Apple-like product rendering,
-   bright warm off-white or pale pastel background, subtle ceramic/glass depth, soft bevels, glossy
-   highlights, realistic studio shadows, and a single large tactile 3D object or symbol that clearly
-   represents the app. Keep the icon family aligned with Matrix OS forest, cream, ember, and deep accents.
-   Do not include text, logos, watermarks, transparent backgrounds, black/dark dock
-   backgrounds, empty padding, or a separate visible icon frame; the Matrix shell owns the final corner
-   radius. Keep lighting and material treatment consistent with the shipped default app PNGs in
-   `~/system/icons/`.
+2. Create `~/system/icons/<slug>.png` using the Matrix desktop icon style:
+   a distinct app-specific silhouette on a transparent background, rich color and controlled depth.
+   Read [App icon recipe](references/app-icons.md) for the palette, scale, prompt template and
+   semantic mappings. Keep a distinct object for each game's identity.
+   Preserve user-provided icons and icon styles when refining an existing app.
 
-For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. SVGs are acceptable
-only for system chrome or simple compatibility fallbacks, not for newly generated app logos.
+For first-party/default apps, prefer committed PNG icons from `home/system/icons/`. Exact supplied
+Supplied Figma SVGs may be packaged directly or rasterized for PNG-compatible launcher paths; keep
+their geometry and colours unchanged. Do not substitute a recreated outline for supplied artwork.
 
 ## Data (Postgres via the MatrixOS bridge)
 
@@ -200,7 +197,7 @@ When editing bundled default apps in this repo:
 - Reuse the shared default-app Vite build path; do not add stale per-app package/runtime fields unless the
   app truly needs them.
 - Run `node scripts/build-default-apps.mjs home/apps` before host-bundle work when default app source changed.
-- Prefer the shared `game-center` icon for games unless a concrete shipped icon exists.
+- Give games their own shipped semantic icon; the controller belongs to Game Center only.
 - Verify app icon slugs against `home/system/icons/<slug>.svg` or `.png`; never rely on runtime icon generation.
 
 ## Scaffold Commands
@@ -290,3 +287,7 @@ Then open the app from the Matrix launcher using the existing authenticated sess
 - 404s for app bundle or icon paths
 - CORS errors from direct provider calls
 - unhandled React errors
+
+### Distinct identities within an app family
+
+Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.

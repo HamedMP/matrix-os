@@ -83,7 +83,7 @@ Object.defineProperty(window, "fixtureGrid", { value: canonicalSize });
 Object.defineProperty(window, "fixtureInputs", { value: inputs });
 Object.defineProperty(window, "fixtureOutput", { value: (data: string) => latestSocket?.receive({ type: "output", seq: outputSequence++, data }) });
 Object.defineProperty(window, "fixtureObserve", { value: () => latestSocket?.receive({ type: "lease-revoked", epoch: 1 }) });
-window.operator = { invoke: async () => ({}), on: () => () => undefined };
+window.operator = { invoke: async (channel) => channel === "terminal:read-clipboard-files" ? { status: "empty" } : {}, on: () => () => undefined };
 useConnection.setState({ platformHost: window.location.origin, runtimeSlot: "primary", api: null });
 const params = new URLSearchParams(window.location.search);
 const electron = params.get("surface") === "electron";

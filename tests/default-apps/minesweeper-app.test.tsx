@@ -35,6 +35,11 @@ function installMatrixDb(rows: DbRow[] = []) {
 }
 
 describe("Minesweeper app", () => {
+  it("preserves a scrollable board viewport when Custom controls fill the frame", () => {
+    const css = readFileSync(resolve(process.cwd(), "home/apps/games/minesweeper/src/styles.css"), "utf8");
+    expect(css).toMatch(/\.ms-frame\s*\{[^}]*overflow-y:\s*auto/);
+    expect(css).toMatch(/\.ms-board-area\s*\{[^}]*min-height:\s*160px;[^}]*overflow:\s*auto/);
+  });
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -46,12 +51,12 @@ describe("Minesweeper app", () => {
     }
   });
 
-  it("uses the shipped shared game icon", () => {
+  it("uses its distinct shipped Minesweeper icon", () => {
     const manifestPath = resolve(process.cwd(), "home/apps/games/minesweeper/matrix.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { icon?: string };
 
-    expect(manifest.icon).toBe("game-center");
-    expect(existsSync(resolve(process.cwd(), "home/system/icons/game-center.png"))).toBe(true);
+    expect(manifest.icon).toBe("v3-minesweeper");
+    expect(existsSync(resolve(process.cwd(), `home/system/icons/${manifest.icon}.png`))).toBe(true);
   });
 
   it("renders the grid, mine counter, timer, and difficulty controls", async () => {

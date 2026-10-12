@@ -94,6 +94,7 @@ function applyTheme(theme: Theme) {
   // Set mode attribute so CSS and apps can detect light/dark
   const mode = theme.mode ?? inferMode(theme);
   root.setAttribute("data-theme", mode);
+  root.style.colorScheme = mode;
   if (mode === "dark") {
     root.classList.add("dark");
   } else {

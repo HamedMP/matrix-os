@@ -12,7 +12,7 @@ import {
 import type { Orchestrator } from '../../packages/platform/src/orchestrator.js';
 import { enqueueGoldenSnapshotBuild } from '../../packages/platform/src/golden-snapshot-repository.js';
 import type { GoldenSnapshotRuntimeConfig } from '../../packages/platform/src/golden-snapshot-schema.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const goldenSnapshotConfig: GoldenSnapshotRuntimeConfig = {
   enabled: false,

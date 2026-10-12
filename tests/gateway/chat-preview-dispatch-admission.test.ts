@@ -3,7 +3,7 @@ import {
   type CanonicalProviderCatalog,
   type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import {
@@ -88,7 +88,7 @@ describe("Preview turn dispatch admission", () => {
   const pending: Array<Promise<unknown>> = [];
   const executions: Array<{ release(): void }> = [];
   beforeEach(async () => {
-    const instance = await KyselyPGlite.create();
+    const instance = await createTestPGlite();
     repository = new ChatRepository(instance.dialect); await repository.bootstrap();
   });
   afterEach(async () => {

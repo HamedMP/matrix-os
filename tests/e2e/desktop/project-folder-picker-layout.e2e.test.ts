@@ -70,6 +70,11 @@ suite("Desktop Add Project compact folder picker", () => {
     });
     page = await app.firstWindow();
     await page.setViewportSize({ width: 1224, height: 768 });
+    await page.addLocatorHandler(page.getByRole("dialog", { name: "Getting started", exact: true }), async () => {
+      const checklist = page.getByRole("button", { name: /^Getting started —/ });
+      if (!await checklist.isVisible()) await page.getByRole("button", { name: "Help", exact: true }).click();
+      await checklist.click();
+    });
     await page.getByRole("button", { name: /create account/i }).click();
     await page.getByRole("button", { name: "Chat", exact: true }).waitFor({ timeout: 15_000 });
   }, 60_000);
@@ -100,6 +105,9 @@ suite("Desktop Add Project compact folder picker", () => {
     await chatNavigation.waitFor({ timeout: 10_000 });
     phase = "reveal Create project";
     await chatNavigation.getByRole("button", { name: "Projects", exact: true }).hover({ timeout: 10_000 });
+    // Keep the section's action revealed while the pointer moves from its
+    // heading to Create project; focus-within is the supported keyboard path.
+    await chatNavigation.getByRole("button", { name: "Projects", exact: true }).focus();
     await chatNavigation.getByRole("button", { name: "Create project" }).click({ timeout: 10_000 });
     const dialog = page.getByRole("dialog", { name: "Create a project" });
     phase = "open existing folder picker";

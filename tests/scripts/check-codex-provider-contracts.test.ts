@@ -90,6 +90,57 @@ describe("Codex provider contract checker", () => {
     }
   });
 
+  it("retains exact published Codex 0.160.1 byte records", () => {
+    const execSchemaBytes = readFileSync(new URL(
+      "../fixtures/codex-0158/exec-events.rs",
+      import.meta.url,
+    ));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0159/app-server-schema-0159.json.gz",
+      import.meta.url,
+    )));
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+
+    // The checked-in fixture is the tagged source plus published CLI-generated
+    // schema, not a hand-built approximation of the methods we consume.
+    // Tagged 0.160.1 exec source is byte-identical to the retained 0.158 fixture;
+    // its published CLI schema is byte-identical to the retained 0.159 fixture.
+    // Both CI targets independently report these exact schema/semantic digests.
+    expect(digest(execSchemaBytes)).toBe(
+      "dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5",
+    );
+    expect(digest(appServerSchemaBytes)).toBe(
+      "7243ba241962af92ca60581f1a81808ebda4212a800f8b205f54703bcfd508c5",
+    );
+
+    expect(contract.verifiedVersions["0.160.1"].schemaSha256).toBe(digest(execSchemaBytes));
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"] as const) {
+      expect(appServerContract.verifiedVersions["0.160.1"].schemaSha256ByTarget[runtimeTarget])
+        .toBe(digest(appServerSchemaBytes));
+    }
+  });
+
+  it("retains the historical 0.162.0 qualification on both supported targets", () => {
+    const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
+    const appServerSchemaBytes = gunzipSync(readFileSync(new URL(
+      "../fixtures/codex-0162/app-server-schema-0162.json.gz", import.meta.url,
+    )));
+    const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+    expect(digest(execSchemaBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
+    expect(digest(appServerSchemaBytes)).toBe("e4e7f0c7d3fd77c48cd8619cad2bf2b315d860ab006ad5a7ebe44f6e32e666c1");
+    for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
+      expect(() => verifyCodexProviderContracts({
+        // The live gate checks the latest reviewed release; reconstruct the
+        // earlier qualification without changing either current contract.
+        version: "0.162.0",
+        execContract: { ...contract, latestVerifiedVersion: "0.162.0" },
+        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.0" },
+        execSchemaBytes, appServerSchemaBytes, runtimeTarget,
+      })).not.toThrow();
+    }
+  });
+
+
   it("qualifies published Codex 0.161.0 bytes and all consumed protocols on both targets", () => {
     const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
     const appServerSchemaBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0161/app-server-schema-0161.json.gz", import.meta.url)));

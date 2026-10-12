@@ -158,7 +158,9 @@ if [[ -n "$MATCHES" ]]; then
     fi
     window_end=$((line_no + 12))
     call_window=$(sed -n "${line_no},${window_end}p" "$file" 2>/dev/null || true)
-    if ! echo "$call_window" | grep -Eq 'signal[[:space:]]*:'; then
+    # Avoid a producer pipe: grep -q can exit before echo finishes writing,
+    # causing SIGPIPE to turn a successful match into failure with pipefail.
+    if ! grep -Eq 'signal[[:space:]]*:' <<< "$call_window"; then
       MISSING_SIGNAL+="$line"$'\n'
     fi
   done <<< "$MATCHES"

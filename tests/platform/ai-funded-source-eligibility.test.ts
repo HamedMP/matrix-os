@@ -4,7 +4,7 @@ import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/
 import { sql } from "kysely";
 import { reserveFundingSources } from "../../packages/platform/src/ai-funded-reservation-sources.js";
 import { ensureSpeechMonthlyAllowance } from "../../packages/platform/src/speech/allowance.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const identity = { ownerId: "eligibility_owner", machineId: "eligibility_machine", runtimeSlot: "primary" };
 const modelId = "z-ai/glm-5";

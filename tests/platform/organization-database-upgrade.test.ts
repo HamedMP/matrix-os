@@ -16,7 +16,7 @@ describe("organization database bootstrap upgrades", () => {
   let db: Kysely<OrganizationPlatformDatabase>;
 
   beforeEach(async () => {
-    fixture = await createTestPlatformDb();
+    fixture = await createTestPlatformDb({ freshSchema: true });
     db = fixture.db.kysely as unknown as Kysely<OrganizationPlatformDatabase>;
   });
 

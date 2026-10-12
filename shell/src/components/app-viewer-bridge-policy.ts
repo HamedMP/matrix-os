@@ -1,3 +1,5 @@
+import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
+
 const RESOURCE_MANAGER_ACTIVITY_PATH = /^\/api\/system\/activity(?:[?#]|$)/;
 
 function appSlugFromName(appName: string): string {
@@ -5,18 +7,37 @@ function appSlugFromName(appName: string): string {
   return parts[parts.length - 1] ?? appName;
 }
 
-export function isAllowedBridgeFetchUrl(appName: string, url: string): boolean {
+export function isAllowedBridgeFetchUrl(
+  appName: string,
+  url: string,
+  method = "GET",
+): boolean {
   // Reject aliases and encoded paths so app-scoped AI cannot bypass identity binding.
   const parsed = new URL(url, "https://bridge.invalid");
-  if (parsed.origin !== "https://bridge.invalid" || parsed.pathname.includes("%")) return false;
-  if (parsed.pathname === "/api/bridge/ai" || parsed.pathname.startsWith("/api/bridge/ai/")) {
+  if (
+    parsed.origin !== "https://bridge.invalid" ||
+    parsed.pathname.includes("%")
+  )
+    return false;
+  const slug = appSlugFromName(appName);
+  if (isAppGalleryIdentity(appName.replace(/^apps\//, ""), slug)) return isAllowedAppGalleryBridgeRequest(url, method);
+  if (url === "/api/integrations")
+    return method === "GET" && isAppGalleryInventoryIdentity(appName.replace(/^apps\//, ""), slug);
+  if (
+    parsed.pathname === "/api/bridge/ai" ||
+    parsed.pathname.startsWith("/api/bridge/ai/")
+  ) {
     return url === "/api/bridge/ai" || url === "/api/bridge/ai/routes";
   }
   if (["/api/bridge/capabilities", "/api/bridge/service", "/api/bridge/query", "/api/bridge/data"].some((path) => parsed.pathname === path || parsed.pathname.startsWith(`${path}/`))) {
-    return url === parsed.pathname && !parsed.pathname.endsWith("/") && ["/api/bridge/capabilities", "/api/bridge/service", "/api/bridge/query", "/api/bridge/data"].includes(url);
+    return url === parsed.pathname && ["/api/bridge/capabilities", "/api/bridge/service", "/api/bridge/query", "/api/bridge/data"].includes(url);
   }
-  if (url.startsWith("/api/bridge/") && parsed.pathname.startsWith("/api/bridge/")) return true;
-  const slug = appSlugFromName(appName);
-  if (slug === "resource-manager") return RESOURCE_MANAGER_ACTIVITY_PATH.test(url);
+  if (
+    url.startsWith("/api/bridge/") &&
+    parsed.pathname.startsWith("/api/bridge/")
+  )
+    return true;
+  if (slug === "resource-manager")
+    return RESOURCE_MANAGER_ACTIVITY_PATH.test(url);
   return false;
 }

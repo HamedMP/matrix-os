@@ -1,4 +1,5 @@
-import { canonicalOsViewCatalogPath, resolveChatAppReference } from "@matrix-os/contracts";
+import { canonicalAppRuntimeCatalogPath } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { AppIdentitySchema, appRuntimeSlugFromIdentity, resolveChatAppReference } from "@matrix-os/contracts";
 import { NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
 import { readBoundedJson } from "./native-app-bridge";
 
@@ -27,13 +28,21 @@ export function createNativeAppOpenResolver(options: NativeAppOpenResolverOption
     const apps: Array<NativeAppOpenTarget & { path: string }> = [];
     for (const row of rows) {
       if (!row || typeof row !== "object") continue;
-      const path = canonicalOsViewCatalogPath(row);
+      const path = canonicalAppRuntimeCatalogPath(row);
       if (!path?.startsWith("apps/") || !path.endsWith("/index.html")) continue;
-      const appIdentity = path.slice(5).replace(/\/(?:dist\/)?index\.html$/, "");
+      const folderIdentity = path.slice(5).replace(/\/(?:dist\/)?index\.html$/, "");
+      const parsedFolder = AppIdentitySchema.safeParse(folderIdentity);
+      const appIdentity = parsedFolder.success && appRuntimeSlugFromIdentity(parsedFolder.data) === row.slug
+        ? parsedFolder.data : row.slug;
       const target = NativeAppOpenTargetSchema.safeParse({ slug: row.slug, name: row.name, appIdentity });
       if (target.success) apps.push({ ...target.data, path });
     }
-    const app = resolveChatAppReference(request.path, apps, { allowRelative: true });
+    const identity = request.path.startsWith("matrix-app:") ? request.path.slice(11) : null;
+    const identities = identity === null ? [] : apps.filter(app => app.slug === identity);
+    // Explicit identities must never fall through to an owner folder match.
+    const app = identity !== null ? (identities.length === 1 ? identities[0] : undefined)
+      : resolveChatAppReference(request.path, apps, { allowRelative: true })
+        ?? resolveChatAppReference(request.path, apps.map(app => ({ ...app, path: `apps/${app.slug}/index.html` })), { allowRelative: true });
     if (!app) throw new Error("installed app unavailable");
     return { slug: app.slug, name: app.name, appIdentity: app.appIdentity };
   };

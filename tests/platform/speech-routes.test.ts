@@ -9,7 +9,7 @@ import {
 import { createSpeechRuntimeRoutes } from "../../packages/platform/src/speech/routes.js";
 import { createApp } from "../../packages/platform/src/main.js";
 import { createDisabledOrchestrator } from "../../packages/platform/src/orchestrator.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const platformSecret = "platform-secret-for-tests-123456789";
 const identity = { ownerId: "user_alice", machineId: "machine_123", runtimeSlot: "primary" } as const;

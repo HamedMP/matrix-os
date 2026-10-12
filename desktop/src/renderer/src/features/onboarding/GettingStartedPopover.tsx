@@ -1,8 +1,8 @@
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus } from "@matrix-os/ui";
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
 import { Github } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
 import { ClipboardCheck } from "../../lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -19,6 +19,11 @@ import {
 
 const TOTAL_STEPS = GETTING_STARTED_STEP_IDS.length;
 const BRAND_COLORS = onboardingChecklist.colors;
+
+const menuOverlay = {
+  acquire: () => useUi.getState().acquireRendererOverlay(),
+  release: () => useUi.getState().releaseRendererOverlay(),
+};
 
 export function gettingStartedAutoOpenKey(handle: string, runtimeSlot: string): string {
   return `matrix:getting-started:auto-opened:${encodeURIComponent(handle)}:${encodeURIComponent(runtimeSlot)}`;
@@ -58,12 +63,12 @@ function StepIndicator({ step }: { step: GettingStartedStep }) {
   );
 }
 
-export default function GettingStartedPopover() {
+export default function GettingStartedPopover(props: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } } = {}) {
   const { scope } = useGettingStartedVisibility();
-  return <GettingStartedPopoverContent key={scope} />;
+  return <GettingStartedPopoverContent key={scope} {...props} />;
 }
 
-function GettingStartedPopoverContent() {
+function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } }) {
   const api = useConnection((state) => state.api);
   const connectionStatus = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
@@ -147,12 +152,12 @@ function GettingStartedPopoverContent() {
     }
   }, [open, isBlocked, autoOpenKey]);
 
+
   const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
 
-  return (
-    <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
-      <Popover.Trigger asChild>
+  const helpRow = Boolean(helpMenu);
+  const trigger = <Popover.Trigger asChild>
         <button
           type="button"
           aria-label={label}
@@ -161,11 +166,12 @@ function GettingStartedPopoverContent() {
           onClick={() => {
             if (requestedOpen) setOpen(false);
           }}
-          className="relative flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
+          className={helpRow ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-lg p-2 text-left text-[13px] outline-none hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]" : "relative flex size-7 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"}
           style={{ color: "var(--text-secondary)" }}
         >
           <ClipboardCheck aria-hidden="true" size={16} />
-          {snapshot.completedCount < TOTAL_STEPS ? (
+          {helpRow ? <><span className="flex-1">Getting started</span><span className="text-xs">{snapshot.completedCount} of {TOTAL_STEPS}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
+          {!helpRow && snapshot.completedCount < TOTAL_STEPS ? (
             <span
               aria-hidden="true"
               className="absolute right-0.5 top-0.5 size-1.5 rounded-full"
@@ -173,7 +179,10 @@ function GettingStartedPopoverContent() {
             />
           ) : null}
         </button>
-      </Popover.Trigger>
+      </Popover.Trigger>;
+  return (
+    <Popover.Root open={open} onOpenChange={handleRadixOpenChange}>
+      {helpMenu ? <DesktopHelpMenu overlay={menuOverlay} {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger} /> : trigger}
       <Popover.Portal>
         <Popover.Content
           role="dialog"

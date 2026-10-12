@@ -157,13 +157,11 @@ createRoot(document.getElementById("root")!).render(
 Every app manifest must set `"icon": "<slug>"`, and the matching file must exist at
 `~/system/icons/<slug>.png` or `~/system/icons/<slug>.svg`. Prefer PNGs for app logos.
 
-New app logos should match the shipped Matrix OS icon family: light premium iOS/macOS skeuomorphic
-app icon artwork, refined Apple-like product rendering, bright warm off-white or pale pastel
-background, subtle ceramic/glass depth, soft bevels, glossy highlights, realistic studio shadows,
-and one large tactile 3D object or symbol that clearly represents the app. Keep the family aligned
-with Matrix OS forest, cream, ember, and deep accents. Do not include text,
-logos, watermarks, transparent backgrounds, black/dark dock backgrounds, empty padding, or a
-separate visible icon frame; the Matrix shell owns the final corner radius.
+New app logos follow the Matrix desktop family: an app-specific subject with a distinct
+silhouette on a transparent canvas, rich differentiated color and restrained depth. Avoid the
+repeated beige square tile. Check at 64, 48 and 20px over light and dark surfaces; preserve
+owner-provided artwork and give each game a distinct semantic object. Read the app-builder's
+`references/app-icons.md` for the precise recipe.
 
 ### Product styles and responsive layouts
 
@@ -272,3 +270,7 @@ to the Matrix kernel and returns `undefined`. It is available in Web and Electro
 app windows. Keep using it for existing kernel workflows. For text-only inference,
 use `await MatrixOS.ai.generate({ prompt })` (explicit owner grant required). These
 APIs have different contracts; do not treat legacy `generate` as a text Promise.
+
+### Distinct identities within an app family
+
+Keep shared typography, spacing, material, lighting and interaction conventions, but give each app a recognizable dominant accent with coordinated soft surfaces and a matching icon palette. Carry that identity into Gallery cards and phone layouts. Use app-local identity tokens rather than inheriting the same shell accent for every product; preserve host base surfaces and semantic success, warning and error colours. Choose purpose-appropriate palettes such as teal finance, sky travel, poppy calendar, plum subscriptions or amber focus. Check light/dark control-label contrast before shipping. First-party palette data lives in `packages/brand/src/app-identities.json`; regenerate installed-app and Gallery CSS with its companion generator.

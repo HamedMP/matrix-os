@@ -21,7 +21,7 @@ describe('account export downloads', () => {
 });
 
 import { sql } from 'kysely';
-import { createTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
 describe('portable account exports',()=>{
  it('traverses all pages of every owner storage prefix and excludes reachability secrets',async()=>{
    const list=vi.fn(async(prefix:string,cursor?:string)=>{

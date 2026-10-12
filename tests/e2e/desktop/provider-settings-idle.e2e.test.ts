@@ -7,6 +7,7 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { ProviderSettingsSnapshotSchema, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { providerAuthSettingsSnapshot, startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(__dirname, "../../..");
 const built = existsSync(join(root, "desktop/out/main/index.js"));
@@ -53,6 +54,7 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
     await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     page.on("request", request => {
       const path = new URL(request.url()).pathname;
       if (path === "/api/ai/provider-settings" && request.method() === "GET") reads++;
@@ -62,8 +64,7 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
-    const checklist = page.getByRole("button", { name: /^Getting started —/ });
-    if (await checklist.getAttribute("aria-expanded") === "true") await checklist.click();
+
     await page.getByRole("button", { name: "Open account menu", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();

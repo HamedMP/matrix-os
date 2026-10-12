@@ -1,0 +1,14 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* Keep the actual spatial canvas; let the paper carry the character. */
+body { background: var(--app-bg); }.stickies-app { height: 100dvh; }
+.stickies-toolbar { top: max(16px, env(safe-area-inset-top)); right: max(16px, env(safe-area-inset-right)); }.stickies-add { min-height: 44px; border-radius: 10px; font-size: 14px; background: var(--matrix-card, #fff); border-color: var(--matrix-border, #c9d2df); backdrop-filter: none; box-shadow: 0 2px 4px rgba(30, 40, 55, .08); }
+.sticky { border-radius: 3px 3px 12px 3px; border: 0; box-shadow: 0 8px 20px rgba(31, 38, 56, .14); backdrop-filter: none; }.sticky::before { display: none; }.sticky-header { height: 44px; padding: 0 4px; border-bottom-color: rgba(46, 36, 8, .08); }.sticky-close { min-width: 44px; min-height: 44px; background: transparent; border-radius: 4px; box-shadow: none; opacity: .7; }.sticky-body { font-size: 16px; line-height: 1.65; padding: 8px 18px 20px; color: #372d19; }
+.stickies-empty { padding: 24px; text-align: center; }
+@media (max-width: 560px) {
+ .stickies-app { display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+ .stickies-toolbar { position: sticky; top: 0; right: auto; align-self: flex-end; }
+ .sticky { position: relative; left: auto !important; top: auto !important; width: 100% !important; min-height: 200px; flex-shrink: 0; }
+ .sticky-header { cursor: default; pointer-events: none; }.sticky-close { pointer-events: auto; }.sticky-body { min-height: 160px; }
+}

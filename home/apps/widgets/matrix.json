@@ -7,7 +7,9 @@
   "author": "system",
   "version": "1.0.0",
   "slug": "widgets",
-  "designs": ["win11"],
+  "designs": [
+    "win11"
+  ],
   "runtimeVersion": "^1.0.0",
   "listingTrust": "first_party",
   "build": {
@@ -21,7 +23,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../system/icons/v3-*.png"
     ]
   }
 }

@@ -1,5 +1,8 @@
 import type { UserMachineRecord } from './db.js';
 import { normalizeDeviceReturnPath } from './request-routing.js';
+import { getAuthPageIndexingTags } from './auth-page-indexing.js';
+import { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escaping.js';
+export { escapeHtmlAttr, escapeHtml, escapeInlineScriptJson } from './html-escaping.js';
 
 export const CLERK_SCRIPT_ORIGIN = 'https://clerk.matrix-os.com';
 const BROWSER_CLERK_SIGN_OUT_TIMEOUT_MS = 10_000;
@@ -20,26 +23,6 @@ export function buildBillingSetupTarget(appShellOrigin: string, redirectTarget: 
   const deviceReturnTarget = deviceReturnTargetFromRedirectPath(redirectTarget);
   if (deviceReturnTarget) url.searchParams.set('device_return', deviceReturnTarget);
   return url.toString();
-}
-
-export function escapeHtmlAttr(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll("'", "&#39;");
-}
-
-export function escapeHtml(value: string): string {
-  return escapeHtmlAttr(value);
-}
-
-export function escapeInlineScriptJson(value: string): string {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026');
 }
 
 export function getAuthPage(
@@ -63,6 +46,7 @@ export function getAuthPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${getAuthPageIndexingTags(mode, appShellOrigin)}
   <link rel="icon" href="data:,">
   <title>Matrix OS</title>
   <style>

@@ -137,12 +137,12 @@ describe("app capability transport", () => {
       document: { documentElement: { dataset: {} }, createElement: () => ({}), head: { appendChild() {} } },
       window: { addEventListener() {}, parent: { postMessage(message: any, _target: any, ports: any[]) {
         sent.push(message);
-        const bound = prepareAppBridgeFetch("notes", message.payload.url, message.payload.init);
-        expect(JSON.parse(bound.init.body as string).app).toBe("notes");
+        const bound = prepareAppBridgeFetch("tools/drive-chat", message.payload.url, message.payload.init);
+        expect(JSON.parse(bound.init.body as string).app).toBe("tools/drive-chat");
         ports[0].reply({ ok: true, body: message.payload.init.body.includes("integrations.list") ? { services: [{ service: "google-drive" }] } : { version: 1, integrations: true, ai: true } });
       } } },
     });
-    runInContext(buildBridgeScript("notes"), context);
+    runInContext(buildBridgeScript("tools/drive-chat"), context);
     expect(await runInContext("window.MatrixOS.integrations()", context)).toEqual([{ service: "google-drive" }]);
     expect(await runInContext("window.MatrixOS.capabilities()", context)).toEqual({ version: 1, integrations: true, ai: true });
     expect(sent.every((entry) => entry.payload.url === "/api/bridge/capabilities")).toBe(true);
@@ -335,4 +335,14 @@ describe("app capability transport", () => {
 it.each(["/api/bridge/capabilities?x=1", "/api/bridge/capabilities/", "/api/bridge/a/../capabilities", "/api/bridge/ai/routes?app=other", "/api/bridge/query?app=other", "/api/bridge/service?app=other"])("rejects privileged endpoint aliases %s", async (url) => {
   const { isAllowedBridgeFetchUrl } = await import("../../shell/src/components/app-viewer-bridge-policy.js");
   expect(isAllowedBridgeFetchUrl("notes", url)).toBe(false);
+});
+
+it("uses the shared install budget only for exact validated gallery install endpoints", async () => {
+  const { appBridgeTimeoutMs } = await import("../../shell/src/components/app-capability-request.js");
+  for (const id of ["files", "reading-library", "a" + "b".repeat(47)]) {
+    expect(appBridgeTimeoutMs(`/api/app-gallery/${id}/install`)).toBe(35000);
+  }
+  for (const url of ["/api/app-gallery", "/api/app-gallery/files", "/api/app-gallery/files/install?x=1", "/api/app-gallery/files/install/", "/api/app-gallery/Files/install", "/api/app-gallery/../install", "/api/app-gallery/" + "a".repeat(49) + "/install"]) {
+    expect(appBridgeTimeoutMs(url)).toBe(10000);
+  }
 });

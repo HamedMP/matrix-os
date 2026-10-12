@@ -29,7 +29,7 @@ import {
   CustomerVpsError,
   DefinitiveProviderRejectionError,
 } from '../../packages/platform/src/customer-vps-errors.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const execFileAsync = promisify(execFile);
 

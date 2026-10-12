@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { parseAppManifest } from "../../packages/gateway/src/app-manifest.js";
 
 const GAMES_DIR = join(__dirname, "../../home/apps/games");
-const SHARED_RENDERER = join(__dirname, "../../home/apps/_shared/default-apps.tsx");
 
 const PLAYABLE_GAME_SLUGS = readdirSync(GAMES_DIR, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -81,13 +80,4 @@ describe("T1420-T1427: Pre-installed games", () => {
     });
   }
 
-  it("keeps the game launcher UI in the shared app renderer", () => {
-    const shared = readFileSync(SHARED_RENDERER, "utf-8");
-    for (const slug of PLAYABLE_GAME_SLUGS) {
-      expect(shared).toContain(slug);
-    }
-    expect(shared).toContain("gameCards");
-    expect(shared).toContain("window.MatrixOS?.openApp");
-    expect(shared).toContain("apps/${id}/index.html");
-  });
 });

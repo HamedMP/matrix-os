@@ -1,12 +1,15 @@
+import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { shellApi, type RequestOptions } from "./http";
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { catalogAppLaunchPath } from "@/lib/app-catalog-launch";
 import { gatewayAssetUrl } from "@/lib/gateway";
 
 export interface ApiAppEntry {
   name: string;
   path: string;
   slug?: string;
+  /** Validated physical catalog reference for saved owner shortcuts. */
+  ownerPath?: string;
   icon?: string;
   iconUrl?: string;
 }
@@ -20,9 +23,11 @@ type AppIconSnapshots = Record<string, AppIconSnapshot>;
 type AppsLoader = (options?: RequestOptions) => Promise<ApiAppEntry[]>;
 
 const MAX_ICON_URL_PRESERVATION_LOOKUPS = 1_000;
-// Only gateway-owned, content-versioned icon paths may come from the catalog;
+// Only bounded owner icon paths or canonical bundled artwork may come from the catalog;
 // anything else falls back to the slug-derived icon URL.
 const SAFE_CATALOG_ICON_URL = /^\/icons\/[A-Za-z0-9_-]{1,64}\.(?:png|svg)(?:\?v=[A-Za-z0-9._~%-]{1,160})?$/;
+
+const SAFE_BUNDLED_APP_ICON_URL = /^\/system-app-icons\/v2\/(?:notes|whiteboard)\.png$/;
 
 export const appKeys = {
   all: () => ["apps"] as const,
@@ -36,11 +41,12 @@ export async function listApps(options?: RequestOptions): Promise<ApiAppEntry[]>
     if (!entry || typeof entry !== "object") return [];
     const raw = entry as Partial<ApiAppEntry> & { file?: unknown };
     if (typeof raw.name !== "string" || raw.name.length === 0 || raw.name.length > 256) return [];
-    const path = canonicalOsViewCatalogPath({ path: raw.path, file: raw.file });
+    const path = catalogAppLaunchPath(raw);
     if (!path) return [];
-    const { iconUrl: rawIconUrl, ...rest } = raw;
+    const { iconUrl: rawIconUrl, ownerPath: _ownerPath, ...rest } = raw;
+    const ownerPath = canonicalOsViewCatalogPath(raw);
     const iconUrl = resolveCatalogIconUrl(rawIconUrl);
-    return [{ ...rest, name: raw.name, path, ...(iconUrl ? { iconUrl } : {}) } as ApiAppEntry];
+    return [{ ...rest, name: raw.name, path, ...(ownerPath && ownerPath !== path ? { ownerPath } : {}), ...(iconUrl ? { iconUrl } : {}) } as ApiAppEntry];
   });
 }
 
@@ -54,7 +60,7 @@ export function resolveCatalogIconUrl(
   value: unknown,
   resolveAssetUrl: (path: string) => string | undefined = gatewayAssetUrl,
 ): string | undefined {
-  if (typeof value !== "string" || !SAFE_CATALOG_ICON_URL.test(value)) return undefined;
+  if (typeof value !== "string" || (!SAFE_CATALOG_ICON_URL.test(value) && !SAFE_BUNDLED_APP_ICON_URL.test(value))) return undefined;
   return resolveAssetUrl(value);
 }
 
@@ -64,7 +70,12 @@ export function hydrateAppIconUrls(
   resolveAssetUrl: (path: string) => string | undefined,
 ): ApiAppEntry[] | undefined {
   if (!apps) return undefined;
-  return apps.map((app) => {
+  return apps.map((entry) => {
+    const path = catalogAppLaunchPath(entry);
+    const ownerPath = canonicalOsViewCatalogPath({ path: entry.ownerPath }) ?? canonicalOsViewCatalogPath(entry);
+    const app = path ? { ...entry, path, ...(ownerPath && ownerPath !== path ? { ownerPath } : {}) } : entry;
+    const selectedUrl = resolveCatalogIconUrl(app.iconUrl, resolveAssetUrl);
+    if (selectedUrl) return { ...app, iconUrl: selectedUrl };
     if (app.iconUrl) return app;
     const iconSlug = app.icon ?? app.slug;
     const versionedUrl = iconSlug ? icons?.[iconSlug]?.versionedUrl : undefined;

@@ -5,6 +5,10 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
+      "@matrix-os/brand/tokens": path.resolve(__dirname, "packages/brand/src/tokens.ts"),
+      "@matrix-os/brand/marks": path.resolve(__dirname, "packages/brand/src/marks.ts"),
+      "@matrix-os/brand": path.resolve(__dirname, "packages/brand/src/index.ts"),
       "@": path.resolve(__dirname, "shell/src"),
       "@renderer": path.resolve(__dirname, "desktop/src/renderer/src"),
       "@matrix-os/kernel/security/external-content": path.resolve(__dirname, "packages/kernel/src/security/external-content.ts"),

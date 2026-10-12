@@ -1,5 +1,6 @@
 import path from "node:path";
 import { defineConfig } from "vitest/config";
+import { DurationSequencer, testWorkers } from "./scripts/ci/test-sequencer";
 
 export default defineConfig({
   plugins: [
@@ -53,6 +54,9 @@ export default defineConfig({
       "@matrix-os/contracts/bokio-integration": path.resolve(__dirname, "packages/contracts/src/bokio-integration.ts"),
       "@matrix-os/contracts/data-imports": path.resolve(__dirname, "packages/contracts/src/data-imports.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
+      "@matrix-os/contracts/app-gallery-bridge-policy": path.resolve(__dirname, "packages/contracts/src/app-gallery-bridge-policy.ts"),
+      "@matrix-os/contracts/app-gallery-inventory": path.resolve(__dirname, "packages/contracts/src/app-gallery-inventory.ts"),
+      "@matrix-os/contracts/app-gallery": path.resolve(__dirname, "packages/contracts/src/app-gallery.ts"),
       "@matrix-os/contracts/codex-chat-import": path.resolve(__dirname, "packages/contracts/src/codex-chat-import.ts"),
       "@matrix-os/contracts/codex-chat-import-client": path.resolve(__dirname, "packages/contracts/src/codex-chat-import-client.ts"),
       "@matrix-os/contracts/collaboration": path.resolve(__dirname, "packages/contracts/src/collaboration.ts"),
@@ -109,7 +113,8 @@ export default defineConfig({
     // PGlite-backed suites are memory- and CPU-heavy during database startup.
     // Keep file-level parallelism bounded so full-suite runs do not starve
     // KyselyPGlite.create() hooks under shared CI or agent-machine load.
-    maxWorkers: 2,
+    maxWorkers: testWorkers(),
+    sequence: { sequencer: DurationSequencer },
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     // tests/e2e is owned by vitest.e2e.config.ts (bun run test:e2e); the
     // desktop suites there launch Electron, which fails on headless unit

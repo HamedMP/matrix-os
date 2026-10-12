@@ -7,7 +7,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createMockHetznerClient, createMockCustomerVpsSystemStore } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const now = '2026-10-10T18:00:00.000Z';
 const expiresAt = '2026-11-10T18:00:00.000Z';

@@ -11,13 +11,16 @@ const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "tetris",
 ]);
 
-export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups";
+export const APP_IFRAME_SANDBOX = "allow-scripts allow-forms allow-popups allow-downloads";
 
 const APP_IFRAME_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
   "object-src 'none'",
   "script-src 'self' 'unsafe-inline'",
+  // Bundled local analysis runs in an opaque-origin Blob worker. The worker
+  // inherits this document policy; external worker URLs remain disallowed.
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
@@ -25,6 +28,8 @@ const APP_IFRAME_CSP = [
 ].join("; ");
 
 export function appIdentityFromPath(path: string): string {
+  const explicit = path.match(/^matrix-app:([a-z0-9][a-z0-9-]{0,63})$/);
+  if (explicit) return explicit[1];
   if (path.startsWith("modules/")) return path.split("/")[1];
   return path.replace(/^apps\//, "").replace(/\/(?:dist\/)?index\.html$/, "").replace(/\.html$/, "").replace(/\/$/, "");
 }
@@ -41,6 +46,8 @@ export function appDataChangeMessageForIdentity(identity: string, changedApp: st
 }
 
 export function extractSlug(path: string): string | null {
+  const explicit = path.match(/^matrix-app:([a-z0-9][a-z0-9-]{0,63})$/);
+  if (explicit) return explicit[1];
   const topLevel = path.match(/^apps\/([a-z0-9][a-z0-9-]{0,63})(?:\/(?:index\.html)?)?$/);
   if (topLevel) return topLevel[1];
 

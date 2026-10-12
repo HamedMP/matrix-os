@@ -1,14 +1,32 @@
 name: CI
-run-name: CI coverage-v1 · ${{ github.sha }}
+run-name: >-
+  ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && format('CI metadata-v1 · {0}', github.sha) || inputs.pr_number && (inputs.execution_mode == 'hosted-only' && format('CI hosted-refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha) || format('CI refresh-v1 pr={0} head={1} base={2} merge={3}', inputs.pr_number, inputs.head_sha, inputs.base_sha, inputs.source_sha)) || format('CI coverage-v1 · {0}', github.sha) }}
 
 on:
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Exact-source refresh coverage mode
+        type: choice
+        default: linux
+        options: [linux, hosted-only]
+      pr_number:
+        description: Trusted same-head stack refresh PR (blank runs ordinary manual CI)
+        type: string
+      head_sha:
+        description: Exact PR head for refresh
+        type: string
+      base_sha:
+        description: Exact parent head for refresh
+        type: string
+      source_sha:
+        description: Exact two-parent merge for refresh
+        type: string
   merge_group:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "stack/**", "codex/**"]
-    types: [labeled, ready_for_review, synchronize]
+    types: [labeled, ready_for_review, synchronize, reopened, edited]
 
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
@@ -17,6 +35,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   changes:
@@ -24,22 +43,50 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     outputs:
+      source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
+      snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
       trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
       should_run: ${{ steps.changed.outputs.should_run }}
       docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
       os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
+      dedicated_eligible: ${{ steps.route.outputs.eligible }}
+      dedicated_required: ${{ steps.route.outputs.required }}
     steps:
+      - name: Checkout trusted main refresh helpers
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Resolve trusted exact-source refresh
+        id: refresh
+        if: github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CI_WORKFLOW_REF: ${{ github.workflow_ref }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {resolveRequestingSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-refresh.mjs')).href);
+            const source=await resolveRequestingSource(github,context.repo,
+              {sha:context.sha,ref:context.ref,workflowRef:process.env.CI_WORKFLOW_REF},context.payload.inputs);
+            core.setOutput('snapshot',JSON.stringify(source));core.setOutput('sourceSha',source.sourceSha);
       - name: Checkout with bounded retry
         env:
           CHECKOUT_BACKOFF_SECONDS: "5"
           CHECKOUT_MAX_ATTEMPTS: "3"
           CHECKOUT_TIMEOUT_SECONDS: "30"
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.refresh.outputs.sourceSha || github.sha }}
         run: |
           set -euo pipefail
 
+          SOURCE_SHA="${SOURCE_SHA:-$GITHUB_SHA}"
+          rm -rf .git
           git init .
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           git config --local gc.auto 0
@@ -50,8 +97,8 @@ jobs:
             if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
               git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
                 fetch --no-tags --prune --no-recurse-submodules \
-                origin "$GITHUB_SHA" \
-              && git checkout --force --detach "$GITHUB_SHA"; then
+                origin "$SOURCE_SHA" \
+              && git checkout --force --detach "$SOURCE_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
               exit 0
             fi
@@ -71,88 +118,116 @@ jobs:
         id: changed
         env:
           PR_ACTION: ${{ github.event.action || '' }}
+          PR_BASE_EDIT: ${{ github.event.action == 'edited' && github.event.changes.base != null }}
           PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}
           PR_LABEL_NAME: ${{ github.event.label.name || '' }}
           GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/dedicated-changes.mjs
+
+      - name: Select guarded Linux delegation
+        id: route
+        env:
+          MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
+          SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
+          REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
         run: |
-          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {readFileSync, appendFileSync} from 'node:fs';
+          const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
+          const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
+          const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
+          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
+          const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
+            shouldRun:process.env.SHOULD_RUN, ref:process.env.GITHUB_REF, pull:event.pull_request});
+          const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
+            shouldRun:process.env.SHOULD_RUN,ref:process.env.GITHUB_REF,pull:event.pull_request});
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
+          NODE
 
-          # Main runs are admitted through the queue. Plan from the last
-          # successful coverage-aware ancestor so failed or cancelled work is
-          # automatically absorbed by the next run.
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-            node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
 
-          # Manual and merge-queue runs must execute CI regardless of changed paths.
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$GITHUB_EVENT_NAME" = "merge_group" ]; then
-            echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=true" >> "$GITHUB_OUTPUT"
-            echo "CI relevant changes: true ($GITHUB_EVENT_NAME always runs)"
-            exit 0
-          fi
+      - name: Record exact main coverage decision
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          COVERAGE_BASE_SHA: ${{ steps.changed.outputs.base_sha }}
+          COVERAGE_BOOTSTRAP: ${{ steps.changed.outputs.bootstrap }}
+          SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
+          DOCS_CONTRACT_TESTS: ${{ steps.changed.outputs.docs_contract_tests }}
+          OS_VIEW_PARITY_TESTS: ${{ steps.changed.outputs.os_view_parity_tests }}
+          DEDICATED_ELIGIBLE: ${{ steps.route.outputs.eligible }}
+          DEDICATED_REQUIRED: ${{ steps.route.outputs.required }}
+        run: node scripts/ci/main-ci-decision.mjs
 
-          should_run_trigger=true
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            should_run_trigger=false
-            if [ "$PR_ACTION" = "ready_for_review" ] || { [ "$PR_ACTION" = "labeled" ] && { [ "$PR_LABEL_NAME" = "ready-for-ci" ] || [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; } || { [ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]; }; then
-              should_run_trigger=true
-            fi
-          fi
+      - name: Upload exact main coverage decision
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/main-ci-decision/receipt.json
+          if-no-files-found: error
+          retention-days: 1
 
-          if [ "$should_run_trigger" != "true" ]; then
-            echo "trigger_requested=false" >> "$GITHUB_OUTPUT"
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "docs_contract_tests=false" >> "$GITHUB_OUTPUT"
-            echo "os_view_parity_tests=false" >> "$GITHUB_OUTPUT"
-            echo "CI trigger not requested; add the ready-for-ci label, mark the PR ready for review, or run manually. Later commits rerun automatically while ready-for-ci remains applied."
-            exit 0
-          fi
+      - name: Clean temporary main coverage decision
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: node scripts/ci/main-ci-decision.mjs --cleanup
 
-          echo "trigger_requested=true" >> "$GITHUB_OUTPUT"
-          git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
-          changed_files="$(git diff --name-only "origin/$GITHUB_BASE_REF" "$GITHUB_SHA")"
-          os_view_parity_tests="$(printf '%s\n' "$changed_files" | node scripts/ci/os-view-parity-plan.mjs)"
-
-          should_run=false
-          docs_contract_tests=false
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            case "$file" in
-              docs/*|specs/*|*.md) docs_contract_tests=true ;;
-              *) should_run=true ;;
-            esac
-          done <<EOF
-          $changed_files
-          EOF
-
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-          echo "docs_contract_tests=$docs_contract_tests" >> "$GITHUB_OUTPUT"
-          echo "os_view_parity_tests=$os_view_parity_tests" >> "$GITHUB_OUTPUT"
-          echo "CI relevant changes: $should_run"
-          echo "Docs contract tests: $docs_contract_tests"
-          echo "OS-view parity tests: $os_view_parity_tests"
-
-  # ── Gate 1: Mechanical checks ──
-  typecheck:
-    name: Type Check
+  ci-backend:
+    name: CI Backend Decision
     needs: changes
     if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      provider: ${{ steps.backend.outputs.provider }}
+      infrastructure_fallback: ${{ steps.backend.outputs.infrastructure_fallback }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        if: needs.changes.outputs.dedicated_eligible == 'true'
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Decide exact-source execution backend
+        id: backend
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+        with:
+          script: |
+            if(process.env.DEDICATED_ELIGIBLE!=='true'){core.setOutput('provider','hosted');core.setOutput('infrastructure_fallback','false');return;}
+            const {pathToFileURL}=require('node:url');const {resolve}=require('node:path');
+            const {requestingSnapshot,decideCiBackend}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
+            const result=await decideCiBackend(github,{...context.repo,...snapshot,requestingRunId:context.runId,
+              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:'delegated',imageDigest:process.env.IMAGE_DIGEST,
+              harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl});
+            core.setOutput('provider',result.provider);core.setOutput('infrastructure_fallback',String(result.infrastructureFallback));
+
+  typecheck:
+    name: Type Check
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    runs-on: ubuntu-latest
     timeout-minutes: 5
-    # TODO: remove continue-on-error once baseline type errors in kernel are fixed
-    continue-on-error: true
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping typecheck."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -176,8 +251,8 @@ jobs:
 
   shell-production-build:
     name: Shell Production Build
-    needs: [changes, typecheck]
-    if: needs.changes.outputs.should_run == 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -186,6 +261,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping shell production build."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -202,6 +279,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
+
+      - name: Cache Next incremental compilation
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: shell/.next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-
 
       - name: Build shell production bundle
         if: needs.changes.outputs.should_run == 'true'
@@ -230,6 +315,7 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           fetch-depth: 0
 
       - name: Install ripgrep
@@ -276,7 +362,7 @@ jobs:
     runs-on: ubuntu-latest
     # Include observed 5m15s checkout, audit and cleanup/transfer variance.
     timeout-minutes: 10
-    # Non-blocking during rollout (matches typecheck baseline). Remove once the
+    # Non-blocking during the React audit rollout. Remove once the
     # React audit baseline is clean, then it gates merges. https://github.com/millionco/react-doctor
     continue-on-error: true
     steps:
@@ -287,6 +373,7 @@ jobs:
       - uses: actions/checkout@v6
         if: needs.changes.outputs.should_run == 'true'
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v6
@@ -300,7 +387,7 @@ jobs:
           COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ needs.changes.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -344,7 +431,7 @@ jobs:
 
   sync-client:
     name: Sync Client Package
-    needs: [changes, patterns]
+    needs: changes
     if: needs.changes.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -354,6 +441,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping sync-client checks."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
@@ -380,11 +469,11 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @finnaai/matrix exec node ./scripts/check-publish.mjs
 
-  # ── Gate 2: Tests ──
+  # Tests run alongside mechanical checks; CI Results collects every result.
   agent-sdk-compatibility:
     name: Agent SDK 0.3.251 Compatibility
-    needs: changes
-    if: needs.changes.outputs.should_run == 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -393,6 +482,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping Agent SDK compatibility."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: pnpm/action-setup@v6
@@ -421,8 +512,8 @@ jobs:
 
   unit:
     name: Unit Tests (${{ matrix.shard }}/4)
-    needs: [changes, patterns, sync-client]
-    if: needs.changes.outputs.should_run == 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
@@ -439,6 +530,8 @@ jobs:
         run: echo "No CI-relevant source changes detected; skipping unit shard."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -459,11 +552,26 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@matrix-os.com"
 
+      - name: Install ripgrep for pattern scanner tests
+        if: needs.changes.outputs.should_run == 'true'
+        run: sudo apt-get install -y ripgrep
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - run: bun run test -- --shard=${{ matrix.shard }}/4
+      - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
+        env:
+          UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
         if: needs.changes.outputs.should_run == 'true'
+
+      - name: Upload unit profiling
+        if: always() && needs.changes.outputs.should_run == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: unit-profile-${{ matrix.shard }}
+          path: output/ci/unit-${{ matrix.shard }}.json
+          if-no-files-found: warn
+          retention-days: 7
 
   funded-postgres:
     name: Funded Settlement PostgreSQL
@@ -490,6 +598,8 @@ jobs:
       MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
       - uses: oven-sh/setup-bun@v2
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -497,86 +607,92 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build test prerequisites once
+        run: bun run test:prepare
       - name: Verify funded settlement on PostgreSQL
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Account deletion PostgreSQL races
         if: needs.changes.outputs.should_run == 'true'
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/account-deletion-*-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Bot creation, Integration grant and source admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/gateway/bots/integration-grant-source-postgres.test.ts tests/gateway/bots/instantiation.test.ts tests/gateway/bots/funded-inference-timeout.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Preview Drive revocation and admission races
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          bun run test -- tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
 
   docs-contract:
     name: Docs Contract Tests
-    needs: changes
-    if: needs.changes.outputs.docs_contract_tests == 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Skip docs contract tests
-        if: needs.changes.outputs.docs_contract_tests != 'true'
+        if: needs.changes.outputs.docs_contract_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
       - uses: actions/checkout@v6
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: pnpm/action-setup@v6
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: actions/setup-node@v6
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - name: Run docs contract tests
-        if: needs.changes.outputs.docs_contract_tests == 'true'
+        if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         run: pnpm exec vitest run tests/repository/site-extraction.test.ts
 
   os-view-parity:
     name: OS View Parity
-    needs: changes
-    if: needs.changes.outputs.os_view_parity_tests == 'true'
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && (needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true') && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - name: Skip OS-view parity tests
-        if: needs.changes.outputs.os_view_parity_tests != 'true'
+        if: needs.changes.outputs.os_view_parity_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No shared OS-view surface changes detected; skipping parity tests."
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
       - name: Run shared OS-view parity contract
-        if: needs.changes.outputs.os_view_parity_tests == 'true'
+        if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         run: |
           pnpm exec vitest run \
             tests/contracts/os-view.test.ts \
@@ -591,17 +707,26 @@ jobs:
             tests/gateway/os-view-state-repository.test.ts
 
   e2e:
-    name: E2E Tests
-    needs: [changes, sync-client, unit]
-    if: needs.changes.outputs.should_run == 'true'
+    name: E2E Tests (${{ matrix.lane }})
+    needs: [changes, ci-backend]
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [general, electron]
     steps:
       - name: Skip expensive CI for docs-only changes
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping e2e tests."
 
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -625,6 +750,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Build test prerequisites once
+        run: bun run test:prepare
+
+      - name: Cache Playwright browser revisions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Chromium for terminal presentation regression
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
@@ -634,41 +768,43 @@ jobs:
         run: pnpm --filter shell exec playwright install --with-deps chromium
 
       - name: Run E2E tests
-        if: needs.changes.outputs.should_run == 'true'
-        run: bun run test:e2e
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
+        run: bun run test:e2e:run
 
       - name: Run native Electron terminal presentation regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_GRID_ELECTRON: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/terminal-soft-grid.e2e.test.ts --maxWorkers=1
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/terminal-soft-grid.e2e.test.ts --maxWorkers=1
 
       - name: Upload terminal presentation evidence
         if: always() && needs.changes.outputs.should_run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: terminal-soft-resize-evidence
+          name: terminal-soft-resize-evidence-${{ matrix.lane }}
           path: output/playwright/terminal-soft-resize
           if-no-files-found: ignore
 
       - name: Build Desktop for Electron E2E
-        if: needs.changes.outputs.should_run == 'true'
-        run: bun run build:desktop
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+        run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop
 
       - name: Run required Desktop file download regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/file-download.e2e.test.ts
 
       - name: Run required Desktop Chat input regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts
 
       - name: Upload Desktop Chat input evidence
-        if: always() && needs.changes.outputs.should_run == 'true'
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         uses: actions/upload-artifact@v7
         with:
           name: desktop-chat-input-evidence
@@ -677,15 +813,15 @@ jobs:
           retention-days: 14
 
       - name: Run required Electron Desktop provider Settings regressions
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
           MATRIX_PROVIDER_AUTH_ELECTRON: "1"
           MATRIX_SETTINGS_EVIDENCE_DIR: output/playwright/settings-providers
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts
 
       - name: Upload Desktop provider auth evidence
-        if: always() && needs.changes.outputs.should_run == 'true'
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         uses: actions/upload-artifact@v7
         with:
           name: desktop-provider-auth-evidence
@@ -694,31 +830,31 @@ jobs:
           retention-days: 14
 
       - name: Run required MAT-335 Desktop regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
 
       - name: Run required Desktop terminal clipboard regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/terminal-clipboard.e2e.test.ts
 
       - name: Run required Desktop terminal file attachment regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-file-drop.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/terminal-file-drop.e2e.test.ts
 
       - name: Run required Desktop terminal snapshot regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/terminal-snapshot.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/terminal-snapshot.e2e.test.ts
 
       - name: Upload Desktop terminal snapshot evidence
-        if: always() && needs.changes.outputs.should_run == 'true'
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-terminal-snapshot-evidence
@@ -727,19 +863,19 @@ jobs:
           retention-days: 14
 
       - name: Run required Desktop release alignment regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/release-alignment.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/release-alignment.e2e.test.ts
 
       - name: Run required Desktop Chat title regression
-        if: needs.changes.outputs.should_run == 'true'
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
-        run: xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/chat-title-layout.e2e.test.ts
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/chat-title-layout.e2e.test.ts
 
       - name: Upload Desktop Chat title evidence
-        if: always() && needs.changes.outputs.should_run == 'true'
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-chat-title-evidence
@@ -748,7 +884,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Desktop release alignment evidence
-        if: always() && needs.changes.outputs.should_run == 'true'
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
         uses: actions/upload-artifact@v7
         with:
           name: desktop-release-alignment-evidence
@@ -760,7 +896,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: e2e-test-results
+          name: e2e-test-results-${{ matrix.lane }}
           path: tests/e2e/
           retention-days: 7
 
@@ -775,23 +911,67 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.changes.outputs.source_sha }}
           persist-credentials: false
       - name: Execute isolated root fixtures without skipped cases
         run: |
           set -euo pipefail
           container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
-          timeout --kill-after=10s 120s docker pull public.ecr.aws/docker/library/node:24-bookworm
+          image="public.ecr.aws/docker/library/node:24-bookworm"
+          if ! timeout --kill-after=10s 120s docker pull "$image"; then
+            image="docker.io/library/node:24-bookworm"
+            timeout --kill-after=10s 120s docker pull "$image"
+          fi
           timeout --kill-after=10s 180s docker run --rm --init \
             --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
             --env MATRIX_DISPOSABLE_ROOT_TEST=true \
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
-            public.ecr.aws/docker/library/node:24-bookworm python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+            "$image" python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+
+  dedicated-linux:
+    name: Verified Dedicated Linux Qualification
+    needs: changes
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact merge revision Linux outcome
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
+          REQUESTING_ATTEMPT: ${{ github.run_attempt }}
+          MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
+          HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
+            const {requestingSnapshot}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
+            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
+            const result=await waitForDedicatedResult(github,{
+              ...context.repo,...snapshot,requestingRunId:context.runId,
+              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
+              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
+            },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
+            core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
 
   ci-results:
-    name: CI Results
-    needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e]
-    if: always()
+    # Metadata events must neither replace a real failed gate with skipped success
+    # nor supersede a requesting source run. Their run-name is distinct above.
+    name: ${{ (github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null) && 'CI Metadata (ignored)' || 'CI Results' }}
+    needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]
+    if: always() && !(github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -799,6 +979,12 @@ jobs:
         env:
           CI_TRIGGER_REQUESTED: ${{ needs.changes.outputs.trigger_requested }}
           SHOULD_RUN: ${{ needs.changes.outputs.should_run }}
+          DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
+          DEDICATED_REQUIRED: ${{ needs.changes.outputs.dedicated_required }}
+          CI_BACKEND_RESULT: ${{ needs.ci-backend.result }}
+          CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
+          INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
+          DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
@@ -814,6 +1000,9 @@ jobs:
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           set -euo pipefail
+          DEDICATED_ELIGIBLE=${DEDICATED_ELIGIBLE:-false}
+          DEDICATED_REQUIRED=${DEDICATED_REQUIRED:-$DEDICATED_ELIGIBLE}
+          DEDICATED_LINUX_RESULT=${DEDICATED_LINUX_RESULT:-skipped}
 
           {
             echo "### CI Results"
@@ -838,6 +1027,7 @@ jobs:
             echo "| Docs Contract Tests | $DOCS_CONTRACT_RESULT |"
             echo "| OS View Parity | $OS_VIEW_PARITY_RESULT |"
             echo "| E2E Tests | $E2E_RESULT |"
+            echo "| Verified Dedicated Linux Qualification | $DEDICATED_LINUX_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$CI_TRIGGER_REQUESTED" != "true" ]; then
@@ -846,7 +1036,7 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$DEDICATED_LINUX_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -862,6 +1052,23 @@ jobs:
 
           if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$FUNDED_HOST_ROOT_RESULT" != "success" ]; then
             failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
+            failed=true
+          fi
+
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_ELIGIBLE" = "true" ]; then
+            if [ "${CI_BACKEND_RESULT:-unknown}" != "success" ]; then failed=true; fi
+            case "${CI_BACKEND_PROVIDER:-unknown}" in
+              linux) [ "${INFRASTRUCTURE_FALLBACK:-false}" = "false" ] || failed=true ;;
+              hosted)
+                [ "${INFRASTRUCTURE_FALLBACK:-false}" = "true" ] || failed=true
+                for result in "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT"; do
+                  [ "$result" = "success" ] || failed=true
+                done ;;
+              *) failed=true ;;
+            esac
           fi
 
           if [ "$failed" = "true" ]; then

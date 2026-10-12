@@ -20,7 +20,7 @@ import {
   resolveCheckoutAttempt,
   upsertOnboardingFirstRun,
 } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const NOW = new Date('2026-06-11T12:00:00.000Z');
 const APP_ORIGIN = 'https://app.matrix-os.com';

@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import { createSourceFile, isFunctionDeclaration, ScriptKind, ScriptTarget, transpileModule } from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs } from "../../shell/src/components/app-capability-request";
+import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "../../shell/src/components/app-viewer-bridge-request";
 import { isAllowedBridgeFetchUrl } from "../../shell/src/components/app-viewer-bridge-policy";
 import { getGatewayUrl } from "../../shell/src/lib/gateway";
 
@@ -47,7 +48,7 @@ describe("explicit computer API isolation", () => {
     const handleBridgeFetch = runInNewContext(transpileModule(`${handler!.getText(parsed)}\nhandleBridgeFetch;`, {
       compilerOptions: { target: ScriptTarget.ES2022 },
     }).outputText, {
-      prepareAppBridgeFetch, readAppBridgeResponse, appBridgeTimeoutMs, isAllowedBridgeFetchUrl,
+      prepareAppBridgeFetch, prepareBridgeFetchRequest, resolveBridgeFetchUrl, readAppBridgeResponse, appBridgeTimeoutMs, isAllowedBridgeFetchUrl,
       getGatewayUrl, fetch: fetcher, AbortSignal, console,
       GATEWAY_URL: "https://matrix.test/vm/stale-computer",
     }) as (app: string, payload: unknown, port: { postMessage: (value: unknown) => void; close: () => void }, signal: AbortSignal) => Promise<void>;

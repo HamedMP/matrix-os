@@ -38,6 +38,7 @@ export function createIntegrationBridgeRoutes(options: IntegrationBridgeRoutesOp
     const services = await options.platformDb.listConnectedServices(userId);
     return context.json({
       services: services.map((service) => ({
+        id: service.id,
         service: service.service,
         account_label: service.account_label,
         account_email: service.account_email,

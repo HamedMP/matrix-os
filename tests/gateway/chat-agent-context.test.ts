@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createCanonicalChatRoutes, type CanonicalChatRouteService } from "../../packages/gateway/src/chat/routes.js";
@@ -32,7 +32,7 @@ describe("server-resolved Chat mention context", () => {
   let enabled = true;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "matrix-chat-context-"));
-    repository = new ChatRepository((await KyselyPGlite.create()).dialect);
+    repository = new ChatRepository((await createTestPGlite()).dialect);
     await repository.bootstrap();
     agents = new ChatAgentStore({ homePath: home, db: repository.kysely });
     await agents.bootstrap();

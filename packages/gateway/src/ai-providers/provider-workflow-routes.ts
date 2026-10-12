@@ -56,7 +56,7 @@ export function createProviderWorkflowRoutes(options: {
     const body = ProviderWorkflowKeyV2Schema.safeParse(await json(c));
     return body.success ? handle(c, owner => options.service.verifyKeyV2(owner, body.data)) : invalid(c);
   });
-  app.get('/provider-settings/workflows/v2/:id', c => {
+  app.get('/provider-settings/workflows/v2/:id', async c => {
     const id = ref.safeParse(c.req.param('id'));
     return id.success ? handle(c, owner => options.service.statusV2(owner, id.data)) : invalid(c);
   });
@@ -68,7 +68,7 @@ export function createProviderWorkflowRoutes(options: {
     const id = ref.safeParse(c.req.param('id')); const body = z.object({}).strict().safeParse(await json(c));
     return id.success && body.success ? handle(c, owner => options.service.cancelV2(owner, id.data)) : invalid(c);
   });
-  app.get('/provider-settings/workflows/capabilities', c => {
+  app.get('/provider-settings/workflows/capabilities', async c => {
     const version = z.enum(['1', '2']).optional().safeParse(c.req.query('connectionVersion'));
     if (!version.success) return invalid(c);
     return handle(c, async owner => {
@@ -80,8 +80,8 @@ export function createProviderWorkflowRoutes(options: {
   });
   app.post('/provider-settings/workflows', async (c) => { const body = ProviderWorkflowStartSchema.safeParse(await json(c)); return body.success ? handle(c, owner => options.service.start(owner, body.data)) : invalid(c); });
   app.post('/provider-settings/workflows/keys', async (c) => { const body = ProviderWorkflowKeySchema.safeParse(await json(c)); return body.success ? handle(c, owner => options.service.verifyKey(owner, body.data)) : invalid(c); });
-  app.get('/provider-settings/workflows/logs/:harnessInstanceId', c => { const id = ref.safeParse(c.req.param('harnessInstanceId')); return id.success ? handle(c, owner => options.service.logs(owner, id.data)) : invalid(c); });
-  app.get('/provider-settings/workflows/:id', c => { const id = ref.safeParse(c.req.param('id')); return id.success ? handle(c, owner => options.service.status(owner, id.data)) : invalid(c); });
+  app.get('/provider-settings/workflows/logs/:harnessInstanceId', async c => { const id = ref.safeParse(c.req.param('harnessInstanceId')); return id.success ? handle(c, owner => options.service.logs(owner, id.data)) : invalid(c); });
+  app.get('/provider-settings/workflows/:id', async c => { const id = ref.safeParse(c.req.param('id')); return id.success ? handle(c, owner => options.service.status(owner, id.data)) : invalid(c); });
   app.post('/provider-settings/workflows/:id/code', async c => { const id = ref.safeParse(c.req.param('id')); const body = ProviderWorkflowCodeSchema.safeParse(await json(c)); return id.success && body.success ? handle(c, owner => options.service.submitCode(owner, id.data, body.data.code)) : invalid(c); });
   app.post('/provider-settings/workflows/:id/cancel', async (c) => { const id = ref.safeParse(c.req.param('id')); const body = z.object({}).strict().safeParse(await json(c)); return id.success && body.success ? handle(c, owner => options.service.cancel(owner, id.data)) : invalid(c); });
   return app;

@@ -1,9 +1,10 @@
 "use client";
 
-import { useGettingStartedBlocker } from "@matrix-os/ui";
+import { useGettingStartedBlocker, DesktopViewMenu } from "@matrix-os/ui";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AppWindow } from "@/hooks/useWindowManager";
-import { Monitor, PanelLeft, X } from "@/lib/hugeicons";
+import { PanelLeft, X } from "@/lib/hugeicons";
+import { useDesktopMode } from "@/stores/desktop-mode";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 interface WebDesktopHeaderProps {
@@ -38,6 +39,8 @@ export function WebDesktopHeader({
   rightActions,
   leadingAction,
 }: WebDesktopHeaderProps) {
+  const mode = useDesktopMode(state => state.mode);
+  const setMode = useDesktopMode(state => state.setMode);
   const [previewsOpen, setPreviewsOpen] = useState(false);
   useGettingStartedBlocker(previewsOpen);
   const activeId = useMemo(() => activeWindowId(windows), [windows]);
@@ -56,7 +59,7 @@ export function WebDesktopHeader({
     <>
       <header
         data-web-desktop-header
-        className="pointer-events-auto absolute inset-x-0 top-0 flex h-[38px] items-stretch border-b border-border/70 bg-card/78 text-foreground shadow-[0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[68px]"
+        className="pointer-events-auto absolute inset-x-0 top-0 flex h-[38px] items-stretch border-b border-border/70 bg-card/82 text-foreground shadow-[0_1px_0_rgba(255,255,255,0.45)] backdrop-blur-[34px]"
         style={{ zIndex: SHELL_Z_INDEX.desktopHeader }}
       >
         <div role="tablist" aria-label="Workspace tabs" className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -71,17 +74,7 @@ export function WebDesktopHeader({
           >
             <PanelLeft className="size-3.5" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-label="Show desktop"
-            aria-selected={activeId === null}
-            title="Show desktop"
-            className="flex w-[44px] shrink-0 items-center justify-center border-r border-border/70 text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground aria-selected:bg-card aria-selected:text-foreground focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-primary"
-            onClick={onShowDesktop}
-          >
-            <Monitor className="size-3.5" aria-hidden="true" />
-          </button>
+          <DesktopViewMenu tab mode={mode} selected={activeId === null} onShowDesktop={onShowDesktop} onModeChange={setMode} />
           {leadingAction ? <div role="presentation" className="flex shrink-0 items-center border-r border-border/70 px-2">{leadingAction}</div> : null}
           {fullscreenWindow ? (
             <button

@@ -126,6 +126,20 @@ describe("web getting started status", () => {
     expect(DESKTOP_APP_DOWNLOAD_URL).toBe("https://matrix-os.com/desktop");
   });
 
+  it("opens the Web checklist through the shared nested Help menu", async () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    installSuccessfulFetch();
+    window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+    render(<GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()}
+      helpMenu={{ onSupport: vi.fn(), discordIcon: <span /> }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const trigger = await screen.findByRole("button", { name: "Getting started — 5 of 5" });
+    fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+  });
+
   it("stays open until its title-bar trigger is clicked and offers the detected desktop download", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     vi.stubGlobal("navigator", { platform: "Win32", userAgent: "Windows NT 10.0" });

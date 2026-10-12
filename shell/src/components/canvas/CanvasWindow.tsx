@@ -7,7 +7,7 @@ import { useWindowManager, type AppWindow } from "@/hooks/useWindowManager";
 import { useMobileViewport } from "@/hooks/useMobileViewport";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { AppViewer } from "../AppViewer";
+import { CanvasAppViewer } from "./CanvasAppViewer";
 import { TerminalApp } from "../terminal/TerminalApp";
 import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
@@ -525,7 +525,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <AppViewer path={win.path} />
+        <CanvasAppViewer path={win.path} />
       )}
     </>
   );

@@ -1,0 +1,17 @@
+@import "../../_shared/app-foundation.css";
+
+
+/* A spending ledger: amounts align, categories stay quiet. */
+:root { --app-bg: var(--matrix-bg, #fbfcfe); --app-fg: var(--matrix-fg, #1c2737); --app-muted: var(--matrix-muted, #edf1f7); --app-border: var(--matrix-border, #e0e5ed); --app-accent: var(--matrix-accent, #365f9d); --elev: none; }
+.exp-app { height: 100dvh; max-width: 1180px; padding: 32px; gap: 28px; }
+.exp-brand__mark { background: transparent; border: 1px solid var(--app-border); color: var(--app-fg); border-radius: 10px; box-shadow: none; }
+.exp-eyebrow { text-transform: none; letter-spacing: 0; font-size: 13px; }.exp-brand h1 { font-size: 32px; font-weight: 600; letter-spacing: -.04em; }
+.exp-kpis { gap: 0; border-bottom: 1px solid var(--app-border); padding-bottom: 24px; }
+.exp-kpi { background: transparent; border: 0; border-radius: 0; box-shadow: none; padding: 12px 24px; border-left: 1px solid var(--app-border); }.exp-kpi:first-child { border-left: 0; padding-left: 0; }
+.exp-kpi strong { font-size: 36px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -.04em; }.exp-kpi--spent strong { font-size: 48px; }
+.exp-card { border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: 0; }
+.exp-grid { gap: 36px; }.exp-compose { border-left: 1px solid var(--app-border); padding-left: 28px; }.exp-card__head h2 { font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
+.exp-bar__track { height: 5px; }.exp-bar { padding: 16px 0; }
+.exp-transactions { border-top: 1px solid var(--app-border); padding-top: 24px; }.exp-row { border-radius: 0; background: transparent; border-bottom: 1px solid var(--app-border); padding: 18px 0; }.exp-row__amt { font-variant-numeric: tabular-nums; font-size: 18px; font-weight: 600; }
+.exp-icon-btn, .exp-text-btn, .exp-primary { min-height: 44px; }.exp-icon-btn { min-width: 44px; }.exp-field input, .exp-field select, .exp-budget-row input { font-size: 16px; min-height: 44px; }.exp-overlay__panel { max-height: 88dvh; overflow-y: auto; }
+@media (max-width: 720px) { .exp-app { padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); gap: 24px; }.exp-kpis { grid-template-columns: 1fr; gap: 12px; }.exp-kpi { border-left: 0; padding: 0; }.exp-kpi:not(:first-child) { display: flex; justify-content: space-between; align-items: center; }.exp-kpi:not(:first-child) strong { font-size: 24px; }.exp-grid { grid-template-columns: 1fr; }.exp-compose { border-left: 0; border-top: 1px solid var(--app-border); padding: 24px 0 0; }.exp-row { gap: 8px; }.exp-row__actions { gap: 0; }.exp-row__sub { overflow-wrap: anywhere; } }

@@ -12,19 +12,21 @@ export default function NavigationHeader() {
 
   return (
     <header
-      className="native-titlebar titlebar-drag absolute inset-x-0 top-0 grid shrink-0 items-center"
+      className="native-titlebar titlebar-drag absolute inset-x-0 top-0 grid shrink-0 items-center border-b"
       onDoubleClick={handleTitlebarDoubleClick}
       style={{
         zIndex: DESKTOP_Z_INDEX.chrome,
         height: "var(--titlebar-height)",
         gridTemplateColumns: "96px minmax(0, 1fr)",
         background: "color-mix(in srgb, var(--bg-sunken) 82%, transparent)",
-        backdropFilter: "blur(68px)",
-      }}
+        borderColor: "var(--border-subtle)",
+        "--desktop-menu-z": DESKTOP_Z_INDEX.popover,
+        backdropFilter: "blur(34px)",
+      } as React.CSSProperties}
     >
       {/* Reserve the native traffic-light controls' drag region. */}
       <div />
-      <div className="flex h-full min-w-0 items-center gap-1 px-2">
+      <div className="flex h-full min-w-0 items-center gap-0 pr-2">
         <DesktopHeaderTabs />
         <DesktopModeControls />
       </div>

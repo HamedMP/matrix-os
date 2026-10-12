@@ -2,7 +2,7 @@
   "name": "Task Manager",
   "description": "Trello-style project boards with draggable cards, labels, due dates, and checklists backed by your own Postgres",
   "category": "productivity",
-  "icon": "task-manager",
+  "icon": "v3-task-manager",
   "author": "system",
   "version": "3.0.0",
   "runtime": "vite",
@@ -17,7 +17,9 @@
           "color": "text",
           "position": "integer"
         },
-        "indexes": ["position"]
+        "indexes": [
+          "position"
+        ]
       },
       "cards": {
         "columns": {
@@ -31,7 +33,10 @@
           "checklist": "jsonb",
           "position": "integer"
         },
-        "indexes": ["column_id", "position"]
+        "indexes": [
+          "column_id",
+          "position"
+        ]
       }
     }
   },
@@ -39,7 +44,17 @@
     "install": "pnpm install --ignore-workspace --prefer-offline",
     "command": "pnpm build",
     "output": "dist",
-    "timeout": 180
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../_shared/**",
+      "public/**",
+      "*.config.*",
+      "index.html",
+      "matrix.json",
+      "../../system/icons/v3-*.png"
+    ]
   },
   "listingTrust": "first_party"
 }

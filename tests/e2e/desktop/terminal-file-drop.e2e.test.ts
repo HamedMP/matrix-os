@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { createTerminalWorkspaceRoutes } from "../../../packages/gateway/src/shell/workspace-routes";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -84,6 +85,7 @@ suite("built Electron Desktop Terminal local attachments", () => {
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile },
     });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     page.on("console", (message) => {
       if (message.text().startsWith("[terminal]")) console.info("Electron test console", message.text());
     });

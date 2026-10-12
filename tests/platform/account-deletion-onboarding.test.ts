@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { appendJourneyEvent,upsertOnboardingFirstRun,insertOnboardingFirstRunIfAbsent } from '../../packages/platform/src/db.js';
 afterEach(()=>vi.unstubAllEnvs());

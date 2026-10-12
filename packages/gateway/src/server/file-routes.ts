@@ -27,6 +27,7 @@ import {
   ProjectFenceError,
 } from "../collaboration/project-fence.js";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file-mutations.js";
 
 export interface FileRouteDeps {
   homePath: string;
@@ -39,6 +40,20 @@ export interface FileRouteDeps {
 export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   const { homePath } = deps;
   const fileBodyLimit = bodyLimit({ maxSize: 10 * 1024 * 1024 });
+
+  // Hold the owner/home boundary before path resolution, admission, blob preflight or writes.
+  // Project admission remains inside this lock. Reads and unrelated routes never acquire it.
+  app.use("*", async (c, next) => {
+    const path = c.req.path;
+    const ownerFiles = path === "/api/files" || path.startsWith("/api/files/")
+      || path === "/files" || path.startsWith("/files/");
+    if (!ownerFiles || !["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) return next();
+    try { await withOwnerFileMutation(homePath, next); }
+    catch (error) {
+      if (!(error instanceof OwnerFileMutationBusyError)) throw error;
+      return c.json({ error: "File service unavailable" }, 503);
+    }
+  });
 
   if (deps.filePreviewService && deps.getPrincipal) {
     app.route("/api/file-previews", createFilePreviewRoutes({
