@@ -1366,6 +1366,55 @@ describe("canonical Chat route controller", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it.each(["selection", "route"] as const)("drops a draft's first Turn after %s opens a saved Chat, then a new draft", async (by) => {
+    const earlier = { ...globalRecord, chat: { ...globalRecord.chat, id: "chat_earlier_draft" } };
+    let resolveAdmission!: (value: Awaited<ReturnType<CanonicalChatClient["admitTurn"]>>) => void;
+    const sharedClient = client({
+      create: vi.fn(async () => earlier),
+      admitTurn: vi.fn(() => new Promise((resolve) => { resolveAdmission = resolve; })),
+    });
+    const { result, rerender } = renderHook(({ chatId }) => useCanonicalChatRouteController({
+      client: sharedClient, projectId: null, active: true, initialChatId: chatId, autoSelectFirst: false,
+    }), { initialProps: { chatId: null as string | null } });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    let submission!: Promise<unknown>;
+    act(() => {
+      submission = result.current.submitTurn({
+        parts: [{ type: "text", text: "Earlier question" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "Earlier question");
+    });
+    await waitFor(() => expect(sharedClient.admitTurn).toHaveBeenCalledTimes(1));
+    // Opening a saved Chat, then New chat, while that Turn is on its way: the new draft stays a draft.
+    const open = (chatId: string | null) => (by === "selection"
+      ? act(() => result.current.selectChat(chatId))
+      : rerender({ chatId }));
+    open(globalRecord.chat.id);
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    open(null);
+    let published: unknown;
+    await act(async () => {
+      resolveAdmission({
+        record: earlier,
+        message: { id: "message_earlier", chatId: earlier.chat.id, role: "user",
+          parts: [{ type: "text", text: "Earlier question" }], createdAt: "2026-08-26T00:00:01.000Z" },
+        turn: { id: "turn_earlier", chatId: earlier.chat.id, messageId: "message_earlier", sequence: 1,
+          status: "queued", createdAt: "2026-08-26T00:00:01.000Z" },
+        run: { id: "run_earlier", chatId: earlier.chat.id, turnId: "turn_earlier", attempt: 1, status: "queued",
+          providerInstanceId: "codex_default", createdAt: "2026-08-26T00:00:01.000Z" },
+      });
+      published = await submission;
+    });
+
+    expect(published).toBeNull();
+    expect(result.current.activeChatId).toBeNull();
+    expect(result.current.detail).toBeNull();
+    expect(result.current.items.map((item) => item.chat.id)).not.toContain(earlier.chat.id);
+  });
+
   it("includes a safe failure reason while recording only the diagnostic category", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const failedClient = client({

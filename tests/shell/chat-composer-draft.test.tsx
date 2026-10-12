@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createChatComposerDraftKeeper, useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft";
 
 afterEach(cleanup);
@@ -59,6 +59,16 @@ it("lets a question go once it is sent, even after its view was switched away, b
   act(() => newer.result.current.setText("And since then, really?"));
   act(() => stale());
   expect(newer.result.current.text).toBe("And since then, really?");
+});
+
+it("bounds the keeper's listeners to a few views, dropping the oldest", () => {
+  const keeper = createChatComposerDraftKeeper();
+  const listeners = Array.from({ length: 100 }, () => vi.fn());
+  for (const listener of listeners) keeper.subscribe(listener);
+  keeper.settle({ identity: "gateway", scope: "chat_a", requestId: "req_sent" });
+  expect(listeners.filter((listener) => listener.mock.calls.length > 0).length).toBeLessThanOrEqual(4);
+  expect(listeners[0]).not.toHaveBeenCalled();
+  expect(listeners.at(-1)).toHaveBeenCalledTimes(1);
 });
 
 it("never brings a sent question back to a view opened on another Chat when the send settles", () => {

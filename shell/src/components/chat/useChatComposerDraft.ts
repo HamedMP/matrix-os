@@ -6,6 +6,7 @@ const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionId
 type DraftStore = { identity: unknown; drafts: Record<string, Draft> };
 /** A sent question: it goes only while it is still that edit, so a question typed after it stays. */
 type SentDraft = { identity: unknown; scope: string; requestId: string };
+const MAX_DRAFT_LISTENERS = 4;
 
 function withoutSent(store: DraftStore, sent: SentDraft): DraftStore {
   if (store.identity !== sent.identity || store.drafts[sent.scope]?.requestId !== sent.requestId) return store;
@@ -36,6 +37,11 @@ export function createChatComposerDraftKeeper(): ChatComposerDraftKeeper {
       for (const listener of [...listeners]) listener(sent);
     },
     subscribe: (listener) => {
+      // One view is open at a time (two while a remount overlaps): past the cap the oldest, long gone, is dropped.
+      for (const stale of listeners) {
+        if (listeners.size < MAX_DRAFT_LISTENERS) break;
+        listeners.delete(stale);
+      }
       listeners.add(listener);
       return () => { listeners.delete(listener); };
     },

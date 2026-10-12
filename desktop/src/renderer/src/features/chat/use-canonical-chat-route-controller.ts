@@ -95,8 +95,11 @@ export function useCanonicalChatRouteController({
     chatId: initialChatId,
     ids: [],
   });
-  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
-  // What a send belongs to: hiding the view keeps a send under way, so the Chat it makes is still shown and reported.
+  const routeScopeRef = useRef<{
+    active: boolean; client: CanonicalChatClient; projectId: string | null; chatId: string | null;
+  } | null>(null);
+  // What a send belongs to: hiding the view keeps a send under way, so the Chat it makes is still shown and reported;
+  // opening another Chat or a new draft, by selection or by route, ends it.
   const sendScopeRef = useRef({});
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
@@ -200,8 +203,12 @@ export function useCanonicalChatRouteController({
     const scopeChanged = previousScope?.active !== active
       || previousScope.client !== client
       || previousScope.projectId !== projectId;
-    routeScopeRef.current = { active, client, projectId };
-    if (previousScope?.client !== client || previousScope.projectId !== projectId) sendScopeRef.current = {};
+    routeScopeRef.current = { active, client, projectId, chatId: initialChatId };
+    // A route echoing this controller's own selection is no navigation; a route to another Chat is.
+    const routedAway = previousScope?.chatId !== initialChatId && initialChatId !== activeChatIdRef.current;
+    if (previousScope?.client !== client || previousScope.projectId !== projectId || routedAway) {
+      sendScopeRef.current = {};
+    }
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
@@ -392,6 +399,7 @@ export function useCanonicalChatRouteController({
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;
+    sendScopeRef.current = {};
     setActiveChatId(chatId);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
