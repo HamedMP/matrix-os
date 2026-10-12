@@ -7,7 +7,7 @@ function fixture(parents=[base]){
  const tuple={sourceKind:'main',prNumber:0,sourceSha:source,headSha:source,headRef:'main',baseSha:base,baseRef:'main',mergeParents:parents};
  const ci={id:321,run_attempt:1,event:'push',workflow_id:98,path:'.github/workflows/ci.yml',head_sha:source,head_branch:'main',display_title:`CI coverage-v1 · ${source}`,status:'in_progress',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
  const run={...ci,id:123,workflow_id:99,event:'workflow_run',path:'.github/workflows/ci-dedicated.yml',display_title:`dedicated-refresh-v2 execution=true request=321 title=${ci.display_title}`};
- const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:source}}}))},repos:{getCommit:vi.fn(async()=>({data:{sha:source,parents:parents.map(sha=>({sha})),commit:{tree:{sha:second}}}}))},pulls:{get:vi.fn()},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun:vi.fn(async()=>({data:ci}))}}};
+ const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:source}}})),getCommit:vi.fn(async()=>({data:{sha:source,parents:parents.map(sha=>({sha})),commit:{tree:{sha:second}}}}))},pulls:{get:vi.fn()},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun:vi.fn(async()=>({data:ci}))}}};
  return{tuple,ci,run,github};
 }
 describe('authenticated default private main CI',()=>{
@@ -16,7 +16,7 @@ describe('authenticated default private main CI',()=>{
   expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
  });
  it.each(['tip','kind','parents','head','base','ref'])('rejects ambiguous or stale main %s',async field=>{
-  const f=fixture();if(field==='tip')f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:second}}});if(field==='kind')delete(f.tuple as any).sourceKind;if(field==='parents')f.tuple.mergeParents=[second];if(field==='head')f.tuple.headSha=second;if(field==='base')f.tuple.baseSha=second;if(field==='ref')f.tuple.baseRef='other';
+  const f=fixture();if(field==='tip')f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:second}}}));if(field==='kind')delete(f.tuple as any).sourceKind;if(field==='parents')f.tuple.mergeParents=[second];if(field==='head')f.tuple.headSha=second;if(field==='base')f.tuple.baseSha=second;if(field==='ref')f.tuple.baseRef='other';
   await expect(verifyCurrentDedicatedSource(f.github,repo,f.tuple)).rejects.toThrow();
  });
  it('routes exact main push by enabled switch without PR labels',()=>{
@@ -39,7 +39,7 @@ describe('authenticated default private main CI',()=>{
  });
 });
 it('bounds hung main API attestation without authorizing a stale grant',async()=>{
- const f=fixture();vi.useFakeTimers();f.github.rest.git.getRef.mockImplementation(()=>new Promise(()=>{}) as any);
+ const f=fixture();vi.useFakeTimers();f.github.rest.repos.getBranch.mockImplementation(()=>new Promise(()=>{}) as any);
  try{const pending=verifyCurrentDedicatedSource(f.github,repo,f.tuple);const rejected=expect(pending).rejects.toThrow(/deadline/);await vi.advanceTimersByTimeAsync(20001);await rejected;}finally{vi.useRealTimers();}
 });
 it('rejects an explicit main snapshot with a different head ref',async()=>{

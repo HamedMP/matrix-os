@@ -59,8 +59,9 @@ jobs:
           script: |
             const pin=process.env.CONTROLLER_SHA;
             if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
-            const {data:main}=await github.rest.git.getRef({...context.repo,ref:'heads/main',request:{timeout:10000}});
-            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.object.sha}`,request:{timeout:10000}});
+            const {data:main}=await github.rest.repos.getBranch({...context.repo,branch:'main',request:{timeout:10000}});
+            if(main.name!=='main'||!/^[a-f0-9]{40}$/.test(main.commit?.sha||''))throw new Error('Invalid current main branch identity');
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
             if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
       - name: Checkout reviewed default-controller helpers
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -288,8 +289,9 @@ jobs:
           script: |
             const pin=process.env.CONTROLLER_SHA || context.sha;
             if(context.ref!=='refs/heads/main'||process.env.CONTROLLER_WORKFLOW_REF!==`${context.repo.owner}/${context.repo.repo}/.github/workflows/ci-dedicated.yml@refs/heads/main`||!/^[a-f0-9]{40}$/.test(pin||''))throw new Error('Untrusted default controller origin or source pin');
-            const {data:main}=await github.rest.git.getRef({...context.repo,ref:'heads/main',request:{timeout:10000}});
-            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.object.sha}`,request:{timeout:10000}});
+            const {data:main}=await github.rest.repos.getBranch({...context.repo,branch:'main',request:{timeout:10000}});
+            if(main.name!=='main'||!/^[a-f0-9]{40}$/.test(main.commit?.sha||''))throw new Error('Invalid current main branch identity');
+            const {data:ancestry}=await github.rest.repos.compareCommitsWithBasehead({...context.repo,basehead:`${pin}...${main.commit.sha}`,request:{timeout:10000}});
             if(!['ahead','identical'].includes(ancestry.status)||ancestry.merge_base_commit?.sha!==pin)throw new Error('Reviewed controller pin is not on main');
             core.setOutput('controller_sha',pin);
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

@@ -1,5 +1,9 @@
 // ETags are authenticated freshness proofs, never offline/cache-error fallbacks.
 // Each wrapper is bound to one immutable GitHub authentication/job context.
+// RFC 9110 If-None-Match uses weak comparison. GitHub can return a
+// strong tag on 304 for the same opaque validator originally marked W/.
+const entityTag=value=>typeof value==='string'&&value.length<=512?/^(?:W\/)?("[\x21\x23-\x7E\x80-\xFF]*")$/.exec(value)?.[1]:undefined;
+const sameEntityTag=(a,b)=>entityTag(a)!==undefined&&entityTag(a)===entityTag(b);
 const bounded=(value,maximum)=>Number.isSafeInteger(value)&&value>0&&value<=maximum;
 const sleep=(ms,signal)=>new Promise((resolve,reject)=>{const abort=()=>{clearTimeout(timer);signal?.removeEventListener('abort',abort);reject(new Error('Controller API cycle cancelled'));};const timer=setTimeout(()=>{signal?.removeEventListener('abort',abort);resolve();},ms);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();});
 export function createConditionalGithub(source,options={}){
@@ -28,7 +32,7 @@ export function createConditionalGithub(source,options={}){
   stats.maximumPollIntervalSeconds=Math.max(stats.maximumPollIntervalSeconds,poll);
   if(values['x-ratelimit-remaining']!==undefined){const remaining=Number(values['x-ratelimit-remaining']);if(Number.isSafeInteger(remaining)&&remaining>=0)stats.minimumRemaining=stats.minimumRemaining===null?remaining:Math.min(stats.minimumRemaining,remaining);}
   if(status===304){
-   if(!cached?.etag||unconditional||headers['if-none-match']!==cached.etag||values.etag!==cached.etag||response.url!==cached.url){stats.errors++;drop(key);throw new Error('Unbound authenticated 304 representation');}
+   if(!cached?.etag||unconditional||headers['if-none-match']!==cached.etag||!sameEntityTag(values.etag,cached.etag)||response.url!==cached.url){stats.errors++;drop(key);throw new Error('Unbound authenticated 304 representation');}
    cached.checkedAt=Date.now();cached.pollSeconds=poll||cached.pollSeconds;entries.delete(key);entries.set(key,cached);stats.conditionalHits++;
    return{status:200,headers:values,url:cached.url,data:structuredClone(cached.data)};
   }

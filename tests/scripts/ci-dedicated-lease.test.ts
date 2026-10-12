@@ -7,7 +7,7 @@ function fixture(){
  const request={repository:'HamedMP/matrix-os',prNumber:2454,headSha:head,baseSha:base,baseRef:'stack/parent',mergeSha:merge,mergeParents:[base,head],requestingRunId:321,requestingRunAttempt:1,controllerRunId:123,controllerRunAttempt:1,controllerSha:controller,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',imageDigest:'sha256:'+'e'.repeat(64),harnessDigest:'f'.repeat(64),mode:'delegated',suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
  const controllerRun={id:123,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'pull_request_target',run_attempt:1,status:'in_progress',conclusion:null as string|null,head_sha:head,head_branch:'child',display_title:`dedicated-ci-v2 pr=2454 head=${head} base=${base} requested=true`,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
  const ciRun={...controllerRun,display_title:`CI coverage-v1 · ${merge}`,id:321,workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',pull_requests:[{number:2454,head:{sha:head,ref:'child'},base:{sha:base,ref:'stack/parent'}}]};
- const github={rest:{git:{getRef:vi.fn(async(args:{ref:string})=>({data:{object:{sha:args.ref==='heads/main'?merge:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:controller}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getWorkflowRun:vi.fn(async(args:{run_id:number})=>({data:args.run_id===123?controllerRun:ciRun})),listWorkflowRuns:vi.fn(async(args:{workflow_id:number})=>({data:{workflow_runs:args.workflow_id===99?[controllerRun]:[ciRun]}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?controller:args.name==='MATRIX_CI_RUNNER_IMAGE_DIGEST'?request.imageDigest:args.name==='MATRIX_CI_RUNNER_HARNESS_DIGEST'?request.harnessDigest:'true'}}))}}};
+ const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getBranch:vi.fn(async(args:{branch:string})=>({data:{name:args.branch,commit:{sha:args.branch==='main'?merge:base}}})),compareCommitsWithBasehead:vi.fn(async()=>({data:{status:'ahead',merge_base_commit:{sha:controller}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async(args:{workflow_id:string})=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}})),getWorkflowRun:vi.fn(async(args:{run_id:number})=>({data:args.run_id===123?controllerRun:ciRun})),listWorkflowRuns:vi.fn(async(args:{workflow_id:number})=>({data:{workflow_runs:args.workflow_id===99?[controllerRun]:[ciRun]}})),getRepoVariable:vi.fn(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?controller:args.name==='MATRIX_CI_RUNNER_IMAGE_DIGEST'?request.imageDigest:args.name==='MATRIX_CI_RUNNER_HARNESS_DIGEST'?request.harnessDigest:'true'}}))}}};
  const origin={sha:controller,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci-dedicated.yml@refs/heads/main'};
  const reviewed={rest:{...github.rest,actions:{...github.rest.actions,listRepoVariables:vi.fn(async()=>({data:{total_count:5,variables:await Promise.all(['MATRIX_CI_CONTROLLER_SHA','MATRIX_CI_DEDICATED_ENABLED','MATRIX_CI_DEDICATED_SHADOW','MATRIX_CI_RUNNER_IMAGE_DIGEST','MATRIX_CI_RUNNER_HARNESS_DIGEST'].map(async name=>(await github.rest.actions.getRepoVariable({name})).data))}}))}}};
  return{github:reviewed,pull,request,controllerRun,ciRun,origin};
@@ -34,7 +34,7 @@ it('never transfers an old-base hosted run through mutable PR API linkage',async
 });
 
 it('revokes the lease when the parent ref moves before GitHub refreshes the PR snapshot',async()=>{
- const f=fixture();f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:merge}}});await expect(verify(f)).rejects.toThrow(/parent ref|base ref/);
+ const f=fixture();f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:merge}}}));await expect(verify(f)).rejects.toThrow(/parent ref|base ref/);
 });
 
 it('revokes an active controller when a newer matching controller is still queued before admission',async()=>{
@@ -70,7 +70,7 @@ it('finds the newest relevant leases despite three hundred retained unrelated ru
 it('binds native actual merge parents at lock and every later renewal',async()=>{
  const {nativeStackFixture}=await import('./helpers/native-stack-fixture');const native=nativeStackFixture(),f=fixture();
  Object.assign(f.request,{prNumber:native.pull.number,headSha:native.snapshot.headSha,baseSha:native.snapshot.baseSha,baseRef:native.snapshot.baseRef,mergeSha:native.snapshot.sourceSha,mergeParents:native.snapshot.mergeParents});
- const g:any=f.github;g.request=native.github.request;g.rest.pulls=native.github.rest.pulls;g.rest.git=native.github.rest.git;g.rest.repos.getCommit=native.github.rest.repos.getCommit;
+ const g:any=f.github;g.request=native.github.request;g.rest.pulls=native.github.rest.pulls;g.rest.repos.getBranch=native.github.rest.repos.getBranch;g.rest.repos.getCommit=native.github.rest.repos.getCommit;
  Object.assign(f.controllerRun,{head_sha:f.request.headSha,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=${f.request.prNumber} head=${f.request.headSha} base=${f.request.baseSha} requested=true`});
  Object.assign(f.ciRun,{head_sha:f.request.headSha,head_branch:native.pull.head.ref,display_title:`CI coverage-v1 · ${f.request.mergeSha}`,pull_requests:[{number:f.request.prNumber,head:{sha:f.request.headSha,ref:native.pull.head.ref},base:{sha:f.request.baseSha,ref:f.request.baseRef}}]});
  await verify(f);await verify(f);native.parent.merge_commit_sha='0'.repeat(40);await expect(verify(f)).rejects.toThrow();
@@ -87,10 +87,10 @@ it.each(['completed','in_progress'])('reconcile-only newer %s controller cannot 
 it.each([[base],[base,head]])('attests explicit main at lock, renewal and final source checks with parents %j',async (...args:any[])=>{
  const parents=args.length===1&&Array.isArray(args[0])?args[0]:args;const f=fixture();
  Object.assign(f.request,{sourceKind:'main',prNumber:0,headSha:merge,mergeSha:merge,baseSha:parents[0],baseRef:'main',mergeParents:parents});
- f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:merge}}});
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:merge}}}));
  f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:parents.map((sha:string)=>({sha})),commit:{tree:{sha:head}}}} as any);
  Object.assign(f.ciRun,{event:'push',head_sha:merge,head_branch:'main',pull_requests:[],display_title:`CI coverage-v1 · ${merge}`});
  Object.assign(f.controllerRun,{event:'workflow_run',head_sha:merge,head_branch:'main',display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${merge}`});
  await verify(f);await verify(f);expect(f.github.rest.pulls.get).not.toHaveBeenCalled();
- f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:head}}});await expect(verify(f)).rejects.toThrow(/stale|ancestor|moved/);
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:head}}}));await expect(verify(f)).rejects.toThrow(/stale|ancestor|moved/);
 });

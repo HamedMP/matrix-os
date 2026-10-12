@@ -1,13 +1,13 @@
 // Independently qualify the exact current main push through the checks-only App.
 // Never dispatch a replacement push or modify the Actions-owned CI aggregate.
+import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {resolveMainSource,verifyMainSource} from './dedicated-main.mjs';
 import {waitForDedicatedResult} from './dedicated-result.mjs';
 import {verifyFullHostedCoverage} from './dedicated-hosted.mjs';
 import {verifyMainCiDecision,authenticatedMainDecisionProof} from './main-ci-decision.mjs';
-const request={timeout:10000},sha=/^[a-f0-9]{40}$/;
+const request={timeout:10000};
 export async function reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester}){
- const {data:ref}=await github.rest.git.getRef({...repo,ref:'heads/main',request});
- const source=ref?.object?.sha;if(!sha.test(source||''))throw new Error('Invalid main source gate ref');
+ const source=await readCurrentBranchSha(github,repo,'main',request);
  const pull={number:0,head:{sha:source,ref:'main'}};
  const {prior,history}=await ownedGate(github,repo,pull,workflow,options.gateAppId);
  if(!config.admitted&&!history&&!prior)return 0;

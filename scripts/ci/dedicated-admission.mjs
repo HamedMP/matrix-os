@@ -1,5 +1,6 @@
 // Data-only decisions. The privileged controller loads this file only from its
 // authenticated default-branch SHA; never load it from a PR or parent checkout.
+import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {verifyMainSource} from './dedicated-main.mjs';
 import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
@@ -16,9 +17,7 @@ const validSnapshot = value => Number.isSafeInteger(value?.prNumber) && value.pr
 
 export async function liveParentRefSha(github,repo,baseRef) {
   if(!branchRef(baseRef))throw new Error('Invalid live parent ref');
-  const {data}=await github.rest.git.getRef({...repo,ref:`heads/${baseRef}`,request});
-  if(!shaPattern.test(data?.object?.sha||''))throw new Error('Invalid live parent ref response');
-  return data.object.sha;
+  return readCurrentBranchSha(github,repo,baseRef,request);
 }
 
 export function selectDedicatedRoute({repository: fullName, eventName, enabled, shouldRun, pull,ref}) {
