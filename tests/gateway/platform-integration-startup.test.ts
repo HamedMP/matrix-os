@@ -58,15 +58,33 @@ describe("integration identity of the dev principal", () => {
     const raw = vi.fn(async () => ({ rows: [{ id: "dev-owner" }] }));
     const app = new Hono();
     const resolve = createIntegrationUserResolver({ raw } as unknown as PlatformDb, env);
+    app.use("*", async (c, next) => { markAuthContextReady(c); await next(); });
     app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
-    await app.request("/identity");
+    expect(await (await app.request("/identity")).json()).toEqual({ id: "dev-owner" });
     const stored = (raw.mock.calls[0] as unknown as [string, string[]])[1][0];
     expect(stored).toBe("dev");
     expect(integrationClerkIdForPrincipal("default", env)).toBe(stored);
     expect(integrationClerkIdForPrincipal("default", { ...env, MATRIX_CLERK_USER_ID: "clerk-dev" })).toBe("clerk-dev");
     expect(integrationClerkIdForPrincipal("default", {})).toBe("default");
-    expect(integrationClerkIdForPrincipal("default", { ...env, NODE_ENV: "production" })).toBe("default");
     expect(integrationClerkIdForPrincipal("user_2abc", env)).toBe("user_2abc");
+  });
+
+  it("maps the dev principal only where the connect flow may use its dev upsert", async () => {
+    const env = { NODE_ENV: "development", MATRIX_HANDLE: "dev", HOSTNAME: "local" };
+    for (const closed of [
+      { ...env, NODE_ENV: "production" }, { ...env, NODE_ENV: "staging" },
+      { ...env, MATRIX_AUTH_TOKEN: "secret" }, { ...env, MATRIX_USER_ID: "owner" },
+    ]) {
+      expect(integrationClerkIdForPrincipal("default", closed)).toBe("default");
+      const raw = vi.fn(async () => ({ rows: [{ id: "dev-owner" }] }));
+      const getUserByClerkId = vi.fn(async () => null);
+      const app = new Hono();
+      const resolve = createIntegrationUserResolver({ raw, getUserByClerkId } as unknown as PlatformDb, closed);
+      app.use("*", async (c, next) => { markAuthContextReady(c); await next(); });
+      app.get("/identity", async (c) => c.json({ id: await resolve(c) }));
+      expect(await (await app.request("/identity")).json()).toEqual({ id: null });
+      expect(raw).not.toHaveBeenCalled();
+    }
   });
 });
 
