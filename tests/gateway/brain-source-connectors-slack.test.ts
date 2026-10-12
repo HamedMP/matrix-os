@@ -147,7 +147,8 @@ describe("Slack bridge source", () => {
     expect((await run(ignoring, config, {}, 1)).errorCode).toBe("provider_timeout");
     const handler = createBrainSlackBridgeHandler({ kysely: harness.db });
     expect(await handler.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
-    expect(await handler.createAdapter("owner_a", connectorProject, config)).toEqual({ ok: false, code: "provider_unavailable" });
+    const unwired = await handler.createAdapter("owner_a", connectorProject, config);
+    expect(unwired.ok && (await harness.sync(unwired.adapter, config)).errorCode).toBe("provider_unavailable");
     expect(handler.listOptions).toBeUndefined();
     const configured = createBrainSlackBridgeHandler({ kysely: harness.db, capture: reader(() => ({ status: "unavailable" })).capture });
     expect(await configured.availability("owner_a")).toEqual({ available: true });

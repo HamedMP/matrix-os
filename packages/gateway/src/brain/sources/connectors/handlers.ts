@@ -53,6 +53,7 @@ export const SlackBridgeConfigSchema = z.object({
   /** Empty: every approved company channel the Company Brain captured. Direct messages are never captured there. */
   channelIds: uniqueList(z.string().regex(/^[CG][A-Z0-9]{2,63}$/), 0, LIMITS.slackChannels).default([]),
 }).strict();
+const UNWIRED_PAGE = { ok: false, code: "provider_unavailable" } as const;
 
 interface HandlerSpec<TConfig> {
   readonly kind: BrainConnectorKind & BrainConnectableSourceKind;
@@ -91,11 +92,11 @@ function buildHandler<TConfig extends object>(
       return stored === null ? null : parseWith(spec.schema, stored);
     },
     async createAdapter(ownerId, _project, config) {
-      // Missing server wiring is provider_unavailable, never not_connected: reconnecting the account would not help.
+      // Without server wiring the run fails provider_unavailable (retry later): reconnecting would not help.
       const adapter = spec.adapter(ownerId, config);
       const availability = await spec.availability(ownerId);
       const unwired = adapter === null || (!availability.available && availability.reason === "not_configured");
-      if (unwired) return { ok: false, code: "provider_unavailable" };
+      if (unwired) return { ok: true, adapter: { kind: spec.kind, readPage: async () => UNWIRED_PAGE } };
       const allowed = availability.available && (spec.account === undefined || await spec.account(ownerId, config));
       return allowed ? { ok: true, adapter } : { ok: false, code: "not_connected" };
     },

@@ -133,16 +133,21 @@ describe("Google Drive source", () => {
 
   it("retries skipped files after the ones that follow them, so they never hold back newer files", async () => {
     harness = await connectorHarness("google_drive");
+    const names = ["a", "b", "c"];
     const routes: Record<string, FakeRoute> = {
-      "google_drive.brain_list_folder": () => ok({ files: ["a", "b", "c"].map((id, day) => file(id, DOC, {
+      "google_drive.brain_list_folder": () => ok({ files: names.map((id, day) => file(id, DOC, {
         modifiedTime: `2026-09-0${day + 1}T00:00:00Z` })) }),
-      "google_drive.brain_export_text": (params) => params.fileId === "c" ? ok("Text of c") : { status: "invalid" },
+      "google_drive.brain_export_text": (params) => String(params.fileId) < "c" ? { status: "invalid" } : ok("Text"),
     };
     const skipped: number[] = [];
     const limits = { pagesPerRun: 1, upsertsPerPage: 1 };
     for (let run = 0; run < 3; run += 1) skipped.push((await driveRun(routes, { folderIds: ["f1"] }, limits)).result.skipped);
     expect(skipped).toEqual([1, 1, 0]);
     expect(await harness.liveIds()).toEqual([connectorDocumentId("google_drive", harness.externalRef, ["file", "c"])]);
+    // A run that retried every skipped file and caught up keeps its place: the next one starts with a newer file.
+    expect((await driveRun(routes, { folderIds: ["f1"] }, { pagesPerRun: 1, upsertsPerPage: 2 })).result.caughtUp).toBe(true);
+    names.push("d");
+    expect((await driveRun(routes, { folderIds: ["f1"] }, limits)).result).toMatchObject({ skipped: 0, counts: { written: 1 } });
   });
 });
 

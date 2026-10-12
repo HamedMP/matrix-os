@@ -74,7 +74,10 @@ describe("connector kind handlers", () => {
     expect(slack.viewConfig(bridge)).toEqual(bridge);
     expect(await linear.availability("owner_a")).toEqual({ available: false, reason: "not_configured" });
     for (const handler of [linear, createBrainLinearHandler({ ...deps, isConnected: async () => true, isConfigured: () => false })]) {
-      expect(await handler.createAdapter("owner_a", connectorProject, plain)).toEqual({ ok: false, code: "provider_unavailable" });
+      // The sources service maps only not_connected, auth_failed and config_invalid: missing wiring fails the run.
+      const unwired = await handler.createAdapter("owner_a", connectorProject, plain);
+      expect(unwired.ok && await harness.sync(unwired.adapter, plain))
+        .toMatchObject({ errorCode: "provider_unavailable", nextAction: "retry_later" });
     }
   });
 
@@ -228,8 +231,8 @@ describe("snapshot adapter", () => {
     expect(under.ok && under.page.deletions).toEqual([]);
   });
 
-  it("frees the space of a page's retention deletions before writing its new documents", async () => {
-    harness = await connectorHarness("google_calendar", "google_calendar:test", { maxBytesPerScope: 15 });
+  it("frees the bytes and slots of a page's retention deletions before writing its new documents", async () => {
+    harness = await connectorHarness("google_calendar", undefined, { maxBytesPerScope: 15, maxDocumentsPerScope: 1 });
     const adapter = (listed: number) => createSnapshotAdapter<object, { documentId: string; stamp: string }>({
       kind: "google_calendar", cursorPrefix: "t2", fingerprint: "f", buildsPerPage: 10, sweep: false, retain: 1,
       list: async () => ({ ok: true, value: { items: [{ documentId: id(listed), stamp }], complete: true, gone: [], notices: [] } }),

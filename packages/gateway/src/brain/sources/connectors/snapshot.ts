@@ -10,7 +10,7 @@
  * failure without calling the provider again.
  *
  * Cursor ("<prefix>:" + base64url JSON): { v: 1, f: fingerprint, m: re-render (or its sweep) in progress, p: last
- * re-rendered [stamp, documentId] or null, r: last item handled while some were left, n: random token }: a progress
+ * re-rendered [stamp, documentId] or null, r: last item handled, n: random token }: a progress
  * marker only; the store decides what changed.
  * Every page that writes takes a new n, so a run that read the cursor before another run committed fails its
  * compare-and-set (cursor_conflict) instead of writing older content over newer; a page that writes nothing keeps it.
@@ -194,7 +194,8 @@ async function nextPage<TConfig, TItem extends SnapshotItem>(
   const migrating = (plan.migrating && !caughtUp) || plan.sweepPending;
   const p = migrating ? plan.position : null;
   if (upserts.length > 0 || deletions.length > 0) plan.nonce = randomBytes(12).toString("base64url");
-  const r = caughtUp ? undefined : plan.resume;
+  // r stays when caught up too, so the next run starts with newer work and retries skipped items last.
+  const r = plan.resume;
   const nextCursor = encodeCursor(spec.cursorPrefix, { v: 1, f: spec.fingerprint, m: migrating, p, r, n: plan.nonce });
   return { ok: true, page: { upserts, deletions, nextCursor, caughtUp, skipped, notices: [...new Set(notices)] } };
 }

@@ -33,6 +33,7 @@ import {
   applyRevise,
   applyUpsert,
   loadCapacity,
+  reclaimTombstones,
   recordSourceUpdatedAt,
   type BrainCapacityLimits,
   type BrainWriteContext,
@@ -286,11 +287,13 @@ export class BrainRepository implements BrainExtractionStore, BrainClaimReader {
       const context = await this.writeContext(trx, key, now);
       const counts = { created: 0, updated: 0, unchanged: 0, refsChanged: 0, restamped: 0, deleted: 0 };
       const rejected: string[] = [];
-      // Deletions of ids the batch does not upsert run first, freeing bytes for its new documents; the rest run last.
+      // Deletions of ids the batch does not upsert run first, freeing bytes and, at the document cap, tombstones to
+      // reclaim for its new documents; the rest run last.
       const upserted = new Set(batch.upserts.map((upsert) => upsert.documentId));
       for (const documentId of batch.deletions.filter((id) => !upserted.has(id))) {
         if (await applyDelete(context, { documentId }, { ownedBySourceId: batch.sourceId })) counts.deleted += 1;
       }
+      await reclaimTombstones(context, batch.sourceId, [...upserted]);
       for (const { refs, ...content } of batch.upserts) {
         const result = await applyUpsert(
           context, { ...content, sourceId: batch.sourceId }, { onForeignSource: "reject" },

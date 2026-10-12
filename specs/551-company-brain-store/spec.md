@@ -293,7 +293,7 @@ Tombstone shape: `deleted_at` set; `title`, `body`, `permalink` empty;
 retained. Tombstones count toward `maxDocumentsPerScope` and contribute 0 bytes to
 `maxBytesPerScope`. They are excluded from `getDocument`, `listDocuments`,
 `searchDocuments`, `assertCurrent`, and the GIN index. Only `eraseScope` removes
-them.
+them, and `applySyncBatch` at the document cap (its step 2).
 
 `upsertDocument`, one transaction under the scope lock:
 
@@ -371,6 +371,8 @@ or behind the documents it describes.
 1. The source must exist live with `status = 'active'`: missing or tombstoned
    gives `not_found`; `paused` or `disabled` gives `conflict`.
 2. Capacity totals are loaded once, then tracked per item; deletions (step 4) of ids not also upserted run first.
+   When the batch's new ids would then pass `maxDocumentsPerScope`, that many of the source's oldest tombstones
+   (never an id it upserts) are removed with their snapshots, so a source that keeps replacing documents goes on.
 3. Each upsert runs upsert steps 2 and 4-9 with `sourceId = batch.sourceId` and no
    `expectedRevision`. A live row owned by another source, or by manual
    publication (`source_id IS NULL`), is skipped and its id appended to
@@ -378,12 +380,9 @@ or behind the documents it describes.
    are counted. Each upsert carries its complete ref set (omitted means none);
    for every upsert that is not rejected the stored set is compared first and
    replaced wholesale only when it differs. A refs-only change still counts as
-   `unchanged` at the same revision and also in `refsChanged`, so a caller can
-   announce it. `applySyncBatch` is the only writer of refs.
-   Unlike `upsertDocument`, an `unchanged` upsert whose `sourceUpdatedAt` names
-   another instant records it in place (no revision, snapshot or `updated_at`
-   change) and counts in `restamped`, so an adapter that compares stamps does
-   not plan it again and a caller can announce the new date.
+   `unchanged` at the same revision and also in `refsChanged`. `applySyncBatch` is the only writer of refs. Unlike
+   `upsertDocument`, an `unchanged` upsert whose `sourceUpdatedAt` names another instant records it in place (no
+   revision, snapshot or `updated_at` change) and counts in `restamped`, so adapters comparing stamps skip it next run.
 4. Each deletion runs `deleteDocument` semantics without CAS, only when the live
    row's `source_id` equals the batch source. A missing, tombstoned, or
    foreign-source id is silently skipped so replays are idempotent. `deleted`

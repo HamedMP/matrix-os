@@ -6,16 +6,15 @@ runner every connectable kind shares. Spec: `specs/560-company-brain-connector-s
 
 ## Scope
 
-- `handlers.ts`: the four kind handlers; `linear.ts` (watermark passes); `google-drive.ts`, `google-calendar.ts` and
-  `slack-bridge.ts` on the snapshot engine (`snapshot.ts`); the runner, `../core/runner.ts`, re-exported by `index.ts`.
-- Out of scope: the `/sources` service and routes (`../core/`), option lookups, the integration caller
-  (`../integration/`), registry actions (`integrations/registry-brain.ts`), the Slack capture reader and schedules.
+`handlers.ts` (four kind handlers), `linear.ts` (watermark passes), `google-drive.ts`, `google-calendar.ts` and
+`slack-bridge.ts` on `snapshot.ts`; the runner `../core/runner.ts`, re-exported by `index.ts`. Out of scope: the
+`/sources` service and routes, option lookups, the integration caller, registry actions, the Slack capture reader.
 
 ## Source of truth
 
-- Provider data through `BrainIntegrationCaller` or `BrainSlackCaptureReader`. Core `brain_*` tables are written only
-  through `applySyncBatch` and receipts; `brain_connector_sources` holds one config per source (JSONB, 8 KiB, FK to
-  `brain_sources` ON DELETE CASCADE). In memory: a capped set of running keys (16) and one bounded plan per run.
+Provider data via `BrainIntegrationCaller` or `BrainSlackCaptureReader`. Core `brain_*` tables only through
+`applySyncBatch` and receipts; `brain_connector_sources` holds one config per source (JSONB, 8 KiB, FK to
+`brain_sources` ON DELETE CASCADE). In memory: a capped set of running keys (16) and one bounded plan per run.
 
 ## Public API
 
@@ -25,17 +24,15 @@ Slack capture reader types and `BRAIN_CONNECTOR_LIMITS`.
 ## Auth and trust boundaries
 
 - Callers authorize the project scope; handlers get an owner id and a scope key, never a request. No credential in
-  configs or logs; logs carry names and codes only. Provider data is untrusted and bounded by zod schemas.
-- Calendar descriptions and locations only with `includeEventBodies`; a calendar config change deletes stored events
-  missing from the listing. The bridge copies `slack_thread` documents of `C` and `G` channels only, and removes every
-  copied thread when the owner can no longer read the company scope (then the run fails).
-- Accounts: without `isConnected`, or with `isConfigured()` false (no transport bound), a kind is `not_configured`
-  and `createAdapter` answers `provider_unavailable`; with `accounts` a run uses only its pinned account label or the
-  owner's single account, never the first of several (`not_connected` otherwise).
+  configs or logs (names and codes only); provider data is untrusted and bounded by zod schemas.
+- Calendar bodies only with `includeEventBodies`. The bridge copies `C`/`G` channel `slack_thread`s only and removes
+  every copy when the owner can no longer read the company scope (then the run fails).
+- Without `isConnected`, or with `isConfigured()` false, a kind is `not_configured` and its runs fail
+  `provider_unavailable`; with `accounts` a run uses only its pinned account label or the owner's single account.
 
 ## Concurrency and recovery
 
-- One run per source per process; across processes the cursor compare-and-set decides (`cursor_conflict`); every
-  page that writes renews its cursor token. Each page commits documents, refs and cursor together. Config writes take
-  `brain-connector:<scopeId>`. After a crash the next run closes the receipt as interrupted; Linear resumes its stored
-  provider cursor and snapshot adapters re-plan from the store. Every provider call races its timeout.
+One run per source per process; across processes the cursor compare-and-set decides (`cursor_conflict`), and every
+page that writes renews its cursor token. Each page commits documents, refs and cursor together; config writes take
+`brain-connector:<scopeId>`. After a crash the next run closes the receipt as interrupted and adapters resume from
+the stored cursor and documents. Every provider call races its timeout.

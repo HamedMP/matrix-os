@@ -141,7 +141,7 @@ describe("brain store sync", () => {
     expect(again).toEqual({ outcome: "unchanged", document: manual });
   });
 
-  it("rolls back the whole batch when capacity is exceeded", async () => {
+  it("rolls back a batch past capacity, making room only from the source's own tombstones", async () => {
     const capped = await createBrainHarness({ maxDocumentsPerScope: 2 });
     try {
       const { repository, db } = capped;
@@ -152,11 +152,15 @@ describe("brain store sync", () => {
       expect(await repository.getSyncCursor(scopeA, source.sourceId)).toBeNull();
       const partial = await repository.applySyncBatch(scopeA, batch(source.sourceId, { upserts: upserts.slice(0, 2) }));
       expect(partial.created).toBe(2);
-      await expectBrainError(repository.applySyncBatch(scopeA, batch(source.sourceId, {
+      // At the cap a batch's own deletion makes room: the source's oldest tombstone goes, with its snapshots.
+      const rolled = await repository.applySyncBatch(scopeA, batch(source.sourceId, {
         expectedCursor: "c1", nextCursor: "c2", upserts: [upserts[2]!], deletions: [upserts[0]!.documentId],
-      })), "capacity");
-      expect((await repository.getDocument(scopeA, upserts[0]!.documentId))?.deletedAt).toBeNull();
-      expect((await repository.getSyncCursor(scopeA, source.sourceId))?.cursor).toBe("c1");
+      }));
+      const revisions = await repository.listRevisions(scopeA, upserts[0]!.documentId);
+      expect([rolled.created, await countBrainRows(db, "brain_documents", scopeA), revisions]).toEqual([1, 2, []]);
+      await expectBrainError(repository.applySyncBatch(scopeA, batch(source.sourceId, {
+        expectedCursor: "c2", nextCursor: "c3", upserts: [brainContent("d")] })), "capacity");
+      expect((await repository.getSyncCursor(scopeA, source.sourceId))?.cursor).toBe("c2");
     } finally {
       await capped.destroy();
     }
