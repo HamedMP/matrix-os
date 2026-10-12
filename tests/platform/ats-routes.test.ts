@@ -195,6 +195,24 @@ describe('platform ATS routes', () => {
     expect((await detail.json() as { application: Record<string, unknown> }).application).toMatchObject({ roleSlug: 'founding-engineer', revision: 1 });
   });
 
+  it('preserves closed positions when updating metadata without a role assignment', async () => {
+    const form = validApplicationForm();
+    form.set('roleSlug', 'closed-engineer');
+    const submitted = await routes({ allowedRoleSlugs: ['closed-engineer'] }).request('/api/ats/applications', {
+      method: 'POST', headers: { authorization: `Bearer ${INGEST_SECRET}` }, body: form,
+    });
+    const { receiptId } = await submitted.json() as { receiptId: string };
+    const response = await routes().request(`/api/ats/admin/applications/${receiptId}`, {
+      method: 'PATCH',
+      headers: { authorization: `Bearer ${ADMIN_SECRET}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ baseRevision: 1, ownerId: 'user_reviewer', tags: ['reviewed'], nextActionAt: null }),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json() as { application: Record<string, unknown> }).application).toMatchObject({
+      roleSlug: 'closed-engineer', revision: 2, ownerId: 'user_reviewer', tags: ['reviewed'],
+    });
+  });
+
   it('returns controlled not-found responses for missing admin mutation targets', async () => {
     const missingApplicationId = '550e8400-e29b-41d4-a716-446655440099';
     const missingTaskId = '550e8400-e29b-41d4-a716-446655440098';
