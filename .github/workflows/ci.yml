@@ -785,7 +785,9 @@ jobs:
 
       - name: Build Desktop for Electron E2E
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
-        run: bun run build:desktop
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+        run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop
 
       - name: Run required Desktop file download regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

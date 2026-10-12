@@ -98,3 +98,11 @@ it('does not authenticate ambiguous legacy refresh controller markers',()=>{
  const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`dedicated-refresh-v1 request=321 title=${helpers.refreshMarker(scope)}`};
  expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(false);
 });
+
+it('binds Electron build provenance to the verified refresh checkout rather than the controller commit',async()=>{
+ const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');
+ const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
+ const build=workflow.jobs.e2e.steps.find((s:any)=>s.name==='Build Desktop for Electron E2E');
+ expect(build.env?.DESKTOP_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
+ expect(build.run).toBe('GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
+});
