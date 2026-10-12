@@ -9,7 +9,7 @@
 Matrix stores the claims a project's synced pull requests, commits and specs make (invariants, decisions,
 commitments, risks), each with a verbatim quote and its span in the stored body. The owner runs bounded extractions
 (`POST /api/brain/projects/:projectId/extract`) and lists claims, optionally for one file or folder (`GET .../claims`).
-This increment ships the deterministic rules extractor (now `rules/v2`, see Rules versions) and the model seam with its
+This increment ships the deterministic rules extractor (now `rules/v3`, see Rules versions) and the model seam with its
 verification; no model is wired.
 
 ## Scope of this increment
@@ -84,7 +84,8 @@ and `---` ends every section (squash bodies). Each quote gives at most one claim
 - `BRAIN_RULES_VERSION` (`claims/types.ts`) names the extractor `BRAIN_RULES_EXTRACTOR_ID` = `rules/v<N>`. It is raised
   whenever `rules.ts` decides differently, so documents already done under an older version are read again. `rules/v2`
   is the first raise: design-note items are decisions only when they choose (above), and open questions and open
-  decisions are never claims.
+  decisions are never claims. `rules/v3`: `Invariants` and `Next steps` sub-headings name their own kind, so a
+  document done under `rules/v2` is read again and its risk or invariant claims there take the right kind.
 - Pending: a document is pending for the current rules version whatever its state under another rules version.
 - Replace across versions: any applied rules outcome (done, failed or skipped) for the live `(incarnation,
   revision)` first removes the document's claims and state of every other rules version, in the same transaction as
@@ -193,8 +194,9 @@ expires; racing inserts from another process hit the partial unique index; a sup
 ## Integration test checkpoint
 
 `pnpm exec vitest run tests/gateway/brain-claims-*.test.ts` (PGlite or pure, fake model only, no network) covers the
-store, the rules versions (`brain-claims-upgrade.test.ts`: `rules/v1` to `rules/v2` replace with counts and no
-duplicates, a scope part way through, model rows untouched, stale flags, the scope cap), the rules on real-body
+store, the rules versions (`brain-claims-upgrade.test.ts`: `rules/v1` to `rules/v3` replace with counts and no
+duplicates, `rules/v2` sub-heading kinds corrected, a scope part way through, model rows untouched, stale flags, the
+scope cap), the rules on real-body
 fixtures (#2035, #2041, #2027, #1607, #1976, specs 008, 033, 057, 067, 084, 093, 107, 109, 534, footer and squash
 bodies), one claim per quote and its kind precedence, verification, the job and the routes on a real service. Manual (dev Docker stack, after spec 553's sync):
 `POST .../extract` until `nextAction` is not `run_again` (2,129 documents: 11 runs of at most 200), then `GET
