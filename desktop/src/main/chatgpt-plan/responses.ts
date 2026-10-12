@@ -1,3 +1,4 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { PlanFailure, logPlanFailure, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
@@ -105,7 +106,7 @@ export async function requestPlanResponse(input: {
     accessToken(): Promise<string>;
     validate(): void;
 }): Promise<string> {
-    if (Buffer.byteLength(input.body) > 512000)
+    if (!validateBotImageInferenceBody(input.body, 512000).valid)
         throw new Error('invalid inference');
     const body = ChatGptPlanWireSchema.parse(JSON.parse(input.body));
     if (body.model !== input.model)

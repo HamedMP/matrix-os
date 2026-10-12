@@ -170,7 +170,7 @@ export function SharedChatComposer({
   botControls,
   resources = [],
   resourceSearch,
-  onAttach,
+  onAttach, attachmentsEnabled,
   onProviderSetup,
   providerCatalogLoading = false,
   onNewChat,
@@ -209,6 +209,7 @@ export function SharedChatComposer({
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
+  attachmentsEnabled?: boolean;
   onProviderSetup?: (
     instance: CanonicalProviderInstanceDescriptor,
     action: CanonicalProviderSetupAction,
@@ -262,7 +263,7 @@ export function SharedChatComposer({
     if (suggestionKey === null) setDismissedSuggestionKey(null);
   }, [suggestionKey]);
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
-  const canAttach = Boolean(onAttach && supportsNativeFileAttachments(instance));
+  const canAttach = Boolean(onAttach && (attachmentsEnabled ?? supportsNativeFileAttachments(instance)));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;

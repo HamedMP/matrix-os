@@ -1,3 +1,4 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 /**
  * Model calls from bot workloads (spec 536, contracts/bot-broker-protocol.md).
  * The worker's loopback bridge sends each provider request as a broker frame;
@@ -115,6 +116,8 @@ export async function forwardBotInference(
     }
     return failure(request.requestId, "invalid_request");
   }
+  const imageInput = validateBotImageInferenceBody(request.body);
+  if (!imageInput.valid || (imageInput.imageCount > 0 && !binding.route.input.includes("image"))) return failure(request.requestId, "invalid_request");
   const isolated = deps.isolatedChat?.targets(binding) === true;
   if (isolated && !validIsolatedInference(request, binding)) return failure(request.requestId, "invalid_request");
   const lifecycle = deps.runSignal ? AbortSignal.any([deps.lifetime, deps.runSignal]) : deps.lifetime;

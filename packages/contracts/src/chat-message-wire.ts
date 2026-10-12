@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import type { CanonicalChatMessage, CanonicalChatRunActivity } from "#canonical-chat";
 import type { CanonicalChatTransportFrame } from "#canonical-chat-content";
+import { canonicalSafeLabel } from "#canonical-chat-primitives";
 
 /** Independent of SSE framing: protocol-2 clients shipped with message-v1 parsers. */
 export const ChatMessageWireVersionSchema = z.enum(["1", "2"]).default("1");
@@ -8,9 +9,26 @@ export type ChatMessageWireVersion = z.infer<typeof ChatMessageWireVersionSchema
 /** Older clients reject unknown activity fields, even with message v2 enabled. */
 export const ChatInputWireVersionSchema = z.enum(["0", "1"]).default("0");
 export type ChatInputWireVersion = z.infer<typeof ChatInputWireVersionSchema>;
+/** Complete owner commands need a client that accepts private paths in previews. */
+export const ChatCommandPreviewWireVersionSchema = z.enum(["0", "1"]).default("0");
+export type ChatCommandPreviewWireVersion = z.infer<typeof ChatCommandPreviewWireVersionSchema>;
+const LegacyToolPreviewSchema = canonicalSafeLabel(1_000, 4_000);
 
 export function chatMessageVersionUrl(path: string): string {
-  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1`;
+  return `${path}${path.includes("?") ? "&" : "?"}messageVersion=2&inputVersion=1&commandPreviewVersion=1`;
+}
+
+function commandPreviewActivities(activities: CanonicalChatRunActivity[], version: ChatCommandPreviewWireVersion): CanonicalChatRunActivity[] {
+  return activities.map(activity => {
+    if (activity.type !== "agent.activity") return activity;
+    const { protectedPreview: _protectedPreview, ...visible } = activity;
+    if (version === "0" && activity.previewKind === "command" && activity.preview
+      && !LegacyToolPreviewSchema.safeParse(activity.preview).success) {
+      const { preview: _preview, previewKind: _kind, ...legacy } = visible;
+      return legacy;
+    }
+    return visible;
+  });
 }
 
 function legacyMessage<T extends CanonicalChatMessage>(message: T) {
@@ -43,13 +61,13 @@ export function projectChatMessageResponse<T extends {
   message?: CanonicalChatMessage;
   messages?: CanonicalChatMessage[];
   activities?: CanonicalChatRunActivity[];
-}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0"): T {
+}>(response: T, version: ChatMessageWireVersion, inputVersion: ChatInputWireVersion = "0", commandPreviewVersion: ChatCommandPreviewWireVersion = "0"): T {
   if (version === "2" && !response.activities) return response;
   return {
     ...response,
     ...(version === "1" && response.message ? { message: legacyMessage(response.message) } : {}),
     ...(version === "1" && response.messages ? { messages: response.messages.map(legacyMessage) } : {}),
-    ...(response.activities ? { activities: legacyInputActivities(response.activities, inputVersion) } : {}),
+    ...(response.activities ? { activities: commandPreviewActivities(legacyInputActivities(response.activities, inputVersion), commandPreviewVersion) } : {}),
   };
 }
 
@@ -57,10 +75,11 @@ export function projectChatMessageFrame(
   frame: CanonicalChatTransportFrame,
   version: ChatMessageWireVersion,
   inputVersion: ChatInputWireVersion = "0",
+  commandPreviewVersion: ChatCommandPreviewWireVersion = "0",
 ): CanonicalChatTransportFrame {
   if (frame.type !== "chat.content") return frame;
   return { ...frame, content: {
-    ...projectChatMessageResponse(frame.content, version, inputVersion),
+    ...projectChatMessageResponse(frame.content, version, inputVersion, commandPreviewVersion),
     ...(version === "1" && frame.content.messageDelta ? { messageDelta: {
       ...frame.content.messageDelta,
       message: legacyMessage(frame.content.messageDelta.message),

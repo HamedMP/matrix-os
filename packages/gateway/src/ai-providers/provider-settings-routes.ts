@@ -7,6 +7,7 @@ import {
   type ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { projectConnectionModelInputs } from "./connection-model-input-projection.js";
 import {
   ProviderSettingsStoreError,
   type ProviderSettingsStoreWriter,
@@ -20,7 +21,7 @@ function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, 
   const { matrixModelInventory, matrixAnthropicConnection, ...baseSnapshot } = snapshot;
   const publicSnapshot = {
     ...baseSnapshot,
-    ...(includeMatrixConnection && matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
+    ...(includeMatrixConnection && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
     accounts: snapshot.accounts.map(({ connectionDetails, ...account }) => {
       // Historical details clients have a closed ChatGPT-only plan enum. Email
       // remains compatible; new Claude plan names require their own opt-in.

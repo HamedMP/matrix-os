@@ -1,4 +1,4 @@
-import { loadToolOutputKey, openToolOutput } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
+import { loadToolOutputKey, openToolOutput, openToolPreview } from "../../packages/gateway/src/coding-agents/protected-tool-output.mjs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
@@ -215,6 +215,39 @@ describe("Codex app-server runner reliability", () => {
     } finally {
       await cleanup(runtime);
     }
+  });
+
+  it.each([
+    "printf ok",
+    "cat /home/matrix/home/projects/demo/README.md\nprintf done",
+    "cat /home/matrix/home/projects/demo/README.md\n" + "printf synthetic-line\n".repeat(70).trim(),
+    "ls /opt/matrix/app",
+    "cat /home/matrix/home/.env /home/matrix/home/auth.json; printf token",
+  ].flatMap(command => [false, true].map(late => ({ command, late }))))("enriches one command completion with protected metadata ($late): $command", async ({ command, late }) => {
+    const item = { id: "late-command", type: "commandExecution", command, cwd: "/home/matrix/home/projects/demo", status: "completed" };
+    const runtime = await startFakeRuntime("late_cmd", [initialize, startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      `  console.log(JSON.stringify({ method: 'item/started', params: { turnId: 'native-turn', item: ${JSON.stringify(late ? { id: "late-command", type: "commandExecution" } : item)} } }));`,
+      `  console.log(JSON.stringify({ method: 'item/completed', params: { turnId: 'native-turn', item: ${JSON.stringify(item)} } }));`,
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));",
+      "}",
+    ], { stubControlServer: true });
+    try {
+      await waitForTranscript(runtime.eventPath, /"type":"turn\.completed"/);
+      const events = await replayTranscript(runtime.eventPath);
+      expect(events.filter(event => event.type === "tool.started")).toHaveLength(1);
+      const completed = events.filter(event => event.type === "tool.completed");
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({ outcome: "success", protectedPreview: expect.any(Object), detail: "Working directory: ~/projects/demo" });
+      if (command === "printf ok") expect(completed[0]).toMatchObject({ preview: "printf ok", previewKind: "command" });
+      if (completed[0]?.type === "tool.completed" && completed[0].protectedPreview) {
+        expect(openToolPreview(await loadToolOutputKey(runtime.homePath), completed[0].toolCallId, completed[0].protectedPreview)).toBe(command);
+      }
+      const transcript = await readFile(runtime.eventPath, "utf8");
+      expect(transcript).not.toContain("/home/matrix/home");
+      expect(transcript).not.toContain("/opt/matrix/app");
+    } finally { await cleanup(runtime); }
   });
 
   it("allows a progressing build to run beyond the no-progress and connector budgets", async () => {

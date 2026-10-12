@@ -15,5 +15,6 @@ it('omits the redundant running footer while retaining Bot identity chrome', asy
  await waitFor(() => expect(client.bots.tasks).toHaveBeenCalled());
  await screen.findByText(saved.name);
  expect(screen.queryByText('Working')).toBeNull();
+ expect(document.querySelector('[data-bot-message-state]')).toBeNull();
  expect(screen.getByRole('button', { name: 'Details' })).toBeTruthy();
 });

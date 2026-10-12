@@ -317,7 +317,6 @@ describe("canonical Chat contracts", () => {
       }).success).toBe(false);
     }
     for (const unsafeDetail of [
-      "Running from /home/matrix/private",
       "Authorization: Bearer secret-value",
       "API_TOKEN=secret-value",
     ]) {
