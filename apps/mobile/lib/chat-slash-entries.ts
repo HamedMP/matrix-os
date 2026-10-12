@@ -39,9 +39,13 @@ export function chatSlashEntries(
 
 /**
  * The draft with the skill or command put first, where an engine looks for
- * one. One the draft already starts with is replaced, not stacked.
+ * one. One of `known` that the draft already starts with is replaced, not
+ * stacked. Any other first word stays, even one that begins with a slash: it
+ * may be a path the person is writing about.
  */
-export function draftWithInvocation(draft: string, invocation: string): string {
-  const rest = draft.replace(/^\s*\/[a-z][a-z0-9_-]*(?=\s|$)/i, "").trimStart();
+export function draftWithInvocation(draft: string, invocation: string, known: readonly string[]): string {
+  const text = draft.trimStart();
+  const firstWord = /^\S+/.exec(text)?.[0] ?? "";
+  const rest = known.includes(firstWord) ? text.slice(firstWord.length).trimStart() : text;
   return `${invocation} ${rest}`;
 }

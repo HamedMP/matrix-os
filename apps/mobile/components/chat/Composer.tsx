@@ -1,5 +1,5 @@
 import type { ReactNode, Ref } from "react";
-import { Platform, TextInput, View } from "react-native";
+import { Platform, Text, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { IconButton, SendIcon, StopIcon } from "@/components/ui";
@@ -29,6 +29,8 @@ export interface ComposerProps {
   /** The photos and files waiting to go with the message, in a row above the input. */
   attachments?: readonly ComposerAttachment[];
   onRemoveAttachment?: (id: string) => void;
+  /** Why the message cannot be sent with what is waiting, said under the attachments. */
+  attachmentNotice?: string | null;
   /** The "+" that adds to the message, at the start of the toolbar. */
   addControl?: ReactNode;
   /** The engine and model control, after the "+". */
@@ -53,6 +55,7 @@ export function Composer({
   onStop,
   attachments,
   onRemoveAttachment,
+  attachmentNotice,
   addControl,
   modelControl,
   keyboardOpen,
@@ -67,6 +70,11 @@ export function Composer({
       <View testID="composer-card" style={styles.card}>
         {attachments && onRemoveAttachment ? (
           <AttachmentTray attachments={attachments} onRemove={onRemoveAttachment} />
+        ) : null}
+        {attachmentNotice ? (
+          <Text testID="composer-attachment-notice" accessibilityRole="alert" style={styles.attachmentNotice}>
+            {attachmentNotice}
+          </Text>
         ) : null}
         <TextInput
           ref={inputRef}
@@ -130,6 +138,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.v2.radius.composer,
     backgroundColor: theme.v2.colors.background,
     boxShadow: theme.v2.designShadows.composer,
+  },
+  attachmentNotice: {
+    ...theme.v2.text.footnote,
+    color: theme.v2.colors.textSubtle,
+    paddingTop: theme.v2.space[8],
+    paddingHorizontal: theme.v2.space[14],
   },
   // The card's top and side padding, and the space above the toolbar, belong
   // to the input so that a tap anywhere in them focuses it. The line height is

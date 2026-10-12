@@ -44,23 +44,35 @@ describe("skills and commands", () => {
   });
 
   describe("putting one in a draft", () => {
+    const known = ["/review", "/app-builder"];
+
     it("starts an empty draft with it, ready for what follows", () => {
-      expect(draftWithInvocation("", "/review")).toBe("/review ");
+      expect(draftWithInvocation("", "/review", known)).toBe("/review ");
     });
 
     it("goes before what is already written", () => {
-      expect(draftWithInvocation("the login screen", "/review")).toBe("/review the login screen");
-      expect(draftWithInvocation("  the login screen", "/review")).toBe("/review the login screen");
+      expect(draftWithInvocation("the login screen", "/review", known)).toBe("/review the login screen");
+      expect(draftWithInvocation("  the login screen", "/review", known)).toBe("/review the login screen");
     });
 
-    it("replaces one the draft already starts with", () => {
-      expect(draftWithInvocation("/app-builder a habit tracker", "/review")).toBe("/review a habit tracker");
-      expect(draftWithInvocation("/app-builder", "/review")).toBe("/review ");
+    it("replaces one of the model's own that the draft already starts with", () => {
+      expect(draftWithInvocation("/app-builder a habit tracker", "/review", known)).toBe("/review a habit tracker");
+      expect(draftWithInvocation("/app-builder", "/review", known)).toBe("/review ");
+      expect(draftWithInvocation("/review", "/review", known)).toBe("/review ");
     });
 
-    it("leaves alone a slash that is not a skill at the start", () => {
-      expect(draftWithInvocation("see /etc/hosts", "/review")).toBe("/review see /etc/hosts");
-      expect(draftWithInvocation("/etc/hosts is wrong", "/review")).toBe("/review /etc/hosts is wrong");
+    it("keeps a path the draft starts with, though it begins like one", () => {
+      expect(draftWithInvocation("/tmp contains the logs", "/review", known)).toBe("/review /tmp contains the logs");
+      expect(draftWithInvocation("/etc/hosts is wrong", "/review", known)).toBe("/review /etc/hosts is wrong");
+      expect(draftWithInvocation("see /etc/hosts", "/review", known)).toBe("/review see /etc/hosts");
+    });
+
+    it("keeps a first word that only begins with one of the model's own", () => {
+      expect(draftWithInvocation("/reviewer notes", "/app-builder", known)).toBe("/app-builder /reviewer notes");
+    });
+
+    it("keeps a slash word the model does not have", () => {
+      expect(draftWithInvocation("/deploy now", "/review", [])).toBe("/review /deploy now");
     });
   });
 });

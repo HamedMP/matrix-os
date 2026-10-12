@@ -833,11 +833,17 @@ Photos, Files, and the selected model's skills and commands. Spec:
   `expo-image-manipulator` before it is attached (`lib/chat-attachment-picker.ts`).
 - What can be attached follows `supports.attachments` of the selected model's
   engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
-  so pick Claude Code or Codex to try a send.
+  so pick Claude Code or Codex to try a send. After a change to a model that
+  does not read a waiting attachment, Send is off and the composer says why.
 - Sending uploads each attachment with `PUT /api/files/blob` into
   `temporary/desktop-chat/` on the computer and names it in the turn with an
   `attachment_reference` part, the same contract the web composer uses. The
   computer clears that folder by itself.
+- An attachment always has the same place there and is never written over. One
+  found already in place (`409 file_exists`) came from an earlier try at the
+  same message, which the computer may have admitted, so it is used as it is
+  and never removed. Only uploads the current send created are removed when it
+  fails before asking for a turn.
 
 Focused checks:
 

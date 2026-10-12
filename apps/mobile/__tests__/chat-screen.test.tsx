@@ -273,6 +273,44 @@ describe("chat screen: new chat", () => {
     );
   });
 
+  it("turns Send off and says why once the model is changed to one that does not read a waiting photo", async () => {
+    mockCatalog.instances[0]!.supports.attachments = ["file", "image"];
+    mockPickPhotos.mockResolvedValue({ attachments: [flowers], rejections: [] });
+    const view = render(<ChatScreen />);
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    await act(async () => { fireEvent.press(screen.getByRole("button", { name: "Photos, Choose from your library" })); });
+    expect(screen.queryByTestId("composer-attachment-notice")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: false });
+
+    mockCatalog.instances[0]!.supports.attachments = ["file"];
+    view.rerender(<ChatScreen />);
+
+    expect(screen.getByTestId("composer-attachment-notice").props.children)
+      .toBe("The selected model cannot read photos. Remove it or choose another model.");
+    expect(screen.getByRole("button", { name: "Send message" }).props.accessibilityState).toMatchObject({ disabled: true });
+    // Neither the button nor the keyboard's send key gets it out.
+    fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+    fireEvent(screen.getByLabelText("Message Matrix"), "submitEditing");
+    expect(mockSendMessage).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByRole("button", { name: "Remove flowers.jpg" }));
+    expect(screen.queryByTestId("composer-attachment-notice")).toBeNull();
+  });
+
+  it("keeps a path at the start of the draft when a skill is chosen", () => {
+    mockCatalog.instances[0]!.skills = [
+      { id: "review", displayName: "Review", description: "Reviews the changes", invocation: "/review" },
+    ];
+    render(<ChatScreen />);
+    fireEvent.changeText(screen.getByLabelText("Message Matrix"), "/tmp contains the logs");
+
+    fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+    fireEvent.press(screen.getByRole("button", { name: "Skills and commands, 1 for the selected model" }));
+    fireEvent.press(screen.getByRole("button", { name: "/review, Reviews the changes" }));
+
+    expect(screen.getByLabelText("Message Matrix").props.value).toBe("/review /tmp contains the logs");
+  });
+
   it("takes a waiting photo back out", async () => {
     mockCatalog.instances[0]!.supports.attachments = ["image"];
     mockPickPhotos.mockResolvedValue({ attachments: [flowers], rejections: [] });

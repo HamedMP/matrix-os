@@ -4,12 +4,7 @@ import { useUnistyles } from "react-native-unistyles";
 
 import { AddIcon, IconButton, Sheet } from "@/components/ui";
 import { pickFiles, pickPhotos } from "@/lib/chat-attachment-picker";
-import {
-  MAX_MESSAGE_ATTACHMENTS,
-  rejectionNotice,
-  type ChatAttachmentKind,
-  type ComposerAttachment,
-} from "@/lib/chat-attachments";
+import { rejectionNotice, type ChatAttachmentKind, type ComposerAttachment } from "@/lib/chat-attachments";
 import type { ChatSlashEntry } from "@/lib/chat-slash-entries";
 
 import { AddMenu, type AddMenuPage } from "./AddMenu";
@@ -19,8 +14,8 @@ const ADD_ICON_SIZE = 18;
 export interface ComposerAddControlProps {
   /** The kinds of attachment the selected model reads. */
   kinds: readonly ChatAttachmentKind[];
-  /** How many attachments are already waiting to go with the message. */
-  attached: number;
+  /** How many more attachments the message can take. */
+  room: number;
   /** The selected model's skills and commands. */
   skills: readonly ChatSlashEntry[];
   /** There is nobody to send as: nothing can be added. */
@@ -36,7 +31,7 @@ export interface ComposerAddControlProps {
  */
 export function ComposerAddControl({
   kinds,
-  attached,
+  room,
   skills,
   disabled = false,
   onAdd,
@@ -51,8 +46,6 @@ export function ComposerAddControl({
   // does not bring it back when it can be used again.
   if (disabled && sheet.open) setSheet({ ...sheet, open: false });
 
-  const remaining = MAX_MESSAGE_ATTACHMENTS - attached;
-
   function close() {
     setSheet((current) => (current.open ? { ...current, open: false } : current));
   }
@@ -64,7 +57,7 @@ export function ComposerAddControl({
       // The library and the file browser open over the sheet, which stays
       // where it is until something has been chosen: a second sheet cannot be
       // opened safely while the first is on its way out.
-      const picked = source === "photos" ? await pickPhotos(remaining) : await pickFiles(remaining, kinds);
+      const picked = source === "photos" ? await pickPhotos(room) : await pickFiles(room, kinds);
       // Backing out returns to the sheet, as it was.
       if (!picked) return;
       close();
@@ -101,7 +94,7 @@ export function ComposerAddControl({
         <AddMenu
           page={sheet.page}
           kinds={kinds}
-          remaining={remaining}
+          remaining={room}
           skills={skills}
           busy={picking}
           onPhotos={() => { void attach("photos"); }}

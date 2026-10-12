@@ -1,50 +1,66 @@
 import type { CanonicalChatModelSelection, CanonicalProviderCatalog } from "@matrix-os/contracts";
 
-import { supportedAttachmentKinds, type ComposerAttachment } from "@/lib/chat-attachments";
-import { chatSlashEntries } from "@/lib/chat-slash-entries";
+import { unreadableNotice, type ChatAttachmentKind, type ComposerAttachment } from "@/lib/chat-attachments";
+import { chatSlashEntries, draftWithInvocation } from "@/lib/chat-slash-entries";
 
 import type { ComposerProps } from "./Composer";
 import { ComposerAddControl } from "./ComposerAddControl";
 
 export interface ComposerAddOptions {
   catalog: CanonicalProviderCatalog | null;
-  /** The model the message goes to, which decides what can be added. */
+  /** The model the message goes to, whose skills and commands are offered. */
   selection: CanonicalChatModelSelection | null;
+  /** The kinds of attachment that model reads: the same list the composer holds sends back by. */
+  kinds: readonly ChatAttachmentKind[];
   /** The photos and files waiting to go with the message. */
   attachments: readonly ComposerAttachment[];
+  /** How many more the message can take. */
+  room: number;
+  /** Those of the waiting attachments the model does not read. */
+  unreadable: readonly ComposerAttachment[];
   onAdd: (attachments: readonly ComposerAttachment[]) => void;
   onRemove: (id: string) => void;
-  /** Puts a chosen skill or command, such as "/review", in the message. */
-  onInvoke: (invocation: string) => void;
+  draft: string;
+  /** Takes the draft with a chosen skill or command put first. */
+  onChangeDraft: (text: string) => void;
   /** False while there is nobody to send as. */
   enabled: boolean;
 }
 
 /**
  * What a screen hands its composer so that things can be added to a message:
- * the waiting attachments and the "+" that adds more. Every screen with a
- * composer builds these the same way, from the model its message goes to.
+ * the waiting attachments, what to say about those that cannot be sent, and
+ * the "+" that adds more. Every screen with a composer builds these the same
+ * way, from the model its message goes to.
  */
 export function composerAddProps({
   catalog,
   selection,
+  kinds,
   attachments,
+  room,
+  unreadable,
   onAdd,
   onRemove,
-  onInvoke,
+  draft,
+  onChangeDraft,
   enabled,
-}: ComposerAddOptions): Pick<ComposerProps, "attachments" | "onRemoveAttachment" | "addControl"> {
+}: ComposerAddOptions): Pick<ComposerProps, "attachments" | "onRemoveAttachment" | "attachmentNotice" | "addControl"> {
+  const skills = chatSlashEntries(catalog, selection);
   return {
     attachments,
     onRemoveAttachment: onRemove,
+    attachmentNotice: unreadableNotice(unreadable),
     addControl: (
       <ComposerAddControl
-        kinds={supportedAttachmentKinds(catalog, selection)}
-        attached={attachments.length}
-        skills={chatSlashEntries(catalog, selection)}
+        kinds={kinds}
+        room={room}
+        skills={skills}
         disabled={!enabled}
         onAdd={onAdd}
-        onInvoke={onInvoke}
+        onInvoke={(invocation) => {
+          onChangeDraft(draftWithInvocation(draft, invocation, skills.map((entry) => entry.invocation)));
+        }}
       />
     ),
   };

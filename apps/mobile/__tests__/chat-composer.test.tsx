@@ -156,6 +156,27 @@ describe("Composer", () => {
       expect(order).toEqual(["flowers.jpg", "Message Matrix"]);
     });
 
+    it("says under them why the message cannot be sent, when it is told so", () => {
+      renderComposer({
+        attachments: [photo],
+        onRemoveAttachment: jest.fn(),
+        attachmentNotice: "The selected model cannot read photos. Remove it or choose another model.",
+      });
+
+      const notice = screen.getByRole("alert");
+      expect(notice.props.children).toBe("The selected model cannot read photos. Remove it or choose another model.");
+      expect(flat(notice)).toMatchObject({ fontSize: 12, paddingHorizontal: 14 });
+      // Inside the card, after the attachments and before the input.
+      const card = screen.getByTestId("composer-card");
+      expect(within(card).getByTestId("composer-attachment-notice")).toBeTruthy();
+    });
+
+    it("says nothing under them otherwise", () => {
+      renderComposer({ attachments: [photo], onRemoveAttachment: jest.fn(), attachmentNotice: null });
+
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
     it("removes the one whose remove button is pressed", () => {
       const onRemoveAttachment = jest.fn();
       renderComposer({ attachments: [photo, notes], onRemoveAttachment });

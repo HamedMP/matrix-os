@@ -14,7 +14,7 @@ import { useChatThread } from "@/components/chat/use-chat-thread";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
-import { draftWithInvocation } from "@/lib/chat-slash-entries";
+import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
@@ -57,8 +57,11 @@ export default function ChatScreen() {
     ?? defaultCatalogSelection(catalog);
   const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
+  const attachmentKinds = supportedAttachmentKinds(catalog, selection);
+
   const {
-    draft, setDraft, attachments, addAttachments, removeAttachment, sentAttachments, send, isSending, optimisticMessages,
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
+    sentAttachments, send, isSending, optimisticMessages,
   } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId,
@@ -66,6 +69,7 @@ export default function ChatScreen() {
     selection,
     turnModes,
     projectId: selectedProjectId,
+    attachmentKinds,
     // The selection is not final until the provider catalog has loaded.
     disabled: providerCatalogLoading,
   });
@@ -81,7 +85,7 @@ export default function ChatScreen() {
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
   const canSend = !providerCatalogLoading && (draft.trim().length > 0 || attachments.length > 0) && isConnected
-    && Boolean(selection) && Boolean(turnModes) && !busy;
+    && unreadableAttachments.length === 0 && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const inputRef = useRef<TextInput>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
@@ -121,11 +125,6 @@ export default function ChatScreen() {
 
   const handleNewChat = useCallback(() => startDraftChat(), [startDraftChat]);
 
-  const handleInvoke = useCallback((invocation: string) => {
-    setDraft(draftWithInvocation(draft, invocation));
-    warmSessionToken();
-  }, [draft, setDraft, warmSessionToken]);
-
   return (
     <ChatScreenView
       title={chatScreenTitle(activeChatId, detail, chats)}
@@ -153,10 +152,14 @@ export default function ChatScreen() {
         ...composerAddProps({
           catalog,
           selection,
+          kinds: attachmentKinds,
           attachments,
+          room: attachmentRoom,
+          unreadable: unreadableAttachments,
           onAdd: addAttachments,
           onRemove: removeAttachment,
-          onInvoke: handleInvoke,
+          draft,
+          onChangeDraft: handleDraftChange,
           enabled: isConnected,
         }),
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (

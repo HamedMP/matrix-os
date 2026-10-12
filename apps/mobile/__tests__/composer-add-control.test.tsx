@@ -50,7 +50,7 @@ const skills: ChatSlashEntry[] = [
 function renderControl(overrides: Partial<ComposerAddControlProps> = {}) {
   const props: ComposerAddControlProps = {
     kinds: ["image", "file"],
-    attached: 0,
+    room: 8,
     skills: [],
     onAdd: jest.fn(),
     onInvoke: jest.fn(),
@@ -121,7 +121,7 @@ describe("the composer's add control", () => {
   describe("photos", () => {
     it("adds the chosen photos and closes the sheet", async () => {
       mockPickPhotos.mockResolvedValue({ attachments: [photo], rejections: [] });
-      const { props } = renderControl({ attached: 3 });
+      const { props } = renderControl({ room: 5 });
       open();
 
       fireEvent.press(row("Photos"));
@@ -249,7 +249,7 @@ describe("the composer's add control", () => {
     });
 
     it("offers neither once the message has all it can carry", () => {
-      renderControl({ attached: 8 });
+      renderControl({ room: 0 });
       open();
 
       expect(row("Photos").props.accessibilityLabel).toBe("Photos, This message has all it can carry");

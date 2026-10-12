@@ -2,7 +2,12 @@ import { useState } from "react";
 
 import type { ComposerProps } from "@/components/chat/Composer";
 import { ComposerAddControl } from "@/components/chat/ComposerAddControl";
-import { appendAttachments, type ChatAttachmentKind, type ComposerAttachment } from "@/lib/chat-attachments";
+import {
+  MAX_MESSAGE_ATTACHMENTS,
+  appendAttachments,
+  type ChatAttachmentKind,
+  type ComposerAttachment,
+} from "@/lib/chat-attachments";
 import { draftWithInvocation, type ChatSlashEntry } from "@/lib/chat-slash-entries";
 
 const SAMPLE_KINDS: readonly ChatAttachmentKind[] = ["image", "file"];
@@ -43,10 +48,12 @@ export function useSampleComposerAdd(draft: string, setDraft: (text: string) => 
     addControl: (
       <ComposerAddControl
         kinds={SAMPLE_KINDS}
-        attached={attachments.length}
+        room={MAX_MESSAGE_ATTACHMENTS - attachments.length}
         skills={SAMPLE_SKILLS}
         onAdd={(added) => setAttachments((current) => appendAttachments(current, added))}
-        onInvoke={(invocation) => setDraft(draftWithInvocation(draft, invocation))}
+        onInvoke={(invocation) => {
+          setDraft(draftWithInvocation(draft, invocation, SAMPLE_SKILLS.map((entry) => entry.invocation)));
+        }}
       />
     ),
   };
