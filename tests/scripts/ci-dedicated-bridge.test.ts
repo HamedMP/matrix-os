@@ -4,6 +4,7 @@ import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import * as outcomeHelpers from '../../scripts/ci/dedicated-outcome.mjs';
 import * as admissionHelpers from '../../scripts/ci/dedicated-admission.mjs';
+import * as configurationHelpers from '../../scripts/ci/dedicated-config-token.mjs';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {parse} from 'yaml';
 const nodeRequire=createRequire(import.meta.url);
@@ -14,7 +15,7 @@ async function execute(name:string,github:unknown,context:unknown,core:unknown) 
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
  const script=source.replaceAll('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
@@ -24,7 +25,7 @@ async function admit(overrides:Record<string,unknown>={},ref='refs/heads/main') 
  const original={number:2440,base:{ref:'main',sha:base,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}}};
  const pull={...structuredClone(original),...overrides};
  const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[{id:77,run_attempt:1,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',head_sha:head,status:'in_progress',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2440,head:{sha:head},base:{sha:base,ref:'main'}}]}]}}))},checks:{create:vi.fn(async(_args:{output:{summary:string}})=>({data:{id:123}})),update:vi.fn(async(_args:{conclusion:string})=>({data:{}}))}}};
- const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
+ const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{repository:{id:42},action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
  const outputs:Record<string,string>={};
  const core={setOutput:(key:string,value:string)=>outputs[key]=value,warning:vi.fn(),setFailed:vi.fn()};
  await execute('Admit current source head',github,context,core);
@@ -148,5 +149,5 @@ it('restricts App keys to authenticated main helpers and creates a checks-only s
  const value=workflow(),job=value.jobs.reconcile;expect(job.environment).toBe('matrix-ci');expect(job.permissions.checks).toBe('read');
  const token=job.steps.find((step:{id?:string})=>step.id==='gate-token');expect(token.uses).toBe('actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349');expect(token.with).toEqual(expect.objectContaining({'app-id':'${{ vars.MATRIX_CI_GATE_APP_ID }}','private-key':'${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}',owner:'${{ github.repository_owner }}',repositories:'${{ github.event.repository.name }}','permission-checks':'write'}));expect(Object.keys(token.with).filter(key=>key.startsWith('permission-'))).toEqual(['permission-checks']);
  const gate=job.steps.find((step:{name?:string})=>step.name==='Reconcile completed child source checks');expect(gate.env.GATE_TOKEN).toBe('${{ steps.gate-token.outputs.token }}');expect(gate.with.script).toContain('new github.constructor({auth:process.env.GATE_TOKEN');expect(gate.with.script).toContain('gateGithub');expect(gate.with.script).toContain('gateAppId');
- const benchmark=value.jobs.benchmark;expect(benchmark.if).toContain("github.ref == 'refs/heads/main'");expect(benchmark.steps.filter((step:any)=>JSON.stringify(step).includes('MATRIX_CI_GATE_APP_PRIVATE_KEY')).map((step:any)=>step.id)).toEqual(['configuration-token']);expect(JSON.stringify(benchmark)).not.toContain('GATE_TOKEN');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
+ const benchmark=value.jobs.benchmark;expect(benchmark.if).toContain("github.ref == 'refs/heads/main'");expect(benchmark.steps.filter((step:any)=>JSON.stringify(step).includes('MATRIX_CI_GATE_APP_PRIVATE_KEY')).map((step:any)=>step.name)).toEqual(['Dispatch authenticated PR qualification lease','Settle source-head check']);expect(JSON.stringify(benchmark)).not.toContain('GATE_TOKEN');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
 });

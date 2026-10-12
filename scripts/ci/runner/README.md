@@ -191,3 +191,13 @@ The pinned token action does not expose the Variables permission, so the helper
 uses a short-lived Node-signed App JWT with the bundled GitHub Script client and
 the installation-token endpoint. Token request errors are sanitized to avoid
 logging authorization headers. No routing activation occurs in this repair.
+
+Before rollout, advance `MATRIX_CI_CONTROLLER_SHA` to a reviewed main commit
+containing `dedicated-config-token.mjs` and approve that same SHA in the host's
+`controllerShas`. An older ancestor pin can pass ancestry checks while lacking
+the new helper. Keep routing disabled until both pins and live tests agree.
+
+Dispatch owns a configuration session that refreshes credentials five minutes
+before their actual expiry, revoking the replaced token. Final settlement uses
+its own fresh session. Both close in `finally`; API errors fail closed and never
+reuse an expired token. This preserves the full queue and execution deadlines.
