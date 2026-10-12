@@ -455,7 +455,7 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('name: Build Desktop for Electron E2E');
-    expect(workflow).toContain('run: bun run build:desktop');
+    expect(workflow).toContain('run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
     expect(workflow).toContain('name: Run required MAT-335 Desktop regression');
     expect(workflow).toContain('MATRIX_DESKTOP_E2E_REQUIRED: "1"');
     expect(workflow).toContain(
@@ -476,7 +476,7 @@ describe('CI workflows', () => {
   it('requires download E2E after the Electron build under a virtual display', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const steps = workflow.jobs.e2e.steps;
-    const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
+    const build = steps.findIndex((step: { run?: string }) => step.run === 'GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
     const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/file-download.e2e.test.ts');
     expect(build).toBeGreaterThanOrEqual(0);
     expect(download).toBeGreaterThan(build);
