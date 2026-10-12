@@ -6,6 +6,9 @@ const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionId
 type DraftStore = { identity: unknown; drafts: Record<string, Draft> };
 /** A sent question: it goes only while it is still that edit, so a question typed after it stays. */
 type SentDraft = { identity: unknown; scope: string; requestId: string };
+/** A question given back to a Chat's composer (a refused first send), for the owner who wrote it. */
+type ReturnedDraft = { identity: unknown; scope: string; text: string; resources: CanonicalChatResourceReference[] };
+type DraftChange = (store: DraftStore) => DraftStore;
 const MAX_DRAFT_LISTENERS = 4;
 
 function withoutSent(store: DraftStore, sent: SentDraft): DraftStore {
@@ -13,6 +16,16 @@ function withoutSent(store: DraftStore, sent: SentDraft): DraftStore {
   const drafts = { ...store.drafts };
   delete drafts[sent.scope];
   return { identity: store.identity, drafts };
+}
+
+function withDraft(store: DraftStore, identity: unknown, scope: string, draft: Draft): DraftStore {
+  if (store.identity !== identity) return store;
+  const drafts = { ...store.drafts };
+  delete drafts[scope];
+  drafts[scope] = draft;
+  // Insertion order is the last edit order; evict the oldest edited Chat.
+  for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
+  return { identity, drafts };
 }
 
 /**
@@ -24,17 +37,25 @@ export interface ChatComposerDraftKeeper {
   read(): DraftStore | null;
   write(store: DraftStore): void;
   settle(sent: SentDraft): void;
-  subscribe(listener: (sent: SentDraft) => void): () => void;
+  /** Puts a question back under its Chat, here and in the view now open, so it is there when that Chat opens. */
+  restore(returned: ReturnedDraft): void;
+  subscribe(listener: (change: DraftChange) => void): () => void;
 }
 export function createChatComposerDraftKeeper(): ChatComposerDraftKeeper {
   let kept: DraftStore | null = null;
-  const listeners = new Set<(sent: SentDraft) => void>();
+  const listeners = new Set<(change: DraftChange) => void>();
+  const apply = (change: DraftChange) => {
+    if (kept) kept = change(kept);
+    for (const listener of [...listeners]) listener(change);
+  };
   return {
     read: () => kept,
     write: (store) => { kept = store; },
-    settle: (sent) => {
-      if (kept) kept = withoutSent(kept, sent);
-      for (const listener of [...listeners]) listener(sent);
+    settle: (sent) => apply((store) => withoutSent(store, sent)),
+    restore: ({ identity, scope, text, resources }) => {
+      // Set from outside the composer, so its references need fresh consent, as with setDraft.
+      const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
+      apply((store) => withDraft(store, identity, scope, { text, resources, requestId, permissionIdentity: requestId }));
     },
     subscribe: (listener) => {
       // One view is open at a time (two while a remount overlaps): past the cap the oldest, long gone, is dropped.
@@ -59,21 +80,14 @@ export function useChatComposerDraft(scope: string, identity: unknown, keeper?: 
     storeRef.current = store;
     keeper?.write(store);
   }, [keeper, store]);
-  useLayoutEffect(() => keeper?.subscribe((sent) => setStore((current) => withoutSent(current, sent))), [keeper]);
+  useLayoutEffect(() => keeper?.subscribe(setStore), [keeper]);
   const draft = store.identity === identity ? store.drafts[scope] ?? emptyDraft : emptyDraft;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable draft writers are effect dependencies in ChatInput, including non-compiler tests and development.
   const update = useCallback((patch: Partial<Pick<Draft, "text" | "resources">>, replace = false) => {
     const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
-    setStore((current) => {
-    if (current.identity !== identity) return current;
-    const drafts = { ...current.drafts };
-    const next = { ...(drafts[scope] ?? emptyDraft), ...patch, requestId, ...(replace ? { permissionIdentity: requestId } : {}) };
-    delete drafts[scope];
-    drafts[scope] = next;
-    // Insertion order is the last edit order; evict the oldest edited Chat.
-    for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
-    return { identity, drafts };
-    });
+    setStore((current) => withDraft(current, identity, scope, {
+      ...(current.drafts[scope] ?? emptyDraft), ...patch, requestId, ...(replace ? { permissionIdentity: requestId } : {}),
+    }));
   }, [identity, scope]);
   return {
     ...draft,

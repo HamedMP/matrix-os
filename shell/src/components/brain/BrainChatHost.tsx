@@ -37,6 +37,11 @@ function BrainChatThreadView({
   const thread = useCanonicalChatThread({
     client: runtime.client, eventSource: runtime.eventSource, chatId: slot.chatId, createChat: slot.createChat,
     onChatChanged: slot.onChatChanged,
+    // A refused first question goes back under its new thread for this owner (keyed as ChatApp keys its drafts), so it
+    // is there even after the viewer switched threads while it was on its way.
+    onDraftReturned: (chatId, draft) => drafts.restore({
+      identity: authority.composerIdentity ?? agents, scope: chatId, ...draft,
+    }),
   });
   return (
     <ChatApp

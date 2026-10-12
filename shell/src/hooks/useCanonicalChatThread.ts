@@ -14,6 +14,7 @@ import type {
   CanonicalChatDetailResponse,
   CanonicalChatMessagePart,
   CanonicalChatRecord,
+  CanonicalChatResourceReference,
   CanonicalUpdateChatReadStateRequest,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -31,6 +32,8 @@ function requestId(): string {
 type SendOptions = ChatSubmitOptions & Required<Pick<ChatSubmitOptions, "instanceId" | "model" | "interactionMode" | "permissionMode">>;
 
 type MentionRequests = ReturnType<typeof createChatMentionRequestTracker>;
+
+type SafeError = { text: string; at: number };
 
 /**
  * Makes the Chat for a draft (shown through `onCreated`), then admits the turn. A question with references behind a
@@ -86,6 +89,11 @@ export interface CanonicalChatThreadOptions {
   createChat: (input: { clientRequestId: string; title: string }) => Promise<CanonicalChatRecord>;
   /** Reports the Chat after every admitted turn, so a host list can sort and date it (a new Chat comes from createChat). */
   onChatChanged?: (chatId: string, title: string) => void;
+  /**
+   * Reports the question of a first send whose new Chat refused the turn, before the draft's composer lets it go, so a
+   * host that keeps drafts saves it under that Chat: the view may be gone by then (the viewer opened another Chat).
+   */
+  onDraftReturned?: (chatId: string, draft: { text: string; resources: CanonicalChatResourceReference[] }) => void;
 }
 
 /**
@@ -93,13 +101,18 @@ export interface CanonicalChatThreadOptions {
  * refresh and turn admission as the Chat app, without its list, URL paths or global selection. Returns ChatApp props.
  */
 export function useCanonicalChatThread({
-  client, eventSource, chatId: openedChatId, createChat, onChatChanged,
+  client, eventSource, chatId: openedChatId, createChat, onChatChanged, onDraftReturned,
 }: CanonicalChatThreadOptions) {
   const [chatId, setChatId] = useState(openedChatId);
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [safeError, setError] = useState<{ text: string; at: number } | null>(null);
-  const setSafeError = useCallback((text: string | null) => setError(text === null ? null : { text, at: Date.now() }), []);
+  // A failed load goes with the next good snapshot; a refused send or stop stays until the next send, so a refresh
+  // never hides why a question was refused.
+  const [errors, setErrors] = useState<Record<"load" | "send", SafeError | null>>({ load: null, send: null });
+  const setSafeError = useCallback((kind: "load" | "send", text: string | null) => setErrors((current) => {
+    if (text === null && current[kind] === null) return current;
+    return { ...current, [kind]: text === null ? null : { text, at: Date.now() } };
+  }), []);
   const [botEventRevision, setBotEventRevision] = useState(0);
   // The question of a first send whose new Chat refused the turn: the view's composer for that Chat gets it back.
   const [returnedDraft, setReturnedDraft] = useState<ChatAgentDraftRequest | null>(null);
@@ -130,12 +143,12 @@ export function useCanonicalChatThread({
       const current = detailRef.current;
       if (current?.record.chat.id === id && current.record.chat.revision > loaded.record.chat.revision) return true;
       show(current?.record.chat.id === id ? { ...loaded, record: mergeChatReadState(loaded.record, current.record) } : loaded);
-      setSafeError(null);
+      setSafeError("load", null);
       return true;
     } catch (error: unknown) {
       if (sequence !== generation.current || chatIdRef.current !== id) return true;
       console.warn("[canonical-chat] Thread detail unavailable:", error instanceof Error ? error.name : "UnknownError");
-      setSafeError("Chat could not be loaded. Try again.");
+      setSafeError("load", "Chat could not be loaded. Try again.");
       return false;
     }
   }, [client, setSafeError, show]);
@@ -155,7 +168,7 @@ export function useCanonicalChatThread({
       const next = current && event.content ? applyCanonicalChatContent(current, event.content) : null;
       if (current && next) {
         show({ ...next, record: mergeCanonicalChatRecord(current.record, next.record) });
-        setSafeError(null);
+        setSafeError("load", null);
       } else refresh.schedule(event.content ? 0 : EVENT_INVALIDATION_COALESCE_MS);
     });
     const onVisible = () => { if (document.visibilityState === "visible") refresh.schedule(); };
@@ -194,17 +207,18 @@ export function useCanonicalChatThread({
   ) => {
     if (!text.trim() || submittingRef.current) return Promise.resolve(false);
     if (!options?.instanceId || !options.model || !options.interactionMode || !options.permissionMode) {
-      setSafeError("Choose an available harness and model.");
+      setSafeError("send", "Choose an available harness and model.");
       return Promise.resolve(false);
     }
     const record = detailRef.current?.record ?? null;
     if (!record && chatIdRef.current !== null) {
-      setSafeError("Wait for this chat to finish loading.");
+      // Gone with the snapshot it waits for.
+      setSafeError("load", "Wait for this chat to finish loading.");
       return Promise.resolve(false);
     }
     submittingRef.current = true;
     setSubmitting(true);
-    setSafeError(null);
+    setSafeError("send", null);
     const onCreated = (created: CanonicalChatRecord) => {
       chatIdRef.current = created.chat.id;
       setChatId(created.chat.id);
@@ -238,8 +252,9 @@ export function useCanonicalChatThread({
       },
       (error: unknown) => {
         console.warn("[canonical-chat] Thread turn failed:", error instanceof Error ? error.name : "UnknownError");
-        setSafeError(canonicalShellChatFailureMessage(error));
+        setSafeError("send", canonicalShellChatFailureMessage(error));
         if (!record && chatIdRef.current !== null) {
+          onDraftReturned?.(chatIdRef.current, { text, resources: options.resources ?? [] });
           returnedDrafts.current += 1;
           setReturnedDraft({ id: returnedDrafts.current, text, ...(options.resources?.length ? { resources: options.resources } : {}) });
           // The question moved to the new Chat's composer, so the draft's composer lets it go (a kept draft would
@@ -252,7 +267,7 @@ export function useCanonicalChatThread({
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [client, createChat, loadDetail, mentionRequests, onChatChanged, setSafeError, show]);
+  }, [client, createChat, loadDetail, mentionRequests, onChatChanged, onDraftReturned, setSafeError, show]);
 
   const onAbortCurrent = useCallback(() => {
     const current = detailRef.current;
@@ -261,7 +276,7 @@ export function useCanonicalChatThread({
     const id = current.record.chat.id;
     client.cancelRun(id, run.runId, requestId()).then(() => loadDetail(id)).catch((error: unknown) => {
       console.warn("[canonical-chat] Thread cancellation failed:", error instanceof Error ? error.name : "UnknownError");
-      setSafeError("The run could not be stopped. Try again.");
+      setSafeError("send", "The run could not be stopped. Try again.");
     });
   }, [client, loadDetail, setSafeError]);
 
@@ -298,6 +313,8 @@ export function useCanonicalChatThread({
 
   const shown = detail?.record.chat.id === chatId ? detail : null;
   const messages = shown ? projectCanonicalTranscript(shown) : [];
+  // As in the Chat app, an action's error shows before a load error.
+  const safeError = errors.send ?? errors.load;
   if (safeError) messages.push({ id: "canonical-safe-error", role: "system", content: safeError.text, timestamp: safeError.at });
   return {
     messages,

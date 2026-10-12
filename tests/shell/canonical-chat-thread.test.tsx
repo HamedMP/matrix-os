@@ -133,6 +133,59 @@ describe("useCanonicalChatThread", () => {
     expect(result.current.composerDraftRequest).toBeNull();
   });
 
+  it("hands a refused first question and its references to the host under the new Chat, even after its view closed", async () => {
+    const client = fakeClient();
+    let refuse!: () => void;
+    client.admitTurn.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      refuse = () => reject(new Error("offline"));
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const onDraftReturned = vi.fn();
+    const { result, unmount } = renderHook(() => useCanonicalChatThread({
+      client, eventSource: fakeEvents(), chatId: null, createChat: vi.fn(async () => record("chat_new")), onDraftReturned,
+    }));
+    const resource = { kind: "chat" as const, id: "chat_notes", label: "Notes" };
+    let sent!: Promise<boolean>;
+    act(() => { sent = result.current.onSubmit("Why?", undefined, { ...SEND, resources: [resource] }); });
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_new", expect.anything()));
+    // The viewer opens another thread before the turn is refused: this view, and its composer, are gone.
+    unmount();
+    refuse();
+    expect(await sent).toBe(true);
+    expect(onDraftReturned).toHaveBeenCalledWith("chat_new", { text: "Why?", resources: [resource] });
+  });
+
+  it("keeps why a send was refused through later snapshots, until the next send", async () => {
+    const client = fakeClient();
+    let loaded!: () => void;
+    client.detail.mockImplementationOnce((chatId: string) => new Promise((resolve) => {
+      loaded = () => resolve(detail(chatId, 1, "Bot chats stay under AGENTS."));
+    }));
+    client.admitTurn.mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const events = fakeEvents();
+    const { result } = renderHook(() => useCanonicalChatThread({
+      client, eventSource: events, chatId: null, createChat: vi.fn(async () => record("chat_new")),
+    }));
+    const refused = "Message could not be sent. Try again.";
+    const lines = () => result.current.messages.map((item) => item.content);
+    await act(async () => { await result.current.onSubmit("Why?", undefined, SEND); });
+    expect(lines()).toEqual([refused]);
+    // The new Chat's first snapshot, read since the Chat was made, lands after the refusal.
+    await waitFor(() => expect(client.detail).toHaveBeenCalledWith("chat_new"));
+    await act(async () => { loaded(); });
+    expect(lines()).toEqual(["Bot chats stay under AGENTS.", refused]);
+    // A refresh after a refused follow-up keeps its reason too.
+    client.admitTurn.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { expect(await result.current.onSubmit("And then?", undefined, SEND)).toBe(false); });
+    client.detail.mockResolvedValueOnce(detail("chat_new", 2, "From the snapshot"));
+    act(() => events.emit({ type: "chat.full_refresh" } as CanonicalChatInvalidation));
+    await waitFor(() => expect(lines()[0]).toBe("From the snapshot"));
+    expect(lines()).toEqual(["From the snapshot", refused]);
+    await act(async () => { expect(await result.current.onSubmit("Why not?", undefined, SEND)).toBe(true); });
+    expect(lines()).not.toContain(refused);
+  });
+
   it("applies streamed content, falls back to a snapshot on a gap, and ignores other Chats", async () => {
     const client = fakeClient();
     const events = fakeEvents();
@@ -341,6 +394,35 @@ describe("Company Brain chat on Web", () => {
     expect(composer()).toHaveValue("");
     await openRow(/^Test plan/);
     expect(composer()).toHaveValue("Which tests");
+  });
+
+  it("keeps a refused first question in its new thread when the viewer switched threads before it was refused", async () => {
+    const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
+    const { client, threads } = webBrain([titled("chat_a", "Release notes")]);
+    let refuse!: () => void;
+    client.admitTurn.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      refuse = () => reject(new Error("provider_unavailable"));
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    const openRow = async (name: RegExp) => {
+      fireEvent.click(await screen.findByRole("button", { name }));
+      await waitFor(() => expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy());
+    };
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: /message/i }), { target: { value: "Why did src/a.ts change?" } });
+    threads.list.mockResolvedValue({ items: [titled("chat_brain", "Why did src/a.ts change"), titled("chat_a", "Release notes")] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_brain", expect.anything()));
+    // The viewer opens another thread before the new thread refuses its first question.
+    await openRow(/^Release notes/);
+    await act(async () => { refuse(); });
+    await openRow(/^Why did src\/a\.ts change/);
+    expect(composer()).toHaveValue("Why did src/a.ts change?");
+    // The question lives in its thread now, so the next draft starts empty.
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(await screen.findByRole("textbox", { name: /message/i })).toHaveValue("");
   });
 
   it("keeps brain drafts through the owner's own authority change, but never gives them to a new owner", async () => {

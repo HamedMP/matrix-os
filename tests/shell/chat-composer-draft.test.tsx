@@ -61,6 +61,22 @@ it("lets a question go once it is sent, even after its view was switched away, b
   expect(newer.result.current.text).toBe("And since then, really?");
 });
 
+it("puts a returned question back under its Chat in the open view and for later views, for that owner only", () => {
+  const keeper = createChatComposerDraftKeeper();
+  const reference = { kind: "chat" as const, id: "chat_notes", label: "Notes" };
+  const open = renderHook(() => useChatComposerDraft("chat_b", "gateway", keeper));
+  act(() => keeper.restore({ identity: "other-gateway", scope: "chat_c", text: "Not mine", resources: [] }));
+  act(() => keeper.restore({ identity: "gateway", scope: "chat_a", text: "What shipped in", resources: [reference] }));
+  // The open view writes its drafts back on its next edit: the returned question must ride along.
+  act(() => open.result.current.setText("Which tests"));
+  open.unmount();
+  const back = renderHook(() => useChatComposerDraft("chat_a", "gateway", keeper));
+  expect(back.result.current).toMatchObject({ text: "What shipped in", resources: [reference] });
+  // Like any question set from outside, its references need fresh consent.
+  expect(back.result.current.permissionIdentity).toBe(back.result.current.requestId);
+  expect(renderHook(() => useChatComposerDraft("chat_c", "gateway", keeper)).result.current.text).toBe("");
+});
+
 it("bounds the keeper's listeners to a few views, dropping the oldest", () => {
   const keeper = createChatComposerDraftKeeper();
   const listeners = Array.from({ length: 100 }, () => vi.fn());
