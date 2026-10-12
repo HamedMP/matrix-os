@@ -102,6 +102,7 @@ first. Each call's fetch counts its attempts: one that rejected after the reques
 | 408, 409, 429, 5xx, 529 `overloaded_error` | `APIError` 408, `ConflictError`, `RateLimitError`, `InternalServerError` | 2; 1 if asked to wait over 5 s | `model_unavailable` | no state | failed, `retry_later` |
 | 400, 413, 422, any other status | `BadRequestError`, `APIError`, `UnprocessableEntityError` | 1 | `model_rejected` | failed `model_failed`, then the run stops | failed, `contact_support` |
 | 2xx whose body cannot be read | none (the body read rejects) | 1 | `model_unavailable` | no state; charged at its worst case | failed, `retry_later` |
+| 200 whose usage is missing or malformed | none | 1 | none | no state; charged at its worst case; stops `model_usage_invalid` | failed, `contact_support` |
 | other non-SDK throw | rethrown | n/a | none | failed `model_failed` (spec 554) | partial, `retry_later` |
 | 200 refusal | none | 1 | none | skipped `model_refused`, usage counted | succeeded |
 | 200 refusal with `recommended_model` | none | 1 | none | failed `model_output_invalid`, usage counted | partial, `retry_later` |

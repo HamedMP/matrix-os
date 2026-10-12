@@ -288,6 +288,19 @@ describe("brain claim extraction with a model", { timeout: 60_000 }, () => {
       expect(await states()).toEqual({});
     });
 
+    it("stops as model_usage_invalid and charges the call at its worst case when a 200 has malformed usage", async () => {
+      await seed(1);
+      const worst = brainModelCallWorstCostMicroUsd(Buffer.byteLength(`Title d0${body(0)}`, "utf8"));
+      const fake = fakeAnthropic(() => jsonResponse(200, messageBody({ usage: { iterations: undefined } })));
+      expect(await (await resolve(fake.fetch))()).toMatchObject({
+        status: "failed", errorCode: "model_usage_invalid", nextAction: "contact_support", counts: { documentsProcessed: 0 },
+        usage: { costMicroUsd: worst }, run: { errorCode: "model_usage_invalid", usage: { costMicroUsd: worst } },
+        spend: { spentMicroUsd: worst },
+      });
+      expect(fake.requests).toHaveLength(1);
+      expect(await states()).toEqual({});
+    });
+
     it("fails the document as model_timeout when the call outlives the per-call timeout", async () => {
       await seed(1);
       const fake = fakeAnthropic(() => "hang");

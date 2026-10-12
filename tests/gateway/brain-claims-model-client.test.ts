@@ -11,6 +11,7 @@ import {
   createAnthropicBrainClaimModel, withBoundedRetryWaits,
 } from "../../packages/gateway/src/brain/claims/model/client.js";
 import { BRAIN_MODEL_SYSTEM_PROMPT } from "../../packages/gateway/src/brain/claims/model/prompt.js";
+import { BrainExtractionUsageSchema } from "../../packages/gateway/src/brain/claims/types.js";
 import { brainModelAttemptWorstCostMicroUsd } from "../../packages/gateway/src/brain/claims/spend.js";
 import {
   BrainModelError, type BrainAnthropicModelOptions,
@@ -183,6 +184,20 @@ describe("brain claims model client", { timeout: 30_000 }, () => {
     ])("marks a response %s invalid and still counts its usage", async (_name, options) => {
       const { model } = setup(ok(options));
       expect(await run(model)).toEqual({ claims: [], usage: DEFAULT_USAGE, outcome: { status: "invalid" } });
+    });
+
+    const { usage } = messageBody() as { usage: Record<string, unknown> };
+    it.each([
+      ["no usage", undefined],
+      ["no iterations", { ...usage, iterations: undefined }],
+      ["iterations that are not a list", { ...usage, iterations: "x" }],
+      ["an iteration that is not an object", { ...usage, iterations: [null] }],
+    ])("returns a 200 with %s as usage the job rejects, so it charges the call at its worst case", async (_name,
+      report) => {
+      const { model } = setup(() => jsonResponse(200, { ...messageBody(), usage: report }));
+      const output = await run(model);
+      expect(output).toMatchObject({ claims: [], outcome: { status: "invalid" } });
+      expect(BrainExtractionUsageSchema.safeParse(output.usage).success).toBe(false);
     });
   });
 

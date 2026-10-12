@@ -9,6 +9,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { z } from "zod/v4";
 import { BrainClaimCandidateSchema, BrainClaimFieldsSchema, type BrainClaimFields } from "../types.js";
 import { brainModelAttemptWorstCostMicroUsd } from "../spend.js";
 import { brainModelUsage } from "./pricing.js";
@@ -32,6 +33,21 @@ export {
 export const BRAIN_MODEL_WIRE_FORMAT = betaZodOutputFormat(BrainModelWireOutputSchema);
 const ZERO_USAGE: BrainModelUsage = {
   inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 0,
+};
+
+const TOKENS = z.number().int().min(0);
+const TOKEN_COUNTS = {
+  input_tokens: TOKENS, output_tokens: TOKENS,
+  cache_read_input_tokens: TOKENS.nullable(), cache_creation_input_tokens: TOKENS.nullable(),
+};
+/** The usage report pricing reads (BrainModelUsageReport), checked first: a response is never trusted. */
+const UsageReportSchema = z.object({
+  ...TOKEN_COUNTS, iterations: z.array(z.object({ ...TOKEN_COUNTS, model: z.string().nullish() })).nullable(),
+});
+/** Every count unknown: outside the job's usage schema, so the job charges the call at its worst case. */
+const UNKNOWN_USAGE: BrainModelUsage = {
+  inputTokens: Number.NaN, outputTokens: Number.NaN, cacheReadTokens: Number.NaN, cacheWriteTokens: Number.NaN,
+  costMicroUsd: Number.NaN,
 };
 
 type WireClaim = BrainModelWireOutput["claims"][number];
@@ -193,8 +209,14 @@ function errorCode(error: unknown): BrainModelErrorCode | null {
   return null;
 }
 
-/** Usage first, so a refusal or an unusable response is still counted; then the stop reason; then the text. */
+/**
+ * Usage first, so a refusal or an unusable response is still counted; then the stop reason; then the text. Usage
+ * missing or malformed: the cost is unknown, so nothing more is read and the job stops the run (model_usage_invalid).
+ */
 function readMessage(message: Anthropic.Beta.BetaMessage, modelId: string): BrainModelOutput {
+  if (!UsageReportSchema.safeParse(message.usage).success) {
+    return { claims: [], usage: { ...UNKNOWN_USAGE }, outcome: { status: "invalid" } };
+  }
   const usage = brainModelUsage(message.usage, modelId);
   const invalid: BrainModelOutput = { claims: [], usage, outcome: { status: "invalid" } };
   if (message.stop_reason === "refusal") {
