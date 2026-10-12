@@ -78,9 +78,27 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 - **Moving between tabs from code** goes through the helpers in
   `lib/shell-routes.ts`. They build new params on every call because the
   navigator ignores params it has already used.
+- **A tab switch asked for in the same step as a change inside the current tab
+  is dropped.** The navigator ignores the params that carry the switch when its
+  own state, which holds the stacks of its tabs, changes in the same render. A
+  screen that closes itself and then shows another tab closes first, and the
+  tab is asked for from the tabs' next `state` event by something that outlives
+  the screen: `components/agents/chat-handoff.tsx` in the Agents tab's layout,
+  used by `agents/new.tsx`. The tab hides the closing screen at once, so that
+  screen also closes without a slide (`animation: "none"`); a slide cut short
+  plays when the tab is next opened.
 - **The Agents tab badge** counts agents waiting on the person
   (`components/agents/use-agents-waiting-count.ts`). The status of an agent is
   derived in the app from its chat and tasks; the server has no status field.
+- **The new-agent gallery is the web's.** It lists the computer's templates
+  (`/api/chat-agents/bot-recipes`), which create an agent, and then the
+  inspirations the app ships with, which are built in chat from the web's
+  prompt. `components/agents/agent-gallery.ts` mirrors the web's
+  `AgentRecipesPanel`, and `tests/ui/agent-gallery-mobile-parity.test.ts` holds
+  the two to the same list, categories, search and prompt. The inspirations are
+  generated: run `node scripts/generate-chat-agent-inspirations.mjs` after the
+  inventory changes, which writes the web's file and
+  `components/agents/agent-inspirations.generated.ts`.
 
 ### Tokens and shared components
 
