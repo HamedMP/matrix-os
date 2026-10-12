@@ -129,6 +129,11 @@ and are required only under `__DEV__`, so a production bundle drops them. Use
 the gallery for screenshot evidence: it shows the screen without account
 details or real chat titles.
 
+The composer's "+" is live in the chat, project and agent frames: it opens the
+real sheet and the real system pickers, over a sample model that reads photos
+and files and has three sample skills. A frame sends nothing, so what is
+attached there never leaves the phone.
+
 ### Left out on purpose
 
 - The model sheet shows the Matrix credit balance and no control to buy
@@ -811,6 +816,43 @@ another App's link, and `target="_blank"`/`window.open`. Confirm no browser or
 native app opens implicitly, blocked-link copy contains no raw URL, and both
 Continue in app and reopening another App recover normally. Record iOS and
 Android results separately; unit tests do not replace that evidence.
+
+## Native Mobile Chat Attachments
+
+The composer's "+" opens the "Add to message" sheet (`ComposerAddControl`):
+Photos, Files, and the selected model's skills and commands. Spec:
+`specs/555-mobile-chat-attachments/spec.md`.
+
+- Photos come from `expo-image-picker` (the system picker, which needs no
+  library permission). Files come from `File.pickFileAsync` in
+  `expo-file-system`. Both are opened over the sheet, which closes once
+  something has been chosen: a second sheet cannot be opened safely while the
+  first is on its way out.
+- A photo that is larger than 2048 pixels on its longer side, larger than 5 MB,
+  or not JPEG, PNG, WebP or GIF is scaled and saved as JPEG with
+  `expo-image-manipulator` before it is attached (`lib/chat-attachment-picker.ts`).
+- What can be attached follows `supports.attachments` of the selected model's
+  engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
+  so pick Claude Code or Codex to try a send.
+- Sending uploads each attachment with `PUT /api/files/blob` into
+  `temporary/desktop-chat/` on the computer and names it in the turn with an
+  `attachment_reference` part, the same contract the web composer uses. The
+  computer clears that folder by itself.
+
+Focused checks:
+
+```bash
+pnpm --dir apps/mobile exec jest --runInBand __tests__/chat-attachments.test.ts __tests__/chat-attachment-picker.test.ts __tests__/requests-chat-attachments.test.ts __tests__/use-chat-composer-attachments.test.tsx __tests__/composer-add-control.test.tsx __tests__/message-attachments.test.tsx
+```
+
+On a simulator, `xcrun simctl addmedia <udid> <image>` adds a photo to the
+library, and a file copied into the simulator's
+`group.com.apple.FileProvider.LocalStorage` app group, under
+`File Provider Storage/`, shows in the file browser under On My iPhone. The
+simulator has no camera. On a device, check a photo straight from the camera
+roll (HEIC, 24 megapixels or more), a PDF from iCloud Drive, a send on mobile
+data, and the same on Android, whose file browser hands over `content://`
+addresses.
 
 ## Full Mobile Readiness Gates
 

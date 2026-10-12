@@ -11,6 +11,8 @@ import { projectChatRows, projectRow, projectRows } from "@/components/projects/
 import { TabBar } from "@/components/shell/TabBar";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
+import { useSampleComposerAdd } from "../chat/sample-composer-add";
+
 import {
   SAMPLE_MODEL,
   SAMPLE_NOW,
@@ -83,6 +85,7 @@ function ProjectsFrame({ naming: namingAtFirst }: { naming: boolean }) {
 function OpenProjectFrame({ page: pageAtFirst }: { page: ProjectOptionsPage | null }) {
   const [page, setPage] = useState(pageAtFirst);
   const [draft, setDraft] = useState("");
+  const { composerAdd } = useSampleComposerAdd(draft, setDraft);
   const project = projectRow(SAMPLE_PROJECT, SAMPLE_NOW);
 
   return (
@@ -121,6 +124,7 @@ function OpenProjectFrame({ page: pageAtFirst }: { page: ProjectOptionsPage | nu
           onChangeDraft: setDraft,
           canSend: draft.trim().length > 0,
           onSend: noop,
+          ...composerAdd,
           modelControl: <ModelTrigger {...SAMPLE_MODEL} onPress={noop} />,
         }}
         onBack={noop}

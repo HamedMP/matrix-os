@@ -8,11 +8,13 @@ import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agent
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
 import { chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
 import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
+import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelTrigger } from "@/components/chat/ModelTrigger";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { draftWithInvocation } from "@/lib/chat-slash-entries";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
@@ -55,7 +57,9 @@ export default function ChatScreen() {
     ?? defaultCatalogSelection(catalog);
   const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
-  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+  const {
+    draft, setDraft, attachments, addAttachments, removeAttachment, sentAttachments, send, isSending, optimisticMessages,
+  } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId,
     detail,
@@ -66,16 +70,17 @@ export default function ChatScreen() {
     disabled: providerCatalogLoading,
   });
 
-  const { messages, running, onStop, renderRequest, renderResults } = useChatThread({
+  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,
     detail,
     gatewayUrl,
     refresh,
     optimisticMessages,
+    sentAttachments,
   });
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
-  const canSend = !providerCatalogLoading && draft.trim().length > 0 && isConnected
+  const canSend = !providerCatalogLoading && (draft.trim().length > 0 || attachments.length > 0) && isConnected
     && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const inputRef = useRef<TextInput>(null);
@@ -116,6 +121,11 @@ export default function ChatScreen() {
 
   const handleNewChat = useCallback(() => startDraftChat(), [startDraftChat]);
 
+  const handleInvoke = useCallback((invocation: string) => {
+    setDraft(draftWithInvocation(draft, invocation));
+    warmSessionToken();
+  }, [draft, setDraft, warmSessionToken]);
+
   return (
     <ChatScreenView
       title={chatScreenTitle(activeChatId, detail, chats)}
@@ -128,6 +138,7 @@ export default function ChatScreen() {
       chatId={activeChatId}
       renderRequest={renderRequest}
       renderResults={renderResults}
+      renderComputerPhoto={renderComputerPhoto}
       composer={{
         inputRef,
         draft,
@@ -139,6 +150,15 @@ export default function ChatScreen() {
         onSend: send,
         running: busy,
         onStop,
+        ...composerAddProps({
+          catalog,
+          selection,
+          attachments,
+          onAdd: addAttachments,
+          onRemove: removeAttachment,
+          onInvoke: handleInvoke,
+          enabled: isConnected,
+        }),
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker
             catalog={catalog}

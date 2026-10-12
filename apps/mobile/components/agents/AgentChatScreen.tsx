@@ -14,7 +14,7 @@ const INFO_ICON_SIZE = 18;
 const MASCOT_SIZE = 32;
 
 export interface AgentChatScreenProps
-  extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "footer"> {
+  extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "renderComputerPhoto" | "footer"> {
   agent: {
     id: string;
     name: string;
@@ -46,6 +46,7 @@ export function AgentChatScreen({
   chatId,
   renderRequest,
   renderResults,
+  renderComputerPhoto,
   footer,
   composer,
 }: AgentChatScreenProps) {
@@ -99,6 +100,7 @@ export function AgentChatScreen({
             chatId={chatId}
             renderRequest={renderRequest}
             renderResults={renderResults}
+            renderComputerPhoto={renderComputerPhoto}
             footer={footer}
           />
           <Composer {...composer} placeholder={`Ask ${agent.name}…`} keyboardOpen={keyboardOpen} />

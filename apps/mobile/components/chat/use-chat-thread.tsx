@@ -7,15 +7,25 @@ import { CanonicalInputMessage } from "@/components/CanonicalInputMessage";
 import {
   buildTranscript,
   optimisticTranscriptMessage,
+  withLocalAttachments,
   type TranscriptMessage,
 } from "@/lib/canonical-chat-transcript";
+import type { SentAttachmentUris } from "@/lib/chat-attachments";
 import { useCancelRun } from "@/lib/queries/use-cancel-run";
 
 import { activeChatRun, allowsHomeRelativeAppPaths } from "./chat-screen-state";
+import { ComputerPhoto } from "./ComputerPhoto";
+import type { ComputerPhotoRequest } from "./MessageAttachments";
 import { ReplyResultApps } from "./ReplyResultApps";
 import type { ChatResultApp } from "./types";
 
 type OptimisticMessage = Parameters<typeof optimisticTranscriptMessage>[0];
+
+// The message list reads nothing itself; this is how it draws a photo that is
+// on the computer and not on the phone.
+const renderComputerPhoto = (photo: ComputerPhotoRequest) => <ComputerPhoto {...photo} />;
+
+const NOTHING_SENT: SentAttachmentUris = {};
 
 interface ChatThreadInput {
   /** Null while there is no chat yet. */
@@ -27,6 +37,8 @@ interface ChatThreadInput {
   refresh: () => Promise<unknown> | void;
   /** Messages sent from this screen that the server has not listed yet. */
   optimisticMessages: readonly OptimisticMessage[];
+  /** Where attachments sent from this screen still are on the phone. */
+  sentAttachments?: SentAttachmentUris;
 }
 
 /**
@@ -34,16 +46,23 @@ interface ChatThreadInput {
  * requests and result cards inside them, and stopping the run. The Chats tab
  * and an agent's chat both read their chat through this.
  */
-export function useChatThread({ chatId, detail, gatewayUrl, refresh, optimisticMessages }: ChatThreadInput) {
+export function useChatThread({
+  chatId,
+  detail,
+  gatewayUrl,
+  refresh,
+  optimisticMessages,
+  sentAttachments = NOTHING_SENT,
+}: ChatThreadInput) {
   const router = useRouter();
   const { mutate: requestCancel, isPending: cancelPending } = useCancelRun();
 
   const messages = useMemo(() => {
-    const transcript = buildTranscript(detail);
+    const transcript = withLocalAttachments(buildTranscript(detail), sentAttachments);
     if (optimisticMessages.length === 0) return transcript;
     // Newest first, as the message list takes them.
     return [...optimisticMessages.map(optimisticTranscriptMessage).reverse(), ...transcript];
-  }, [detail, optimisticMessages]);
+  }, [detail, optimisticMessages, sentAttachments]);
 
   const activeRunId = activeChatRun(detail)?.id;
 
@@ -106,5 +125,6 @@ export function useChatThread({ chatId, detail, gatewayUrl, refresh, optimisticM
     onStop,
     renderRequest,
     renderResults,
+    renderComputerPhoto,
   };
 }

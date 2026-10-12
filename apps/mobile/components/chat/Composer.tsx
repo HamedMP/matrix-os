@@ -2,7 +2,10 @@ import type { ReactNode, Ref } from "react";
 import { Platform, TextInput, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { AddIcon, IconButton, SendIcon, StopIcon } from "@/components/ui";
+import { IconButton, SendIcon, StopIcon } from "@/components/ui";
+import type { ComposerAttachment } from "@/lib/chat-attachments";
+
+import { AttachmentTray } from "./AttachmentTray";
 
 const TOOLBAR_ICON_SIZE = 18;
 const STOP_ICON_SIZE = 16;
@@ -23,7 +26,12 @@ export interface ComposerProps {
   running?: boolean;
   /** Stops the running turn. Left out while there is no run to stop yet. */
   onStop?: () => void;
-  /** The engine and model control, after the attach button. */
+  /** The photos and files waiting to go with the message, in a row above the input. */
+  attachments?: readonly ComposerAttachment[];
+  onRemoveAttachment?: (id: string) => void;
+  /** The "+" that adds to the message, at the start of the toolbar. */
+  addControl?: ReactNode;
+  /** The engine and model control, after the "+". */
   modelControl?: ReactNode;
   /** Whether the on-screen keyboard is showing, which the card then rests on. */
   keyboardOpen: boolean;
@@ -43,6 +51,9 @@ export function Composer({
   onSend,
   running = false,
   onStop,
+  attachments,
+  onRemoveAttachment,
+  addControl,
   modelControl,
   keyboardOpen,
 }: ComposerProps) {
@@ -54,6 +65,9 @@ export function Composer({
   return (
     <View testID="composer" style={[styles.wrap, keyboardOpen && styles.wrapOnKeyboard]}>
       <View testID="composer-card" style={styles.card}>
+        {attachments && onRemoveAttachment ? (
+          <AttachmentTray attachments={attachments} onRemove={onRemoveAttachment} />
+        ) : null}
         <TextInput
           ref={inputRef}
           accessibilityLabel="Message Matrix"
@@ -74,13 +88,7 @@ export function Composer({
         />
         <View testID="composer-toolbar" style={styles.toolbar}>
           <View testID="composer-toolbar-leading" style={styles.leading}>
-            <IconButton
-              {...roundButton}
-              accessibilityLabel="Attach"
-              icon={AddIcon}
-              iconSize={TOOLBAR_ICON_SIZE}
-              backgroundColor={colors.card}
-            />
+            {addControl}
             {modelControl}
           </View>
           {running ? (

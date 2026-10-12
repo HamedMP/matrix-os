@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Alert } from "react-native";
 import { useLocalSearchParams, useNavigation } from "expo-router";
 
+import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectOptionsSheet, type ProjectOptionsPage } from "@/components/projects/ProjectOptionsSheet";
 import { ProjectScreen } from "@/components/projects/ProjectScreen";
@@ -13,6 +14,7 @@ import { useProjectComposer } from "@/components/projects/use-project-composer";
 import { useProjectList } from "@/components/projects/use-project-list";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { draftWithInvocation } from "@/lib/chat-slash-entries";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjectChats } from "@/lib/queries/use-project-chats";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
@@ -132,6 +134,18 @@ export default function ProjectRoute() {
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          ...composerAddProps({
+            catalog,
+            selection,
+            attachments: composer.attachments,
+            onAdd: composer.addAttachments,
+            onRemove: composer.removeAttachment,
+            onInvoke: (invocation) => {
+              composer.setDraft(draftWithInvocation(composer.draft, invocation));
+              warmSessionToken();
+            },
+            enabled: true,
+          }),
           modelControl: (
             <ModelPicker
               catalog={catalog}

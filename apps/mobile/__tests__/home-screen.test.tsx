@@ -164,7 +164,9 @@ describe("drawer home screen", () => {
         defaultSelection: { instanceId: "instance_test", model: "test" },
         models: [{ id: "test", availability: "available" }],
         options: [],
-        supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
+        supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"], attachments: [] },
+        skills: [],
+        commands: [],
       }],
     };
 

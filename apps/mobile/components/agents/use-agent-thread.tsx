@@ -10,8 +10,10 @@ import { useCallback } from "react";
 import { Linking } from "react-native";
 import { useAuth } from "@clerk/clerk-expo";
 
+import { composerAddProps } from "@/components/chat/composer-add";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { draftWithInvocation } from "@/lib/chat-slash-entries";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
@@ -63,7 +65,9 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   useAgentChatSync(chatId);
 
   const { selection, turnModes } = agentTurnSetup({ agent, fromTemplate: Boolean(botChat.snapshot), detail, catalog });
-  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+  const {
+    draft, setDraft, attachments, addAttachments, removeAttachment, sentAttachments, send, isSending, optimisticMessages,
+  } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId: chatId,
     detail,
@@ -74,12 +78,13 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     disabled: chatId === null,
   });
 
-  const { messages, running, onStop, renderRequest, renderResults } = useChatThread({
+  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId,
     detail,
     gatewayUrl,
     refresh,
     optimisticMessages,
+    sentAttachments,
   });
   const busy = isSending || running;
   const signedIn = Boolean(isSignedIn);
@@ -88,6 +93,11 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     setDraft(text);
     warmSessionToken();
   }, [setDraft, warmSessionToken]);
+
+  const handleInvoke = useCallback((invocation: string) => {
+    setDraft(draftWithInvocation(draft, invocation));
+    warmSessionToken();
+  }, [draft, setDraft, warmSessionToken]);
 
   const interactions = botChat.snapshot?.interactions ?? NO_INTERACTIONS;
 
@@ -98,6 +108,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     messages,
     renderRequest,
     renderResults,
+    renderComputerPhoto,
     /** What the agent is waiting on the person for, drawn after the newest message. */
     footer: interactions.length > 0 ? (
       <PendingInteractions
@@ -113,10 +124,20 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
       onChangeDraft: handleDraftChange,
       editable: signedIn,
       onFocus: warmSessionToken,
-      canSend: draft.trim().length > 0 && signedIn && Boolean(selection) && Boolean(turnModes) && !busy,
+      canSend: (draft.trim().length > 0 || attachments.length > 0) && signedIn
+        && Boolean(selection) && Boolean(turnModes) && !busy,
       onSend: send,
       running: busy,
       onStop,
+      ...composerAddProps({
+        catalog,
+        selection,
+        attachments,
+        onAdd: addAttachments,
+        onRemove: removeAttachment,
+        onInvoke: handleInvoke,
+        enabled: signedIn,
+      }),
     },
   };
 }

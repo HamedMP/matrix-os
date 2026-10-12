@@ -237,6 +237,15 @@ describe("project route", () => {
       expect(modelPickerProps()).toMatchObject({ catalog, catalogLoading: false, selection: sonnet });
     });
 
+    it("has the control that adds to a message, offering what the model chosen here reads", async () => {
+      await renderPortfolio();
+
+      fireEvent.press(screen.getByRole("button", { name: "Add to message" }));
+
+      expect(screen.getByRole("button", { name: "Photos, The selected model cannot read photos" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Files, The selected model cannot read files" })).toBeTruthy();
+    });
+
     it("tells the model picker that the models are still being checked, and holds sends until they are known", async () => {
       requests.fetchChatProviderCatalog.mockReturnValue(pendingRequest().promise);
       await renderProject();
