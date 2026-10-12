@@ -1273,6 +1273,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               }}
               headerActions={(
                 <WebDesktopControls
+                  showAoede={!VOICE_HIDDEN || AOEDE_LIVE_PREVIEW}
                   onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
                   onOpenSupport={() => void openShellSupport()}
                   onOpenSettings={openWebSettings}
