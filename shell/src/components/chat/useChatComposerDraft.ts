@@ -4,15 +4,42 @@ import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 type Draft = { text: string; resources: CanonicalChatResourceReference[]; requestId: string; permissionIdentity: string };
 const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionIdentity: "" };
 type DraftStore = { identity: unknown; drafts: Record<string, Draft> };
+/** A sent question: it goes only while it is still that edit, so a question typed after it stays. */
+type SentDraft = { identity: unknown; scope: string; requestId: string };
+
+function withoutSent(store: DraftStore, sent: SentDraft): DraftStore {
+  if (store.identity !== sent.identity || store.drafts[sent.scope]?.requestId !== sent.requestId) return store;
+  const drafts = { ...store.drafts };
+  delete drafts[sent.scope];
+  return { identity: store.identity, drafts };
+}
 
 /**
  * Keeps a view's drafts after it unmounts: a host that remounts the Chat view for each Chat (the Company Brain) gives
- * every view the same keeper, so an unfinished question and its references come back with the Chat.
+ * every view the same keeper, so an unfinished question and its references come back with the Chat. A send that
+ * settles after a switch unmounted its view still lets its question go, in the keeper and in the view now open.
  */
-export interface ChatComposerDraftKeeper { read(): DraftStore | null; write(store: DraftStore): void }
+export interface ChatComposerDraftKeeper {
+  read(): DraftStore | null;
+  write(store: DraftStore): void;
+  settle(sent: SentDraft): void;
+  subscribe(listener: (sent: SentDraft) => void): () => void;
+}
 export function createChatComposerDraftKeeper(): ChatComposerDraftKeeper {
   let kept: DraftStore | null = null;
-  return { read: () => kept, write: (store) => { kept = store; } };
+  const listeners = new Set<(sent: SentDraft) => void>();
+  return {
+    read: () => kept,
+    write: (store) => { kept = store; },
+    settle: (sent) => {
+      if (kept) kept = withoutSent(kept, sent);
+      for (const listener of [...listeners]) listener(sent);
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  };
 }
 
 export function useChatComposerDraft(scope: string, identity: unknown, keeper?: ChatComposerDraftKeeper) {
@@ -26,6 +53,7 @@ export function useChatComposerDraft(scope: string, identity: unknown, keeper?: 
     storeRef.current = store;
     keeper?.write(store);
   }, [keeper, store]);
+  useLayoutEffect(() => keeper?.subscribe((sent) => setStore((current) => withoutSent(current, sent))), [keeper]);
   const draft = store.identity === identity ? store.drafts[scope] ?? emptyDraft : emptyDraft;
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable draft writers are effect dependencies in ChatInput, including non-compiler tests and development.
   const update = useCallback((patch: Partial<Pick<Draft, "text" | "resources">>, replace = false) => {
@@ -63,12 +91,11 @@ export function useChatComposerDraft(scope: string, identity: unknown, keeper?: 
     // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable identity prevents replaying a pending external draft request.
     setText: useCallback((text: string) => update({ text }), [update]),
     setResources: (resources: CanonicalChatResourceReference[]) => update({ resources }),
-    clear: () => setStore((current) => {
-      if (current.identity !== identity || current.drafts[scope]?.requestId !== draft.requestId) return current;
-      const drafts = { ...current.drafts };
-      delete drafts[scope];
-      return { identity, drafts };
-    }),
+    clear: () => {
+      const sent = { identity, scope, requestId: draft.requestId };
+      setStore((current) => withoutSent(current, sent));
+      keeper?.settle(sent);
+    },
   };
 }
 export type ChatComposerDraft = ReturnType<typeof useChatComposerDraft>;

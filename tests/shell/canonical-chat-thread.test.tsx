@@ -301,6 +301,34 @@ describe("Company Brain chat on Web", () => {
     expect(await screen.findByRole("textbox", { name: /message/i })).toHaveValue("Who owns");
   });
 
+  it("does not bring a sent question back as a draft when the viewer switched threads before it was sent", async () => {
+    const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
+    const { client } = webBrain([titled("chat_a", "Release notes"), titled("chat_b", "Test plan")]);
+    let admit!: () => void;
+    client.admitTurn.mockImplementationOnce((chatId: string) => new Promise((resolve) => {
+      admit = () => resolve({ record: record(chatId, 2), message: message(chatId, "msg_user", "Why?", 2), turn: {}, run: {},
+        admission: "accepted" });
+    }));
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    const openRow = async (name: RegExp) => {
+      fireEvent.click(await screen.findByRole("button", { name }));
+      await waitFor(() => expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy());
+    };
+    await openRow(/^Release notes/);
+    fireEvent.change(composer(), { target: { value: "What shipped in May?" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_a", expect.anything()));
+    // The viewer opens another thread before the question is admitted; the open view then saves its own draft.
+    await openRow(/^Test plan/);
+    await act(async () => { admit(); });
+    fireEvent.change(composer(), { target: { value: "Which tests" } });
+    await openRow(/^Release notes/);
+    expect(composer()).toHaveValue("");
+    await openRow(/^Test plan/);
+    expect(composer()).toHaveValue("Which tests");
+  });
+
   it("marks a brain answer read only while its window is focused, like the Chat window", async () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     const unread = { unread: true, markedUnread: false, version: 3, readThroughSeq: 0, latestIncomingSeq: 1 };

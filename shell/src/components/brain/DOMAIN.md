@@ -12,15 +12,15 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 - `BrainChatHost.tsx`: the Web chat slot. It fills the Chat tab with the shell's own `ChatApp` in `layout="embedded"`
   (no rail, suggestion chips, Share, settings or connection line; the same transcript, composer, Bot panel and model
   recovery notice), driven by `hooks/useCanonicalChatThread.ts`: a controller for one Chat that reuses the Chat app's
-  transcript, content deltas and snapshot refresh, calls the slot's `createChat` on a draft's first send, never
-  changes the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the
-  slot (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own
-  model). When a new thread's first turn is refused, the question moves into its composer. A question with a
-  reference sent while an answer runs is queued, as in the Chat app, and a retry keeps its queue. A thread switch
-  remounts the view, so the host keeps the composer drafts (`composerDrafts`): each thread's unfinished question and
-  references, and each project's draft (`newDraftScope`), come back when the viewer returns. Open in Chat switches
-  the Chat app to the same Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans
-  to it). Rows rename and delete over the shell chat client.
+  transcript, content deltas and snapshot refresh, calls the slot's `createChat` on a draft's first send, never changes
+  the URL or the Chat app's selection, and reports the Chat after every admitted turn. The Bot comes from the slot
+  (`botId`), so a draft already sends as the Bot, and a Bot chat shows no harness setup (a Bot runs on its own model).
+  When a new thread's first turn is refused, the question moves into its composer. A question with a reference sent
+  while an answer runs is queued, as in the Chat app, and a retry keeps its queue. A thread switch remounts the view, so
+  the host keeps the composer drafts (`composerDrafts`): each thread's unfinished question and references, and each
+  project's draft (`newDraftScope`), come back when the viewer returns; a question sent before a switch leaves them once
+  it is admitted. Open in Chat switches the Chat app to the same Chat and focuses or opens its window through
+  `lib/shell-window-focus.ts` (Web Canvas pans to it). Rows rename and delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
   (no heading, the title bar names the app), `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the
   palette in `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`.
@@ -51,6 +51,6 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 
 - `tests/shell/`: `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, one poll at a time, the
   embedded layout, a draft sent as a brain thread, a refused first question given back, drafts kept across thread
-  switches, read state only while seen, Open in Chat), `chat-composer-draft.test.tsx` (the draft keeper),
-  `canonical-chat-client.test.ts` (the Chat delete), `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts`,
-  `window-manager.test.ts`.
+  switches and a sent one not brought back, read state only while seen, Open in Chat), `chat-composer-draft.test.tsx`
+  (the draft keeper), `canonical-chat-client.test.ts` (the Chat delete), `builtin-apps.test.ts`,
+  `web-desktop-app-launch.test.ts`, `window-manager.test.ts`.
