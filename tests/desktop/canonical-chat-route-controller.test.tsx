@@ -1415,6 +1415,39 @@ describe("canonical Chat route controller", () => {
     expect(result.current.items.map((item) => item.chat.id)).not.toContain(earlier.chat.id);
   });
 
+  it("still shows why a Turn failed after its own Chat row was clicked again while it was on its way", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let refuse!: (error: unknown) => void;
+    const sharedClient = client({
+      admitTurn: vi.fn(() => new Promise((_resolve, reject) => { refuse = reject; })),
+    });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient, projectId: null, active: true, initialChatId: globalRecord.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+
+    let submission!: Promise<unknown>;
+    act(() => {
+      submission = result.current.submitTurn({
+        parts: [{ type: "text", text: "Why?" }],
+        selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+        interactionMode: "default",
+        permissionMode: "supervised",
+      }, "Why?");
+    });
+    await waitFor(() => expect(sharedClient.admitTurn).toHaveBeenCalledTimes(1));
+    act(() => result.current.selectChat(globalRecord.chat.id));
+    await act(async () => {
+      refuse(new AppError("offline"));
+      await submission;
+    });
+
+    expect(result.current.error).toBe(
+      "The message could not be sent. Reason: Can't reach Matrix OS. Check your connection.",
+    );
+    warn.mockRestore();
+  });
+
   it("includes a safe failure reason while recording only the diagnostic category", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const failedClient = client({

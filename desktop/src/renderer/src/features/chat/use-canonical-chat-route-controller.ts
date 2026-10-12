@@ -396,7 +396,8 @@ export function useCanonicalChatRouteController({
 
   const selectChat = useCallback((chatId: string | null) => {
     detailRequestSequence.current += 1;
-    sendScopeRef.current = {};
+    // Clicking the open Chat's row again is no navigation: a send under way still reports its result.
+    if (activeChatIdRef.current !== chatId) sendScopeRef.current = {};
     setActiveChatId(chatId);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
