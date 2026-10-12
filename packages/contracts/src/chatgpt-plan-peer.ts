@@ -1,3 +1,4 @@
+import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "#bots/image-inference";
 import { z } from 'zod/v4';
 // Raw SSE bytes and its worst-case JSON encoding (control characters expand 6x).
 export const CHATGPT_PLAN_RESPONSE_BYTE_LIMIT = 1024 * 1024;
@@ -29,7 +30,7 @@ export const ChatGptPlanPeerConnectSchema = z.object({ version: z.literal(1), ch
 export const ChatGptPlanPeerSessionSchema = z.object({ version: z.literal(1), sessionId: z.uuid() }).strict();
 export const ChatGptPlanPeerRequestSchema = z.discriminatedUnion('action', [
     z.object({ version: z.literal(1), action: z.literal('infer'), id: z.uuid(), sequence: z.number().int().min(1).max(CHATGPT_PLAN_PEER_MAX_SEQUENCE), expiresAt: z.string().datetime(), accountId: reference, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(512000) }).strict(),
+        computerId: reference, requestClass: z.enum(['interactive', 'background']), runId: reference, model: reference, body: z.string().max(BOT_IMAGE_INFERENCE_MAX_BYTES).refine(body => validateBotImageInferenceBody(body, 512000).valid) }).strict(),
     z.object({ version: z.literal(1), action: z.literal('cancel'), id: z.uuid() }).strict(),
 ]);
 export const ChatGptPlanPeerReplySchema = z.discriminatedUnion('ok', [
@@ -51,6 +52,7 @@ export function chatGptPlanPeerProof(input: {
 }): string {
     return JSON.stringify({ version: 1, challenge: input.challenge, ownerId: input.ownerId, computerId: input.computerId, snapshot: input.snapshot, ...(input.replacement ? { replacement: input.replacement } : {}) });
 }
+export const CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT = 4 * (BOT_IMAGE_INFERENCE_MAX_BYTES + 256 * 1024) + 64 * 1024;
 export const ChatGptPlanPeerPollSchema = z.object({
     version: z.literal(1), requests: z.array(ChatGptPlanPeerRequestSchema).max(32),
 }).strict();

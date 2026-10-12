@@ -94,7 +94,7 @@ const FAILURES: Partial<Record<NonNullable<BotTurnResult["blockedReason"]>, { co
 function completion(result: BotTurnResult): CanonicalProviderRunEvent {
   if (result.status === "completed" || result.status === "waiting_person") return { type: "run.completed", outcome: "completed" };
   if (result.status === "cancelled") return { type: "run.completed", outcome: "aborted" };
-  const failure = (result.blockedReason && FAILURES[result.blockedReason])
+  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: "The attachments could not be read. Attach the files again, using PNG, JPEG or WebP images up to 2 MiB, or files up to 1 MiB." } : (result.blockedReason && FAILURES[result.blockedReason])
     ?? { code: "run_failed" as const, message: "The bot could not finish this request." };
   return {
     type: "run.completed",
@@ -121,7 +121,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       if (input.owner.type !== "personal") throw new Error("Bots run only for a personal owner");
       const handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
-        selection: input.selection, text: messageText(input.parts), signal: input.signal,
+        selection: input.selection, text: messageText(input.parts), parts: input.parts, signal: input.signal,
       });
       let result: BotTurnResult;
       let drained = false;

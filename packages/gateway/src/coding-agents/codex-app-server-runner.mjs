@@ -1,6 +1,7 @@
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
+import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
@@ -50,7 +51,6 @@ const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
-const CREDENTIAL_DISPLAY_TEXT = /(?:api[_-]?key|authorization|cookie|credential|password|secret|token)\s*(?:=|:|\s)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -517,19 +517,11 @@ function safeDisplayPath(value) {
   return undefined;
 }
 
-function safeToolDetails(item) {
+function safeToolDetails(item, toolCallId) {
   if (item.type === "commandExecution") {
-    const command = typeof item.command === "string" ? item.command.trim() : "";
-    const safeCommand = command.length > 0
-      && command.length <= 1_000
-      && !UNSAFE_DISPLAY_TEXT.test(command)
-      && !CREDENTIAL_DISPLAY_TEXT.test(command)
-      && !/[\r\n\u0000]/.test(command)
-      ? command
-      : undefined;
     const cwd = safeDisplayPath(item.cwd);
     return {
-      ...(safeCommand ? { preview: safeCommand, previewKind: "command" } : {}),
+      ...codexCommandPreview(item.command, toolCallId, toolOutputKey),
       ...(cwd ? { detail: `Working directory: ${cwd}` } : {}),
     };
   }
@@ -908,7 +900,7 @@ async function handleItemLifecycle(raw) {
     privateToolItems.add(matrixItemId);
   }
   const presentation = toolPresentation(item);
-  const details = safeToolDetails(item);
+  const details = safeToolDetails(item, matrixItemId);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
@@ -946,6 +938,7 @@ async function handleItemLifecycle(raw) {
     type: "matrix.codex.tool.completed",
     toolCallId: matrixItemId,
     outcome: toolOutcome(item.status),
+    ...details,
   });
   startedToolItems.delete(matrixItemId);
   privateToolItems.delete(matrixItemId);

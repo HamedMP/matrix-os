@@ -334,6 +334,7 @@ export async function startBots(options: {
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
   const orchestrator = createBotTaskOrchestrator({
+    homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     bindings,
     transact,
     interactions,
@@ -363,11 +364,12 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
+    submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
   const qualifiedTools: BotToolDispatcher = {

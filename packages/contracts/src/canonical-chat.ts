@@ -1,3 +1,5 @@
+import { CanonicalChatCommandPreviewSchema } from "#command-preview";
+export { CanonicalChatCommandPreviewSchema } from "#command-preview";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
@@ -475,7 +477,8 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
   label: canonicalSafeLabel(240, 960),
   status: CanonicalChatAgentActivityStatusSchema,
   summary: canonicalSafeLabel(1_000, 4_000).optional(),
-  preview: canonicalSafeLabel(1_000, 4_000).optional(),
+  preview: CanonicalChatCommandPreviewSchema.optional(),
+  protectedPreview: ProtectedToolOutputSchema.optional(),
   previewKind: z.enum(["command", "path", "text"]).optional(),
   detail: canonicalSafeLabel(2_000, 8_000).optional(),
 }).strict().superRefine((activity, context) => {

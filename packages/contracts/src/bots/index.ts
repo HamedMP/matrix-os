@@ -13,3 +13,6 @@ export * from "#bots/model-choice";
 export * from "#bots/provider-connections";
 export * from "#bots/execution-presentation";
 export * from "#bots/custom-creation";
+
+export * from "#bots/input-policy";
+export * from "#bots/image-inference";
