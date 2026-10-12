@@ -49,9 +49,10 @@ Electron Desktop is the visual reference. Web Desktop and Web Canvas must reuse 
 - `packages/contracts/src/onboarding-widget.ts`: a pure reducer with typed events (discriminated union), the starter-task catalog with exact Figma copy, prompt builders, and `deriveOnboardingRunView(detail, runId)`. That function projects canonical chat messages into a bounded work log, a result and a failure.
 - `packages/ui/src/onboarding-widget/`: presentational components. They take `state`, a derived view model and callbacks, and do no network I/O. Logos come in from the adapter as React nodes.
 - Electron `features/onboarding-widget/`: the controller hook owns the reducer. Each task:
-  1. Creates one canonical chat, titled "Getting started".
+  1. Creates a new canonical chat named after the task (`onboardingChatTitle`, for example "Research: AI agent pricing" or "Plan my week"). Retries and follow-ups go back into that task's chat.
   2. Admits turns with the default composer selection derived from the provider catalog.
-  3. Subscribes to the shared canonical chat event stream and reloads the chat detail on `chat.changed`.
+  3. Once the turn is admitted, opens the main Chat on that chat and shrinks the widget to its bubble (`useOnboardingChatHandoff`, shared by Electron Desktop, Web Desktop and Web Canvas).
+  4. Subscribes to the shared canonical chat event stream and reloads the chat detail on `chat.changed`.
 
   Integrations use `useIntegrations().startConnect` plus `shell:open-external`, with bounded polling through `syncNow`. AI changes use `createDesktopProviderWorkflowClient`.
 
@@ -84,6 +85,6 @@ Electron Desktop is the visual reference. Web Desktop and Web Canvas must reuse 
 
 - **Source of truth:** canonical chat (owner Postgres) for conversation content. Local preferences only control presentation.
 - **Lock/transaction scope:** none added. Chat admission idempotency comes from `clientRequestId`.
-- **Acceptable orphan states:** a created "Getting started" chat without a turn (admission failed) remains visible in the Chat app and is reused on retry.
+- **Acceptable orphan states:** if a task's chat is created but its first turn is not admitted, the empty chat stays visible in the Chat app and a retry starts the task in a new chat.
 - **Auth source of truth:** the existing desktop trusted-core session (`useConnection().api`).
 - **Deferred:** server-side onboarding completion, "Shrink to corner" control inside the Chat app, Web surfaces (PR 2), save-as-agent, mobile.

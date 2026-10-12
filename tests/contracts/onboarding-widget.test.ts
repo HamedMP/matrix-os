@@ -7,6 +7,7 @@ import {
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
   onboardingAiLabel,
+  onboardingChatTitle,
   onboardingRunInFlight,
   onboardingRunTitle,
   parseOnboardingRepoUrl,
@@ -148,6 +149,33 @@ describe("reduceOnboardingWidget", () => {
     const done = run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" });
     expect(done.screen).toMatchObject({ phase: "done" });
     expect(done.firstTaskCompleted).toBe(true);
+  });
+
+  it("starts every new task in its own chat instead of reusing the last one", () => {
+    const earlier = { ...fresh(), chatId: "chat_earlier" };
+    const research = run(earlier, { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "AI agent pricing" });
+    expect(research.screen).toMatchObject({ kind: "run", phase: "starting" });
+    expect(research.chatId).toBeNull();
+    const week = run(earlier, { type: "task.selected", taskId: "plan-week", connectedServices: ["google_calendar"] });
+    expect(week.screen).toMatchObject({ kind: "run", taskId: "plan-week", phase: "starting" });
+    expect(week.chatId).toBeNull();
+    const code = run(
+      earlier,
+      { type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] },
+      { type: "answer.submitted", text: "matrix-os", context: "https://github.com/HamedMP/matrix-os" },
+    );
+    expect(code.chatId).toBeNull();
+    expect(run(earlier, { type: "freeform.submitted", text: "Summarize today" }).chatId).toBeNull();
+  });
+
+  it("keeps a task's chat for its retries and follow-ups", () => {
+    const started = run(fresh(), { type: "freeform.submitted", text: "Summarize today" });
+    const requestId = started.screen.kind === "run" ? started.screen.requestId : -1;
+    const admitted = run(started, { type: "run.admitted", requestId, chatId: "chat_task", runId: "run_1" });
+    const failed = run(admitted, { type: "run.settled", runId: "run_1", outcome: "failed" });
+    expect(run(failed, { type: "run.retried", simpler: true }).chatId).toBe("chat_task");
+    const done = run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" });
+    expect(run(done, { type: "followUp.chosen", choice: "Yes", prompt: "Do this every Monday at 8:00." }).chatId).toBe("chat_task");
   });
 
   it("ignores admission results for a superseded request", () => {
@@ -390,6 +418,23 @@ describe("buildOnboardingPrompt", () => {
 
   it("passes free-form text through unchanged", () => {
     expect(buildOnboardingPrompt({ taskId: "custom", answer: "Summarize today", appConnected: false, simpler: false })).toBe("Summarize today");
+  });
+});
+
+describe("onboardingChatTitle", () => {
+  it("names each new chat after its task so Chat can tell them apart", () => {
+    expect(onboardingChatTitle({ taskId: "research", answer: "AI agent pricing" })).toBe("Research: AI agent pricing");
+    expect(onboardingChatTitle({ taskId: "plan-week", answer: "" })).toBe("Plan my week");
+    expect(onboardingChatTitle({ taskId: "build-website", answer: "Portfolio" })).toBe("Website: Portfolio");
+    expect(onboardingChatTitle({ taskId: "work-on-code", answer: "matrix-os" })).toBe("Code: matrix-os");
+    expect(onboardingChatTitle({ taskId: "custom", answer: "Summarize today" })).toBe("Summarize today");
+  });
+
+  it("keeps a follow-up's result title and clips long requests", () => {
+    expect(onboardingChatTitle({ taskId: "custom", answer: "Do this every Monday", title: "Week plan" })).toBe("Week plan");
+    const long = onboardingChatTitle({ taskId: "research", answer: "x".repeat(200) });
+    expect(long).toHaveLength(60);
+    expect(long.endsWith("…")).toBe(true);
   });
 });
 

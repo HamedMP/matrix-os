@@ -14,7 +14,6 @@ import {
   admitOnboardingTurn,
   isComputerStartingError,
   loadOnboardingRepos,
-  ONBOARDING_CHAT_TITLE,
   onboardingApps,
   onboardingConnectedProviders,
   onboardingCreditsExhausted,
@@ -213,26 +212,28 @@ describe("onboarding turn admission", () => {
   const selection = { instanceId: "hermes_default", model: "default", options: [], interactionMode: "default", permissionMode: "default" };
   const admitted = (chatId: string) => ({ record: { chat: { id: chatId } }, run: { id: "run_1" } });
 
-  it("creates the Getting started chat on the first task", async () => {
+  it("creates a new chat named after the task", async () => {
     const client = {
       create: vi.fn().mockResolvedValue({ chat: { id: "chat_new", revision: 3 } }),
       getDetail: vi.fn(),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: null, prompt: "Do it", selection })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
-    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: ONBOARDING_CHAT_TITLE }));
+    await expect(admitOnboardingTurn({ client: client as never, chatId: null, title: "Research: AI agent pricing", prompt: "Do it", selection }))
+      .resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    expect(client.getDetail).not.toHaveBeenCalled();
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: "Research: AI agent pricing" }));
     expect(client.admitTurn).toHaveBeenCalledWith("chat_new", expect.objectContaining({
       baseRevision: 3, parts: [{ type: "text", text: "Do it" }], selection: { instanceId: "hermes_default", model: "default" },
     }), { chatScope: "global" });
   });
 
-  it("reuses the existing chat at its current revision", async () => {
+  it("sends a retry or follow-up into the task's chat at its current revision", async () => {
     const client = {
       create: vi.fn(),
       getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 9 } } }),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
     };
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Again", selection });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", title: "Week plan", prompt: "Again", selection });
     expect(client.create).not.toHaveBeenCalled();
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 9 }), { chatScope: "global" });
   });
@@ -243,9 +244,11 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn().mockRejectedValue(new AppError("notFound")),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", title: "Week plan", prompt: "x", selection }))
+      .resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: "Week plan" }));
     client.getDetail.mockRejectedValue(new AppError("offline"));
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection })).rejects.toThrow(AppError);
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", title: "Week plan", prompt: "x", selection })).rejects.toThrow(AppError);
   });
 
   it("treats only offline and timeout as the computer still starting", () => {

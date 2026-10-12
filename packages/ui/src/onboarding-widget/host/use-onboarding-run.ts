@@ -1,6 +1,7 @@
 import {
   buildOnboardingPrompt,
   deriveOnboardingRunView,
+  onboardingChatTitle,
   onboardingTask,
   type OnboardingRunView,
   type OnboardingWidgetEvent,
@@ -62,7 +63,7 @@ export function useOnboardingRun(
       simpler: screen.simpler,
       ...(screen.context ? { context: screen.context } : {}),
     });
-    void admitOnboardingTurn({ port, chatId: chatIdRef.current, prompt, selection }).then(
+    void admitOnboardingTurn({ port, chatId: chatIdRef.current, title: onboardingChatTitle(screen), prompt, selection }).then(
       (admitted) => {
         computerAttempts.current = 0;
         dispatch({ type: "run.admitted", requestId, chatId: admitted.chatId, runId: admitted.runId });
