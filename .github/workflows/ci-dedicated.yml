@@ -49,6 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: matrix-ci
     timeout-minutes: 70
+    env:
+      # Duplicate workflow_run events start several controllers; only the newest may
+      # qualify. These exact helper errors mean another controller or source won.
+      RACE_LOST_ERRORS: '["A newer controller superseded this lease", "A newer requesting CI attempt superseded this lease", "Dedicated qualification revision or admission is stale", "Current parent ref has changed", "Current ordered merge parents are stale", "Current main source is stale", "Main moved during source attestation"]'
     steps:
       - name: Authenticate reviewed controller pin before helper or secret use
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -85,8 +89,7 @@ jobs:
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {admitDedicatedSource,newestRequestingCiRun}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
-            // Duplicate workflow_run events start several controllers; only the newest may qualify.
-            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
+            const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
             let admission;
             try{admission=await admitDedicatedSource(github,{
               repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
@@ -122,7 +125,7 @@ jobs:
             const {resolve}=require('node:path');
             const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
-            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
+            const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
             try{await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
               baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)});}
             catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
@@ -163,7 +166,7 @@ jobs:
               imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
-            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
+            const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
             let receipt;
             try{receipt=await dispatchDedicatedLease(configuration.github,{repo:context.repo,
               controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
@@ -221,16 +224,16 @@ jobs:
         with:
           script: |
             const main=process.env.SOURCE_KIND==='main';
-            if(process.env.SUPERSEDED==='true'){
-              // A newer controller or source owns qualification; this check never carries receipt credit.
-              await github.rest.checks.update({...context.repo,check_run_id:Number(process.env.CHECK_ID),request:{timeout:10000},
+            const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
+            // A newer controller or source owns qualification; this check never carries receipt credit.
+            const settleSuperseded=()=>github.rest.checks.update({...context.repo,check_run_id:Number(process.env.CHECK_ID),request:{timeout:10000},
                 details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 status:'completed',conclusion:'neutral',output:{title:'Superseded by a newer controller or source',
                   summary:JSON.stringify({schemaVersion:3,...(main?{sourceKind:'main'}:{}),superseded:true,receiptVerified:false,
                     sourceSha:process.env.SOURCE_SHA,headSha:process.env.HEAD_SHA,prNumber:Number(process.env.PR_NUMBER),
                     controllerSha:process.env.CONTROLLER_SHA,controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT)})}});
-              return;
-            }
+            if(process.env.SUPERSEDED==='true'){await settleSuperseded();return;}
+            let superseded=false;
             let infrastructure=false;let proof={};
             let success=Number(process.env.PR_NUMBER)===0&&!main?process.env.MANUAL_OUTCOME==='success':process.env.DISPATCH_OUTCOME === 'success' && process.env.QUALIFICATION_VERIFIED === 'true';
             const {pathToFileURL}=require('node:url');
@@ -248,13 +251,17 @@ jobs:
                 headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
                 prNumber:Number(process.env.PR_NUMBER),...(main?{sourceKind:'main'}:{}),mergeParents:JSON.parse(process.env.MERGE_PARENTS||'[]')});
             } catch(error) {
-              core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
-              core.setFailed('Current PR revision could not be revalidated');
               success=false;infrastructure=false;
+              if(raceLost(error)){superseded=true;core.notice(`Standing down: ${error.message}`);}
+              else{
+                core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
+                core.setFailed('Current PR revision could not be revalidated');
+              }
             } finally{
               if(configuration)try{await configuration.close();}
-              catch{core.setFailed('Configuration read token revocation failed');success=false;infrastructure=false;}
+              catch{core.setFailed('Configuration read token revocation failed');success=false;infrastructure=false;superseded=false;}
             }
+            if(superseded){await settleSuperseded();return;}
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
               details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
