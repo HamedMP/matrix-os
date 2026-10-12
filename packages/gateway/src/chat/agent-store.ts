@@ -143,6 +143,15 @@ export class ChatAgentStore {
     return stored?.agent ?? null;
   }
 
+  /** Internal creation provenance; the hash is never projected in the strict public definition DTO. */
+  async matchesCreationHash(owner: ChatOwner, agentId: string, createHash: string): Promise<boolean> {
+    const id = ChatAgentIdSchema.parse(agentId);
+    const hash = z.string().regex(/^[a-f0-9]{64}$/).parse(createHash);
+    const directory = await this.directory([this.ownerKey(owner)]);
+    const stored = directory ? await this.read(join(directory, `${id}.md`)) : null;
+    return stored?.agent.id === id && stored.createHash === hash;
+  }
+
   async list(owner: ChatOwner, includeArchived = false): Promise<ChatAgent[]> {
     const directory = await this.directory([this.ownerKey(owner)]);
     if (!directory) return [];
@@ -206,6 +215,7 @@ export class ChatAgentStore {
     id: string;
     createHash: string;
     fields: Pick<ChatAgent, "name" | "description" | "instructions" | "selection">;
+    recipe?: ChatAgent["recipe"];
     recipeRef: BotRecipeRef;
   }): Promise<ChatAgent> {
     const id = ChatAgentIdSchema.parse(input.id);
@@ -221,7 +231,7 @@ export class ChatAgentStore {
       }
       if ((await this.list(owner, true)).length >= MAX_AGENTS) throw new ChatAgentStoreError("agent_capacity");
       const now = (this.options.now?.() ?? new Date()).toISOString();
-      const agent = ChatAgentSchema.parse({ ...input.fields, recipeRef: input.recipeRef,
+      const agent = ChatAgentSchema.parse({ ...input.fields, ...(input.recipe ? { recipe: input.recipe } : {}), recipeRef: input.recipeRef,
         id, revision: 1, archived: false, createdAt: now, updatedAt: now });
       await this.write(directory, { agent, createHash }, true);
       return agent;

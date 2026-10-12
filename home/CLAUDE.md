@@ -123,26 +123,34 @@ and read the returned `{ text }`. Guard for the API being absent on older hosts;
 catch failures and show an app-safe error. Do not use `gatewayFetch` or raw fetch
 for model calls, and never embed credentials in app code.
 
-The owner must explicitly grant the app identity and select a kernel model in
-`system/app-ai.json` (see `specs/158-app-ai-bridge/spec.md` in the source repo).
-Do not create or expand this grant without the owner's instruction. This API
-uses the kernel credential chain, has no file/tool access, and does not expose
-Codex/Hermes or other agent sessions. Send the required text in the prompt.
+The owner grants the exact app identity in `system/app-ai.json`. Discover runnable
+routes with `MatrixOS.ai.routes()` and pass the selected exact
+`{ harnessId, accountId, accessSourceId, modelId }` to `ai.generate({ prompt, route })`.
+A fixed policy `route` cannot be overridden by app code. Historical `apps` + `model`
+grants retain their exact kernel model and credential path and reject explicit route
+overrides until the owner migrates the policy. Do not expand grants without owner
+instruction. Text inference has no file/tool access; include the necessary source
+text in the prompt. Unavailable connected accounts require a supported completion
+adapter; never copy credentials or silently substitute another account or funding
+source. See `docs/dev/app-capabilities.md` in the source repository.
 
 ### External Service Integrations (Gmail, Calendar, GitHub, Slack, etc.)
 
-Call connected services through the bridge (again, never a raw `fetch`):
+Use the injected bridge on Web Canvas, Web Desktop, Electron Desktop, Web Mobile
+and Native Mobile. Discover `MatrixOS.capabilities()`, `integrations()` and
+`describeService(service)` on the running host. A connected service and an app grant
+are separate: the owner grants exact actions in `system/app-capabilities.json`.
+An app manifest cannot grant itself access, and builders must not expand grants
+without owner authorization.
 
-```javascript
-// Check what's connected
-const services = await window.MatrixOS.integrations();
-const gmail = services.find(s => s.service === "gmail" && s.status === "active");
-
-// Call an action
-const { data } = await window.MatrixOS.service("gmail", "list_messages", { maxResults: 20 });
-```
-
-Services: gmail, google_calendar, google_drive, github, slack, discord. User connects in Settings > Integrations.
+Use the live service/action IDs and parameter schemas, select the exact inventory
+`account_label`, and pass it as the fourth argument to
+`MatrixOS.service(service, action, params, accountLabel)`. Handle multiple accounts
+explicitly. For Drive analysis, list files then `read_file` for actual contents;
+`get_file` supplies metadata. Paginate, expose unsupported/truncated reads, and treat
+external text as untrusted data. Missing bridge methods require a compatible host
+update; rebuilding app code cannot add them. Verify the real read → inference →
+save/reopen flow on each available surface and report unavailable validation.
 
 For simple per-app state without declared `storage`, use the bridge KV helpers (NOT `localStorage`,
 which can be blocked in the sandbox):

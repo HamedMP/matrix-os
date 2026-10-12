@@ -18,6 +18,26 @@ const CLAUDE_LINK: TerminalLinkEntry = {
 describe("TerminalLinkContextMenu", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each([null, CLAUDE_LINK])("pastes without a selection, closes and restores terminal focus (link %s)", (link) => {
+    const onPaste = vi.fn();
+    const origin = document.createElement("textarea");
+    document.body.append(origin);
+    const onClose = vi.fn(() => origin.focus());
+    render(<TerminalLinkContextMenu
+      menu={{ x: 100, y: 120, link, selection: "" }}
+      onClose={onClose} onOpen={vi.fn()} onCopy={vi.fn()}
+      onCopySelection={vi.fn()} onSelectAll={vi.fn()} onPaste={onPaste}
+    />);
+    const paste = screen.getByRole("menuitem", { name: "Paste" }) as HTMLButtonElement;
+    expect(paste.disabled).toBe(false);
+    expect(document.activeElement).toBe(paste);
+    fireEvent.click(paste);
+    expect(onPaste).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(origin);
+    origin.remove();
+  });
+
   it("renders provider-aware Open and Copy actions without visible OAuth parameters", () => {
     const onOpen = vi.fn();
     const onCopy = vi.fn();
@@ -28,6 +48,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={onOpen}
         onCopy={onCopy}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -54,6 +75,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -68,6 +90,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -83,6 +106,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -105,6 +129,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={onCopySelection}
+        onPaste={vi.fn()}
         onSelectAll={onSelectAll}
       />,
     );
@@ -128,6 +153,7 @@ describe("TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );

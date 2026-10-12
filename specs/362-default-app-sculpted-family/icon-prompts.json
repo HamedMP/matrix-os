@@ -1,0 +1,297 @@
+{
+  "generator": "built-in image_gen.imagegen",
+  "useCase": "stylized-concept",
+  "references": [
+    "https://www.figma.com/design/xPG2FeYRtC9owCKSVXCqWA/brand?node-id=1-545",
+    "home/system/icons/notes.png",
+    "home/system/icons/files.png"
+  ],
+  "output": {
+    "directory": "home/apps/app-gallery/src/assets/icons",
+    "format": "PNG",
+    "width": 256,
+    "height": 256,
+    "optimization": "sips -Z 256; preserve original generated image"
+  },
+  "apps": [
+    {
+      "id": "folio",
+      "color": "Lagoon #176d65",
+      "subject": "a lagoon teal upright document portfolio with three cream layered pages and one small glazed teal leaf clasp",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a lagoon teal upright document portfolio with three cream layered pages and one small glazed teal leaf clasp. Dominant intentional accent is Lagoon #176d65; related ivory, sage and clay are secondary only.",
+      "source": "exec-7f27fa11-bf10-459c-9051-0af7252dda05.png",
+      "output": "home/apps/app-gallery/src/assets/icons/folio.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "atlas",
+      "color": "Sky #2562a0",
+      "subject": "a softly sculpted sky-blue folded travel map with a large copper map-location pin; no printed labels",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a softly sculpted sky-blue folded travel map with a large copper map-location pin; no printed labels. Dominant intentional accent is Sky #2562a0; related ivory, sage and clay are secondary only.",
+      "source": "exec-9b6b04a9-bd30-491a-ad72-b8cedc271860.png",
+      "output": "home/apps/app-gallery/src/assets/icons/atlas.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "agenda",
+      "color": "Poppy #b4364b",
+      "subject": "a poppy rose ceramic desk calendar with two cream rounded binding loops and three simple raised day squares; no numbers",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a poppy rose ceramic desk calendar with two cream rounded binding loops and three simple raised day squares; no numbers. Dominant intentional accent is Poppy #b4364b; related ivory, sage and clay are secondary only.",
+      "source": "exec-b371e051-2c1a-4b54-9a85-854c0eaec63c.png",
+      "output": "home/apps/app-gallery/src/assets/icons/agenda.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "follow-ups",
+      "color": "Sage #83986c",
+      "subject": "a sage ceramic reply-envelope with a single curved pale clay return arrow emerging above it",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a sage ceramic reply-envelope with a single curved pale clay return arrow emerging above it. Dominant intentional accent is Sage #83986c; related ivory, sage and clay are secondary only.",
+      "source": "exec-7714460c-daa4-4b0c-8d8b-cea8e5582137.png",
+      "output": "home/apps/app-gallery/src/assets/icons/follow-ups.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "subscriptions",
+      "color": "Plum #78509b",
+      "subject": "a plum ceramic ring of two broad circular renewal arrows encircling a tiny ivory payment card",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a plum ceramic ring of two broad circular renewal arrows encircling a tiny ivory payment card. Dominant intentional accent is Plum #78509b; related ivory, sage and clay are secondary only.",
+      "source": "exec-b6401a07-894f-4a11-baf3-ca076595cafc.png",
+      "output": "home/apps/app-gallery/src/assets/icons/subscriptions.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "deliveries",
+      "color": "Clay #b65c40",
+      "subject": "a warm terracotta parcel box with an ivory wrapping band and a small sage delivery tag",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a warm terracotta parcel box with an ivory wrapping band and a small sage delivery tag. Dominant intentional accent is Clay #b65c40; related ivory, sage and clay are secondary only.",
+      "source": "exec-ff876532-5d97-4272-866d-5016ad8e54fc.png",
+      "output": "home/apps/app-gallery/src/assets/icons/deliveries.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "reading-library",
+      "color": "Moss #667b43",
+      "subject": "three upright moss-green ceramic books with distinct rounded spines supported by an ivory bookend",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: three upright moss-green ceramic books with distinct rounded spines supported by an ivory bookend. Dominant intentional accent is Moss #667b43; related ivory, sage and clay are secondary only.",
+      "source": "exec-7640b0fe-9925-4509-84fb-3d6689f80a80.png",
+      "output": "home/apps/app-gallery/src/assets/icons/reading-library.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "people",
+      "color": "Periwinkle #575caa",
+      "subject": "two rounded periwinkle ceramic portrait busts, one larger in front and one pale lilac behind, simple human silhouettes",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: two rounded periwinkle ceramic portrait busts, one larger in front and one pale lilac behind, simple human silhouettes. Dominant intentional accent is Periwinkle #575caa; related ivory, sage and clay are secondary only.",
+      "source": "exec-341890f9-83fa-4940-ba62-f7d629c73399.png",
+      "output": "home/apps/app-gallery/src/assets/icons/people.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "files",
+      "color": "Pearl sage #a5bba6",
+      "subject": "one frosted sage glass file folder holding ivory, muted clay and pale green document cards",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one frosted sage glass file folder holding ivory, muted clay and pale green document cards. Dominant intentional accent is Pearl sage #a5bba6; related ivory, sage and clay are secondary only.",
+      "source": "exec-697f5870-8892-408d-b720-e9e59e5e1578.png",
+      "output": "home/apps/app-gallery/src/assets/icons/files.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "notes",
+      "color": "Marigold #82600f",
+      "subject": "a marigold honey ceramic notebook with an ivory quill laid diagonally across it, tiny copper nib",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a marigold honey ceramic notebook with an ivory quill laid diagonally across it, tiny copper nib. Dominant intentional accent is Marigold #82600f; related ivory, sage and clay are secondary only.",
+      "source": "exec-fa89daa1-06f6-42d4-9989-7abf500f02e0.png",
+      "output": "home/apps/app-gallery/src/assets/icons/notes.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "habits",
+      "color": "Fern #58764a",
+      "subject": "a fern-green little ceramic potted sprout with three rounded leaves and a single ivory check-shaped plant stake",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a fern-green little ceramic potted sprout with three rounded leaves and a single ivory check-shaped plant stake. Dominant intentional accent is Fern #58764a; related ivory, sage and clay are secondary only.",
+      "source": "exec-86897ebe-ba96-4bb6-81a1-37826a55ec6c.png",
+      "output": "home/apps/app-gallery/src/assets/icons/habits.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "focus",
+      "color": "Honey #90651b",
+      "subject": "one honey ceramic hourglass with translucent amber center and ivory sand, generous simple frame",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one honey ceramic hourglass with translucent amber center and ivory sand, generous simple frame. Dominant intentional accent is Honey #90651b; related ivory, sage and clay are secondary only.",
+      "source": "exec-c840fd32-12d3-4a70-b331-4a136974f3e8.png",
+      "output": "home/apps/app-gallery/src/assets/icons/focus.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "cashflow",
+      "color": "Bronze #88662b",
+      "subject": "a bronze-tinted ceramic wallet opened enough to reveal an ivory note and two amber coins, broad clean silhouette",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a bronze-tinted ceramic wallet opened enough to reveal an ivory note and two amber coins, broad clean silhouette. Dominant intentional accent is Bronze #88662b; related ivory, sage and clay are secondary only.",
+      "source": "exec-1666b071-7bbe-4869-bcff-8c4a8e4ad748.png",
+      "output": "home/apps/app-gallery/src/assets/icons/cashflow.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "revenue",
+      "color": "Emerald #216c4d",
+      "subject": "three chunky emerald ceramic ascending bar columns supporting a small ivory upward arrow, no chart axes or screen",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: three chunky emerald ceramic ascending bar columns supporting a small ivory upward arrow, no chart axes or screen. Dominant intentional accent is Emerald #216c4d; related ivory, sage and clay are secondary only.",
+      "source": "exec-abe7dbcb-85e7-414d-b898-6bde1efacedb.png",
+      "output": "home/apps/app-gallery/src/assets/icons/revenue.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "pipeline",
+      "color": "Deep sage #506953",
+      "subject": "a compact sculpture of three deep sage ceramic funnel stages stacked as one conical funnel, with an amber sphere entering the top",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: a compact sculpture of three deep sage ceramic funnel stages stacked as one conical funnel, with an amber sphere entering the top. Dominant intentional accent is Deep sage #506953; related ivory, sage and clay are secondary only.",
+      "source": "exec-fbbcf2e5-af63-4704-8f30-75960a6c247b.png",
+      "output": "home/apps/app-gallery/src/assets/icons/pipeline.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "projects",
+      "color": "Cobalt #4059b2",
+      "subject": "three chunky cobalt ceramic interlocking building blocks with one pale blue block, arranged as a stable small stepped construction",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: three chunky cobalt ceramic interlocking building blocks with one pale blue block, arranged as a stable small stepped construction. Dominant intentional accent is Cobalt #4059b2; related ivory, sage and clay are secondary only.",
+      "source": "exec-ce35ec3f-e128-4518-b7da-973082a86105.png",
+      "output": "home/apps/app-gallery/src/assets/icons/projects.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "meeting-briefs",
+      "color": "Aubergine #694a78",
+      "subject": "two aubergine ceramic speech bubbles sitting above a single small ivory folded brief sheet, clear simple conversational silhouette",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: two aubergine ceramic speech bubbles sitting above a single small ivory folded brief sheet, clear simple conversational silhouette. Dominant intentional accent is Aubergine #694a78; related ivory, sage and clay are secondary only.",
+      "source": "exec-f9a46d4b-7073-439f-95ba-fc1bb8323b90.png",
+      "output": "home/apps/app-gallery/src/assets/icons/meeting-briefs.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "support",
+      "color": "Forest #103d2c",
+      "subject": "one forest-green glazed ceramic telephone headset with thick rounded ear cups and an ivory microphone boom",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one forest-green glazed ceramic telephone headset with thick rounded ear cups and an ivory microphone boom. Dominant intentional accent is Forest #103d2c; related ivory, sage and clay are secondary only.",
+      "source": "exec-ef6d58db-f8b7-4a3b-b7ba-60e230b01702.png",
+      "output": "home/apps/app-gallery/src/assets/icons/support.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "hiring",
+      "color": "Pale clay #c58b72",
+      "subject": "one pale clay ceramic person silhouette within a freestanding ivory circular magnifying glass, hiring search subject",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one pale clay ceramic person silhouette within a freestanding ivory circular magnifying glass, hiring search subject. Dominant intentional accent is Pale clay #c58b72; related ivory, sage and clay are secondary only.",
+      "source": "exec-ddc14b56-0d4f-45be-aa0f-8afc5bcaa0f2.png",
+      "output": "home/apps/app-gallery/src/assets/icons/hiring.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "company-spend",
+      "color": "Warm umber #7b5847",
+      "subject": "one warm umber ceramic expense receipt with chunky scalloped bottom and two amber coins at its foot, no text",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one warm umber ceramic expense receipt with chunky scalloped bottom and two amber coins at its foot, no text. Dominant intentional accent is Warm umber #7b5847; related ivory, sage and clay are secondary only.",
+      "source": "exec-59e9a65a-8281-4983-a4e9-b5dbdbc77aa3.png",
+      "output": "home/apps/app-gallery/src/assets/icons/company-spend.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "releases",
+      "color": "Burnt amber #bf641f",
+      "subject": "one burnt-amber ceramic rocket with cream round porthole and two sage fins, standing upright, tiny ivory flame",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one burnt-amber ceramic rocket with cream round porthole and two sage fins, standing upright, tiny ivory flame. Dominant intentional accent is Burnt amber #bf641f; related ivory, sage and clay are secondary only.",
+      "source": "exec-f0acd85b-6f18-47a3-a587-962afb3cd851.png",
+      "output": "home/apps/app-gallery/src/assets/icons/releases.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "knowledge",
+      "color": "Deep olive #55642c",
+      "subject": "one deep-olive ceramic open book with thick ivory pages and a small frosted amber light bulb hovering above its center",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one deep-olive ceramic open book with thick ivory pages and a small frosted amber light bulb hovering above its center. Dominant intentional accent is Deep olive #55642c; related ivory, sage and clay are secondary only.",
+      "source": "exec-aac10bde-5345-4a88-b230-b848d3e5da35.png",
+      "output": "home/apps/app-gallery/src/assets/icons/knowledge.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "campaigns",
+      "color": "Persimmon #bc5d43",
+      "subject": "one persimmon ceramic megaphone with ivory wide mouth and a sage rounded grip, obvious broad silhouette",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one persimmon ceramic megaphone with ivory wide mouth and a sage rounded grip, obvious broad silhouette. Dominant intentional accent is Persimmon #bc5d43; related ivory, sage and clay are secondary only.",
+      "source": "exec-63277bf5-6f7b-4704-b68c-ad85958d14ac.png",
+      "output": "home/apps/app-gallery/src/assets/icons/campaigns.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "analytics",
+      "color": "Muted jade #397b72",
+      "subject": "one muted-jade frosted-glass magnifying lens poised over three chunky ivory chart bars with one jade bar, no screen",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one muted-jade frosted-glass magnifying lens poised over three chunky ivory chart bars with one jade bar, no screen. Dominant intentional accent is Muted jade #397b72; related ivory, sage and clay are secondary only.",
+      "source": "exec-283df6d4-dd5f-4030-9eee-a8b25140c1b9.png",
+      "output": "home/apps/app-gallery/src/assets/icons/analytics.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "workout-coach",
+      "color": "Coral #b24b38",
+      "subject": "one coral glazed ceramic dumbbell diagonally balanced, four thick rounded weight plates and ivory center grip",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one coral glazed ceramic dumbbell diagonally balanced, four thick rounded weight plates and ivory center grip. Dominant intentional accent is Coral #b24b38; related ivory, sage and clay are secondary only.",
+      "source": "exec-c5708317-cce8-40f5-b974-a6505bde442e.png",
+      "output": "home/apps/app-gallery/src/assets/icons/workout-coach.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "paycheck-runway",
+      "color": "Sea glass #267577",
+      "subject": "one sea-glass ceramic payday calendar with two broad rings, an amber coin in front and a short row of three ivory planning squares, no numbers",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one sea-glass ceramic payday calendar with two broad rings, an amber coin in front and a short row of three ivory planning squares, no numbers. Dominant intentional accent is Sea glass #267577; related ivory, sage and clay are secondary only.",
+      "source": "exec-2d3898c7-1e2d-40ba-a0b7-90d3ed7c64b3.png",
+      "output": "home/apps/app-gallery/src/assets/icons/paycheck-runway.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "meal-planner",
+      "color": "Olive #647225",
+      "subject": "one olive ceramic shallow bowl holding an ivory spoon and a simple sage leafy sprig, with one terracotta tomato in bowl",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one olive ceramic shallow bowl holding an ivory spoon and a simple sage leafy sprig, with one terracotta tomato in bowl. Dominant intentional accent is Olive #647225; related ivory, sage and clay are secondary only.",
+      "source": "exec-306ca434-aa81-40e6-b975-0940b01f52a6.png",
+      "output": "home/apps/app-gallery/src/assets/icons/meal-planner.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "job-search",
+      "color": "Copper #a35c27",
+      "subject": "one copper ceramic briefcase with thick ivory handle and a small sage sprout-shaped clasp, strong clean silhouette",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one copper ceramic briefcase with thick ivory handle and a small sage sprout-shaped clasp, strong clean silhouette. Dominant intentional accent is Copper #a35c27; related ivory, sage and clay are secondary only.",
+      "source": "exec-0a24eb0a-102b-47b5-801b-f416ae9e6209.png",
+      "output": "home/apps/app-gallery/src/assets/icons/job-search.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "study-notes",
+      "color": "Iris #6450ac",
+      "subject": "three iris ceramic study flashcards fanned slightly, top card with one ivory raised star and no words",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: three iris ceramic study flashcards fanned slightly, top card with one ivory raised star and no words. Dominant intentional accent is Iris #6450ac; related ivory, sage and clay are secondary only.",
+      "source": "exec-1b51f58a-6a12-4fa5-a939-9e0a5a09e1eb.png",
+      "output": "home/apps/app-gallery/src/assets/icons/study-notes.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "journal-memory",
+      "color": "Rose #9d5278",
+      "subject": "one rose glazed ceramic closed journal with cream page edges and a broad sage ribbon bookmark, a small embossed ivory heart",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one rose glazed ceramic closed journal with cream page edges and a broad sage ribbon bookmark, a small embossed ivory heart. Dominant intentional accent is Rose #9d5278; related ivory, sage and clay are secondary only.",
+      "source": "exec-c0eab64a-2c94-4fd9-b29a-02d109cbb3f7.png",
+      "output": "home/apps/app-gallery/src/assets/icons/journal-memory.png",
+      "status": "generated-reviewed"
+    },
+    {
+      "id": "chess-coach",
+      "color": "Slate #46566d",
+      "subject": "one slate-blue glazed ceramic chess knight with clear curved horse head and ivory circular base, no chessboard",
+      "prompt": "Use case: stylized-concept. Asset type: a single polished Matrix OS launcher icon, square PNG, no words. Reference image 1 supplies only the nature-led Matrix palette and simple modern organic mood; reference images 2 and 3 supply ceramic/frosted glass softness, product lighting, large semantic subject, ivory rounded-square tile. Generate ONE icon only. A warm ivory softly beveled rounded-square tile fills 98% of the square canvas; its corner outside area is ivory. Center one simple tactile sculpted subject filling roughly 65% of the tile; gently elevated three-quarter front view, soft top-left daylight and subtle contact shadow. Materials: glazed ceramic with rounded edges, matte clay accents and occasional frosted glass. Distinct silhouette readable at 64px. Calm premium organic friendly character. Strictly no lettering, no logos, no UI screenshots, no pictorial scenic background, no elaborate gold ornaments, no circuitry, no flat line glyph. Tiny gold hardware only if functionally justified. Avoid oversized margins. Subject and accent: one slate-blue glazed ceramic chess knight with clear curved horse head and ivory circular base, no chessboard. Dominant intentional accent is Slate #46566d; related ivory, sage and clay are secondary only.",
+      "source": "exec-3fb33e99-9f4b-416b-8e3d-deb11426ee28.png",
+      "output": "home/apps/app-gallery/src/assets/icons/chess-coach.png",
+      "status": "generated-reviewed"
+    }
+  ]
+}

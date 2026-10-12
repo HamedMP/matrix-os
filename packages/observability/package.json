@@ -26,7 +26,7 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "node ../../scripts/build-typescript.mjs"
   },
   "dependencies": {
     "hono": "^4.11.9",

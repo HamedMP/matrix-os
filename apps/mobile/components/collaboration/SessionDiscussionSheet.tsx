@@ -160,7 +160,7 @@ const styles = StyleSheet.create((theme) => ({
   composer: { gap: 8, padding: 16, borderTopWidth: 1, borderTopColor: theme.v2.colors.borderSubtle },
   error: { fontFamily: theme.v2.fonts.semibold, fontSize: 13, color: theme.v2.colors.textDefault },
   input: { minHeight: 72, padding: 12, borderWidth: 1, borderColor: theme.v2.colors.borderSubtle, borderRadius: 14, color: theme.v2.appColors.ink, fontFamily: theme.v2.fonts.body, textAlignVertical: "top" },
-  post: { alignSelf: "flex-end", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, backgroundColor: theme.v2.palette.green[800] },
-  postText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.textInverse },
+  post: { alignSelf: "flex-end", paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, backgroundColor: theme.v2.colors.controlPrimary },
+  postText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.onControlPrimary },
   faded: { opacity: 0.5 },
 }));

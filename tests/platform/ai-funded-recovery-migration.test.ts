@@ -51,7 +51,7 @@ describe.skipIf(engine === "PostgreSQL" && !databaseUrl)(`generation ${predecess
       db = createPlatformDb(url.toString());
       await db.ready;
     } else {
-      ({ db } = await createTestPlatformDb());
+      ({ db } = await createTestPlatformDb({ freshSchema: true }));
     }
     now = new Date("2026-10-04T00:00:00.000Z");
     const identity = { ownerId: "legacy_owner", machineId: "legacy_machine", runtimeSlot: "primary" };

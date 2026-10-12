@@ -21,7 +21,7 @@ export class AtsDatabaseConfigError extends Error {
 
 export function resolveAtsDatabaseUrl(env: NodeJS.ProcessEnv): string | undefined {
   const databaseUrl = env.ATS_DATABASE_URL?.trim() || undefined;
-  const enabled = Boolean(env.ATS_INGEST_SECRET?.trim() || env.ATS_ADMIN_SECRET?.trim());
+  const enabled = Boolean(env.ATS_INGEST_SECRET?.trim() || env.ATS_ADMIN_SECRET?.trim() || env.ATS_MAIL_INGEST_SECRET?.trim() || env.ATS_SLACK_BOT_TOKEN?.trim());
   if (enabled && !databaseUrl) throw new AtsDatabaseConfigError();
   return databaseUrl;
 }

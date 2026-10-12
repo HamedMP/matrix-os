@@ -4,7 +4,7 @@ import { createCustomerVpsService } from '../../packages/platform/src/customer-v
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { getActiveUserMachineByClerkId, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret = 'recovery-admission-secret-at-least-32';
 const owner = 'user_recovery_admission';

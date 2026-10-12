@@ -14,17 +14,22 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
   },
   reactCompiler: true,
-  experimental: localParityBuild
-    ? {
-        // The amd64 parity builder runs under Rosetta on developer Macs. Keep
-        // the emitted production bundle unchanged while bounding peak build
-        // memory using the controls recommended by Next.js.
-        webpackBuildWorker: true,
-        webpackMemoryOptimizations: true,
-        staticGenerationMaxConcurrency: 1,
-        staticGenerationMinPagesPerWorker: 100,
-      }
-    : undefined,
+  // The required source-extension hook disables Next's automatic build worker.
+  // Explicit workers allow server/edge compilation and tracing to overlap.
+  experimental: {
+    webpackBuildWorker: true,
+    parallelServerCompiles: true,
+    parallelServerBuildTraces: true,
+    // Avoid traversing thousands of unused icon re-exports in both bundles.
+    optimizePackageImports: ["@hugeicons/core-free-icons"],
+    ...(localParityBuild ? {
+      // The amd64 parity builder runs under Rosetta on developer Macs. Keep
+      // the emitted production bundle unchanged while bounding peak memory.
+      webpackMemoryOptimizations: true,
+      staticGenerationMaxConcurrency: 1,
+      staticGenerationMinPagesPerWorker: 100,
+    } : {}),
+  },
   transpilePackages: ["@matrix-os/contracts", "@matrix-os/observability", "@matrix-os/ui"],
   // Allow HMR websockets when the dev shell is reached through a tunnel
   // (staging/dev.matrix-os.com) rather than localhost. Next 16 blocks dev

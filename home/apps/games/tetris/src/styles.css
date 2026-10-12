@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #6c50aa;
+  --game-wash: #f1ecfb;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -364,4 +366,23 @@ button:focus-visible {
     flex-wrap: wrap;
     overflow: visible;
   }
+}
+
+.play-area, .side-rail { min-height: 0; }
+.board-wrap { width: min(100%, calc((100dvh - 44px) * .5)); height: auto; }
+.board { width: 100%; height: auto; max-height: none; }
+.stat strong { font-weight: 650; }
+.overlay__card { max-width: min(320px, calc(100vw - 48px)); }
+@media (max-width: 760px) {
+  .tetris-app { grid-template-rows: auto auto; overflow-y: auto; }
+  .board-wrap { width: min(280px, calc((100dvh - 160px) * .5), calc(100vw - 48px)); }
+  .side-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-right: 0; }
+  .brand, .stat-grid, .controls, .hints, .error-note { grid-column: 1 / -1; }
+  .brand { order: -2; }
+  .controls { order: -1; }
+  .next-stack__list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .next-stack { grid-column: 1 / -1; }
+  .preview__grid { width: min(72px, 100%); }
+  .overlay__card { padding: 18px; gap: 10px; }
+  .overlay__card h1 { font-size: 24px; }
 }

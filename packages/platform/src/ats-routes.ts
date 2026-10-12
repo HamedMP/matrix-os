@@ -21,6 +21,7 @@ import {
 import { ATS_DISPOSITIONS, ATS_STAGES } from './ats-types.js';
 import type { AtsDB } from './ats-db.js';
 import { timingSafeTokenEquals } from './platform-token.js';
+import { createAtsMailRoutes } from './ats-mail-routes.js';
 
 const APPLICATION_BODY_LIMIT = 6 * 1024 * 1024;
 const RESUME_SIZE_LIMIT = 5 * 1024 * 1024;
@@ -131,6 +132,7 @@ export function createAtsRoutes(options: {
   db: AtsDB;
   ingestSecret: string;
   adminSecret: string;
+  mailSecret?: string;
   allowedRoleSlugs: readonly string[];
   bookingBaseUrl?: string;
   publicSiteUrl?: string;
@@ -241,6 +243,7 @@ export function createAtsRoutes(options: {
     c.header('Cache-Control', 'no-store, private');
     return next();
   });
+  app.route('/', createAtsMailRoutes({ db: options.db, mailSecret: options.mailSecret ?? '', allowedRoleSlugs: options.allowedRoleSlugs }));
 
   app.get('/api/ats/admin/applications', async (c) => {
     const query = z.object({

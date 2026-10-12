@@ -1,10 +1,15 @@
+import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
+export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
 export * from "#private-preview";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
-export type { AppAiInput, AppAiRequest, AppAiResult } from "#app-ai";
+export type { AppAiInput, AppAiRequest, AppAiResult, AppAiRouteSelection, AppAiRoute, AppAiRoutes } from "#app-ai";
+export { APP_AI_ROUTES_CHANNEL, AppAiRouteSelectionSchema, AppAiRouteSchema, AppAiRoutesSchema, AppAiRoutesRequestSchema } from "#app-ai";
 export * from "#release-alignment";
 export * from "#runtime-compatibility";
 export * from "#chat-message-wire";
@@ -291,10 +296,6 @@ export const MatrixComputerHandleSchema = z.string()
   .min(2)
   .max(63)
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
-export const MatrixComputerRuntimeSlotSchema = z.string()
-  .min(1)
-  .max(32)
-  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
 export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);
@@ -1406,6 +1407,9 @@ export {
   legacyDesktopImportFromConfig,
   normalizeOsViewMode,
   osViewFixedAppAppearanceForPath,
+  osViewBundledIconUrlForPath,
+  osViewUsesBundledArtworkForLegacyIcon,
+  osViewIconUrlForApp,
   normalizeOsViewDesktopAppPath,
   normalizeOsViewDesktopIcons,
   otherOsViewMode,

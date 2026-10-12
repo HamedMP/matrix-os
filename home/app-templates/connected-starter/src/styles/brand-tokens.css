@@ -1,0 +1,16 @@
+/* Generated from @matrix-os/brand desktopPalette. Do not edit. */
+:root {
+  --matrix-brand-forest: #0E3422;
+  --matrix-brand-forestDeep: #092417;
+  --matrix-brand-stageStart: #16472F;
+  --matrix-brand-forestHover: #174D34;
+  --matrix-brand-coral: #D06E53;
+  --matrix-brand-gold: #F1C379;
+  --matrix-brand-green: #BED77B;
+  --matrix-brand-blue: #C5D6E2;
+  --matrix-brand-paper: #FCFCF8;
+  --matrix-brand-canvas: #F1F4E8;
+  --matrix-brand-surfaceMuted: #F7F8F1;
+  --matrix-brand-textMuted: #536259;
+  --matrix-brand-danger: #9F3F2C;
+}

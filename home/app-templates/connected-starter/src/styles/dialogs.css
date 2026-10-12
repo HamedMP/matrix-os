@@ -1,0 +1,133 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--fg) 28%, transparent);
+  z-index: 20;
+  display: flex;
+  justify-content: flex-end;
+}
+.sheet {
+  width: min(530px, 100%);
+  height: 100%;
+  overflow-y: auto;
+  padding: 28px;
+  background: var(--card);
+  box-shadow: -10px 0 60px #0001;
+}
+.sheet > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+.sheet > header h2 {
+  font-size: 25px;
+}
+.sheet > header button {
+  font-size: 25px;
+  padding: 2px 10px;
+}
+.editor {
+  display: grid;
+  gap: 18px;
+}
+.editor > label > span,
+.date-fields label > span {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.sheet-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 20px;
+}
+.evidence {
+  padding: 22px 0;
+  border-bottom: 1px solid var(--border);
+}
+.evidence h3 {
+  font-size: 17px;
+  line-height: 1.6;
+  margin: 9px 0;
+}
+.evidence p {
+  font-size: 12px;
+  line-height: 1.9;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.evidence a {
+  font-size: 11px;
+}
+.evidence code {
+  font-size: 9px;
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin-top: 15px;
+}
+.date-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 15px;
+}
+legend {
+  font-size: 12px;
+  font-weight: 550;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0;
+}
+.check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+.check > span {
+  font-size: 12px;
+}
+.check small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.request-sent {
+  text-align: center;
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 45px;
+}
+.request-sent p {
+  font-size: 13px;
+  line-height: 1.9;
+}
+.request-sent .orb {
+  width: 50px;
+  height: 50px;
+  font-size: 25px;
+}
+.unavailable {
+  max-width: 700px;
+  padding: 60px 30px;
+}
+.unavailable p {
+  font-size: 14px;
+  margin-top: 15px;
+  line-height: 1.8;
+}

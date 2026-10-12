@@ -35,6 +35,39 @@ Applies to every LLM model, agent harness, and project chat, including new or re
 Links: <spec or PR, when available>
 ```
 
+## Project Work Tracking and Review
+
+**Goal:** Make project work easy to track and review. These rules apply to every
+project chat, model, harness, and delegated agent. Read this root `AGENTS.md` at
+the start of project work and after compaction; `CLAUDE.md` points to the same
+file so the rules have one source of truth.
+
+- **Use requester-assigned ENG tickets.** Follow the Linear Ticket Check above
+  to verify and reuse the task or stack ticket before implementation, PR
+  creation, and merge. Keep it in the requested project. Split independent
+  deliverables only when that helps planning; a stack may share one ticket.
+- **Link substantial changes to specs.** Keep the spec or plan in `specs/` and
+  link it from the ENG ticket and PR. Keep tickets brief: goal, essential
+  actions, completion check, and links; detailed context belongs in the spec.
+- **Suggest stakeholder approval.** Recommend review of substantial scope or
+  behavior changes by the affected product, design, engineering, or integration
+  owners. Record the recommendation and any existing approval in the ticket or
+  PR; a recommendation is not an additional approval gate when the requester
+  has already authorized the work or merge.
+- **Require live visual evidence for every affected surface.** Follow the
+  Live visual evidence gate below, including its runtime, screenshot,
+  recording, parity, and surface requirements. One surface cannot stand in for
+  another, and `N/A` needs architectural rationale and reviewer approval.
+- **Put the evidence in both the PR and Slack `#tech`.** Include the actual
+  captures or accessible capture links in the PR, post the same evidence with
+  the ENG ticket and PR links in the tech channel, and link its Slack permalink
+  back to the PR. State the exact commit/build, scenario, and any test bypass or
+  fixture limitations; redact credentials and private customer content.
+- **Do not claim visual qualification without evidence.** Mockups, automated
+  test results, or another surface's capture do not prove the affected running
+  surface. Missing runtime/device access is an explicit blocker to review and
+  merge readiness; continue unaffected work and obtain the missing evidence.
+
 ## Tech Stack
 
 - **Runtime**: Node.js 24+, TypeScript 5.5+ strict, ES modules
@@ -357,7 +390,7 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 - Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
 - Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
-- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
+- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
 - If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
@@ -374,8 +407,8 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 - **> 3000 additions or > 50 files**: split the PR
 - Split along: gateway, platform, sync-client, shell, docs/deploy
-- For multi-slice features, use stacked PRs instead of one oversized PR. **GitHub Stack or Graphite** may be the primary tool; no project-wide preference is established. Follow the existing stack's tool, or choose one for a new stack and use it consistently for create, restack, submit, and merge. Record the chosen tool and stack link in the PR descriptions.
-- For Graphite, follow `docs/dev/stacked-prs.md`: `gt create`, `gt modify`, `gt restack`, `gt sync`, `gt submit --stack`, and `gt merge`. For GitHub Stack, use its supported stack workflow. If the chosen tool is unavailable or unauthenticated, report the blocker instead of silently changing tools. Do not flatten or migrate a stack unless explicitly asked.
+- **Use GitHub native stacks exclusively for dependent PRs.** Follow `docs/dev/stacked-prs.md`: create/adopt layers with `gh stack init` and `gh stack add`, commit explicit paths with Git, rebase descendants with `gh stack rebase`, publish with `gh stack submit`, and merge with `gh stack merge`. Link the shared Linear ticket and native GitHub stack in every layer. A standalone change remains one ordinary GitHub PR.
+- Require authenticated `gh` and the official `github/gh-stack` extension. If unavailable, report the setup blocker; do not switch stack tools or flatten dependencies. Adopt existing ordered PRs with `gh stack link` after verifying their heads, bases and ownership; preserve all unreviewed work.
 
 ### PR Body: Concise and Actionable
 
@@ -399,7 +432,7 @@ PR descriptions must help an engineer review and follow the process quickly. Aim
 ## Process
 
 - [ ] Linear: <task or shared stack ticket link>
-- [ ] Stack (if applicable): <name/link>; <GitHub Stack or Graphite>
+- [ ] GitHub native stack (if applicable): <name/link>
 - [ ] Key checks passed: <evidence>
 - [ ] Spec linked; stakeholder review suggested: <links>
 - [ ] UI: live screenshots + recording for each affected surface; parity checked
@@ -428,21 +461,29 @@ Do not request review while still pushing commits. Either declare a review commi
 
 ### Stacked-PR Merge Safety (NON-NEGOTIABLE)
 
-**Use the stack's chosen primary tool, GitHub Stack or Graphite, end to end.** Do not mix tools or silently migrate an existing stack. For Graphite, track untracked branches with `gt track` before landing and follow `docs/dev/stacked-prs.md`. Each layer references the shared Linear ticket and its stack; separate tickets per layer are unnecessary.
+**Use GitHub native stacks end to end.** Follow `docs/dev/stacked-prs.md`; use the official `gh stack` extension for stack membership, rebasing, publication and merge. Each layer references the shared Linear ticket and native stack; separate tickets per layer are unnecessary.
 
 Learned from the 2026-07-13 merge cascade (PRs #932/#934/#935/#926/#933/#941/#945/#948:
 a raw `gh pr merge` loop merged children into parent branches instead of `main`, and
-four PRs became unrecoverable-closed, requiring reland PRs). Whichever stack tool is chosen, preserve these merge safeguards:
+four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merge safeguards:
 
-- **Merge a PR only when its base branch is `main`.** Verify first:
-  `gh pr view <n> --json baseRefName`. Merging a stacked PR whose base is another
-  PR's branch lands the child INTO that branch, not into `main`, while GitHub still
-  reports it "merged".
+- **Merge stacks through GitHub's atomic stack operation:**
+  `gh stack merge <stack-number> --yes --squash`. Verify the stack targets `main`,
+  its bottom-to-top membership and exact head SHAs, and current-head Greptile
+  `5/5`, zero unresolved review blockers, `ready-for-ci`, and passing CI for every
+  included PR. Native stack merge lands the included layers into the stack base
+  together; child PR bases correctly remain their preceding layer.
+- **Use `gh pr merge` only for a standalone PR targeting `main`.** Verify
+  `gh pr view <n> --json baseRefName`. Never individually merge a child into its
+  parent branch, even if GitHub would report it as merged.
 - **Never pass `--delete-branch` while any later PR in the stack is open.** Branch
   deletion races GitHub's automatic retargeting; the next merge in a loop can land in
   the wrong base. Delete branches only after the entire stack has landed.
-- **Never loop `gh pr merge` over a stack.** Land strictly one at a time: merge the
-  bottom PR, wait until the next PR's base shows `main`, then merge it.
+- **Never loop `gh pr merge` over a stack.** Use the native stack merge; if it
+  fails, inspect the reported blocker instead of falling back to a merge loop.
+- A merge request or CLI success is not completion: verify every included PR is
+  `MERGED` at its reviewed head and record the merge commits. A merge queue may
+  leave the stack queued; continue monitoring before closing tickets or cleanup.
 - A closed PR whose base branch was deleted **cannot be reopened or retargeted**
   (GitHub rejects both). Recovery requires fresh consolidation PRs from the surviving
   branch tips and a full re-review — far more expensive than merging slowly.
@@ -452,7 +493,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Whichever stack too
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
 - **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Greptile reviews on PR creation and thereafter only on an explicit `@greptileai please review` comment.** It does not review every push. After a push the score stays stale until you ask, so waiting for an automatic re-review blocks forever.
+- **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
 
   | Reviewed SHA | What it means | Do this |
@@ -493,7 +534,7 @@ Read these on demand, not every session:
 
 - `ARCHITECTURE.md` and root `DOMAIN.md` (if present) -- when changing package ownership, cross-package imports, or domain boundaries; if a package/context has its own `ARCHITECTURE.md` / `DOMAIN.md`, read the nearest relevant docs before moving code
 - `docs/dev/review-pipeline.md` -- when reviewing or opening PRs (three-pass structure, checklists, CI gates)
-- `docs/dev/stacked-prs.md` -- when splitting a feature into Graphite stacked PRs
+- `docs/dev/stacked-prs.md` -- when creating, reviewing or merging GitHub native stacks
 - `docs/dev/onboarding.md` -- developer setup, API keys, and getting started
 - `docs/dev/mobile-shell.md` -- when working on the Expo/native mobile shell, physical-device testing, or terminal resume controls
 - `docs/dev/pr-review-analysis.md` -- when triaging review comments or understanding recurring defect patterns
@@ -577,9 +618,9 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 
 ### Stack review monitor
 
-- For existing Graphite stacks, prefer the repo command in `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
+- For existing GitHub native stacks, use `.claude/commands/monitor-stack-reviews.md`: `/monitor-stack-reviews <pr-or-range-or-branch>`.
 - That command owns the review gate for stack fixes: current-head Greptile `5/5`, no unresolved human/Codex review blockers, `ready-for-ci` applied only after that review state, then CI monitoring.
-- Treat missing `gt`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that do not match the current head SHA, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
+- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that do not match the current head SHA, or missing `ready-for-ci` repository label as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Backlog
 

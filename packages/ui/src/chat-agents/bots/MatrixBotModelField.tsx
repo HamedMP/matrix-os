@@ -111,6 +111,7 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
         </option>)}
       </select>
     </label>
+    {onRefreshCatalog ? <button type="button" className="justify-self-start text-xs underline" disabled={pending || catalogLoading} onClick={onRefreshCatalog}>Refresh models</button> : null}
     {legacySelected ? <p className="text-xs" style={chatAgentMutedStyle}>This agent keeps its saved route until you choose a Matrix AI model.</p> : null}
     {catalogLoading ? <p role="status" className="text-xs" style={chatAgentMutedStyle}>Loading available bot models…</p> : null}
     {selection && !available && !legacySelected && (reserved || !noModels) ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."

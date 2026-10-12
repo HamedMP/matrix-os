@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
+import { fetch as streamingFetch } from "expo/fetch";
 
-import { getAppSlug } from "@/lib/apps";
+import type { MobileAppBridgeRequest } from "@/lib/app-capability-bridge";
+
+import { getAppIdentity, getAppSlug } from "@/lib/apps";
 import {
   createAppSession,
   fetchActiveComputer,
@@ -73,7 +76,7 @@ export function useComputerApps() {
   };
 }
 
-export function useComputerAppSession(slug: string) {
+export function useComputerAppSession(slug: string, runtimeSlugHint?: string) {
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
   const authEnabled = Boolean(isLoaded && isSignedIn && userId);
   const activeComputer = useQuery({
@@ -89,7 +92,7 @@ export function useComputerAppSession(slug: string) {
   const computerKey = computer ? `${computer.handle}:${computer.runtimeSlot}` : "none";
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   const session = useQuery({
-    queryKey: mobileQueryKeys.appSession(userId ?? "signed-out", computerKey, slug),
+    queryKey: [...mobileQueryKeys.appSession(userId ?? "signed-out", computerKey, slug), runtimeSlugHint ?? "catalog"],
     enabled: authEnabled && Boolean(gatewayUrl) && Boolean(slug),
     gcTime: 0,
     retry: false,
@@ -97,11 +100,29 @@ export function useComputerAppSession(slug: string) {
     queryFn: async () => {
       const token = await getToken();
       if (!token || !gatewayUrl) throw new Error("App session unavailable. Try again.");
-      return createAppSession(token, gatewayUrl, slug);
+      // Route/deep-link parameters are hints, never authority for app grants.
+      const installed = await fetchInstalledApps(token, gatewayUrl);
+      const matches = installed.filter(app => getAppIdentity(app) === slug
+        && (runtimeSlugHint === undefined || getAppSlug(app) === runtimeSlugHint));
+      if (matches.length !== 1) throw new Error("App session unavailable. Try again.");
+      const runtimeSlug = getAppSlug(matches[0]);
+      if (installed.filter(app => getAppSlug(app) === runtimeSlug).length !== 1) throw new Error("App session unavailable. Try again.");
+      const session = await createAppSession(token, gatewayUrl, runtimeSlug);
+      return { ...session, appIdentity: getAppIdentity(matches[0]), runtimeSlug };
     },
   });
 
+  const requestAppBridge = useCallback<MobileAppBridgeRequest>(async (path, init) => {
+    if (!authEnabled || !gatewayUrl || !init.signal || !/^\/api\/bridge\/(?:capabilities|query|ai|ai\/routes)(?:\?|$)/.test(path)) throw new Error("App request unavailable");
+    const token = await getToken();
+    if (!token) throw new Error("App request unavailable");
+    return streamingFetch(`${gatewayUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, signal: init.signal, redirect: "error" });
+  }, [authEnabled, gatewayUrl, getToken, userId]);
+
   return {
+    requestAppBridge,
+    appIdentity: session.data?.appIdentity,
+    runtimeSlug: session.data?.runtimeSlug,
     launchUrl: gatewayUrl && session.data
       ? resolveMobileAppSessionLaunchUrl(gatewayUrl, session.data.launchUrl)
       : null,
@@ -112,6 +133,6 @@ export function useComputerAppSession(slug: string) {
   };
 }
 
-export function installedAppSlug(app: Parameters<typeof getAppSlug>[0]): string {
-  return getAppSlug(app);
+export function installedAppSlug(app: Parameters<typeof getAppIdentity>[0]): string {
+  return getAppIdentity(app);
 }

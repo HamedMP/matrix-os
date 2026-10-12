@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ function mockContext(): any {
 describe("serveStaticFileWithin security headers", () => {
   it("serves app HTML with a CSP that blocks third-party scripts", async () => {
     const dir = await mkdtemp(join(tmpdir(), "matrix-static-csp-"));
+    try {
     await writeFile(
       join(dir, "index.html"),
       '<!doctype html><script src="https://code.iconify.design/iconify-icon/2.3.0/iconify-icon.min.js"></script>',
@@ -24,8 +25,13 @@ describe("serveStaticFileWithin security headers", () => {
 
     const res = await serveStaticFileWithin(dir, "index.html", mockContext());
 
+    await res.arrayBuffer();
     expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Security-Policy")).toContain("worker-src 'self' blob:");
+    expect(res.headers.get("Content-Security-Policy")).not.toContain("worker-src https:");
+    expect(res.headers.get("Content-Security-Policy")).not.toContain("worker-src data:");
     expect(res.headers.get("Content-Security-Policy")).toContain("script-src 'self' 'unsafe-inline'");
     expect(res.headers.get("Content-Security-Policy")).not.toContain("https://code.iconify.design");
+    } finally { await rm(dir,{recursive:true,force:true}); }
   });
 });

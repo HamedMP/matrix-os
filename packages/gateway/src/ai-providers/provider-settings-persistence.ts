@@ -2,6 +2,7 @@ import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:f
 import { basename, dirname } from "node:path";
 import { join } from "node:path";
 import {
+  MATRIX_CHATGPT_PLAN_INSTANCE_ID,
   ProviderAccentColorSchema,
   ProviderConnectionAttemptSchema,
   ProviderGatewayPolicySchema,
@@ -181,8 +182,9 @@ function sourceForHarness(
   harness: ProviderHarnessKind,
   canonical: AiProviderSnapshotV3,
 ) {
+  // This source executes on its paired device, never through a native CLI profile.
   const candidates = canonical.accessSources.filter((source) =>
-    source.eligibleModelIds.some((modelId) => canonical.models.some((model) =>
+    source.id !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && source.eligibleModelIds.some((modelId) => canonical.models.some((model) =>
       model.id === modelId && model.vendor === source.vendor
         && model.status !== "retired" && model.status !== "unavailable")));
   if (harness === "codex") {

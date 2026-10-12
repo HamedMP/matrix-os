@@ -21,7 +21,7 @@ test "$(git rev-parse HEAD)" = "$(gh pr view 1620 --json headRefOid --jq .headRe
 pnpm install --frozen-lockfile
 ```
 
-If that branch is already checked out in another worktree, fetch it and use that existing worktree instead of forcing or rewriting it. A normal checkout of PR #1620 already contains the dependent PR commits; Graphite authentication is not required.
+If that branch is already checked out in another worktree, fetch it and use that existing worktree instead of forcing or rewriting it. A normal checkout of PR #1620 already contains the dependent PR commits; use GitHub authentication for PR access.
 
 ## Prerequisites
 

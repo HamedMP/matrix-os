@@ -34,9 +34,11 @@ export interface TurnAdmissionOptions {
   releasePendingDispatch(runId: string): void;
   atCapacity(owner: ChatOwner): boolean;
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
+  beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
+    clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
   startDispatch(owner: ChatOwner, message: CanonicalChatMessage, run: CanonicalChatRun,
     adapter: CanonicalChatProviderAdapter, root?: ResolvedChatExecutionRoot, resumeState?: unknown,
-    promptOverride?: string, admissionKey?: string): void;
+    promptOverride?: string, admissionKey?: string): Promise<void>;
 }
 
 const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
@@ -44,6 +46,7 @@ const id = (prefix: string) => `${prefix}${randomUUID().replaceAll("-", "")}`;
 export async function admitCanonicalTurn(
   deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  provenance?: { previewTurnProof?: string },
 ): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
@@ -223,6 +226,15 @@ export async function admitCanonicalTurn(
       return mapRepositoryError(error);
     }
 
+    let previewCleanup: void | (() => void) = undefined;
+    const disposePendingPreview = () => {
+      try {
+        if (previewCleanup) previewCleanup();
+      } catch (error: unknown) {
+        console.warn("[chat] Preview Drive admission cleanup failed", error instanceof Error ? error.name : "UnknownError");
+      }
+    };
+    let dispatched = false;
     try {
       if (!admitted.alreadyAccepted) {
         const stopping = deps.hasStoppingExecution(owner, chatId);
@@ -239,7 +251,37 @@ export async function admitCanonicalTurn(
             503,
           );
         }
-        deps.startDispatch(
+        if (adapter.driverKind === "claude_code" && input.permissionMode === "supervised"
+          && input.interactionMode === "default" && provenance?.previewTurnProof
+          && deps.beforePreviewDispatch) {
+          try {
+            previewCleanup = await deps.beforePreviewDispatch({ actorId: principal.userId, chatId, turnId: admitted.turn.id,
+              runId: admitted.run.id, clientRequestId: input.clientRequestId, body: input,
+              proof: provenance.previewTurnProof });
+          } catch (error: unknown) {
+            // The Chat turn remains valid, but the personal integration stays unavailable.
+            console.warn("[chat] Preview Drive turn redemption failed", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+        // Redemption yields to other admissions and shutdown. Keep this final
+        // check synchronous with startDispatch's active registration.
+        try {
+          deps.assertOpen();
+          if (deps.hasStoppingExecution(owner, chatId)) return mapRepositoryError(new ChatBusyError(chatId));
+          if (deps.atCapacity(owner)) {
+            throw new CanonicalChatOrchestrationError(
+              safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
+              503,
+            );
+          }
+        } catch (error: unknown) {
+          await deps.repository.finishRun(owner, {
+            chatId, runId: admitted.run.id, outcome: "failed",
+            completedAt: (deps.now ?? (() => new Date()))().toISOString(),
+          });
+          throw error;
+        }
+        const completion = deps.startDispatch(
           owner,
           admitted.message,
           admitted.run,
@@ -249,6 +291,10 @@ export async function admitCanonicalTurn(
           undefined,
           admissionKey,
         );
+        // Startup may fail before a provider issues the capability. Disposal
+        // only removes this exact pending entry; issued capabilities own cleanup.
+        if (previewCleanup) void completion.then(disposePendingPreview, disposePendingPreview);
+        dispatched = true;
       }
       return CanonicalChatTurnAdmissionResponseSchema.parse({
         record: admitted.chat,
@@ -258,6 +304,10 @@ export async function admitCanonicalTurn(
         admission: admitted.alreadyAccepted ? "already_accepted" : "accepted",
       });
     } finally {
-      deps.releasePendingDispatch(run.id);
+      try {
+        if (!dispatched) disposePendingPreview();
+      } finally {
+        deps.releasePendingDispatch(run.id);
+      }
     }
 }

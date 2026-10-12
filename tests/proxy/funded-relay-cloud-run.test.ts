@@ -2,7 +2,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+afterEach(() => vi.restoreAllMocks());
 
 import {
   createFundedRelayService,
@@ -11,6 +12,52 @@ import {
 import { FUNDED_PRICING_VERSIONS } from "../../packages/proxy/src/funded-pricing-review.js";
 
 const root = process.cwd();
+
+it("deploys the Claude advisor beta and attested Jev pricing in one candidate revision", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/ai-relay-cloud-run.yml"), "utf8");
+  const block = workflow.split("- name: Deploy candidate revision")[1]!
+    .split("- name: Smoke candidate relay")[0]!.split("run: |\n")[1]!;
+  const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
+  const result = spawnSync("bash", ["-c", `
+gcloud() {
+  if [ "$1 $2 $3" = "run deploy fixture" ]; then
+    for arg in "$@"; do printf '%s\\n' "$arg"; done
+    exit 0
+  fi
+  return 1
+}
+${script}
+`], { encoding: "utf8", timeout: 10_000, env: {
+    ...process.env, GITHUB_SHA: "a".repeat(40),
+    GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token", GATEWAY_TOKEN_VERSION: "latest",
+    WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-preview", WORKERS_TOKEN_VERSION: "latest",
+    CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "latest",
+    METADATA_SECRET_SECRET: "ai-relay-metadata-secret", METADATA_SECRET_VERSION: "latest",
+    AI_RELAY_CLOUD_RUN_SERVICE: "fixture", GCP_PROJECT_ID: "fixture",
+    GCP_REGION: "fixture", IMAGE_DIGEST: `fixture@sha256:${"a".repeat(64)}`,
+    AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture",
+    PLATFORM_INTERNAL_URL: "https://platform.example.test",
+    CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,
+    MATRIX_JEV_PRICING_REVIEW_VERSION: "typesafe-jev-input-2026-09",
+    MATRIX_JEV_PRICING_REVIEWED_AT: "2026-09-30T00:00:00.000Z",
+    MATRIX_JEV_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+    MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
+    MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: "2026-10-01T00:00:00.000Z",
+    MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+    MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS["@cf/zai-org/glm-5.3-flash"],
+    MATRIX_FUNDED_GLM_PRICING_REVIEWED_AT: "2026-10-01T00:00:00.000Z",
+    MATRIX_FUNDED_GLM_PRICING_VALID_THROUGH: "2026-10-30T00:00:00.000Z",
+  } });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  const envArgs = result.stdout.split("\n").filter(line => line.startsWith("^|^"));
+  expect(envArgs).toHaveLength(1);
+  expect(envArgs[0]).toContain(",advisor-tool-2026-03-01,");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEW_VERSION=typesafe-jev-input-2026-09");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_REVIEWED_AT=2026-09-30T00:00:00.000Z");
+  expect(envArgs[0]).toContain("|MATRIX_JEV_PRICING_VALID_THROUGH=2026-10-30T00:00:00.000Z");
+  expect(result.stdout).toContain("--no-traffic\n");
+});
 
 function enabledEnv(): NodeJS.ProcessEnv {
   return {
@@ -73,13 +120,20 @@ describe("funded relay Cloud Run service", () => {
     try {
       expect((await service.app.request(path)).status).toBe(401);
       expect(fetchFn).not.toHaveBeenCalled();
-      const headers = { authorization: `Bearer ${config.relayControlToken}` };
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      const headers = { authorization: `Bearer ${config.relayControlToken}`,
+        "x-matrix-readiness-probe-id": "12345678-1234-4123-8123-123456789abc",
+        "x-cloud-trace-context": `${"b".repeat(32)}/123;o=1` };
       expect((await service.app.request(path, { headers })).status).toBe(200);
       expect(fetchFn).toHaveBeenCalledWith(
         "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/zai-org/glm-5.3-flash",
         expect.objectContaining({ method: "POST", redirect: "error", signal: expect.any(AbortSignal),
           body: expect.stringContaining('"max_tokens":1') }),
       );
+      expect(JSON.parse(String(info.mock.calls[0]?.[0]))).toMatchObject({
+        probeId: headers["x-matrix-readiness-probe-id"], traceId: "b".repeat(32),
+        modelId: "@cf/zai-org/glm-5.3-flash", outcome: "ready",
+      });
       fetchFn.mockResolvedValueOnce(new Response(null, { status: 503 }));
       expect((await service.app.request(path, { headers })).status).toBe(503);
       fetchFn.mockResolvedValueOnce(Response.json({ success: true, result: [{ name: "@cf/zai-org/glm-5.3-flash" }] }));
@@ -177,6 +231,7 @@ describe("funded relay Cloud Run service", () => {
       "context-management-2025-06-27",
       "prompt-caching-scope-2026-01-05",
       "mid-conversation-system-2026-04-07",
+      "advisor-tool-2026-03-01",
       "effort-2025-11-24",
     ]) expect(workflow).toContain(beta);
     expect(workflow).toContain("CLOUDFLARE_AI_GATEWAY_TOKEN=${GATEWAY_TOKEN_SECRET}:${GATEWAY_TOKEN_VERSION}");

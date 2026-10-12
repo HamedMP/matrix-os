@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   Animated,
   Easing,
@@ -15,7 +15,7 @@ export interface SkeletonProps extends Omit<ViewProps, "children" | "style"> {
 }
 
 export function Skeleton({ style, shimmerTestID, ...props }: SkeletonProps) {
-  const progress = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     const animation = Animated.loop(Animated.timing(progress, {
@@ -56,7 +56,7 @@ export function Skeleton({ style, shimmerTestID, ...props }: SkeletonProps) {
 const styles = StyleSheet.create((theme) => ({
   base: {
     overflow: "hidden",
-    backgroundColor: theme.v2.colors.accentSurface,
+    backgroundColor: theme.v2.colors.skeleton,
   },
   shimmer: {
     position: "absolute",
@@ -64,6 +64,6 @@ const styles = StyleSheet.create((theme) => ({
     bottom: -40,
     left: 0,
     width: 72,
-    backgroundColor: "rgba(255, 255, 255, 0.58)",
+    backgroundColor: theme.v2.colors.skeletonHighlight,
   },
 }));

@@ -36,8 +36,11 @@ import {
   tapScale,
 } from "@/lib/motion";
 import { useChatContext } from "@/stores/chat-context";
+import { mobileAppsFromBootstrap } from "./mobile-app";
 import { getGatewayUrl } from "@/lib/gateway";
+import { webShellIconUrlForApp, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import { nameToSlug } from "@/lib/utils";
+import { normalizeAppBridgeLaunchPath, routeAppBridgeLaunch } from "@/lib/builtin-apps";
 import {
   loadShellSnapshot,
   saveShellSnapshot,
@@ -93,28 +96,12 @@ function mobileTerminalCapacityAction<T extends {
 
 const BUILT_IN_APPS: MobileApp[] = [
   { id: "terminal", name: "Terminal", path: "__terminal__", iconSlug: "terminal" },
-  { id: "files", name: "Files", path: "__file-browser__", iconSlug: "folder" },
+  { id: "files", name: "Files", path: "__file-browser__", iconSlug: "files" },
   ...(HERMES_CHAT_HIDDEN
     ? []
     : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
-function mobileAppsFromBootstrap(
-  bootstrap: ShellBootstrapSnapshot | { name: string; path: string; icon?: string }[] | null | undefined,
-): MobileApp[] {
-  const list = Array.isArray(bootstrap) ? bootstrap : bootstrap?.apps;
-  if (!Array.isArray(list)) return [];
-  return list.flatMap((a) => {
-    if (typeof a.name !== "string" || typeof a.path !== "string") return [];
-    const relative = a.path.replace(/^\/files\//, "");
-    return [{
-      id: `app:${relative}`,
-      name: a.name,
-      path: relative,
-      iconSlug: a.icon ?? ("slug" in a && typeof a.slug === "string" ? a.slug : nameToSlug(a.name)),
-    }];
-  });
-}
 
 function mergeMobileApps(base: MobileApp[], installed: MobileApp[]): MobileApp[] {
   const seen = new Set(base.map((p) => p.path));
@@ -179,6 +166,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
   const [time, setTime] = useState("--:--");
   const [terminalInputActiveId, setTerminalInputActiveId] = useState<string | null>(null);
   const stackRef = useRef(openStack);
+  const appsRef = useRef(apps);
+  useEffect(() => { appsRef.current = apps; }, [apps]);
   const launchPathConsumedRef = useRef<string | null>(null);
   const appsRefreshGenerationRef = useRef(0);
   useEffect(() => {
@@ -291,7 +280,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
             : { terminalLayoutId: createTerminalLayoutId(), terminalPersistence: "durable" as const }),
         }];
       }
-      const existing = prev.findIndex((o) => o.app.path === app.path);
+      const existing = prev.findIndex((o) => normalizeAppBridgeLaunchPath(o.app.path) === normalizeAppBridgeLaunchPath(app.path));
       if (existing >= 0) {
         const next = prev.slice();
         const [taken] = next.splice(existing, 1);
@@ -304,6 +293,15 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     setView("app");
     return true;
   }, []);
+
+  const openAppFromBridge = useCallback((name: string, requestedPath: string) => {
+    routeAppBridgeLaunch(name, requestedPath, (title, path) => {
+      const registered = appsRef.current.find((candidate) => normalizeAppBridgeLaunchPath(candidate.path) === path);
+      openApp(registered ? { ...registered, path } : {
+        id: `app:${path}`, name: title, path, iconSlug: nameToSlug(title),
+      });
+    });
+  }, [openApp]);
 
   const openAgentSetupTerminal = useCallback((action: TerminalLaunchAction) => {
     const terminal = BUILT_IN_APPS.find((app) => app.path === "__terminal__");
@@ -395,7 +393,8 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
     setView("switcher");
   };
 
-  const pinnedDock = apps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
+  const displayApps = apps.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) }));
+  const pinnedDock = displayApps.filter((a) => ["terminal", "files", "chat"].includes(a.id)).slice(0, 4);
 
   // Touch: swipe from the bottom edge up by >40px when an app is foregrounded
   // opens the app switcher (matches iOS swipe-up). Done with pointer events
@@ -490,7 +489,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
                 background: "var(--background)",
               }}
             >
-              <MobileAppFrame openApp={o} chat={chat} visible={visible} />
+              <MobileAppFrame openApp={o} chat={chat} visible={visible} onOpenApp={openAppFromBridge} />
             </motion.div>
           );
         })}
@@ -507,7 +506,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
               exit="exit"
             >
               <MobileLauncher
-                apps={apps}
+                apps={displayApps}
                 onOpen={openApp}
                 onOpenSettings={() => {
                   setSettingsDefaultSection("appearance");
@@ -552,7 +551,7 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
         </AnimatePresence>
       </main>
 
-      <MobileDock
+      <MobileDock galleryIconUrl={webGalleryLauncherIconUrl(apps)}
         apps={pinnedDock}
         currentPath={view === "app" ? top?.app.path : undefined}
         view={view}
@@ -598,10 +597,12 @@ function MobileAppFrame({
   openApp,
   chat,
   visible,
+  onOpenApp,
 }: {
   openApp: OpenApp;
   visible: boolean;
   chat: ReturnType<typeof useChatContext>;
+  onOpenApp: (name: string, path: string) => void;
 }) {
   const { app, id: openId } = openApp;
   if (app.path.startsWith("__terminal__")) {
@@ -676,7 +677,7 @@ function MobileAppFrame({
       </div>
     );
   }
-  return <AppViewer path={app.path} onOpenApp={() => {}} />;
+  return <AppViewer path={app.path} onOpenApp={onOpenApp} />;
 }
 
 function AppSwitcher({
@@ -764,7 +765,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <MobileAppIcon slug={o.app.iconSlug} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"

@@ -132,7 +132,9 @@ describe("bot tool dispatcher", () => {
       await writeFile(path, "partial");
       await utimes(path, staleAt, staleAt);
     }
-    for (let pass = 0; pass < 3; pass += 1) await sweepBotWorkspaceSaves(home);
+    // Two workspace rounds are needed for two staging visits; filesystem
+    // iteration may place this workspace last (129 workspaces, 257 files).
+    for (let pass = 0; pass < 4; pass += 1) await sweepBotWorkspaceSaves(home);
     expect(await readdir(staging)).toEqual([]);
     for (let index = 0; index < 128; index += 1) {
       const workspace = join(home, "bots", `bot_${String(index).padStart(24, "0")}`);

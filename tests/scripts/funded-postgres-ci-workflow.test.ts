@@ -15,7 +15,7 @@ describe("funded settlement real PostgreSQL CI", () => {
   it("runs independent-pool settlement tests against a disposable service with a required local URL", () => {
     const job = workflow().jobs["funded-postgres"];
     expect(job).toBeDefined();
-    expect(job?.services?.postgres?.image).toBe("postgres:16");
+    expect(job?.services?.postgres?.image).toBe("public.ecr.aws/docker/library/postgres:16");
     expect(job?.env?.MATRIX_TEST_POSTGRES_URL).toBe("postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test");
     const command = job?.steps?.find(step => step.name === "Verify funded settlement on PostgreSQL")?.run;
     expect(command).toContain('${MATRIX_TEST_POSTGRES_URL:?');

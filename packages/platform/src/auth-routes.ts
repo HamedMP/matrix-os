@@ -254,6 +254,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
         clerkUserId,
         handle,
         gatewayUrl,
+        sessionProvenance: 'clerk-device',
         runtimeSlot: runtimeSlot ?? machine?.runtimeSlot,
       });
       // Best-effort display profile; never let it break sign-in.

@@ -1,7 +1,7 @@
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
-import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection } from "./connection-selection.js";
+import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection, resolveManagedIntegrationCall } from "./connection-selection.js";
 import { Hono, type Context } from "hono";
 import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
@@ -605,21 +605,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
       try {
-        // Immutable selection cannot follow a label onto a replacement account.
-        // Legacy callers without an ID keep their existing broker behavior.
-        if (connectionId) {
-          const selected = resolveIntegrationConnection(
-            (await mcpPresetBroker.listConnections(uid)).filter(row => row.status === "active"), service, label,
-          );
-          if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
-          if (selected.kind !== "found" || selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
-        }
+        const selected = await resolveManagedIntegrationCall({ service, label, connectionId,
+          listConnections: () => mcpPresetBroker.listConnections(uid) });
+        if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+        if (selected.kind === "denied") return c.json({ error: "Action not permitted" }, 403);
         const data = await mcpPresetBroker.call({
           userId: uid,
           service: def,
           actionId: action,
           params,
-          ...(connectionId ? { connectionId } : {}),
+          ...(selected.kind === "found" ? { connectionId: selected.connectionId } : {}),
         });
         return c.json({ data, service, action });
       } catch (err) {

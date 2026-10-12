@@ -1,0 +1,31 @@
+{
+  "name": "Connected Starter",
+  "description": "An empty owner-controlled workspace with connected evidence.",
+  "runtime": "vite",
+  "slug": "connected-starter",
+  "category": "productivity",
+  "icon": "layers",
+  "author": "system",
+  "version": "1.0.0",
+  "runtimeVersion": "^1.0.0",
+  "listingTrust": "first_party",
+  "scope": "personal",
+  "storage": {
+    "tables": {
+      "records": { "columns": { "source_id": "text", "payload": "jsonb" } }
+    }
+  },
+  "build": {
+    "install": "true",
+    "command": "vite build --base ./ --outDir dist",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "scripts/sync-inventory.mjs",
+      "index.html",
+      "vite.config.ts",
+      "matrix.json"
+    ]
+  }
+}

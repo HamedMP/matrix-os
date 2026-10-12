@@ -518,6 +518,7 @@ describe("Codex app-server control runtime", () => {
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: '', phase: 'commentary' } } }));",
       "    for (const delta of ['I will ', 'inspect ', 'the repository.']) console.log(JSON.stringify({ method: 'item/agentMessage/delta', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', itemId: 'native-commentary-item', delta } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-commentary-item', type: 'agentMessage', text: 'I will inspect the repository.', phase: 'commentary' } } }));",
+      "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'native-partial-item', type: 'agentMessage', text: 'Here is a partial result.', phase: 'partial_answer' } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'reasoning-item', type: 'reasoning', summary: ['private hidden reasoning'], status: 'inProgress' } } }));",
       "    console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'reasoning-item', type: 'reasoning', summary: ['private hidden reasoning'], status: 'completed' } } }));",
       "    console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread-items', turnId: 'native-turn-items', item: { id: 'safe-command-item', type: 'commandExecution', command: 'pnpm build', cwd: '/home/matrix/home/apps/flappy-bird', aggregatedOutput: '', exitCode: null, status: 'inProgress', durationMs: null } } }));",
@@ -573,6 +574,8 @@ describe("Codex app-server control runtime", () => {
       expect(events.map((event) => event.type)).toEqual([
         "assistant.text.delta",
         "assistant.text.completed",
+        "assistant.text.delta",
+        "assistant.text.completed",
         "tool.started",
         "tool.completed",
         "tool.started",
@@ -591,6 +594,8 @@ describe("Codex app-server control runtime", () => {
       const [
         commentaryDelta,
         commentaryCompleted,
+        partialDelta,
+        partialCompleted,
         reasoningStarted,
         reasoningCompleted,
         safeCommandStarted,
@@ -610,6 +615,11 @@ describe("Codex app-server control runtime", () => {
       expect(commentaryCompleted).toMatchObject({
         type: "assistant.text.completed",
         messageId: commentaryDelta && "messageId" in commentaryDelta ? commentaryDelta.messageId : undefined,
+      });
+      expect(partialDelta).toMatchObject({ type: "assistant.text.delta", delta: "Here is a partial result." });
+      expect(partialCompleted).toMatchObject({
+        type: "assistant.text.completed",
+        messageId: partialDelta && "messageId" in partialDelta ? partialDelta.messageId : undefined,
       });
       expect(reasoningStarted).toMatchObject({
         type: "tool.started",

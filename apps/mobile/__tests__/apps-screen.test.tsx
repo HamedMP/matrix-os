@@ -7,14 +7,18 @@ jest.mock("expo-router", () => ({
 
 jest.mock("@/lib/queries/use-computer-apps", () => ({
   useComputerApps: () => mockUseComputerApps(),
-  installedAppSlug: (app: { slug: string }) => app.slug,
+  installedAppSlug: (app: { file: string; path: string; name: string; slug: string }) => jest.requireActual("../lib/apps").getAppIdentity(app),
 }));
 
 import React from "react";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { StyleSheet as NativeStyleSheet } from "react-native";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
-import AppsScreen from "../app/(drawer)/apps";
+import AppsScreen from "../app/(drawer)/(tabs)/(apps)/apps";
+import { Icon } from "../components/ui/Icon";
+import { IconTile } from "../components/ui/IconTile";
+import { AddIcon, ChevronRightIcon, FolderIcon } from "../components/ui/icons";
 
 describe("drawer apps screen", () => {
   beforeEach(() => {
@@ -58,8 +62,43 @@ describe("drawer apps screen", () => {
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/app-preview/[app]",
-      params: { app: "chess", name: "Chess" },
+      params: { app: "games/chess", runtimeSlug: "chess", name: "Chess" },
     });
+  });
+
+  it("opens Files and Connect Apps from two rows above the search field", () => {
+    render(<AppsScreen />);
+
+    const files = screen.getByRole("button", { name: "Files" });
+    const connectApps = screen.getByRole("button", { name: "Connect Apps" });
+    const hosts = screen.root.findAll((node: { type: unknown }) => typeof node.type === "string");
+    expect(hosts.indexOf(files)).toBeGreaterThan(-1);
+    expect(hosts.indexOf(files)).toBeLessThan(hosts.indexOf(connectApps));
+    expect(hosts.indexOf(connectApps)).toBeLessThan(hosts.indexOf(screen.getByLabelText("Search apps")));
+
+    const tiles = screen.UNSAFE_getAllByType(IconTile);
+    expect(tiles.map((tile) => tile.props)).toEqual([
+      { icon: FolderIcon, size: 40 },
+      { icon: AddIcon, size: 40 },
+    ]);
+    const chevrons = screen.UNSAFE_getAllByType(Icon).filter((icon) => icon.props.icon === ChevronRightIcon);
+    expect(chevrons).toHaveLength(2);
+
+    fireEvent.press(files);
+    expect(mockPush).toHaveBeenLastCalledWith("/files");
+
+    fireEvent.press(connectApps);
+    expect(mockPush).toHaveBeenLastCalledWith("/integrations");
+  });
+
+  it("starts below the status bar now that no navigator draws a header above it", () => {
+    render(
+      <SafeAreaInsetsContext.Provider value={{ top: 62, right: 0, bottom: 34, left: 0 }}>
+        <AppsScreen />
+      </SafeAreaInsetsContext.Provider>,
+    );
+
+    expect(NativeStyleSheet.flatten(screen.root.props.style)).toMatchObject({ flex: 1, paddingTop: 62 });
   });
 
   it("names the supported presentations for apps needing workspace capabilities", () => {

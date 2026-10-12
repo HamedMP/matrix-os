@@ -4,6 +4,7 @@ import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Markdown } from "@tiptap/markdown";
 import type { Note, NotesController } from "./notes-controller";
 import "./notes.css";
+import { desktopFonts } from "@matrix-os/brand";
 
 function exitEmptyChecklistItem(editor: Editor | null): boolean {
   if (!editor) return false;
@@ -46,14 +47,14 @@ export default function NoteEditor({ note, controller }: { note: Note; controlle
   });
 
   return (
-    <div className="w-full px-6">
+    <div className="notes-document mx-auto w-full max-w-[780px] px-6 py-5">
       <input
         aria-label="Note title"
         value={note.title}
         maxLength={240}
         placeholder="Untitled"
         className="notes-title mb-2 w-full border-0 bg-transparent text-[30px] font-semibold leading-[38px] tracking-[-0.8px] outline-none placeholder:text-[var(--text-subtle)]"
-        style={{ color: "var(--text-primary)" }}
+        style={{ color: "var(--text-primary)", fontFamily: desktopFonts.display }}
         onChange={(event) => controller.edit(note.id, { title: event.currentTarget.value })}
         onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); editor?.commands.focus("start"); } }}
         onBlur={() => { void controller.flush(); }}

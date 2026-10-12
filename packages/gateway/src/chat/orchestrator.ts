@@ -198,6 +198,8 @@ export class CanonicalChatOrchestrator {
     };
     onAiGeneration?: (input: AiGenerationInput) => void;
     onSharedEvent?: (scopeId: string) => Promise<void>;
+    beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
+      clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
     sharedExecutionCoordinatorFactory?: (
       options: SharedChatExecutionCoordinatorOptions,
     ) => SharedChatExecutionCoordinator;
@@ -293,6 +295,7 @@ export class CanonicalChatOrchestrator {
   async admitTurn(
     principal: RequestPrincipal, owner: ChatOwner, chatId: string,
     inputValue: CanonicalCreateChatTurnRequest,
+    provenance?: { previewTurnProof?: string },
   ): Promise<CanonicalChatTurnAdmissionResponse> {
     return admitCanonicalTurn({
       ...this.options,
@@ -304,7 +307,7 @@ export class CanonicalChatOrchestrator {
       atCapacity: (scope) => this.atCapacity(scope),
       hasStoppingExecution: (scope, id, admissionKey) => hasStoppingChatExecution(this.active.values(), scope, id, admissionKey),
       startDispatch: (...args) => this.startDispatch(...args),
-    }, principal, owner, chatId, inputValue);
+    }, principal, owner, chatId, inputValue, provenance);
   }
 
   async enqueueQueuedTurn(
@@ -363,7 +366,7 @@ export class CanonicalChatOrchestrator {
     admissionKey?: string,
     sharedScopeId?: string,
     onComplete?: () => Promise<void>,
-  ): void {
+  ): Promise<void> {
     const controller = new AbortController();
     const completion = this.dispatch(
       owner, message, run, adapter, controller, resolvedRoot, resumeState, promptOverride, sharedScopeId,
@@ -395,6 +398,7 @@ export class CanonicalChatOrchestrator {
       ...(sharedScopeId ? { sharedScopeId } : {}),
       completion,
     });
+    return completion;
   }
 
   async dispatchNextSharedQueued(

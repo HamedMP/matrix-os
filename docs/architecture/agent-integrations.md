@@ -45,12 +45,19 @@ platform stores AES-256-GCM encrypted OAuth/static credentials; the VPS stores
 only the non-secret revisioned enforcement projection in
 `~/system/mcp-servers.json`. Calls require the intersection of both copies.
 
-Canonical Claude Chat advertises only its issued Custom MCP surface: list and
-describe for discovery-only runs, plus the broker call wrapper when calls are
-authorized. Ordinary integration inventory is not advertised on this route.
-Existing full integration clients retain their complete tool inventory. The
-advertisement selector never expands the actor-bound Gateway grant or bypasses
-tool approval.
+Canonical Claude Chat advertises exactly its issued tool surface. The explicit
+`integrationRead` opt-in adds `list_integration_inventory`, `describe_service` and
+`call_service` for built-in connected-service reads, including Google Drive. The
+actor-bound grant permits only inventory, action catalog and the read-call broker;
+reads require the exact connected account label and reject writes or connection
+management. A skill does not grant authority. No second Drive login or Custom MCP
+registration is needed when this built-in read scope is available.
+
+Custom MCP discovery-only runs still advertise list and describe wrappers; calls
+add the broker wrapper only when authorized. Existing no-flag scopes and full
+integration clients retain their previous surfaces. The advertisement selector
+never expands the actor-bound Gateway grant or bypasses tool approval. See
+[connected app capabilities](../dev/app-capabilities.md) for the separate app grants.
 
 The MCP and OAuth HTTPS transports pin the validated DNS address for both
 single-address and all-address lookup callbacks used by Node automatic
@@ -112,10 +119,11 @@ the launcher with `--require-scoped-capability`, so a missing Run bearer cannot
 fall back to the VPS machine token. The gateway issues that bearer only when
 the Chat owner matches the configured single-owner runtime and the runtime is
 not Preview. A normal Run can read the Custom MCP collection/detail and call an
-exact server ID. Review/read-only Runs receive discovery-only bearers, and
-Claude auto-allows only the two discovery wrappers for them. The Gateway denies
-raw call POSTs from those bearers because Custom MCP tools have no trusted
-read/write classification. Completion, abort, timeout, and gateway shutdown
+exact server ID. Review/read-only Runs receive Custom MCP discovery-only bearers.
+When explicitly opted into built-in integration reads, both normal and review Runs
+also receive the three fixed read wrappers and the independent read-call route.
+The Gateway denies Custom MCP raw call POSTs from discovery-only bearers because
+those tools have no trusted read/write classification. Completion, abort, timeout, and gateway shutdown
 revoke every grant. For normal Runs, the broker still enforces tool enablement,
 server revision, and approval policy:
 the Gateway also rejects a Run-bearer request that claims human approval

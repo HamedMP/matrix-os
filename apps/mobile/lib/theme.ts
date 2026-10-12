@@ -39,33 +39,34 @@ export const colors = {
     statusIdle: "#9AA098",
     statusDone: "#6A8A7A",
   },
-  // Dark console — a botanical-tinted near-black so the terminal reads as a
-  // proper terminal window against the light shell chrome. The greens/cyans are
-  // pushed brighter than the shell palette so prompts and diffs pop on dark ink.
+  // Dark console: a neutral near-black so the terminal reads as a proper
+  // terminal window against the light app chrome. Only the colours programs
+  // print with (red, green, yellow, blue, magenta, cyan) carry a hue, and they
+  // are pushed bright so prompts and diffs stand out on the dark ground.
   terminal: {
-    bg: "#121511",
-    surface: "#171B14",
-    fg: "#E4E8DE",
-    fgDim: "#9BA593",
-    cursor: "#B7C3A6",
-    selection: "rgba(154, 164, 140, 0.30)",
-    border: "rgba(228, 232, 222, 0.08)",
-    black: "#2A2E26",
+    bg: "#0D0C0C",
+    surface: "#171717",
+    fg: "#E1E0E0",
+    fgDim: "#A8A4A4",
+    cursor: "#C8C6C6",
+    selection: "rgba(200, 198, 198, 0.30)",
+    border: "rgba(225, 224, 224, 0.08)",
+    black: "#242323",
     red: "#E06A4E",
     green: "#7FC58D",
     yellow: "#D9B45A",
     blue: "#83A8DB",
     magenta: "#C29BD4",
     cyan: "#6FCFC4",
-    white: "#C4CBBC",
-    brightBlack: "#5A6356",
+    white: "#C8C6C6",
+    brightBlack: "#635F5F",
     brightRed: "#F08368",
     brightGreen: "#9FD8AC",
     brightYellow: "#E8C778",
     brightBlue: "#9CBEEC",
     brightMagenta: "#D6B6E4",
     brightCyan: "#8BE0D6",
-    brightWhite: "#F2F5EE",
+    brightWhite: "#F3F2F2",
   },
   dark: {
     background: "#141614",

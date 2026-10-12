@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { type PlatformDB, insertContainer } from '../../packages/platform/src/db.js';
 import { createSocialApi } from '../../packages/platform/src/social.js';
 

@@ -3,7 +3,7 @@ import type { StripeBillingClient } from '../../packages/platform/src/billing/st
 import { createAccountDeletionGuardedStripeClient } from '../../packages/platform/src/account-deletion/billing-admission.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { upsertBillingCustomer, type PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const secret = 'billing-admission-secret-at-least-32-bytes';
 const owner = 'user_billing_deletion';

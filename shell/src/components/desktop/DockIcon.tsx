@@ -54,12 +54,12 @@ export function DockIcon({
       ref={buttonRef}
       type="button"
       onClick={onClick}
-      className="relative flex items-center justify-center rounded-xl shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all bg-card border border-border/60 overflow-hidden"
+      className={`relative flex items-center justify-center rounded-xl hover:scale-105 active:scale-95 transition-all ${dockArtworkClass(Boolean(showImage))}`}
       style={{ width: iconSize, height: iconSize }}
     >
       {showImage ? (
         // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host with an onError fallback chain (.png -> .svg) that next/image cannot reproduce
-        <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
+        <img src={iconUrl} alt={name} className="size-full object-contain" onError={onImgError} />
       ) : (
         <span className="text-sm font-semibold text-foreground">
           {initial}
@@ -137,4 +137,8 @@ export function DockIcon({
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+function dockArtworkClass(hasArtwork: boolean): string {
+  return hasArtwork ? "bg-transparent border-0 shadow-none" : "bg-card border border-border/60 shadow-sm hover:shadow-md";
 }

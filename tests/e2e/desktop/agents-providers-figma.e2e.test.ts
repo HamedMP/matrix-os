@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startAgentsProvidersWorkflowGateway } from "./fixtures/agents-providers-workflows";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
@@ -32,11 +33,11 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     });
     await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
-    const checklist = page.getByRole("button", { name: /^Getting started —/ });
-    if (await checklist.getAttribute("aria-expanded") === "true") await checklist.click();
+
     await page.getByRole("button", { name: "Open account menu", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
@@ -50,7 +51,16 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
   async function select(name: string) {
     const row = feature().locator(".matrix-ap-rail-item").filter({ hasText: name }).first();
     if (await row.getAttribute("aria-expanded") !== "true") await row.click();
-    await expect.poll(() => row.getAttribute("aria-expanded"), { timeout: 5_000 }).toBe("true");
+    await expect.poll(() => row.evaluate(trigger => {
+      const id = trigger.getAttribute("aria-controls");
+      const details = id ? document.getElementById(id) : null;
+      // Lazy disclosure exposes the button before its clipping transition ends.
+      // Wait for the actual interaction surface, rather than just the toggle state.
+      return trigger.getAttribute("aria-expanded") === "true" && details !== null
+        && details.getBoundingClientRect().height > 0
+        && getComputedStyle(details).opacity === "1"
+        && !details.getAnimations().some(animation => animation.playState === "running");
+    }), { timeout: 5_000 }).toBe(true);
   }
   it("animates the first lazy disclosure, reverses without jumping, and respects reduced motion", async () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });

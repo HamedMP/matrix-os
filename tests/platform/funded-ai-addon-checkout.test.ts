@@ -9,7 +9,7 @@ import {
 } from "../../packages/platform/src/billing-routes.js";
 import { loadAiCreditCheckoutConfig } from "../../packages/platform/src/ai-credit-checkout.js";
 import { getBillingWebhookEvent, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const checkoutEnv = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "true",

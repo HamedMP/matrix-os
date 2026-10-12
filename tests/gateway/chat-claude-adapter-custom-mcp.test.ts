@@ -18,6 +18,41 @@ const input = {
 };
 
 describe("canonical Claude native Custom MCP approval handoff", () => {
+  it("denies a Custom MCP native request on the Preview Drive run", async () => {
+    const registry = createMatrixMcpCapabilityRegistry({ previewRuntime: true });
+    registry.authorizePreviewDriveRun({ actorId: input.owner.ownerId, chatId: input.chatId,
+      runId: input.runId, runGrant: "a".repeat(64) });
+    const responses: Array<{ behavior: string }> = [];
+    const spawnFn = vi.fn<CanonicalCliSpawn>(() => {
+      const child = new EventEmitter() as ReturnType<CanonicalCliSpawn>;
+      child.stdout = new EventEmitter() as typeof child.stdout;
+      child.stderr = new EventEmitter() as typeof child.stderr;
+      child.kill = vi.fn();
+      child.stdin = { write(chunk: string, callback?: (error?: Error | null) => void) {
+        callback?.();
+        const frame = JSON.parse(chunk);
+        if (frame.type === "user") queueMicrotask(() => child.stdout!.emit("data", Buffer.from(`${JSON.stringify({
+          type: "control_request", request_id: "native_1", request: { subtype: "can_use_tool",
+            tool_name: "mcp__matrix-integrations__call_custom_mcp_tool", input: nativeInput },
+        })}\n`)));
+        if (frame.type === "control_response") {
+          responses.push(frame.response.response);
+          queueMicrotask(() => {
+            child.stdout!.emit("data", Buffer.from(`${JSON.stringify({ type: "result", subtype: "success",
+              result: "done", session_id: "claude_fixture_session" })}\n`));
+            child.emit("exit", 0, null);
+          });
+        }
+        return true;
+      }, end() {} } as typeof child.stdin;
+      return child;
+    });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn,
+      resolveCredentialEnv: async () => ({}), matrixMcpCapabilityIssuer: registry });
+    for await (const _ of adapter.start(input)) { /* Drain native transport. */ }
+    expect(responses).toEqual([{ behavior: "deny", message: "Tool approval is unavailable in this Chat connection." }]);
+    registry.close();
+  });
   it("continues a supervised Run when approval lease registration fails, leaving always_ask to broker policy", async () => {
     const responses: Array<{ behavior: string; updatedInput?: Record<string, unknown> }> = [];
     const spawnFn = vi.fn<CanonicalCliSpawn>(() => {

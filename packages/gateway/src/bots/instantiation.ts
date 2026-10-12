@@ -17,6 +17,7 @@
 import { createHash } from "node:crypto";
 import { lstat, opendir } from "node:fs/promises";
 import {
+  CreateManagedCustomBotRequestSchema, MANAGED_CUSTOM_BOT_RECIPE_REF,
   InstantiateBotRequestSchema,
   InstantiateBotResponseSchema,
   type ChatAgent,
@@ -34,6 +35,9 @@ import { createBotBindingsRepository } from "./repositories/bindings.js";
 import { createBotOperationsRepository, type BotOperation } from "./repositories/operations.js";
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
+import { isManagedCustomOperationRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
+import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
+import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
 
 export type BotInstantiationErrorCode = "invalid_request" | "conflict" | "rate_limited" | "unavailable";
 
@@ -117,6 +121,7 @@ export function createBotInstantiation(deps: {
   agents: Pick<ChatAgentStore, "createRecipeBot" | "get" | "count">;
   recipes: BotRecipeCatalog;
   validateSelection?: (ownerId: string, selection: import("@matrix-os/contracts").CanonicalChatModelSelection) => Promise<void>;
+  customRecipes?: Pick<ChatAgentRecipeResolver, "resolve">;
   ensureWorkspace(botId: string): Promise<void>;
   now?: () => Date;
 }) {
@@ -227,12 +232,12 @@ export function createBotInstantiation(deps: {
     });
   }
 
-  return {
-    async instantiate(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {
+  async function instantiate(ownerId: string, requestValue: unknown, custom?: import("@matrix-os/contracts").CreateManagedCustomBotRequest): Promise<InstantiateBotResponse> {
       const parsed = InstantiateBotRequestSchema.safeParse(requestValue);
       if (!parsed.success) throw new BotInstantiationError("invalid_request");
       const request = parsed.data;
-      const payloadHash = instantiationPayloadHash(request);
+      if (!custom && isManagedCustomOperationRequestId(request.clientRequestId)) throw new BotInstantiationError("invalid_request");
+      const payloadHash = custom ? createHash("sha256").update(JSON.stringify(["managed-custom-v1", custom])).digest("hex") : instantiationPayloadHash(request);
       const scope = owner(ownerId);
       // A retry is answered from its operation first, so retiring a recipe never breaks replay.
       const existing = await operations.get(ownerId, request.clientRequestId);
@@ -241,7 +246,8 @@ export function createBotInstantiation(deps: {
       if (replayedExisting) return replayedExisting;
       let recipe;
       try {
-        recipe = deps.recipes.resolve(request.recipe);
+        if (!custom && request.recipe.recipeId === MANAGED_CUSTOM_BOT_RECIPE_REF.recipeId) throw new BotInstantiationError("invalid_request");
+        recipe = custom ? { ...MANAGED_CUSTOM_BOT_RECIPE_REF, name: custom.name, description: custom.description, instructions: custom.instructions } : deps.recipes.resolve(request.recipe);
       } catch (error: unknown) {
         if (!(error instanceof BotRecipeCatalogError)) throw error;
         if (!existing) throw new BotInstantiationError("invalid_request");
@@ -251,6 +257,14 @@ export function createBotInstantiation(deps: {
       if (request.selection) {
         if (!deps.validateSelection) throw new BotInstantiationError("invalid_request");
         await deps.validateSelection(ownerId, request.selection);
+      }
+      if (custom) {
+        try {
+          await resolveManagedCustomDefinition(custom, deps.customRecipes);
+        } catch (error) {
+          if (error instanceof ManagedCustomDefinitionError) throw new BotInstantiationError("invalid_request");
+          throw error;
+        }
       }
       // Checked before reserving so a full owner is refused without leaving an operation behind.
       if (!existing && await deps.agents.count(scope) >= 100) throw new BotInstantiationError("rate_limited");
@@ -275,6 +289,7 @@ export function createBotInstantiation(deps: {
             selection: request.selection ?? MATRIX_BOT_SELECTION,
           },
           recipeRef: { recipeId: recipe.recipeId, version: recipe.version },
+          ...(custom?.recipe ? { recipe: custom.recipe } : {}),
         })
         : () => deps.agents.get(scope, operation.botId);
       try {
@@ -288,6 +303,13 @@ export function createBotInstantiation(deps: {
         if (concurrent) return concurrent;
         throw error;
       }
+    }
+  return {
+    instantiate: (ownerId: string, requestValue: unknown) => instantiate(ownerId, requestValue),
+    async createCustom(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {
+      const parsed = CreateManagedCustomBotRequestSchema.safeParse(requestValue);
+      if (!parsed.success) throw new BotInstantiationError("invalid_request");
+      return instantiate(ownerId, { clientRequestId: managedCustomOperationRequestId(ownerId, parsed.data.clientRequestId), recipe: MANAGED_CUSTOM_BOT_RECIPE_REF, name: parsed.data.name, selection: parsed.data.selection }, parsed.data);
     },
     /**
      * Reconciliation: finishes an unfinished operation whose definition file

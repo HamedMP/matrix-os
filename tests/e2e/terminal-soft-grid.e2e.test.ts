@@ -71,6 +71,32 @@ describe("real terminal renderer soft-grid resizing", () => {
     if (userData) await rm(userData, { recursive: true, force: true });
   });
 
+  it.each([
+    { surface: "web", name: "Web Desktop", zoom: 1 },
+    { surface: "web", name: "Web Canvas", zoom: 0.5 },
+    { surface: "electron", name: "Electron Desktop", zoom: 1 },
+  ].filter((entry) => nativeElectron ? entry.surface === "electron" : entry.surface === "web"))("pastes through the actual right-click menu without Enter in $name", async ({ surface, zoom }) => {
+    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const payload = "menu paste λ 👩🏽‍💻";
+    try {
+      await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&sizing=viewport`);
+      await page.locator(".xterm-screen").waitFor();
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+      if (electron) await electron.evaluate(({ clipboard }, text) => clipboard.writeText(text), payload);
+      else await page.evaluate((text) => navigator.clipboard.writeText(text), payload);
+      // Ignore TUI mouse packets produced by the right click itself.
+      await page.locator(".xterm-screen").click({ button: "right", position: { x: 80, y: 80 } });
+      const paste = page.getByRole("menuitem", { name: "Paste", exact: true });
+      await paste.waitFor();
+      const prior = await page.evaluate(() => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.length);
+      await paste.click();
+      const expected = surface === "web" ? `\x1b[200~${payload}\x1b[201~` : payload;
+      await expect.poll(() => page.evaluate((start) => (window as unknown as { fixtureInputs: string[] }).fixtureInputs.slice(start), prior)).toEqual([expected]);
+      expect(await page.getByRole("menu").count()).toBe(0);
+      expect(await page.locator(".xterm-helper-textarea").evaluate((element) => document.activeElement === element)).toBe(true);
+    } finally { if (!electron) await page.close(); }
+  });
+
   async function geometry(page: Page) {
     return page.locator("[data-terminal-viewport]").evaluate((host) => {
       const viewport = host as HTMLElement;

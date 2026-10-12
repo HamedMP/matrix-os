@@ -8,17 +8,21 @@ import { useDotGrid } from "../DotGrid";
 import { useCanvasSettings } from "@/stores/canvas-settings";
 import { autoArrangeWindows } from "./canvas-auto-arrange";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
-import {
-  GettingStartedPopover,
-  type GettingStartedSettingsSection,
-} from "../onboarding/GettingStartedPopover";
+import { DesktopViewMenu } from "@matrix-os/ui";
+import { WebDesktopControls, type WebDesktopSettingsSection } from "../desktop/WebDesktopControls";
+import { openShellSupport } from "@/lib/posthog-client";
+import { showWebDesktop } from "@/lib/web-desktop-app-launch";
+import { useDesktopMode } from "@/stores/desktop-mode";
 
 interface CanvasToolbarProps {
-  onOpenSettings?: (section: GettingStartedSettingsSection) => void;
+  onOpenSettings?: (section: WebDesktopSettingsSection) => void;
   onOpenFirstWork?: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
-export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () => {} }: CanvasToolbarProps = {}) {
+export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () => {}, onOpenCommandPalette = () => {} }: CanvasToolbarProps = {}) {
+  const mode = useDesktopMode(state => state.mode);
+  const setMode = useDesktopMode(state => state.setMode);
   const zoom = useCanvasTransform((s) => s.zoom);
   const zoomIn = useCanvasTransform((s) => s.zoomIn);
   const zoomOut = useCanvasTransform((s) => s.zoomOut);
@@ -59,6 +63,8 @@ export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () 
 
   return (
     <>
+      <DesktopViewMenu mode={mode} onModeChange={setMode} onShowDesktop={() => showWebDesktop()} />
+      <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none]">
       <button
         type="button"
         onClick={zoomOut}
@@ -235,11 +241,8 @@ export function CanvasToolbar({ onOpenSettings = () => {}, onOpenFirstWork = () 
       </div>
 
       <div className="h-4 w-px shrink-0 bg-border" />
-      <GettingStartedPopover
-        onOpenSettings={onOpenSettings}
-        onOpenFirstWork={onOpenFirstWork}
-        triggerClassName="flex size-6 shrink-0 items-center justify-center rounded transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      />
+      </div>
+      <WebDesktopControls onOpenSettings={onOpenSettings} onOpenCommandPalette={onOpenCommandPalette} onOpenFirstWork={onOpenFirstWork} onOpenSupport={() => { void openShellSupport(); }} />
     </>
   );
 }

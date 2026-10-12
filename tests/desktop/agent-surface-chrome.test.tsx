@@ -61,6 +61,7 @@ it.each(["window", "tab"] as const)("shows Agents titles on the sole real native
   fireEvent.click(screen.getByRole("button", { name: "Close agent settings" }));
   await waitFor(() => expect(within(toolbar).getByText("Your AI team")).toBeTruthy());
   fireEvent.click(screen.getByRole("button", { name: "New Agent", exact: true }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   await waitFor(() => expect(within(toolbar).getByText("New agent")).toBeTruthy());
   fireEvent.click(screen.getByRole("button", { name: "Close agent settings" }));
   fireEvent.click(screen.getByRole("button", { name: "New chat", exact: true }));

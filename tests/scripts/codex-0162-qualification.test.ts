@@ -14,8 +14,8 @@ const reviewedDigests = {
   "turn/completed": "b2500c9932e97982d2267730d43f01ab9b93423b4b662fc6040ea776766cf728",
 };
 
-describe("published Codex 0.162.0 qualification", () => {
-  it("pins published bytes and reviewed consumed payloads on both targets", () => {
+describe("published Codex 0.162.0 and 0.162.1 qualification", () => {
+  it("reuses identical reviewed 0.162.0 bytes to qualify 0.162.1 on both targets", () => {
     const execSchemaBytes = readFileSync(new URL("../fixtures/codex-0158/exec-events.rs", import.meta.url));
     const appServerSchemaBytes = bytes("0162");
     const schema = JSON.parse(appServerSchemaBytes.toString());
@@ -28,7 +28,7 @@ describe("published Codex 0.162.0 qualification", () => {
       );
     }
     for (const runtimeTarget of ["darwin-arm64", "linux-x64"]) {
-      expect(() => verifyCodexProviderContracts({ version: "0.162.0", execContract,
+      expect(() => verifyCodexProviderContracts({ version: "0.162.1", execContract,
         appServerContract, execSchemaBytes, appServerSchemaBytes, runtimeTarget })).not.toThrow();
     }
   });

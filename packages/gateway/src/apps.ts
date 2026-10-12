@@ -5,6 +5,8 @@ import { listUniqueAppManifests } from "./app-runtime/app-index.js";
 import { computeRuntimeState, type RuntimeState } from "./app-runtime/runtime-state.js";
 import { DesignIdEnum, type AppManifest, type DesignId } from "./app-runtime/manifest-schema.js";
 import { resolveSystemIconMetadata, type SystemIconMetadata } from "./icon-metadata.js";
+import { isUnmodifiedBundledIcon } from "./bundled-icon-ownership.js";
+import { AppGalleryCatalogSchema } from "@matrix-os/contracts/app-gallery";
 
 export interface AppEntry extends AppMeta {
   slug?: string;
@@ -57,6 +59,19 @@ export async function listAppCatalog(
 
 const ICON_METADATA_BATCH_SIZE = 16;
 const SAFE_ICON_STEM = /^[a-zA-Z0-9_-]{1,64}$/;
+const BUNDLED_GALLERY_CATALOG = new URL("../../../home/system/app-gallery.json", import.meta.url);
+let galleryLegacyIconsPromise: Promise<Map<string, string>> | undefined;
+
+function galleryLegacyIcons(): Promise<Map<string, string>> {
+  galleryLegacyIconsPromise ??= readFile(BUNDLED_GALLERY_CATALOG, "utf8")
+    .then((raw) => AppGalleryCatalogSchema.parse(JSON.parse(raw)))
+    .then((catalog) => new Map(catalog.apps.map((app) => [app.id, app.icon])))
+    .catch((error: unknown) => {
+      console.warn("[apps] bundled gallery icon catalog is unavailable:", error instanceof Error ? error.message : String(error));
+      return new Map<string, string>();
+    });
+  return galleryLegacyIconsPromise;
+}
 
 export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null {
   if (typeof app.icon === "string" && SAFE_ICON_STEM.test(app.icon)) return app.icon;
@@ -67,6 +82,7 @@ export function appIconStem(app: Pick<AppEntry, "icon" | "slug">): string | null
 async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<AppCatalog> {
   const hydrated: AppEntry[] = [];
   const icons: Record<string, SystemIconMetadata> = {};
+  const legacyIcons = await galleryLegacyIcons();
   for (let offset = 0; offset < apps.length; offset += ICON_METADATA_BATCH_SIZE) {
     const batch = apps.slice(offset, offset + ICON_METADATA_BATCH_SIZE);
     // In-flight lookups are deduplicated per batch, so this map never holds
@@ -88,8 +104,25 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
     const entries = await Promise.all(batch.map(async (app) => {
       const iconStem = appIconStem(app);
       if (!iconStem) return app;
-      const icon = await resolveOnce(iconStem);
+      const galleryStem = app.slug && app.author === "Matrix OS" && legacyIcons.get(app.slug) === iconStem
+        ? `gallery-${app.slug}` : null;
+      const selectedIcon = await resolveOnce(iconStem);
+      const bundledSelection = selectedIcon && await isUnmodifiedBundledIcon(homePath, selectedIcon);
+      if (galleryStem && bundledSelection) {
+        const galleryIcon = await resolveOnce(galleryStem);
+        if (galleryIcon && [`/icons/${galleryStem}.png`, `/icons/${galleryStem}.svg`].includes(galleryIcon.url)) {
+          icons[galleryStem] = galleryIcon;
+          return { ...app, iconUrl: galleryIcon.versionedUrl };
+        }
+      }
+      const icon = selectedIcon;
       if (!icon) return app;
+      if (bundledSelection && (app.slug === "notes" || app.slug === "whiteboard") &&
+        [ `/files/apps/${app.slug}/index.html`, `apps/${app.slug}/index.html`, `/files/apps/${app.slug}/dist/index.html` ].includes(app.path)) {
+        // Canonical bundled artwork is carried by the app itself. Do not publish
+        // legacy owner-home bytes as a snapshot fallback for this selection.
+        return { ...app, iconUrl: `/system-app-icons/v2/${app.slug}.png` };
+      }
       icons[iconStem] = icon;
       return { ...app, iconUrl: icon.versionedUrl };
     }));
@@ -100,7 +133,7 @@ async function attachLocalIconUrls(homePath: string, apps: AppEntry[]): Promise<
 
 const DEFAULT_DESIGN_ID: DesignId = "flat";
 
-async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
+export async function resolveActiveDesignId(homePath: string): Promise<DesignId> {
   const themePath = join(homePath, "system/theme.json");
   let theme: unknown;
   try {

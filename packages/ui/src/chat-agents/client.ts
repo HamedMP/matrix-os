@@ -30,7 +30,7 @@ export interface ChatAgentClient {
   driveProjects?: ChatDriveProjectClient;
   bots?: BotClient;
   list(): Promise<ChatAgentListResponse>;
-  catalog(): Promise<CanonicalProviderCatalog>;
+  catalog(options?: { refresh?: boolean }): Promise<CanonicalProviderCatalog>;
   recipeCatalog(): Promise<ChatAgentRecipeCatalog>;
   integrations(): Promise<ChatAgentIntegrationConnection[]>;
   create(input: CreateChatAgentRequest): Promise<ChatAgent>;
@@ -47,7 +47,7 @@ export function createChatAgentClient(request: (
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents", "GET")),
-    catalog: async () => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(), "GET")),
+    catalog: async (options) => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(options?.refresh === true), "GET")),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),
     create: async (input) => ChatAgentSchema.parse(await request("/api/chat-agents", "POST", CreateChatAgentRequestSchema.parse(input))),

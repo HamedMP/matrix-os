@@ -51,7 +51,6 @@ export function IntegrationLogo({
 
   function categoryColor(category: string): string {
     if (category === "google") return theme.v2.palette.blue[50];
-    if (category === "communication") return theme.v2.palette.green[100];
     return theme.v2.palette.neutral[100];
   }
 }

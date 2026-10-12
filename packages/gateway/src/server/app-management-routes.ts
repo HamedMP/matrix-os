@@ -5,6 +5,7 @@ import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { createImageClient, loadIconStyle, buildIconPrompt, generateIconBatch } from "@matrix-os/kernel";
+import { registerAppGalleryRoutes } from "../app-gallery/routes.js";
 import { listApps } from "../apps.js";
 import { renameApp, deleteApp } from "../app-ops.js";
 import { buildShellBootstrap } from "../shell-bootstrap.js";
@@ -22,6 +23,7 @@ function isSafeIconStem(value: unknown): value is string {
 
 export function registerAppManagementRoutes(app: Hono, options: { homePath: string }): void {
   const { homePath } = options;
+  registerAppGalleryRoutes(app, { homePath });
   const renameAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const deleteAppBodyLimit = bodyLimit({ maxSize: 4096 });
   const appIconBodyLimit = bodyLimit({ maxSize: 4096 });

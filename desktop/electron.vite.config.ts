@@ -24,6 +24,8 @@ export default defineConfig((): UserConfig => ({
     },
     build: {
       rollupOptions: {
+        // Electron is a runtime builtin; bundling its npm installer breaks startup.
+        external: ["electron"],
         input: { index: resolve(__dirname, "src/main/index.ts") },
       },
     },
@@ -34,6 +36,7 @@ export default defineConfig((): UserConfig => ({
     plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts"] })],
     build: {
       rollupOptions: {
+        external: ["electron"],
         // A sandboxed Electron preload cannot require sibling files. Keep the
         // shell and app bridge behind one entry so Rollup emits no shared
         // chunks that Chromium's restricted preload loader cannot resolve.

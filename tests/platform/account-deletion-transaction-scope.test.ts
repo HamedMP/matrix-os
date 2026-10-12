@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 let db: PlatformDB | undefined;
 afterEach(async () => { await destroyTestPlatformDb(db); });

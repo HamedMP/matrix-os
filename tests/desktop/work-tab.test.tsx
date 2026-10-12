@@ -8,6 +8,7 @@ import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-c
 import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
 import { createCanonicalChatWorkspaceClient, providerCatalog } from "./canonical-chat-workspace-test-utils";
+import { canonicalChatProviderCatalogPath } from "../../packages/ui/src/provider-projection-paths";
 import { clientFixture, saved } from "./chat-agents-fixture";
 import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useBoard, type Project } from "@desktop/renderer/src/stores/board";
@@ -264,7 +265,11 @@ describe("WorkTab rail integration", () => {
   it("creates a recipe bot and navigates to its saved Chat from the real WorkTab", async () => {
     const api = useConnection.getState().api!;
     const originalGet = api.get;
+    let finishDiscovery!: (catalog: typeof providerCatalog) => void;
+    const discovery = new Promise<typeof providerCatalog>(resolve => { finishDiscovery = resolve; });
     api.get = vi.fn(async (path: string) => {
+      if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
+      if (path === canonicalChatProviderCatalogPath(true)) return discovery;
       if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
       return originalGet(path);
     }) as typeof api.get;
@@ -277,13 +282,25 @@ describe("WorkTab rail integration", () => {
     HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
     HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
-    fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+    const model = screen.getByRole("combobox", { name: "Bot model" });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true)));
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    // Native selection/submission obey the same discovery barrier as visible controls.
+    fireEvent.change(model, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+    await act(async () => finishDiscovery(providerCatalog));
+    await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(model, { target: { value: "" } });
+    expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/chat-agents/instantiate", expect.objectContaining({
       selection: { instanceId: "matrix_bot_default", model: "auto" },
     })));
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(1);
   });
 
   beforeEach(() => {

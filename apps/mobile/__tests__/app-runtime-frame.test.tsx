@@ -159,3 +159,31 @@ describe("app runtime frame", () => {
     expect(log).toHaveBeenCalledWith("[mobile] external app link unavailable", "Error");
   });
 });
+
+it("installs capability bootstrap before app scripts and binds native messages to the launch", async () => {
+  const request = jest.fn(async () => new Response(JSON.stringify({ services: [] })));
+  render(<AppRuntimeFrame url={runtime} title="Notes" app="notes" requestAppBridge={request} />);
+  const props = screen.getByTestId("webview").props;
+  expect(props.injectedJavaScriptBeforeContentLoaded).toContain("window.MatrixOS=");
+  expect(props.injectedJavaScriptBeforeContentLoadedForMainFrameOnly).toBe(true);
+  expect(props.injectedJavaScriptBeforeContentLoaded).not.toContain("session=token");
+  await act(async () => {
+    props.onMessage({ nativeEvent: { url: "https://outside.example/", data: "{}" } });
+  });
+  expect(request).not.toHaveBeenCalled();
+});
+
+it("binds an arbitrary nested catalog identity and runtime slug to the real native broker", async () => {
+  const nestedRuntime = "https://app.matrix-os.com/apps/timer/?session=fixture";
+  const request = jest.fn(() => new Promise<Response>(() => {}));
+  const { unmount } = render(<AppRuntimeFrame url={nestedRuntime} title="Timer" app="tools/timer" runtimeSlug="timer" requestAppBridge={request} />);
+  const props = screen.getByTestId("webview").props;
+  const launch = /launch="([a-z0-9]+)"/.exec(props.injectedJavaScriptBeforeContentLoaded)![1];
+  await act(async () => {
+    props.onMessage({ nativeEvent: { url: nestedRuntime, data: JSON.stringify({ type: "matrix:app-ready", launchId: launch, documentId: "doc" }) } });
+    props.onMessage({ nativeEvent: { url: nestedRuntime, data: JSON.stringify({ type: "matrix:app-request", launchId: launch, documentId: "doc", id: 1, kind: "capability", input: { kind: "integrations.list" } }) } });
+  });
+  expect(request).toHaveBeenCalledWith("/api/bridge/capabilities", expect.objectContaining({ body: JSON.stringify({ app: "tools/timer", input: { kind: "integrations.list" } }) }));
+  unmount();
+  await act(async () => { await Promise.resolve(); });
+});

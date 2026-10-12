@@ -14,14 +14,17 @@ const Payload = z.object({
   version: z.literal(1), handle: z.string().min(1).max(63), actorId: z.string().min(1).max(256),
   chatId: z.string().regex(REF), runId: z.string().regex(REF), approvalId: z.string().regex(REF),
   decision: z.enum(["approve", "decline", "cancel"]), clientRequestId: z.string().regex(REF),
+  actionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   bodyDigest: z.string().regex(/^[a-f0-9]{64}$/), expiresAt: z.number().int(),
   nonce: z.string().regex(/^[a-f0-9]{32}$/),
 }).strict();
 type Payload = z.infer<typeof Payload>;
 
-function bodyDigest(input: { clientRequestId: string; decision: string }): string {
+function bodyDigest(input: { clientRequestId: string; decision: string; actionDigest?: string }): string {
   return createHash("sha256")
-    .update(`matrix-custom-mcp-approval-body:v1\0${JSON.stringify([input.clientRequestId, input.decision])}`)
+    .update(input.actionDigest === undefined
+      ? `matrix-custom-mcp-approval-body:v1\0${JSON.stringify([input.clientRequestId, input.decision])}`
+      : `matrix-custom-mcp-approval-body:v2\0${JSON.stringify([input.clientRequestId, input.decision, input.actionDigest])}`)
     .digest("hex");
 }
 
@@ -52,6 +55,7 @@ export function mintCustomMcpApprovalProof(input: {
     version: 1, handle: input.identity.handle, actorId: input.identity.userId,
     chatId: match[1], runId: match[2], approvalId: match[3],
     decision: parsed.data.decision, clientRequestId: parsed.data.clientRequestId,
+    ...(parsed.data.actionDigest ? { actionDigest: parsed.data.actionDigest } : {}),
     bodyDigest: bodyDigest(parsed.data), expiresAt: now + TTL_MS,
     nonce: randomBytes(16).toString("hex"),
   });
@@ -62,22 +66,32 @@ export function mintCustomMcpApprovalProof(input: {
 export function verifyCustomMcpApprovalProof(proof: string | undefined, expected: {
   handle: string; actorId: string; chatId: string; runId: string; approvalId: string;
   decision: "approve" | "decline" | "cancel"; clientRequestId: string;
+  actionDigest?: string;
   secret: string; now?: number;
 }): boolean {
-  if (!proof || proof.length > 1_500 || !expected.secret) return false;
+  return readVerifiedCustomMcpApprovalProof(proof, expected) !== null;
+}
+
+/** Return signed nonce for an atomic one-use Preview action grant. */
+export function readVerifiedCustomMcpApprovalProof(proof: string | undefined, expected: {
+  handle: string; actorId: string; chatId: string; runId: string; approvalId: string;
+  decision: "approve" | "decline" | "cancel"; clientRequestId: string;
+  actionDigest?: string; secret: string; now?: number;
+}): Payload | null {
+  if (!proof || proof.length > 1_500 || !expected.secret) return null;
   const match = /^([A-Za-z0-9_-]+)\.([a-f0-9]{64})$/.exec(proof);
-  if (!match) return false;
+  if (!match) return null;
   const actualMac = Buffer.from(match[2]!, "hex");
   const expectedMac = Buffer.from(signature(match[1]!, expected.secret), "hex");
-  if (!timingSafeEqual(actualMac, expectedMac)) return false;
+  if (!timingSafeEqual(actualMac, expectedMac)) return null;
   let decoded: unknown;
   try { decoded = JSON.parse(Buffer.from(match[1]!, "base64url").toString("utf8")); }
   catch (error: unknown) {
-    if (error instanceof SyntaxError || error instanceof TypeError) return false;
+    if (error instanceof SyntaxError || error instanceof TypeError) return null;
     throw error;
   }
   const parsed = Payload.safeParse(decoded);
-  if (!parsed.success) return false;
+  if (!parsed.success) return null;
   const value: Payload = parsed.data;
   const now = expected.now ?? Date.now();
   return value.expiresAt > now && value.expiresAt <= now + TTL_MS
@@ -85,5 +99,6 @@ export function verifyCustomMcpApprovalProof(proof: string | undefined, expected
     && value.chatId === expected.chatId && value.runId === expected.runId
     && value.approvalId === expected.approvalId && value.decision === expected.decision
     && value.clientRequestId === expected.clientRequestId
-    && value.bodyDigest === bodyDigest(expected);
+    && value.actionDigest === expected.actionDigest
+    && value.bodyDigest === bodyDigest(expected) ? value : null;
 }

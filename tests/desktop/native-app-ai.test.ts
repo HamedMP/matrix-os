@@ -7,7 +7,7 @@ it("binds AI requests to the registered app and rejects another origin", async (
   bridge.register(1, "brain");
   const sender = { id: 1, url: "https://gateway.test/apps/brain/" };
   await expect(bridge.aiGenerate(sender, { prompt: "hello" })).resolves.toEqual({ text: "done" });
-  expect(aiRequest).toHaveBeenCalledWith("brain", { prompt: "hello" });
+  expect(aiRequest).toHaveBeenCalledWith("brain", { prompt: "hello" }, expect.any(AbortSignal));
   await expect(bridge.aiGenerate({ ...sender, url: "https://evil.test/apps/brain/" }, { prompt: "hello" })).rejects.toThrow();
   await expect(bridge.aiGenerate(sender, { prompt: "hello", app: "other" })).rejects.toThrow();
   expect(aiRequest).toHaveBeenCalledTimes(1);

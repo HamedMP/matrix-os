@@ -1,4 +1,8 @@
 import type { LayoutWindow } from "@/hooks/useWindowManager";
+import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { useDesktopMode } from "@/stores/desktop-mode";
+import { getCodeEditorUrl } from "./feature-flags";
+import { resolveWebDesktopBuiltInLaunch } from "./web-desktop-app-launch";
 
 const BUILT_IN_APP_VALUES = [
   "__terminal__",
@@ -25,8 +29,6 @@ const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["/files/apps/terminal/index.html", "__terminal__"],
   ["files", "__file-browser__"],
   ["file-browser", "__file-browser__"],
-  ["apps/files/index.html", "__file-browser__"],
-  ["/files/apps/files/index.html", "__file-browser__"],
   ["chat", "__chat__"],
   ["apps/chat/index.html", "__chat__"],
   ["/files/apps/chat/index.html", "__chat__"],
@@ -48,6 +50,39 @@ const BUILT_IN_APP_TITLES = new Map<string, string>([
 export function normalizeBuiltInAppPath(path: string): string {
   if (path.startsWith("__terminal__:")) return "__terminal__";
   return BUILT_IN_APP_ALIASES.get(path) ?? path;
+}
+
+/** Bridge directory launches share the HTML identity used by the app catalog. */
+export function normalizeAppBridgeLaunchPath(requestedPath: string): string {
+  const relativePath = requestedPath.replace(/^\/files\//, "");
+  if (relativePath.startsWith("__")) return relativePath;
+  const isAppDirectory = /^apps\/[a-z0-9][a-z0-9_-]*(?:\/[a-z0-9][a-z0-9_-]*)*\/?$/.test(relativePath);
+  const catalogPath = isAppDirectory ? `${relativePath.replace(/\/$/, "")}/index.html` : relativePath;
+  return normalizeBuiltInAppPath(canonicalOsViewCatalogPath({ path: catalogPath }) ?? relativePath);
+}
+
+/** App bridges use the same shell-owned destinations as the launcher. */
+export function routeAppBridgeLaunch(
+  name: string,
+  requestedPath: string,
+  openWindow: (name: string, path: string) => void,
+): void {
+  const path = normalizeAppBridgeLaunchPath(requestedPath);
+  if (isRetiredBuiltInAppPath(path)) return;
+  const destination = resolveWebDesktopBuiltInLaunch(path);
+  if (destination?.kind === "external") {
+    window.open(destination.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (destination?.kind === "external-code") {
+    window.open(getCodeEditorUrl(), "_blank", "noopener,noreferrer");
+    return;
+  }
+  if (destination?.kind === "os-view") {
+    useDesktopMode.getState().setMode(destination.mode);
+    return;
+  }
+  openWindow(destination?.kind === "app" ? destination.name : name, destination?.kind === "app" ? destination.path : path);
 }
 
 const BUILT_IN_PATHS = new Set<string>(BUILT_IN_APP_VALUES);

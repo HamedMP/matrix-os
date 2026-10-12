@@ -10,7 +10,7 @@ import {
   insertUserMachine,
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('clerk user sync', () => {
   let db: PlatformDB;

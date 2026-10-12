@@ -30,6 +30,7 @@ RUN echo "shamefully-hoist=true" > .npmrc
 # Copy postinstall helper before install (package.json postinstall references it)
 COPY scripts/fix-node-pty-perms.mjs scripts/fix-node-pty-perms.mjs
 COPY scripts/build-default-apps.mjs scripts/build-default-apps.mjs
+COPY scripts/build-typescript.mjs scripts/build-typescript.mjs
 COPY scripts/install-hermes-matrix-skills.sh scripts/install-hermes-matrix-skills.sh
 COPY scripts/sync-matrix-agent-skills.sh scripts/sync-matrix-agent-skills.sh
 
@@ -158,7 +159,7 @@ RUN npm install -g --ignore-scripts \
 # Keep the legacy Alpine image on the latest compatible release and pass the
 # same tag to the installer so both the script and cloned checkout are pinned.
 ARG HERMES_VERSION=v2026.7.20
-RUN curl -fsSL "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh" \
+RUN curl -fsSL --retry 4 --retry-delay 2 --connect-timeout 10 --max-time 120 --retry-max-time 180 "https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_VERSION}/scripts/install.sh" \
     -o /tmp/hermes-agent-install.sh && \
     bash /tmp/hermes-agent-install.sh --branch "${HERMES_VERSION}" --skip-setup && \
     rm -f /tmp/hermes-agent-install.sh

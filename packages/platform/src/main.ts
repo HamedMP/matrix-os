@@ -1,4 +1,5 @@
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
+import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -111,6 +112,7 @@ import {
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { createAtsRoutes } from './ats-routes.js';
+import { ATS_OPEN_ROLE_SLUGS } from './ats-roles.js';
 import type { AtsDB } from './ats-db.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -259,6 +261,7 @@ export function createApp(deps: {
   platformSecret?: string;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -633,10 +636,8 @@ export function createApp(deps: {
       db: deps.atsDb,
       ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
       adminSecret: appEnv.ATS_ADMIN_SECRET ?? '',
-      allowedRoleSlugs: [
-        'founders-associate-gtm-operations',
-        'founding-engineer',
-      ],
+      mailSecret: appEnv.ATS_MAIL_INGEST_SECRET ?? '',
+      allowedRoleSlugs: ATS_OPEN_ROLE_SLUGS,
       bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));
@@ -717,6 +718,9 @@ export function createApp(deps: {
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
     || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
+    db, platformSecret, integration: deps.previewDriveIntegration, env: appEnv,
+  }));
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,
@@ -731,6 +735,9 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+  if (deps.internalSyncRoutes) {
+    app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
+  }
   app.get('/vps/releases', async (c) => {
     if (!platformSecret) {
       return c.json({ error: 'VPS tracking not configured' }, 503);

@@ -39,16 +39,14 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
         <div
           data-app-icon
           className={`flex size-24 items-center justify-center rounded-[22px] shadow-sm text-2xl font-semibold transition-all overflow-hidden ${
-            isOpen
-              ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
-              : "bg-card border border-border/60 text-foreground group-hover:shadow-md"
+            iconSurfaceClass(Boolean(showImage) && !createApp, isOpen)
           }`}
         >
           {createApp ? (
             <PlusIcon className="size-12" aria-hidden="true" />
           ) : showImage ? (
             // react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- app icon served from a runtime gateway host (/icons/{slug}.png) that cannot be statically configured for next/image
-            <img src={iconUrl} alt={name} className="size-full object-cover" onError={onImgError} />
+            <img src={iconUrl} alt={name} className="size-full object-contain" onError={onImgError} />
           ) : (
             initial
           )}
@@ -143,4 +141,10 @@ export function AppTile({ name, isOpen, onClick, pinned, onTogglePin, iconUrl, o
       </ContextMenuContent>
     </ContextMenu>
   );
+}
+
+function iconSurfaceClass(hasArtwork: boolean, isOpen: boolean): string {
+  if (hasArtwork) return "bg-transparent border-0 shadow-none text-foreground";
+  return isOpen ? "bg-primary/10 border border-primary/40 text-primary shadow-primary/20 shadow-md"
+    : "bg-card border border-border/60 text-foreground group-hover:shadow-md";
 }

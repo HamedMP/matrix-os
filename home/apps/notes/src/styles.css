@@ -702,3 +702,32 @@ h1 {
     flex-wrap: wrap;
   }
 }
+
+/* A soft library and a generous writing sheet. */
+.app-shell .sidebar { background: color-mix(in srgb, var(--card) 55%, transparent); border-color: var(--border); }
+.app-shell .sidebar__header { padding: 24px 20px 18px; }
+.app-shell :is(.icon-button, .button, .search-field, .format-button, .mode-button) { border-radius: var(--family-control-radius); border-color: var(--border); }
+.app-shell .note-list { gap: 8px; }
+.app-shell .note-card { border: 1px solid transparent; border-radius: 18px; padding: 16px; }
+.app-shell .note-card--active { background: var(--family-surface); border-color: color-mix(in srgb, var(--accent) 28%, var(--border)); box-shadow: var(--family-lift); }
+.app-shell .note-card__title { overflow-wrap: anywhere; }
+.app-shell .toolbar { background: color-mix(in srgb, var(--card) 80%, transparent); }
+.app-shell .toolbar__actions { flex-wrap: wrap; }
+.app-shell .editor-grid { padding: 18px; }
+.app-shell .editor-pane { border: 1px solid var(--border); border-radius: var(--family-radius); box-shadow: var(--family-lift); overflow: hidden; }
+.app-shell .format-toolbar { flex-shrink: 0; background: transparent; }
+.app-shell .format-toolbar > * { flex-shrink: 0; }
+.app-shell .editor-footer { flex-shrink: 0; gap: 12px; flex-wrap: wrap; }
+.app-shell :is(.title-input, .rich-editor, .content-input) { overflow-wrap: anywhere; }
+.app-shell .rich-editor pre { background: var(--foreground); color: var(--background); }
+.app-shell .empty-state__icon { background: var(--family-surface); border-color: var(--border); box-shadow: var(--family-lift); }
+@media (max-width: 820px) {
+ .app-shell .sidebar__header { padding: max(12px, env(safe-area-inset-top)) 16px 8px; }
+ .app-shell .note-card { min-width: 180px; padding: 12px; }
+ .app-shell .editor-grid { padding: 10px 10px 0; }
+ .app-shell .toolbar { align-items: flex-start; gap: 8px; }
+ .app-shell .toolbar__status { min-height: 44px; }
+ .app-shell .title-input { font-size: clamp(26px, 7vw, 36px); padding: 16px 18px 8px; }
+ .app-shell :is(.rich-editor, .content-input) { padding: 12px 18px 28px; }
+ .app-shell .editor-footer { padding: 12px 18px max(12px, env(safe-area-inset-bottom)); }
+}

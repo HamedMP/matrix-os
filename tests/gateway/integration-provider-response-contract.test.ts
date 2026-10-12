@@ -6,6 +6,7 @@ import { executeIntegrationAction } from "../../packages/gateway/src/integration
 import { GOOGLE_SERVICES } from "../../packages/gateway/src/integrations/google.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
+import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const attachmentInput = { service: "gmail", action: "get_attachment", label: "Work", connectionId: "conn_1", params: { messageId: "abc", attachmentId: "attach_1" }, read: true };
 
@@ -19,7 +20,7 @@ describe("provider response contracts through real read consumers", () => {
       getUserById: vi.fn(async () => ({ pipedream_external_id: "owner" })), touchServiceUsage: vi.fn(async () => undefined) };
     const routes = createIntegrationReadCallRoutes({ db: db as unknown as PlatformDb,
       pipedream: { boundedGmailGet, proxyGet, runAction } as unknown as PipedreamConnectClient,
-      resolveUserId: async c => c.req.header("x-platform-user-id") ?? null });
+      resolveUserId: async c => requireRequestPrincipal(c).userId });
     const result = await createBotIntegrationClient(createLocalIntegrationTransport(routes)).call("owner", attachmentInput);
     expect(result).toEqual({ data: { size: 1024 * 1024, data } });
     expect(fetcher).toHaveBeenCalledOnce(); expect(db.touchServiceUsage).toHaveBeenCalledExactlyOnceWith("conn_1");

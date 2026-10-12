@@ -63,7 +63,7 @@ export function usageLines(usage: ProviderUsage): { primary: string; secondary: 
   }
   if (usage.kind === "subscription_allowance") {
     return {
-      primary: `${Math.round(usage.usedBasisPoints / 100)}% used`,
+      primary: `${Math.round((10000 - usage.usedBasisPoints) / 100)}% left`,
       secondary: usage.resetsAt === null ? null : `Resets ${shortDate(usage.resetsAt)}`,
       stale: usage.state === "stale",
     };

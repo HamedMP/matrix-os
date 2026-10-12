@@ -58,3 +58,28 @@ it("does not refresh the bot snapshot for every piece of streamed text", () => {
   act(() => { jest.advanceTimersByTime(60_000); });
   expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: botKey });
 });
+
+it("refreshes the agents' statuses when an agent asks for something in a chat that is not open", () => {
+  openBotChat();
+  jest.useFakeTimers();
+  const statusesKey = mobileQueryKeys.agentStatusesAll("owner", "test:primary");
+
+  act(() => emitEvent?.({ type: "chat.changed", chatId: "chat_of_another_agent", cursor: 1, eventType: "interaction.requested" }));
+
+  expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: statusesKey });
+  // The open chat's own status is left alone: the event was not about it.
+  expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: botKey });
+});
+
+it("leaves the agents' statuses alone for streamed text", () => {
+  openBotChat();
+  jest.useFakeTimers();
+  const statusesKey = mobileQueryKeys.agentStatusesAll("owner", "test:primary");
+
+  for (let cursor = 1; cursor <= 20; cursor += 1) {
+    act(() => emitEvent?.({ type: "chat.changed", chatId: "chat_of_another_agent", cursor, eventType: "run.message" }));
+  }
+  act(() => { jest.advanceTimersByTime(60_000); });
+
+  expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: statusesKey });
+});

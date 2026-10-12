@@ -50,6 +50,12 @@ packages/platform/data/
 /.local/production-parity/
 
 # Test artifacts
+/output/chat-dock-badge/
+/output/chat-subagent-activity/
+/output/chat-tool-details/
+/output/eng203/
+/output/mat524/
+/output/ci/
 shell/test-results/
 shell/e2e/test-results/
 shell/e2e/playwright-report/
@@ -154,3 +160,6 @@ paper/*.pdf
 .gstack/
 /output/playwright/
 distro/observability/logs-edge/logs-edge.env
+
+# Local shared-package compiler state (never included in bundles)
+.matrix-build-cache/

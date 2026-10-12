@@ -963,6 +963,7 @@ describe("canonical Chat routes", () => {
       { type: "personal", ownerId: "owner_1" },
       "chat_route_test",
       expect.objectContaining({ clientRequestId: "req_route_turn" }),
+      { previewTurnProof: undefined },
     );
 
     const cancelled = await app.request("/api/chats/chat_route_test/runs/run_route/cancel", {

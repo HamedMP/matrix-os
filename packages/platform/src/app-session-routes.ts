@@ -38,6 +38,7 @@ import {
   buildNativeAppSessionCookie,
   CODE_SESSION_EXPIRES_IN_SEC,
 } from './session-cookies.js';
+import type { AppDomainIdentity } from './session-routing-identity.js';
 import { issueSyncJwt } from './sync-jwt.js';
 
 const APP_SESSION_BODY_LIMIT = 1024;
@@ -70,13 +71,6 @@ interface ProvisionIdentity {
   handle: string;
   displayName: string;
   email?: string;
-}
-
-interface AppDomainIdentity {
-  handle: string;
-  userId: string;
-  runtimeSlot?: string;
-  source?: 'auth' | 'mobile-session' | 'static-route';
 }
 
 export function createAppSessionRoutes(opts: {
@@ -338,6 +332,7 @@ export function createAppSessionRoutes(opts: {
           runtimeSlot: requestedRuntimeSlot,
         });
         if (nativeIdentity) {
+          // Preserve the verified token bytes: a native marker never upgrades session provenance.
           const nativeToken = authHeader.slice(7);
           opts.applyNoStoreHeaders(c);
           c.header('Set-Cookie', buildAppSessionCookie(nativeToken), { append: true });
@@ -406,6 +401,7 @@ export function createAppSessionRoutes(opts: {
     const issued = await issueSyncJwt({
       secret: opts.platformJwtSecret,
       clerkUserId: result.userId,
+      sessionProvenance: 'clerk-browser',
       handle,
       gatewayUrl: opts.getGatewayUrlForHandle(handle),
       runtimeSlot: machine?.runtimeSlot,

@@ -56,7 +56,7 @@ function TurnReceipt({
   const elapsed = active ? now - startedAt : endedAt - startedAt;
   const label = `${active ? "Working" : "Worked"} for ${formatTurnDuration(elapsed)}`;
   return (
-    <ConversationItem messageId={`receipt:${startedAt}`} className="-mb-1">
+    <ConversationItem messageId={`receipt:${startedAt}`} className="mb-3">
       <Marker variant="border" className="min-h-10 pb-1">
         {canToggle ? (
           <button

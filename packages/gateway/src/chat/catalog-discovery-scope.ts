@@ -9,7 +9,8 @@ export const CHAT_CODING_DRIVERS = ["codex", "claude_code", "opencode", "pi"] as
 export function chatCatalogDiscoveryScope(selection?: CanonicalChatModelSelection) {
   const managedMatrix = selection?.instanceId === MANAGED_PI_INSTANCE_ID;
   const systems = CHAT_SYSTEM_DRIVERS.filter(kind => !selection || selection.instanceId === `${kind}_default`);
-  const coding = CHAT_CODING_DRIVERS.filter(kind => !selection || selection.instanceId === `${kind}_default`);
+  const coding = CHAT_CODING_DRIVERS.filter(kind => !selection || selection.instanceId === `${kind}_default`
+    || (kind === "claude_code" && selection.instanceId === "claude_code_matrix_included"));
   const personalPlan = selection?.instanceId === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID;
   const known = managedMatrix || personalPlan || systems.length > 0 || coding.length > 0;
   return {

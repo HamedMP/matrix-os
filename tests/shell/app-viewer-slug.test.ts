@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { extractSlug, shouldRenderAppIframe } from "../../shell/src/components/app-viewer-helpers.js";
+import { extractSlug, shouldRenderAppIframe, isAppDataChangeForIdentity } from "../../shell/src/components/app-viewer-helpers.js";
 
 describe("AppViewer extractSlug (spec 063 regression)", () => {
+  it("matches the existing nested storage namespace without receiving another leaf app's updates", () => {
+    expect(isAppDataChangeForIdentity("games/chess", "games/chess")).toBe(true);
+    expect(isAppDataChangeForIdentity("games/chess", "gameschess")).toBe(true);
+    expect(isAppDataChangeForIdentity("games/chess", "chess")).toBe(false);
+    expect(isAppDataChangeForIdentity("chess", "gameschess")).toBe(false);
+    expect(isAppDataChangeForIdentity("private/chess", "chess")).toBe(false);
+  });
   it("extracts slug from top-level app paths", () => {
     expect(extractSlug("apps/calculator/index.html")).toBe("calculator");
     expect(extractSlug("apps/hello-vite/")).toBe("hello-vite");

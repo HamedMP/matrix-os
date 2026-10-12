@@ -1,6 +1,6 @@
 "use client";
 
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus } from "@matrix-os/ui";
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
   deriveGettingStartedSnapshot,
@@ -10,7 +10,7 @@ import {
   type GettingStartedStep,
   type GettingStartedStepId,
 } from "@matrix-os/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -84,6 +84,7 @@ interface GettingStartedPopoverProps {
   onOpenSettings: (section: GettingStartedSettingsSection) => void;
   onOpenFirstWork: () => void;
   triggerClassName?: string;
+  helpMenu?: { onSupport(): void; discordIcon: ReactNode };
 }
 
 type GettingStartedFetcher = (
@@ -179,6 +180,7 @@ export function GettingStartedPopover(props: GettingStartedPopoverProps) {
 function GettingStartedPopoverContent({
   onOpenSettings,
   onOpenFirstWork,
+  helpMenu,
   triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 }: GettingStartedPopoverProps) {
   const { visible: open, requestedOpen, blocked, isBlocked, setRequestedOpen: setOpen } = useGettingStartedVisibility();
@@ -295,25 +297,27 @@ function GettingStartedPopoverContent({
   const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
   const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
 
-  return (
-    <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
-      <PopoverPrimitive.Trigger asChild>
+  const trigger = <PopoverPrimitive.Trigger asChild>
         <button
           type="button"
           aria-label={label}
           title={label}
           disabled={blocked}
-          className={`relative ${triggerClassName}`}
+          className={helpMenu ? "relative flex w-full flex-wrap items-center gap-2.5 rounded-md p-2 text-left text-[13px] outline-none hover:bg-foreground/5 focus-visible:bg-foreground/5" : `relative ${triggerClassName}`}
           onClick={() => {
             if (requestedOpen) setOpen(false);
           }}
         >
           <ClipboardCheck className="size-4" aria-hidden="true" />
-          {snapshot.completedCount < TOTAL_STEPS ? (
+          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{snapshot.completedCount} of {TOTAL_STEPS}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
+          {!helpMenu && snapshot.completedCount < TOTAL_STEPS ? (
             <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
           ) : null}
         </button>
-      </PopoverPrimitive.Trigger>
+      </PopoverPrimitive.Trigger>;
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
+      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger} /> : trigger}
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
           role="dialog"

@@ -1869,6 +1869,7 @@ export function TerminalPane({
         onCopy={(link) => copyTerminalSelection(link.url)}
         onCopySelection={copyTerminalSelection}
         onSelectAll={selectAllTerminal}
+        onPaste={() => pasteTerminalClipboard()}
       />
       {/* Reading the imperative xterm search-addon handle during render is
           intentional: the addon is created inside the init effect and is stable

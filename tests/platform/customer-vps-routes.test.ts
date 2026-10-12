@@ -7,7 +7,7 @@ import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-
 import { createCustomerVpsRoutes } from '../../packages/platform/src/customer-vps-routes.js';
 import { PreviewSnapshotUnavailableError } from '../../packages/platform/src/customer-vps-errors.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('platform/customer-vps-routes', () => {
   let db: PlatformDB;

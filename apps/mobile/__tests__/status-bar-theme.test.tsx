@@ -55,8 +55,8 @@ import TerminalSessionLayout from "../app/terminal-session/_layout";
 import AppRuntimeFrame from "../components/AppRuntimeFrame";
 import { TerminalSurface } from "../components/TerminalSurface";
 import { saveSettings } from "../lib/storage";
-import { mobileQueryClient } from "../lib/query-client";
 import { applyMobileThemePreference } from "../lib/theme-preference";
+import { mobileQueryClient } from "../lib/query-client";
 
 type ThemeName = keyof UnistylesThemes;
 type AppearanceListener = (preferences: { colorScheme: ColorSchemeName }) => void;
@@ -82,7 +82,7 @@ const secureStoreItems = new Map<string, string>();
 const themeReaders = new Set<() => void>();
 const appearanceListeners = new Set<AppearanceListener>();
 let activeTheme: ThemeName = "light";
-let systemAppearance: ColorSchemeName = "light";
+let systemAppearance: ReturnType<typeof Appearance.getColorScheme> = "light";
 let app: RenderAPI | null = null;
 
 function subscribeToTheme(notify: () => void) {
@@ -196,6 +196,12 @@ describe("status bar content", () => {
     it("is dark on the light theme", async () => {
       await launchApp();
 
+      expect(await statusBarContent()).toBe("dark-content");
+    });
+
+    it.each([null, undefined, "unspecified"] as const)("uses light theme when system appearance is %s", async (appearance) => {
+      systemAppearance = appearance;
+      await launchApp();
       expect(await statusBarContent()).toBe("dark-content");
     });
 

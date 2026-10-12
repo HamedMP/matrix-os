@@ -1,3 +1,12 @@
+import { createHash } from "node:crypto";
+import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
+import { readReleaseInfo } from "../system-info.js";
+import { createIsolatedChatAuthority } from "../chat/isolated-chat-envelope.js";
+import { createBotSourceRevalidator } from "../bots/source-revalidation.js";
+import { createBotProcedureResolver } from "../bots/custom-procedure.js";
+import { createChatAgentRecipeResolver, discoverChatAgentRecipeSkillsRoot } from "../chat/agent-recipe.js";
+import { listServices } from "../integrations/registry.js";
+import { createBotCreationSelectionValidator } from "../bots/creation-selection.js";
 import { createChatGptPlanPeers, type ChatGptPlanPeers } from '../bots/chatgpt-plan-peers.js';
 import { createCustomBotChats } from "../bots/custom-direct-chat.js";
 import { createBotJevTools, type JevBotWorkflowDependencies } from "../bots/jev-tools.js";
@@ -7,8 +16,6 @@ import { createManagedPiAdmission } from "../chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../chat/managed-pi-runtime.js";
 import { createManagedPiSessionsRepository } from "../chat/managed-pi-sessions.js";
 import { createManagedPiCheckpointsRepository } from "../chat/managed-pi-checkpoints.js";
-import { resolveManagedPiRoute } from "../bots/route-resolver.js";
-import { BotInstantiationError } from "../bots/instantiation.js";
 import { isManagedPiBinding, type PiRuntimeBinding } from "../bots/runtime-registry.js";
 /**
  * Starts recipe bot services on the owner database the chat repository owns
@@ -155,14 +162,6 @@ export async function startBots(options: {
 }): Promise<BotServices | undefined> {
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
-  // Native key writes may leave the run signal live. Consumers call this again
-  // after asynchronous preparation, immediately before the actual effect.
-  const revalidateAnthropicSource = async (binding: PiRuntimeBinding, signal?: AbortSignal) => {
-    if (!binding.anthropicApi) return;
-    const currentSignal = AbortSignal.any([...(signal ? [signal] : []), lifetime.signal]);
-    if (currentSignal.aborted || !options.matrixAnthropic || !await options.matrixAnthropic.revalidate(binding, currentSignal)
-      || currentSignal.aborted) throw new BotBrokerActionError("stale_generation");
-  };
   const db = ownerBotExecutor(options.repository.kysely);
   try {
     await bootstrapBotDatabase(db);
@@ -170,9 +169,23 @@ export async function startBots(options: {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
     return undefined;
   }
+  const isolatedConfig = parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE);
+  const isolatedChat = isolatedConfig ? createIsolatedChatAuthority({ config: isolatedConfig, db,
+    identity: () => ({ ownerId: options.runtimeOwnerId ?? "", machineId: process.env.MATRIX_MACHINE_ID ?? "",
+      runtimeSlot: process.env.MATRIX_RUNTIME_SLOT ?? "",
+      credentialSha256: createHash("sha256").update(process.env.MATRIX_FUNDED_AI_RUNTIME_TOKEN ?? "").digest("hex"),
+      sourceSha: readReleaseInfo()?.gitCommit ?? process.env.MATRIX_BUILD_SHA ?? "" }), now }) : undefined;
   const recipes = createBotRecipeCatalog();
+  const customRecipes = createChatAgentRecipeResolver({ homePath: options.homePath,
+    skillsRoot: await discoverChatAgentRecipeSkillsRoot({}), services: listServices().map(({ id, name }) => ({ id, name })) });
+  const procedures = createBotProcedureResolver({ db, agents: options.agents, recipes, customRecipes });
+  const resolveProcedure = (ownerId: string, agent: import("@matrix-os/contracts").ChatAgent) => procedures.resolve(ownerId, agent);
+
   const chatgptPlanPeers = options.runtimeOwnerId && options.computerId
     ? createChatGptPlanPeers({ db, ownerId: options.runtimeOwnerId, computerId: options.computerId }) : undefined;
+  // Prepared tool work must recheck both definition and current native source consent.
+  const revalidateSource = createBotSourceRevalidator({ lifetime: lifetime.signal, revalidateDefinition: binding => procedures.revalidate(binding),
+    ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
   const providerConnections = createBotProviderConnections({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
     agentExists: async (ownerId, botId) => { const agent = await options.agents.get({ type: 'personal', ownerId }, botId); return Boolean(agent?.recipeRef && !agent.archived); },
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
@@ -184,17 +197,9 @@ export async function startBots(options: {
     chats: options.repository,
     agents: options.agents,
     recipes,
-    validateSelection: async (ownerId, selection) => {
-      if (!options.host?.available) throw new BotInstantiationError("unavailable");
-      try {
-        if (selection.instanceId === "matrix_anthropic_api") {
-          if (!options.matrixAnthropic) throw new BotInstantiationError("unavailable");
-          await options.matrixAnthropic.resolve(selection, ownerId, "interactive");
-        } else if (selection.instanceId === "matrix_chatgpt_plan" && chatgptPlanPeers) await chatgptPlanPeers.resolve(selection, ownerId, "interactive");
-        else resolveManagedPiRoute(await options.providers.getSnapshot(), selection);
-      }
-      catch (error: unknown) { console.warn("[bots] selected managed model unavailable", error instanceof Error ? error.name : "UnknownError"); throw new BotInstantiationError("invalid_request"); }
-    },
+    validateSelection: createBotCreationSelectionValidator({ available: () => Boolean(options.host?.available), providers: options.providers,
+      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}) }),
+    customRecipes,
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
   });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
@@ -202,7 +207,7 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, agents: options.agents, assertSource: revalidateAnthropicSource })
+    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
@@ -216,7 +221,7 @@ export async function startBots(options: {
       },
     } : {}),
   });
-  const authority = createBotAuthority({ transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
+  const authority = createBotAuthority({ resolveProcedure, transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
   // Started connection requests are completed from the inventory; passes never overlap and stop on close.
   let connectionTimer: ReturnType<typeof setInterval> | undefined;
   let connecting: Promise<unknown> | undefined;
@@ -335,6 +340,7 @@ export async function startBots(options: {
     memory,
     agents: options.agents,
     recipes,
+    resolveProcedure,
     resolveRoute: createBotModelRouteResolver({
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       providers: options.providers,
@@ -357,21 +363,23 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
-    assertSource: revalidateAnthropicSource,
+    assertSource: revalidateSource,
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
   });
   const qualifiedTools: BotToolDispatcher = {
     effectClass: request => tools.effectClass(request),
     async prepare(binding, request, signal) {
-      await revalidateAnthropicSource(binding, signal);
+      if (isolatedChat?.targets(binding)) throw new BotBrokerActionError("denied");
+      await revalidateSource(binding, signal);
       await tools.prepare?.(binding, request, signal);
     },
     async dispatch(binding, request, signal) {
-      await revalidateAnthropicSource(binding, signal);
+      if (isolatedChat?.targets(binding)) throw new BotBrokerActionError("denied");
+      await revalidateSource(binding, signal);
       return tools.dispatch(binding, request, signal);
     },
   };
@@ -389,12 +397,16 @@ export async function startBots(options: {
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: qualifiedTools,
     inference: {
+      ...(isolatedChat ? { isolatedChat } : {}),
       ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
       revalidateBinding: async (binding) => {
-        if (!isManagedPiBinding(binding)) return true;
+        if (!isManagedPiBinding(binding)) {
+          try { await procedures.revalidate(binding); return true; }
+          catch (error: unknown) { console.warn("[bots] Custom authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
+        }
         try { await managedAdmission.toolAuthority(binding); return true; }
         catch (error: unknown) { console.warn("[managed-pi] authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
       },
@@ -420,7 +432,7 @@ export async function startBots(options: {
     providerConnections,
     chatgptPlanPeers,
     startConnectionReconciler,
-    botChats,
+    botChats: { ...botChats, assertManagedCustom: (owner, agent, chatId) => procedures.assert(owner.ownerId, agent, chatId) },
     tasks,
     adapter,
     managedAdapter: managed.adapter,

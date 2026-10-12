@@ -1,3 +1,4 @@
+import { CreateManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
 import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
@@ -44,6 +45,7 @@ export interface BotClient extends Partial<BotConnectionClient> {
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
+  createCustom?(input: CreateManagedCustomBotRequest): Promise<InstantiateBotResponse>;
   instantiate(input: InstantiateBotRequest): Promise<InstantiateBotResponse>;
   interactions(chatId: string): Promise<BotInteraction[]>;
   tasks(chatId: string): Promise<BotTaskSummary[]>;
@@ -70,6 +72,7 @@ export function createBotClient(request: BotRequest): BotClient {
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
+    createCustom: (input) => call("/api/chat-agents/managed-custom", "POST", InstantiateBotResponseSchema, CreateManagedCustomBotRequestSchema.parse(input)),
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
     interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
     tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks?includeRunIds=true`, "GET", BotTaskListResponseSchema)).tasks,

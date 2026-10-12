@@ -8,7 +8,7 @@ import {
   getRunningUserMachineByHandle,
 } from './db.js';
 import { canClerkUserAccessMachine } from './customer-vps-preview.js';
-import { verifySyncJwt } from './sync-jwt.js';
+import { verifySyncJwt, type UserSessionProvenance } from './sync-jwt.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import {
   APP_ROUTE_COOKIE,
@@ -41,6 +41,10 @@ export interface AppDomainIdentity {
   source?: 'auth' | 'mobile-session' | 'static-route';
   /** True only after the bearer itself has passed Matrix sync-JWT verification. */
   verifiedSyncBearer?: boolean;
+  /** Verified signed session origin, independent of bearer/cookie transport. */
+  sessionProvenance?: UserSessionProvenance;
+  /** Epoch seconds of the verified source JWT; absent for fresh Clerk authentication. */
+  sessionExpiresAt?: number;
 }
 
 export interface SyncBearerIdentity {
@@ -48,6 +52,7 @@ export interface SyncBearerIdentity {
   userId: string;
   runtimeSlot?: string;
   expiresAt: number;
+  sessionProvenance?: UserSessionProvenance;
 }
 
 export function readMobileAppSessionRoutingHandle(path: string, rawUrl: string): string | null {
@@ -244,6 +249,7 @@ export async function resolveSyncBearerIdentity(opts: {
       userId: record.clerkUserId,
       runtimeSlot,
       expiresAt: claims.exp,
+      sessionProvenance: claims.session_provenance,
     };
   }
 
@@ -254,6 +260,7 @@ export async function resolveSyncBearerIdentity(opts: {
     userId: claims.sub,
     runtimeSlot: machine.runtimeSlot,
     expiresAt: claims.exp,
+    sessionProvenance: claims.session_provenance,
   };
 }
 
@@ -280,6 +287,8 @@ export async function resolveAppDomainIdentity(opts: {
   if (bearerToken && opts.platformJwtSecret) {
     try {
       const claims = await verifySyncJwt(bearerToken, { secret: opts.platformJwtSecret });
+      // Ordinary auth retains its clock tolerance; expired sessions gain no new personal authority.
+      const sessionProvenance = claims.exp > Math.floor(Date.now() / 1000) ? claims.session_provenance : undefined;
       const verifiedSyncBearer = opts.authHeader?.startsWith('Bearer ') === true;
       if (bearerToken === appSessionToken && opts.clerkAuth) {
         const clerkToken = opts.clerkAuth.extractToken(undefined, opts.cookieHeader);
@@ -311,6 +320,8 @@ export async function resolveAppDomainIdentity(opts: {
             runtimeSlot: requestedMachine.runtimeSlot,
             source: 'auth',
             verifiedSyncBearer,
+            sessionProvenance,
+            sessionExpiresAt: claims.exp,
           };
         }
       }
@@ -321,6 +332,8 @@ export async function resolveAppDomainIdentity(opts: {
           runtimeSlot,
           source: 'auth',
           verifiedSyncBearer,
+          sessionProvenance,
+          sessionExpiresAt: claims.exp,
         };
       }
       const record = opts.legacyContainerRoutingEnabled === false
@@ -332,6 +345,8 @@ export async function resolveAppDomainIdentity(opts: {
           userId: record.clerkUserId,
           source: 'auth',
           verifiedSyncBearer,
+          sessionProvenance,
+          sessionExpiresAt: claims.exp,
         };
       }
       const machine = await getRunningUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -342,6 +357,8 @@ export async function resolveAppDomainIdentity(opts: {
           runtimeSlot: machine.runtimeSlot,
           source: 'auth',
           verifiedSyncBearer,
+          sessionProvenance,
+          sessionExpiresAt: claims.exp,
         };
       }
       const activeMachine = await getActiveUserMachineByHandle(opts.db, claims.handle, runtimeSlot);
@@ -354,6 +371,8 @@ export async function resolveAppDomainIdentity(opts: {
         runtimeSlot: activeMachine.runtimeSlot,
         source: 'auth',
         verifiedSyncBearer,
+        sessionProvenance,
+        sessionExpiresAt: claims.exp,
       };
     } catch (err: unknown) {
       if (!isSyncJwtAuthError(err)) {
@@ -382,6 +401,7 @@ export async function resolveAppDomainIdentity(opts: {
       handle: '',
       userId: result.userId,
       source: 'auth',
+      sessionProvenance: 'clerk-browser',
     };
   }
 
@@ -400,6 +420,7 @@ export async function resolveAppDomainIdentity(opts: {
         userId: result.userId,
         runtimeSlot: requestedMachine.runtimeSlot,
         source: 'auth',
+        sessionProvenance: 'clerk-browser',
       };
     }
   }
@@ -412,6 +433,7 @@ export async function resolveAppDomainIdentity(opts: {
       handle: record.handle,
       userId: result.userId,
       source: 'auth',
+      sessionProvenance: 'clerk-browser',
     };
   }
   let machine = opts.runtimeSlot !== 'primary'
@@ -426,6 +448,7 @@ export async function resolveAppDomainIdentity(opts: {
         handle: '',
         userId: result.userId,
         source: 'auth',
+        sessionProvenance: 'clerk-browser',
       };
     }
     return null;
@@ -436,7 +459,14 @@ export async function resolveAppDomainIdentity(opts: {
     userId: result.userId,
     runtimeSlot: machine.runtimeSlot,
     source: 'auth',
+    sessionProvenance: 'clerk-browser',
   };
+}
+
+/** JWT-derived personal authority must not outlive its original signed session. */
+export function renewedUserSessionLifetime(identity: AppDomainIdentity, defaultLifetime: number, now = Math.floor(Date.now() / 1000)): number {
+  return !identity.sessionProvenance || identity.sessionExpiresAt === undefined ? defaultLifetime
+    : Math.max(0, Math.min(defaultLifetime, identity.sessionExpiresAt - now));
 }
 
 export function shouldMarkNativeAppSession(

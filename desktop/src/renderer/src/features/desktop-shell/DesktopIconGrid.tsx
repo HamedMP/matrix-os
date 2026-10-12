@@ -93,16 +93,23 @@ export default function DesktopIconGrid({
               }
             }}
           >
-            <DesktopAppIcon
-              name={destination.name}
-              icon={destination.iconUrl
-                ? <img src={destination.iconUrl} alt="" className="size-full object-cover" draggable={false} />
-                : <destination.icon size={24} aria-hidden="true" />}
-              color={destination.color ?? "var(--bg-surface)"}
-              iconColor={destination.iconColor ?? "var(--accent)"}
-              className="relative size-12 rounded-[14px] border shadow-[var(--shadow-2)] transition-transform duration-150 group-hover:-translate-y-0.5"
-              style={{ borderColor: "var(--border-subtle)" }}
-            />
+            {destination.iconUrl ? (
+              <img
+                src={destination.iconUrl}
+                alt=""
+                className="size-12 object-contain drop-shadow-[0_4px_7px_rgba(0,0,0,0.16)] transition-transform duration-150 group-hover:-translate-y-0.5"
+                draggable={false}
+              />
+            ) : (
+              <DesktopAppIcon
+                name={destination.name}
+                icon={<destination.icon size={24} aria-hidden="true" />}
+                color={destination.color ?? "var(--bg-surface)"}
+                iconColor={destination.iconColor ?? "var(--accent)"}
+                className="relative size-12 rounded-[14px] border shadow-[var(--shadow-2)] transition-transform duration-150 group-hover:-translate-y-0.5"
+                style={{ borderColor: "var(--border-subtle)" }}
+              />
+            )}
             <span
               data-desktop-icon-label
               className="max-w-full truncate text-[12px] font-medium"

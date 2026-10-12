@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
 
 function readWorkflowStepRun(
   root: string,
@@ -283,7 +284,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain(
       "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
     );
-    expect(workflow).toContain(
+    expect(path === '.github/workflows/ci.yml' ? sourceChangeScript : workflow).toContain(
       '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
     );
 
@@ -326,7 +327,8 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const superseder = readFileSync(join(root, '.github/workflows/ci-supersede.yml'), 'utf8');
 
-    expect(workflow).toContain('run-name: CI coverage-v1');
+    expect(workflow).toContain("format('CI coverage-v1 · {0}', github.sha)");
+    expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
     expect(workflow).toContain(
@@ -351,9 +353,11 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('ci-results:');
-    expect(workflow).toContain('name: CI Results');
+    const aggregate = parse(workflow).jobs['ci-results'];
+    const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e]');
+    expect(workflow).toContain('needs: [changes, ci-backend, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, funded-host-root, docs-contract, os-view-parity, e2e, dedicated-linux]');
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -381,7 +385,7 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
       workflow.indexOf('  changes:'),
-      workflow.indexOf('  # ── Gate 1: Mechanical checks'),
+      workflow.indexOf('\n  typecheck:'),
     );
 
     expect(changesJob).toContain('timeout-minutes: 3');
@@ -392,10 +396,10 @@ describe('CI workflows', () => {
     expect(changesJob).toContain('timeout --foreground --kill-after=5s');
     expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
     expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
-    expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
+    expect(sourceChangeScript).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
     expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
-    expect(changesJob).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(sourceChangeScript).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
@@ -451,11 +455,11 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('name: Build Desktop for Electron E2E');
-    expect(workflow).toContain('run: bun run build:desktop');
+    expect(workflow).toContain('run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
     expect(workflow).toContain('name: Run required MAT-335 Desktop regression');
     expect(workflow).toContain('MATRIX_DESKTOP_E2E_REQUIRED: "1"');
     expect(workflow).toContain(
-      'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
+      'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
     );
   });
 
@@ -466,14 +470,14 @@ describe('CI workflows', () => {
     const input = steps.findIndex((step: { name?: string }) => step.name === 'Run required Desktop Chat input regression');
     expect(input).toBeGreaterThan(build);
     expect(steps[input].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
-    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts');
+    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts');
   });
 
   it('requires download E2E after the Electron build under a virtual display', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const steps = workflow.jobs.e2e.steps;
-    const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
-    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts');
+    const build = steps.findIndex((step: { run?: string }) => step.run === 'GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
+    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/file-download.e2e.test.ts');
     expect(build).toBeGreaterThanOrEqual(0);
     expect(download).toBeGreaterThan(build);
     expect(steps[download].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');

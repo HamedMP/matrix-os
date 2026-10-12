@@ -75,6 +75,17 @@ AI_FUNDED_PROMOTIONAL_GRANT_MICROUSD=5000000
 AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT=<ISO timestamp>
 ```
 
+With both funded control-plane and runtime provisioning enabled, successful
+customer-primary registration/payment activation initializes a missing ordinary
+Sonnet/GLM policy with a $5 monthly budget and no expiry, and issues the permanent
+$5 lifetime starter entitlement once per owner. Activation, policy and grant
+share one transaction and deletion/owner locks before machine mutation. Existing
+policies (including opt-outs), consumed credit, reservations and token epochs are
+retained. Historical permanent starter grants are recognized without rewriting
+or refilling them. Preview and non-primary runtimes are excluded. The optional
+expiring campaign above remains a separate promotion; enabling it may issue an
+additional campaign grant and is not needed for the lifetime starter entitlement.
+
 Incomplete funded configuration must fail before listen. The transport checkpoint uses a distinct `sk-matrix-funded-*` HMAC audience; activation replaces it with the planned owner/runtime/expiry/revocation-scoped credential. Customer VPSes receive only relay URL and that scoped runtime token.
 
 Matrix AI becomes selectable only when explicit current owner/runtime policy

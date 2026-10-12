@@ -46,7 +46,7 @@ export function createBotRoutes(options: {
   recipes?: Pick<BotRecipeCatalog, "list">;
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
-  instantiation?: Pick<BotInstantiation, "instantiate">;
+  instantiation?: Pick<BotInstantiation, "instantiate"> & Partial<Pick<BotInstantiation, "createCustom">>;
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
@@ -81,6 +81,14 @@ export function createBotRoutes(options: {
     }
     console.warn("[bots] request failed:", error instanceof Error ? error.name : "UnknownError");
     return errorResponse(context, "unavailable");
+  });
+
+  routes.post("/api/chat-agents/managed-custom", limit, async (context) => {
+    const principal = options.getPrincipal(context);
+    if (!options.instantiation?.createCustom) return errorResponse(context, "unavailable");
+    const result = await options.instantiation.createCustom(principal.userId, await context.req.json());
+    context.header("Cache-Control", "private, no-store");
+    return context.json(result, result.operation === "created" ? 201 : 200);
   });
 
   routes.post("/api/chat-agents/instantiate", limit, async (context) => {

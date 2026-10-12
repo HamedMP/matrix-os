@@ -173,11 +173,6 @@ function MountedUserButton({
   const secondary = email && email !== displayName ? email : null;
   const isSettings = variant === "settings";
   const isMenubar = variant === "menubar";
-  const itemClass =
-    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-foreground/[0.06] focus:bg-foreground/[0.06]";
-  const dangerItemClass =
-    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive data-[disabled]:opacity-60";
-
   async function handleSignOut() {
     if (signingOut) return;
     setSigningOut(true);
@@ -226,8 +221,32 @@ function MountedUserButton({
           side={isMenubar ? "bottom" : "top"}
           sideOffset={10}
           style={{ zIndex: SHELL_Z_INDEX.popover }}
-          className="w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"
+          className={isMenubar ? "w-[224px] rounded-xl border bg-card p-1.5 text-foreground shadow-xl" : "w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"}
         >
+          {isMenubar ? <TopBarAccountContent
+            label={user?.username ? `@${user.username}` : displayName}
+            signingOut={signingOut} onSignOut={handleSignOut} onOpenSettings={onOpenSettings}
+          /> : <LegacyAccountContent avatarUrl={avatarUrl} displayName={displayName}
+            secondary={secondary} signingOut={signingOut} onSignOut={handleSignOut}
+            onOpenSettings={onOpenSettings} onManageAccount={() => clerk.openUserProfile()}
+            showSharedWithMe={showSharedWithMe && organizationStatus !== "none"} />}
+        </DropdownMenuPrimitive.Content>
+      </DropdownMenuPrimitive.Portal>
+    </DropdownMenuPrimitive.Root>
+  );
+}
+
+function LegacyAccountContent({ avatarUrl, displayName, secondary, signingOut, onSignOut, onOpenSettings, onManageAccount, showSharedWithMe }: {
+  avatarUrl: string | null; displayName: string; secondary: string | null; signingOut: boolean;
+  onSignOut(): Promise<void>; onManageAccount(): void; onOpenSettings?: (section: AccountSettingsSection) => void;
+  showSharedWithMe: boolean;
+}) {
+  const itemClass =
+    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-foreground/[0.06] focus:bg-foreground/[0.06]";
+  const dangerItemClass =
+    "flex cursor-default items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive data-[disabled]:opacity-60";
+
+  return <>
           <div className="flex items-center gap-3 rounded-2xl bg-foreground/[0.035] px-3 py-3">
             <span className="shrink-0 rounded-full ring-1 ring-black/[0.06]">
               <AccountAvatar avatarUrl={avatarUrl} displayName={displayName} />
@@ -255,7 +274,7 @@ function MountedUserButton({
             <DropdownMenuPrimitive.Item
               className={itemClass}
               onSelect={() => {
-                clerk.openUserProfile();
+                onManageAccount();
               }}
             >
               <UserIcon className="size-4 text-muted-foreground" aria-hidden="true" />
@@ -267,7 +286,7 @@ function MountedUserButton({
                 Account data and deletion
               </a>
             </DropdownMenuPrimitive.Item>
-            {showSharedWithMe && organizationStatus !== "none" ? <DropdownMenuPrimitive.Item asChild>
+            {showSharedWithMe ? <DropdownMenuPrimitive.Item asChild>
               <Link className={itemClass} href="/shared">
                 <UsersIcon className="size-4 text-muted-foreground" aria-hidden="true" />
                 Shared with me
@@ -316,7 +335,7 @@ function MountedUserButton({
             disabled={signingOut}
             onSelect={(event) => {
               event.preventDefault();
-              void handleSignOut();
+              void onSignOut();
             }}
           >
             {signingOut ? (
@@ -330,10 +349,25 @@ function MountedUserButton({
           <p className="px-2.5 pb-0.5 pt-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground/60">
             Secured by Clerk
           </p>
-        </DropdownMenuPrimitive.Content>
-      </DropdownMenuPrimitive.Portal>
-    </DropdownMenuPrimitive.Root>
-  );
+  </>;
+}
+
+function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: {
+  label: string; signingOut: boolean; onSignOut(): Promise<void>;
+  onOpenSettings?: (section: AccountSettingsSection) => void;
+}) {
+  const row = "flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] outline-none data-[highlighted]:bg-foreground/5";
+  return <>
+    <div className="px-2 pb-2 pt-1 text-[11px] text-muted-foreground"><p className="mb-1 tracking-wider">PERSONAL ACCOUNT</p><p className="truncate">{label}</p></div>
+    {onOpenSettings ? <>
+      <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("appearance")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("billing")}><CreditCardIcon className="size-3.5" aria-hidden="true" />View plans</DropdownMenuPrimitive.Item>
+    </> : null}
+    <DropdownMenuPrimitive.Separator className="my-0.5 h-px bg-border" />
+    <DropdownMenuPrimitive.Item className={`${row} data-[disabled]:opacity-60`} disabled={signingOut} aria-busy={signingOut} onSelect={event => { event.preventDefault(); void onSignOut(); }}>
+      {signingOut ? <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" /> : <LogOutIcon className="size-3.5" aria-hidden="true" />}{signingOut ? "Signing out…" : "Log out"}
+    </DropdownMenuPrimitive.Item>
+  </>;
 }
 
 function AccountAvatar({
