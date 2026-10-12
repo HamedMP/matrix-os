@@ -226,6 +226,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
       api={api}
       scope={scope}
       projectName={projectName}
+      selectedOrganizationId={organizationId}
       popoverZIndex={layers?.popover}
       {...(organizationName ? { organizationName } : {})}
       {...(inventory ? { inventory } : {})}

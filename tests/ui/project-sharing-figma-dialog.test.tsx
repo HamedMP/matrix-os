@@ -112,7 +112,8 @@ describe("Figma-aligned project access dialog", () => {
       delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" popoverZIndex={11_000} />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" popoverZIndex={11_000} />);
 
     expect(await screen.findByText("Alex Rivera (you)")).toBeVisible();
     expect(screen.getByText("Created this · lives on Alex Rivera’s computer")).toBeVisible();
@@ -165,7 +166,8 @@ describe("Figma-aligned project access dialog", () => {
     };
 
     render(<ProjectSharingDialog api={api} scope={sharedScope} projectName="Launch plan"
-      organizationName="Acme Research" refreshInventory={async () => inventory} onClose={vi.fn()} />);
+      selectedOrganizationId="org_acme" organizationName="Acme Research"
+      refreshInventory={async () => inventory} onClose={vi.fn()} />);
 
     expect(await screen.findByRole("region", { name: "Editor AI" })).toBeVisible();
     const enable = screen.getByRole("button", { name: "Use this AI source for Editors" });
@@ -219,6 +221,38 @@ describe("Figma-aligned project access dialog", () => {
       `/api/collaboration/scopes/${scope.id}/grants`,
       expect.objectContaining({ audience: { kind: "organization" }, preset: "contributor" }),
     ));
+  });
+
+  it("resolves the scope organization name when another organization is selected", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/organizations") return { complete: true, organizations: [
+          { organizationId: "org_other", name: "Wrong Organization", slug: "wrong-organization", role: "org:member",
+            memberCount: 1, aiSubmission: "members", membershipEpoch: 1 },
+          { organizationId: "org_acme", name: "Acme Research", slug: "acme-research", role: "org:member",
+            memberCount: 2, aiSubmission: "members", membershipEpoch: 1 },
+        ] };
+        if (path === "/api/organizations/org_acme/members") return { members: [] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Alex Rivera" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000610", preset: "viewer", revision: "3" },
+          people: [],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope}
+      selectedOrganizationId="org_other" organizationName="Wrong Organization" />);
+
+    expect(await screen.findByText("Everyone in Acme Research")).toBeVisible();
+    expect(screen.queryByText("Everyone in Wrong Organization")).toBeNull();
+    expect(api.get).toHaveBeenCalledWith("/api/organizations/org_acme/members");
   });
 
   it("preserves a selected audience when reopening an unpublished project", async () => {
@@ -344,7 +378,8 @@ describe("Figma-aligned project access dialog", () => {
       delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" />);
 
     expect(await screen.findByRole("combobox", { name: "Add person" })).toHaveValue("user_viewer");
     fireEvent.change(screen.getByRole("combobox", { name: "Role" }), { target: { value: "contributor" } });
@@ -380,7 +415,8 @@ describe("Figma-aligned project access dialog", () => {
       post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" />);
 
     const role = await screen.findByRole("button", { name: "Access for Ada: Editor · inherited" });
     fireEvent.pointerDown(role, { button: 0, ctrlKey: false });
@@ -421,7 +457,8 @@ describe("Figma-aligned project access dialog", () => {
       post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Load more members" }));
     expect(await screen.findByRole("option", { name: "Later member" })).toBeVisible();
@@ -456,7 +493,8 @@ describe("Figma-aligned project access dialog", () => {
       post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={sharedScope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" />);
 
     expect(await screen.findByRole("button", { name: "Add" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Load more members" }));
@@ -487,7 +525,8 @@ describe("Figma-aligned project access dialog", () => {
       post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
     };
 
-    render(<ProjectAccessManager api={api} scope={scope} organizationName="Acme Research" />);
+    render(<ProjectAccessManager api={api} scope={scope} selectedOrganizationId="org_acme"
+      organizationName="Acme Research" />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Access is unavailable/);
     fireEvent.click(screen.getByRole("button", { name: "Refresh access" }));

@@ -26,6 +26,7 @@ export function ProjectSharingDialog({
   api,
   scope,
   projectName,
+  selectedOrganizationId,
   organizationName,
   popoverZIndex,
   inventory,
@@ -40,6 +41,7 @@ export function ProjectSharingDialog({
   api: CollaborationApi;
   scope: CollaborationScope;
   projectName: string;
+  selectedOrganizationId?: string | null;
   organizationName?: string;
   popoverZIndex?: number;
   inventory?: CollaborationProjectInventory;
@@ -175,6 +177,7 @@ export function ProjectSharingDialog({
 
     <div className="min-h-0 flex-1 overflow-y-auto">
       {scope.organizationId ? <ProjectAccessManager api={api} scope={scope}
+        selectedOrganizationId={selectedOrganizationId}
         organizationName={organizationName}
         popoverZIndex={popoverZIndex}
         onChanged={refreshAfterAccessChange} /> : null}

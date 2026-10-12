@@ -112,9 +112,10 @@ function privatePresentation(scope: CollaborationScope, grants: CollaborationGra
   });
 }
 
-export function ProjectAccessManager({ api, scope, organizationName, popoverZIndex, onChanged }: {
+export function ProjectAccessManager({ api, scope, selectedOrganizationId, organizationName, popoverZIndex, onChanged }: {
   api: CollaborationApi;
   scope: CollaborationScope;
+  selectedOrganizationId?: string | null;
   organizationName?: string | null;
   popoverZIndex?: number;
   onChanged?: () => Promise<unknown>;
@@ -128,7 +129,8 @@ export function ProjectAccessManager({ api, scope, organizationName, popoverZInd
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
-  const [organizationDisplayName, setOrganizationDisplayName] = useState(organizationName ?? null);
+  const trustedOrganizationName = selectedOrganizationId === scope.organizationId ? organizationName : null;
+  const [organizationDisplayName, setOrganizationDisplayName] = useState(trustedOrganizationName ?? null);
   const alive = useRef(true);
   const base = `/api/collaboration/scopes/${encodeURIComponent(scope.id)}`;
 
@@ -136,11 +138,11 @@ export function ProjectAccessManager({ api, scope, organizationName, popoverZInd
     if (!scope.organizationId) throw new Error("Organization unavailable");
     const [memberValue, organizationValue] = await Promise.all([
       api.get(`/api/organizations/${encodeURIComponent(scope.organizationId)}/members`),
-      organizationName ? Promise.resolve(null) : api.get("/api/organizations"),
+      trustedOrganizationName ? Promise.resolve(null) : api.get("/api/organizations"),
     ]);
     const memberPage = OrganizationManagementMembersPageSchema.parse(memberValue);
     const listed = memberPage.members.map(({ actorId, displayName }) => ({ actorId, displayName }));
-    let displayName = organizationName;
+    let displayName = trustedOrganizationName;
     if (!displayName) {
       const listing = OrganizationManagementListSchema.parse(organizationValue);
       const selected = listing.organizations.find((organization) => organization.organizationId === scope.organizationId);
@@ -169,7 +171,7 @@ export function ProjectAccessManager({ api, scope, organizationName, popoverZInd
       setError(false);
     }
     return next;
-  }, [api, base, organizationName, scope.lifecycle, scope.organizationId, scope.ownerId]);
+  }, [api, base, scope.lifecycle, scope.organizationId, scope.ownerId, trustedOrganizationName]);
 
   const reload = useCallback(async () => {
     setLoading(true);

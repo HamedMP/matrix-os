@@ -276,7 +276,8 @@ describe("whole-project sharing confirmation", () => {
       throw new Error("unexpected route");
     });
     const onAccessChanged = vi.fn(async () => refreshed);
-    render(<ProjectSharingDialog api={api} scope={privateScope} projectName="Launch" organizationName="Matrix Team" inventory={first}
+    render(<ProjectSharingDialog api={api} scope={privateScope} projectName="Launch"
+      selectedOrganizationId="org_matrix_team" organizationName="Matrix Team" inventory={first}
       refreshInventory={async () => refreshed} onAccessChanged={onAccessChanged} onClose={vi.fn()} />);
 
     const general = await screen.findByRole("button", { name: "General access: Editor" });
