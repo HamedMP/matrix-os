@@ -162,3 +162,13 @@ wiring. Admission lives in `admitted-input.ts`, image payload limits in
 `image-inference.ts`, command policy in `command-preview-policy.mjs`, and legacy
 thread projection in `thread-client-projection.ts`. The repository export edit
 is narrowly scoped sidecar removal; broader repository extraction is deferred.
+
+Acceptance-environment recovery follows spec537's ENG-265 contracts. Full platform
+deployments preserve and verify the configured internal organization; ordinary
+inventory includes only owned private machines without treating them as shared.
+Dedicated inventory and immutable release metadata establish PR/bundle/full
+commit and expiry. UI availability, subscription connectivity, per-Computer
+grants and actual provider pixel/marker evidence remain distinct gates. An
+isolated inventory endpoint does not itself prove normal gateway routing. No
+Main runtime deployment, credential migration or unapproved source/grant is part
+of this recovery.
