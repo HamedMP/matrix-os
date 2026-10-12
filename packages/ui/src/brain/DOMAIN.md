@@ -23,14 +23,12 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   follows the newest queued or running job of its slot, so a reload shows a run still going and keeps its buttons
   off. The repository card shows the owner's model spend for the last 30 days across all projects, and the model
   confirm the budget left (`modelSpend` of `GET .../claims`). A run that waits for another run of the project says so.
-- Every screen is one shrinkable grid column, and long titles, keys and selects shrink or wrap, so nothing is wider
-  than a 390 px screen.
+- Every screen is one shrinkable grid column; long titles, keys and selects shrink or wrap to fit a 390 px screen.
 - Colors come from `BRAIN_TONE`: each class chains the Electron Desktop token first and the Web token second, with
   no `dark:` variants. Both renderers scan this folder for Tailwind classes.
 - Keyboard focus (`BRAIN_TONE.focus`) is a 2 px outline in the ring color on Web; Electron Desktop's global focus
   ring replaces it. `tests/ui/brain-tone.test.ts` builds the classes with Tailwind to check it.
-- Out of scope: account connections (Settings), window chrome, and where each surface registers the app (the
-  adapters).
+- Out of scope: account connections (Settings), window chrome, and where each surface registers the app (adapters).
 
 ## Source Of Truth
 
