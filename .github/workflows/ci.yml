@@ -559,7 +559,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - run: bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
+      - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
+        env:
+          UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Upload unit profiling
@@ -785,7 +787,9 @@ jobs:
 
       - name: Build Desktop for Electron E2E
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
-        run: bun run build:desktop
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+        run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop
 
       - name: Run required Desktop file download regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

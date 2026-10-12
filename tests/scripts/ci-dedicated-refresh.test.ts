@@ -37,7 +37,7 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  expect(dedicated.on.workflow_run).toEqual({workflows:['CI'],types:['requested','in_progress','completed']});
  expect(dedicated.on.pull_request_target.types).toContain('opened');
  expect(dedicated.jobs.reconcile.if).not.toContain('vars.MATRIX_CI_DEDICATED');
- expect(dedicated.jobs.reconcile.steps.at(-1).with.script).toContain('reconcileSourceQualification');
+ expect(dedicated.jobs.reconcile.steps.find((step:any)=>step.name==='Reconcile completed child source checks').with.script).toContain('reconcileSourceQualification');
 });
 it('admits a rerun through in_progress because GitHub requested events do not fire on reruns',async()=>{
  const f=fixture();const run={id:321,run_attempt:2,status:'in_progress',workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',head_sha:head,head_branch:'child',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};
@@ -97,4 +97,20 @@ it('does not authenticate ambiguous legacy refresh controller markers',()=>{
  const scope={prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,requestingRunId:321};
  const run={id:124,workflow_id:99,path:'.github/workflows/ci-dedicated.yml',event:'workflow_run',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`dedicated-refresh-v1 request=321 title=${helpers.refreshMarker(scope)}`};
  expect(helpers.authenticatedControllerRun(run,repo,scope,{id:99},'child')).toBe(false);
+});
+
+it('binds Electron build provenance to the verified refresh checkout rather than the controller commit',async()=>{
+ const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');
+ const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
+ const build=workflow.jobs.e2e.steps.find((s:any)=>s.name==='Build Desktop for Electron E2E');
+ expect(build.env?.DESKTOP_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
+ expect(build.run).toBe('GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
+});
+
+it('binds source-reading unit builds to the verified refresh checkout',async()=>{
+ const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');
+ const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
+ const unit=workflow.jobs.unit.steps.find((s:any)=>String(s.run).includes('bun run test -- --shard='));
+ expect(unit.env?.UNIT_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
+ expect(unit.run).toMatch(/^GITHUB_SHA="\$UNIT_SOURCE_SHA" bun run test -- --shard=/);
 });

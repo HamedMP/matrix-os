@@ -4,17 +4,18 @@ import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
 import * as outcomeHelpers from '../../scripts/ci/dedicated-outcome.mjs';
 import * as admissionHelpers from '../../scripts/ci/dedicated-admission.mjs';
+import * as configurationHelpers from '../../scripts/ci/dedicated-config-token.mjs';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import {parse} from 'yaml';
 const nodeRequire=createRequire(import.meta.url);
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),controller='d'.repeat(40);
 function workflow(){return parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));}
-async function execute(name:string,github:unknown,context:unknown,core:unknown) {
+async function execute(name:string,github:unknown,context:unknown,core:unknown,helperOverrides:Record<string,unknown>={}) {
  const source=workflow().jobs.benchmark.steps.find((step:{name:string})=>step.name===name).with.script;
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
  const script=source.replaceAll('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
@@ -24,7 +25,7 @@ async function admit(overrides:Record<string,unknown>={},ref='refs/heads/main') 
  const original={number:2440,base:{ref:'main',sha:base,repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge,state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}],head:{sha:head,repo:{full_name:'HamedMP/matrix-os'}}};
  const pull={...structuredClone(original),...overrides};
  const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[{id:77,run_attempt:1,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',head_sha:head,status:'in_progress',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2440,head:{sha:head},base:{sha:base,ref:'main'}}]}]}}))},checks:{create:vi.fn(async(_args:{output:{summary:string}})=>({data:{id:123}})),update:vi.fn(async(_args:{conclusion:string})=>({data:{}}))}}};
- const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
+ const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{repository:{id:42},action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
  const outputs:Record<string,string>={};
  const core={setOutput:(key:string,value:string)=>outputs[key]=value,warning:vi.fn(),setFailed:vi.fn()};
  await execute('Admit current source head',github,context,core);
@@ -82,6 +83,14 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(core.warning).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure');
+ });
+ it('completes the source check as failed when credential cleanup fails',async()=>{
+  const {outputs,github,context,core}=await admit();
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'failure',SUITE:'qualification'}))vi.stubEnv(key,value);
+  const close=vi.fn().mockRejectedValue(new Error('sensitive revocation request headers'));
+  await execute('Settle source-head check',github,context,core,{'scripts/ci/dedicated-config-token.mjs':{createConfigurationSession:()=>({github,close})}});
+  expect(close).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledWith('Configuration read token revocation failed');
+  expect(github.rest.checks.update).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0]).toMatchObject({status:'completed',conclusion:'failure'});
  });
  it('keeps title edits and unrelated label removal from superseding active qualification',()=>{
   const group=workflow().concurrency.group;
@@ -144,9 +153,9 @@ it('supersedes obsolete CI for arbitrary parent branch names without executing t
  const value=parse(readFileSync('.github/workflows/ci-pr-supersede.yml','utf8'));
  expect(value.on.pull_request_target.branches).toBeUndefined();expect(value.jobs.supersede.steps.every((step:{uses:string})=>!step.uses.startsWith('actions/checkout'))).toBe(true);
 });
-it('restricts the required-gate App key to main-only reconciliation and creates a checks-only separate client',()=>{
+it('restricts App keys to authenticated main helpers and creates a checks-only separate gate client',()=>{
  const value=workflow(),job=value.jobs.reconcile;expect(job.environment).toBe('matrix-ci');expect(job.permissions.checks).toBe('read');
  const token=job.steps.find((step:{id?:string})=>step.id==='gate-token');expect(token.uses).toBe('actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349');expect(token.with).toEqual(expect.objectContaining({'app-id':'${{ vars.MATRIX_CI_GATE_APP_ID }}','private-key':'${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}',owner:'${{ github.repository_owner }}',repositories:'${{ github.event.repository.name }}','permission-checks':'write'}));expect(Object.keys(token.with).filter(key=>key.startsWith('permission-'))).toEqual(['permission-checks']);
- const gate=job.steps.at(-1);expect(gate.env.GATE_TOKEN).toBe('${{ steps.gate-token.outputs.token }}');expect(gate.with.script).toContain('new github.constructor({auth:process.env.GATE_TOKEN');expect(gate.with.script).toContain('gateGithub');expect(gate.with.script).toContain('gateAppId');
- expect(JSON.stringify(value.jobs.benchmark)).not.toContain('MATRIX_CI_GATE_APP_PRIVATE_KEY');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
+ const gate=job.steps.find((step:{name?:string})=>step.name==='Reconcile completed child source checks');expect(gate.env.GATE_TOKEN).toBe('${{ steps.gate-token.outputs.token }}');expect(gate.with.script).toContain('new github.constructor({auth:process.env.GATE_TOKEN');expect(gate.with.script).toContain('gateGithub');expect(gate.with.script).toContain('gateAppId');
+ const benchmark=value.jobs.benchmark;expect(benchmark.if).toContain("github.ref == 'refs/heads/main'");expect(benchmark.steps.filter((step:any)=>JSON.stringify(step).includes('MATRIX_CI_GATE_APP_PRIVATE_KEY')).map((step:any)=>step.name)).toEqual(['Dispatch authenticated PR qualification lease','Settle source-head check']);expect(JSON.stringify(benchmark)).not.toContain('GATE_TOKEN');expect(JSON.stringify(parse(readFileSync('.github/workflows/ci.yml','utf8')))).not.toContain('GATE_TOKEN');
 });

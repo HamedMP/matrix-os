@@ -47,7 +47,7 @@ describe("Sheet", () => {
     // Built with the real modifier so the assertion follows @expo/ui's wire
     // format, which changed shape within SDK 57.
     expect(mockBottomSheetProps).toHaveBeenCalledWith(expect.objectContaining({
-      modifiers: [presentationBackground("#F4F7ED")],
+      modifiers: [presentationBackground("#FFFEFC")],
     }));
   });
 

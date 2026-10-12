@@ -18,10 +18,25 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
     recipes: query.data ?? [],
     isPending: query.isPending,
     isError: query.isError,
-    create: async (recipe: BotRecipeRef, clientRequestId: string, selection?: CanonicalChatModelSelection) => {
+    /** Reads the templates again, as after a failed read. */
+    refetch: () => query.refetch(),
+    /**
+     * Resolves to the new agent's id and the id of its chat. `name` is what the
+     * person calls the agent; without one it takes the template's name.
+     */
+    create: async (
+      recipe: BotRecipeRef,
+      clientRequestId: string,
+      selection?: CanonicalChatModelSelection,
+      name?: string,
+    ): Promise<{ agentId: string; chatId: string }> => {
       const token = await getToken();
       if (!token || !gatewayUrl) throw new Error("Bot could not be created.");
-      return (await instantiateNativeBot(token, gatewayUrl, { recipe, clientRequestId, ...(selection ? { selection } : {}) })).chatId;
+      const chosenName = name?.trim();
+      const created = await instantiateNativeBot(token, gatewayUrl, {
+        recipe, clientRequestId, ...(selection ? { selection } : {}), ...(chosenName ? { name: chosenName } : {}),
+      });
+      return { agentId: created.agent.id, chatId: created.chatId };
     },
   };
 }

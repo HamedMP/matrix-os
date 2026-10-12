@@ -200,7 +200,7 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
   if (!isLoaded || authenticated === undefined) {
     return (
       <StartupScreen>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.v2.colors.textSubtle} style={styles.loadingSpinner} />
       </StartupScreen>
     );
   }
@@ -209,7 +209,7 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
     return (
       <StartupScreen>
         <Text style={styles.loadingSubtitle}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={theme.colors.primary} style={styles.loadingSpinner} />
+        <ActivityIndicator size="large" color={theme.v2.colors.textSubtle} style={styles.loadingSpinner} />
       </StartupScreen>
     );
   }

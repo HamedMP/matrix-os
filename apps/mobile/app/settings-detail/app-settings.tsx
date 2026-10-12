@@ -161,7 +161,7 @@ export default function AppSettingsScreen() {
               <View style={styles.themeOptionContent}>
                 <Text style={styles.themeOptionLabel}>{THEME_LABELS[theme]}</Text>
                 {settings.theme === theme ? (
-                  <Icon icon={CheckmarkCircle02Icon} size={22} color={uiTheme.v2.appColors.green} />
+                  <Icon icon={CheckmarkCircle02Icon} size={22} color={uiTheme.v2.colors.textDefault} />
                 ) : null}
               </View>
               <Spacer size="lg" />

@@ -126,6 +126,9 @@ jobs:
         if: steps.admit.outputs.admitted == 'true' && (steps.admit.outputs.pr_number != '0' || steps.admit.outputs.source_kind == 'main') && steps.current.outputs.current == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          CONFIGURATION_PRIVATE_KEY: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
           SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -139,6 +142,8 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
+            const {createConfigurationSession}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            const configuration=createConfigurationSession(github,context.repo,{appId:Number(process.env.CONFIGURATION_APP_ID),installationId:Number(process.env.CONFIGURATION_INSTALLATION_ID),repositoryId:context.payload.repository.id,privateKey:process.env.CONFIGURATION_PRIVATE_KEY,mask:value=>core.setSecret(value)});
             const {mkdir,writeFile}=require('node:fs/promises');
             const {dispatchDedicatedLease}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
@@ -151,10 +156,12 @@ jobs:
               imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
-            const receipt=await dispatchDedicatedLease(github,{repo:context.repo,
+            let receipt;
+            try{receipt=await dispatchDedicatedLease(configuration.github,{repo:context.repo,
               controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
               ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
-              {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});
+              {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});}
+            finally{await configuration.close();}
             await mkdir('output/ci-dedicated',{recursive:true});
             await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(receipt),{flag:'wx'});
             core.setOutput('request',JSON.stringify(request));
@@ -173,6 +180,9 @@ jobs:
         if: always() && steps.admit.outputs.check_id != ''
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          CONFIGURATION_PRIVATE_KEY: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
           CHECK_ID: ${{ steps.admit.outputs.check_id }}
           HEAD_SHA: ${{ steps.admit.outputs.head_sha }}
           MERGE_PARENT_SHA: ${{ steps.admit.outputs.merge_parent_sha }}
@@ -206,10 +216,13 @@ jobs:
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {verifyCurrentDedicatedSource,verifyDedicatedLeaseGrant}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
+            let configuration;
             try {
+              const {createConfigurationSession}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+              configuration=createConfigurationSession(github,context.repo,{appId:Number(process.env.CONFIGURATION_APP_ID),installationId:Number(process.env.CONFIGURATION_INSTALLATION_ID),repositoryId:context.payload.repository.id,privateKey:process.env.CONFIGURATION_PRIVATE_KEY,mask:value=>core.setSecret(value)});
               const {validInfrastructureProof}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-outcome.mjs')).href);
               proof=process.env.INFRASTRUCTURE_PROOF?JSON.parse(process.env.INFRASTRUCTURE_PROOF):{};infrastructure=process.env.DISPATCH_OUTCOME==='success'&&validInfrastructureProof(proof);
-              if((success||infrastructure) && (Number(process.env.PR_NUMBER)>0||main))await verifyDedicatedLeaseGrant(github,context.repo,
+              if((success||infrastructure) && (Number(process.env.PR_NUMBER)>0||main))await verifyDedicatedLeaseGrant(configuration.github,context.repo,
                 {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},JSON.parse(process.env.LEASE_REQUEST));
               await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:process.env.SOURCE_SHA,
                 headSha:process.env.HEAD_SHA,baseSha:process.env.BASE_SHA,baseRef:process.env.BASE_REF,
@@ -218,6 +231,9 @@ jobs:
               core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
               core.setFailed('Current PR revision could not be revalidated');
               success=false;infrastructure=false;
+            } finally{
+              if(configuration)try{await configuration.close();}
+              catch{core.setFailed('Configuration read token revocation failed');success=false;infrastructure=false;}
             }
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
@@ -281,6 +297,21 @@ jobs:
           ref: ${{ steps.origin.outputs.controller_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Create repository-scoped configuration read token
+        id: configuration-token
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          CONFIGURATION_PRIVATE_KEY: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {mintConfigurationToken}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            const token=await mintConfigurationToken(github,context.repo,{appId:Number(process.env.CONFIGURATION_APP_ID),installationId:Number(process.env.CONFIGURATION_INSTALLATION_ID),repositoryId:context.payload.repository.id,privateKey:process.env.CONFIGURATION_PRIVATE_KEY,mask:value=>core.setSecret(value)});
+            core.setOutput('token',token);
+
       - name: Create repository-scoped checks-only gate token
         id: gate-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
@@ -302,6 +333,7 @@ jobs:
       - name: Reconcile completed child source checks
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
           GATE_TOKEN: ${{ steps.gate-token.outputs.token }}
           GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
@@ -311,11 +343,26 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
+            const {withConfigurationGithub}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            if(!process.env.CONFIGURATION_TOKEN)throw new Error('Configuration read token is required');
+            const configurationGithub=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            const sourceGithub=withConfigurationGithub(github,configurationGithub);
             const {reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             if(!process.env.GATE_TOKEN)throw new Error('Protected gate App token is required');
             // GitHub Script bundles Octokit; external @actions packages are not installed.
             const gateGithub=new github.constructor({auth:process.env.GATE_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
-            const gate=await reconcileSourceQualification(github,context.repo,
+            const gate=await reconcileSourceQualification(sourceGithub,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
               {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
             core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);
+
+      - name: Revoke configuration read token
+        if: always() && steps.configuration-token.outputs.token != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
+        with:
+          script: |
+            const client=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            try{await client.request('DELETE /installation/token',{request:{timeout:10000}});}
+            catch{throw new Error('Configuration read token revocation failed');}

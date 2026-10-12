@@ -405,6 +405,112 @@ describe("createCanonicalChatCacheSync", () => {
     cleanup();
   });
 
+  describe("agent statuses", () => {
+    // Shaped like mobileQueryKeys: one status query per set of agents under a shared prefix.
+    const STATUSES_KEY = ["mobile", "agents", "status", "user", "computer"];
+
+    /** The chat list and the agents' statuses mounted, as the tab bar keeps them, with one chat open. */
+    function mountedStatuses({ watchStatuses = true } = {}) {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+      const fetchStatuses = jest.fn(async () => ({}));
+      const statusesKey = [...STATUSES_KEY, "bot_one,bot_two"];
+      queryClient.setQueryData(CHATS_KEY, { items: [] });
+      queryClient.setQueryData(statusesKey, {});
+      const unmount = [
+        new QueryObserver(queryClient, { queryKey: CHATS_KEY, queryFn: async () => ({ items: [] }) }).subscribe(() => undefined),
+        new QueryObserver(queryClient, { queryKey: statusesKey, queryFn: fetchStatuses }).subscribe(() => undefined),
+      ];
+      const sync = createCanonicalChatCacheSync({
+        queryClient,
+        chatsKey: CHATS_KEY,
+        agentStatusesKey: watchStatuses ? STATUSES_KEY : undefined,
+        activeChat: { chatId: "chat_content", detailKey: DETAIL_KEY },
+      });
+      return {
+        sync, queryClient, fetchStatuses, statusesKey,
+        cleanup() {
+          sync.dispose();
+          unmount.forEach((stop) => stop());
+          queryClient.clear();
+        },
+      };
+    }
+
+    it.each(["interaction.requested", "interaction.resolved", "bot.task.updated"] as const)(
+      "reads them again on %s in any chat, not only the open one",
+      async (eventType) => {
+        const { sync, fetchStatuses, cleanup } = mountedStatuses();
+
+        sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 2, eventType });
+        await settle();
+
+        expect(fetchStatuses).toHaveBeenCalledTimes(1);
+        cleanup();
+      },
+    );
+
+    it("leaves them alone for streamed text, tool activity and ordinary chat changes", async () => {
+      const { sync, fetchStatuses, cleanup } = mountedStatuses();
+
+      sync.handle(textDelta(2, 0, "x", "chat_of_an_agent"));
+      sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 3, eventType: "run.activity" });
+      sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 4, eventType: "chat.updated" });
+      await jest.advanceTimersByTimeAsync(30_000);
+
+      expect(fetchStatuses).not.toHaveBeenCalled();
+      cleanup();
+    });
+
+    it("collapses a burst into one read now and one when the interval ends", async () => {
+      const { sync, fetchStatuses, cleanup } = mountedStatuses();
+
+      for (let cursor = 2; cursor <= 12; cursor += 1) {
+        sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor, eventType: "bot.task.updated" });
+      }
+      await settle();
+      expect(fetchStatuses).toHaveBeenCalledTimes(1);
+
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(fetchStatuses).toHaveBeenCalledTimes(2);
+      cleanup();
+    });
+
+    it("reads them again on a full refresh", async () => {
+      const { sync, fetchStatuses, cleanup } = mountedStatuses();
+
+      sync.handle({ type: "chat.full_refresh" });
+      await settle();
+
+      expect(fetchStatuses).toHaveBeenCalledTimes(1);
+      cleanup();
+    });
+
+    it("leaves a read it still owed marked stale when disposed", async () => {
+      const { sync, queryClient, fetchStatuses, statusesKey, cleanup } = mountedStatuses();
+
+      sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 2, eventType: "interaction.requested" });
+      await settle();
+      sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 3, eventType: "interaction.resolved" });
+      sync.dispose();
+      await jest.advanceTimersByTimeAsync(5_000);
+
+      expect(fetchStatuses).toHaveBeenCalledTimes(1);
+      expect(queryClient.getQueryState(statusesKey)?.isInvalidated).toBe(true);
+      cleanup();
+    });
+
+    it("reads nothing when it was given no statuses to keep current", async () => {
+      const { sync, fetchStatuses, cleanup } = mountedStatuses({ watchStatuses: false });
+
+      sync.handle({ type: "chat.changed", chatId: "chat_of_an_agent", cursor: 2, eventType: "interaction.requested" });
+      sync.handle({ type: "chat.full_refresh" });
+      await jest.advanceTimersByTimeAsync(5_000);
+
+      expect(fetchStatuses).not.toHaveBeenCalled();
+      cleanup();
+    });
+  });
+
   it("cancels a pending list refresh when disposed", async () => {
     const { sync, fetchList, cleanup } = mountedQueries(jest.fn());
 

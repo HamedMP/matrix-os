@@ -134,6 +134,6 @@ const styles = StyleSheet.create((theme) => ({
   linkText: {
     fontFamily: theme.v2.fonts.semibold,
     fontSize: 12,
-    color: theme.v2.colors.brand,
+    color: theme.v2.colors.textDefault,
   },
 }));

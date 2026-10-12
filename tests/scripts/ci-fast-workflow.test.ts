@@ -14,7 +14,7 @@ describe('fast CI preserves validation while removing serialized work', () => {
   it('installs the real pattern scanner dependency before every unit shard', () => {
     const steps = workflow.jobs.unit.steps;
     const scanner = steps.findIndex(step => step.run === 'sudo apt-get install -y ripgrep');
-    const test = steps.findIndex(step => step.run?.startsWith('bun run test --'));
+    const test = steps.findIndex(step => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(scanner).toBeGreaterThanOrEqual(0);
     expect(scanner).toBeLessThan(test);
     expect(steps[scanner]?.if).toBe(steps[test]?.if);
@@ -79,7 +79,7 @@ describe('fast CI preserves validation while removing serialized work', () => {
 
   it('uploads shard-specific JSON profiling even after failing tests', () => {
     const steps = workflow.jobs.unit.steps;
-    const test = steps.find(s => s.run?.startsWith('bun run test --'));
+    const test = steps.find(s => s.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(test?.run).toContain('--reporter=default --reporter=json');
     expect(test?.run).toContain('output/ci/unit-${{ matrix.shard }}.json');
     const upload = steps.find(s => s.name === 'Upload unit profiling');
