@@ -187,11 +187,8 @@ describe("Company Brain chat in Electron Desktop", () => {
     expect(useTabs.getState().tabs).toEqual([]);
   });
 
-  it("keeps following a saved brain chat that is not on the first page of chats", async () => {
+  it("keeps following a saved brain chat without loading a chat list that could leave it out", async () => {
     const client = brainClient();
-    let listPage!: (page: { items: [] }) => void;
-    // The list's first page leaves this thread out (older than its 100 chats), and answers after the thread loads.
-    vi.mocked(client.list).mockReturnValue(new Promise((resolve) => { listPage = resolve; }));
     const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
     const eventSource = { subscribe: (listener: (event: CanonicalChatInvalidation) => void) => {
       listeners.add(listener);
@@ -203,12 +200,14 @@ describe("Company Brain chat in Electron Desktop", () => {
       initialView="conversation" active={false} live externalNavigation catalog={{ ...providerCatalog, instances: [] }}
       createChat={vi.fn()} botId={BOT.id} />);
     expect(await screen.findByText("Build the canonical Chat contract.")).toBeTruthy();
-    await act(async () => { listPage({ items: [] }); });
-    // The shown thread is neither dropped nor loaded again, and its events still refresh it.
-    expect(screen.getByText("Build the canonical Chat contract.")).toBeTruthy();
+    // With `externalNavigation` no list page (its first 100 chats) can drop an older thread: none is loaded.
+    expect(client.list).not.toHaveBeenCalled();
     expect(loads()).toBe(1);
+    // Its events still refresh it, and still load no list.
     act(() => { for (const listener of [...listeners]) listener({ type: "chat.changed", chatId, cursor: 9, revision: 9, eventType: "run.message" }); });
     await waitFor(() => expect(loads()).toBe(2));
+    expect(screen.getByText("Build the canonical Chat contract.")).toBeTruthy();
+    expect(client.list).not.toHaveBeenCalled();
   });
 
   it("keeps the thread a first send made while the window was hidden, and shows it when the window comes back", async () => {

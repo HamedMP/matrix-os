@@ -18,10 +18,10 @@ product rules, the client and the screens are documented in `packages/ui/src/bra
   `botId` the workspace shows no project picker and no Share, as on Web. It passes on every report the workspace makes
   (after each admitted turn, the first one in a reopened chat included). The Chat it shows follows those reports, not
   the slot, so a refused first question stays in the draft's composer with the error. A first send that settles while
-  the tab is hidden still shows and reports its thread. An opened thread stays selected when the chat list's first page
-  leaves it out, so its events and polling keep it live. Each project's brain draft has its own key (`newDraftScope`),
-  never the Chat tab's new-chat draft. Open in Chat opens the Chat tab on the same Chat; rows rename and delete over the
-  tab's chat client.
+  the tab is hidden still shows and reports its thread. With `externalNavigation` the workspace loads no chat list, so
+  an opened thread stays selected however old it is, and its events and polling keep it live. Each project's brain
+  draft has its own key (`newDraftScope`), never the Chat tab's new-chat draft. Open in Chat opens the Chat tab on the
+  same Chat; rows rename and delete over the tab's chat client.
 - Registration: tab kind `brain` (`stores/tabs.ts`, one tab like Notes), the fixed app `__brain__` after Whiteboard
   (`desktop-shell/desktop-apps.ts`; in the launcher, not placed on the desktop by default), its opener in
   `NativeDesktopShell.tsx`, `TabContent.tsx`, `SurfaceIcon.tsx`, the analytics kind `brain`, the palette entry
