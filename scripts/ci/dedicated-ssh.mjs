@@ -13,6 +13,12 @@ const limits={unitWorkers:16,cpu:30,memoryMiB:114688,workMiB:65536,tmpMiB:8192,h
 const electronFiles=['file-download','canonical-input','provider-auth-terminal','agents-providers-figma','agents-providers-button-contrast','provider-settings-idle','project-folder-picker-layout','terminal-file-drop','terminal-snapshot','release-alignment','chat-title-layout','terminal-clipboard'].map(name=>`tests/e2e/desktop/${name}.e2e.test.ts`).concat('tests/e2e/provider-authorization-electron.e2e.test.ts').sort();
 const reports=['unit','general','grid','electron-download','electron-input','electron-providers','electron-folder','electron-clipboard','electron-drop','electron-snapshot','electron-release','electron-title'];
 const integer=value=>Number.isSafeInteger(value)&&value>=0;
+export async function writeSshPrivateKey(path,key){
+ if(typeof key!=='string'||!key||key.length>16384)throw new Error('Pinned SSH connection is not configured');
+ // Secret transport may trim the PEM/OpenSSH final newline. Preserve every
+ // existing byte; OpenSSH rejects an otherwise valid key without this terminator.
+ await writeFile(path,key.endsWith('\n')?key:key+'\n',{mode:0o600,flag:'wx'});
+}
 export function canonicalRequest(value){
  if(Array.isArray(value))return JSON.stringify(value.map(item=>JSON.parse(canonicalRequest(item))));
  if(value&&typeof value==='object')return JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([key,item])=>[key,JSON.parse(canonicalRequest(item))])));
@@ -115,7 +121,7 @@ export async function dispatchDedicatedLease(github,input,options={}){
  const api=createConditionalGithub(github,{authenticationContext:`controller-${value.controllerRunId}-${value.controllerRunAttempt}`,signal:aborter.signal});
  const stop=()=>aborter.abort();process.once('SIGTERM',stop);process.once('SIGINT',stop);
  try{
-  await writeFile(join(directory,'key'),key,{mode:0o600,flag:'wx'});await writeFile(join(directory,'hosts'),knownHosts,{mode:0o600,flag:'wx'});
+  await writeSshPrivateKey(join(directory,'key'),key);await writeFile(join(directory,'hosts'),knownHosts,{mode:0o600,flag:'wx'});
   const args=['-F','/dev/null','-p','22','-o','ProxyCommand=none','-o','ProxyJump=none','-i',join(directory,'key'),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','GlobalKnownHostsFile=/dev/null','-o','StrictHostKeyChecking=yes','-o',`UserKnownHostsFile=${join(directory,'hosts')}`,'-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3',`matrixci@${host}`];
   const child=spawn('/usr/bin/ssh',[...args,`lease-v1 run ${envelope.leaseId}`],{stdio:['pipe','pipe','pipe'],env:{PATH:process.env.PATH,LANG:'C.UTF-8'}});
   try{return await runDedicatedLeaseSession(child,envelope,{signal:aborter.signal,transportHost:host,revalidate:(request,cycle)=>cycle.unconditional?api.runUnconditional(()=>verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)):verifyDedicatedLeaseGrant(api.github,input.repo,input.controller,request)});}
