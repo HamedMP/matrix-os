@@ -5,6 +5,17 @@ import {
   isOptimisticMessageDelivered,
   type OptimisticUserMessage,
 } from "@/lib/canonical-chat-transcript";
+import {
+  appendAttachments,
+  moveAttachmentDraft,
+  readAttachmentDraft,
+  rememberSentAttachments,
+  sameAttachments,
+  writeAttachmentDraft,
+  type ChatAttachmentDrafts,
+  type ComposerAttachment,
+  type SentAttachmentUris,
+} from "@/lib/chat-attachments";
 import { chatDraftKey, moveChatDraft, writeChatDraft, type ChatDrafts } from "@/lib/chat-drafts";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests";
@@ -18,6 +29,7 @@ const MAX_FAILED_SENDS = 8;
 const MAX_PENDING_MESSAGES = 8;
 
 const NEW_CHAT_DRAFT_KEY = chatDraftKey(null);
+const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
 interface PendingMessage extends OptimisticUserMessage {
   /** `ComposerState.navigation` when it was sent. */
@@ -30,9 +42,11 @@ interface FailedSend {
   /** The project a new chat was to be created in. */
   projectId: string | null;
   text: string;
+  /** What was sent with the text. It goes back to the composer with it. */
+  attachments: readonly ComposerAttachment[];
   chatRequestId: string;
   turnRequestId: string;
-  /** Its text has not gone back into a composer yet -- see `reconcile`. */
+  /** Its text and attachments have not gone back into a composer yet -- see `reconcile`. */
   held: boolean;
 }
 
@@ -50,12 +64,24 @@ interface ComposerState {
   navigation: number;
   /** One draft per chat, so text typed in one chat is never offered to another. */
   drafts: ChatDrafts;
+  /** The photos and files waiting in each chat's composer, kept apart like the drafts. */
+  attachments: ChatAttachmentDrafts;
+  /** Where attachments sent from here still are on the phone. */
+  sentAttachments: SentAttachmentUris;
   pending: PendingMessage[];
   failed: FailedSend[];
 }
 
 function emptyComposerState(scope: string | null, shownChatId: string | null, epoch: number): ComposerState {
-  return { epoch, scope, shownChatId, navigation: 0, drafts: {}, pending: [], failed: [] };
+  return {
+    epoch, scope, shownChatId, navigation: 0, drafts: {}, attachments: {}, sentAttachments: {}, pending: [], failed: [],
+  };
+}
+
+/** Nothing is waiting in the new chat's composer, so a held send can go back into it. */
+function newChatComposerIsFree(state: ComposerState): boolean {
+  return !(state.drafts[NEW_CHAT_DRAFT_KEY] ?? "").trim()
+    && readAttachmentDraft(state.attachments, NEW_CHAT_DRAFT_KEY).length === 0;
 }
 
 /** Brings the composer state in line with what is on screen. Returns `state` itself when nothing changed. */
@@ -82,12 +108,13 @@ function reconcile(
   // chat's composer held a different draft) returns once that composer is
   // free -- and not during a send, whose leftover text follows it into the
   // chat it creates.
-  if (on.activeChatId === null && !on.isSending && !(next.drafts[NEW_CHAT_DRAFT_KEY] ?? "").trim()) {
+  if (on.activeChatId === null && !on.isSending && newChatComposerIsFree(next)) {
     const held = next.failed.find((failed) => failed.held);
     if (held) {
       next = {
         ...next,
         drafts: writeChatDraft(next.drafts, NEW_CHAT_DRAFT_KEY, held.text),
+        attachments: writeAttachmentDraft(next.attachments, NEW_CHAT_DRAFT_KEY, held.attachments),
         failed: next.failed.map((failed) => (failed === held ? { ...failed, held: false } : failed)),
       };
     }
@@ -139,20 +166,48 @@ export function useChatComposer({
     });
   }, [draftKey]);
 
+  const attachments = readAttachmentDraft(state.attachments, draftKey);
+  const addAttachments = useCallback((added: readonly ComposerAttachment[]) => {
+    if (added.length === 0) return;
+    // What was chosen belongs to the chat it was chosen for, and to the
+    // account and computer that were there when choosing began.
+    setState((current) => (current.epoch !== epoch ? current : {
+      ...current,
+      attachments: writeAttachmentDraft(
+        current.attachments,
+        draftKey,
+        appendAttachments(readAttachmentDraft(current.attachments, draftKey), added),
+      ),
+    }));
+  }, [draftKey, epoch]);
+  const removeAttachment = useCallback((id: string) => {
+    setState((current) => {
+      const waiting = readAttachmentDraft(current.attachments, draftKey);
+      if (!waiting.some((attachment) => attachment.id === id)) return current;
+      return {
+        ...current,
+        attachments: writeAttachmentDraft(current.attachments, draftKey, waiting.filter((attachment) => attachment.id !== id)),
+      };
+    });
+  }, [draftKey]);
+
   const send = useCallback(() => {
     const trimmed = draft.trim();
     // One send at a time: the composer stays editable while a send is in
     // flight, and a second one would go out against the same stale revision
     // -- or, from a draft, create a second chat.
-    if (disabled || !trimmed || !selection || !turnModes || isSending) return;
+    if (disabled || (!trimmed && attachments.length === 0) || !selection || !turnModes || isSending) return;
     // Reuse the idempotency keys of a failed send when the same text is
     // retried in the same chat -- if the first attempt's admission succeeded
     // server-side but its response was lost, retrying with fresh IDs would
     // create a second chat and run (and bill) the prompt again. A new chat
     // retried under a different project is not the same send: its creation
-    // key would bring back the chat made in the old project.
+    // key would bring back the chat made in the old project. Nor is the same
+    // text with other attachments: the computer would answer the retried
+    // request as the message it first admitted.
     const retried = state.failed.find((failed) => (
       failed.chatId === activeChatId && failed.projectId === projectId && failed.text === trimmed
+      && sameAttachments(failed.attachments, attachments)
     ));
     const chatRequestId = retried?.chatRequestId ?? canonicalChatRequestId();
     const turnRequestId = retried?.turnRequestId ?? canonicalChatRequestId();
@@ -163,20 +218,26 @@ export function useChatComposer({
       setState((current) => (current.epoch === epoch ? change(current) : current));
     };
 
-    // A failed token fetch, computer resolution, chat creation, or turn
-    // admission undoes both of these below, so the text is never lost.
+    // A failed token fetch, computer resolution, upload, chat creation, or
+    // turn admission undoes these below, so nothing that was sent is lost.
     update((current) => ({
       ...current,
       pending: [
         ...current.pending.filter((message) => message.id !== optimisticId),
-        { id: optimisticId, chatId: activeChatId, text: trimmed, turnRequestId, createdAt: Date.now(), navigation },
+        {
+          id: optimisticId, chatId: activeChatId, text: trimmed, attachments, turnRequestId,
+          createdAt: Date.now(), navigation,
+        },
       ].slice(-MAX_PENDING_MESSAGES),
       drafts: writeChatDraft(current.drafts, draftKey, ""),
+      attachments: writeAttachmentDraft(current.attachments, draftKey, NO_ATTACHMENTS),
+      sentAttachments: rememberSentAttachments(current.sentAttachments, attachments),
     }));
     sendMessage.mutate({
       chatId: activeChatId,
       baseRevision: detail?.record.chat.revision ?? 0,
       text: trimmed,
+      attachments,
       selection,
       interactionMode: turnModes.interactionMode,
       permissionMode: turnModes.permissionMode,
@@ -187,11 +248,15 @@ export function useChatComposer({
         ...current,
         pending: current.pending.map((message) => (message.id === optimisticId ? { ...message, chatId } : message)),
         // Text typed while this first send was in flight belongs to the chat
-        // that now exists -- unless the user has moved on since, in which
-        // case the new chat's composer holds a different draft.
+        // that now exists, and so do attachments added meanwhile -- unless
+        // the user has moved on since, in which case the new chat's composer
+        // holds a different draft.
         drafts: current.navigation === navigation
           ? moveChatDraft(current.drafts, draftKey, chatDraftKey(chatId))
           : current.drafts,
+        attachments: current.navigation === navigation
+          ? moveAttachmentDraft(current.attachments, draftKey, chatDraftKey(chatId))
+          : current.attachments,
       })),
     }, {
       onSuccess: (admission) => update((current) => ({
@@ -209,27 +274,34 @@ export function useChatComposer({
       })),
       onError: () => update((current) => {
         const typed = current.drafts[draftKey] ?? "";
+        const added = readAttachmentDraft(current.attachments, draftKey);
         // The text goes back to the chat it was sent in -- which may no
         // longer be the one on screen -- ahead of anything typed there
-        // meanwhile, so neither is lost. The exception is a new chat the user
-        // has left and come back to: text in its composer now is a different
-        // draft, so the failed text is held until that composer is free.
-        const held = activeChatId === null && current.navigation !== navigation && typed.trim() !== "";
+        // meanwhile, so neither is lost; the attachments go back the same
+        // way. The exception is a new chat the user has left and come back
+        // to: what is in its composer now is a different draft, so the failed
+        // send is held until that composer is free.
+        const held = activeChatId === null && current.navigation !== navigation
+          && (typed.trim() !== "" || added.length > 0);
+        // The text is left as it is when only attachments were sent, so no
+        // stray space is put in front of what was typed meanwhile.
+        const restoredText = trimmed && typed.trim() ? `${trimmed} ${typed}` : trimmed || typed;
         return {
           ...current,
           pending: current.pending.filter((message) => message.id !== optimisticId),
-          drafts: held
-            ? current.drafts
-            : writeChatDraft(current.drafts, draftKey, typed.trim() ? `${trimmed} ${typed}` : trimmed),
+          drafts: held ? current.drafts : writeChatDraft(current.drafts, draftKey, restoredText),
+          attachments: held
+            ? current.attachments
+            : writeAttachmentDraft(current.attachments, draftKey, appendAttachments(attachments, added)),
           failed: [
             ...current.failed.filter((failed) => failed.turnRequestId !== turnRequestId),
-            { chatId: activeChatId, projectId, text: trimmed, chatRequestId, turnRequestId, held },
+            { chatId: activeChatId, projectId, text: trimmed, attachments, chatRequestId, turnRequestId, held },
           ].slice(-MAX_FAILED_SENDS),
         };
       }),
     });
   }, [
-    draft, draftKey, selection, turnModes, activeChatId, detail, projectId, disabled,
+    draft, draftKey, attachments, selection, turnModes, activeChatId, detail, projectId, disabled,
     sendMessage, isSending, state.failed, epoch, navigation,
   ]);
 
@@ -242,6 +314,13 @@ export function useChatComposer({
   return {
     draft,
     setDraft,
+    /** The photos and files waiting to go with the next message from the chat on screen. */
+    attachments,
+    /** Adds to them, each once, up to what a message carries. */
+    addAttachments,
+    removeAttachment,
+    /** Where attachments sent from here still are on the phone, by their place on the computer. */
+    sentAttachments: state.sentAttachments,
     send,
     isSending,
     /** Sent messages to show in the chat on screen until the server's copies arrive, oldest first. */
