@@ -14,6 +14,11 @@
   --mxo-amber-soft: #fcf2e5;
   --mxo-red: #d6453d;
   --mxo-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  /* The card grows away from the corner it is anchored to, and enters from that corner. */
+  --mxo-origin-x: right;
+  --mxo-origin-y: bottom;
+  --mxo-enter-x: 10px;
+  --mxo-enter-y: 10px;
   position: fixed;
   right: 24px;
   bottom: 24px;
@@ -23,12 +28,29 @@
   font-family: "Geist", "Inter", system-ui, sans-serif;
   color: var(--mxo-text);
   -webkit-font-smoothing: antialiased;
+  /* Electron: stay clickable and draggable when moved over the window's title bar drag region. */
+  -webkit-app-region: no-drag;
 }
 
 .mxo-root--left {
+  --mxo-origin-x: left;
+  --mxo-enter-x: -10px;
   right: auto;
   left: 24px;
   align-items: flex-start;
+}
+
+.mxo-root--top {
+  --mxo-origin-y: top;
+  --mxo-enter-y: -10px;
+  top: 24px;
+  bottom: auto;
+}
+
+.mxo-root[data-dragging],
+.mxo-root[data-dragging] * {
+  cursor: grabbing;
+  user-select: none;
 }
 
 :where(.mxo-root),
@@ -68,7 +90,7 @@
   background: var(--mxo-bg);
   border-radius: 16px;
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22);
-  transform-origin: bottom right;
+  transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
   animation: mxo-enter 260ms var(--mxo-ease) backwards;
   /* Lets the card grow and shrink between its compact and tall sizes where the browser supports it. */
   interpolate-size: allow-keywords;
@@ -78,20 +100,9 @@
 /* Conversation screens hold their height so the card does not jump as steps arrive. */
 .mxo-widget--tall { height: min(624px, calc(100vh - 48px)); }
 
-/* A new animation name replays the entrance, so moving to the other corner animates too. */
-.mxo-root--left .mxo-widget,
-.mxo-root--left .mxo-bubble {
-  transform-origin: bottom left;
-  animation-name: mxo-enter-left;
-}
-
+/* The offset comes from variables, so dropping the widget in a new spot does not replay the entrance. */
 @keyframes mxo-enter {
-  from { opacity: 0; transform: translate(10px, 10px) scale(0.96); }
-  to { opacity: 1; transform: none; }
-}
-
-@keyframes mxo-enter-left {
-  from { opacity: 0; transform: translate(-10px, 10px) scale(0.96); }
+  from { opacity: 0; transform: translate(var(--mxo-enter-x), var(--mxo-enter-y)) scale(0.96); }
   to { opacity: 1; transform: none; }
 }
 
@@ -118,6 +129,9 @@
   min-height: 55px;
   padding: 12px 12px 12px 14px;
   border-bottom: 1px solid var(--mxo-border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
 }
 
 .mxo-header__text {
@@ -730,6 +744,7 @@
   top: calc(100% - 4px);
   right: 8px;
   width: 168px;
+  cursor: default;
 }
 
 .mxo-menu__row {
@@ -806,7 +821,9 @@
   background: var(--mxo-bg);
   box-shadow: 0 10px 30px -6px rgba(0, 0, 0, 0.2);
   text-align: left;
-  transform-origin: bottom right;
+  cursor: grab;
+  touch-action: none;
+  transform-origin: var(--mxo-origin-x) var(--mxo-origin-y);
   transition: box-shadow 150ms ease, transform 150ms ease;
   animation: mxo-enter 240ms var(--mxo-ease) backwards;
 }
@@ -815,6 +832,8 @@
   box-shadow: 0 14px 34px -6px rgba(0, 0, 0, 0.24);
   transform: translateY(-1px);
 }
+
+.mxo-root[data-dragging] .mxo-bubble { transform: none; }
 
 .mxo-bubble__text {
   display: flex;

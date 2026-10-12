@@ -74,7 +74,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
   });
 
   const chatMaximized = useChatMaximized();
-  useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
+  useOnboardingSupportDock({ size: state.size, position: prefs.position, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
   if (chatMaximized) return null;
   return <OnboardingWidget {...widget} zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar} />;
 }

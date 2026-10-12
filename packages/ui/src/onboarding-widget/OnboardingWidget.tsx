@@ -14,6 +14,7 @@ import { AiMenu } from "./ai-panel.js";
 import { providerWaitingLabel } from "./helpers.js";
 import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
+import { useWidgetDrag, useWidgetPlacement } from "./use-widget-position.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
 function headerStatus(state: OnboardingWidgetState, runView: OnboardingRunView | null): { tone: "working" | "attention"; label: string } | null {
@@ -54,6 +55,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
   const runInFlight = onboardingRunInFlight(state);
+  const placement = useWidgetPlacement(rootRef, prefs.position);
+  const drag = useWidgetDrag(rootRef, (position) => actions.changePrefs({ ...prefs, position }));
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -110,12 +113,13 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     actions.dispatch(composerEvent(state, text));
   };
 
-  const sideClass = prefs.side === "left" ? " mxo-root--left" : "";
+  const rootClass = `mxo-root${prefs.position.x === "left" ? " mxo-root--left" : ""}${prefs.position.y === "top" ? " mxo-root--top" : ""}`;
+  const rootStyle = { zIndex, ...placement };
 
   if (isBubble) {
     return (
-      <div className={`mxo-root${sideClass}`} style={{ zIndex }}>
-        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} onOpen={open} />
+      <div ref={rootRef} className={rootClass} style={rootStyle} onClickCapture={drag.onClickCapture}>
+        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} dragHandle={drag.handle} onOpen={open} />
       </div>
     );
   }
@@ -125,9 +129,17 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const showModelLine = state.screen.kind === "tasks" || choosingAi;
 
   return (
-    <div ref={rootRef} className={`mxo-root${sideClass}`} style={{ zIndex }} onKeyDown={onKeyDown}>
+    <div ref={rootRef} className={rootClass} style={rootStyle} onKeyDown={onKeyDown} onClickCapture={drag.onClickCapture}>
       <section className={`mxo-card mxo-widget${compact ? "" : " mxo-widget--tall"}`} aria-label="Matrix">
-        <WidgetHeader status={headerStatus(state, runView)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
+        <WidgetHeader
+          status={headerStatus(state, runView)}
+          prefs={prefs}
+          actions={actions}
+          dragHandle={drag.handle}
+          moreOpen={moreOpen}
+          onMoreOpen={setMoreOpen}
+          onMinimize={minimize}
+        />
 
         <WidgetBody props={props} appQuery={appQuery} onAppQuery={setAppQuery} runInFlight={runInFlight} />
 

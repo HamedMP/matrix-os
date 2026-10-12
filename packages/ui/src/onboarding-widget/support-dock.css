@@ -31,13 +31,13 @@
   box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22) !important;
 }
 
-/* Onboarding bubble in the same corner: stack the launcher above it. */
+/* Onboarding bubble in the same corner: stack the launcher just above it (the host publishes the lift). */
 html[data-mxo-onboarding="bubble-right"] #ph-conversations-widget-container > div {
-  bottom: 88px !important;
+  bottom: var(--mxo-onboarding-lift, 88px) !important;
 }
 
 html[data-mxo-onboarding="bubble-right"] #ph-conversations-widget-container > div > div:has(button[aria-label="Close"]) {
-  max-height: calc(100vh - 168px) !important;
+  max-height: calc(100vh - var(--mxo-onboarding-lift, 88px) - 80px) !important;
 }
 
 /* Expanded onboarding card owns the corner; the top-bar Support button stays available. */

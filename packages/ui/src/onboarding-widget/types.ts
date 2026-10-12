@@ -5,6 +5,7 @@ import type {
   OnboardingWidgetEvent,
   OnboardingWidgetState,
 } from "@matrix-os/contracts";
+import type { OnboardingWidgetPosition } from "./position.js";
 
 export type OnboardingAppCategory = "work" | "personal" | "dev";
 
@@ -24,7 +25,7 @@ export interface OnboardingWidgetRepo {
 
 export interface OnboardingWidgetPrefs {
   keepInCorner: boolean;
-  side: "right" | "left";
+  position: OnboardingWidgetPosition;
   showOnLogin: boolean;
 }
 

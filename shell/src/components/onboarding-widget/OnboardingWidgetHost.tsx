@@ -122,7 +122,7 @@ function OnboardingWidgetSession({ prefsKey, displayName, initialPrefs, onOpenCh
 
   const chatFullscreen = useChatFullscreen();
   const supportOpen = useShellSupportOpen();
-  useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatFullscreen, supportOpen, dispatch, closeSupport: closeShellSupport });
+  useOnboardingSupportDock({ size: state.size, position: prefs.position, visible: !chatFullscreen, supportOpen, dispatch, closeSupport: closeShellSupport });
   if (chatFullscreen) return null;
   return <OnboardingWidget {...widget} zIndex={SHELL_Z_INDEX.onboardingWidget} />;
 }

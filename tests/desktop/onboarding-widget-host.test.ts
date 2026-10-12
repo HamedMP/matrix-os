@@ -51,6 +51,38 @@ describe("onboarding widget prefs", () => {
     expect(readOnboardingPrefs("huge", storage)).toBeNull();
   });
 
+  it("remembers where the widget was moved", () => {
+    const storage = memoryStorage();
+    const moved = { ...DEFAULT_ONBOARDING_PREFS, position: { x: "left", y: "top", dx: 320, dy: 140 } } as const;
+    writeOnboardingPrefs("k", moved, storage);
+    expect(readOnboardingPrefs("k", storage)).toEqual(moved);
+  });
+
+  it("reads prefs saved with the old left or right side as that bottom corner", () => {
+    const legacy = { keepInCorner: false, side: "left", showOnLogin: true, firstTaskCompleted: true, aiChoice: "claude", chatId: "chat_9" };
+    const storage = memoryStorage({ legacy: JSON.stringify(legacy), bad: JSON.stringify({ ...legacy, side: "top" }) });
+    expect(readOnboardingPrefs("legacy", storage)).toEqual({
+      keepInCorner: false,
+      position: { x: "left", y: "bottom", dx: 24, dy: 24 },
+      showOnLogin: true,
+      firstTaskCompleted: true,
+      aiChoice: "claude",
+      chatId: "chat_9",
+    });
+    expect(readOnboardingPrefs("bad", storage)).toBeNull();
+  });
+
+  it("rejects a saved position that is not whole, bounded pixel offsets", () => {
+    const at = (position: unknown) => JSON.stringify({ ...DEFAULT_ONBOARDING_PREFS, position });
+    const storage = memoryStorage({
+      negative: at({ x: "left", y: "top", dx: -5, dy: 10 }),
+      huge: at({ x: "left", y: "top", dx: 1e9, dy: 10 }),
+      fractional: at({ x: "left", y: "top", dx: 1.5, dy: 10 }),
+      sideways: at({ x: "middle", y: "top", dx: 10, dy: 10 }),
+    });
+    for (const key of ["negative", "huge", "fractional", "sideways"]) expect(readOnboardingPrefs(key, storage)).toBeNull();
+  });
+
   it("returns null when storage itself throws", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(readOnboardingPrefs("k", { getItem: () => { throw new DOMException("denied", "SecurityError"); } })).toBeNull();

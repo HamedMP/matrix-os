@@ -38,7 +38,7 @@ function initialState(prefs: OnboardingStoredPrefs): OnboardingWidgetState {
 export function useOnboardingWidgetState(initialPrefs: OnboardingStoredPrefs) {
   const [state, dispatch] = useReducer(reduceOnboardingWidget, initialPrefs, initialState);
   const [prefs, setPrefs] = useState<OnboardingWidgetPrefs>(() => ({
-    keepInCorner: initialPrefs.keepInCorner, side: initialPrefs.side, showOnLogin: initialPrefs.showOnLogin,
+    keepInCorner: initialPrefs.keepInCorner, position: initialPrefs.position, showOnLogin: initialPrefs.showOnLogin,
   }));
   return { state, dispatch, prefs, setPrefs };
 }

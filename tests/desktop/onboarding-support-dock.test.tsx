@@ -3,16 +3,18 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OnboardingWidgetSize } from "@matrix-os/contracts";
+import { DEFAULT_ONBOARDING_POSITION, onboardingCornerPosition, type OnboardingWidgetPosition } from "@matrix-os/ui";
 import { useOnboardingSupportDock } from "@desktop/renderer/src/features/onboarding-widget/use-onboarding-support-dock";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 
-type DockProps = { size: OnboardingWidgetSize; side: "right" | "left"; visible?: boolean };
+type DockProps = { size: OnboardingWidgetSize; position?: OnboardingWidgetPosition; visible?: boolean };
 
 function renderDock(initial: DockProps) {
   const dispatch = vi.fn();
   const closeSupport = vi.fn();
   const view = renderHook(
-    ({ size, side, visible }: DockProps) => useOnboardingSupportDock({ size, side, visible, dispatch, closeSupport }),
+    ({ size, position = DEFAULT_ONBOARDING_POSITION, visible }: DockProps) =>
+      useOnboardingSupportDock({ size, position, visible, dispatch, closeSupport }),
     { initialProps: initial },
   );
   return { ...view, dispatch, closeSupport };
@@ -28,30 +30,48 @@ describe("onboarding widget support dock", () => {
     delete document.documentElement.dataset.mxoOnboarding;
   });
 
-  it("publishes the widget size and side so the support launcher can dock beside it", () => {
-    const { rerender, unmount } = renderDock({ size: "bubble", side: "right" });
+  it("publishes the widget size and whether it shares the support launcher's corner", () => {
+    const { rerender, unmount } = renderDock({ size: "bubble" });
     expect(document.documentElement.dataset.mxoOnboarding).toBe("bubble-right");
 
-    rerender({ size: "corner", side: "left" });
-    expect(document.documentElement.dataset.mxoOnboarding).toBe("card-left");
+    rerender({ size: "corner", position: onboardingCornerPosition("left") });
+    expect(document.documentElement.dataset.mxoOnboarding).toBe("card-away");
+
+    rerender({ size: "corner", position: { x: "right", y: "top", dx: 24, dy: 24 } });
+    expect(document.documentElement.dataset.mxoOnboarding).toBe("card-away");
 
     unmount();
     expect(document.documentElement.dataset.mxoOnboarding).toBeUndefined();
   });
 
+  it("lifts the support launcher just above a bubble nudged off its corner", () => {
+    const style = document.documentElement.style;
+    const { rerender, unmount } = renderDock({ size: "bubble" });
+    expect(style.getPropertyValue("--mxo-onboarding-lift")).toBe("88px");
+
+    rerender({ size: "bubble", position: { x: "right", y: "bottom", dx: 30, dy: 50 } });
+    expect(style.getPropertyValue("--mxo-onboarding-lift")).toBe("114px");
+
+    rerender({ size: "bubble", position: { x: "right", y: "bottom", dx: 30, dy: 300 } });
+    expect(style.getPropertyValue("--mxo-onboarding-lift")).toBe("");
+
+    unmount();
+    expect(style.getPropertyValue("--mxo-onboarding-lift")).toBe("");
+  });
+
   it("releases the corner while the widget is hidden behind a maximized Chat", () => {
-    const { rerender } = renderDock({ size: "bubble", side: "right" });
+    const { rerender } = renderDock({ size: "bubble" });
     expect(document.documentElement.dataset.mxoOnboarding).toBe("bubble-right");
 
-    rerender({ size: "bubble", side: "right", visible: false });
+    rerender({ size: "bubble", visible: false });
     expect(document.documentElement.dataset.mxoOnboarding).toBeUndefined();
 
-    rerender({ size: "bubble", side: "right", visible: true });
+    rerender({ size: "bubble", visible: true });
     expect(document.documentElement.dataset.mxoOnboarding).toBe("bubble-right");
   });
 
   it("shrinks the onboarding card to its bubble when the support panel opens", () => {
-    const { dispatch } = renderDock({ size: "corner", side: "right" });
+    const { dispatch } = renderDock({ size: "corner" });
     expect(dispatch).not.toHaveBeenCalled();
 
     act(() => useUi.getState().setSupportPanelOpen(true));
@@ -60,12 +80,22 @@ describe("onboarding widget support dock", () => {
   });
 
   it("closes the support panel when the onboarding card is expanded", () => {
-    const { rerender, closeSupport } = renderDock({ size: "bubble", side: "right" });
+    const { rerender, closeSupport } = renderDock({ size: "bubble" });
     act(() => useUi.getState().setSupportPanelOpen(true));
     expect(closeSupport).not.toHaveBeenCalled();
 
-    rerender({ size: "corner", side: "right" });
+    rerender({ size: "corner" });
 
     expect(closeSupport).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the support chat alone while the widget sits away from its corner", () => {
+    const away = onboardingCornerPosition("left");
+    const { rerender, dispatch, closeSupport } = renderDock({ size: "bubble", position: away });
+    act(() => useUi.getState().setSupportPanelOpen(true));
+    expect(dispatch).not.toHaveBeenCalled();
+
+    rerender({ size: "corner", position: away });
+    expect(closeSupport).not.toHaveBeenCalled();
   });
 });

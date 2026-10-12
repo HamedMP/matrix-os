@@ -12,8 +12,13 @@ import {
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
 } from "../../packages/contracts/src/index.js";
-import { OnboardingWidget } from "../../packages/ui/src/onboarding-widget/index.js";
-import type { OnboardingWidgetActions, OnboardingWidgetApp, OnboardingWidgetProps } from "../../packages/ui/src/onboarding-widget/index.js";
+import { DEFAULT_ONBOARDING_POSITION, OnboardingWidget } from "../../packages/ui/src/onboarding-widget/index.js";
+import type {
+  OnboardingWidgetActions,
+  OnboardingWidgetApp,
+  OnboardingWidgetPrefs,
+  OnboardingWidgetProps,
+} from "../../packages/ui/src/onboarding-widget/index.js";
 
 const APPS: OnboardingWidgetApp[] = [
   { id: "google_calendar", name: "Google Calendar", category: "work", status: "available", logoUrl: "https://example.test/gcal.png" },
@@ -43,7 +48,9 @@ const REPOS = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", u
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
   appsUnavailable = false, repos = REPOS, activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
+  prefs = { keepInCorner: true, position: DEFAULT_ONBOARDING_POSITION, showOnLogin: true },
 }: {
+  prefs?: OnboardingWidgetPrefs;
   repos?: OnboardingWidgetProps["repos"];
   actions: OnboardingWidgetActions;
   initial?: OnboardingWidgetState;
@@ -82,7 +89,7 @@ function Harness({
       creditsExhausted={creditsExhausted}
       aiSignInNeedsCode={aiSignInNeedsCode}
       appsUnavailable={appsUnavailable}
-      prefs={{ keepInCorner: true, side: "right", showOnLogin: true }}
+      prefs={prefs}
     />
   );
 }
@@ -382,5 +389,110 @@ describe("OnboardingWidget", () => {
     expect(running).not.toBe(question);
     rerender(<Harness actions={actions} runView={{ status: "running", steps: [{ id: "s1", label: "Searching the web", state: "running" }] }} />);
     expect(screenNode()).toBe(running);
+  });
+});
+
+describe("moving the onboarding widget", () => {
+  const BUBBLE_STATE = initialOnboardingWidgetState({ size: "bubble", firstTaskCompleted: false });
+
+  function drag(handle: Element, to: { x: number; y: number }, from = { x: 100, y: 100 }) {
+    fireEvent.pointerDown(handle, { button: 0, clientX: from.x, clientY: from.y });
+    fireEvent.pointerMove(handle, { clientX: to.x, clientY: to.y });
+    fireEvent.pointerUp(handle, { clientX: to.x, clientY: to.y });
+  }
+
+  it("drags the card by its header anywhere on screen and remembers where it was dropped", () => {
+    const actions = makeActions();
+    const { container } = render(<Harness actions={actions} />);
+    const header = container.querySelector(".mxo-header")!;
+    const root = container.querySelector(".mxo-root")!;
+
+    fireEvent.pointerDown(header, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(header, { clientX: 400, clientY: 300 });
+    expect(root).toHaveAttribute("data-dragging");
+    fireEvent.pointerUp(header, { clientX: 400, clientY: 300 });
+
+    expect(root).not.toHaveAttribute("data-dragging");
+    expect(actions.changePrefs).toHaveBeenCalledWith(expect.objectContaining({
+      position: { x: "left", y: "top", dx: 300, dy: 200 },
+    }));
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+  });
+
+  it("keeps the header buttons working instead of starting a drag from them", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} />);
+    const more = screen.getByRole("button", { name: "More" });
+    drag(more, { x: 400, y: 300 });
+    expect(actions.changePrefs).not.toHaveBeenCalled();
+    fireEvent.click(more);
+    expect(screen.getByRole("menu", { name: "Matrix options" })).toBeInTheDocument();
+  });
+
+  it("opens the bubble on a click or a small wobble, but not right after dragging it", () => {
+    const actions = makeActions();
+    const { unmount } = render(<Harness actions={actions} initial={BUBBLE_STATE} />);
+    const bubble = screen.getByRole("button", { name: /Open Matrix/ });
+    drag(bubble, { x: 102, y: 101 });
+    fireEvent.click(bubble);
+    expect(actions.dispatch).toHaveBeenCalledWith({ type: "size.changed", size: "corner" });
+    expect(actions.changePrefs).not.toHaveBeenCalled();
+    unmount();
+
+    const moved = makeActions();
+    render(<Harness actions={moved} initial={BUBBLE_STATE} />);
+    const dragged = screen.getByRole("button", { name: /Open Matrix/ });
+    drag(dragged, { x: 700, y: 500 });
+    fireEvent.click(dragged);
+    expect(moved.dispatch).not.toHaveBeenCalledWith({ type: "size.changed", size: "corner" });
+    expect(moved.changePrefs).toHaveBeenCalledWith(expect.objectContaining({
+      position: { x: "right", y: "bottom", dx: 424, dy: 368 },
+    }));
+    fireEvent.click(dragged);
+    expect(moved.dispatch).toHaveBeenCalledWith({ type: "size.changed", size: "corner" });
+  });
+
+  it("drops a drag that the browser cancels without moving the widget", () => {
+    const actions = makeActions();
+    const { container } = render(<Harness actions={actions} />);
+    const header = container.querySelector(".mxo-header")!;
+    fireEvent.pointerDown(header, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(header, { clientX: 400, clientY: 300 });
+    fireEvent.pointerCancel(header);
+    expect(container.querySelector(".mxo-root")).not.toHaveAttribute("data-dragging");
+    expect(actions.changePrefs).not.toHaveBeenCalled();
+  });
+
+  it("shows the widget at its saved spot", () => {
+    const { container } = render(
+      <Harness actions={makeActions()} prefs={{ keepInCorner: true, position: { x: "left", y: "top", dx: 120, dy: 90 }, showOnLogin: true }} />,
+    );
+    const root = container.querySelector<HTMLElement>(".mxo-root")!;
+    expect(root.style.left).toBe("120px");
+    expect(root.style.top).toBe("90px");
+    expect(root.style.right).toBe("");
+    expect(root.style.bottom).toBe("");
+    expect(root).toHaveClass("mxo-root--left", "mxo-root--top");
+  });
+
+  it("moves to either bottom corner from the menu, and back to its corner after a free move", () => {
+    const actions = makeActions();
+    const prefs = { keepInCorner: true, position: { x: "right", y: "top", dx: 40, dy: 60 }, showOnLogin: true } as const;
+    render(<Harness actions={actions} prefs={prefs} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move back to the corner" }));
+    expect(actions.changePrefs).toHaveBeenLastCalledWith({ ...prefs, position: DEFAULT_ONBOARDING_POSITION });
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to the left corner" }));
+    expect(actions.changePrefs).toHaveBeenLastCalledWith({ ...prefs, position: { x: "left", y: "bottom", dx: 24, dy: 24 } });
+  });
+
+  it("offers only the other corner while the widget already sits in one", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menuitem", { name: "Move to the left corner" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Move back to the corner" })).not.toBeInTheDocument();
   });
 });

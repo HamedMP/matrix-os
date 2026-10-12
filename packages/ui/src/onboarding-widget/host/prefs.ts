@@ -1,21 +1,36 @@
 import { z } from "zod/v4";
+import { DEFAULT_ONBOARDING_POSITION, ONBOARDING_POSITION_MAX, onboardingCornerPosition } from "../position.js";
 
 const STORAGE_PREFIX = "matrix:onboarding-widget:v1";
 
-const StoredPrefsSchema = z.strictObject({
+const PositionOffsetSchema = z.number().int().min(0).max(ONBOARDING_POSITION_MAX);
+
+/** Prefs saved before the widget could move freely held only `side`; read that as its bottom corner. */
+function withLegacySide(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || "position" in value) return value;
+  const { side, ...rest } = value as Record<string, unknown>;
+  return side === "left" || side === "right" ? { ...rest, position: onboardingCornerPosition(side) } : value;
+}
+
+const StoredPrefsSchema = z.preprocess(withLegacySide, z.strictObject({
   keepInCorner: z.boolean(),
-  side: z.enum(["right", "left"]),
+  position: z.strictObject({
+    x: z.enum(["left", "right"]),
+    y: z.enum(["top", "bottom"]),
+    dx: PositionOffsetSchema,
+    dy: PositionOffsetSchema,
+  }),
   showOnLogin: z.boolean(),
   firstTaskCompleted: z.boolean(),
   aiChoice: z.enum(["matrix", "claude", "codex"]),
   chatId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/).nullable(),
-});
+}));
 
 export type OnboardingStoredPrefs = z.infer<typeof StoredPrefsSchema>;
 
 export const DEFAULT_ONBOARDING_PREFS: OnboardingStoredPrefs = {
   keepInCorner: false,
-  side: "right",
+  position: DEFAULT_ONBOARDING_POSITION,
   showOnLogin: true,
   firstTaskCompleted: false,
   aiChoice: "matrix",
