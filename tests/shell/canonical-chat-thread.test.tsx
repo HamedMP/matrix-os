@@ -208,6 +208,8 @@ describe("useCanonicalChatThread", () => {
   });
 });
 
+type Authority = Record<"agentClient" | "agentSummaryClient" | "authorityKey" | "composerIdentity" | "isCurrentAuthority", unknown>;
+
 /** The Web Brain app over a fake gateway: one project with a repository, and a Company Brain Bot. */
 function webBrain(items: unknown[] = [], connected = true, windowState = { active: true, visible: true }) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(String(url).includes("/sources")
@@ -223,10 +225,22 @@ function webBrain(items: unknown[] = [], connected = true, windowState = { activ
   } };
   const client = fakeClient(agents);
   const switchConversation = vi.fn();
-  const chat = { chatRuntime: { client, eventSource: fakeEvents() }, switchConversation, connected } as unknown as ChatState;
-  const view = (state: typeof windowState) => <ChatProvider value={chat}><BrainApp showHeading={false} {...state} /></ChatProvider>;
-  const { rerender } = render(view(windowState));
-  return { bot, threads, agents, client, switchConversation, rerender: (state: typeof windowState) => rerender(view(state)) };
+  const chatRuntime = { client, eventSource: fakeEvents() };
+  // The shell chat authority, as `useCanonicalChatState` returns it.
+  let authority: Authority = { agentClient: agents, agentSummaryClient: agents, authorityKey: "owner/epoch0",
+    composerIdentity: {}, isCurrentAuthority: () => true };
+  let state = windowState;
+  const view = () => (
+    <ChatProvider value={{ chatRuntime, switchConversation, connected, ...authority } as unknown as ChatState}>
+      <BrainApp showHeading={false} {...state} />
+    </ChatProvider>
+  );
+  const { rerender } = render(view());
+  return {
+    bot, threads, agents, client, switchConversation,
+    rerender: (next: typeof windowState) => { state = next; rerender(view()); },
+    authorize: (next: Partial<Authority>) => { authority = { ...authority, ...next }; rerender(view()); },
+  };
 }
 
 describe("Company Brain chat on Web", () => {
@@ -327,6 +341,75 @@ describe("Company Brain chat on Web", () => {
     expect(composer()).toHaveValue("");
     await openRow(/^Test plan/);
     expect(composer()).toHaveValue("Which tests");
+  });
+
+  it("keeps brain drafts through the owner's own authority change, but never gives them to a new owner", async () => {
+    const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
+    const { authorize } = webBrain([titled("chat_a", "Release notes")]);
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    const openRow = async () => {
+      fireEvent.click(await screen.findByRole("button", { name: /^Release notes/ }));
+      await waitFor(() => expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy());
+    };
+    const openDraft = async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+      return screen.findByRole("textbox", { name: /message/i });
+    };
+    await openRow();
+    fireEvent.change(composer(), { target: { value: "What shipped in" } });
+    fireEvent.change(await openDraft(), { target: { value: "Who owns" } });
+    // A revoke the owner recovers from: a new authority over the same composer identity.
+    authorize({ authorityKey: "owner/epoch1" });
+    await waitFor(() => expect(composer()).toHaveValue("Who owns"));
+    await openRow();
+    expect(composer()).toHaveValue("What shipped in");
+    // Another Clerk session or organization: the open view remounts, and no kept question comes back.
+    authorize({ authorityKey: "next/epoch0", composerIdentity: {} });
+    await waitFor(() => expect(composer()).toHaveValue(""));
+    expect(await openDraft()).toHaveValue("");
+    await openRow();
+    expect(composer()).toHaveValue("");
+  });
+
+  it("shows no brain chat while the agent client is withheld, then reads the next owner's Bot through its summary client", async () => {
+    const { bot, agents, authorize } = webBrain();
+    fireEvent.change(await screen.findByRole("textbox", { name: /message/i }), { target: { value: "What changed?" } });
+    authorize({ agentClient: undefined, agentSummaryClient: undefined });
+    expect(await screen.findByText("Chat is not available here.")).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: /message/i })).toBeNull();
+    const summary = { ...agents, list: vi.fn(async () => ({ enabled: true, agents: [bot] })) };
+    authorize({ agentClient: agents, agentSummaryClient: summary, authorityKey: "next/epoch0", composerIdentity: {} });
+    expect(await screen.findByRole("textbox", { name: /message/i })).toHaveValue("");
+    expect(summary.list).toHaveBeenCalled();
+  });
+
+  it("opens, renames and deletes nothing once the chat authority has moved on", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let current = true;
+    const { client, switchConversation, authorize } = webBrain([record("chat_old", 1)]);
+    const updateTitle = vi.fn(async () => record("chat_old", 2));
+    const remove = vi.fn(async () => undefined);
+    Object.assign(client, { updateTitle, delete: remove });
+    authorize({ isCurrentAuthority: () => current });
+    const open = await screen.findByRole("button", { name: "Open in Chat" });
+    current = false;
+    fireEvent.click(open);
+    expect(switchConversation).not.toHaveBeenCalled();
+    const menu = async (item: string) => {
+      fireEvent.keyDown(await screen.findByRole("button", { name: "More for What changed" }), { key: "Enter" });
+      fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+    };
+    await menu("Rename");
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Renamed" } });
+    fireEvent.submit(name.closest("form")!);
+    expect(await screen.findByText("The chat could not be renamed. Try again.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await menu("Delete");
+    fireEvent.click(within(await screen.findByRole("group", { name: "Delete What changed" })).getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("The chat could not be deleted. Try again.")).toBeTruthy();
+    expect(updateTitle).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("marks a brain answer read only while its window is focused, like the Chat window", async () => {

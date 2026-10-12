@@ -19,16 +19,20 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
   while an answer runs is queued, as in the Chat app, and a retry keeps its queue. A thread switch remounts the view, so
   the host keeps the composer drafts (`composerDrafts`): each thread's unfinished question and references, and each
   project's draft (`newDraftScope`), come back when the viewer returns; a question sent before a switch leaves them once
-  it is admitted. Open in Chat switches the Chat app to the same Chat and focuses or opens its window through
-  `lib/shell-window-focus.ts` (Web Canvas pans to it). Rows rename and delete over the shell chat client.
+  it is admitted. Like the Chat app, it follows the shell chat authority (`useCanonicalChatAuthority`): no slot while
+  the chat state withholds the agent client, Bot reads over its guarded summary client, and the view keyed by
+  `authorityKey` and given `composerIdentity`, so a new owner never gets the previous owner's transcript or drafts; Open
+  in Chat, rename and delete are refused once the authority has moved on. Open in Chat switches the Chat app to the same
+  Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans to it). Rows rename and
+  delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
   (no heading, the title bar names the app), `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the
   palette in `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`.
 
 ## Source Of Truth
 
-- The gateway, through the shared view. Only unsent composer drafts are kept here, in memory, while the app is open.
-  The client and the one event stream come from the shell chat state (`useCanonicalChatState` returns them as
+- The gateway, through the shared view. Only unsent composer drafts are kept here, in memory, while the app is open, for
+  one owner. The client and the one event stream come from the shell chat state (`useCanonicalChatState` returns them as
   `chatRuntime`), so the shell still opens one stream.
 
 ## Public API
@@ -51,6 +55,7 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
 
 - `tests/shell/`: `brain-shell.test.tsx`, `canonical-chat-thread.test.tsx` (the thread hook, one poll at a time, the
   embedded layout, a draft sent as a brain thread, a refused first question given back, drafts kept across thread
-  switches and a sent one not brought back, read state only while seen, Open in Chat), `chat-composer-draft.test.tsx`
-  (the draft keeper), `canonical-chat-client.test.ts` (the Chat delete), `builtin-apps.test.ts`,
-  `web-desktop-app-launch.test.ts`, `window-manager.test.ts`.
+  switches and a sent one not brought back, drafts never given to a new owner, no slot while the agent client is
+  withheld, nothing opened, renamed or deleted after an authority change, read state only while seen, Open in Chat),
+  `chat-composer-draft.test.tsx` (the draft keeper), `canonical-chat-client.test.ts` (the Chat delete),
+  `builtin-apps.test.ts`, `web-desktop-app-launch.test.ts`, `window-manager.test.ts`.

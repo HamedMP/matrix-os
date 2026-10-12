@@ -147,7 +147,9 @@ now returns as `chatRuntime`; no URL or selection changes). Open in Chat switche
 focuses or opens the Chat window through `lib/shell-window-focus.ts`, the helper the dock, palette and Files share,
 so Web Canvas pans to it (the Chat app on Web Mobile). Rows rename with `PATCH /api/chats/:id/title` and delete with
 `DELETE /api/chats/:id`. A thread switch remounts the Web chat view, so the slot keeps its composer drafts: each
-thread's unfinished question and references, and each project's draft, come back when the viewer returns.
+thread's unfinished question and references, and each project's draft, come back when the viewer returns. Like the
+Chat app, the slot follows the shell chat authority: none while the agent client is withheld, one view per
+`authorityKey`, drafts kept for one owner (`composerIdentity`), and no open, rename or delete after it changes.
 
 Electron Desktop: tab kind `brain` (one tab, like Notes), the fixed app `__brain__` right after Whiteboard in the
 launcher (not placed on the desktop by default, as on Web Desktop; "Add to desktop" places it), the palette entry
@@ -268,7 +270,7 @@ Web client by default, its errors read by the shared reader, a delete with no bo
 `tests/shell/canonical-chat-thread.test.tsx` covers the one-Chat hook (one create per draft, a report after every
 admitted turn and none when it fails, a refused first question given back, content deltas, a snapshot on a gap, no
 URL change) and the Web slot end to end (no rail, chips, harness setup, settings or connection line, a draft sent as
-a brain thread, drafts kept across thread switches, read state only while the window is focused, Open in Chat, and on Web Canvas the Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
+a brain thread, drafts kept across thread switches but never given to a new owner, read state only while the window is focused, Open in Chat, and on Web Canvas the Chat window restored and panned to); `tests/shell/canonical-chat-client.test.ts` covers the Chat delete; and
 `tests/desktop/brain-chat-tab.test.tsx` covers the Electron slot through `useDesktopBrainChatHost().render(slot)` (a
 draft made through the host and sent as the Bot, the turn reported once, a saved chat opened in the conversation
 view without its open report and its first turn reported, a refused first question kept, a draft apart from the Chat
