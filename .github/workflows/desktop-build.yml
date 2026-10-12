@@ -199,7 +199,17 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign -dv --verbose=4 "$app_path" 2>&1 \
             | grep "Authority=Developer ID Application" >/dev/null
-          xcrun stapler validate "$app_path"
+          for stapler_attempt in 1 2 3 4 5; do
+            if xcrun stapler validate "$app_path"; then
+              break
+            fi
+            if [ "$stapler_attempt" -eq 5 ]; then
+              echo "Apple notarization ticket validation failed after 5 attempts" >&2
+              exit 1
+            fi
+            echo "Apple notarization ticket validation attempt $stapler_attempt failed; retrying in 15 seconds" >&2
+            sleep 15
+          done
           spctl --assess --type execute --verbose=4 "$app_path"
           if pnpm exec asar list "$app_path/Contents/Resources/app.asar" \
             | grep "node_modules/@matrix-os/contracts" >/dev/null; then

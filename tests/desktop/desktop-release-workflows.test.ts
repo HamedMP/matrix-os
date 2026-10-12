@@ -339,7 +339,11 @@ describe("desktop release workflows", () => {
     expect(build).toContain("Verify macOS signature and notarization");
     expect(build).toContain('codesign --verify --deep --strict --verbose=2 "$app_path"');
     expect(build).toContain('grep "Authority=Developer ID Application" >/dev/null');
-    expect(build).toContain('xcrun stapler validate "$app_path"');
+    expect(build).toContain("for stapler_attempt in 1 2 3 4 5; do");
+    expect(build).toContain('if xcrun stapler validate "$app_path"; then');
+    expect(build).toContain('if [ "$stapler_attempt" -eq 5 ]; then');
+    expect(build).toContain("Apple notarization ticket validation failed after 5 attempts");
+    expect(build).toContain("sleep 15");
     expect(build).toContain('spctl --assess --type execute --verbose=4 "$app_path"');
     expect(build).toContain("Launch smoke test macOS app");
     expect(build).toContain("ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING");
