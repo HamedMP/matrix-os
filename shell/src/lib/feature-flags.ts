@@ -8,9 +8,10 @@ export const HERMES_CHAT_HIDDEN = false;
 // Voice (Aoede) dock button is hidden for now while the voice experience is
 // out of the minimal flow. The vocal store/overlay wiring stays intact.
 export const VOICE_HIDDEN = true;
-// Explicit build-time opt-in also permits production-shaped local qualification.
-// Releases remain hidden unless their build deliberately sets this flag.
-export const AOEDE_LIVE_PREVIEW = process.env.NEXT_PUBLIC_AOEDE_LIVE_PREVIEW === "1";
+// This preview branch exists specifically to qualify Aoede in the hosted web
+// shell. Keep it independent of deployment environment propagation so its dock
+// entrypoint and Live overlay cannot be compiled out of the preview bundle.
+export const AOEDE_LIVE_PREVIEW = true;
 
 import { isSelfHostedDocument } from "./self-host-mode";
 
