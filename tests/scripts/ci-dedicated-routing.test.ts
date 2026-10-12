@@ -51,7 +51,7 @@ describe('executable delegation and aggregate admission',()=>{
       writeFileSync(resolve(dir,'event.json'),JSON.stringify({pull_request:{base:{ref:base,repo:{full_name:'HamedMP/matrix-os'}},head:{repo:{full_name:repo}},state:'open',draft:false,labels:[{name:'ready-for-ci'},{name:'fast-ci'}]}}));
       const script=ci.jobs.changes.steps.find((step:{id?:string})=>step.id==='route').run;
       const body=script.match(/^node --input-type=module <<'NODE'\n([\s\S]*)\nNODE\s*$/)![1];
-      const env={...process.env,MATRIX_CI_DEDICATED_ENABLED:enabled,SHOULD_RUN:source,GITHUB_EVENT_NAME:event,GITHUB_REPOSITORY:'HamedMP/matrix-os',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')};
+      const env={...process.env,MATRIX_CI_DEDICATED_ENABLED:enabled,SHOULD_RUN:source,GITHUB_EVENT_NAME:event,GITHUB_REF:'refs/heads/fixture',MATRIX_CI_DEDICATED_SHADOW:'false',REFRESH_SNAPSHOT:'',GITHUB_REPOSITORY:'HamedMP/matrix-os',GITHUB_EVENT_PATH:resolve(dir,'event.json'),GITHUB_OUTPUT:resolve(dir,'output')};
       const execution=spawnSync(process.execPath,['--input-type=module','-e',body],{env,encoding:'utf8',timeout:10000});
       expect(execution.status,execution.stderr).toBe(0);
       expect(readFileSync(resolve(dir,'output'),'utf8').trim().split('\n')[0]).toBe(`eligible=${expected}`);

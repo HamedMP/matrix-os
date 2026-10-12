@@ -171,3 +171,23 @@ checks for previously admitted sources; flipping the switch alone does not
 restore skipped coverage. A successful old receipt or
 similarly named check cannot qualify another attempt. Public testing docs ship
 in the companion site documentation PR.
+
+## Controller configuration credentials
+
+Repository Variables API reads require a GitHub App installation token with
+`actions_variables: read`; `GITHUB_TOKEN` Actions permissions do not include this
+access. The Matrix CI Qualification installation therefore needs Variables
+read-only in addition to its existing Checks write grant.
+
+Authenticated default-main jobs mint a separate token limited to the current
+repository and Variables read. The protected gate token still requests only
+Checks write. Only reviewed, pinned helpers see the App key; candidate code and
+the isolated worker receive neither credential. Normal workflow/run/PR APIs
+retain the Actions client. Live configuration reads still occur before grants
+and renewals; denied reads fail closed. Configuration tokens are masked, checked
+for repository/permission/expiry scope and revoked on job completion.
+
+The pinned token action does not expose the Variables permission, so the helper
+uses a short-lived Node-signed App JWT with the bundled GitHub Script client and
+the installation-token endpoint. Token request errors are sanitized to avoid
+logging authorization headers. No routing activation occurs in this repair.

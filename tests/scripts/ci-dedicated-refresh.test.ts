@@ -37,7 +37,7 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  expect(dedicated.on.workflow_run).toEqual({workflows:['CI'],types:['requested','in_progress','completed']});
  expect(dedicated.on.pull_request_target.types).toContain('opened');
  expect(dedicated.jobs.reconcile.if).not.toContain('vars.MATRIX_CI_DEDICATED');
- expect(dedicated.jobs.reconcile.steps.at(-1).with.script).toContain('reconcileSourceQualification');
+ expect(dedicated.jobs.reconcile.steps.find((step:any)=>step.name==='Reconcile completed child source checks').with.script).toContain('reconcileSourceQualification');
 });
 it('admits a rerun through in_progress because GitHub requested events do not fire on reruns',async()=>{
  const f=fixture();const run={id:321,run_attempt:2,status:'in_progress',workflow_id:98,path:'.github/workflows/ci.yml',event:'pull_request',head_sha:head,head_branch:'child',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2454,head:{sha:head},base:{sha:base,ref:'stack/parent'}}]};

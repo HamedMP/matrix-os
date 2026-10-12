@@ -68,6 +68,21 @@ jobs:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Create repository-scoped configuration read token
+        id: configuration-token
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          CONFIGURATION_PRIVATE_KEY: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {mintConfigurationToken}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            const token=await mintConfigurationToken(github,context.repo,{appId:Number(process.env.CONFIGURATION_APP_ID),installationId:Number(process.env.CONFIGURATION_INSTALLATION_ID),repositoryId:context.payload.repository.id,privateKey:process.env.CONFIGURATION_PRIVATE_KEY,mask:value=>core.setSecret(value)});
+            core.setOutput('token',token);
+
       - name: Admit current source head
         id: admit
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
@@ -126,6 +141,7 @@ jobs:
         if: steps.admit.outputs.admitted == 'true' && (steps.admit.outputs.pr_number != '0' || steps.admit.outputs.source_kind == 'main') && steps.current.outputs.current == 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
           SNAPSHOT: ${{ toJSON(steps.admit.outputs) }}
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           CONTROLLER_WORKFLOW_REF: ${{ github.workflow_ref }}
@@ -139,6 +155,10 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
+            const {withConfigurationGithub}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            if(!process.env.CONFIGURATION_TOKEN)throw new Error('Configuration read token is required');
+            const configurationGithub=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            const sourceGithub=withConfigurationGithub(github,configurationGithub);
             const {mkdir,writeFile}=require('node:fs/promises');
             const {dispatchDedicatedLease}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
@@ -151,7 +171,7 @@ jobs:
               imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
-            const receipt=await dispatchDedicatedLease(github,{repo:context.repo,
+            const receipt=await dispatchDedicatedLease(sourceGithub,{repo:context.repo,
               controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
               ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
               {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});
@@ -246,6 +266,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Revoke configuration read token
+        if: always() && steps.configuration-token.outputs.token != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
+        with:
+          script: |
+            const client=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            try{await client.request('DELETE /installation/token',{request:{timeout:10000}});}
+            catch{throw new Error('Configuration read token revocation failed');}
+
   reconcile:
     name: Revoke stale stacked qualification
     if: github.ref == 'refs/heads/main'
@@ -281,6 +312,21 @@ jobs:
           ref: ${{ steps.origin.outputs.controller_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
+      - name: Create repository-scoped configuration read token
+        id: configuration-token
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
+          CONFIGURATION_INSTALLATION_ID: ${{ vars.MATRIX_CI_GATE_APP_INSTALLATION_ID }}
+          CONFIGURATION_PRIVATE_KEY: ${{ secrets.MATRIX_CI_GATE_APP_PRIVATE_KEY }}
+        with:
+          script: |
+            const {pathToFileURL}=require('node:url');
+            const {resolve}=require('node:path');
+            const {mintConfigurationToken}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            const token=await mintConfigurationToken(github,context.repo,{appId:Number(process.env.CONFIGURATION_APP_ID),installationId:Number(process.env.CONFIGURATION_INSTALLATION_ID),repositoryId:context.payload.repository.id,privateKey:process.env.CONFIGURATION_PRIVATE_KEY,mask:value=>core.setSecret(value)});
+            core.setOutput('token',token);
+
       - name: Create repository-scoped checks-only gate token
         id: gate-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
@@ -302,6 +348,7 @@ jobs:
       - name: Reconcile completed child source checks
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
           GATE_TOKEN: ${{ steps.gate-token.outputs.token }}
           GATE_APP_ID: ${{ vars.MATRIX_CI_GATE_APP_ID }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
@@ -311,11 +358,26 @@ jobs:
           script: |
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
+            const {withConfigurationGithub}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-config-token.mjs')).href);
+            if(!process.env.CONFIGURATION_TOKEN)throw new Error('Configuration read token is required');
+            const configurationGithub=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            const sourceGithub=withConfigurationGithub(github,configurationGithub);
             const {reconcileSourceQualification}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             if(!process.env.GATE_TOKEN)throw new Error('Protected gate App token is required');
             // GitHub Script bundles Octokit; external @actions packages are not installed.
             const gateGithub=new github.constructor({auth:process.env.GATE_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
-            const gate=await reconcileSourceQualification(github,context.repo,
+            const gate=await reconcileSourceQualification(sourceGithub,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
               {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
             core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);
+
+      - name: Revoke configuration read token
+        if: always() && steps.configuration-token.outputs.token != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          CONFIGURATION_TOKEN: ${{ steps.configuration-token.outputs.token }}
+        with:
+          script: |
+            const client=new github.constructor({auth:process.env.CONFIGURATION_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            try{await client.request('DELETE /installation/token',{request:{timeout:10000}});}
+            catch{throw new Error('Configuration read token revocation failed');}
