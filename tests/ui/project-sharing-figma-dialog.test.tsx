@@ -355,6 +355,44 @@ describe("Figma-aligned project access dialog", () => {
     ));
   });
 
+  it("shows inherited Editor access while allowing a redundant direct grant to be removed", async () => {
+    const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async (path: string) => {
+        if (path.endsWith("/members")) return { members: [
+          { actorId: "user_owner", displayName: "Owner", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+          { actorId: "user_editor", displayName: "Ada", role: "org:member", joinedAt: "2026-01-01T00:00:00.000Z" },
+        ] };
+        if (path.endsWith("/project/access")) return {
+          scopeId: scope.id,
+          revision: "7",
+          owner: { actorId: "user_owner", displayName: "Owner" },
+          generalAccess: { grantId: "40000000-0000-4000-8000-000000000640", preset: "contributor", revision: "3" },
+          people: [{
+            actor: { actorId: "user_editor", displayName: "Ada" }, status: "active",
+            effectivePreset: "contributor", inherited: true,
+            directGrant: { grantId: "40000000-0000-4000-8000-000000000641", preset: "viewer", revision: "2" },
+          }],
+        };
+        throw new Error(`unexpected GET ${path}`);
+      }),
+      post: vi.fn(), patch: vi.fn(), delete: vi.fn(),
+    };
+
+    render(<ProjectAccessManager api={api} scope={sharedScope} organizationName="Acme Research" />);
+
+    const role = await screen.findByRole("button", { name: "Access for Ada: Editor · inherited" });
+    fireEvent.pointerDown(role, { button: 0, ctrlKey: false });
+    expect(await screen.findByRole("menuitem", { name: "Remove access" })).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: /Viewer View project activity only/ })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove access" }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(
+      `/api/collaboration/scopes/${scope.id}/grants/40000000-0000-4000-8000-000000000641`,
+      expect.objectContaining({ expectedRevision: "7", expectedMemberRevision: "2" }),
+    ));
+  });
+
   it("loads later organization-member pages before adding direct access", async () => {
     const sharedScope = { ...scope, lifecycle: "shared" as const, revision: "7" };
     const api = {

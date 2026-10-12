@@ -73,7 +73,9 @@ export function SharedChatControls({
         updateDraft={(text) => updateDraft(text, "ai")} submit={submitAi} />
       <p className="mt-2 flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
         <Users aria-hidden className="size-3" />
-        Project members see this Chat · AI uses the project’s files
+        {scope.membershipMode === "inherited"
+          ? "Project members see this Chat · AI uses the project’s files"
+          : "People with access see this Chat · AI uses this Chat’s shared context"}
       </p>
     </div>
   </footer>;

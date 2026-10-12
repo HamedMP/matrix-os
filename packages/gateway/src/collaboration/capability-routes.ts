@@ -63,6 +63,24 @@ function projectGrant(grant: GrantRecord) {
   });
 }
 
+async function resolveAccessParticipant(
+  options: Pick<CapabilityRouteOptions, "resolveParticipant">,
+  actorId: string,
+): Promise<{ actorId: string; displayName: string }> {
+  try {
+    const participant = await options.resolveParticipant(actorId);
+    return participant.actorId === actorId
+      ? participant
+      : { actorId, displayName: "Organization member" };
+  } catch (error: unknown) {
+    console.warn(
+      "[collaboration-access] participant lookup failed",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+    return { actorId, displayName: "Organization member" };
+  }
+}
+
 /**
  * The actor managing a scope's grants. A private project has no scope access yet, so its owner
  * chooses who gets access before sharing through the exact owner setup session; the grants it
@@ -120,7 +138,7 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
           const inherited = candidate.organizationActivated && effective.preset !== null
             && (!directIsEffective || organizationGrant?.preset === "contributor" || candidate.directGrant?.preset === "viewer");
           return {
-            actor: await options.resolveParticipant(actorId),
+            actor: await resolveAccessParticipant(options, actorId),
             status: effective.preset === null ? "pending" : "active",
             effectivePreset: effective.preset ?? candidate.directGrant?.preset ?? "viewer",
             inherited,
@@ -136,7 +154,7 @@ export function registerCapabilityRoutes(routes: Hono, options: CapabilityRouteO
     return c.json(CollaborationProjectAccessPresentationSchema.parse({
       scopeId,
       revision: String(scope.revision),
-      owner: await options.resolveParticipant(scope.ownerId),
+      owner: await resolveAccessParticipant(options, scope.ownerId),
       generalAccess: organizationGrant ? {
         grantId: organizationGrant.grantId,
         preset: organizationGrant.preset,

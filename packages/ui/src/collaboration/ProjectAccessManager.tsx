@@ -26,16 +26,18 @@ function editorLabel(preset: CollaborationPreset): "Editor" | "Viewer" {
   return preset === "contributor" ? "Editor" : "Viewer";
 }
 
-function AccessRoleMenu({ ariaLabel, value, disabled, popoverZIndex, allowRestricted = false, onSelect, onRemove }: {
+function AccessRoleMenu({ ariaLabel, value, inherited = false, disabled, popoverZIndex, allowRestricted = false, onSelect, onRemove }: {
   ariaLabel: string;
   value: CollaborationPreset | "restricted";
+  inherited?: boolean;
   disabled: boolean;
   popoverZIndex?: number;
   allowRestricted?: boolean;
-  onSelect: (value: CollaborationPreset | "restricted") => void;
+  onSelect?: (value: CollaborationPreset | "restricted") => void;
   onRemove?: () => void;
 }) {
-  const label = value === "restricted" ? "Restricted" : editorLabel(value);
+  const roleLabel = value === "restricted" ? "Restricted" : editorLabel(value);
+  const label = inherited ? `${roleLabel} · inherited` : roleLabel;
   return <DropdownMenu.Root>
     <DropdownMenu.Trigger asChild>
       <button type="button" className={roleTriggerClass} disabled={disabled} aria-label={`${ariaLabel}: ${label}`}>
@@ -45,14 +47,17 @@ function AccessRoleMenu({ ariaLabel, value, disabled, popoverZIndex, allowRestri
     <DropdownMenu.Content align="end" sideOffset={4} className={roleMenuClass}
       style={{ background: "var(--bg-overlay, var(--popover, #fffefc))", color: "var(--text-primary)",
         borderColor: "var(--border-default)", ...(popoverZIndex === undefined ? {} : { zIndex: popoverZIndex }) }}>
-      <RoleMenuItem label="Editor" description="Change files and request AI" selected={value === "contributor"}
-        onSelect={() => onSelect("contributor")} />
-      <RoleMenuItem label="Viewer" description="View project activity only" selected={value === "viewer"}
-        onSelect={() => onSelect("viewer")} />
-      {allowRestricted ? <RoleMenuItem label="Restricted" description="Only people added directly can open it"
-        selected={value === "restricted"} onSelect={() => onSelect("restricted")} /> : null}
+      {onSelect ? <>
+        <RoleMenuItem label="Editor" description="Change files and request AI" selected={value === "contributor"}
+          onSelect={() => onSelect("contributor")} />
+        <RoleMenuItem label="Viewer" description="View project activity only" selected={value === "viewer"}
+          onSelect={() => onSelect("viewer")} />
+        {allowRestricted ? <RoleMenuItem label="Restricted" description="Only people added directly can open it"
+          selected={value === "restricted"} onSelect={() => onSelect("restricted")} /> : null}
+      </> : null}
       {onRemove ? <>
-        <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle, var(--border-default))" }} />
+        {onSelect ? <DropdownMenu.Separator className="my-1 h-px"
+          style={{ background: "var(--border-subtle, var(--border-default))" }} /> : null}
         <DropdownMenu.Item className={roleItemClass} style={{ color: "var(--danger, #dc2626)" }} onSelect={onRemove}>
           Remove access
         </DropdownMenu.Item>
@@ -308,12 +313,13 @@ export function ProjectAccessManager({ api, scope, organizationName, popoverZInd
               {person.status === "pending" ? "Pending until opened" : person.inherited ? "Inherited from general access" : "Direct access"}
             </span>
           </span>
-          {directGrant && !organizationEditor ? <AccessRoleMenu
+          {directGrant ? <AccessRoleMenu
             ariaLabel={`Access for ${person.actor.displayName}`}
-            value={directGrant.preset}
+            value={organizationEditor ? person.effectivePreset : directGrant.preset}
+            inherited={organizationEditor}
             disabled={pending || membersPending}
             popoverZIndex={popoverZIndex}
-            onSelect={(preset) => void mutate(async (current) => {
+            onSelect={organizationEditor ? undefined : (preset) => void mutate(async (current) => {
               if (preset === "restricted") return;
               if (!api.patch) throw new Error("Access editing unavailable");
               await api.patch(`${base}/grants/${encodeURIComponent(directGrant.grantId)}`, {

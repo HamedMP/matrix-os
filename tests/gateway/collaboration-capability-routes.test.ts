@@ -39,11 +39,13 @@ describe("collaboration capability HTTP routes", () => {
   let membershipDelayMs: number;
   let activeMembershipChecks: number;
   let maxActiveMembershipChecks: number;
+  let participantLookupFailureActorId: string | null;
 
   beforeEach(async () => {
     membershipDelayMs = 0;
     activeMembershipChecks = 0;
     maxActiveMembershipChecks = 0;
+    participantLookupFailureActorId = null;
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     runtime = await createGatewayCollaboration({
@@ -72,7 +74,10 @@ describe("collaboration capability HTTP routes", () => {
         platformBaseUrl: "https://platform.internal",
         serviceToken: "c".repeat(32),
       },
-      resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      resolveParticipant: async (actorId) => {
+        if (actorId === participantLookupFailureActorId) throw new Error("profile not found");
+        return { actorId, displayName: actorId };
+      },
       outboxFetch: async () => new Response(null, { status: 204 }),
       startTimers: false,
     });
@@ -189,6 +194,31 @@ describe("collaboration capability HTTP routes", () => {
         directGrant: { grantId: directGrantId, preset: "contributor" } }],
     });
     expect((await signed({ actorId: memberId, method: "GET", path })).status).toBe(403);
+  });
+
+  it("keeps a pending direct grant manageable when its member has no Matrix profile", async () => {
+    const grantPath = `/api/collaboration/scopes/${scopeId}/grants`;
+    const created = await signed({ actorId: ownerId, method: "POST", path: grantPath, body: {
+      clientRequestId: randomUUID(), expectedRevision: "1",
+      audience: { kind: "member", actorId: memberId }, preset: "viewer",
+    } });
+    expect(created.status).toBe(201);
+    participantLookupFailureActorId = memberId;
+
+    const response = await signed({
+      actorId: ownerId,
+      method: "GET",
+      path: `/api/collaboration/scopes/${scopeId}/project/access`,
+    });
+
+    expect(response.status).toBe(200);
+    expect(CollaborationProjectAccessPresentationSchema.parse(await response.json()).people).toEqual([
+      expect.objectContaining({
+        actor: { actorId: memberId, displayName: "Organization member" },
+        status: "pending",
+        directGrant: expect.objectContaining({ preset: "viewer" }),
+      }),
+    ]);
   });
 
   it("bounds parallel access checks while presenting larger project audiences", async () => {

@@ -39,6 +39,29 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe("shared Chat AI controls", () => {
+  it("describes project inheritance separately from legacy standalone Chat access", async () => {
+    const api = {
+      baseUrl: "https://app.matrix-os.com",
+      get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
+      post: vi.fn(), delete: vi.fn(),
+    };
+    const { rerender } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn()} refreshVersion={0} />);
+
+    expect(await screen.findByLabelText("Message Chat")).toBeEnabled();
+    expect(screen.getByText("People with access see this Chat · AI uses this Chat’s shared context")).toBeVisible();
+    expect(screen.queryByText(/Project members see this Chat/)).toBeNull();
+
+    rerender(<SharedChatControls api={api} scope={{ ...baseScope, membershipMode: "inherited" }} actorId="user_editor"
+      resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
+      changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
+      sendDiscussion={vi.fn()} refreshVersion={0} />);
+
+    expect(screen.getByText("Project members see this Chat · AI uses the project’s files")).toBeVisible();
+  });
+
   it("keeps AI text private after failure, then submits it as a distinct request", async () => {
     let fail = true;
     const updateDraft = vi.fn();
@@ -106,7 +129,7 @@ describe("shared Chat AI controls", () => {
       get: vi.fn(async () => ({ requests: [], approvals: [], capability, resourceRevision: "4" })),
       post: vi.fn(), delete: vi.fn(),
     };
-    const { container } = render(<SharedChatControls api={api} scope={baseScope} actorId="user_editor"
+    const { container } = render(<SharedChatControls api={api} scope={{ ...baseScope, membershipMode: "inherited" }} actorId="user_editor"
       resourceRevision="4" draft={{ text: "", mode: "ai" }} updateDraft={vi.fn()}
       changeDraftMode={vi.fn()} discussionSending={false} discussionError={false}
       sendDiscussion={vi.fn()} refreshVersion={0} />);
