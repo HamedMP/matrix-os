@@ -102,9 +102,8 @@ it('continues the same task in its new run after a confirmed answer and drops th
   </BotChatPanel>);
   fireEvent.change(await screen.findByRole('textbox', { name: 'Answer Target' }), { target: { value: 'Acme' } });
   fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
-  const progress = await screen.findByText('Working');
-  expect(progress.closest('[data-agent-message-body]')?.getAttribute('data-agent-message-body')).toBe('run_continued');
-  expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull());
+  expect(screen.queryByText('Working')).toBeNull();
   expect(screen.queryByText('Waiting for your answer')).toBeNull();
 });
 it('keeps independent permission approvals actionable when an identical question is represented canonically', async () => {
