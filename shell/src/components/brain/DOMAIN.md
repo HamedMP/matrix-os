@@ -28,7 +28,8 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
   delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
   (no heading, the title bar names the app), `mobile/MobileShell.tsx` (`mobile`), `ShellHome.tsx`, the taskbar, the
-  palette in `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts`.
+  palette in `Desktop.tsx`, `lib/web-desktop-app-launch.ts` and the minimum size in `hooks/useWindowManager.ts` (which
+  reads `BRAIN_SHELL_VIEW` from `@matrix-os/ui`, not from here: the brain app imports the window store).
 
 ## Source Of Truth
 
