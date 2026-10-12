@@ -18,7 +18,7 @@ One rule shapes everything: no second chat system. A brain chat is a canonical C
 ## Scope of this increment
 
 In scope (server): the `company-brain` recipe and its answer rules, the read-only `brain.read` broker capability
-(contract, worker tools, run setup, broker dispatch), thread Chats bound to one project (migration v7 and two routes),
+(contract, worker tools, run setup, broker dispatch), thread Chats bound to one project (migration v9 and two routes),
 the optional run effort, leaving Bot chats out of the `matrix_chat` brain source, and their tests.
 
 Out of scope here and named below: the Brain app chat tab and the web and Electron hosts (App side), and every item
@@ -92,11 +92,11 @@ The sandbox stays `network: "broker_only"`.
 A thread is one more Chat of a recipe Bot, fixed to one project when it is created. Sessions and tasks are already
 keyed by Bot and Chat, so a thread needs only a binding kind.
 
-Migration v7 `bot_chat_threads` (`bots/database-migrations.ts`): the binding kind check allows `thread`; a new
-`project_id` column is set exactly on threads and must match `^proj_[A-Za-z0-9_-]{1,128}$`; a partial index serves the
-thread list. Existing rows keep no project. The project is written once; no code path updates it (the column type
-refuses updates). The Chat's own `project_id` stays null: Bot chats are not Project chats (spec 544), so moving a Chat
-between projects cannot change what the brain reads.
+Migration v9 `bot_chat_threads` (`bots/database-migrations.ts`) follows main's v7 `jev_label_grant` and v8
+`isolated_chat_phases`: the binding kind check allows `thread`; a new `project_id` column is set exactly on threads and
+must match `^proj_[A-Za-z0-9_-]{1,128}$`; a partial index serves the thread list. Existing rows keep no project. The
+project is written once; no code path updates it (the column type refuses updates). The Chat's own `project_id` stays
+null: Bot chats are not Project chats (spec 544), so moving a Chat between projects cannot change what the brain reads.
 
 Every place that reads "the Bot of this Chat" accepts a direct or a thread binding (`bindings.boundBot`):
 `GET /api/chats/:chatId/bot`, Chat turn preparation, the run, admission (which also checks the thread's project), the
@@ -185,7 +185,7 @@ Brain tools cost no model tokens.
 - Concurrency: thread creation runs under the owner lock in one transaction; concurrent retries of one request give
   one Chat and one binding. The thread cap is checked under the same lock.
 - Crash recovery: the Chat and its binding commit together, so a crash leaves both or neither.
-- Rollback: once Bot migration v7 is recorded, an older build refuses the Bot database as newer (`newer_schema`)
+- Rollback: once Bot migration v9 is recorded, an older build refuses the Bot database as newer (`newer_schema`)
   and starts no Bots at all, direct Chats included, until the newer build is restored. Ordinary Chats keep working;
   thread Chats show as ordinary Chats and cannot run Bot turns.
 - Error propagation: every refusal reaches the model as fixed guidance, and the client as an allowlisted code.
