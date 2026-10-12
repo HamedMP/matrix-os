@@ -37,6 +37,39 @@ and it does not relax the shared Preview guard from #1906.
 
 ## Security invariants
 
+### Acceptance recovery contracts (ENG-265)
+
+1. **Scope / trigger:** full Cloud Run environment replacement must preserve
+   Private Preview configuration; ordinary computer selection includes the
+   authenticated owner's private machines.
+2. **Signatures:** `GET /api/auth/computers` retains its strict
+   `MatrixComputerList` wire. `GET /api/private-previews` supplies the PR,
+   confirmed bundle and expiry; immutable release metadata supplies the full
+   commit. These are separate reads from source/grant admission.
+3. **Contracts:** `MATRIX_INTERNAL_CLERK_ORG_ID` comes from configured GitHub
+   variables and is included in full `--set-env-vars` replacement. Production
+   requires it; empty staging/Preview configuration keeps the feature disabled.
+   Nonempty values match `^org_[A-Za-z0-9]{1,124}$`; revision verification checks
+   the effective value. Database records retain `private-preview`; ordinary rows
+   use compatible `Preview Computer` / kind `preview` presentation. Rich
+   PR/commit/expiry fields remain in dedicated inventory rather than expanding
+   the unversioned strict wire. Display kind never grants shared-preview access.
+4. **Validation / errors:** missing production or malformed configured org fails
+   deployment. Dedicated routes retain503 for missing service/config/projection,
+   401 for unauthenticated actors and403 for nonmembers. Ordinary selection keeps
+   exact owner authorization without adding this membership gate to Main.
+   Deleted, foreign-owner and private access-list recipient rows stay excluded.
+5. **Good / base / bad:** owned running private slots appear as available Preview
+   Computers and can be selected normally. Main/shared behavior is unchanged.
+   Foreign private slots never appear, even with a malformed nonempty access list.
+6. **Required tests:** execute actual workflow validation/replacement/revision
+   snippets for missing, valid, malformed and dropped org values. Assert bounded
+   owner SQL, private class preservation, compatible projection, exact owner
+   selection, deleted/cross-owner/private-recipient exclusion and unchanged Main.
+7. **Wrong / correct:** omitting the org or reclassifying private records as shared
+   makes acceptance unavailable or unsafe. Preserve configured org and actual
+   private class, reuse owner predicates, and separate display from permissions.
+
 On a Matrix VPS, the Terminal user can read the machine credential: `matrix`
 has passwordless sudo, and `host.env` is readable by the `matrix` group. The
 machine credential is an HMAC of the handle. The PR's own gateway code also runs

@@ -1,5 +1,14 @@
 # Managed Chat and Bot attachment admission
 
+Live subscription acceptance requires an exact PR bundle in an owner-authorized
+runtime. Platform deployments preserve and verify the internal Clerk organization
+required by Private Preview. A generic Preview503 does not establish model
+attachment rejection. The normal Computers chooser includes owned private
+runtimes using its compatible Preview category; `matrix preview list --json`
+provides PR, confirmed bundle and expiry, and immutable release metadata provides
+the full source commit. Check connectivity and per-Computer subscription grants
+separately before submitting inputs.
+
 Spec550 / ENG-265 restores explicitly submitted attachments for managed Pi Chat
 and recipe Bot. Matrix AI is a presentation label; the observed authenticated
 model descriptor decides image support. Linked ChatGPT subscription, owner API
