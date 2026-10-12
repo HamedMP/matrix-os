@@ -109,6 +109,19 @@ describe("the composer's add control", () => {
     expect(row("Photos").props.accessibilityState).toMatchObject({ disabled: false });
   });
 
+  it("closes its sheet when pressed again, and opens on what can be attached the next time", () => {
+    renderControl({ skills });
+    open();
+    fireEvent.press(row("Skills and commands"));
+
+    fireEvent.press(addButton());
+    expect(mockSheet.isPresented).toBe(false);
+
+    fireEvent.press(addButton());
+    expect(mockSheet.isPresented).toBe(true);
+    expect(row("Photos")).toBeTruthy();
+  });
+
   it("closes when the sheet is dismissed", () => {
     renderControl();
     open();

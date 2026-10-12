@@ -88,7 +88,9 @@ export function ComposerAddControl({
         borderRadius={radius.full}
         backgroundColor={colors.card}
         disabled={disabled}
-        onPress={() => setSheet({ open: true, page: "menu" })}
+        // Pressed again while its sheet is open, it closes it. Each opening
+        // starts on what can be attached.
+        onPress={() => setSheet((current) => (current.open ? { ...current, open: false } : { open: true, page: "menu" }))}
       />
       <Sheet visible={sheet.open} onClose={close} testID="composer-add-sheet">
         <AddMenu
