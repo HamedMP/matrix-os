@@ -8,7 +8,7 @@ function fixture(){
  const summary={schemaVersion:2,suite:'qualification',headSha:head,baseSha:oldBase,baseRef:'stack/parent',sourceSha:oldBase,prNumber:2454,controllerSha:controller,controllerRef:'refs/heads/main',controllerWorkflow:'.github/workflows/ci-dedicated.yml',controllerAttempt:1};
  const check={id:10,name:'Dedicated CI Results',head_sha:head,status:'completed',conclusion:'success',app:{slug:'github-actions'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify(summary)}};
  const run={id:123,workflow_id:99,event:'pull_request_target',path:'.github/workflows/ci-dedicated.yml',head_sha:head,repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'}};
- const github={rest:{git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),update:vi.fn(async()=>({data:{}})),create:vi.fn(async()=>({data:{id:11}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:'.github/workflows/ci-dedicated.yml'}})),getWorkflowRun:vi.fn(async()=>({data:run}))}}};
+ const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}}))},pulls:{get:vi.fn(async()=>({data:pull})),list:vi.fn(async()=>({data:[pull]}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}})),update:vi.fn(async()=>({data:{}})),create:vi.fn(async()=>({data:{id:11}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:'.github/workflows/ci-dedicated.yml'}})),getWorkflowRun:vi.fn(async()=>({data:run}))}}};
  return{pull,summary,check,run,github};
 }
 async function reconcile(github:unknown){const fn=(helpers as Record<string,unknown>).reconcileDedicatedChildren as Function;expect(fn).toBeTypeOf('function');return fn(github,repo,origin,{serverUrl:'https://github.com'});}
@@ -41,6 +41,6 @@ describe('trusted parent-only stack invalidation',()=>{
 
 it('revokes current green evidence when only the live parent ref has advanced',async()=>{
  const f=fixture();f.check.output.summary=JSON.stringify({...f.summary,baseSha:f.pull.base.sha,sourceSha:f.pull.merge_commit_sha});
- f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:oldBase}}});await reconcile(f.github);
+ f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:oldBase}}}));await reconcile(f.github);
  expect(f.github.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:10,conclusion:'failure'}));
 });

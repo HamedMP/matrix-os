@@ -4,7 +4,7 @@ const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),main='d'.repe
 const repo={owner:'HamedMP',repo:'matrix-os'};
 function fixture(){
  const pull={number:2454,state:'open',draft:false,labels:[{name:'fast-ci'},{name:'ready-for-ci'}],head:{sha:head,ref:'child',repo:{full_name:'HamedMP/matrix-os'}},base:{sha:base,ref:'stack/parent',repo:{full_name:'HamedMP/matrix-os'}},merge_commit_sha:merge};
- const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},git:{getRef:vi.fn(async()=>({data:{object:{sha:base}}}))},repos:{getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
+ const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))}}};
  const context={sha:main,ref:'refs/heads/main',workflowRef:'HamedMP/matrix-os/.github/workflows/ci.yml@refs/heads/main'};
  const inputs={pr_number:'2454',head_sha:head,base_sha:base,source_sha:merge};
  return{github,pull,context,inputs};
@@ -14,7 +14,7 @@ describe('trusted same-head parent refresh',()=>{
   const f=fixture();expect(await helpers.resolveRequestingSource(f.github,repo,f.context,f.inputs)).toEqual({prNumber:2454,headSha:head,baseSha:base,sourceSha:merge,baseRef:'stack/parent',headRef:'child',mergeParents:[base,head]});
  });
  it.each(['origin','head','base','merge','ref','labels','fork','parents','input'])('fails closed for %s mismatch',async kind=>{
-  const f=fixture();if(kind==='origin')f.context.ref='refs/heads/child';if(kind==='head')f.pull.head.sha=main;if(kind==='base')f.pull.base.sha=main;if(kind==='merge')f.pull.merge_commit_sha=main;if(kind==='ref')f.github.rest.git.getRef.mockResolvedValue({data:{object:{sha:main}}});if(kind==='labels')f.pull.labels=[];if(kind==='fork')f.pull.head.repo.full_name='other/repo';if(kind==='parents')f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:base}]}});if(kind==='input')f.inputs.source_sha='main';
+  const f=fixture();if(kind==='origin')f.context.ref='refs/heads/child';if(kind==='head')f.pull.head.sha=main;if(kind==='base')f.pull.base.sha=main;if(kind==='merge')f.pull.merge_commit_sha=main;if(kind==='ref')f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:main}}}));if(kind==='labels')f.pull.labels=[];if(kind==='fork')f.pull.head.repo.full_name='other/repo';if(kind==='parents')f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:merge,parents:[{sha:head},{sha:base}]}});if(kind==='input')f.inputs.source_sha='main';
   await expect(helpers.resolveRequestingSource(f.github,repo,f.context,f.inputs)).rejects.toThrow();
  });
  it('authenticates actual main dispatch API shape with immutable tuple marker and no PR rows',()=>{

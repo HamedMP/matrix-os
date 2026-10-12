@@ -20,7 +20,7 @@ class InnerContracts(unittest.TestCase):
 import json,os,sys
 from pathlib import Path
 name=Path(sys.argv[0]).name;args=sys.argv[1:];work=Path(os.environ['MOCK_WORK'])
-with open(os.environ['MOCK_LOG'],'a') as output:output.write(json.dumps(dict(cmd=name,args=args,pg=os.environ.get('MATRIX_PLATFORM_FIXTURE_POSTGRES_URL'),provider=os.environ.get('MATRIX_PROVIDER_AUTH_ELECTRON'),required=os.environ.get('MATRIX_DESKTOP_E2E_REQUIRED'),store=os.environ.get('npm_config_store_dir'),import_method=os.environ.get('npm_config_package_import_method'),cwd=os.getcwd(),cache=os.environ.get('XDG_CACHE_HOME'),browsers=os.environ.get('PLAYWRIGHT_BROWSERS_PATH'),pythoncache=os.environ.get('PYTHONPYCACHEPREFIX')))+'\\n')
+with open(os.environ['MOCK_LOG'],'a') as output:output.write(json.dumps(dict(cmd=name,args=args,isolated=sys.flags.isolated,pg=os.environ.get('MATRIX_PLATFORM_FIXTURE_POSTGRES_URL'),provider=os.environ.get('MATRIX_PROVIDER_AUTH_ELECTRON'),required=os.environ.get('MATRIX_DESKTOP_E2E_REQUIRED'),store=os.environ.get('npm_config_store_dir'),import_method=os.environ.get('npm_config_package_import_method'),cwd=os.getcwd(),cache=os.environ.get('XDG_CACHE_HOME'),browsers=os.environ.get('PLAYWRIGHT_BROWSERS_PATH'),pythoncache=os.environ.get('PYTHONPYCACHEPREFIX')))+'\\n')
 if name=='python3' and any(a.endswith('/prepared.py') for a in args):
  print(os.environ['MOCK_CACHE'])
  if os.environ.get('MOCK_FAIL')=='prepared':sys.exit(1)
@@ -39,7 +39,10 @@ if fail=='typecheck' and name=='bun' and args==['run','typecheck:run']:sys.exit(
 if fail=='brand' and name=='pnpm' and args==['--filter','@matrix-os/brand','build']:sys.exit(1)
 if fail=='immutability' and name=='python3' and '--prepare-unit-source' in args:sys.exit(1)
 if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
-'''.replace('#!PYTHON','#!'+sys.executable)
+'''.replace('#!PYTHON','#!'+sys.executable+' -I')
+   # Stand-ins inspect the lane environment but must not repeatedly compile
+   # Python's stdlib against each fresh lane cache. Production commands keep
+   # their real interpreter and cache behavior.
    for name in ('python3','git','node','pnpm','bun','xvfb-run','pgmock'):
     p=binary/name;p.write_text(helper);p.chmod(0o755)
    env=dict(os.environ,PATH=str(binary)+':'+os.environ['PATH'],MOCK_WORK=str(work),MOCK_LOG=str(root/'log'),MOCK_FAIL=fail,MOCK_CACHE=cache)
@@ -47,6 +50,15 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
    calls=[json.loads(line) for line in (root/'log').read_text().splitlines()]
    times={p.name:dict((f[0],int(f[2])) for line in p.read_text().splitlines() for f in [line.split('\t')]) for p in (work/'results').glob('timing-*.tsv')}
    return result,calls,times
+ def test_fixture_interpreter_ignores_lane_python_caches_but_records_environment(self):
+  result,calls,_=self.invoke()
+  self.assertEqual(result.returncode,0,result.stderr)
+  self.assertTrue(calls)
+  self.assertTrue(all(c['isolated']==1 for c in calls))
+  lane_calls=[c for c in calls if c['cmd'] in ('pnpm','bun')]
+  self.assertTrue(lane_calls)
+  self.assertTrue(all(c['pythoncache'].endswith('/cache/'+Path(c['cwd']).name+'/python') for c in lane_calls))
+
  def test_all_inner_phases_native_pg_and_four_cold_installs(self):
   result,calls,times=self.invoke();self.assertEqual(result.returncode,0,result.stderr)
   for lane,phases in PHASES.items():
