@@ -96,6 +96,8 @@ export function useCanonicalChatRouteController({
     ids: [],
   });
   const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
+  // What a send belongs to: hiding the view keeps a send under way, so the Chat it makes is still shown and reported.
+  const sendScopeRef = useRef({});
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
   // Keep the stream checkpoint synchronous. React may defer/replay a state
@@ -199,6 +201,7 @@ export function useCanonicalChatRouteController({
       || previousScope.client !== client
       || previousScope.projectId !== projectId;
     routeScopeRef.current = { active, client, projectId };
+    if (previousScope?.client !== client || previousScope.projectId !== projectId) sendScopeRef.current = {};
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
@@ -436,11 +439,10 @@ export function useCanonicalChatRouteController({
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
   ) => {
-    const routeScope = routeScopeRef.current;
+    const sendScope = sendScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
-      && activeChatIdRef.current === selectedChatId);
-    if (!isCurrentScope()) return null;
+    const isCurrentScope = () => sendScopeRef.current === sendScope && activeChatIdRef.current === selectedChatId;
+    if (!routeScopeRef.current?.active || !isCurrentScope()) return null;
     try {
       let current = detail;
       if (!current) {

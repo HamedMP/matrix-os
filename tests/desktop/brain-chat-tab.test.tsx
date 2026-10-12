@@ -211,6 +211,38 @@ describe("Company Brain chat in Electron Desktop", () => {
     await waitFor(() => expect(loads()).toBe(2));
   });
 
+  it("keeps the thread a first send made while the window was hidden, and shows it when the window comes back", async () => {
+    runtime.client = brainClient();
+    const client = runtime.client as CanonicalChatClient;
+    let admit!: () => void;
+    vi.mocked(client.admitTurn).mockReturnValueOnce(new Promise((resolve) => {
+      admit = () => resolve({ record: canonicalChatRecord, message: snapshot.messages[0]!, turn: snapshot.turns[0]!,
+        run: snapshot.runs[0]!, admission: "accepted" });
+    }));
+    useConnection.setState({ api: fakeApi() });
+    const slot = slotFor(null);
+    function Slot({ live }: { live: boolean }) {
+      const host = useDesktopBrainChatHost(live);
+      return host ? <>{host.render(slot)}</> : null;
+    }
+    // As DesktopBrainView: the tab's runtime and its chat stream run only while the Brain window is shown.
+    const view = (live: boolean) => <WorkSurfaceRuntimeProvider active={live}><Slot live={live} /></WorkSurfaceRuntimeProvider>;
+    const { rerender } = render(view(true));
+    expect(await screen.findByRole("heading", { name: "Ask about matrix-os" })).toBeTruthy();
+    await send("What changed this week?");
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(created.chat.id, expect.anything(), expect.anything()));
+
+    // Minimized while the first turn is on its way: its answer still belongs to the thread it made.
+    rerender(view(false));
+    await act(async () => { admit(); });
+    await waitFor(() => expect(slot.onChatChanged).toHaveBeenCalledWith(canonicalChatRecord.chat.id, canonicalChatRecord.chat.title));
+    rerender(view(true));
+    expect((await screen.findByRole("textbox", { name: "Reply to chat" })).textContent).toBe("");
+    expect(await screen.findByText("Build the canonical Chat contract.")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Ask about matrix-os" })).toBeNull();
+    expect(slot.createChat).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a refused first question in the composer with the reason, then sends it into the thread", async () => {
     runtime.client = brainClient();
     const client = runtime.client as CanonicalChatClient;
