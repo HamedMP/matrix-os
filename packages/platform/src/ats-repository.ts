@@ -249,6 +249,7 @@ export async function updateAtsApplicationMetadata(
   input: {
     applicationId: string;
     baseRevision: number;
+    roleSlug?: string;
     ownerId: string | null;
     tags: string[];
     nextActionAt: string | null;
@@ -260,6 +261,7 @@ export async function updateAtsApplicationMetadata(
   return db.transaction(async (trx) => {
     await requireAtsApplication(trx, input.applicationId);
     const updated = await trx.executor.updateTable('ats_applications').set({
+      ...(input.roleSlug ? { role_slug: input.roleSlug } : {}),
       owner_id: input.ownerId,
       tags: JSON.stringify(input.tags),
       next_action_at: input.nextActionAt,
@@ -275,7 +277,9 @@ export async function updateAtsApplicationMetadata(
       applicationId: input.applicationId,
       eventType: 'application_metadata_updated',
       actorId: input.actorId,
-      detail: { ownerId: input.ownerId, tags: input.tags, nextActionAt: input.nextActionAt },
+      detail: { ownerId: input.ownerId, tags: input.tags, nextActionAt: input.nextActionAt,
+        ...(input.roleSlug ? { roleSlug: input.roleSlug } : {}),
+      },
       at: input.at,
     });
     return mapApplication(updated);
