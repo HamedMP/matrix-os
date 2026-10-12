@@ -6,7 +6,7 @@ import { CanvasToolbar } from "../../shell/src/components/canvas/CanvasToolbar.j
 import { useDotGrid } from "../../shell/src/components/DotGrid.js";
 import { useCanvasLabels } from "../../shell/src/stores/canvas-labels.js";
 import { useCanvasSettings } from "../../shell/src/stores/canvas-settings.js";
-import { useCanvasTransform } from "../../shell/src/hooks/useCanvasTransform.js";
+import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from "../../shell/src/hooks/useCanvasTransform.js";
 import { useDesktopMode } from "../../shell/src/stores/desktop-mode.js";
 import { useWindowManager } from "../../shell/src/hooks/useWindowManager.js";
 
@@ -69,6 +69,36 @@ describe("responsive CanvasToolbar", () => {
     expect(screen.getByTestId("compact-canvas-actions").className).toContain("lg:hidden");
   });
 
+  it("wires zoom buttons, reset, slider and fit-all to the transform store", () => {
+    useWindowManager.getState().openWindow("A", "apps/a.html", 0);
+    render(<CanvasToolbar />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(useCanvasTransform.getState().zoom).toBeCloseTo(1 + ZOOM_STEP);
+    fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    expect(useCanvasTransform.getState().zoom).toBeCloseTo(1);
+
+    const slider = screen.getByRole("slider", { name: "Zoom level" });
+    expect(slider.getAttribute("min")).toBe(String(ZOOM_MIN));
+    expect(slider.getAttribute("max")).toBe(String(ZOOM_MAX));
+    fireEvent.change(slider, { target: { value: "0.5" } });
+    expect(useCanvasTransform.getState().zoom).toBe(0.5);
+    fireEvent.click(screen.getByRole("button", { name: "Reset zoom to 100%" }));
+    expect(useCanvasTransform.getState().zoom).toBe(1);
+
+    fireEvent.change(slider, { target: { value: "2.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Fit all" }));
+    expect(useCanvasTransform.getState().zoom).not.toBe(2.5);
+  });
+
+  it.each([
+    [1, "100%"], [0.5, "50%"], [2, "200%"], [0.1, "10%"], [3, "300%"],
+  ])("renders zoom %s as %s in the actual toolbar", (zoom, label) => {
+    useCanvasTransform.setState({ zoom });
+    render(<CanvasToolbar />);
+    expect(screen.getByRole("button", { name: "Reset zoom to 100%" }).textContent).toBe(label);
+  });
+
   it("shows the desktop by leaving fullscreen and minimizing every open window without closing it", () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     useDesktopMode.setState({ mode: "canvas" });
@@ -115,5 +145,37 @@ describe("responsive CanvasToolbar", () => {
 
     menu = await openCanvasControls();
     expect(within(menu).getByRole("menuitemcheckbox", { name: "Show app titles" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  describe("window geometry and fit-all", () => {
+    it("fits all windows into viewport", () => {
+      useWindowManager.getState().openWindow("A", "apps/a.html", 0);
+      useWindowManager.getState().openWindow("B", "apps/b.html", 0);
+      const [w1, w2] = useWindowManager.getState().windows;
+      useWindowManager.getState().moveWindow(w1.id, 0, 0);
+      useWindowManager.getState().moveWindow(w2.id, 2000, 1500);
+
+      const windows = useWindowManager.getState().windows;
+      useCanvasTransform.getState().fitAll(
+        windows.map((w) => ({ x: w.x, y: w.y, width: w.width, height: w.height })),
+        1920,
+        1080,
+      );
+
+      const { zoom, panX, panY } = useCanvasTransform.getState();
+      expect(zoom).toBeGreaterThan(0);
+      expect(zoom).toBeLessThanOrEqual(ZOOM_MAX);
+      // Pan should center the content
+      expect(panX).toBeDefined();
+      expect(panY).toBeDefined();
+    });
+
+    it("resets to 1:1 when no windows", () => {
+      useCanvasTransform.getState().fitAll([], 1920, 1080);
+      const { zoom, panX, panY } = useCanvasTransform.getState();
+      expect(zoom).toBe(1);
+      expect(panX).toBe(0);
+      expect(panY).toBe(0);
+    });
   });
 });

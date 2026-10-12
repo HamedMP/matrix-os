@@ -1,0 +1,457 @@
+{
+  "baseCommit": "11945b124f0c4c17d91769d95c88afe3463f9ace",
+  "environment": {
+    "node": "24.13.1",
+    "pnpm": "10.33.4",
+    "vitest": "4.0.18",
+    "platform": "macOS arm64",
+    "workers": 2,
+    "isolation": "unchanged default",
+    "testTimeoutMs": 20000,
+    "hookTimeoutMs": 60000,
+    "nativeFixtureSetup": "Node 24 locked-version native fixture binary verified in a private worktree copy; the shared dependency store was not modified."
+  },
+  "sourceContractBenchmark": {
+    "command": "pnpm exec vitest run <listed variant files> --reporter=json --outputFile=<report>",
+    "beforeFiles": [
+      "tests/shell/terminal-font-css.test.ts",
+      "tests/shell/font-preload-policy.test.ts",
+      "tests/shell/shell-local-fonts.test.ts",
+      "tests/shell/design-tooltip-css.test.ts",
+      "tests/shell/windows-taskbar-css.test.ts",
+      "tests/default-apps/design-refresh-layout.test.ts",
+      "tests/default-apps/sculpted-icon-identities.test.ts",
+      "tests/default-apps/gallery-vector-artwork.test.ts",
+      "tests/default-apps/bundled-brand-review-regressions.test.ts",
+      "tests/observability/posthog-logship.test.ts",
+      "tests/observability/process-error-entrypoints.test.ts",
+      "tests/observability/cloudflared-ingress.test.ts",
+      "tests/observability/promtail-client-errors.test.ts",
+      "tests/platform/golden-snapshot-dev-gate.test.ts",
+      "tests/platform/golden-snapshot-builder-wiring.test.ts"
+    ],
+    "afterFiles": [
+      "tests/shell/font-source-contracts.test.ts",
+      "tests/shell/chrome-style-source-contracts.test.ts",
+      "tests/default-apps/brand-source-contracts.test.ts",
+      "tests/observability/deployment-source-contracts.test.ts",
+      "tests/platform/golden-snapshot-wiring-contracts.test.ts"
+    ],
+    "passedTestsPerRun": 85,
+    "beforeMedianWallSeconds": 1.148614,
+    "afterMedianWallSeconds": 0.736665,
+    "medianReductionSeconds": 0.411949,
+    "medianReductionPercent": 35.865,
+    "runs": [
+      {
+        "pair": 1,
+        "variant": "before",
+        "wallSeconds": 1.2768205420579761,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 15
+      },
+      {
+        "pair": 1,
+        "variant": "after",
+        "wallSeconds": 0.7366648750612512,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 5
+      },
+      {
+        "pair": 2,
+        "variant": "after",
+        "wallSeconds": 0.7547011249698699,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 5
+      },
+      {
+        "pair": 2,
+        "variant": "before",
+        "wallSeconds": 1.213738040998578,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 15
+      },
+      {
+        "pair": 3,
+        "variant": "before",
+        "wallSeconds": 1.148613875033334,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 15
+      },
+      {
+        "pair": 3,
+        "variant": "after",
+        "wallSeconds": 0.6868208340601996,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 5
+      },
+      {
+        "pair": 4,
+        "variant": "after",
+        "wallSeconds": 0.7318880410166457,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 5
+      },
+      {
+        "pair": 4,
+        "variant": "before",
+        "wallSeconds": 1.1213503329781815,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 15
+      },
+      {
+        "pair": 5,
+        "variant": "before",
+        "wallSeconds": 1.1417570000048727,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 15
+      },
+      {
+        "pair": 5,
+        "variant": "after",
+        "wallSeconds": 0.7397418329492211,
+        "exitCode": 0,
+        "passedTests": 85,
+        "failedTests": 0,
+        "files": 5
+      }
+    ]
+  },
+  "retention": {
+    "consolidated": [
+      {
+        "from": "tests/shell/terminal-font-css.test.ts",
+        "to": "tests/shell/font-source-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "7eeda9b6f271db9207e29a1cbfd2fae052c4cb0699dc68fca04ccb70677d3f02",
+        "retainedAstSha256": "7eeda9b6f271db9207e29a1cbfd2fae052c4cb0699dc68fca04ccb70677d3f02",
+        "expandedTests": 1
+      },
+      {
+        "from": "tests/shell/font-preload-policy.test.ts",
+        "to": "tests/shell/font-source-contracts.test.ts",
+        "retainedStatements": 5,
+        "originalAstSha256": "1d95ac0d2f997e420aea28c6b854466b6053d3c4450ebe6b64fb0bfaf0b7a8a2",
+        "retainedAstSha256": "1d95ac0d2f997e420aea28c6b854466b6053d3c4450ebe6b64fb0bfaf0b7a8a2",
+        "expandedTests": 12
+      },
+      {
+        "from": "tests/shell/shell-local-fonts.test.ts",
+        "to": "tests/shell/font-source-contracts.test.ts",
+        "retainedStatements": 3,
+        "originalAstSha256": "0bf2366bb38c454b5391517e91e8204caf48d675121d4b36618111f924445e8e",
+        "retainedAstSha256": "0bf2366bb38c454b5391517e91e8204caf48d675121d4b36618111f924445e8e",
+        "expandedTests": 11
+      },
+      {
+        "from": "tests/shell/design-tooltip-css.test.ts",
+        "to": "tests/shell/chrome-style-source-contracts.test.ts",
+        "retainedStatements": 2,
+        "originalAstSha256": "695a8bdfe20bdec93fc67b897f9f2040c8640d809f09428c97dee801777b78cb",
+        "retainedAstSha256": "695a8bdfe20bdec93fc67b897f9f2040c8640d809f09428c97dee801777b78cb",
+        "expandedTests": 1
+      },
+      {
+        "from": "tests/shell/windows-taskbar-css.test.ts",
+        "to": "tests/shell/chrome-style-source-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "b2482b3b32e6be83829a3a43fb1f1b4f078311922638242e03a371adda4fe54c",
+        "retainedAstSha256": "b2482b3b32e6be83829a3a43fb1f1b4f078311922638242e03a371adda4fe54c",
+        "expandedTests": 2
+      },
+      {
+        "from": "tests/default-apps/design-refresh-layout.test.ts",
+        "to": "tests/default-apps/brand-source-contracts.test.ts",
+        "retainedStatements": 2,
+        "originalAstSha256": "2e034cfd3e889b57aec94a51398e9615e3d68844ba0deb0a1ba71f6a77721734",
+        "retainedAstSha256": "2e034cfd3e889b57aec94a51398e9615e3d68844ba0deb0a1ba71f6a77721734",
+        "expandedTests": 7
+      },
+      {
+        "from": "tests/default-apps/sculpted-icon-identities.test.ts",
+        "to": "tests/default-apps/brand-source-contracts.test.ts",
+        "retainedStatements": 2,
+        "originalAstSha256": "db151cb92c7f1656bfccf2d1c2c943ef163af590b6d11381ef62e101e7faa672",
+        "retainedAstSha256": "db151cb92c7f1656bfccf2d1c2c943ef163af590b6d11381ef62e101e7faa672",
+        "expandedTests": 7
+      },
+      {
+        "from": "tests/default-apps/gallery-vector-artwork.test.ts",
+        "to": "tests/default-apps/brand-source-contracts.test.ts",
+        "retainedStatements": 4,
+        "originalAstSha256": "81c472b7ce79730ae86a803c37598a95ce014ed0e9a8db4d3b25fb8d8d0ea6b7",
+        "retainedAstSha256": "81c472b7ce79730ae86a803c37598a95ce014ed0e9a8db4d3b25fb8d8d0ea6b7",
+        "expandedTests": 26
+      },
+      {
+        "from": "tests/default-apps/bundled-brand-review-regressions.test.ts",
+        "to": "tests/default-apps/brand-source-contracts.test.ts",
+        "retainedStatements": 3,
+        "originalAstSha256": "9dd0ce61c982d7edf9abf701ed185ece54cf13cc8ca2e965fdc31637f014a42a",
+        "retainedAstSha256": "9dd0ce61c982d7edf9abf701ed185ece54cf13cc8ca2e965fdc31637f014a42a",
+        "expandedTests": 5
+      },
+      {
+        "from": "tests/observability/posthog-logship.test.ts",
+        "to": "tests/observability/deployment-source-contracts.test.ts",
+        "retainedStatements": 3,
+        "originalAstSha256": "5c6233baed5f82d1da497ff0fb3c225a702e0c5eaa20df31a9f3af9aedd54920",
+        "retainedAstSha256": "5c6233baed5f82d1da497ff0fb3c225a702e0c5eaa20df31a9f3af9aedd54920",
+        "expandedTests": 3
+      },
+      {
+        "from": "tests/observability/process-error-entrypoints.test.ts",
+        "to": "tests/observability/deployment-source-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "6443c72f85670e0d433614b0dbf8b943e8f6383a117c4d386e46af536bc0b413",
+        "retainedAstSha256": "6443c72f85670e0d433614b0dbf8b943e8f6383a117c4d386e46af536bc0b413",
+        "expandedTests": 1
+      },
+      {
+        "from": "tests/observability/cloudflared-ingress.test.ts",
+        "to": "tests/observability/deployment-source-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "4b281e8f750985ac6f04a2f21523550520eb02d24764b7b52c1937435dfedfdb",
+        "retainedAstSha256": "4b281e8f750985ac6f04a2f21523550520eb02d24764b7b52c1937435dfedfdb",
+        "expandedTests": 1
+      },
+      {
+        "from": "tests/observability/promtail-client-errors.test.ts",
+        "to": "tests/observability/deployment-source-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "87777f229e3826fb1971890d427b74f166f1ceae16c168c41312a6689994dd30",
+        "retainedAstSha256": "87777f229e3826fb1971890d427b74f166f1ceae16c168c41312a6689994dd30",
+        "expandedTests": 3
+      },
+      {
+        "from": "tests/platform/golden-snapshot-dev-gate.test.ts",
+        "to": "tests/platform/golden-snapshot-wiring-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "0e2b7114c60d237845ebfb499efc79608aab9fa90ea86a28f5c3ef5bf4591fc0",
+        "retainedAstSha256": "0e2b7114c60d237845ebfb499efc79608aab9fa90ea86a28f5c3ef5bf4591fc0",
+        "expandedTests": 2
+      },
+      {
+        "from": "tests/platform/golden-snapshot-builder-wiring.test.ts",
+        "to": "tests/platform/golden-snapshot-wiring-contracts.test.ts",
+        "retainedStatements": 1,
+        "originalAstSha256": "98761345daa96cc0a4303521a3f6753ab4b5c17f66f3d4bd220dc2d712e544c3",
+        "retainedAstSha256": "98761345daa96cc0a4303521a3f6753ab4b5c17f66f3d4bd220dc2d712e544c3",
+        "expandedTests": 3
+      }
+    ],
+    "removedIdenticalWorkflowCase": {
+      "file": "tests/platform/funded-postgres-ci-workflow.test.ts",
+      "retained": "runs pooled custom Bot creation and rollback in the bounded disposable service step",
+      "removed": "executes isolated pre-send races under the disposable PostgreSQL environment",
+      "callbackSha256": "eed5d024f1fe9d4093bdd06c88c51f283ea76c0e4680ec562f4d14c16ec17876"
+    },
+    "retainedCanvasCallbacks": [
+      {
+        "name": "tiles three windows into a pleasant Tetris layout instead of a single strip",
+        "retainedFile": "tests/shell/canvas-auto-arrange.test.ts",
+        "callbackSha256": "70c0149ba3ca7ba58e3bb6502478bc4e52b309e2ef592e7c717efb80df0a25d2"
+      },
+      {
+        "name": "tiles three portrait windows with a wide top slot and two lower slots",
+        "retainedFile": "tests/shell/canvas-auto-arrange.test.ts",
+        "callbackSha256": "c05b49fa827ed611739ca7b1a2a7f9707ed21611880877598a6cfe75116d7882"
+      },
+      {
+        "name": "uses a compact square grid for four windows",
+        "retainedFile": "tests/shell/canvas-auto-arrange.test.ts",
+        "callbackSha256": "40dcb5911e981e36e5374bd782d1b5f51e9b0e43ec2c1d19f2d682d37378a731"
+      },
+      {
+        "name": "centers incomplete rows in larger tiled grids",
+        "retainedFile": "tests/shell/canvas-auto-arrange.test.ts",
+        "callbackSha256": "1039668f785075c05b7cb1cac59c03231155bbe2583f99fa2a200edbc060e0d3"
+      },
+      {
+        "name": "fits all windows into viewport",
+        "retainedFile": "tests/shell/canvas-toolbar-responsive.test.tsx",
+        "callbackSha256": "ddc31d93888d300cebd93e6a6e085beb82bf783757cb66850c86e7e7c3a983c3"
+      },
+      {
+        "name": "resets to 1:1 when no windows",
+        "retainedFile": "tests/shell/canvas-toolbar-responsive.test.tsx",
+        "callbackSha256": "de20c363aad0da209afdc16aa22b43a8124490f0f03a5d1e1d71e8b4fcc0197e"
+      }
+    ]
+  },
+  "focusedValidation": {
+    "before": {
+      "files": 21,
+      "passedTests": 156,
+      "failedTests": 0,
+      "repetitions": 3
+    },
+    "after": {
+      "files": 11,
+      "passedTests": 150,
+      "failedTests": 0,
+      "repetitions": 3
+    },
+    "removedCases": 12,
+    "addedRealToolbarCases": 6
+  },
+  "canvasExecutionCoverage": {
+    "files": [
+      {
+        "file": "shell/src/components/canvas/CanvasToolbar.tsx",
+        "statements": {
+          "beforeCovered": 43,
+          "afterCovered": 50,
+          "lost": 0
+        },
+        "functions": {
+          "beforeCovered": 19,
+          "afterCovered": 24,
+          "lost": 0
+        },
+        "branchArms": {
+          "beforeCovered": 15,
+          "afterCovered": 17,
+          "lost": 0
+        }
+      },
+      {
+        "file": "shell/src/components/canvas/canvas-auto-arrange.ts",
+        "statements": {
+          "beforeCovered": 73,
+          "afterCovered": 73,
+          "lost": 0
+        },
+        "functions": {
+          "beforeCovered": 15,
+          "afterCovered": 15,
+          "lost": 0
+        },
+        "branchArms": {
+          "beforeCovered": 22,
+          "afterCovered": 22,
+          "lost": 0
+        }
+      },
+      {
+        "file": "shell/src/hooks/useCanvasTransform.ts",
+        "statements": {
+          "beforeCovered": 75,
+          "afterCovered": 75,
+          "lost": 0
+        },
+        "functions": {
+          "beforeCovered": 21,
+          "afterCovered": 21,
+          "lost": 0
+        },
+        "branchArms": {
+          "beforeCovered": 19,
+          "afterCovered": 19,
+          "lost": 0
+        }
+      }
+    ],
+    "comparison": "No previously covered V8 statement/function/branch arm was lost. Source files unchanged.",
+    "thresholdResult": "Both partial coverage runs hit unchanged global thresholds; neither is a passing full coverage gate."
+  },
+  "limitations": [
+    "Local focused timings are not hosted full-shard CI timings.",
+    "The subset coverage comparison is regression-retention evidence, not overall 99% coverage certification.",
+    "Heavyweight auth/concurrency/integration/end-to-end and source-provenance suites remain."
+  ],
+  "broadLocalDiagnostic": {
+    "status": "incomplete, normally SIGTERM-terminated after unrelated baseline fixture failures",
+    "completedFileEntries": 467,
+    "reportedPassedCases": 11993,
+    "reportedFailedCases": 39,
+    "reportedSkippedCases": 215,
+    "unchangedFailedSuites": [
+      {
+        "file": "tests/platform/golden-snapshot-host-scripts.test.ts",
+        "cases": 36,
+        "failures": 2,
+        "unchangedBaselineSha256": "b5a2af814c4b9e5a96ede1a9582da9824a4c8f1cb755efc39042321882f94878"
+      },
+      {
+        "file": "tests/gateway/session-registry.test.ts",
+        "cases": 53,
+        "failures": 22,
+        "unchangedBaselineSha256": "3ba8b8d3a1389a2725d5c1d2926baf1f90f13e492145adea433d18c3564a343b"
+      },
+      {
+        "file": "tests/platform/preview-collaboration-workflows.test.ts",
+        "cases": 27,
+        "failures": 2,
+        "unchangedBaselineSha256": "d0fbe4d164ef42182fd9dccf9afa37e8829b787d00dcf86bd52de9ba23979aa2"
+      },
+      {
+        "file": "tests/gateway/terminal-workspace-routes.test.ts",
+        "cases": 17,
+        "failures": 2,
+        "unchangedBaselineSha256": "f6c97b8dad75af2c945be60b4c439833fbe391f1f97d6d2de10d7b86d5d5c9a1"
+      },
+      {
+        "file": "tests/deploy/customer-vps/symphony-decommission.test.ts",
+        "cases": 15,
+        "failures": 4,
+        "unchangedBaselineSha256": "0fc2b4ed821595c88993067e32d71fc4726c7685ef2c14da8ddf3ae3951361b5"
+      },
+      {
+        "file": "tests/platform/customer-vps-update-manifest-trust.test.ts",
+        "cases": 17,
+        "failures": 5,
+        "unchangedBaselineSha256": "6fcca84fdc6914e7de9a258d78ad2600a7c48956ffa6e8225233361c92b1bff1"
+      },
+      {
+        "file": "tests/platform/private-preview-workflow.test.ts",
+        "cases": 31,
+        "failures": 2,
+        "unchangedBaselineSha256": "3d2a9b744535f0749bada93b63198e1d279fab841515dc4429228deebeb7b128"
+      }
+    ],
+    "productionAndFixtureHelperDiff": "No production source, workflow, script or fixture helper edits. All seven failed test files match the base commit byte for byte.",
+    "qualification": "Not a passing full unit or hosted CI gate."
+  },
+  "baselineFixtureRecheck": {
+    "passed": 194,
+    "failed": 2,
+    "skipped": 0,
+    "remainingFailures": [
+      {
+        "file": "tests/gateway/terminal-workspace-routes.test.ts",
+        "test": "expires stale terminal paste assets before retaining a new upload"
+      },
+      {
+        "file": "tests/gateway/terminal-workspace-routes.test.ts",
+        "test": "runs recurring paste cleanup without overlap and clears its timer on close"
+      }
+    ],
+    "environmentRepair": "GNU coreutils and isolated Python with cryptography on PATH; pre-existing shared test-home moved aside and restored unchanged; worktree-private Node 24 native fixture binary.",
+    "sourceProof": "Seven selected test files, their production sources, workflow/script dependencies and fixture helpers remain unchanged from base."
+  },
+  "finalFocusedGate": {
+    "command": "bun run test <all 11 affected and adjacent files> --reporter=json --outputFile=<report>",
+    "passed": 150,
+    "failed": 0,
+    "skipped": 0
+  }
+}
