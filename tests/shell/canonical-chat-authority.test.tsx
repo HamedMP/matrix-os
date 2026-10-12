@@ -36,6 +36,7 @@ beforeEach(async () => {
     agents: { list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_one", name: "Private Bot", recipeRef: {} }] })), bots: {
       directChat: vi.fn(async () => "chat_bot"), directBot: vi.fn(async () => null), tasks: vi.fn(async () => []),
       interactions: vi.fn(async () => [{ kind: "approval", status: "pending", expiresAt: "2099-01-01T00:00:00Z" }]),
+      threads: { list: vi.fn(async () => ({ items: [] })), create: vi.fn(async () => detail().record) },
     } } as unknown as ChatAgentClient,
   } as CanonicalShellChatClient;
 });
@@ -161,6 +162,25 @@ it("rejects a late summary library result before it can populate the old cache a
   });
   await expect(prior.list()).rejects.toThrow("ChatAuthorityChanged");
   expect(state.client.agents!.list).toHaveBeenCalledTimes(1);
+});
+
+it("fences a late Bot thread list like the other Bot reads, and keeps thread create on the action client", async () => {
+  const threads = state.client.agents!.bots!.threads;
+  const pending = deferred<Awaited<ReturnType<typeof threads.list>>>();
+  vi.mocked(threads.list).mockImplementationOnce(() => pending.promise);
+  const hook = mount();
+  const prior = hook.result.current.agentSummaryClient!;
+  expect(prior.bots!.threads.create).toBe(threads.create);
+  const input = { projectId: "proj_same" };
+  const result = prior.bots!.threads.list("bot_one", input).catch((error: unknown) => error);
+  await act(async () => {
+    state.store.revoke(); await state.store.refresh();
+    pending.resolve({ items: [detail("Late private thread").record] });
+    expect(await result).toEqual(new Error("ChatAuthorityChanged"));
+  });
+  await expect(prior.bots!.threads.list("bot_one", input)).rejects.toThrow("ChatAuthorityChanged");
+  expect(threads.list).toHaveBeenCalledTimes(1);
+  await expect(hook.result.current.agentSummaryClient!.bots!.threads.list("bot_one", input)).resolves.toEqual({ items: [] });
 });
 
 it.each(["approval", "input", "queue", "cancel"])("does not publish a late %s failure or reload recovered detail", async operation => {

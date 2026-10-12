@@ -30,6 +30,8 @@ export interface BrainChatHost {
   readonly openInChat?: (chatId: string) => void;
   /** Rename and delete a past brain chat over the normal Chat routes; without them the rows only open. */
   readonly rows?: BrainChatRowActions;
+  /** Who the chat client speaks for (owner, session, epoch); a new value reads the Bot, list and open chat again. */
+  readonly authorityKey?: string;
 }
 
 export interface BrainChatSlot {
@@ -112,16 +114,24 @@ function useDraftNotice(api: BrainShellClient, projectId: string, onOpenSources:
   return null;
 }
 
+type Starting = "idle" | "busy" | "failed";
+
 function BrainChatBot({ host, ...props }: BotProps) {
-  const bot = useBrainLoad(() => findCompanyBrainBot(host.agents), "bot");
-  const [starting, setStarting] = useState<"idle" | "busy" | "failed">("idle");
+  const botKey = `bot:${host.authorityKey ?? ""}`;
+  const bot = useBrainLoad(() => findCompanyBrainBot(host.agents), botKey);
+  // A Start belongs to the authority it was pressed under: another one shows the card afresh, and a Start that settles
+  // after the authority changed leaves the new card alone.
+  const [started, setStarted] = useState<{ readonly key: string; readonly value: Starting }>({ key: botKey, value: "idle" });
+  const starting = started.key === botKey ? started.value : "idle";
   const start = () => {
-    setStarting("busy");
+    const key = botKey;
+    const set = (value: Starting) => setStarted((previous) => (previous.key === key ? { key, value } : previous));
+    setStarted({ key, value: "busy" });
     createCompanyBrainBot(host.agents).then(
-      (state) => { setStarting("idle"); bot.replace(state); },
+      (state) => { set("idle"); bot.replace(state); },
       (error: unknown) => {
         console.warn("[brain] chat setup failed", error instanceof Error ? error.name : typeof error);
-        setStarting("failed");
+        set("failed");
       },
     );
   };
@@ -139,7 +149,7 @@ function BrainChatBot({ host, ...props }: BotProps) {
 }
 
 function BrainChatState({ state, starting, onStart, ...props }: BotProps & {
-  readonly state: CompanyBrainBotState; readonly starting: "idle" | "busy" | "failed"; readonly onStart: () => void;
+  readonly state: CompanyBrainBotState; readonly starting: Starting; readonly onStart: () => void;
 }) {
   switch (state.kind) {
     case "unavailable": return <ChatNotice text={NOT_RUNNING} onOpenSearch={props.onOpenSearch} />;
@@ -149,7 +159,7 @@ function BrainChatState({ state, starting, onStart, ...props }: BotProps & {
   }
 }
 
-function BrainChatSetup({ starting, onStart }: { readonly starting: "idle" | "busy" | "failed"; readonly onStart: () => void }) {
+function BrainChatSetup({ starting, onStart }: { readonly starting: Starting; readonly onStart: () => void }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className={`m-4 grid max-w-lg gap-3 rounded-xl border p-4 ${BRAIN_TONE.border}`}>
@@ -203,7 +213,7 @@ function useFirstPick(threads: BrainThreads, projectId: string, choosing: boolea
  * first pick included. A new slot number remounts the surface's chat view; a draft that becomes a thread keeps it.
  */
 function useBrainChatSlot(host: BrainChatHost, botId: string, projectId: string, threads: BrainThreads) {
-  const key = `${botId}:${projectId}`;
+  const key = `${host.authorityKey ?? ""}:${botId}:${projectId}`;
   const [opened, setOpened] = useState<Opened | null>(null);
   // One thread per draft: a second call for the same draft gets the same answer, and a send after a failure keeps the
   // draft's first request id, so a thread saved before its answer was lost is replayed, not made twice.
@@ -288,7 +298,7 @@ function withEdit(
 function BrainChatThreads({
   host, api, botId, projectId, projectName, onOpenSearch, onOpenSources,
 }: BotProps & { readonly botId: string }) {
-  const threads = useBrainThreads(host.agents, botId, projectId);
+  const threads = useBrainThreads(host.agents, botId, projectId, host.authorityKey);
   const draftNotice = useDraftNotice(api, projectId, onOpenSources);
   const { key, current, open, closeDeleted, createChat, onChatChanged } = useBrainChatSlot(host, botId, projectId, threads);
   const [listOpen, setListOpen] = useState(false);

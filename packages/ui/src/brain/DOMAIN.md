@@ -76,10 +76,12 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   `BrainShellErrorState`, `BrainShellScreen`, `BrainShellScreenId`, `BrainProjectOption`, `BrainChatHost` and
   `BrainChatSlot`. Other files of this folder are internal.
 - `BrainChatHost` is what a surface lends the Chat tab: its Chat Agents client, `render(slot)` for its own chat view,
-  `openInChat`, and `rows` (rename, which sends the row's title version and may answer with the renamed record, delete
-  and the menu layer over its own chat client). The slot carries the project, the Bot, the Chat (or null for a draft),
-  the empty chat's heading and line, `createChat` (the first send of a draft) and `onChatChanged` (called by the view
-  after every admitted turn). Without a host the tab says chat is not available here and offers Search.
+  `openInChat`, `rows` (rename, which sends the row's title version and may answer with the renamed record, delete
+  and the menu layer over its own chat client) and `authorityKey` (who that client speaks for: a new one reads the Bot,
+  the list and the open chat again and shows nothing read before, a Start pressed before included). The slot carries
+  the project, the Bot, the Chat (or null for a draft), the empty chat's heading and line, `createChat` (the first send
+  of a draft) and `onChatChanged` (called by the view after every admitted turn). Without a host the tab says chat is
+  not available here and offers Search.
 - `BrainHttpTransport` is four JSON calls (`get`, `post`, `patch`, `delete`) with a per-call `timeoutMs`. A failed
   call rejects with an `Error` that has `category` (`unauthorized`, `offline`, `timeout`, `notFound` or `server`) and
   may have `detail`, a lower_snake gateway code. Anything else (another category, a plain `Error`) reads as

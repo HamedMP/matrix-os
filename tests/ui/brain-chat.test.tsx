@@ -70,6 +70,16 @@ function renderChat(host: BrainChatHost, api = chatApi()) {
   return render(<BrainApp api={api} loadProjects={async () => PROJECTS} chat={host} showHeading={false} />);
 }
 
+/** Renders the chat lent under one authority; the returned call lends the same host again under `next`. */
+function renderUnder(host: BrainChatHost, authorityKey: string) {
+  const api = chatApi();
+  const app = (key: string) => (
+    <BrainApp api={api} loadProjects={async () => PROJECTS} chat={{ ...host, authorityKey: key }} showHeading={false} />
+  );
+  const { rerender } = render(app(authorityKey));
+  return (next: string) => rerender(app(next));
+}
+
 beforeEach(() => {
   vi.spyOn(Date, "now").mockReturnValue(NOW);
   window.localStorage.clear();
@@ -508,6 +518,60 @@ describe("Brain chat tab", () => {
     // Once a source is there, focus leaves the draft alone.
     await act(async () => { window.dispatchEvent(new Event("focus")); });
     expect(api.sources).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads the Bot, the list and the open chat again under a new authority, showing nothing read before", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [thread("chat_a", "Owner question")] }) });
+    const lend = renderUnder(fakeHost(agents.client).host, "owner/epoch0");
+    const before = await screen.findByTestId("chat-view");
+    expect(before).toHaveTextContent("chat_a");
+    // The same authority lent again reads nothing again and keeps the open chat's view.
+    lend("owner/epoch0");
+    expect(screen.getByTestId("chat-view")).toBe(before);
+    expect(agents.list).toHaveBeenCalledTimes(1);
+    expect(agents.threads.list).toHaveBeenCalledTimes(1);
+
+    let answerOld: (value: unknown) => void = () => undefined;
+    agents.threads.list.mockImplementationOnce(() => new Promise((resolve) => { answerOld = resolve; }));
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(2));
+    let answerBot: (value: { enabled: boolean; agents: unknown[] }) => void = () => undefined;
+    agents.list.mockImplementationOnce(() => new Promise((resolve) => { answerBot = resolve; }));
+    agents.threads.list.mockResolvedValue({ items: [thread("chat_b", "Recovered question")] });
+    lend("owner/epoch1");
+    expect(screen.getByRole("status")).toHaveTextContent("Opening the brain chat...");
+    expect(screen.queryByText("Owner question")).toBeNull();
+    expect(screen.queryByTestId("chat-view")).toBeNull();
+    // A list read under the old authority that answers late never shows under the new one.
+    await act(async () => {
+      answerOld({ items: [thread("chat_late", "Late owner question")] });
+      answerBot({ enabled: true, agents: [brainBot()] });
+    });
+    const after = await screen.findByTestId("chat-view");
+    expect(after).toHaveTextContent("chat_b");
+    expect(after).not.toBe(before);
+    expect(screen.getByRole("button", { name: /Recovered question/ })).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByText("Owner question")).toBeNull();
+    expect(screen.queryByText("Late owner question")).toBeNull();
+    expect(agents.list).toHaveBeenCalledTimes(2);
+    expect(agents.threads.list).toHaveBeenCalledTimes(3);
+  });
+
+  it("shows the Start card afresh under a new authority, and a Start pressed before leaves it alone", async () => {
+    const agents = fakeAgents({ agents: [] });
+    let failOld: (error: Error) => void = () => undefined;
+    agents.bots.instantiate.mockImplementationOnce(() => new Promise((_resolve, reject) => { failOld = reject; }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const lend = renderUnder(fakeHost(agents.client).host, "owner/epoch0");
+    fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(screen.getByRole("button", { name: "Starting..." })).toBeDisabled();
+    await waitFor(() => expect(agents.bots.instantiate).toHaveBeenCalledTimes(1));
+    lend("owner/epoch1");
+    expect(await screen.findByRole("button", { name: "Start" })).toBeEnabled();
+    await act(async () => { failOld(new Error("offline")); });
+    expect(warn).toHaveBeenCalledWith("[brain] chat setup failed", "Error");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
   });
 
   it("drops a list that answers after a project switch, and folds the list on narrow screens with focus kept", async () => {
