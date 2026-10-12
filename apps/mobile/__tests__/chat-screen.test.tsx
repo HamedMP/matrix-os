@@ -77,7 +77,7 @@ const mockCatalog = {
     models: [{ id: "sonnet", displayName: "Sonnet 5", availability: "available" }],
     options: [{ id: "effort", label: "Effort", kind: "enum", placement: "composer", defaultValue: "medium",
       values: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }] }],
-    supports: { interactionModes: ["default"], permissionModes: ["supervised"] },
+    supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
   }],
 };
 

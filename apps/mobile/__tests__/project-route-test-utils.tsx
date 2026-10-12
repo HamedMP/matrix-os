@@ -130,7 +130,7 @@ export const catalog = {
       { id: "opus", displayName: "Opus 5", availability: "available" },
     ],
     options: [],
-    supports: { interactionModes: ["default"], permissionModes: ["supervised"] },
+    supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
   }],
 };
 

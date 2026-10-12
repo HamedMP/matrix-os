@@ -50,7 +50,7 @@ const catalog = { instances: [{
   id: "codex_default", driverKind: "codex", availability: "available", options: [],
   defaultSelection: { instanceId: "codex_default", model: "gpt-test" },
   models: [{ id: "gpt-test", displayName: "GPT Test", availability: "available" }],
-  supports: { interactionModes: ["default"], permissionModes: ["supervised"] },
+  supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
 }] };
 
 function typeAndSend(text: string) {

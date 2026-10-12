@@ -60,7 +60,7 @@ const mockCatalog = {
     defaultSelection: { instanceId: "matrix_pi_default", model: "sonnet" },
     models: [{ id: "sonnet", displayName: "Sonnet 5", availability: "available" }],
     options: [],
-    supports: { interactionModes: ["default"], permissionModes: ["supervised"] },
+    supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"] },
   }],
 };
 
