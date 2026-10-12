@@ -238,6 +238,7 @@ jobs:
             }
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
+              details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               status: 'completed', conclusion: success ? 'success' : infrastructure ? 'neutral' : 'failure',
               output: {
                 title: success ? 'Isolated Linux suite passed' : infrastructure ? 'Linux infrastructure unavailable; full hosted coverage required' : 'Isolated Linux suite failed',
