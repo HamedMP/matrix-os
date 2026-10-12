@@ -333,6 +333,33 @@ describe("integrations-mcp brain tools", () => {
     } finally { await f.close(); }
   });
 
+  it("answers at the deadline even when the stalled body never finishes cancelling", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+    let waiting!: () => void;
+    const stalled = new Promise<void>((resolve) => { waiting = resolve; });
+    let pulls = 0;
+    // The body stalls on its second pull, as above, and its cancel never settles either.
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"q":')); },
+      pull() { if (++pulls === 2) waiting(); }, cancel,
+    });
+    const f = await connect(() => new Response(body));
+    try {
+      const answer = f.call("brain_search", { project: "p", query: "slow" });
+      await stalled;
+      deadline.abort(new DOMException("The operation timed out.", "TimeoutError"));
+      let timer: NodeJS.Timeout | undefined;
+      const hung = new Promise((resolve) => { timer = setTimeout(() => resolve("still waiting on cancel"), 1_000); });
+      expect(await Promise.race([answer, hung])).toEqual({ text: "Company Brain is temporarily unavailable.", isError: true });
+      clearTimeout(timer);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(error.mock.calls).toEqual([["[brain-read] brain_search failed:", "TimeoutError"]]);
+    } finally { await f.close(); }
+  });
+
   it("ends a call whose transport never answers at the deadline, and cancels the body of a late answer", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const deadline = new AbortController();

@@ -161,7 +161,8 @@ async function readBounded(response: Response, signal: AbortSignal): Promise<str
     }
     return text + decoder.decode();
   } finally {
-    await reader.cancel().catch(cleanupFailed);
+    // Not awaited: a body whose cancel never settles must not hold the answer past the deadline.
+    void reader.cancel().catch(cleanupFailed);
   }
 }
 
