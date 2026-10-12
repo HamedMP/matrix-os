@@ -23,6 +23,31 @@ describe("exact merge revision dedicated qualification evidence",()=>{
   it("accepts only completed default-branch controller run and qualification provenance",async()=>{
     const {github}=fixture(); await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
   });
+  it('accepts GitHub-normalized check URLs only with independently authenticated controller and immutable receipt',async()=>{
+    const {github,check}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
+    expect(github.rest.actions.getWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({run_id:123}));
+    expect(github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+  });
+  it.each(['11','010','10?controller=123','10/','10#controller','https://other.invalid/runs/10'])(
+    'rejects a normalized URL with substituted check identity or suffix %s',async value=>{
+      const {github,check}=fixture();check.details_url=value.startsWith('https:')?value:`https://github.com/HamedMP/matrix-os/runs/${value}`;
+      await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
+      expect(github.rest.actions.listWorkflowRunArtifacts).not.toHaveBeenCalled();
+    });
+  it('does not treat a normalized source check as coverage without its current controller artifact',async()=>{
+    const {github,check}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});
+    await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
+    expect(github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
+  });
+  it('rejects older-controller receipt substitution behind a normalized check URL',async()=>{
+    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    const latest={...run,id:124};github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[latest,run]}});
+    github.rest.actions.getWorkflowRun.mockResolvedValue({data:latest});
+    github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
+    await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('Immutable controller request scope mismatch');
+  });
   it.each([{sourceSha:"e".repeat(40)},{baseSha:"e".repeat(40)},{headSha:"e".repeat(40)},{prNumber:1},{suite:"unit"},{controllerRef:"refs/heads/untrusted"},{schemaVersion:1},{baseRef:"other-parent"}])("rejects mismatched scope/revision provenance %j",async change=>{
     const {github}=fixture(change); await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow("No verified");
   });
@@ -199,7 +224,7 @@ it('settles current result without rejecting unrelated retained run history',asy
  await expect(waitForDedicatedResult(f.github,expected,{maxAttempts:1})).resolves.toEqual({runId:123,sourceSha});
 });
 
-it('authenticates the native current public cumulative source through final waiter settlement',async()=>{
+it.each([false,true])('authenticates native cumulative source through final settlement with normalized URL=%s',async normalized=>{
  const f=fixture(),native=nativeStackFixture();
  Object.assign(f.github.rest,{repos:native.github.rest.repos,pulls:native.github.rest.pulls});
  const github={...f.github,request:native.github.request};
@@ -207,6 +232,7 @@ it('authenticates the native current public cumulative source through final wait
  Object.assign(f.run,{head_sha:nativePins.head,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=2491 head=${nativePins.head} base=${nativePins.base} requested=true`});
  f.check.head_sha=nativePins.head;
  f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...native.snapshot});pinArtifactFixture(f.github,f.check,f.run);
+ if(normalized)f.check.details_url=`https://github.com/HamedMP/matrix-os/runs/${f.check.id}`;
  f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${nativePins.head}-${nativePins.merge}-${nativePins.base}-pr2491-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
  await expect(waitForDedicatedResult(github,scope,options)).resolves.toEqual({runId:123,sourceSha:nativePins.merge});
  expect(native.github.request).toHaveBeenCalledTimes(4); // initial and final independent native proofs
@@ -230,11 +256,12 @@ describe('authenticated pre-workload infrastructure handoff',()=>{
   await expect(waitForDedicatedResult(f.github,expected,{...options,allowInfrastructureFallback:true})).rejects.toThrow();
  });
 });
-it('accepts exact current main only with explicit kind and actual ordered parent evidence',async()=>{
+it.each([false,true])('accepts exact current main only with explicit kind/parents and normalized URL=%s',async normalized=>{
  const main={...expected,sourceKind:'main',prNumber:0,headSha:sourceSha,headRef:'main',mergeParents:[baseSha]};const f=fixture({sourceKind:'main',prNumber:0,headSha:sourceSha,mergeParents:[baseSha]});f.check.head_sha=sourceSha;
  Object.assign(f.run,{event:'workflow_run',head_branch:'main',head_sha:sourceSha,display_title:`dedicated-refresh-v2 execution=true request=321 title=CI coverage-v1 · ${sourceSha}`});
  f.github.rest.repos.getBranch.mockImplementation(async(args:any)=>({data:{name:args.branch,commit:{sha:sourceSha}}}));f.github.rest.repos.getCommit.mockResolvedValue({data:{sha:sourceSha,parents:[{sha:baseSha}],commit:{tree:{sha:headSha}}}} as any);
  f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${sourceSha}-${sourceSha}-${baseSha}-pr0-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}});
+ if(normalized)f.check.details_url=`https://github.com/HamedMP/matrix-os/runs/${f.check.id}`;
  await expect(waitForDedicatedResult(f.github,main,options)).resolves.toEqual({runId:123,sourceSha});
  f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),mergeParents:['e'.repeat(40)]});
  await expect(waitForDedicatedResult(f.github,main,options)).rejects.toThrow();
