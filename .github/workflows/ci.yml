@@ -560,6 +560,8 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
 
       - run: bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
+        env:
+          GITHUB_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Upload unit profiling

@@ -106,3 +106,11 @@ it('binds Electron build provenance to the verified refresh checkout rather than
  expect(build.env?.DESKTOP_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
  expect(build.run).toBe('GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
 });
+
+it('binds source-reading unit builds to the verified refresh checkout',async()=>{
+ const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');
+ const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
+ const unit=workflow.jobs.unit.steps.find((s:any)=>String(s.run).includes('bun run test -- --shard='));
+ expect(unit.env?.GITHUB_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
+ expect(unit.run).toMatch(/^bun run test -- --shard=/);
+});
