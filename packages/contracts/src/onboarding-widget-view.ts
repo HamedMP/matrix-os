@@ -53,27 +53,33 @@ export function deriveOnboardingRunView(
   let resultText: string | undefined;
   for (const message of source.messages) {
     if (message.runId !== runId) continue;
+    // Canonical Chat stores a long answer as consecutive slices of one string.
+    let messageText = "";
     for (const part of message.parts) {
       if (isPart(part, "tool_request")) {
         steps.push({ id: part.toolCallId, label: part.label, state: "running" });
       } else if (isPart(part, "tool_result")) {
         const step = steps.find((candidate) => candidate.id === part.toolCallId);
         if (step) step.state = part.outcome === "success" ? "done" : "failed";
-      } else if (isPart(part, "text") && message.role === "assistant" && part.text.trim()) {
-        resultText = part.text.trim();
+      } else if (isPart(part, "text") && message.role === "assistant") {
+        messageText += part.text;
       }
     }
+    if (messageText.trim()) resultText = messageText.trim();
   }
   const settled = status === "completed" || status === "failed";
-  let view: OnboardingWorkStep[] = steps.map(({ id, label, state }) => ({
+  const allSteps: OnboardingWorkStep[] = steps.map(({ id, label, state }) => ({
     id,
     label,
     state: settled && state === "running" ? (status === "failed" ? "failed" : "done") : state,
   }));
+  let view = allSteps.slice(-ONBOARDING_WORK_LOG_MAX_STEPS);
   if (status === "failed" && !view.some((step) => step.state === "failed")) {
-    view.push({ id: "run-failed", label: options.failedStepLabel ?? "Couldn't finish this", state: "failed" });
+    view = [
+      ...allSteps.slice(-(ONBOARDING_WORK_LOG_MAX_STEPS - 1)),
+      { id: "run-failed", label: options.failedStepLabel ?? "Couldn't finish this", state: "failed" },
+    ];
   }
-  view = view.slice(-ONBOARDING_WORK_LOG_MAX_STEPS);
   if (status !== "completed" || !resultText) return { status, steps: view };
   const firstLine = resultText.split("\n").find((line) => line.trim())?.trim() ?? resultText;
   return {

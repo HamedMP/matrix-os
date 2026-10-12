@@ -222,6 +222,27 @@ describe("reduceOnboardingWidget", () => {
     expect(onboardingAiLabel("codex")).toBe("ChatGPT");
   });
 
+  it("keeps a task started during AI sign-in when that sign-in finishes", () => {
+    const waiting = run(fresh(), { type: "ai.menuToggled" }, { type: "ai.providerPicked", provider: "claude" }, { type: "ai.methodPicked", method: "account" });
+    const started = run(waiting, { type: "freeform.submitted", text: "Summarize today" });
+    expect(started.ai).toBeNull();
+    const connected = run(started, { type: "ai.connected", provider: "claude" });
+    expect(connected.screen).toEqual(started.screen);
+    expect(connected.echo).toBe("Summarize today");
+    expect(connected.aiChoice).toBe("claude");
+    expect(connected.notice).toBe("Claude connected");
+    const requestId = connected.screen.kind === "run" ? connected.screen.requestId : -1;
+    const done = run(connected, { type: "run.admitted", requestId, chatId: "c", runId: "r" }, { type: "run.settled", runId: "r", outcome: "completed" });
+    expect(done.screen).toMatchObject({ kind: "run", phase: "done" });
+    expect(done.firstTaskCompleted).toBe(true);
+
+    const queued = run(started, { type: "computer.waiting" }, { type: "ai.connected", provider: "claude" });
+    expect(queued.screen).toMatchObject({ kind: "run", phase: "waiting_computer" });
+
+    const finished = run(done, { type: "ai.connected", provider: "codex" });
+    expect(finished.screen).toEqual({ kind: "tasks" });
+  });
+
   it("hands off to Settings only from an in-progress connect step", () => {
     const method = run(fresh(), { type: "ai.menuToggled" }, { type: "ai.providerPicked", provider: "codex" });
     const waiting = run(method, { type: "ai.methodPicked", method: "account" });
@@ -272,6 +293,16 @@ describe("deriveOnboardingRunView", () => {
     expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.");
   });
 
+  it("joins every text part of the final answer and summarizes its headline", () => {
+    const view = deriveOnboardingRunView(source({ status: "completed" }, [
+      { runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Let me look that up." }, { type: "tool_request", toolCallId: "t1", name: "web_search", label: "Searched 24 sources" }] },
+      { runId: "run_1", role: "tool", parts: [{ type: "tool_result", toolCallId: "t1", outcome: "success", truncated: false }] },
+      { runId: "run_1", role: "assistant", parts: [{ type: "text", text: "Prices range from $0 to " }, { type: "text", text: "$200 per seat.\n\nMore detail." }] },
+    ]), "run_1");
+    expect(view.resultText).toBe("Prices range from $0 to $200 per seat.\n\nMore detail.");
+    expect(view.resultSummary).toBe("Prices range from $0 to $200 per seat.");
+  });
+
   it("strips markdown from the summary line", () => {
     const summary = (text: string) => deriveOnboardingRunView(source({ status: "completed" }, [
       { runId: "run_1", role: "assistant", parts: [{ type: "text", text }] },
@@ -294,6 +325,17 @@ describe("deriveOnboardingRunView", () => {
 
     const noSteps = deriveOnboardingRunView(source({ status: "failed" }), "run_1", { failedStepLabel: "Couldn't write the brief" });
     expect(noSteps.steps).toEqual([{ id: "run-failed", label: "Couldn't write the brief", state: "failed" }]);
+  });
+
+  it("keeps the failure visible when an early failed step falls out of the six-step log", () => {
+    const messages: OnboardingRunSource["messages"] = Array.from({ length: 7 }, (_, index) => [
+      { runId: "run_1", role: "assistant", parts: [{ type: "tool_request", toolCallId: `t${index}`, name: "n", label: `Step ${index}` }] },
+      { runId: "run_1", role: "tool", parts: [{ type: "tool_result", toolCallId: `t${index}`, outcome: index === 0 ? "failed" : "success", truncated: false }] },
+    ]).flat();
+    const view = deriveOnboardingRunView(source({ status: "failed" }, messages), "run_1", { failedStepLabel: "Couldn't finish the brief" });
+    expect(view.steps).toHaveLength(6);
+    expect(view.steps.map((step) => step.label)).toEqual(["Step 2", "Step 3", "Step 4", "Step 5", "Step 6", "Couldn't finish the brief"]);
+    expect(view.steps.at(-1)).toEqual({ id: "run-failed", label: "Couldn't finish the brief", state: "failed" });
   });
 
   it("caps the work log at the most recent six steps", () => {

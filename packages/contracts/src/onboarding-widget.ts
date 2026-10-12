@@ -162,6 +162,11 @@ export function onboardingRunInFlight(state: OnboardingWidgetState): boolean {
   return state.screen.kind === "run" && (state.screen.phase === "starting" || state.screen.phase === "running");
 }
 
+/** Queued, admitting or running: leaving this screen would drop the events that settle the run. */
+function runActive(state: OnboardingWidgetState): boolean {
+  return state.screen.kind === "run" && state.screen.phase !== "done" && state.screen.phase !== "failed";
+}
+
 function withRun(state: OnboardingWidgetState, patch: Partial<OnboardingRunScreen>): OnboardingWidgetState {
   if (state.screen.kind !== "run") return state;
   return { ...state, screen: { ...state.screen, ...patch } };
@@ -278,8 +283,10 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
       if (state.ai?.step === "waiting") return { ...state, ai: { ...state.ai, status: "waiting" } };
       if (state.ai?.step === "key") return { ...state, ai: { ...state.ai, status: "idle" } };
       return state;
-    case "ai.connected":
-      return { ...state, ai: null, aiChoice: event.provider, echo: null, notice: `${onboardingAiLabel(event.provider)} connected`, screen: { kind: "tasks" } };
+    case "ai.connected": {
+      const connected = { ...state, ai: null, aiChoice: event.provider, notice: `${onboardingAiLabel(event.provider)} connected` };
+      return runActive(state) ? connected : { ...connected, echo: null, screen: { kind: "tasks" } };
+    }
     case "ai.selected":
       return { ...state, ai: null, aiChoice: event.provider };
     case "ai.cancelled":

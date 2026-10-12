@@ -12,6 +12,7 @@ A new user lands on their desktop with the Matrix chat widget already open. It o
 | --- | --- |
 | PR 1 (this) | Shared state machine and task catalog (`@matrix-os/contracts`), shared presentational widget (`@matrix-os/ui`), Electron Desktop host and controller |
 | PR 2 | Web Desktop and Web Canvas host, using the same contracts and UI |
+| Docs | Separate `FinnaAI/matrix-os-site` PR under `content/docs/`: a getting-started guide for the widget covering the starter tasks, connecting apps, changing the AI, and the "Show on every login" setting. Opened once the widget ships on Electron Desktop |
 | Later | Server-persisted onboarding completion, "Save a task as an agent", day-2 return, mobile (Cover "Later iterations") |
 
 Electron Desktop is the visual reference. Web Desktop and Web Canvas must reuse the same `reduceOnboardingWidget`, `deriveOnboardingRunView` and `OnboardingWidget` components. Only the surface adapter (chat client, integrations, provider workflow, window opening) differs.
