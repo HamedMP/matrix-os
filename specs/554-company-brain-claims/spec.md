@@ -55,10 +55,11 @@ and `---` ends every section (squash bodies). Each quote gives at most one claim
   heading); in-scope words (`Goals`, `In scope`, also in `Goals / Non-Goals`) open none; `deferr`, `non-goal`,
   `out of scope`, `follow-up stack` (deferred); other `follow-up(s)` (ignored: done review work); `decision(s)`;
   `risk(s)`; `Scope...` (none); `next step(s)`. A level-1 heading is the title and opens nothing. A sub-heading of a
-  claim section keeps its kind unless it names its own; under deferred its items stay `Deferred scope`, else the
-  sub-heading is their label. In-scope and open-question sub-headings open nothing, even under a Decisions or
-  Invariants heading, and a bare `**Open questions:**` line ends the section instead of labelling it. Items labelled
-  `Open question(s)` or `Open decision(s)`, or nested under such a label, are dropped unless they carry a kind prefix.
+  claim section keeps its kind unless it names its own (`Invariants`, `Next steps`; a canonical label only labels);
+  under deferred its items stay `Deferred scope`, else the sub-heading is their label. In-scope and open-question
+  sub-headings open nothing, even under a Decisions or Invariants heading, and a bare `**Open questions:**` line ends
+  the section instead of labelling it. Items labelled `Open question(s)` or `Open decision(s)`, or nested under such a
+  label, are dropped unless they carry a kind prefix.
 - Design notes: a sub-heading of a decisions section that does not name a decision itself (`### Canvas Title Bars`
   under `## Key Design Decisions`) often describes the design instead of choosing it. Its items are decisions only
   when they carry their own label or a `Decision:` prefix, or state a choice: chose, decided, instead of, rather than,

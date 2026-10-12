@@ -116,12 +116,14 @@ const UNCLASSIFIED = { kind: "none", label: null } as const;
  */
 const IN_SCOPE_SECTION = { kind: "none", label: null } as const;
 const OPEN_SECTION = { kind: "none", label: null } as const;
+/** classify returns this very object for a heading that names invariants, not for a canonical label heading. */
+const INVARIANTS_SECTION = { kind: "invariants", label: null } as const;
 
 function classify(text: string): { readonly kind: SectionKind; readonly label: string | null } {
   if (text.length > HEADING_KEY_MAX_CHARS) return UNCLASSIFIED;
   const key = keyOf(text);
   if (OPEN.test(key)) return OPEN_SECTION;
-  if (key.includes("invariant")) return { kind: "invariants", label: null };
+  if (key.includes("invariant")) return INVARIANTS_SECTION;
   const canonical = BARE_AUTH.test(key) ? null : canonicalLabel(key);
   if (canonical !== null) return { kind: canonical === DEFERRED_LABEL ? "deferred" : "invariants", label: canonical };
   if (IN_SCOPE.test(key)) return IN_SCOPE_SECTION;
@@ -273,8 +275,9 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
 
   /**
    * A title (level 1), in-scope or open-question heading opens no section, even under a claim section. Any other
-   * sub-heading of a claim section keeps its kind unless it names its own; deferred items stay `Deferred scope`, others
-   * take the sub-heading's words as their label. A sub-heading that keeps a decisions kind holds design notes.
+   * sub-heading of a claim section keeps its kind unless it names its own (a canonical label such as `Source of truth`
+   * only labels); deferred items stay `Deferred scope`, others take the sub-heading's words as their label. A
+   * sub-heading that keeps a decisions kind holds design notes.
    */
   function enterHeading(level: number, headingText: string): void {
     popSections((section) => section.level < level);
@@ -286,7 +289,7 @@ function scanClaims(text: string, sink: (draft: BrainClaimDraft) => void): void 
       stack.push(newSection(level, classified.kind, classified.label, future));
       return;
     }
-    const own = classified.kind === "deferred" || classified.kind === "decisions" || classified.kind === "risks";
+    const own = classified === INVARIANTS_SECTION || (classified.kind !== "invariants" && classified.kind !== "none");
     const kind = own ? classified.kind : parent.kind;
     const label = kind === "deferred" ? DEFERRED_LABEL : canonicalLabel(headingText) ?? verbatimLabel(headingText);
     stack.push(newSection(level, kind, label, future || parent.future, !own && kind === "decisions"));

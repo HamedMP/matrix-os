@@ -150,6 +150,18 @@ describe("rules decisions under design-note sub-headings", () => {
     ]);
   });
 
+  it("lets Invariants and Next steps sub-headings name their own kind; a canonical label sub-heading only labels", () => {
+    expect(rows(md("## Risks", "### Invariants", "- One writer per scope.", "## Invariants", "### Next steps",
+      "- Wire the kernel tool.", "## Decisions", "### Matrix invariants", "- Claims stay per document.",
+      "### Source of truth", "- We chose Postgres for claims.",
+    ), "git_spec")).toEqual([
+      ["invariant", "Invariants", "medium", "One writer per scope."],
+      ["commitment", "Next steps", "high", "Wire the kernel tool."],
+      ["invariant", "Matrix invariants", "medium", "Claims stay per document."],
+      ["decision", "Source of truth", "high", "We chose Postgres for claims."],
+    ]);
+  });
+
   it("never reads open questions or decisions as claims, under any claim section or label", () => {
     expect(rows(md("## Decisions", "- One pool per owner.", "### Open questions",
       "- Should we use one pool per owner?", "#### Pools", "- Must pools be shared?", "### Storage",
