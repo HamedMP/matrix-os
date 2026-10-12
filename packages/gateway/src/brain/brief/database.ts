@@ -37,6 +37,11 @@ export async function bootstrapBrainBriefDatabase(db: Kysely<BrainDatabase>): Pr
         PRIMARY KEY (owner_id, scope_id, brief_date, brief_window)
       )
     `.execute(trx);
+    // When the runner last built or failed each scope (ids and a time only), so passes rotate across restarts.
+    await sql`CREATE TABLE IF NOT EXISTS brain_brief_tries (
+      owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 256),
+      scope_id TEXT NOT NULL CHECK (char_length(scope_id) BETWEEN 1 AND 256),
+      tried_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (owner_id, scope_id))`.execute(trx);
   });
 }
 
@@ -185,7 +190,7 @@ export async function writeStoredBrief(
   });
 }
 
-/** Removes every stored brief of the scope, or only `only` while the row still holds that copy (not a newer one). */
+/** Removes every stored brief and the try of the scope, or only `only` while the row still holds that copy. */
 export async function deleteStoredBriefs(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, only?: BrainStoredBrief,
 ): Promise<void> {
@@ -195,6 +200,18 @@ export async function deleteStoredBriefs(
     if (only !== undefined) query = query.where("brief_date", "=", only.date).where("brief_window", "=", only.window)
       .where("body", "=", sql`${JSON.stringify(only)}::jsonb`);
     await query.execute();
+    const tries = sql`DELETE FROM brain_brief_tries WHERE owner_id = ${scope.ownerId} AND scope_id = ${scope.scopeId}`;
+    if (only === undefined) await tries.execute(trx);
+  });
+}
+
+/** Marks a try of a scope with a live source (none once erased, so the listener's delete holds); logs a failure. */
+export async function markTried(db: Kysely<BrainDatabase>, scope: BrainScopeKey): Promise<void> {
+  await withScopeLock(db, scope, (trx) => sql`INSERT INTO brain_brief_tries SELECT ${scope.ownerId}, ${scope.scopeId},
+    clock_timestamp() WHERE EXISTS (SELECT 1 FROM brain_sources WHERE owner_id = ${scope.ownerId}
+      AND scope_id = ${scope.scopeId} AND deleted_at IS NULL) ON CONFLICT (owner_id, scope_id) DO UPDATE
+    SET tried_at = excluded.tried_at`.execute(trx)).catch((error: unknown) => {
+    console.error("[brain-brief] Marking a try failed:", error instanceof Error ? error.name : "UnknownError");
   });
 }
 

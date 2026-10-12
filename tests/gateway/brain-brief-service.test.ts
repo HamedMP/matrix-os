@@ -2,7 +2,7 @@ import { sql } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { BrainFeatureError, type BrainBriefSummaryModel } from "../../packages/gateway/src/brain/contracts.js";
-import { readStoredBrief, writeStoredBrief } from "../../packages/gateway/src/brain/brief/database.js";
+import { markTried, readStoredBrief, writeStoredBrief } from "../../packages/gateway/src/brain/brief/database.js";
 import { bootstrapBrainBriefDatabase, createBrainBrief, createBrainBriefScopeLister } from "../../packages/gateway/src/brain/brief/index.js";
 import { pickAttentionConflicts } from "../../packages/gateway/src/brain/brief/sections.js";
 import { briefWindow } from "../../packages/gateway/src/brain/brief/time.js";
@@ -109,13 +109,13 @@ describe("brief", () => {
     expect(old.sections.changes.find((group) => group.label === "Notes")).toMatchObject({ created: 0, revised: 1 });
   });
 
-  it("lists sources in a past brief as they were at its end, citing a document dated before it", async () => {
+  it("lists sources in a past brief as they were at its end, citing a document as it was then", async () => {
     const git = await fx.source();
     await fx.sync(git, [{ seed: "a", at: "2026-09-20T08:00:00.000Z" }]);
     await fx.receipt(git, "failed", "source_auth_failed");
     fx.harness.tick(86_400_000);
     await fx.receipt(git, "failed", "source_rate_limited", 9 * 86_400_000);
-    await fx.sync(git, [{ seed: "b", at: "2026-10-11T08:00:00.000Z" }]);
+    await fx.sync(git, [{ seed: "b", at: "2026-10-11T08:00:00.000Z" }, { seed: "a", body: "Edited.", at: "2026-10-11T08:00:00.000Z" }]);
     const attention = async (date: string) => (await fx.feature.service.generateBrief(BRIEF_OWNER, "proj_a", { date }))
       .sections.attention.map((line) => `${line.text} [${line.cites[0]!.label}]`);
     expect(await attention("2026-09-29")).toEqual([]);
@@ -147,6 +147,16 @@ describe("brief", () => {
     };
     expect(await read("2026-09-30")).toEqual([[[1, "Title spec"]], ["use A."], ["Ship A."]]);
     expect(await read("2026-10-01")).toEqual([[[1, "Spec v2"]], ["use B."], ["Ship A."]]);
+  });
+
+  it("keeps a past brief's decisions on a version whose earlier version was pruned", async () => {
+    const git = await fx.source();
+    await fx.sync(git, [{ seed: "p", body: "Draft.", at: "2026-09-29T08:00:00.000Z" }]);
+    await fx.sync(git, [{ seed: "p", body: "Decision: use B.", at: "2026-09-30T08:00:00.000Z" }]);
+    await fx.extract("p", [{ kind: "decision", statement: "use B." }]);
+    fx.harness.tick(60_000);
+    for (let edit = 0; edit < 10; edit += 1) await fx.sync(git, [{ seed: "p", body: `Decision: use B. Edit ${edit}.` }]);
+    expect((await brief({ date: "2026-09-30" })).sections.decisions.map((line) => line.text)).toEqual(["use B."]);
   });
 
   it("keeps in a day's final rebuild a decision deleted by an edit after the day, not one dropped, outdated or re-extracted", async () => {
@@ -387,12 +397,14 @@ describe("stored briefs", () => {
     expect(listener.name).toBe("brief");
     expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, "2026-10-01", "day")).toBeNull();
   });
-  it("does not store a brief built before its scope was erased once the listener ran", async () => {
+  it("does not store a brief or a runner's try made before its scope was erased once the listener ran", async () => {
     const { git } = await seedDay();
     const built = await brief();
-    expect(built.stored).toBe(true);
+    const tries = async () => (await markTried(fx.harness.db, BRIEF_SCOPE), (await sql`SELECT * FROM brain_brief_tries`.execute(fx.harness.db)).rows);
+    expect([built.stored, (await tries()).length]).toEqual([true, 1]);
     await fx.harness.repository.eraseScope(BRIEF_SCOPE);
     await fx.feature.listener.handle({ type: "scope_erased", scope: BRIEF_SCOPE, at: "x" }, new AbortController().signal);
+    expect(await tries()).toEqual([]);
     expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, built)).toBe(false);
     const group = { ...built.sections.changes[0]!, sourceId: git, items: [] };
     const empty = { decisions: [], commitments: [], risks: [], attention: [] };
@@ -414,7 +426,9 @@ describe("runner", () => {
     await writeStoredBrief(fx.harness.db, other, { ...(await brief()), date: "2026-09-29",
       generatedAt: "2026-09-29T06:00:00.000Z", from: "2026-09-29T00:00:00.000Z", to: "2026-09-30T00:00:00.000Z" });
     const run = (now = fx.harness.now()) => fx.feature.runner({ ownerId: BRIEF_OWNER, now, scopes, signal });
+    await sql`DROP TABLE brain_brief_tries`.execute(fx.harness.db); // a try that cannot be marked is logged, not fatal
     expect(await run()).toEqual({ scopes: 5, built: 1, failed: 2, skipped: 2 });
+    expect(error).toHaveBeenCalledWith("[brain-brief] Marking a try failed:", "error");
     expect(await readStoredBrief(fx.harness.db, gone, "2026-10-01", "day")).toBeNull();
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "error");
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "UnknownError");
@@ -440,18 +454,18 @@ describe("runner", () => {
     expect(seen).toEqual(["proj_a", "proj_b", "proj_b", "proj_a"]);
   });
 
-  it("counts a scope as failed and builds nothing when its project lookup is down, and next tries the others first", async () => {
+  it("counts a scope as failed and builds nothing when its project lookup is down, and next tries the others first, even after a restart", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let stop = new AbortController();
     // proj_a sorts first and its lookup is down; each try also uses up the pass (as a slow failure would).
     const resolve: typeof fx.resolver.resolve = async (owner, ref) => (ref === "proj_a" ? (stop.abort(), Promise.reject(new BrainApiError("brain_unavailable"))) : fx.resolver.resolve(owner, ref));
-    const down = createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
+    const down = () => createBrainBrief({ repository: fx.harness.repository, now: fx.harness.now, resolver: { ...fx.resolver, resolve } });
     for (const scopeId of [BRIEF_SCOPE.scopeId, "personal:project:proj_b"]) await fx.source("git", scopeId, { ownerId: BRIEF_OWNER, scopeId });
     const runs: unknown[] = [];
     for (const days of [0, 0, 1]) {
       fx.harness.tick(days * 86_400_000);
       stop = new AbortController();
-      runs.push(await down.runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes: createBrainBriefScopeLister(fx.harness.db), signal: stop.signal }));
+      runs.push(await down().runner({ ownerId: BRIEF_OWNER, now: fx.harness.now(), scopes: createBrainBriefScopeLister(fx.harness.db), signal: stop.signal }));
     }
     expect(runs).toEqual([{ scopes: 2, built: 0, failed: 1, skipped: 1 }, ...Array(2).fill({ scopes: 2, built: 1, failed: 1, skipped: 0 })]);
     expect(error).toHaveBeenCalledWith("[brain-brief] Scheduled brief failed:", "BrainApiError");

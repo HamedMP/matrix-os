@@ -1,7 +1,7 @@
 /**
  * The daily brief job: one pass shortly after start (the runner skips scopes whose brief is fresh), then every day
  * at BRAIN_BRIEF_SCHEDULE.hourUtc. Timers are unref'd; stop() aborts a running pass and waits for it briefly.
- * Also the scope lister the runner reads (live sources, stalest brief first; read-only).
+ * Also the scope lister the runner reads (live sources, least lately tried, then stalest brief, first; read-only).
  */
 import { sql, type Kysely } from "kysely";
 import {
@@ -26,13 +26,14 @@ export function msUntilNextRun(now: Date, hourUtc: number = BRAIN_BRIEF_SCHEDULE
 
 export function createBrainBriefScopeLister(db: Kysely<BrainDatabase>): BrainScopeLister {
   return {
-    /** Those whose newest stored brief is oldest (none: first) lead, so a pass cut short never starves the rest. */
+    /** Least lately built or failed by the runner, then oldest newest brief (none: first), lead: none starves. */
     async listActiveScopes(ownerId: string, limit: number): Promise<readonly BrainScopeKey[]> {
       const bounded = Math.max(1, Math.min(Math.trunc(limit) || 1, BRAIN_SCHEDULED_SCOPES_MAX));
       const { rows } = await sql<{ scope_id: string }>`
         SELECT s.scope_id FROM (SELECT DISTINCT scope_id FROM brain_sources WHERE owner_id = ${ownerId}
           AND deleted_at IS NULL) s
-        ORDER BY (SELECT max(b.generated_at) FROM brain_brief_briefs b WHERE b.owner_id = ${ownerId}
+        ORDER BY (SELECT t.tried_at FROM brain_brief_tries t WHERE t.owner_id = ${ownerId} AND t.scope_id = s.scope_id)
+          NULLS FIRST, (SELECT max(b.generated_at) FROM brain_brief_briefs b WHERE b.owner_id = ${ownerId}
           AND b.scope_id = s.scope_id) NULLS FIRST, s.scope_id LIMIT ${bounded}`.execute(db);
       return rows.map((row) => ({ ownerId, scopeId: row.scope_id }));
     },

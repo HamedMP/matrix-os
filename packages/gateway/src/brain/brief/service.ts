@@ -14,7 +14,7 @@ import {
 import type { BrainScopeKey } from "../types.js";
 import { computeConflicts } from "./conflicts.js";
 import {
-  citesDeleted, deleteStoredBriefs, purgeDeletedBriefs, readStoredBrief, unfinishedDays, writeStoredBrief,
+  citesDeleted, deleteStoredBriefs, markTried, purgeDeletedBriefs, readStoredBrief, unfinishedDays, writeStoredBrief,
   type BrainStoredBrief,
 } from "./database.js";
 import { pageOf, queryFingerprint } from "./paging.js";
@@ -123,22 +123,17 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
     },
   };
 
-  let tries = 0;
-  /** When this runner last tried each scope of the last pass's list (so at most BRAIN_SCHEDULED_SCOPES_MAX). */
-  let tried = new Map<string, number>();
   /**
-   * Per scope: drops stored briefs citing deleted documents, skips a project scope whose project is gone, then builds
-   * today's day brief (skipped when fresh) and a final rebuild of each stored day copy of the last BRIEF_FINISH_DAYS
-   * built before its day ended, so a failed one is retried. Scopes tried least lately go first (ties: the lister's
-   * order, stalest brief first), so one that fails or runs long every pass never holds the others back.
+   * Per scope, in the lister's order: drops stored briefs citing deleted documents, skips a project scope whose project
+   * is gone, then builds today's day brief (skipped when fresh) and a final rebuild of each stored day copy of the last
+   * BRIEF_FINISH_DAYS built before its day ended, so a failed one is retried. A scope built or failed is marked tried
+   * (stored), so the lister puts it after the others next pass, even after a restart.
    */
   const runner: BrainBriefRunner = async ({ ownerId, now, scopes, signal }) => {
     const deadline = performance.now() + BRAIN_BRIEF_SCHEDULE.passBudgetMs;
     const stopped = () => signal.aborted || performance.now() > deadline;
     const max = BRAIN_SCHEDULED_SCOPES_MAX;
-    const last = (scope: BrainScopeKey) => tried.get(scope.scopeId) ?? 0;
-    const list = (await scopes.listActiveScopes(ownerId, max)).slice(0, max).sort((x, y) => last(x) - last(y));
-    tried = new Map(list.map((scope) => [scope.scopeId, last(scope)]));
+    const list = (await scopes.listActiveScopes(ownerId, max)).slice(0, max);
     const today = utcDate(now);
     const since = utcDate(new Date(now.getTime() - BRIEF_FINISH_DAYS * DAY_MS));
     let built = 0;
@@ -149,7 +144,6 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
         skipped += 1;
         continue;
       }
-      tried.set(scope.scopeId, ++tries);
       try {
         await purgeDeletedBriefs(db, scope);
         if (await projectGone(ownerId, scope)) {
@@ -168,11 +162,13 @@ export function createBrainBrief(deps: BrainBriefServiceDeps): BrainBriefFeature
           await capped(() => build(scope, date, "day", now, null));
           done += 1;
         }
+        if (done > 0) await markTried(db, scope);
         if (done > 0) built += 1;
         else skipped += 1;
       } catch (error: unknown) {
         failed += 1;
         console.error("[brain-brief] Scheduled brief failed:", error instanceof Error ? error.name : "UnknownError");
+        await markTried(db, scope);
       }
     }
     return { scopes: list.length, built, failed, skipped };

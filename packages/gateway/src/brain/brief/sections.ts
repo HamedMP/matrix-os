@@ -97,9 +97,9 @@ async function claimLines(
   return { lines, truncated: rows.length > LIMITS.linesPerSection };
 }
 
-/** Claims first seen in the window: a revised document only adds claims written after its new revision. Claims keep no
- * history: an `earlier` line whose claim was deleted stays if its document was edited after it, but not by the window
- * end (a re-extraction of the same revision is left to decide). */
+/** Claims first seen in the window: a revised document only adds claims written after its new revision (all of them
+ * once the one before was pruned). Claims keep no history: an `earlier` line whose claim was deleted stays if its
+ * document was edited after it, but not by the window end (a re-extraction of the same revision is left to decide). */
 async function newClaims(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, range: BriefWindowRange, kind: BrainClaimKind,
   earlier: readonly BrainBriefLine[] = [],

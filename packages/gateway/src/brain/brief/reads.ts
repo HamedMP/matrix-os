@@ -27,19 +27,20 @@ export function commitmentDue() {
   return sql<string | null>`COALESCE(CASE WHEN ${own} ~ ${date} THEN ${own} END, ${documentRef("due")})`;
 }
 
-/** Live documents `a` as of `at` (null: now): the row if dated before `at`, else its newest snapshot dated before it,
- * with when that version was stored (`written`) and replaced (`until`, null for the row). */
-export function documentsAsOf(scope: BrainScopeKey, at: Date | null) {
+/** Live documents `a` (rows `d` matching `only`) as of `at` (null: now): the row if dated before `at`, else its newest
+ * snapshot dated before it; when that version was stored (`written`, -infinity once the one before it was pruned) and
+ * replaced (`until`, null for the row). */
+export function documentsAsOf(scope: BrainScopeKey, at: Date | null, only = sql`TRUE`) {
   const end = at ?? sql`'infinity'::timestamptz`;
-  return sql<{ document_id: string; dated: Date | string; revision: number; written: Date | string | null;
+  return sql<{ document_id: string; dated: Date | string; revision: number; written: Date | string;
     until: Date | string | null; title: string; body: string }>`
     ((SELECT d.document_id, d.source_updated_at AS dated, d.revision, d.updated_at AS written,
       NULL::timestamptz AS until, d.title, d.body FROM brain_documents d WHERE d.owner_id = ${scope.ownerId}
-      AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL AND d.source_updated_at < ${end})
-    UNION ALL (SELECT DISTINCT ON (v.document_id) v.document_id, v.source_updated_at, v.revision,
-      lag(v.superseded_at) OVER (PARTITION BY v.document_id ORDER BY v.revision), v.superseded_at, v.title, v.body
+      AND d.scope_id = ${scope.scopeId} AND d.deleted_at IS NULL AND d.source_updated_at < ${end} AND ${only})
+    UNION ALL (SELECT DISTINCT ON (v.document_id) v.document_id, v.source_updated_at, v.revision, lag(v.superseded_at,
+      1, '-infinity') OVER (PARTITION BY v.document_id ORDER BY v.revision), v.superseded_at, v.title, v.body
     FROM brain_document_revisions v JOIN brain_documents d ON d.owner_id = v.owner_id AND d.scope_id = v.scope_id
-      AND d.document_id = v.document_id AND d.incarnation = v.incarnation AND d.deleted_at IS NULL
+      AND d.document_id = v.document_id AND d.incarnation = v.incarnation AND d.deleted_at IS NULL AND ${only}
     WHERE v.owner_id = ${scope.ownerId} AND v.scope_id = ${scope.scopeId} AND d.source_updated_at >= ${end}
       AND v.source_updated_at < ${end} ORDER BY v.document_id, v.source_updated_at DESC, v.revision DESC))`.as("a");
 }
@@ -94,7 +95,7 @@ export interface SourceState {
 }
 
 /** Active live sources with their newest receipt, newest success and newest live document; `before` (a past brief):
- * only sources, receipts and documents from before it, and a receipt still running then has no finish. */
+ * only sources and receipts from before it, documents as they were then (documentsAsOf), no finish if still running. */
 export async function sourceStates(
   db: Kysely<BrainDatabase>, scope: BrainScopeKey, before: Date | null,
 ): Promise<SourceState[]> {
@@ -106,9 +107,8 @@ export async function sourceStates(
       (SELECT max(r.finished_at) FROM brain_sync_receipts r WHERE r.owner_id = s.owner_id AND r.scope_id = s.scope_id
         AND r.source_id = s.source_id AND r.status IN ('succeeded', 'partial') ${cut("r.finished_at")}) AS last_success,
       n.status AS last_status, n.finished_at AS last_finished, n.error_code AS last_error,
-      (SELECT d.document_id FROM brain_documents d WHERE d.owner_id = s.owner_id AND d.scope_id = s.scope_id
-        AND d.source_id = s.source_id AND d.deleted_at IS NULL ${cut("d.source_updated_at")}
-        ORDER BY d.source_updated_at DESC, d.document_id DESC LIMIT 1) AS newest_document
+      (SELECT a.document_id FROM ${documentsAsOf(scope, before, sql`d.source_id = s.source_id`)}
+        ORDER BY a.dated DESC, a.document_id DESC LIMIT 1) AS newest_document
     FROM brain_sources s
     LEFT JOIN LATERAL (SELECT r.status, ${finished} AS finished_at, r.error_code FROM brain_sync_receipts r
       WHERE r.owner_id = s.owner_id AND r.scope_id = s.scope_id AND r.source_id = s.source_id ${cut("r.started_at")}
