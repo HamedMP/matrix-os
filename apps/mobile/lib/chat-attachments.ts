@@ -148,7 +148,9 @@ export function unreadableAttachments(
   attachments: readonly ComposerAttachment[],
   kinds: readonly ChatAttachmentKind[],
 ): readonly ComposerAttachment[] {
-  const unreadable = attachments.filter((attachment) => !kinds.includes(attachment.kind));
+  const readsPhotos = kinds.includes("image");
+  const readsFiles = kinds.includes("file");
+  const unreadable = attachments.filter((attachment) => !(attachment.kind === "image" ? readsPhotos : readsFiles));
   return unreadable.length > 0 ? unreadable : NO_UNREADABLE;
 }
 
