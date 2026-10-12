@@ -1,3 +1,5 @@
+// Composition only, under 2,000 lines: new seams get server/ modules (brain-wiring.ts). Extraction plan: route families
+// per GATEWAY_ROUTE_GROUPS (server/route-inventory.ts); canonical Chat per specs/536-conversational-bots/plan.md.
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
@@ -33,7 +35,6 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import {
-  appendFile as appendFileAsync,
   mkdir as mkdirAsync,
   writeFile as writeFileAsync,
 } from "node:fs/promises";
@@ -152,6 +153,7 @@ import { createCompanyBrainReadinessService } from "./onboarding/company-brain-r
 import { createCompanyBrainRoutes } from "./onboarding/company-brain-routes.js";
 import { createBrainApiRoutes, stopBrainServices } from "./brain/api/index.js";
 import { createBrainGatewayAgentTools, createBrainGatewayProjectErase, createBrainGatewayStart } from "./server/brain-wiring.js";
+import { createHealingLog, logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure } from "./server/gateway-logging.js";
 import { createDraftActionReadinessService } from "./onboarding/draft-action-readiness.js";
 import { createDraftActionRoutes } from "./onboarding/draft-action-routes.js";
 import type { GeminiLiveConnection } from "./onboarding/gemini-live.js";
@@ -923,25 +925,6 @@ export async function createGateway(config: GatewayConfig) {
       ? `${internalPlatformUrl}/internal/containers/${internalHandle}/integrations`
       : null;
 
-  function logBestEffortFailure(context: string, err: unknown): void {
-    console.warn(
-      `[gateway] ${context}:`,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-
-  function logUnexpectedJsonParseFailure(context: string, err: unknown): void {
-    if (!(err instanceof SyntaxError)) {
-      logBestEffortFailure(context, err);
-    }
-  }
-
-  function logUnexpectedWsSendFailure(context: string, err: unknown): void {
-    if (!(err instanceof Error && /not open|not opened|closed/i.test(err.message))) {
-      logBestEffortFailure(context, err);
-    }
-  }
-
   // Platform integration services are constructed before auth and mounted below it.
   const platformIntegrations = await initializePlatformIntegrations({
     env: process.env,
@@ -955,18 +938,7 @@ export async function createGateway(config: GatewayConfig) {
   const integrationRoutes = platformIntegrations.routes;
   const resolveIntegrationUserId = platformIntegrations.resolveUserId;
 
-  function logHealing(message: string) {
-    const timestamp = new Date().toISOString();
-    const line = `[${timestamp}] [heal] ${message}\n`;
-    const logPath = join(homePath, "system/activity.log");
-    appendFileAsync(logPath, line).catch((err: unknown) => {
-      if (err instanceof Error) {
-        console.warn("[heal] failed to append activity log:", err.message);
-      } else {
-        console.warn("[heal] failed to append activity log:", String(err));
-      }
-    });
-  }
+  const logHealing = createHealingLog(homePath);
 
   function broadcast(msg: ServerMessage) {
     const json = JSON.stringify(msg);

@@ -1,6 +1,6 @@
 /**
- * The Matrix agent's brain_why dependency: binds the gateway owner once, at
- * registration, and maps service failures to the kernel tool's fixed statuses.
+ * The Matrix agent's brain_why dependency: binds one owner (the run's caller)
+ * and maps service failures to the kernel tool's fixed statuses.
  */
 import type { BrainAgentTools, BrainWhyAgentResult } from "@matrix-os/kernel";
 import {

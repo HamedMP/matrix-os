@@ -171,19 +171,19 @@ describe("dispatcher per-message kernel overrides", () => {
       configs.push(config);
       yield resultEvent();
     });
-    const dispatcher = createDispatcher({
-      homePath: makeHomePath(), spawnFn: spawn, maxConcurrency: 1, brainTools, brainReadTools,
-      brainOwnerIds: ["owner_a"],
-    });
+    const brainToolsFor = vi.fn((callerId: string) => callerId === "owner_a" ? { brainTools, brainReadTools } : undefined);
+    const dispatcher = createDispatcher({ homePath: makeHomePath(), spawnFn: spawn, maxConcurrency: 1, brainToolsFor });
     for (const callerId of ["owner_a", "collaborator", undefined]) {
       await dispatcher.dispatch("serial", undefined, () => {}, undefined, undefined, callerId ? { callerId } : {});
     }
     await dispatcher.dispatchBatch([{ taskId: "batch-1", message: "batch", onEvent: () => {} }]);
-    await createDispatcher({ homePath: makeHomePath(), spawnFn: spawn, brainTools, brainReadTools })
+    await createDispatcher({ homePath: makeHomePath(), spawnFn: spawn })
       .dispatch("no owners", undefined, () => {}, undefined, undefined, { callerId: "owner_a" });
 
     expect(configs.map((config) => [config.brainTools === brainTools, config.brainReadTools === brainReadTools]))
       .toEqual([[true, true], [false, false], [false, false], [false, false], [false, false]]);
+    // Bound per run to the server-set caller; a run without one (or a batch) never asks.
+    expect(brainToolsFor.mock.calls).toEqual([["owner_a"], ["collaborator"]]);
     expect(brainTools.why).not.toHaveBeenCalled();
     expect(brainReadTools.search).not.toHaveBeenCalled();
   });

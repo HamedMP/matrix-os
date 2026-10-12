@@ -18,6 +18,7 @@ import type {
   BrainBackgroundJob, BrainChangeEvent, BrainServices,
 } from "../../packages/gateway/src/brain/contracts.js";
 import { BrainRepository } from "../../packages/gateway/src/brain/index.js";
+import { createBrainSourceHandlers } from "../../packages/gateway/src/brain/sources/core/index.js";
 import { saveMatrixConfig } from "../../packages/gateway/src/brain/sources/matrix/database.js";
 import type { ProjectConfig } from "../../packages/gateway/src/project-manager.js";
 import type { OwnerScope } from "../../packages/gateway/src/state-ops.js";
@@ -251,6 +252,17 @@ describe("startBrainServices", { timeout: 60_000 }, () => {
       expect((await sources.sync(OWNER, "widgets", owned.source.sourceId)).counts.written).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("hands the gateway's notes and home to no matrix handler while it has no owner principal", async () => {
+    const notes = { listNotes: vi.fn(async () => []), listNoteKeys: vi.fn(async () => []) };
+    const deps = { kysely: harness.db, integrations: { call: vi.fn() }, homePath: "/home", notes, chats: null };
+    const handlers = createBrainSourceHandlers(deps, ["matrix_sources"]);
+    expect(handlers.map((each) => each.kind)).toEqual(["matrix_notes", "matrix_files", "matrix_chat"]);
+    for (const handler of handlers.slice(0, 2)) {
+      expect(await handler.availability(OWNER)).toEqual({ available: false, reason: "not_configured" });
+      expect(await handler.createAdapter(OWNER, {} as never, {})).toEqual({ ok: false, code: "not_connected" });
     }
   });
 

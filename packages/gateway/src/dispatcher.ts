@@ -12,8 +12,6 @@ import {
   type MatrixDB,
   type OsViewAgentTools,
   type OwnerAudioTranscriber,
-  type BrainAgentTools,
-  type BrainAgentReadTools,
 } from "@matrix-os/kernel";
 import { wrapExternalContent, detectSuspiciousPatterns } from "@matrix-os/kernel/security/external-content";
 import { appendFile } from "node:fs/promises";
@@ -52,10 +50,8 @@ export interface DispatchOptions {
   onAiGeneration?: (input: AiGenerationInput) => void;
   osViewTools?: OsViewAgentTools;
   ownerAudioTranscriber?: OwnerAudioTranscriber;
-  /** The gateway owner's brain tools: only a serial run whose callerId is one of brainOwnerIds gets them. */
-  brainTools?: BrainAgentTools;
-  brainReadTools?: BrainAgentReadTools;
-  brainOwnerIds?: readonly string[];
+  /** A serial run's brain tools, bound to its server-set callerId; undefined (none) unless it is a brain owner. */
+  brainToolsFor?: (callerId: string) => Pick<KernelConfig, "brainTools" | "brainReadTools"> | undefined;
 }
 
 export interface DispatchContext {
@@ -238,7 +234,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
       );
       const deadline = fundedAbortController(entry.abortController, credentialLaunch.fundedRunTimeoutMs);
       const callerId = entry.kernelOverrides?.callerId;
-      const brain = callerId !== undefined && opts.brainOwnerIds?.includes(callerId) === true;
+      const brain = callerId === undefined ? undefined : opts.brainToolsFor?.(callerId);
       const config: KernelConfig = {
         db,
         homePath,
@@ -251,7 +247,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         requestApproval: entry.kernelOverrides?.requestApproval,
         osViewTools: opts.osViewTools,
         ownerAudioTranscriber: opts.ownerAudioTranscriber,
-        ...(brain ? { brainTools: opts.brainTools, brainReadTools: opts.brainReadTools } : {}),
+        ...brain,
       };
       try {
         for await (const event of spawnFn(message, config, deadline.controller)) {

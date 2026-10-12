@@ -108,6 +108,8 @@ it("starts the brain with the owner database and hands it to the routes, the age
   for (const name of ["createBrainLateBoundIntegrations", "createBrainAgentReadTools", "createBrainProjectCleanup"]) {
     expect(server, name).not.toContain(name);
   }
+  // Split before adding behavior (CLAUDE.md): server.ts stays under 2,000 lines and names its extraction plan.
+  expect([server.split("\n").length < 2_000, server.startsWith("// Composition only")]).toEqual([true, true]);
 });
 
 describe("gateway seams (server/brain-wiring.ts)", () => {
@@ -132,10 +134,27 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
     }
   });
 
-  it("offers no agent tools while the brain is off", () => {
-    expect(createBrainGatewayAgentTools(null, ["owner_a"])).toEqual({
-      brainTools: undefined, brainReadTools: undefined, brainOwnerIds: ["owner_a"],
-    });
+  it("offers no agent tools while the brain is off, and none to a principal that is not an owner", () => {
+    const tools = createBrainGatewayAgentTools(null, ["owner_a"]);
+    expect(tools.brainToolsFor("owner_a")).toEqual({ brainTools: undefined, brainReadTools: undefined });
+    expect(tools.brainToolsFor("collaborator")).toBeUndefined();
+  });
+
+  it("binds a run's tools to its caller: a Clerk owner beside \"default\" in dev, or alone in production", async () => {
+    const why = vi.fn(async () => ({})), search = vi.fn(async () => ({}));
+    const services = { brainService: { why }, kyselyInstance: null, brainServices: {
+      project: null, search: { search }, graph: null, brief: null, impact: null,
+    } } as unknown as Parameters<typeof createBrainGatewayAgentTools>[0];
+    const dev = createBrainGatewayStart(["user_c"], { NODE_ENV: "development", MATRIX_CLERK_USER_ID: "user_c" }).ownerIds;
+    const production = createBrainGatewayStart(["user_c"], { NODE_ENV: "production" }).ownerIds;
+    for (const [ownerIds, callerId] of [[dev, "user_c"], [dev, "default"], [production, "user_c"]] as const) {
+      const run = createBrainGatewayAgentTools(services, ownerIds).brainToolsFor(callerId);
+      expect(await run?.brainTools?.why({ project: "widgets", path: "src" })).toEqual({ status: "ok" });
+      expect(await run?.brainReadTools?.search?.({ project: "widgets", query: "plan" })).toEqual({ status: "ok" });
+      expect(why).toHaveBeenLastCalledWith(callerId, "widgets", expect.anything());
+      expect(search).toHaveBeenLastCalledWith(callerId, "widgets", expect.anything());
+    }
+    expect(createBrainGatewayAgentTools(services, production).brainToolsFor("default")).toBeUndefined();
   });
 
   it("hands the brain tools to an /api/message run of an owner only, never a collaborator's", async () => {
@@ -144,8 +163,10 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
     writeFileSync(join(home, "system/config.json"), JSON.stringify({ kernel: { anthropicApiKey: "owner-test-key" } }));
     try {
       const configs: KernelConfig[] = [];
+      const why = vi.fn(async () => ({}));
+      const services = { brainService: { why }, brainServices: null, kyselyInstance: null } as never;
       const dispatcher = createDispatcher({
-        homePath: home, brainTools: { why: vi.fn() }, brainOwnerIds: ["owner_a"],
+        homePath: home, ...createBrainGatewayAgentTools(services, ["owner_a"]),
         spawnFn: async function* (_message: string, config: KernelConfig) { configs.push(config); } as never,
       });
       const app = new Hono();
@@ -162,6 +183,8 @@ describe("gateway seams (server/brain-wiring.ts)", () => {
           headers: { "content-type": "application/json", "x-user": user } })).status).toBe(200);
       }
       expect(configs.map((config) => config.brainTools !== undefined)).toEqual([true, false, false]);
+      await configs[0]!.brainTools!.why({ project: "widgets", path: "src" });
+      expect(why).toHaveBeenCalledWith("owner_a", "widgets", expect.anything());
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

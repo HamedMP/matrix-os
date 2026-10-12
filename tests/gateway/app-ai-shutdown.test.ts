@@ -17,7 +17,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   );
   const logBestEffortFailure = vi.fn();
   const dependencies = {
-    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure,
+    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, stopBrainServices: vi.fn(), ownerDatabaseServices: null,
     jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),

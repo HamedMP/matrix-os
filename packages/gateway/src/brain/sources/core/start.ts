@@ -111,10 +111,11 @@ export function createBrainSourceHandlers(
     }));
   }
   if (ready.includes("matrix_sources")) {
-    const owners = deps.homeOwnerIds === undefined ? {} : { ownerIds: deps.homeOwnerIds };
+    // Without an owner principal the gateway's Notes and home are never handed over at all.
+    const ownerIds = deps.homeOwnerIds ?? [], owned = ownerIds.length > 0;
     handlers.push(
-      createBrainMatrixNotesHandler({ kysely, notes: deps.notes, ...owners }),
-      createBrainMatrixFilesHandler({ kysely, homePath: deps.homePath, ...owners }),
+      createBrainMatrixNotesHandler({ kysely, notes: owned ? deps.notes : null, ownerIds }),
+      createBrainMatrixFilesHandler({ kysely, homePath: owned ? deps.homePath : "", ownerIds }),
       createBrainMatrixChatHandler({ kysely, chats: deps.chats }),
     );
   }
