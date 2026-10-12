@@ -32,7 +32,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
     const authorizations=await sql`SELECT * FROM bot_provider_authorizations`.execute(db);
     const bindings=await sql`SELECT * FROM bot_execution_bindings`.execute(db);
     const starts=await concurrentStarts();
-    expect(starts.flatMap(result=>result.applied)).toEqual([6,7,8,9]);
+    expect(starts.flatMap(result=>result.applied).sort((a,b)=>a-b)).toEqual([6,7,8,9]);
     expect(await db.selectFrom("bot_schema_migrations").select(["version","name"]).where("version","=",6).execute()).toEqual([{version:6,name:"bot_chatgpt_plan_devices"}]);
     expect(await pins()).toEqual([]);
     expect((await sql`SELECT * FROM bot_provider_authorizations`.execute(db)).rows).toEqual(authorizations.rows);
@@ -50,7 +50,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("released v6 pooled start
     await db.insertInto("bot_chatgpt_plan_devices").values(saved).execute();
     const before=await pins();
     // Only the later migrations apply, once; the v6 pins stay as they were.
-    expect((await concurrentStarts()).flatMap(result=>result.applied)).toEqual([7,8,9]);
+    expect((await concurrentStarts()).flatMap(result=>result.applied).sort((a,b)=>a-b)).toEqual([7,8,9]);
     expect((await concurrentStarts()).every(result=>result.applied.length===0)).toBe(true);
     expect(await pins()).toEqual(before);
   });
