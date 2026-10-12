@@ -49,20 +49,26 @@ interface SendChatMessageInput {
 const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
 
 /**
- * Uploads a message's attachments. When one fails, those that did arrive are
- * removed again: no message will name them.
+ * Uploads a message's attachments and resolves to the places of those this
+ * call put on the computer. An attachment found already in place came from an
+ * earlier try, whose turn the computer may have admitted, so it is not among
+ * them and is never removed. When an upload fails, the ones this call did put
+ * there are removed again: no message names them.
  */
 async function uploadAttachments(
   token: string,
   gatewayUrl: string,
   attachments: readonly ComposerAttachment[],
-): Promise<void> {
+): Promise<string[]> {
   const uploads = await Promise.allSettled(
     attachments.map((attachment) => uploadChatAttachment(token, gatewayUrl, attachment)),
   );
+  const created = uploads.flatMap((upload) => (
+    upload.status === "fulfilled" && upload.value.created ? [upload.value.path] : []
+  ));
   const failed = uploads.find((upload) => upload.status === "rejected");
-  if (!failed) return;
-  await removeUploads(token, gatewayUrl, uploads.flatMap((upload) => (upload.status === "fulfilled" ? [upload.value] : [])));
+  if (!failed) return created;
+  await removeUploads(token, gatewayUrl, created);
   throw failed.reason;
 }
 
@@ -105,7 +111,7 @@ export function useSendChatMessage() {
       if (attachmentParts.some((part) => part === null)) throw new Error("Attachment cannot be sent.");
       // Uploaded before the chat is created, so a failed upload leaves no
       // empty chat behind.
-      await uploadAttachments(token, gatewayUrl, attachments);
+      const newUploads = await uploadAttachments(token, gatewayUrl, attachments);
       // A session token lasts a minute and an upload can take most of one, so
       // what follows an upload asks for the token again.
       const sendToken = attachments.length > 0 ? await getToken() : token;
@@ -123,8 +129,9 @@ export function useSendChatMessage() {
             ...(projectId ? { projectId } : {}),
           });
         } catch (error: unknown) {
-          // No turn has been asked for yet, so nothing can name the uploads.
-          await removeUploads(sendToken, gatewayUrl, attachmentParts.flatMap((part) => (part?.ownerReference ? [part.ownerReference] : [])));
+          // This send has asked for no turn yet, and no earlier one named
+          // what it has just put on the computer.
+          await removeUploads(sendToken, gatewayUrl, newUploads);
           throw error;
         }
         targetChatId = record.chat.id;
@@ -137,7 +144,7 @@ export function useSendChatMessage() {
       }
 
       // Uploads stay if this fails: the answer may only have been lost, and
-      // the turn it admitted names them. Sending again writes over them.
+      // the turn it admitted names them. Sending again finds them in place.
       const admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
         clientRequestId: turnRequestId,
         baseRevision: revision,

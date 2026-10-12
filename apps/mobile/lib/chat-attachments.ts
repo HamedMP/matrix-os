@@ -46,6 +46,7 @@ const UPLOAD_DIRECTORY = "temporary/desktop-chat";
 const MAX_NAME_LENGTH = 120;
 const ATTACHMENT_ID = /^att_[a-f0-9]{32}$/;
 const NO_KINDS: readonly ChatAttachmentKind[] = [];
+const NO_UNREADABLE: readonly ComposerAttachment[] = [];
 
 export function attachmentKindForMimeType(mimeType: string): ChatAttachmentKind {
   return mimeType.toLowerCase().startsWith("image/") ? "image" : "file";
@@ -125,16 +126,39 @@ export function sameAttachments(left: readonly ComposerAttachment[], right: read
   return left.length === right.length && left.every((attachment, index) => attachment.id === right[index]?.id);
 }
 
-/** `added` after `current`, each attachment once, and no more than a message carries. */
+/**
+ * `added` after `current`, each attachment once, up to `limit` in all. What is
+ * already in `current` always stays; of `added`, the first that fit.
+ */
 export function appendAttachments(
   current: readonly ComposerAttachment[],
   added: readonly ComposerAttachment[],
+  limit: number = MAX_MESSAGE_ATTACHMENTS,
 ): ComposerAttachment[] {
   const merged = [...current];
   for (const attachment of added) {
+    if (merged.length >= limit) break;
     if (!merged.some((existing) => existing.id === attachment.id)) merged.push(attachment);
   }
-  return merged.slice(0, MAX_MESSAGE_ATTACHMENTS);
+  return merged;
+}
+
+/** The waiting attachments the selected model does not read, which a message cannot be sent with. */
+export function unreadableAttachments(
+  attachments: readonly ComposerAttachment[],
+  kinds: readonly ChatAttachmentKind[],
+): readonly ComposerAttachment[] {
+  const unreadable = attachments.filter((attachment) => !kinds.includes(attachment.kind));
+  return unreadable.length > 0 ? unreadable : NO_UNREADABLE;
+}
+
+/** What to tell the person about waiting attachments the selected model does not read. Null when it reads them all. */
+export function unreadableNotice(unreadable: readonly ComposerAttachment[]): string | null {
+  if (unreadable.length === 0) return null;
+  const photos = unreadable.every((attachment) => attachment.kind === "image");
+  const files = unreadable.every((attachment) => attachment.kind === "file");
+  const what = photos ? "photos" : files ? "files" : "these attachments";
+  return `The selected model cannot read ${what}. Remove ${unreadable.length === 1 ? "it" : "them"} or choose another model.`;
 }
 
 /** A new chat's title when its first message is attachments and no text. */

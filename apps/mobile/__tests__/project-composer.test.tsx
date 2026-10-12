@@ -237,6 +237,29 @@ describe("useProjectComposer", () => {
       expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["later.jpg"]);
     });
 
+    it("hold the message back while the selected model does not read one of them", () => {
+      const { result, rerender, initialProps } = renderComposer({ attachmentKinds: ["file"] });
+      act(() => result.current.setDraft("Look at this"));
+      act(() => result.current.addAttachments([photo("a")]));
+
+      expect(result.current.unreadableAttachments.map((attachment) => attachment.name)).toEqual(["a.jpg"]);
+      expect(result.current.canSend).toBe(false);
+      act(() => result.current.send());
+      expect(mockMutate).not.toHaveBeenCalled();
+
+      rerender({ ...initialProps, attachmentKinds: ["image", "file"] });
+      expect(result.current.unreadableAttachments).toEqual([]);
+      expect(result.current.canSend).toBe(true);
+    });
+
+    it("say how many more there is room for", () => {
+      const { result } = renderComposer();
+      expect(result.current.attachmentRoom).toBe(8);
+
+      act(() => result.current.addAttachments([photo("a"), photo("b")]));
+      expect(result.current.attachmentRoom).toBe(6);
+    });
+
     it("send again as the same message after a failure, and as a new one when they differ", () => {
       const { result } = renderComposer();
       act(() => result.current.setDraft("Look at this"));

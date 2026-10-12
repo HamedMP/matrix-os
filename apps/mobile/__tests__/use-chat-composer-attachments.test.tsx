@@ -133,7 +133,7 @@ describe("chat composer attachments", () => {
     mockCreateChat.mockResolvedValue({ chat: { id: "chat_new", revision: 1 } });
     mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_new", "msg_new"));
     mockUploadChatAttachment.mockImplementation(async (_token: string, _gateway: string, attachment: ComposerAttachment) => (
-      `temporary/desktop-chat/${attachment.id}-${attachment.name}`
+      { path: `temporary/desktop-chat/${attachment.id}-${attachment.name}`, created: true }
     ));
     mockRemoveChatAttachment.mockResolvedValue(undefined);
   });
@@ -258,7 +258,7 @@ describe("chat composer attachments", () => {
 
   it("creates no chat and admits no turn when an upload fails, removes the uploads that arrived, and gives everything back", async () => {
     mockUploadChatAttachment
-      .mockResolvedValueOnce(placeOf("flowers"))
+      .mockResolvedValueOnce({ path: placeOf("flowers"), created: true })
       .mockRejectedValueOnce(new Error("Could not upload the attachment. Try again."));
     const composer = renderComposer();
     attach(composer, "flowers", "falls");
@@ -321,6 +321,64 @@ describe("chat composer attachments", () => {
     expect(mockUploadChatAttachment.mock.calls.map((call) => call[2].id)).toEqual([idOf("flowers"), idOf("flowers")]);
   });
 
+  describe("sending again after the computer may have admitted the turn", () => {
+    // The first try uploads both and the answer to its admission is lost. The
+    // turn it admitted names both uploads, so nothing may remove them.
+    async function loseTheAnswer(composer: ReturnType<typeof renderComposer>) {
+      mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
+      attach(composer, "flowers", "falls");
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]));
+      mockUploadChatAttachment.mockReset();
+    }
+
+    it("removes nothing when an upload fails on the second try", async () => {
+      const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
+      await loseTheAnswer(composer);
+      // The computer still has the first; the second cannot be reached.
+      mockUploadChatAttachment
+        .mockResolvedValueOnce({ path: placeOf("flowers"), created: false })
+        .mockRejectedValueOnce(new Error("Could not upload the attachment. Try again."));
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockUploadChatAttachment).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+      expect(mockRemoveChatAttachment).not.toHaveBeenCalled();
+      expect(waiting(composer)).toEqual(["flowers.jpg", "falls.jpg"]);
+    });
+
+    it("removes nothing when the chat cannot be reached on the second try", async () => {
+      const composer = renderComposer();
+      await loseTheAnswer(composer);
+      mockUploadChatAttachment
+        .mockResolvedValueOnce({ path: placeOf("flowers"), created: false })
+        .mockResolvedValueOnce({ path: placeOf("falls"), created: false });
+      mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockCreateChat).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+      expect(mockRemoveChatAttachment).not.toHaveBeenCalled();
+    });
+
+    it("removes only what the second try itself put on the computer", async () => {
+      const composer = renderComposer();
+      await loseTheAnswer(composer);
+      // One upload had been cleared meanwhile, so this try puts it back.
+      mockUploadChatAttachment
+        .mockResolvedValueOnce({ path: placeOf("flowers"), created: false })
+        .mockResolvedValueOnce({ path: placeOf("falls"), created: true });
+      mockCreateChat.mockRejectedValueOnce(new Error("Could not start a new chat. Try again."));
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockRemoveChatAttachment).toHaveBeenCalledTimes(1));
+
+      expect(mockRemoveChatAttachment.mock.calls[0][2]).toBe(placeOf("falls"));
+    });
+  });
+
   it("sends the same text with other attachments as a new message", async () => {
     mockAdmitChatTurn.mockRejectedValueOnce(new Error("Could not send message. Try again."));
     const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
@@ -336,6 +394,138 @@ describe("chat composer attachments", () => {
 
     const [first, second] = mockAdmitChatTurn.mock.calls.map((call) => call[3].clientRequestId);
     expect(second).not.toBe(first);
+  });
+
+  describe("room for attachments while a send is on its way", () => {
+    function pendingAdmission() {
+      let settle: { admit: (admission: unknown) => void; fail: (error: Error) => void } = { admit: () => {}, fail: () => {} };
+      mockAdmitChatTurn.mockReturnValueOnce(new Promise((resolve, reject) => { settle = { admit: resolve, fail: reject }; }));
+      return () => settle;
+    }
+
+    const eight = Array.from({ length: MAX_MESSAGE_ATTACHMENTS }, (_, index) => `p${index}`);
+
+    it("is held for what is being sent, so that nothing added meanwhile is lost if it comes back", async () => {
+      const settle = pendingAdmission();
+      const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
+      attach(composer, ...eight);
+      expect(composer.result.current.attachmentRoom).toBe(0);
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+
+      // The composer is empty, but its places are spoken for.
+      expect(waiting(composer)).toEqual([]);
+      expect(composer.result.current.attachmentRoom).toBe(0);
+      attach(composer, "one-more");
+      expect(waiting(composer)).toEqual([]);
+
+      await act(async () => { settle().fail(new Error("Could not send message. Try again.")); });
+      await waitFor(() => expect(waiting(composer)).toHaveLength(MAX_MESSAGE_ATTACHMENTS));
+      expect(waiting(composer)).toEqual(eight.map((name) => `${name}.jpg`));
+    });
+
+    it("leaves the rest of the places free", async () => {
+      const settle = pendingAdmission();
+      const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
+      attach(composer, "a", "b", "c");
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+      expect(composer.result.current.attachmentRoom).toBe(5);
+      attach(composer, ...eight);
+
+      // Five of the eight fit beside the three that may come back.
+      expect(waiting(composer)).toHaveLength(5);
+      await act(async () => { settle().fail(new Error("Could not send message. Try again.")); });
+      await waitFor(() => expect(waiting(composer)).toHaveLength(MAX_MESSAGE_ATTACHMENTS));
+      expect(waiting(composer).slice(0, 3)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
+    });
+
+    it("is given back once the send has gone through", async () => {
+      const settle = pendingAdmission();
+      const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
+      attach(composer, ...eight);
+
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+      await act(async () => { settle().admit(admissionFor("chat_a", "msg_a")); });
+      await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+
+      expect(composer.result.current.attachmentRoom).toBe(MAX_MESSAGE_ATTACHMENTS);
+    });
+
+    it("is held in the chat that is sending, not in another", async () => {
+      pendingAdmission();
+      const composer = renderComposer({ activeChatId: "chat_a", detail: detailFor("chat_a") });
+      attach(composer, ...eight);
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+
+      composer.rerender({ ...newChat, activeChatId: "chat_b", detail: detailFor("chat_b") });
+
+      expect(composer.result.current.attachmentRoom).toBe(MAX_MESSAGE_ATTACHMENTS);
+    });
+  });
+
+  it("puts what was being chosen for a new chat into the chat it became meanwhile", async () => {
+    let admit: (admission: unknown) => void = () => {};
+    mockAdmitChatTurn.mockReturnValueOnce(new Promise((resolve) => { admit = resolve; }));
+    const composer = renderComposer();
+    act(() => { composer.result.current.setDraft("Start"); });
+    act(() => { composer.result.current.send(); });
+    await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+
+    // The library is opened from the new chat while its first message is on its way...
+    const addToTheNewChat = composer.result.current.addAttachments;
+    await act(async () => { admit(admissionFor("chat_new", "msg_new")); });
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+    composer.rerender({ ...newChat, activeChatId: "chat_new", detail: detailFor("chat_new") });
+
+    // ...and a photo is chosen once that chat exists and is the one on screen.
+    act(() => { addToTheNewChat([photo("late")]); });
+
+    expect(waiting(composer)).toEqual(["late.jpg"]);
+    composer.rerender(newChat);
+    expect(waiting(composer)).toEqual([]);
+  });
+
+  describe("attachments the selected model does not read", () => {
+    it("hold the message back and are reported, until the model reads them or they are removed", async () => {
+      const composer = renderComposer({ attachmentKinds: ["file"] });
+      attach(composer, "flowers");
+      act(() => { composer.result.current.setDraft("What is this?"); });
+
+      expect(composer.result.current.unreadableAttachments.map((item) => item.name)).toEqual(["flowers.jpg"]);
+      act(() => { composer.result.current.send(); });
+      expect(mockFetchActiveComputer).not.toHaveBeenCalled();
+      expect(composer.result.current.draft).toBe("What is this?");
+      expect(waiting(composer)).toEqual(["flowers.jpg"]);
+
+      composer.rerender({ ...newChat, attachmentKinds: ["image", "file"] });
+      expect(composer.result.current.unreadableAttachments).toEqual([]);
+      act(() => { composer.result.current.send(); });
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+    });
+
+    it("stop holding it back once removed", async () => {
+      const composer = renderComposer({ attachmentKinds: [] });
+      attach(composer, "flowers");
+      act(() => { composer.result.current.setDraft("Never mind the photo"); });
+
+      act(() => { composer.result.current.removeAttachment(photo("flowers").id); });
+      act(() => { composer.result.current.send(); });
+
+      await waitFor(() => expect(mockAdmitChatTurn).toHaveBeenCalledTimes(1));
+      expect(mockUploadChatAttachment).not.toHaveBeenCalled();
+    });
+
+    it("are none where the screen does not say what the model reads", () => {
+      const composer = renderComposer();
+      attach(composer, "flowers");
+
+      expect(composer.result.current.unreadableAttachments).toEqual([]);
+    });
   });
 
   it("puts returned attachments ahead of any added while the send was on its way", async () => {

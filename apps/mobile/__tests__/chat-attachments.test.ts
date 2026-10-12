@@ -16,6 +16,8 @@ import {
   rememberSentAttachments,
   sameAttachments,
   supportedAttachmentKinds,
+  unreadableAttachments,
+  unreadableNotice,
   writeAttachmentDraft,
   type ComposerAttachment,
 } from "../lib/chat-attachments";
@@ -164,6 +166,39 @@ describe("chat attachments", () => {
     const many = Array.from({ length: MAX_MESSAGE_ATTACHMENTS + 3 }, (_, index) => photo(`n${index}`));
     expect(appendAttachments([], many)).toHaveLength(MAX_MESSAGE_ATTACHMENTS);
     expect(appendAttachments(many.slice(0, 7), many.slice(7)).at(-1)?.name).toBe("n7.jpg");
+  });
+
+  it("adds up to a lower limit when asked, without dropping what is already there", () => {
+    const waiting = [photo("a"), photo("b"), photo("c")];
+
+    expect(appendAttachments(waiting, [photo("d"), photo("e")], 4).map((item) => item.name))
+      .toEqual(["a.jpg", "b.jpg", "c.jpg", "d.jpg"]);
+    // Already over the limit: nothing is added and nothing is lost.
+    expect(appendAttachments(waiting, [photo("d")], 2).map((item) => item.name)).toEqual(["a.jpg", "b.jpg", "c.jpg"]);
+    // One that is already there takes no room from the next.
+    expect(appendAttachments(waiting, [photo("a"), photo("d")], 4).map((item) => item.name))
+      .toEqual(["a.jpg", "b.jpg", "c.jpg", "d.jpg"]);
+  });
+
+  describe("attachments the selected model does not read", () => {
+    const notes = photo("n", { kind: "file", mimeType: "text/plain", name: "n.txt" });
+
+    it("are those of a kind it does not take", () => {
+      expect(unreadableAttachments([photo("a"), notes], ["file"]).map((item) => item.name)).toEqual(["a.jpg"]);
+      expect(unreadableAttachments([photo("a"), notes], []).map((item) => item.name)).toEqual(["a.jpg", "n.txt"]);
+      expect(unreadableAttachments([photo("a"), notes], ["image", "file"])).toEqual([]);
+      expect(unreadableAttachments([], [])).toEqual([]);
+    });
+
+    it("are named by kind, with what can be done about them", () => {
+      expect(unreadableNotice([])).toBeNull();
+      expect(unreadableNotice([photo("a")]))
+        .toBe("The selected model cannot read photos. Remove it or choose another model.");
+      expect(unreadableNotice([notes, notes]))
+        .toBe("The selected model cannot read files. Remove them or choose another model.");
+      expect(unreadableNotice([photo("a"), notes]))
+        .toBe("The selected model cannot read these attachments. Remove them or choose another model.");
+    });
   });
 
   it("titles a chat that starts with attachments and no text", () => {

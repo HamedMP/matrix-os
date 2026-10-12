@@ -1,7 +1,14 @@
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useRef, useState } from "react";
 
-import { appendAttachments, sameAttachments, type ComposerAttachment } from "@/lib/chat-attachments";
+import {
+  MAX_MESSAGE_ATTACHMENTS,
+  appendAttachments,
+  sameAttachments,
+  unreadableAttachments,
+  type ChatAttachmentKind,
+  type ComposerAttachment,
+} from "@/lib/chat-attachments";
 import { useSendChatMessage } from "@/lib/queries/use-send-chat-message";
 import { canonicalChatRequestId } from "@/lib/requests/canonical-chat";
 
@@ -22,6 +29,11 @@ interface ProjectComposerOptions {
   projectId: string | null;
   selection: CanonicalChatModelSelection | null;
   turnModes: { interactionMode: string; permissionMode: string } | null;
+  /**
+   * The kinds of attachment the selected model reads. A message is not sent
+   * while one of another kind is waiting. Left out, nothing is held back.
+   */
+  attachmentKinds?: readonly ChatAttachmentKind[];
   /** Holds sends back, as while there is no model to send to yet. */
   disabled?: boolean;
   /** Called once the new chat's first message is admitted, with the model it was started with. */
@@ -39,6 +51,7 @@ export function useProjectComposer({
   projectId,
   selection,
   turnModes,
+  attachmentKinds,
   disabled = false,
   onChatStarted,
 }: ProjectComposerOptions) {
@@ -49,7 +62,10 @@ export function useProjectComposer({
   const failedSends = useRef<FailedSend[]>([]);
 
   const text = draft.trim();
+  const unreadable = attachmentKinds ? unreadableAttachments(attachments, attachmentKinds) : [];
   const canSend = !disabled && projectId !== null && (text !== "" || attachments.length > 0)
+    // The computer would refuse the turn after the phone had uploaded the files.
+    && unreadable.length === 0
     && selection !== null && turnModes !== null && !isSending;
 
   const addAttachments = (added: readonly ComposerAttachment[]) => {
@@ -97,5 +113,18 @@ export function useProjectComposer({
     });
   };
 
-  return { draft, setDraft, attachments, addAttachments, removeAttachment, canSend, send, isSending };
+  return {
+    draft,
+    setDraft,
+    attachments,
+    addAttachments,
+    removeAttachment,
+    /** How many more can be added. What is being sent stays in the box, so it is counted. */
+    attachmentRoom: Math.max(0, MAX_MESSAGE_ATTACHMENTS - attachments.length),
+    /** The waiting attachments the selected model does not read. Nothing is sent while there are any. */
+    unreadableAttachments: unreadable,
+    canSend,
+    send,
+    isSending,
+  };
 }

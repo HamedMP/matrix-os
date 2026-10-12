@@ -37,19 +37,26 @@ scope.
   than 5 MB, or in a type models do not read (HEIC) is scaled down and saved as
   JPEG before it is attached. Anything left out is named in one alert.
 - Attachments belong to the chat they were added in, like the text draft, and
-  do not carry over to another account or computer.
+  do not carry over to another account or computer. What is chosen for a new
+  chat while its first message is on its way goes to the chat that message
+  creates.
 - Sending shows the message at once. If the send fails, the text and the
-  attachments return to the composer.
+  attachments return to the composer. Places are held for them until the send
+  is settled, so nothing added meanwhile is pushed out when they come back.
+- A message is not sent while an attachment waits that the selected model does
+  not read, as after a change of model. The composer says which kind it is and
+  that it can be removed or another model chosen.
 - Backing out of the library or the file browser returns to the sheet.
 
 ## Wire contract
 
 No server change. The app uses what the web client uses:
 
-1. `PUT /api/files/blob?path=temporary/desktop-chat/<id>-<name>&force=true`
-   with the file as the body. The id is 16 random bytes from the system's
-   random source, so an upload's place cannot be guessed and one attachment
-   always uploads to the same place.
+1. `PUT /api/files/blob?path=temporary/desktop-chat/<id>-<name>` with the file
+   as the body. The id is 16 random bytes from the system's random source, so
+   an upload's place cannot be guessed and one attachment always has the same
+   place. Nothing is written over: `409 file_exists` means an earlier try
+   already put the attachment there, and it is used as it is.
 2. `POST /api/chats/:chatId/turns` with one `attachment_reference` part per
    upload (`ownerReference` is the upload's place).
 3. `DELETE /api/files/blob?path=…` for uploads that no turn will name.
@@ -73,9 +80,11 @@ No server change. The app uses what the web client uses:
 
 | Step that fails | Result |
 | --- | --- |
-| An upload | No chat is created, no turn is asked for. Uploads that arrived are removed. Text and attachments return to the composer. |
-| Creating the chat | Uploads are removed. Text and attachments return. |
-| Admitting the turn | The answer may only have been lost, so uploads stay. Sending again reuses the request ids and the upload places, so the computer sees one message. |
+| An upload | No chat is created, no turn is asked for. Uploads that this send put on the computer are removed. Text and attachments return to the composer. |
+| An upload is stored but is not the whole file | It is removed, so a later try does not find it in place, and the upload counts as failed. |
+| Creating the chat | Uploads that this send put on the computer are removed. Text and attachments return. |
+| Admitting the turn | The answer may only have been lost, so uploads stay. Sending again reuses the request ids and finds the uploads in place, so the computer sees one message. |
+| Anything, on a later try | An upload found already in place is never removed: the turn of an earlier try may name it. |
 | Removing an unused upload | Logged. The computer clears the upload folder by itself (7 days, 200 files). |
 | The phone's copy of a sent photo is gone | The message shows the computer's copy. |
 
@@ -106,7 +115,18 @@ new build, not an over-the-air update.
 - A model that reads no attachments shows both rows disabled with the reason.
 - A skill chosen from the sheet starts the draft.
 - A failed send returns text and attachments, and sending again does not
-  create a second chat or message.
+  create a second chat or message, nor remove a file a sent message uses.
+- After a change to a model that does not read a waiting attachment, Send is
+  off and the composer says why.
+
+## Public documentation
+
+A separate PR in `FinnaAI/matrix-os-site`, under `content/docs/`, adds to the
+Native Mobile chat page: how to attach photos and files from the "+", the
+limits (8 per message, 5 MB each, photos scaled to 2048 pixels), that what can
+be attached depends on the selected model, and how to choose a skill or
+command. Done when that PR is linked from this stack's PRs; it ships with the
+0.2.6 build, not before.
 
 ## Not in scope
 
