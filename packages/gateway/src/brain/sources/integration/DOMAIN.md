@@ -12,8 +12,9 @@ gateway's integration layer for an owner. Spec: `specs/558-company-brain-github-
   customer gateway posts to the platform's internal `/read-call` route with its machine bearer, signed owner
   delegation and the read scope header. Local: the gateway holds the platform database and Pipedream client and runs
   `executeIntegrationAction` itself for the platform user whose Clerk id (or platform UUID) is the owner id (by the
-  Settings connect flow's rule, `integrations/principal-identity.ts`: outside production the dev principal `default`
-  reads the user stored under `MATRIX_CLERK_USER_ID`, else `MATRIX_HANDLE`; deps `env`), as a
+  Settings connect flow's rule, `integrations/principal-identity.ts`: on a local gateway with no auth token or
+  configured owner the dev principal `default` reads the user stored under `MATRIX_CLERK_USER_ID`, else
+  `MATRIX_HANDLE`; deps `env`), as a
   raw Pipedream proxy read (`pipedream.boundedProxy`): capped at 4 MiB while it is read, and cancelled by the call's
   signal. An action that cannot be read that way (no directApi GET or POST) is `unavailable`.
 - Owns no tables. Its only state is a label cache (at most 256 entries, 5 minute lifetime) for remote calls that

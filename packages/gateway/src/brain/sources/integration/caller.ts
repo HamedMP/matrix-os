@@ -71,8 +71,8 @@ export interface BrainIntegrationCallerDeps {
   readonly registry?: BrainIntegrationRegistry;
   readonly now?: () => number;
   /**
-   * The gateway's environment, for the local transport's identity rule (integrationClerkIdForPrincipal): outside
-   * production the dev principal reads the connections the Settings connect flow stored. Absent: no mapping.
+   * The gateway's environment, for the local transport's identity rule (integrationClerkIdForPrincipal): on a local
+   * gateway with no auth the dev principal reads the connections the Settings connect flow stored. Absent: no mapping.
    */
   readonly env?: IntegrationIdentityEnv;
 }

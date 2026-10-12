@@ -120,8 +120,8 @@ export function createIntegrationUserResolver(
     }
 
     // ---- Path C: dev env-var fallback ----
-    // The dev principal's Clerk id, by the same rule the Company Brain reads connections with (Path B returned in
-    // production, so the rule maps the dev principal here).
+    // The dev principal's Clerk id, by the same rule the Company Brain reads connections with (only a local gateway
+    // with no auth reaches this path, which is where the rule maps the dev principal).
     const handle = env.MATRIX_HANDLE ?? INTEGRATION_DEV_PRINCIPAL_ID;
     const clerkId = integrationClerkIdForPrincipal(INTEGRATION_DEV_PRINCIPAL_ID, env);
     const containerId = env.HOSTNAME ?? "local";

@@ -1,3 +1,5 @@
+import { readPrincipalRuntimeConfig } from "../request-principal.js";
+
 /**
  * The one rule that maps a request principal to the Clerk id its platform integration rows are stored under. The
  * Settings connect flow (startup/platform-integrations.ts, dev path) and the Company Brain's local integration reads
@@ -16,10 +18,19 @@ export function integrationDevClerkId(env: IntegrationIdentityEnv): string {
 }
 
 /**
- * Outside production the dev principal maps to the dev connect flow's Clerk id; every other principal (a Clerk id
- * from the platform header or a JWT, or the configured owner) is its own Clerk id.
+ * Whether "default" is the dev principal: only a local development gateway with no auth token and no configured owner
+ * gives it (request-principal.ts), and only there does the Settings connect flow use its dev upsert.
+ */
+export function integrationDevPrincipalActive(env: IntegrationIdentityEnv): boolean {
+  const runtime = readPrincipalRuntimeConfig(env);
+  return runtime.isLocalDevelopment && !runtime.isProduction && !runtime.authEnabled && !runtime.configuredUserId;
+}
+
+/**
+ * On a local gateway with no auth the dev principal maps to the dev connect flow's Clerk id; every other principal
+ * (the verified platform user, a JWT subject or the configured owner) is its own Clerk id.
  */
 export function integrationClerkIdForPrincipal(ownerId: string, env: IntegrationIdentityEnv): string {
-  if (env.NODE_ENV !== "production" && ownerId === INTEGRATION_DEV_PRINCIPAL_ID) return integrationDevClerkId(env);
+  if (ownerId === INTEGRATION_DEV_PRINCIPAL_ID && integrationDevPrincipalActive(env)) return integrationDevClerkId(env);
   return ownerId;
 }
