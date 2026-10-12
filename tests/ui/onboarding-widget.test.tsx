@@ -365,4 +365,22 @@ describe("OnboardingWidget", () => {
     render(<Harness actions={makeActions()} events={events} repos={[]} />);
     expect(screen.getByText("No repos found. Paste a repo link below.")).toBeInTheDocument();
   });
+
+  it("plays the screen transition when the step changes, not while a run updates in place", () => {
+    const actions = makeActions();
+    const { container, rerender } = render(<Harness actions={actions} />);
+    const screenNode = () => container.querySelector(".mxo-screen");
+    const tasks = screenNode();
+    expect(tasks).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Research anything/ }));
+    const question = screenNode();
+    expect(question).not.toBe(tasks);
+
+    fireEvent.click(screen.getByRole("button", { name: "AI agent pricing" }));
+    const running = screenNode();
+    expect(running).not.toBe(question);
+    rerender(<Harness actions={actions} runView={{ status: "running", steps: [{ id: "s1", label: "Searching the web", state: "running" }] }} />);
+    expect(screenNode()).toBe(running);
+  });
 });

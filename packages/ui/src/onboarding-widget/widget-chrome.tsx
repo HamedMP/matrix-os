@@ -124,6 +124,18 @@ function ScreenView({ props, appQuery, onAppQuery }: { props: OnboardingWidgetPr
   }
 }
 
+/** Changes only when the widget moves to another step, so a run updating in place does not replay the transition. */
+function screenMotionKey(state: OnboardingWidgetState): string {
+  if (state.ai && state.ai.step !== "menu") return `ai:${state.ai.step}:${state.ai.provider}`;
+  const screen = state.screen;
+  switch (screen.kind) {
+    case "question":
+    case "connect": return `${screen.kind}:${screen.taskId}`;
+    case "run": return `run:${screen.taskId}:${screen.answer.slice(0, 64)}`;
+    default: return screen.kind;
+  }
+}
+
 export function WidgetBody({ props, appQuery, onAppQuery, runInFlight }: {
   props: OnboardingWidgetProps;
   appQuery: string;
@@ -135,24 +147,26 @@ export function WidgetBody({ props, appQuery, onAppQuery, runInFlight }: {
   const showAllTasks = state.screen.kind !== "tasks" && state.screen.kind !== "apps" && !runInFlight;
   return (
     <div className="mxo-body" aria-live="polite">
-      {state.echo ? <UserEcho text={state.echo} /> : null}
-      {state.notice ? <DoneLine text={state.notice} /> : null}
-      {aiFlow ? (
-        <AiFlow
-          panel={aiFlow}
-          actions={actions}
-          keepName={activeAiName(props.activeAi, props.matrixAvailable)}
-          signInCode={props.aiSignInCode ?? null}
-          needsCode={props.aiSignInNeedsCode ?? false}
-        />
-      ) : (
-        <>
-          <ScreenView props={props} appQuery={appQuery} onAppQuery={onAppQuery} />
-          {showAllTasks ? (
-            <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
-          ) : null}
-        </>
-      )}
+      {state.echo ? <UserEcho key={state.echo} text={state.echo} /> : null}
+      {state.notice ? <DoneLine key={state.notice} text={state.notice} /> : null}
+      <div key={screenMotionKey(state)} className="mxo-screen">
+        {aiFlow ? (
+          <AiFlow
+            panel={aiFlow}
+            actions={actions}
+            keepName={activeAiName(props.activeAi, props.matrixAvailable)}
+            signInCode={props.aiSignInCode ?? null}
+            needsCode={props.aiSignInNeedsCode ?? false}
+          />
+        ) : (
+          <>
+            <ScreenView props={props} appQuery={appQuery} onAppQuery={onAppQuery} />
+            {showAllTasks ? (
+              <button type="button" className="mxo-link mxo-link--quiet" onClick={() => actions.dispatch({ type: "tasks.requested" })}>All tasks</button>
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }
