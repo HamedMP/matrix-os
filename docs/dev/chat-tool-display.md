@@ -27,6 +27,12 @@ continue to redact private paths. Missing or invalid keys retain safe coarse
 metadata. New canonical clients opt into `commandPreviewVersion=1` for complete
 previews; unversioned responses retain the legacy safe preview contract.
 
+Provider ingestion, including Claude and Hermes tool projections, retains the
+strict plaintext preview contract. The wider owner response schema must never
+admit raw private commands: only the authenticated encrypted sidecar may supply
+them. Read, export and legacy thread projections also apply the coarse policy
+to historical unprotected metadata before any authorized owner decryption.
+
 Native completion metadata enriches the existing activity ID instead of
 emitting another start, so status, activity sequence and watchdog accounting
 remain stable. Detail expansion shows all command lines alongside the working

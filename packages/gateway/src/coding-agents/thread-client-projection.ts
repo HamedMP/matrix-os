@@ -1,3 +1,4 @@
+import { projectPlaintextToolPreview } from "../chat/plaintext-tool-preview.js";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 
 /** Native completion evidence is internal to canonical Chat. Old thread clients
@@ -5,7 +6,7 @@ import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts
 export function projectThreadEventForClient(event: AgentThreadEvent): AgentThreadEvent {
   if (event.type === "tool.started") {
     const { protectedPreview: _protectedPreview, ...coarse } = event;
-    return coarse;
+    return projectPlaintextToolPreview(coarse);
   }
   if (event.type === "tool.completed") {
     const { protectedPreview: _protectedPreview, preview: _preview, previewKind: _kind, detail: _detail, ...coarse } = event;
