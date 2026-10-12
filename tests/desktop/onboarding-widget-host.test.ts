@@ -4,6 +4,7 @@ import { AppError } from "../../desktop/src/shared/app-error";
 import { createLegacyGlobalProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
 import {
   DEFAULT_ONBOARDING_PREFS,
+  onboardingActiveAi,
   onboardingLoginPresentation,
   onboardingPrefsKey,
   readOnboardingPrefs,
@@ -75,6 +76,29 @@ describe("onboarding AI selection", () => {
 
     const codexReady = catalogWith((instance) => instance.driverKind === "codex" ? { ...instance, availability: "available" } : instance);
     expect(onboardingConnectedProviders(codexReady)).toEqual(["codex"]);
+  });
+
+  function harness(id: string, driverKind: string, availability: "available" | "unavailable" = "available") {
+    const hermes = createLegacyGlobalProviderCatalog({ hasProject: false }).instances.find((instance) => instance.id === "hermes_default")!;
+    return { ...hermes, id, driverKind, availability, defaultSelection: { instanceId: id, model: "provider-default" } } as CanonicalProviderCatalog["instances"][number];
+  }
+  const catalogOf = (...instances: CanonicalProviderCatalog["instances"]): CanonicalProviderCatalog =>
+    ({ ...createLegacyGlobalProviderCatalog({ hasProject: false }), instances });
+  const hermesOff = harness("hermes_default", "hermes", "unavailable");
+  const claude = harness("claude_code_default", "claude_code");
+
+  it("runs Matrix AI only on Hermes or the managed Matrix route, never on whatever else is the default", () => {
+    expect(onboardingSelection(catalogOf(hermesOff, claude), "matrix")).toBeNull();
+    expect(onboardingSelection(catalogOf(hermesOff, harness("matrix_pi_default", "matrix_pi"), claude), "matrix")?.instanceId).toBe("matrix_pi_default");
+    expect(onboardingSelection(catalogOf(hermesOff, claude), "claude")?.instanceId).toBe("claude_code_default");
+    expect(onboardingSelection(catalogOf(hermesOff, harness("claude_code_default", "claude_code", "unavailable")), "claude")).toBeNull();
+  });
+
+  it("names the AI a task really runs on, and keeps the saved choice for when Matrix AI can run again", () => {
+    expect(onboardingActiveAi(catalogOf(hermesOff, claude), "matrix")).toBe("claude");
+    expect(onboardingActiveAi(catalogOf(hermesOff), "matrix")).toBe("matrix");
+    expect(onboardingActiveAi(createLegacyGlobalProviderCatalog({ hasProject: false }), "matrix")).toBe("matrix");
+    expect(onboardingActiveAi(catalogOf(hermesOff, claude), "codex")).toBe("codex");
   });
 
   it("reports exhausted credits only for the selected instance", () => {

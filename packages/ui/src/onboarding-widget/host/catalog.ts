@@ -11,17 +11,30 @@ import type { OnboardingAppCategory, OnboardingWidgetApp } from "../types.js";
 export const ONBOARDING_MAX_APPS = 50;
 
 const DRIVER_FOR_PROVIDER: Record<OnboardingAiProvider, string> = { claude: "claude_code", codex: "codex" };
+const MATRIX_AI_INSTANCES = ["hermes_default", "matrix_pi_default"];
 const CREDIT_STATES = new Set(["credit_required", "budget_exceeded"]);
 
+/** A route for exactly the chosen AI, or null; never whatever else the catalog would default to. */
 export function onboardingSelection(catalog: CanonicalProviderCatalog, choice: OnboardingAiChoice): CanonicalComposerSelection | null {
-  if (choice === "matrix") return createCanonicalComposerSelection(catalog, "hermes_default") ?? createCanonicalComposerSelection(catalog);
-  const instance = catalog.instances.find((candidate) => candidate.driverKind === DRIVER_FOR_PROVIDER[choice] && candidate.availability === "available");
-  return instance ? createCanonicalComposerSelection(catalog, instance.id) : null;
+  const ids = choice === "matrix"
+    ? MATRIX_AI_INSTANCES
+    : catalog.instances.filter((instance) => instance.driverKind === DRIVER_FOR_PROVIDER[choice]).map((instance) => instance.id);
+  for (const id of ids) {
+    const selection = createCanonicalComposerSelection(catalog, id);
+    if (selection?.instanceId === id) return selection;
+  }
+  return null;
 }
 
 export function onboardingConnectedProviders(catalog: CanonicalProviderCatalog): OnboardingAiProvider[] {
   return (Object.keys(DRIVER_FOR_PROVIDER) as OnboardingAiProvider[]).filter((provider) =>
     catalog.instances.some((instance) => instance.driverKind === DRIVER_FOR_PROVIDER[provider] && instance.availability === "available"));
+}
+
+/** The AI a new task runs on: the saved choice, or a connected AI while Matrix AI can't run on this computer. */
+export function onboardingActiveAi(catalog: CanonicalProviderCatalog, choice: OnboardingAiChoice): OnboardingAiChoice {
+  if (choice !== "matrix" || onboardingSelection(catalog, "matrix")) return choice;
+  return onboardingConnectedProviders(catalog).find((provider) => onboardingSelection(catalog, provider)) ?? "matrix";
 }
 
 export function onboardingCreditsExhausted(catalog: CanonicalProviderCatalog, selection: CanonicalComposerSelection | null): boolean {

@@ -34,6 +34,7 @@ Electron Desktop is the visual reference. Web Desktop and Web Canvas must reuse 
 - **Task rhythm (3–6).** One question with chips → at most one connect card (Connect / Skip) → a work log with checks → a result card with Open → exactly one follow-up offer.
 - **Connect apps first (2).** Search, filter chips, Connect / Connected rows, Done. Back on the task list, the confirmation names the newly connected apps, and their task tags disappear.
 - **Change the AI (7).** Matrix AI / Claude / ChatGPT · Codex / More in Settings. Claude → Claude account (Recommended) or API key → waiting for sign-in (Reopen tab / Cancel) or key entry ("Stored on your computer only.") → "Claude connected". Back on the task list, the footer shows the new AI. This uses the same provider workflow V2 client as Settings.
+  - Matrix AI runs only on Hermes (`hermes_default`) or the managed Matrix route (`matrix_pi_default`), never on whatever else the catalog would default to. When neither can run, the menu marks Matrix AI "Not available on this computer" and tasks run on the first connected AI, which the footer, the follow-up "Using …" line and the connect flow's keep button name. The saved choice stays Matrix AI, so it comes back once Matrix AI can run. With no AI able to run, the footer says "Matrix AI isn't available here".
 - **Not normal (8).**
   - Computer starting: tasks can still be picked; the run is queued and starts when ready.
   - Failed run: the failed step shows in red, with Try again / Try a simpler version.

@@ -258,7 +258,7 @@ function FollowUpOffer({ run, followUp, aiChoice, actions }: {
   );
 }
 
-type RunScreenProps = { run: OnboardingRunScreen; state: OnboardingWidgetState } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "actions">;
+type RunScreenProps = { run: OnboardingRunScreen; state: OnboardingWidgetState } & Pick<OnboardingWidgetProps, "runView" | "creditsExhausted" | "activeAi" | "actions">;
 
 export function RunScreen(props: RunScreenProps) {
   const { run, runView, actions } = props;
@@ -280,7 +280,7 @@ export function RunScreen(props: RunScreenProps) {
   );
 }
 
-function RunDone({ run, state, runView, creditsExhausted, actions }: RunScreenProps) {
+function RunDone({ run, state, runView, creditsExhausted, activeAi, actions }: RunScreenProps) {
   const task = onboardingTask(run.taskId);
   const steps = runView?.steps ?? [];
   const followUp = task && !state.followUpUsed && !creditsExhausted ? task.followUp : null;
@@ -292,7 +292,7 @@ function RunDone({ run, state, runView, creditsExhausted, actions }: RunScreenPr
         <ResultCard title={onboardingRunTitle(run)} subtitle={task ? runView?.resultSummary : undefined} onOpen={actions.openResult} />
       ) : null}
       {creditsExhausted ? <CreditsOffer actions={actions} /> : null}
-      {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={state.aiChoice} actions={actions} /> : null}
+      {followUp ? <FollowUpOffer run={run} followUp={followUp} aiChoice={activeAi} actions={actions} /> : null}
     </>
   );
 }

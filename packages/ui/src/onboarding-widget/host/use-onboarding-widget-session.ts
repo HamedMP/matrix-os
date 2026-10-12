@@ -9,7 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
-import { onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
+import { onboardingActiveAi, onboardingApps, onboardingConnectedProviders, onboardingCreditsExhausted, onboardingSelection } from "./catalog.js";
 import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingLoginPresentation, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
@@ -63,11 +63,14 @@ export interface OnboardingWidgetSessionInput {
 /** Everything a host renders `OnboardingWidget` with, minus its own layering. */
 export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput): Omit<OnboardingWidgetProps, "zIndex"> {
   const { prefsKey, state, dispatch, prefs, setPrefs, catalog, repoSource, available, connections, appConnect, openChat, openSettings } = input;
-  const selection = useMemo(() => onboardingSelection(catalog, state.aiChoice), [catalog, state.aiChoice]);
+  const loading = input.catalogLoading;
+  const activeAi = useMemo(() => (loading ? state.aiChoice : onboardingActiveAi(catalog, state.aiChoice)), [catalog, loading, state.aiChoice]);
+  const matrixAvailable = useMemo(() => loading || onboardingSelection(catalog, "matrix") !== null, [catalog, loading]);
+  const selection = useMemo(() => onboardingSelection(catalog, activeAi), [catalog, activeAi]);
   const connectedProviders = useMemo(() => onboardingConnectedProviders(catalog), [catalog]);
   const creditsExhausted = useMemo(() => onboardingCreditsExhausted(catalog, selection), [catalog, selection]);
 
-  const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: input.catalogLoading });
+  const runView = useOnboardingRun(state, dispatch, { port: input.chatPort, selection, selectionPending: loading });
   const ai = useOnboardingAiConnect(input.aiPort, dispatch);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
 
@@ -127,6 +130,8 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     apps,
     repos,
     runView,
+    activeAi,
+    matrixAvailable,
     connectedProviders,
     creditsExhausted,
     aiSignInCode: ai.signInCode,
