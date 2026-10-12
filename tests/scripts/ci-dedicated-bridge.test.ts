@@ -27,7 +27,7 @@ async function admit(overrides:Record<string,unknown>={},ref='refs/heads/main') 
  const github={rest:{pulls:{get:vi.fn(async()=>({data:pull}))},repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:base}}})),getCommit:vi.fn(async()=>({data:{sha:merge,parents:[{sha:base},{sha:head}]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[{id:77,run_attempt:1,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',head_sha:head,status:'in_progress',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:`CI coverage-v1 · ${merge}`,pull_requests:[{number:2440,head:{sha:head},base:{sha:base,ref:'main'}}]}]}}))},checks:{create:vi.fn(async(_args:{output:{summary:string}})=>({data:{id:123}})),update:vi.fn(async(_args:{conclusion:string})=>({data:{}}))}}};
  const context={repo:{owner:'HamedMP',repo:'matrix-os'},sha:controller,ref,eventName:'pull_request_target',payload:{repository:{id:42},action:'synchronize',pull_request:original},serverUrl:'https://github.com',runId:1};
  const outputs:Record<string,string>={};
- const core={setOutput:(key:string,value:string)=>outputs[key]=value,warning:vi.fn(),setFailed:vi.fn()};
+ const core={setOutput:(key:string,value:string)=>outputs[key]=value,warning:vi.fn(),notice:vi.fn(),setFailed:vi.fn()};
  await execute('Admit current source head',github,context,core);
  return{outputs,github,pull,context,core};
 }
@@ -69,8 +69,10 @@ describe('dedicated CI trusted dispatcher integration',()=>{
  it('revalidates after admission and refuses dispatch when the parent moved',async()=>{
   const {outputs,github,pull,context,core}=await admit();vi.stubEnv('SNAPSHOT',JSON.stringify(outputs));
   await execute('Revalidate exact PR snapshot before dispatch',github,context,core);expect(outputs.current).toBe('true');
-  pull.base.sha='e'.repeat(40);
-  await expect(execute('Revalidate exact PR snapshot before dispatch',github,context,core)).rejects.toThrow(/stale/);
+  pull.base.sha='e'.repeat(40);delete outputs.current;
+  // A moved parent stands the controller down: no dispatch credit, neutral settlement.
+  await execute('Revalidate exact PR snapshot before dispatch',github,context,core);
+  expect(outputs.current).toBeUndefined();expect(outputs.superseded).toBe('true');
  });
  it.each(['success','failure','skipped'])('settles dispatch %s without treating skipped work as success',async outcome=>{
   const {outputs,github,context,core}=await admit();

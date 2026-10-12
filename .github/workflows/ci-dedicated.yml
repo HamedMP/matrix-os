@@ -85,9 +85,13 @@ jobs:
             const {pathToFileURL}=require('node:url');
             const {resolve}=require('node:path');
             const {admitDedicatedSource,newestRequestingCiRun}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
-            const admission=await admitDedicatedSource(github,{
+            // Duplicate workflow_run events start several controllers; only the newest may qualify.
+            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
+            let admission;
+            try{admission=await admitDedicatedSource(github,{
               repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA});
+              eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA});}
+            catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('admitted','false');return;}
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
@@ -118,8 +122,10 @@ jobs:
             const {resolve}=require('node:path');
             const {verifyCurrentDedicatedSource}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-admission.mjs')).href);
             const data=JSON.parse(process.env.SNAPSHOT);
-            await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
-              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)});
+            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
+            try{await verifyCurrentDedicatedSource(github,context.repo,{sourceSha:data.sha,headSha:data.head_sha,
+              baseSha:data.base_sha,baseRef:data.base_ref,prNumber:Number(data.pr_number),...(data.source_kind==='main'?{sourceKind:'main'}:{}),mergeParents:JSON.parse(data.merge_parents)});}
+            catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
             core.setOutput('current','true');
 
       - name: Dispatch authenticated PR qualification lease
@@ -157,11 +163,13 @@ jobs:
               imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,
               mode:data.mode,suite:'qualification',limits:{unitWorkers:16,cpu:30,memoryMiB:114688,
                 workMiB:65536,tmpMiB:8192,homeMiB:1024,pids:4096,shmMiB:2048}};
+            const raceLost=error=>error instanceof Error&&['A newer controller superseded this lease','A newer requesting CI attempt superseded this lease','Dedicated qualification revision or admission is stale','Current parent ref has changed','Current ordered merge parents are stale'].includes(error.message);
             let receipt;
             try{receipt=await dispatchDedicatedLease(configuration.github,{repo:context.repo,
               controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},request,
               ssh:{host:process.env.CI_SSH_HOST,key:process.env.CI_SSH_KEY,knownHosts:process.env.CI_KNOWN_HOSTS}},
               {metrics:values=>core.info('Controller API polling: '+JSON.stringify(values))});}
+            catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('superseded','true');return;}
             finally{await configuration.close();}
             await mkdir('output/ci-dedicated',{recursive:true});
             await writeFile('output/ci-dedicated/receipt.json',JSON.stringify(receipt),{flag:'wx'});
@@ -209,9 +217,20 @@ jobs:
           SOURCE_SHA: ${{ steps.admit.outputs.sha }}
           SUITE: ${{ inputs.suite || 'qualification' }}
           CONTROLLER_ATTEMPT: ${{ github.run_attempt }}
+          SUPERSEDED: ${{ steps.current.outputs.superseded || steps.dispatch.outputs.superseded }}
         with:
           script: |
             const main=process.env.SOURCE_KIND==='main';
+            if(process.env.SUPERSEDED==='true'){
+              // A newer controller or source owns qualification; this check never carries receipt credit.
+              await github.rest.checks.update({...context.repo,check_run_id:Number(process.env.CHECK_ID),request:{timeout:10000},
+                details_url:`${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                status:'completed',conclusion:'neutral',output:{title:'Superseded by a newer controller or source',
+                  summary:JSON.stringify({schemaVersion:3,...(main?{sourceKind:'main'}:{}),superseded:true,receiptVerified:false,
+                    sourceSha:process.env.SOURCE_SHA,headSha:process.env.HEAD_SHA,prNumber:Number(process.env.PR_NUMBER),
+                    controllerSha:process.env.CONTROLLER_SHA,controllerAttempt:Number(process.env.CONTROLLER_ATTEMPT)})}});
+              return;
+            }
             let infrastructure=false;let proof={};
             let success=Number(process.env.PR_NUMBER)===0&&!main?process.env.MANUAL_OUTCOME==='success':process.env.DISPATCH_OUTCOME === 'success' && process.env.QUALIFICATION_VERIFIED === 'true';
             const {pathToFileURL}=require('node:url');
