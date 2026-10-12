@@ -422,7 +422,9 @@ describe("stored briefs", () => {
     const quiet = await brief();
     expect(quiet.stored).toBe(true);
     expect(JSON.stringify(quiet.sections)).not.toMatch(/documentId|sourceId/);
-    await eraseBrainScopeRows(fx.harness.db, BRIEF_SCOPE);
+    await markTried(fx.harness.db, BRIEF_SCOPE);
+    await eraseBrainScopeRows(fx.harness.db, BRIEF_SCOPE); // no listener runs: the erase alone drops the try too
+    expect((await sql`SELECT * FROM brain_brief_tries`.execute(fx.harness.db)).rows).toEqual([]);
     expect(await writeStoredBrief(fx.harness.db, BRIEF_SCOPE, quiet)).toBe(false);
     expect(await readStoredBrief(fx.harness.db, BRIEF_SCOPE, quiet.date, "day")).toBeNull();
   });

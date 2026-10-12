@@ -20,3 +20,4 @@ contract: `../contracts/brief.ts`; tests: `tests/gateway/brain-brief-*.test.ts` 
   too). A pass (time budget, abort signal, the two-build cap) takes scopes built or failed least lately first (then
   stalest brief), skips gone projects and rebuilds day copies of the last `BRIEF_FINISH_DAYS` built before their day
   ended.
+- A project erase (`api/erase.ts`) deletes the scope's briefs and tries under this lock, brief on or off.

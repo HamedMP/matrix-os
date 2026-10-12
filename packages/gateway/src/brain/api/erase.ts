@@ -44,7 +44,7 @@ export const BRAIN_FEATURE_ERASE_TABLES: readonly FeatureErase[] = [
   },
   {
     feature: "brief", lockName: (scope) => `${BRAIN_FEATURE_SCOPE_LOCK_PREFIXES.brief}${scope.scopeId}`,
-    tables: ["brain_brief_briefs"],
+    tables: ["brain_brief_briefs", "brain_brief_tries"],
   },
 ];
 
