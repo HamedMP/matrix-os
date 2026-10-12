@@ -103,8 +103,8 @@ it('binds Electron build provenance to the verified refresh checkout rather than
  const {readFileSync}=await import('node:fs');const {parse}=await import('yaml');
  const workflow=parse(readFileSync('.github/workflows/ci.yml','utf8'));
  const build=workflow.jobs.e2e.steps.find((s:any)=>s.name==='Build Desktop for Electron E2E');
- expect(build.env?.DESKTOP_SOURCE_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
- expect(build.run).toBe('GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
+ expect(build.env?.GITHUB_SHA).toBe('${{ needs.changes.outputs.source_sha || github.sha }}');
+ expect(build.run).toBe('bun run build:desktop');
 });
 
 it('binds source-reading unit builds to the verified refresh checkout',async()=>{
