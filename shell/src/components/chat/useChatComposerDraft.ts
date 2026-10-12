@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
+import { canAddChatMention } from "@matrix-os/ui";
 
 type Draft = { text: string; resources: CanonicalChatResourceReference[]; requestId: string; permissionIdentity: string };
 const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionIdentity: "" };
@@ -29,6 +30,24 @@ function withDraft(store: DraftStore, identity: unknown, scope: string, draft: D
 }
 
 /**
+ * A returned question goes in front of what was typed under its Chat since it was sent (the same question is not
+ * added twice), and its references join the ones typed since where they fit, so nothing typed is lost.
+ */
+function withReturned(store: DraftStore, returned: ReturnedDraft, requestId: string): DraftStore {
+  const typed = store.identity === returned.identity ? store.drafts[returned.scope] : undefined;
+  const typedText = typed?.text ?? "";
+  const text = typedText.trim() && typedText.trim() !== returned.text.trim()
+    ? `${returned.text}\n\n${typedText}`
+    : returned.text;
+  const resources = returned.resources.reduce(
+    (kept, resource) => (canAddChatMention(kept, resource) ? [...kept, resource] : kept),
+    typed?.resources ?? [],
+  );
+  // Set from outside the composer, so its references need fresh consent, as with setDraft.
+  return withDraft(store, returned.identity, returned.scope, { text, resources, requestId, permissionIdentity: requestId });
+}
+
+/**
  * Keeps a view's drafts after it unmounts: a host that remounts the Chat view for each Chat (the Company Brain) gives
  * every view the same keeper, so an unfinished question and its references come back with the Chat. A send that
  * settles after a switch unmounted its view still lets its question go, in the keeper and in the view now open.
@@ -37,7 +56,10 @@ export interface ChatComposerDraftKeeper {
   read(): DraftStore | null;
   write(store: DraftStore): void;
   settle(sent: SentDraft): void;
-  /** Puts a question back under its Chat, here and in the view now open, so it is there when that Chat opens. */
+  /**
+   * Puts a question back under its Chat, here and in the view now open, so it is there when that Chat opens, in front
+   * of anything typed there since.
+   */
   restore(returned: ReturnedDraft): void;
   subscribe(listener: (change: DraftChange) => void): () => void;
 }
@@ -52,10 +74,9 @@ export function createChatComposerDraftKeeper(): ChatComposerDraftKeeper {
     read: () => kept,
     write: (store) => { kept = store; },
     settle: (sent) => apply((store) => withoutSent(store, sent)),
-    restore: ({ identity, scope, text, resources }) => {
-      // Set from outside the composer, so its references need fresh consent, as with setDraft.
+    restore: (returned) => {
       const requestId = `req_${crypto.randomUUID().replaceAll("-", "")}`;
-      apply((store) => withDraft(store, identity, scope, { text, resources, requestId, permissionIdentity: requestId }));
+      apply((store) => withReturned(store, returned, requestId));
     },
     subscribe: (listener) => {
       // One view is open at a time (two while a remount overlaps): past the cap the oldest, long gone, is dropped.

@@ -90,8 +90,9 @@ export interface CanonicalChatThreadOptions {
   /** Reports the Chat after every admitted turn, so a host list can sort and date it (a new Chat comes from createChat). */
   onChatChanged?: (chatId: string, title: string) => void;
   /**
-   * Reports the question of a first send whose new Chat refused the turn, before the draft's composer lets it go, so a
-   * host that keeps drafts saves it under that Chat: the view may be gone by then (the viewer opened another Chat).
+   * Takes the question of a first send whose new Chat refused the turn, before the draft's composer lets it go, so a
+   * host that keeps drafts saves it under that Chat and in the view now open: the view may be gone by then (the viewer
+   * opened another Chat). Without it, the view's composer gets the question back (`composerDraftRequest`).
    */
   onDraftReturned?: (chatId: string, draft: { text: string; resources: CanonicalChatResourceReference[] }) => void;
 }
@@ -114,7 +115,8 @@ export function useCanonicalChatThread({
     return { ...current, [kind]: text === null ? null : { text, at: Date.now() } };
   }), []);
   const [botEventRevision, setBotEventRevision] = useState(0);
-  // The question of a first send whose new Chat refused the turn: the view's composer for that Chat gets it back.
+  // The question of a first send whose new Chat refused the turn, for a host that keeps no drafts: the view's composer
+  // for that Chat gets it back.
   const [returnedDraft, setReturnedDraft] = useState<ChatAgentDraftRequest | null>(null);
   const returnedDrafts = useRef(0);
   const [mentionRequests] = useState(createChatMentionRequestTracker);
@@ -254,9 +256,12 @@ export function useCanonicalChatThread({
         console.warn("[canonical-chat] Thread turn failed:", error instanceof Error ? error.name : "UnknownError");
         setSafeError("send", canonicalShellChatFailureMessage(error));
         if (!record && chatIdRef.current !== null) {
-          onDraftReturned?.(chatIdRef.current, { text, resources: options.resources ?? [] });
-          returnedDrafts.current += 1;
-          setReturnedDraft({ id: returnedDrafts.current, text, ...(options.resources?.length ? { resources: options.resources } : {}) });
+          // A host that keeps drafts puts it back itself, in front of a question typed since; else the composer does.
+          if (onDraftReturned) onDraftReturned(chatIdRef.current, { text, resources: options.resources ?? [] });
+          else {
+            returnedDrafts.current += 1;
+            setReturnedDraft({ id: returnedDrafts.current, text, ...(options.resources?.length ? { resources: options.resources } : {}) });
+          }
           // The question moved to the new Chat's composer, so the draft's composer lets it go (a kept draft would
           // bring it back on the next New chat).
           return true;

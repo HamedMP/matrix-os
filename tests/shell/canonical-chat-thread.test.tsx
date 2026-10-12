@@ -425,6 +425,39 @@ describe("Company Brain chat on Web", () => {
     expect(await screen.findByRole("textbox", { name: /message/i })).toHaveValue("");
   });
 
+  it.each([
+    ["after the viewer switched away and came back", true],
+    ["in the view that sent it", false],
+  ])("gives a refused first question back %s without losing a question typed since", async (_case, switchAway) => {
+    const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
+    const { client, threads } = webBrain([titled("chat_a", "Release notes")]);
+    let refuse!: () => void;
+    client.admitTurn.mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      refuse = () => reject(new Error("provider_unavailable"));
+    }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const composer = () => screen.getByRole("textbox", { name: /message/i });
+    const openRow = async (name: RegExp) => {
+      fireEvent.click(await screen.findByRole("button", { name }));
+      await waitFor(() => expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy());
+    };
+    fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
+    fireEvent.change(await screen.findByRole("textbox", { name: /message/i }), { target: { value: "Why did src/a.ts change?" } });
+    threads.list.mockResolvedValue({ items: [titled("chat_brain", "Why did src/a.ts change"), titled("chat_a", "Release notes")] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith("chat_brain", expect.anything()));
+    if (switchAway) {
+      await openRow(/^Release notes/);
+      await openRow(/^Why did src\/a\.ts change/);
+    }
+    // The viewer types the next question in the new thread before the first one is refused.
+    await waitFor(() => expect(composer()).toHaveValue(""));
+    fireEvent.change(composer(), { target: { value: "Which tests cover it?" } });
+    await act(async () => { refuse(); });
+    await waitFor(() => expect(composer()).toHaveValue("Why did src/a.ts change?\n\nWhich tests cover it?"));
+  });
+
   it("keeps brain drafts through the owner's own authority change, but never gives them to a new owner", async () => {
     const titled = (id: string, title: string) => ({ ...record(id, 1), chat: { ...record(id, 1).chat, title } });
     const { authorize } = webBrain([titled("chat_a", "Release notes")]);

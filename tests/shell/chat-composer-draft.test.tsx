@@ -77,6 +77,24 @@ it("puts a returned question back under its Chat in the open view and for later 
   expect(renderHook(() => useChatComposerDraft("chat_c", "gateway", keeper)).result.current.text).toBe("");
 });
 
+it("keeps a question typed since when a returned question comes back, without doubling either", () => {
+  const keeper = createChatComposerDraftKeeper();
+  const notes = { kind: "chat" as const, id: "chat_notes", label: "Notes" };
+  const plan = { kind: "chat" as const, id: "chat_plan", label: "Plan" };
+  // The viewer typed the next question in the new Chat before its first one was refused.
+  const open = renderHook(() => useChatComposerDraft("chat_new", "gateway", keeper));
+  act(() => open.result.current.setDraft({ text: "Which tests?", resources: [plan, notes] }));
+  act(() => keeper.restore({ identity: "gateway", scope: "chat_new", text: "Why did it change?", resources: [notes] }));
+  expect(open.result.current).toMatchObject({ text: "Why did it change?\n\nWhich tests?", resources: [plan, notes] });
+  open.unmount();
+  const back = renderHook(() => useChatComposerDraft("chat_new", "gateway", keeper));
+  expect(back.result.current.text).toBe("Why did it change?\n\nWhich tests?");
+  // The same question again is not added twice.
+  act(() => back.result.current.setDraft({ text: "Why did it change?", resources: [] }));
+  act(() => keeper.restore({ identity: "gateway", scope: "chat_new", text: "Why did it change?", resources: [notes] }));
+  expect(back.result.current).toMatchObject({ text: "Why did it change?", resources: [notes] });
+});
+
 it("bounds the keeper's listeners to a few views, dropping the oldest", () => {
   const keeper = createChatComposerDraftKeeper();
   const listeners = Array.from({ length: 100 }, () => vi.fn());
