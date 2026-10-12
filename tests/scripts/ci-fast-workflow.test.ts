@@ -11,6 +11,19 @@ const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'ut
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
+  it('bootstraps every Bun lane with the exact qualified version without API tag discovery', () => {
+    const setups = Object.values(workflow.jobs).flatMap(job =>
+      job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@')),
+    );
+    expect(setups.length).toBeGreaterThan(0);
+    for (const step of setups) {
+      // setup-bun resolves only floating versions through GitHub's tags API.
+      // 1.4.3 is the runtime used by the preceding successful full CI run.
+      expect(step.with?.['bun-version']).toBe('1.4.3');
+      expect(step.with?.['bun-download-url']).toBeUndefined();
+    }
+  });
+
   it('installs the real pattern scanner dependency before every unit shard', () => {
     const steps = workflow.jobs.unit.steps;
     const scanner = steps.findIndex(step => step.run === 'sudo apt-get install -y ripgrep');
