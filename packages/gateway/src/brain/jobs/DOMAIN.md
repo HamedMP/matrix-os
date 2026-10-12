@@ -69,7 +69,8 @@ Queued, leased, resumable runs of the brain's bounded work (sync, extract, searc
   not caught up stops the run with that code, so a refresh that cannot progress is never run again 500 times.
 - Busy answers (another run holds the same sync or extraction lock) are tried again every `retryDelayMs` until the
   time cap and are not steps; the run then fails with the busy code. The first busy answer of a wait is saved in the
-  summary as `waiting` (with a heartbeat that also sees a cancel), so a client can say the run waits.
+  summary as `waiting` (with a heartbeat that also sees a cancel), so a client can say the run waits. A paid run
+  waits only on `extraction_in_progress` (no pass started); any other busy code fails it, as its pass may have spent.
 - With `brain_jobs` off and the brain on, the routes serve `BRAIN_JOBS_OFF` (POST is `job_kind_unavailable`, the list
   is empty, a run id is `job_not_found`), so clients fall back to the direct routes.
 - A run whose row was erased mid-step finds its lease gone and writes nothing.

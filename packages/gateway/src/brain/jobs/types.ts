@@ -84,6 +84,15 @@ export const BRAIN_JOB_WORKER_CEILINGS: BrainJobWorkerLimits = {
 export const BRAIN_JOB_RETRY_CODES: ReadonlySet<string> = new Set([
   "sync_in_progress", "extraction_in_progress", "brain_unavailable",
 ]);
+/**
+ * The only busy code a paid run (a model extract) waits on, since it proves no pass started. Any other may follow paid
+ * work (a pass that spent and then could not close its run answers brain_unavailable), so the run fails with it.
+ */
+export const BRAIN_JOB_PAID_RETRY_CODES: ReadonlySet<string> = new Set(["extraction_in_progress"]);
+
+/** A paid run (a model extract), as the store's PAID predicate. */
+export const brainJobPaid = (request: BrainJobRequest): boolean =>
+  request.kind === "extract" && request.extractor === "model";
 
 const SourceIdSchema = z.string().regex(/^src_[a-f0-9]{32}$/);
 

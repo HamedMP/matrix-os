@@ -48,6 +48,8 @@ syncs and claim reading as runs and polls them (spec 563).
   asked by default and by its source id, or a sync started over HTTP). They are tried again every `retryDelayMs`
   until the time cap and do not count as steps; a run that reaches the cap while waiting fails with the busy code.
   The first busy answer of a wait is saved in the summary as `waiting`, so a client can say the run is waiting.
+  A paid run waits only on `extraction_in_progress` (no pass started); any other busy code fails it, since its pass
+  may have spent.
   Caps: `jobWallClockMs` per claim (`time_limit`), `maxSteps` per run (`step_limit`).
 - Each step is raced against the run's abort signal, so the time cap, a cancel and shutdown end the run at once even
   when the step ignores the signal. The step's service call then ends on its own budget, and the heartbeat timer

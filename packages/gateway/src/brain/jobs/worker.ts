@@ -11,8 +11,9 @@ import type { BrainBackgroundJob } from "../contracts.js";
 import type { BrainScopeKey } from "../types.js";
 import type { BrainClaimedJob, BrainJobOutcome, BrainJobStore } from "./store.js";
 import {
-  BRAIN_JOB_CODE_PATTERN, BRAIN_JOB_LIMITS, BRAIN_JOB_RETRY_CODES, BRAIN_JOB_WORKER_CEILINGS,
-  BRAIN_JOB_WORKER_DEFAULTS, type BrainJobSteps, type BrainJobSummary, type BrainJobWorkerLimits,
+  BRAIN_JOB_CODE_PATTERN, BRAIN_JOB_LIMITS, BRAIN_JOB_PAID_RETRY_CODES, BRAIN_JOB_RETRY_CODES,
+  BRAIN_JOB_WORKER_CEILINGS, BRAIN_JOB_WORKER_DEFAULTS, brainJobPaid, type BrainJobSteps, type BrainJobSummary,
+  type BrainJobWorkerLimits,
 } from "./types.js";
 
 export const BRAIN_JOB_WORKER_NAME = "brain-jobs";
@@ -180,6 +181,8 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
     if (first.cancelRequested) return { status: "cancelled", errorCode: null, ...progress };
     // The busy code of the last answer while waiting to try again; the time cap then fails the run with it.
     let busy: string | null = null;
+    // A paid run waits only on a busy answer that proves its pass never started, so it never pays for a second pass.
+    const retryCodes = brainJobPaid(job.request) ? BRAIN_JOB_PAID_RETRY_CODES : BRAIN_JOB_RETRY_CODES;
     for (;;) {
       if (signal.aborted) return fromAbort(signal.reason as StopReason, progress, busy);
       if (progress.steps >= limits.maxSteps) return { status: "failed", errorCode: "step_limit", ...progress };
@@ -194,7 +197,7 @@ export function createBrainJobWorker(deps: BrainJobWorkerDeps): BrainJobWorker {
         if (signal.aborted) return fromAbort(signal.reason as StopReason, progress, busy);
         const code = brainJobErrorCode(error);
         if (code === "step_failed") console.error("[brain-jobs] Step failed:", errorName(error));
-        if (!BRAIN_JOB_RETRY_CODES.has(code)) return { status: "failed", errorCode: code, ...progress };
+        if (!retryCodes.has(code)) return { status: "failed", errorCode: code, ...progress };
         // Busy (another run holds the lock): try again until the time cap; a busy answer is not a step. The first busy
         // answer of a wait is recorded as `waiting`, so a client can say the run waits (the next step replaces it).
         if (progress.result?.waiting !== code) {

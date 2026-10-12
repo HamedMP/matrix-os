@@ -180,6 +180,30 @@ describe("brain job worker stops", () => {
     expect(await store.get(scopeA, gone)).toBeNull();
   });
 
+  it("fails a model extract on an unsure busy answer instead of paying for another pass", async () => {
+    // A pass that spent and then could not close its run answers brain_unavailable: it may have been billed.
+    const spent = vi.fn(async () => { throw Object.assign(new Error("x"), { code: "brain_unavailable" }); });
+    start(createBrainJobSteps({ project: { extract: spent } as never }));
+    const model = (await store.enqueue(scopeA, "proj_a", { kind: "extract", extractor: "model" })).job.jobId;
+    expect(await settled(model, "failed")).toMatchObject({ errorCode: "brain_unavailable", steps: 0 });
+    expect(spent).toHaveBeenCalledTimes(1);
+    await worker!.stop();
+    // extraction_in_progress proves no pass started, so a model run still waits; a rules run costs nothing and waits.
+    const busy: Record<string, string> = { model: "extraction_in_progress", rules: "brain_unavailable" };
+    const extract = vi.fn(async (_owner: string, _project: string, { extractor }: { extractor: string }) => {
+      const code = busy[extractor];
+      delete busy[extractor];
+      if (code !== undefined) throw Object.assign(new Error("busy"), { code });
+      return { status: "succeeded", errorCode: null, caughtUp: true, nextAction: "", counts: {} };
+    });
+    start(createBrainJobSteps({ project: { extract } as never }), { concurrency: 2 });
+    const again = (await store.enqueue(scopeA, "proj_a", { kind: "extract", extractor: "model" })).job.jobId;
+    const rules = (await store.enqueue(scopeA, "proj_a", { kind: "extract", extractor: "rules" })).job.jobId;
+    expect(await settled(again)).toMatchObject({ steps: 1 });
+    expect(await settled(rules)).toMatchObject({ steps: 1 });
+    expect(extract).toHaveBeenCalledTimes(4);
+  });
+
   it("says a busy run is waiting, once per wait, and sees a cancel while it waits", async () => {
     const waiting = await queue("graph_refresh");
     const heartbeat = vi.spyOn(store, "heartbeat");
