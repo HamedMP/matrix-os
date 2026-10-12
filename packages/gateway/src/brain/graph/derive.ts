@@ -30,7 +30,7 @@ const PERSON_REF_LINKS: Readonly<Record<string, BrainStoredLinkType>> = {
 };
 
 /** One described entity: what a record document (PR, issue, spec) is the record of. */
-export interface BrainDescribed {
+interface BrainDescribed {
   readonly entity: BrainEntityDraft; readonly mode: BrainLinkMode; readonly refKind: string | null;
 }
 
@@ -71,7 +71,7 @@ const issue = (key: string): BrainEntityDraft => entityDraft("issue", key, key);
 const spec = (dir: string): BrainEntityDraft => entityDraft("spec", dir, dir);
 
 /** The entities a document is the record of (git_pr / github_pr, github_issue / linear_issue, git_spec). */
-export function describedEntities(
+function describedEntities(
   provenance: string, footer: BrainGitFooter | null, refs: Refs,
 ): readonly BrainDescribed[] {
   const first = (kind: string, pattern: RegExp) => (refs.get(kind) ?? []).find((value) => pattern.test(value));
@@ -90,14 +90,8 @@ export function describedEntities(
 }
 
 /** The git footer of git_pr and git_commit bodies, else null. */
-export function graphFooter(provenance: string, body: string): BrainGitFooter | null {
+function graphFooter(provenance: string, body: string): BrainGitFooter | null {
   return GIT_PROVENANCES.has(provenance) ? parseBrainGitFooter(body) : null;
-}
-
-export function describedFor(
-  provenance: string, body: string, refs: BrainGraphDocumentInput["refs"],
-): readonly BrainDescribed[] {
-  return describedEntities(provenance, graphFooter(provenance, body), groupRefs(refs));
 }
 
 /** The `Author:` line between the footer's `Commit:` line and the end of the body. */

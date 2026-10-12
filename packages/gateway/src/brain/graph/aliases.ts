@@ -120,7 +120,7 @@ async function returnCarried(trx: Trx, scope: BrainScopeKey, root: string, alias
 
 /**
  * Manual merge, split or unmerge of a person alias; returns the entity id the view is about. merge: aliasKey (a
- * person entity ref with an entity row) now resolves to the entity, and aliases that resolved to it move along (via
+ * person ref with an entity or alias row) now resolves to the entity, and aliases that resolved to it move along (via
  * it); alias_conflict when it is merged into another entity. split ("not the same person"): undoes a merge into this
  * entity and keeps a split row, and the aliases that came in through it go back to it (alias_conflict when there is
  * no such merge). unmerge (Undo of a manual merge): the manual row is deleted and the carried aliases go back, so
@@ -135,12 +135,13 @@ export async function updateGraphAlias(
   if (root.kind !== "person" || alias === null || alias.kind !== "person" || alias.entityId === root.entity_id) {
     throw new BrainApiError("invalid_request");
   }
-  const aliasRow = await trx.selectFrom("brain_graph_entities").select(["entity_id", "key"])
-    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
-    .where("entity_id", "=", alias.entityId).executeTakeFirst();
-  if (aliasRow === undefined) throw new BrainFeatureError("entity_not_found");
-  const existing = await aliases(trx, scope).select(["entity_id", "state", "reason"])
+  const existing = await aliases(trx, scope).select(["entity_id", "state", "reason", "alias_key"])
     .where("alias_entity_id", "=", alias.entityId).executeTakeFirst();
+  // A key with an alias row is known: a name only `Name <email>` trailers showed has no entity row of its own.
+  const known = existing !== undefined || await trx.selectFrom("brain_graph_entities").select("entity_id")
+    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId)
+    .where("entity_id", "=", alias.entityId).executeTakeFirst() !== undefined;
+  if (!known) throw new BrainFeatureError("entity_not_found");
   const mergedHere = existing?.state === "merged" && existing.entity_id === root.entity_id;
   const at = now.toISOString();
   if (input.action === "split") {
@@ -156,7 +157,8 @@ export async function updateGraphAlias(
     await trx.deleteFrom("brain_graph_aliases").where("owner_id", "=", scope.ownerId)
       .where("scope_id", "=", scope.scopeId).where("alias_entity_id", "=", alias.entityId).execute();
     await returnCarried(trx, scope, root.entity_id, alias.entityId, at);
-    if (aliasRow.key.startsWith("name:")) await reconcileNameAliases(trx, scope, [aliasRow.key], now);
+    const key = existing.alias_key.slice("person:".length);
+    if (key.startsWith("name:")) await reconcileNameAliases(trx, scope, [key], now);
     return root.entity_id;
   }
   if (existing?.state === "merged" && !mergedHere) throw new BrainFeatureError("alias_conflict");

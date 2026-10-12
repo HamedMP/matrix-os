@@ -1,8 +1,8 @@
 /**
  * Graph writes. One transaction per document under the brain-graph:<scope> lock (never the core brain:<scope> lock):
- * re-read the live document, its refs and current decision claims, derive, replace the document's links, add its
- * entities, record what it was derived from, reconcile name aliases and nudge dependent documents. Core tables are
- * only read.
+ * re-read the live document, its refs, current decision claims and what its parent or pull request last derived (none
+ * before its first derivation), derive, replace its links, add its entities, record what it was derived from,
+ * reconcile name aliases and nudge the documents that read it. Core tables are only read.
  */
 import { sql, type Kysely, type Transaction } from "kysely";
 import { BRAIN_FEATURE_SCOPE_LOCK_PREFIXES, BRAIN_GRAPH_LIMITS } from "../contracts.js";
@@ -10,8 +10,8 @@ import { commitDocumentId } from "../git/documents.js";
 import type { BrainScopeKey } from "../types.js";
 import { parseBrainGitFooter } from "../why.js";
 import { reconcileNameAliases } from "./aliases.js";
-import { deriveBrainGraph, describedFor, quotedPaths } from "./derive.js";
-import { brainEntityId, brainLinkId, personDisplay } from "./ids.js";
+import { deriveBrainGraph, quotedPaths } from "./derive.js";
+import { brainEntityId, brainLinkId, entityDraft, personDisplay } from "./ids.js";
 import {
   BRAIN_GRAPH_IDENTITIES_PER_DOCUMENT, type BrainEntityDraft, type BrainGraphDatabase, type BrainGraphExecutor,
   type BrainIdentityPair,
@@ -20,7 +20,6 @@ import {
 /** capacity: the entities the derivation would add do not fit the scope's limit; nothing was written. */
 export type BrainGraphDeriveOutcome = "derived" | "removed" | "capacity";
 
-const FOOTER_TAIL_CHARS = 2_048;
 const DOCUMENT_ID = /^[a-f0-9]{64}$/;
 /** A claims digest no md5 of decision claims equals: the row reads as pending until derived or removed again. */
 const OUTDATED_DIGEST = "0".repeat(32);
@@ -95,38 +94,39 @@ async function removeDocument(
   await nudgeDependents(trx, scope, documentId, provenance, before, [], []);
 }
 
-/** The pull requests and issues the parent document (its `parent` ref) is the record of. */
+/** Live documents' stored `describes` links (l) and their entities (e): what each last derivation found it records. */
+function described(trx: BrainGraphExecutor, scope: BrainScopeKey) {
+  return trx.selectFrom("brain_graph_links as l")
+    .innerJoin("brain_documents as d", (join) => join.onRef("d.owner_id", "=", "l.owner_id")
+      .onRef("d.scope_id", "=", "l.scope_id").onRef("d.document_id", "=", "l.document_id"))
+    .innerJoin("brain_graph_entities as e", (join) => join.onRef("e.owner_id", "=", "l.owner_id")
+      .onRef("e.scope_id", "=", "l.scope_id").onRef("e.entity_id", "=", "l.to_entity_id"))
+    .where("l.owner_id", "=", scope.ownerId).where("l.scope_id", "=", scope.scopeId).where("l.type", "=", "describes")
+    .where("d.deleted_at", "is", null);
+}
+
+/** Pull requests and issues the live parent (the first `parent` ref) describes, as last derived. */
 async function parentTargets(
   trx: BrainGraphExecutor, scope: BrainScopeKey, refs: readonly { kind: string; value: string }[],
 ): Promise<BrainEntityDraft[]> {
   const parentId = refs.find((ref) => ref.kind === "parent" && DOCUMENT_ID.test(ref.value))?.value;
   if (parentId === undefined) return [];
-  const tail = sql<string>`right(body, ${FOOTER_TAIL_CHARS}::int)`.as("tail");
-  const parent = await trx.selectFrom("brain_documents").select(["provenance", tail])
-    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", parentId)
-    .where("deleted_at", "is", null).executeTakeFirst();
-  if (parent === undefined) return [];
-  const parentRefs = await trx.selectFrom("brain_document_refs").select(["kind", "value"])
-    .where("owner_id", "=", scope.ownerId).where("scope_id", "=", scope.scopeId).where("document_id", "=", parentId)
-    .where("kind", "in", ["pr", "handle"]).limit(200).execute();
-  return describedFor(parent.provenance, parent.tail, parentRefs).map((described) => described.entity)
-    .filter((entity) => entity.kind === "pull_request" || entity.kind === "issue");
+  const rows = await described(trx, scope).select(["e.kind", "e.key", "e.display_name"])
+    .where("l.document_id", "=", parentId).where("e.kind", "in", ["pull_request", "issue"]).orderBy("e.entity_id")
+    .limit(BRAIN_GRAPH_LIMITS.linksPerDocument).execute();
+  return rows.map((row) => entityDraft(row.kind, row.key, row.display_name));
 }
 
-/** PR numbers of live github_pr documents whose `commit` refs hold this git_commit's footer sha. */
+/** PR numbers live github_pr documents holding this git_commit's footer sha as a `commit` ref describe, as derived. */
 async function commitPullRequests(trx: BrainGraphExecutor, scope: BrainScopeKey, body: string): Promise<string[]> {
   const sha = parseBrainGitFooter(body)?.sha;
   if (sha === undefined) return [];
-  const rows = await trx.selectFrom("brain_document_refs as c")
-    .innerJoin("brain_documents as d", (join) => join.onRef("d.owner_id", "=", "c.owner_id")
-      .onRef("d.scope_id", "=", "c.scope_id").onRef("d.document_id", "=", "c.document_id"))
-    .innerJoin("brain_document_refs as p", (join) => join.onRef("p.owner_id", "=", "c.owner_id")
-      .onRef("p.scope_id", "=", "c.scope_id").onRef("p.document_id", "=", "c.document_id"))
-    .select("p.value").distinct()
-    .where("c.owner_id", "=", scope.ownerId).where("c.scope_id", "=", scope.scopeId).where("c.kind", "=", "commit")
-    .where("c.value", "=", sha).where("d.deleted_at", "is", null).where("d.provenance", "=", "github_pr")
-    .where("p.kind", "=", "pr").orderBy("p.value").limit(8).execute();
-  return rows.map((row) => row.value);
+  const rows = await described(trx, scope)
+    .innerJoin("brain_document_refs as c", (join) => join.onRef("c.owner_id", "=", "l.owner_id")
+      .onRef("c.scope_id", "=", "l.scope_id").onRef("c.document_id", "=", "l.document_id"))
+    .select("e.key").distinct().where("d.provenance", "=", "github_pr").where("e.kind", "=", "pull_request")
+    .where("c.kind", "=", "commit").where("c.value", "=", sha).orderBy("e.key").limit(8).execute();
+  return rows.map((row) => row.key);
 }
 
 /**

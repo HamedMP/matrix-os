@@ -1,19 +1,13 @@
 # Company Brain graph: links and timelines
 
-**Status:** Implementation target (graph layer of the brain stack; builds on specs 551 to 554)  
-**Owner:** gateway `brain` domain (`brain/graph/`)  
-**Date:** 2026-10-02
+**Status:** Implementation target (builds on specs 551 to 554) · **Owner:** gateway `brain/graph/` · **Date:** 2026-10-02
 
-## Outcome
+## Outcome and scope
 
 For any file, folder, person, spec, pull request or issue, Matrix answers "what touched this, newest first" and "what
 is it linked to" with cited documents, derived from synced documents, refs and decision claims. Links are explicit or
-inferred, with evidence. Owners merge or split person aliases by hand, helped by scored merge suggestions.
-
-## Scope of this increment
-
-In scope: `brain/graph/` (tables, derivation, derived index, reads, service, seven routes, merge suggestions) and
-tests. Out of scope (no stubs): Deferred scope in Invariants. OS-view matrix: N/A (a JSON API; spec 563 renders it).
+inferred, with evidence. Owners merge or split person aliases by hand, helped by scored merge suggestions. In scope:
+`brain/graph/` and tests; no stubs for the Deferred scope (Invariants). OS views: N/A (spec 563 renders it).
 
 ## Graph model
 
@@ -30,7 +24,7 @@ tests. Out of scope (no stubs): Deferred scope in Invariants. OS-view matrix: N/
 | refs author, reviewer; assignee, attendee, participant | authored, reviewed; mentions (document to person), explicit |
 | git_pr footer number; github_pr `pr`; github_issue and linear_issue `handle`; git_spec `spec` | describes; a git squash `(#N)` is inferred, a merge message or GitLab merge request explicit |
 | `spec` refs of other documents; `issue` refs | implements_spec; references_issue; explicit |
-| other `pr` refs; `parent` ref; git_commit footer sha in a github_pr `commit` ref | mentions (git: inferred), part_of for reviews and review comments; part_of what the parent describes (pull request or issue); part_of that pull request; explicit |
+| other `pr` refs; `parent` ref; git_commit footer sha in a github_pr `commit` ref | mentions (git: inferred), part_of for reviews and review comments; part_of what the parent last derived it describes (pull request or issue); part_of the pull request that github_pr last derived; explicit |
 | text `#N` (title and message; not a number a `pr` or `issue` ref states); text `specs/NNN-name` | mentions pull_request (after close, fix or resolve, or in a GitLab repository, an issue); mentions spec; inferred, 16 each per document |
 | current decision claims | decided_in from each `#N`, spec directory, own issue key and path ref of the scope the quote names, inferred, 16 per document |
 
@@ -45,9 +39,9 @@ tests. Out of scope (no stubs): Deferred scope in Invariants. OS-view matrix: N/
 
 - `documents_changed` with ids derives those documents (removing tombstoned ones); null ids and `claims_changed` run
   one refresh; `scope_erased` deletes every graph row of the scope.
-- `refresh`: tombstoned documents, then live ones missing, whose state differs or linked to a parent no longer live,
-  up to the limit and budget; then the project entity and a sweep of up to 1,000 unreferenced entities. One refused
-  at the entity limit stays pending; deriving or removing one marks outdated the documents that read what changed.
+- `refresh`: tombstoned documents, then live ones missing or outdated, within the limit and budget; then the project
+  entity and a sweep of up to 1,000 orphan entities; one refused at the entity limit stays pending. Deriving or
+  removing one marks outdated what reads it (a child or commit reads what its parent or pull request last derived).
 
 ## Person merge suggestions
 
@@ -79,7 +73,7 @@ Spec 553's rules: principal first; no service is 503; a malformed `:projectId` (
 | GET `/entities/merge-suggestions` | `limit` 1..50 (20), `cursor` | `{ items, nextCursor, truncated }`; registered before `/entities/:entityId` |
 | GET `/entities/:entityId` | none | `BrainEntityView`: aliases (merged first), seen times over merged aliases, link count (links of live documents and a file's or folder's changes) capped at 10,000 |
 | GET `/entities/:entityId/links` | `hops` 1 or 2, `types`, `direction` out, in or both, `limit` 1..200 (50), `cursor` | `BrainNeighbourhoodView` |
-| POST `/entities/:entityId/aliases` | bodyLimit 2 KiB; `{ action: merge, split or unmerge, aliasKey }` | `BrainEntityView` |
+| POST `/entities/:entityId/aliases` | bodyLimit 2 KiB; `{ action: merge, split or unmerge, aliasKey }` (a person ref with an entity or alias row) | `BrainEntityView` |
 | POST `/graph/refresh` | bodyLimit 1 KiB; empty or `{}` | `BrainRefreshView` |
 
 Timelines: newest first; files match path refs exactly, folders brain_why's bytewise range, plus stored links of the
@@ -99,9 +93,8 @@ bodies (`entity_not_found`, `alias_conflict`, `brain_capacity`); anything else i
 
 ## Integration wiring
 
-`api/start.ts` bootstraps the graph alone (a failure turns only the graph off) and registers listener `graph`;
-`api/feature-routes.ts` mounts the routes. Shared: `brain/cite.ts`, `brain/bounded.ts`, `api/feature-route-kit.ts`.
-No environment variables.
+`api/start.ts` bootstraps the graph alone (a failure turns only the graph off) and registers listener `graph`; routes
+mount in `api/feature-routes.ts`. Shared: `brain/cite.ts`, `brain/bounded.ts`, `api/feature-route-kit.ts`; no env vars.
 
 ## Failure modes
 

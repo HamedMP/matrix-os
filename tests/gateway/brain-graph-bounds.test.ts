@@ -1,4 +1,4 @@
-/** Graph bounds and dependents over PGlite: one refresh cap, reads under the deadline, live links, stale inputs. */
+/** Graph bounds and dependents over PGlite: refresh cap, read deadlines, live links, stale inputs, alias rows. */
 import { Kysely, sql } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +6,8 @@ import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { brainEntityId, createBrainGraph } from "../../packages/gateway/src/brain/graph/index.js";
 import { BrainRepository, type BrainDatabase } from "../../packages/gateway/src/brain/index.js";
 import {
-  FIXTURE, OWNER, PROJECT, SCOPE, createGraphHarness, id, rejectsWith, resolver, seedProject, type GraphHarness,
+  FIXTURE, OWNER, PROJECT, SCOPE, SHA_B, createGraphHarness, gitBody, id, rejectsWith, resolver, seedProject,
+  type GraphHarness,
 } from "./helpers/brain-graph-fixtures.js";
 
 describe("brain graph bounds", { timeout: 60_000 }, () => {
@@ -74,17 +75,24 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
     expect(view.links.map((link) => link.evidence.cite.documentId)).toEqual([id("commitB")]);
   });
 
-  it("drops a comment's part_of link once its parent, never derived, is tombstoned", async () => {
+  it("keeps no part_of link to a parent or pull request tombstoned before its first derivation", async () => {
+    await harness.sync("git", [FIXTURE.commitB]);
+    await harness.sync("github", [FIXTURE.githubPr]);
     await harness.sync("linear", [FIXTURE.issue, FIXTURE.comment]);
-    // A hook derives only the comment, so the issue has no graph state when it is tombstoned.
-    await harness.graph.index.handle({ type: "documents_changed", scope: SCOPE, sourceId: null,
-      documentIds: [id("comment")], at: "" }, new AbortController().signal);
     const partOf = async () => (await sql<{ document_id: string }>`SELECT document_id FROM brain_graph_links
-      WHERE ref_kind = 'parent'`.execute(harness.db)).rows.map((row) => row.document_id);
-    expect(await partOf()).toEqual([id("comment")]);
+      WHERE ref_kind IN ('parent', 'commit') ORDER BY document_id`.execute(harness.db)).rows.map((row) => row.document_id);
+    // A hook derives only the dependents: the pull request and the issue have no graph state when tombstoned.
+    await harness.graph.index.handle({ type: "documents_changed", scope: SCOPE, sourceId: null,
+      documentIds: [id("commitB"), id("comment")], at: "" }, new AbortController().signal);
+    await harness.sync("github", [], [id("githubPr")]);
     await harness.sync("linear", [], [id("issue")]);
     expect(await harness.refresh()).toMatchObject({ caughtUp: true });
     expect(await partOf()).toEqual([]);
+    // Live again and derived, they link their dependents.
+    await harness.sync("github", [FIXTURE.githubPr]);
+    await harness.sync("linear", [FIXTURE.issue]);
+    expect(await harness.refresh()).toMatchObject({ caughtUp: true });
+    expect(await partOf()).toEqual([id("commitB"), id("comment")].sort());
   });
 
   it("re-derives a decision when a path it quotes gains or loses its path ref", async () => {
@@ -111,5 +119,19 @@ describe("brain graph bounds", { timeout: 60_000 }, () => {
     const view = await harness.graph.service.getEntity(OWNER, PROJECT, alice);
     expect(view.aliases.filter((row) => row.state === "merged").map((row) => row.aliasKey))
       .toEqual(["person:name:alice smith"]);
+  });
+
+  it("splits, merges and unmerges a name alias only a `Name <email>` trailer showed (no entity row)", async () => {
+    const body = gitBody("fix\n\nCo-authored-by: Zoe Quinn <zoe@acme.dev>", { sha: SHA_B, author: "Bob Jones" });
+    await harness.sync("git", [{ ...FIXTURE.commitB, body }]);
+    await harness.refresh();
+    const [zoe, aliasKey] = ["person:email:zoe@acme.dev", "person:name:zoe quinn"];
+    const aliases = async (action?: "split" | "merge" | "unmerge") => (action === undefined
+      ? await harness.graph.service.getEntity(OWNER, PROJECT, zoe)
+      : await harness.graph.service.updateAlias(OWNER, PROJECT, zoe, { action, aliasKey })).aliases
+      .map((row) => `${row.aliasKey}|${row.state}|${row.reason}`);
+    const [auto, manual] = [`${aliasKey}|merged|single_email_for_name`, `${aliasKey}|merged|manual`];
+    expect([await aliases(), await aliases("split"), await aliases("merge"), await aliases("unmerge")])
+      .toEqual([[auto], [`${aliasKey}|split|single_email_for_name`], [manual], [auto]]);
   });
 });

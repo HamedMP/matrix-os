@@ -2,7 +2,6 @@
 import { describe, expect, it } from "vitest";
 import { BrainApiError } from "../../packages/gateway/src/brain/api/types.js";
 import { deriveBrainGraph } from "../../packages/gateway/src/brain/graph/index.js";
-import { describedFor } from "../../packages/gateway/src/brain/graph/derive.js";
 import {
   brainEntityId, cutText, decodeGraphCursor, encodeGraphCursor, isEntityKey, parseEntityInput, parseQueryDate,
   personEmailKey, personNameKey, queryFingerprint,
@@ -89,7 +88,6 @@ describe("brain graph derivation", () => {
       `${d}|describes|explicit|spec:specs/001-a`, `${d}|mentions|inferred|spec:specs/010-x`,
       `${d}|mentions|inferred|spec:specs/011-y`,
     ]);
-    expect(describedFor("linear_issue", "", refs(["handle", "ENG-7"]))[0]!.entity.key).toBe("ENG-7");
     expect(summary({ provenance: "git_spec" })).toEqual([]);
     const blank = derive({ title: "   ", refs: refs(["path", "a/b.ts"], ["path", "a/c.ts"]) });
     expect(blank.entities.map((entity) => [entity.kind, entity.displayName])).toEqual([

@@ -78,9 +78,9 @@ export interface BrainGraphDocumentInput {
   readonly decisionQuotes: readonly string[];
   /** Paths quoted in decisionQuotes that are path refs of the scope; only these become decided_in file links. */
   readonly knownPaths?: ReadonlySet<string>;
-  /** Entities the parent document (its `parent` ref) describes: pull requests and issues. */
+  /** Pull requests and issues the parent document (its `parent` ref) describes, as last derived. */
   readonly parentTargets: readonly BrainEntityDraft[];
-  /** Pull request numbers whose github_pr documents carry this git_commit's sha as a `commit` ref. */
+  /** Pull requests that github_pr documents carrying this git_commit's sha as a `commit` ref describe, as derived. */
   readonly commitPullRequests: readonly string[];
 }
 
