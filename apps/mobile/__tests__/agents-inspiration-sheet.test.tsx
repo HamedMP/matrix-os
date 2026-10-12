@@ -116,6 +116,19 @@ describe("inspiration sheet", () => {
     });
   });
 
+  it("scrolls a long description within two fifths of the window, so the button under it stays in reach", () => {
+    renderSheet();
+
+    const area = screen.getByTestId("inspiration-sheet-description");
+    expect(flat(area)).toMatchObject({ flexGrow: 0, maxHeight: Math.round(1334 * 0.4) });
+    expect(area.props.alwaysBounceVertical).toBe(false);
+    expect(within(area).getByText(followUps.description)).toBeTruthy();
+    // The head and the button stay put while the description scrolls.
+    expect(within(area).queryByRole("button", { name: "Build in chat" })).toBeNull();
+    expect(within(area).queryByRole("header", { name: "Call Follow-Ups" })).toBeNull();
+    expect(within(screen.getByTestId("inspiration-sheet-body")).getByRole("button", { name: "Build in chat" })).toBeTruthy();
+  });
+
   it("builds the agent in chat from a filled, large, full-width button", () => {
     const { props } = renderSheet();
 

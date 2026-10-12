@@ -113,6 +113,8 @@ describe("new agent screen", () => {
     const search = screen.getByLabelText("Search templates");
     expect(search.props.placeholder).toBe("Search templates");
     expect(search.props.value).toBe("inbox");
+    // The keyboard would rewrite a template's name, such as "tinkabot", on leaving the field.
+    expect(search.props.autoCorrect).toBe(false);
     fireEvent.changeText(search, "sales");
     expect(onChangeQuery).toHaveBeenCalledWith("sales");
   });

@@ -92,6 +92,8 @@ export function NewAgentScreen({
         <SearchField
           placeholder="Search templates"
           value={query}
+          // Left on, the keyboard rewrites names such as "tinkabot" when a row is pressed.
+          autoCorrect={false}
           onChangeText={(text) => {
             showFromTop();
             onChangeQuery(text);

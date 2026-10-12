@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -7,6 +7,9 @@ import { Button, Sheet, SheetGrabber } from "@/components/ui";
 
 import type { AgentInspiration } from "./agent-inspirations.generated";
 import { TemplateSheetHead } from "./TemplateSheetHead";
+
+// The share of the window's height the description may take before it scrolls.
+const DESCRIPTION_HEIGHT_SHARE = 0.4;
 
 export interface InspirationSheetProps {
   /** The inspiration being looked at. Null closes the sheet. */
@@ -23,6 +26,7 @@ export interface InspirationSheetProps {
 export function InspirationSheet({ inspiration, onBuildInChat, onClose }: InspirationSheetProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   // The inspiration last chosen stays drawn while the sheet slides away.
   const [drawn, setDrawn] = useState(inspiration);
   if (inspiration && inspiration !== drawn) setDrawn(inspiration);
@@ -43,7 +47,16 @@ export function InspirationSheet({ inspiration, onBuildInChat, onClose }: Inspir
             caption={drawn.categories.join(" · ")}
             onClose={onClose}
           />
-          <Text style={styles.description}>{drawn.description}</Text>
+          {/* A long description scrolls, so the button under it stays in reach
+              on a small screen and with large text. */}
+          <ScrollView
+            testID="inspiration-sheet-description"
+            alwaysBounceVertical={false}
+            nestedScrollEnabled
+            style={[styles.descriptionArea, { maxHeight: Math.round(height * DESCRIPTION_HEIGHT_SHARE) }]}
+          >
+            <Text style={styles.description}>{drawn.description}</Text>
+          </ScrollView>
           <Button size="large" fullWidth label="Build in chat" onPress={onBuildInChat} />
         </View>
       ) : null}
@@ -56,6 +69,9 @@ const styles = StyleSheet.create((theme) => ({
   sheet: {
     gap: theme.v2.space[14],
     paddingHorizontal: theme.v2.space[20],
+  },
+  descriptionArea: {
+    flexGrow: 0,
   },
   description: {
     ...theme.v2.text.callout,
