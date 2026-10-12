@@ -224,7 +224,7 @@ const styles = StyleSheet.create((theme) => ({
   deleteAccountLabel: {
     fontFamily: theme.fonts.sans,
     fontSize: 14,
-    color: theme.colors.forest,
+    color: theme.v2.colors.textDefault,
     opacity: 0.8,
     textDecorationLine: "underline",
   },

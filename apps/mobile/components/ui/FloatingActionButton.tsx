@@ -27,10 +27,10 @@ export function FloatingActionButton({
     <IconButton
       {...props}
       iconSize={iconSize}
-      iconColor={iconColor ?? theme.v2.colors.textInverse}
+      iconColor={iconColor ?? theme.v2.colors.onControlPrimary}
       buttonSize={size}
       borderRadius={999}
-      backgroundColor={backgroundColor ?? theme.v2.palette.green[800]}
+      backgroundColor={backgroundColor ?? theme.v2.colors.controlPrimary}
       style={[
         styles.button,
         { right: rightInset, bottom: bottomInset },

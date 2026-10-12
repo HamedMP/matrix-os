@@ -1,4 +1,5 @@
 const mockGetToken = jest.fn(async () => "clerk-token");
+const mockBack = jest.fn();
 const mockFetchInbox = jest.fn();
 const mockFetchShared = jest.fn();
 const mockFetchInvitation = jest.fn();
@@ -20,6 +21,7 @@ const mockOpenStream = jest.fn();
 const mockHydrate = jest.fn();
 
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: mockGetToken, userId: "user_editor" }) }));
+jest.mock("expo-router", () => ({ useRouter: () => ({ back: mockBack, canGoBack: () => true }) }));
 jest.mock("@/lib/requests/collaboration", () => ({
   fetchCollaborationInbox: (...args: unknown[]) => mockFetchInbox(...args),
   fetchSharedCollaborations: (...args: unknown[]) => mockFetchShared(...args),
@@ -54,7 +56,7 @@ jest.mock("@/components/collaboration/SharedTerminalScreen", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import SharedScreen from "../app/(drawer)/shared";
+import SharedScreen from "../app/(drawer)/(tabs)/(chats)/shared";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const invitationId = "30000000-0000-4000-8000-000000000001";
@@ -162,6 +164,15 @@ describe("native shared Chat screen", () => {
 
   afterAll(() => {
     global.WebSocket = OriginalWebSocket;
+  });
+
+  it("returns to the chat screen from the back button in its top bar", async () => {
+    render(<SharedScreen />);
+    await screen.findByText("Shared with me");
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it("accepts an invitation and opens an ordinary attributed Chat composer", async () => {

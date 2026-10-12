@@ -225,8 +225,8 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: variant === "danger"
       ? "rgba(224, 106, 78, 0.16)"
       : variant === "symbol"
-        ? "rgba(228, 232, 222, 0.07)"
-        : "rgba(228, 232, 222, 0.10)",
+        ? "rgba(225, 224, 224, 0.07)"
+        : "rgba(225, 224, 224, 0.10)",
   }),
   keyPressed: { opacity: 0.72, transform: [{ scale: 0.96 }] },
   keyLabel: (variant: KeyVariant, size?: KeySize) => ({

@@ -101,7 +101,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
   if (!result) {
     return (
       <Centered>
-        <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
+        <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
         <Body>Loading your Matrix computer…</Body>
       </Centered>
     );
@@ -144,7 +144,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
     case "payment_settling":
       return (
         <Centered>
-          {journey.settling?.delayed ? null : <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />}
+          {journey.settling?.delayed ? null : <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />}
           <Title>{journey.settling?.delayed ? "Taking longer than expected" : "Activating your subscription"}</Title>
           <Body>{journey.detail}</Body>
           {journey.settling?.delayed ? (
@@ -155,7 +155,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
     case "provisioning":
       return (
         <Centered>
-          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
           <Title>Building your Matrix computer</Title>
           <Body>{journey.progress ? (PROVISIONING_STAGE_LABEL[journey.progress.stage] ?? journey.detail) : journey.detail}</Body>
         </Centered>
@@ -179,7 +179,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
       // first_run / ready — the caller redirects.
       return (
         <Centered>
-          <ActivityIndicator color={theme.colors.primary} testID="journey-loading" />
+          <ActivityIndicator color={theme.v2.colors.textSubtle} testID="journey-loading" />
           <Body>Opening your Matrix computer…</Body>
         </Centered>
       );
@@ -191,9 +191,9 @@ const styles = StyleSheet.create((theme) => ({
   scrollContainer: { flex: 1, backgroundColor: theme.colors.background },
   scrollContent: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: theme.spacing.lg },
   card: { alignItems: "center", gap: theme.spacing.md, maxWidth: 360 },
-  title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.colors.forest, textAlign: "center" },
-  body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.colors.forest, opacity: 0.8, textAlign: "center" },
-  button: { backgroundColor: theme.colors.primary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
+  title: { fontFamily: theme.fonts.sansSemiBold, fontSize: 20, color: theme.v2.colors.textDefault, textAlign: "center" },
+  body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.v2.colors.textDefault, opacity: 0.8, textAlign: "center" },
+  button: { backgroundColor: theme.v2.colors.controlPrimary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
   buttonPressed: { opacity: 0.85 },
-  buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.colors.primaryForeground },
+  buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.v2.colors.onControlPrimary },
 }));

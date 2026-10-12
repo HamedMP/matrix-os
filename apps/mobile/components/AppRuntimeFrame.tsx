@@ -93,7 +93,7 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, 
         startInLoadingState
         renderLoading={() => (
           <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-            <ActivityIndicator color={colors.light.primary} />
+            <ActivityIndicator color={colors.light.mutedForeground} />
           </View>
         )}
         renderError={() => <AppRuntimeUnavailable title={title} />}
