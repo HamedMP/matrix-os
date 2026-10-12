@@ -221,3 +221,18 @@ it.each(['head','base','source','mode','time','boundary'])('does not retain an i
  const evidence=JSON.parse(prior.output.summary);expect(evidence).not.toHaveProperty('recoveryStartedAt');expect(evidence).not.toHaveProperty('recoveryAfterRunId');
  expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();
 });
+describe('source gate API budget',()=>{
+ const notApplicablePrior=(evidence:Record<string,unknown>={})=>({id:9,name:'CI Source Qualification',head_sha:head,status:'completed',conclusion:'success',app:{id:777,slug:'matrix-ci-gate'},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,admittedPreviously:false,prNumber:2454,headSha:head,headRef:'child',baseSha:base,baseRef:'stack/parent',sourceSha:merge,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1,notApplicable:true,...evidence})}});
+ it('does not rewrite an unchanged N/A gate for the same head, base and source',async()=>{
+  const f=fixture();f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[notApplicablePrior()]:[]}}));
+  await reconcile(f);expect(f.gateGithub.rest.checks.update).not.toHaveBeenCalled();expect(f.gateGithub.rest.checks.create).not.toHaveBeenCalled();
+ });
+ it.each([['baseSha','6'.repeat(40)],['sourceSha','7'.repeat(40)]])('rewrites an N/A gate whose %s moved',async(field,value)=>{
+  const f=fixture();f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[notApplicablePrior({[field]:value})]:[]}}));
+  await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:9,conclusion:'success'}));
+ });
+ it('rewrites an N/A gate that is not a completed success',async()=>{
+  const f=fixture();const prior={...notApplicablePrior(),conclusion:'failure'};f.github.rest.checks.listForRef.mockImplementation(async(args:any)=>({data:{check_runs:args.check_name==='CI Source Qualification'?[prior]:[]}}));
+  await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:9,conclusion:'success'}));
+ });
+});

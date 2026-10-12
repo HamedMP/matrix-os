@@ -104,7 +104,12 @@ export async function reconcileSourceQualification(github,repo,controller,option
    const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
    if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!==name||written.head_sha!==pull.head.sha)throw new Error('Dedicated gate App issuer response mismatch');
   };
-  if(!admitted&&!recovery){await write('success','Dedicated source qualification: not admitted',{notApplicable:true});continue;}
+  if(!admitted&&!recovery){
+   // Unchanged N/A rewrites dominated the shared installation API budget.
+   const unchanged=prior?.check.status==='completed'&&prior.check.conclusion==='success'&&old?.notApplicable===true&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha;
+   if(!unchanged)await write('success','Dedicated source qualification: not admitted',{notApplicable:true});
+   continue;
+  }
   if(admitted&&(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||''))){await write('failure','Reviewed execution configuration is incomplete');continue;}
   try{const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
   catch(error){await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}

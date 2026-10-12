@@ -37,6 +37,9 @@ it('pins every refreshed lane checkout and preserves mandatory hosted gates unde
  expect(dedicated.on.workflow_run).toEqual({workflows:['CI'],types:['requested','in_progress','completed']});
  expect(dedicated.on.pull_request_target.types).toContain('opened');
  expect(dedicated.jobs.reconcile.if).not.toContain('vars.MATRIX_CI_DEDICATED');
+ // Only completed CI can settle a gate; requested/in_progress reconciles exhausted the installation API budget.
+ expect(dedicated.jobs.reconcile.if).toBe("github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.action == 'completed')");
+ expect(dedicated.on.schedule).toEqual([{cron:'*/15 * * * *'}]);
  expect(dedicated.jobs.reconcile.steps.find((step:any)=>step.name==='Reconcile completed child source checks').with.script).toContain('reconcileSourceQualification');
 });
 it('admits a rerun through in_progress because GitHub requested events do not fire on reruns',async()=>{

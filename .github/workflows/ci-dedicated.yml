@@ -15,7 +15,7 @@ on:
     workflows: [CI]
     types: [requested, in_progress, completed]
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/15 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
@@ -266,7 +266,7 @@ jobs:
 
   reconcile:
     name: Revoke stale stacked qualification
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.action == 'completed')
     environment: matrix-ci
     permissions:
       actions: write
