@@ -52,7 +52,7 @@ app/(drawer)/(tabs)/(chats)/projects/[projectId].tsx
 app/(drawer)/(tabs)/agents/index.tsx            /agents
 app/(drawer)/(tabs)/agents/new.tsx              /agents/new
 app/(drawer)/(tabs)/agents/[agentId].tsx        /agents/<agentId>   the agent's own chat
-app/(drawer)/(tabs)/(apps)/apps.tsx             /apps          Files and Connect Apps are entries here
+app/(drawer)/(tabs)/(apps)/apps.tsx             /apps          default apps first, then installed apps
 app/(drawer)/(tabs)/(apps)/files.tsx            /files
 app/(drawer)/(tabs)/(apps)/integrations.tsx     /integrations
 app/(drawer)/(tabs)/terminal.tsx                /terminal

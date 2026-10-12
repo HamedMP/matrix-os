@@ -4,6 +4,7 @@ import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import ArrowUp02Icon from "@hugeicons/core-free-icons/ArrowUp02Icon";
+import BlocksIcon from "@hugeicons/core-free-icons/BlocksIcon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
@@ -53,6 +54,7 @@ describe("role icons", () => {
       LoadingIcon: Loading03Icon,
       ChatIcon: Message01Icon,
       FolderIcon: Folder01Icon,
+      ConnectAppsIcon: BlocksIcon,
       SharedIcon: UserMultiple02Icon,
       DocumentIcon: File01Icon,
       LockIcon: SquareLock02Icon,
@@ -63,8 +65,8 @@ describe("role icons", () => {
     });
   });
 
-  it("exports nothing but the 29 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(29);
+  it("exports nothing but the 30 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(30);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }
