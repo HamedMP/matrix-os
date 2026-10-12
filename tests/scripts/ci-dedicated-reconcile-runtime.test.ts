@@ -9,7 +9,7 @@ const nodeRequire = createRequire(import.meta.url);
 const controller = 'a'.repeat(40);
 const workflow = () => parse(readFileSync('.github/workflows/ci-dedicated.yml', 'utf8'));
 
-async function execute(token = 'fake-gate-app-token', helperError?: Error, configurationToken = 'fake-configuration-token') {
+async function execute(token = 'fake-gate-app-token', helperError?: Error, configurationToken = 'fake-configuration-token', event: { eventName?: string; payload?: Record<string, unknown> } = {}) {
   vi.stubEnv('GATE_TOKEN', token);
   vi.stubEnv('CONFIGURATION_TOKEN', configurationToken);
   vi.stubEnv('GATE_APP_ID', '777');
@@ -26,7 +26,7 @@ async function execute(token = 'fake-gate-app-token', helperError?: Error, confi
     }
   }
   const github = new Client({ auth: 'fake-actions-token' });
-  const context = { repo: { owner: 'HamedMP', repo: 'matrix-os' }, ref: 'refs/heads/main', runId: 123, payload: {} };
+  const context = { repo: { owner: 'HamedMP', repo: 'matrix-os' }, ref: 'refs/heads/main', runId: 123, eventName: event.eventName ?? 'schedule', payload: event.payload ?? {} };
   const core = { info: vi.fn() };
   const reconcile = vi.fn(async () => {
     if (helperError) throw helperError;
@@ -78,3 +78,28 @@ it('propagates reconciliation failures instead of reporting success', async () =
 });
 
 it('rejects a missing configuration token before reconciliation',async()=>{await expect(execute('fake-gate-app-token',undefined,'')).rejects.toThrow('Configuration read token is required');});
+
+const scopeOf = async (eventName: string, payload: Record<string, unknown>) => {
+  const { reconcile } = await execute('fake-gate-app-token', undefined, 'fake-configuration-token', { eventName, payload });
+  const options = reconcile.mock.calls[0][3] as Record<string, unknown>;
+  return { prNumber: options.prNumber, childrenOf: options.childrenOf };
+};
+const ownPr = (number: number) => ({ number, base: { repo: { url: 'https://api.github.com/repos/HamedMP/matrix-os' } }, head: { repo: { url: 'https://api.github.com/repos/HamedMP/matrix-os' } } });
+
+it('scopes a completed PR CI run to its own pull request instead of scanning every open PR', async () => {
+  expect(await scopeOf('workflow_run', { action: 'completed', workflow_run: { pull_requests: [ownPr(2535)] } })).toEqual({ prNumber: 2535, childrenOf: undefined });
+});
+it.each([
+  ['main push or dispatched refresh CI', []],
+  ['an ambiguous multi-PR CI run', [ownPr(1), ownPr(2)]],
+  ['a fork PR CI run', [{ ...ownPr(7), head: { repo: { url: 'https://api.github.com/repos/fork/matrix-os' } } }]],
+])('keeps the full scan for %s', async (_label, pullRequests) => {
+  expect(await scopeOf('workflow_run', { action: 'completed', workflow_run: { pull_requests: pullRequests } })).toEqual({ prNumber: undefined, childrenOf: undefined });
+});
+it('scopes a pushed PR to itself and its direct stacked children', async () => {
+  expect(await scopeOf('pull_request_target', { action: 'synchronize', pull_request: { number: 2422, head: { ref: 'stack/parent' } } })).toEqual({ prNumber: undefined, childrenOf: { number: 2422, headRef: 'stack/parent' } });
+});
+it('keeps single-PR scope for other pull request events and the full scan for schedules', async () => {
+  expect(await scopeOf('pull_request_target', { action: 'labeled', pull_request: { number: 2422, head: { ref: 'x' } } })).toEqual({ prNumber: 2422, childrenOf: undefined });
+  expect(await scopeOf('schedule', {})).toEqual({ prNumber: undefined, childrenOf: undefined });
+});

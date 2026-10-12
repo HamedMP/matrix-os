@@ -236,3 +236,20 @@ describe('source gate API budget',()=>{
   await reconcile(f);expect(f.gateGithub.rest.checks.update).toHaveBeenCalledWith(expect.objectContaining({check_run_id:9,conclusion:'success'}));
  });
 });
+describe('scoped reconciliation after a PR push',()=>{
+ it('reconciles only the pushed PR and its direct stacked children',async()=>{
+  const f=fixture();
+  const other=(number:number,baseRef:string)=>({...structuredClone(f.pull),number,base:{...structuredClone(f.pull.base),ref:baseRef}});
+  const pushed={...structuredClone(f.pull),number:2422,head:{...structuredClone(f.pull.head),ref:'stack/parent'}};
+  const listed=[pushed,other(2423,'stack/parent'),other(2499,'main'),other(2500,'unrelated')];
+  f.github.rest.pulls.list.mockResolvedValue({data:listed});
+  f.github.rest.pulls.get.mockImplementation(async(args:any)=>({data:listed.find(pull=>pull.number===args.pull_number)!}));
+  const result=await gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,childrenOf:{number:2422,headRef:'stack/parent'}});
+  expect(f.github.rest.pulls.get.mock.calls.map(([args]:any[])=>args.pull_number)).toEqual([2422,2423]);
+  expect(result.examined).toBe(2);
+ });
+ it.each([[{number:0,headRef:'x'}],[{number:2422,headRef:''}],[{number:2422}]])('rejects an invalid child scope %j',async childrenOf=>{
+  const f=fixture();
+  await expect(gate.reconcileSourceQualification(f.github,repo,origin,{runId:123,runAttempt:1,gateAppId:777,gateGithub:f.gateGithub,childrenOf} as any)).rejects.toThrow('Invalid source gate scope');
+ });
+});

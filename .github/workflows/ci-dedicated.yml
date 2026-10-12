@@ -354,9 +354,19 @@ jobs:
             if(!process.env.GATE_TOKEN)throw new Error('Protected gate App token is required');
             // GitHub Script bundles Octokit; external @actions packages are not installed.
             const gateGithub=new github.constructor({auth:process.env.GATE_TOKEN,baseUrl:github.request.endpoint.DEFAULTS.baseUrl,request:{timeout:10000}});
+            // Scope reconciliation to the PRs an event can affect; full scans exhausted the installation API budget.
+            // Main pushes, schedules and dispatched refresh CI keep the full scan.
+            const ownRepo=`${github.request.endpoint.DEFAULTS.baseUrl}/repos/${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+            const ciPulls=context.eventName==='workflow_run'?(context.payload.workflow_run?.pull_requests??[]):[];
+            const scope=context.payload.pull_request
+              ?(context.payload.action==='synchronize'
+                ?{childrenOf:{number:context.payload.pull_request.number,headRef:context.payload.pull_request.head.ref}}
+                :{prNumber:context.payload.pull_request.number})
+              :ciPulls.length===1&&[ciPulls[0].base?.repo?.url,ciPulls[0].head?.repo?.url].every(url=>String(url).toLowerCase()===ownRepo)
+                ?{prNumber:ciPulls[0].number}:{};
             const gate=await reconcileSourceQualification(sourceGithub,context.repo,
               {sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
-              {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...(context.payload.pull_request&&context.payload.action!=='synchronize'?{prNumber:context.payload.pull_request.number}:{})});
+              {gateGithub,gateAppId:Number(process.env.GATE_APP_ID),runId:context.runId,runAttempt:Number(process.env.CONTROLLER_ATTEMPT),...scope});
             core.info(`Examined ${gate.examined} source gates; refreshed ${gate.dispatched} exact-source requests.`);
 
       - name: Revoke configuration read token

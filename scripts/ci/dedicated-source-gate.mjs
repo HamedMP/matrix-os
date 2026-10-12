@@ -80,7 +80,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
  if(!id(workflow.id)||workflow.path!==path)throw new Error('Unexpected source gate workflow');
  const config=await settings(github,repo);
- const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]:await boundedPages(page=>github.rest.pulls.list({...repo,state:'open',per_page:100,page,request}));
+ const children=options.childrenOf;
+ if(children!==undefined&&(!id(children?.number)||typeof children.headRef!=='string'||!children.headRef))throw new Error('Invalid source gate scope');
+ const listOpen=()=>boundedPages(page=>github.rest.pulls.list({...repo,state:'open',per_page:100,page,request}));
+ // A push only changes the pushed PR and the merge source of PRs stacked directly on its branch.
+ const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]
+  :children?(await listOpen()).filter(pull=>pull.number===children.number||pull.base?.ref===children.headRef)
+  :await listOpen();
  let examined=0,dispatched=0;
  for(const listed of pulls){
   if(!id(listed.number)||typeof listed.head?.repo?.full_name!=='string'||!same(listed.base?.repo?.full_name,repo)||!sha.test(listed.head.sha||''))continue;
@@ -141,6 +147,6 @@ export async function reconcileSourceQualification(github,repo,controller,option
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
- if(!options.prNumber)examined+=await reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester});
+ if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester});
  return{examined,dispatched};
 }
