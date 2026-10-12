@@ -231,7 +231,10 @@ jobs:
               core.warning(error instanceof Error ? error.message : 'Unknown PR revalidation failure');
               core.setFailed('Current PR revision could not be revalidated');
               success=false;infrastructure=false;
-            } finally{if(configuration)await configuration.close();}
+            } finally{
+              if(configuration)try{await configuration.close();}
+              catch{core.setFailed('Configuration read token revocation failed');success=false;infrastructure=false;}
+            }
             await github.rest.checks.update({
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), request: {timeout: 10000},
               status: 'completed', conclusion: success ? 'success' : infrastructure ? 'neutral' : 'failure',

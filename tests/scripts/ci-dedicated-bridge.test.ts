@@ -10,12 +10,12 @@ import {parse} from 'yaml';
 const nodeRequire=createRequire(import.meta.url);
 const head='a'.repeat(40),base='b'.repeat(40),merge='c'.repeat(40),controller='d'.repeat(40);
 function workflow(){return parse(readFileSync('.github/workflows/ci-dedicated.yml','utf8'));}
-async function execute(name:string,github:unknown,context:unknown,core:unknown) {
+async function execute(name:string,github:unknown,context:unknown,core:unknown,helperOverrides:Record<string,unknown>={}) {
  const source=workflow().jobs.benchmark.steps.find((step:{name:string})=>step.name===name).with.script;
  // Vitest's VM has no native dynamic-import callback. Inject only that loader,
  // checking the actual workflow-resolved path and executing the real helper.
  const script=source.replaceAll('await import(', 'await loadHelper(');
- const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
+ const loadHelper=async (url:string)=>{const files={'scripts/ci/dedicated-admission.mjs':admissionHelpers,'scripts/ci/dedicated-outcome.mjs':outcomeHelpers,'scripts/ci/dedicated-config-token.mjs':configurationHelpers,...helperOverrides};for(const [file,helpers]of Object.entries(files))if(url===pathToFileURL(resolve(process.cwd(),file)).href)return helpers;throw new Error('Unexpected protected workflow helper path');};
  const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor;
  return new AsyncFunction('github','context','core','require','loadHelper',script)(github,context,core,nodeRequire,loadHelper);
 }
@@ -83,6 +83,14 @@ describe('dedicated CI trusted dispatcher integration',()=>{
   for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENT_SHA:base,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'success',SUITE:'qualification'}))vi.stubEnv(key,value);
   await execute('Settle source-head check',github,context,core);
   expect(core.warning).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0].conclusion).toBe('failure');
+ });
+ it('completes the source check as failed when credential cleanup fails',async()=>{
+  const {outputs,github,context,core}=await admit();
+  for(const [key,value] of Object.entries({CHECK_ID:outputs.check_id,HEAD_SHA:head,MERGE_PARENTS:JSON.stringify([base,head]),BASE_SHA:base,BASE_REF:'main',PR_NUMBER:'2440',SOURCE_SHA:merge,DISPATCH_OUTCOME:'failure',SUITE:'qualification'}))vi.stubEnv(key,value);
+  const close=vi.fn().mockRejectedValue(new Error('sensitive revocation request headers'));
+  await execute('Settle source-head check',github,context,core,{'scripts/ci/dedicated-config-token.mjs':{createConfigurationSession:()=>({github,close})}});
+  expect(close).toHaveBeenCalledOnce();expect(core.setFailed).toHaveBeenCalledWith('Configuration read token revocation failed');
+  expect(github.rest.checks.update).toHaveBeenCalledOnce();expect(github.rest.checks.update.mock.calls[0][0]).toMatchObject({status:'completed',conclusion:'failure'});
  });
  it('keeps title edits and unrelated label removal from superseding active qualification',()=>{
   const group=workflow().concurrency.group;
