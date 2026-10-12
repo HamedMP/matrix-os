@@ -108,8 +108,10 @@ and Electron Desktop render it through thin adapters: `shell/src/components/brai
   the chat they opened; a failed list opens a draft and offers "Try again". The open chat's title is kept apart from
   the list, and a rename or delete made here stays over the list only until the chat is read again (then the server's
   title shows, a later rename elsewhere too) or is not listed, at most 500 of them. A rename keeps the new title
-  version (the host's answer, else one more), so a chat not read again since can be renamed again. A delete that
-  settles moves the viewer only if the deleted chat is still the open one.
+  version (the host's answer, else one more), so a chat not read again since can be renamed again. A failed rename
+  reads its chat again from the first page on (Save off meanwhile) and keeps the server's record over the list, so a
+  retry after a rename elsewhere sends the current version. A delete that settles moves the viewer only if the
+  deleted chat is still the open one.
 - Proxies in front of the gateway end a request at 30 s, so repository runs and source syncs start a job (202) and
   poll it: 1 s, then doubling to 10 s, at most 90 polls; three failed polls in a row, or one refused poll, stop with
   "Try again", and the poll cap with "Check again". Stop asks the gateway to cancel. A gateway without the jobs route

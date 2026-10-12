@@ -474,6 +474,81 @@ describe("Brain chat tab", () => {
     expect(rename.mock.lastCall?.[0].chat.titleVersion).toBe(9);
   });
 
+  it("reads a Show more chat again after a rename fails, so a retry sends the title version renamed elsewhere", async () => {
+    let older = thread("chat_old", "An older question", "2026-09-01T00:00:00.000Z");
+    const agents = fakeAgents({ threads: async (_agentId, input) => input.cursor === undefined
+      ? { items: [thread("chat_a", "Bot chat sidebar")], nextCursor: "chatcur_2" }
+      : { items: [older] } });
+    const rename = vi.fn<NonNullable<BrainChatHost["rows"]>["rename"]>(async () => undefined);
+    renderChat(fakeHost(agents.client, { rename, remove: vi.fn(async () => undefined) }).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.keyDown(await screen.findByRole("button", { name: "More for An older question" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Older, renamed" } });
+    // The phone renamed it first: the server refuses the stale title version.
+    older = { chat: { ...(older as { chat: object }).chat, title: "Renamed on the phone", titleVersion: 3 } } as never;
+    rename.mockRejectedValueOnce(new Error("TitleVersionConflict"));
+    const reads = agents.threads.list.mock.calls.length;
+    fireEvent.submit(name.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent("The chat was renamed elsewhere. Save again to use this name.");
+    // Read again from the first page on: a focus reload reads the first page only.
+    expect(agents.threads.list.mock.calls.slice(reads).map(([, input]) => input)).toEqual([
+      { projectId: PROJECT, limit: 50 }, { projectId: PROJECT, limit: 50, cursor: "chatcur_2" },
+    ]);
+    expect(name).toHaveValue("Older, renamed");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() => expect(rename).toHaveBeenCalledTimes(2));
+    expect(rename.mock.lastCall?.[0].chat).toMatchObject({ title: "Renamed on the phone", titleVersion: 3 });
+    expect(await screen.findByRole("button", { name: /^Older, renamed/ })).toBeTruthy();
+  });
+
+  it("keeps Save off until a failed rename's chat is read again, and says try again when that read fails", async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    const agents = fakeAgents({ threads: async () => ({ items: [thread("chat_a", "Bot chat sidebar")] }) });
+    const rename = vi.fn<NonNullable<BrainChatHost["rows"]>["rename"]>(async () => { throw new Error("Offline"); });
+    renderChat(fakeHost(agents.client, { rename, remove: vi.fn(async () => undefined) }).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Bot chat sidebar" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Where bot chats show" } });
+    agents.threads.list.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() => expect(agents.threads.list).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // The same title version as before: nothing changed elsewhere, so a plain try again.
+    await act(async () => { answer({ items: [thread("chat_a", "Bot chat sidebar")] }); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("The chat could not be renamed. Try again.");
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    agents.threads.list.mockRejectedValueOnce(BOTS_DOWN());
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() => expect(rename).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    expect(screen.getByRole("alert")).toHaveTextContent("The chat could not be renamed. Try again.");
+  });
+
+  it("closes a rename whose answer was lost when the chat read again has the new name", async () => {
+    const agents = fakeAgents({ threads: async () => ({ items: [thread("chat_a", "Bot chat sidebar")] }) });
+    const rename = vi.fn<NonNullable<BrainChatHost["rows"]>["rename"]>(async () => { throw new Error("TimeoutError"); });
+    renderChat(fakeHost(agents.client, { rename, remove: vi.fn(async () => undefined) }).host);
+    await screen.findByTestId("chat-view");
+    fireEvent.keyDown(screen.getByRole("button", { name: "More for Bot chat sidebar" }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+    const name = await screen.findByRole("textbox", { name: "Chat name" });
+    fireEvent.change(name, { target: { value: "Where bot chats show" } });
+    agents.threads.list.mockResolvedValue({ items: [
+      { chat: { ...(thread("chat_a", "Where bot chats show") as { chat: object }).chat, titleVersion: 3 } },
+    ] });
+    fireEvent.submit(name.closest("form")!);
+    const renamed = await screen.findByRole("button", { name: /^Where bot chats show/ });
+    await waitFor(() => expect(renamed).toHaveFocus());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("keeps the chat the viewer opened while a delete was on its way, and their focus", async () => {
     const agents = fakeAgents({ threads: async () => ({ items: [
       thread("chat_a", "Bot chat sidebar"), thread("chat_b", "Navigation cache", "2026-10-07T09:00:00.000Z"),

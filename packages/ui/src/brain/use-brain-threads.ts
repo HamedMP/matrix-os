@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useEffectEvent } from "react";
+import { useCallback, useEffect, useEffectEvent } from "react";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../chat-agents/client.js";
 import { botsNotRunning } from "./company-brain-bot.js";
-import { useBrainPages } from "./use-brain-load.js";
+import { BRAIN_LIST_MAX_ITEMS, useBrainPages } from "./use-brain-load.js";
 
 const THREAD_PAGE_SIZE = 50;
 
@@ -26,7 +26,8 @@ const chatIdOf = (record: CanonicalChatRecord): string => record.chat.id;
  * The Company Brain chats of one project, newest activity first, 50 a page ("Show more" pages on, up to 500). The list
  * loads on open and reloads on `reload` and when the window gets focus, keeping the pages "Show more" added while the
  * first page keeps all its chats (a chat pushed off it would fall between the pages); it opens no event stream of its
- * own. A new `authorityKey` loads it from the start and keeps nothing read under the old one.
+ * own. A new `authorityKey` loads it from the start and keeps nothing read under the old one. `find` reads one listed
+ * chat again from the first page on (a chat "Show more" added is on no page a reload reads), null when it is not listed.
  */
 export function useBrainThreads(agents: ChatAgentClient, botId: string, projectId: string, authorityKey = "") {
   const pages = useBrainPages<BrainThreadPage>(
@@ -54,5 +55,19 @@ export function useBrainThreads(agents: ChatAgentClient, botId: string, projectI
     return () => window.removeEventListener("focus", listener);
   }, []);
   const notRunning = pages.first.state.status === "ready" && pages.first.state.data.notRunning;
-  return { ...pages, reload, notRunning };
+  const find = useCallback(async (chatId: string): Promise<CanonicalChatRecord | null> => {
+    if (!agents.bots) throw new Error("BotsUnavailable");
+    let cursor: string | undefined;
+    for (let read = 0; read < BRAIN_LIST_MAX_ITEMS; read += THREAD_PAGE_SIZE) {
+      const page = await agents.bots.threads.list(botId, {
+        projectId, limit: THREAD_PAGE_SIZE, ...(cursor === undefined ? {} : { cursor }),
+      });
+      const found = page.items.find((record) => record.chat.id === chatId);
+      if (found !== undefined) return found;
+      if (!page.nextCursor) return null;
+      cursor = page.nextCursor;
+    }
+    return null;
+  }, [agents, botId, projectId]);
+  return { ...pages, reload, notRunning, find };
 }

@@ -31,11 +31,15 @@ function renamedTo(record: CanonicalChatRecord, title: string): CanonicalChatRec
   return { ...record, chat: { ...record.chat, title, titleVersion: (record.chat.titleVersion ?? 0) + 1 } };
 }
 
+/** Reads a chat again and keeps the server's record over the list; null when it is not listed or cannot be read. */
+export type BrainChatReread = (record: CanonicalChatRecord) => Promise<CanonicalChatRecord | null>;
+
 /** One past chat: open it, or rename or delete it from its menu (right click, or the More button). */
-function BrainChatRow({ record, current, now, actions, onOpen, onRenamed, onDeleted }: {
+function BrainChatRow({ record, current, now, actions, onOpen, onRenamed, onReread, onDeleted }: {
   readonly record: CanonicalChatRecord; readonly current: boolean; readonly now: number;
   readonly actions: BrainChatRowActions | null; readonly onOpen: () => void;
-  readonly onRenamed: (renamed: CanonicalChatRecord) => void; readonly onDeleted: () => void;
+  readonly onRenamed: (renamed: CanonicalChatRecord) => void; readonly onReread: BrainChatReread;
+  readonly onDeleted: () => void;
 }) {
   const [mode, setMode] = useState<"view" | "rename" | "delete">("view");
   const [busy, setBusy] = useState(false);
@@ -67,8 +71,16 @@ function BrainChatRow({ record, current, now, actions, onOpen, onRenamed, onDele
       (renamed) => { setBusy(false); onRenamed(renamed ?? renamedTo(record, next)); back(); },
       (error: unknown) => {
         console.warn("[brain] chat rename failed", failureName(error));
-        setBusy(false);
-        setFailed("The chat could not be renamed. Try again.");
+        // A chat renamed elsewhere since the list was read refuses this title version: Save stays off until the chat
+        // is read again, so a retry sends the version the server has now.
+        void onReread(record).then((fresh) => {
+          setBusy(false);
+          // The rename landed after all (its answer was lost), or the chat was given this name elsewhere.
+          if (fresh?.chat.title === next) return back();
+          setFailed(fresh !== null && fresh.chat.titleVersion !== record.chat.titleVersion
+            ? "The chat was renamed elsewhere. Save again to use this name."
+            : "The chat could not be renamed. Try again.");
+        });
       },
     );
   };
@@ -133,13 +145,13 @@ function BrainChatRow({ record, current, now, actions, onOpen, onRenamed, onDele
  * focus to the open chat (or New chat), and Escape closes it.
  */
 export function BrainChatList({
-  id, shown, threads, items, chatId, projectName, actions, onOpen, onClose, onRenamed, onDeleted,
+  id, shown, threads, items, chatId, projectName, actions, onOpen, onClose, onRenamed, onReread, onDeleted,
 }: {
   readonly id: string; readonly shown: boolean; readonly threads: ReturnType<typeof useBrainThreads>;
   readonly items: readonly CanonicalChatRecord[]; readonly chatId: string | null; readonly projectName: string;
   readonly actions: BrainChatRowActions | null; readonly onOpen: (record: CanonicalChatRecord | null) => void;
   readonly onClose: () => void; readonly onRenamed: (renamed: CanonicalChatRecord) => void;
-  readonly onDeleted: (chatId: string) => void;
+  readonly onReread: BrainChatReread; readonly onDeleted: (chatId: string) => void;
 }) {
   const status = threads.first.state.status;
   const now = Date.now();
@@ -179,7 +191,7 @@ export function BrainChatList({
           {items.map((record) => (
             <BrainChatRow key={record.chat.id} record={record} current={record.chat.id === chatId} now={now}
               actions={actions} onOpen={() => onOpen(record)}
-              onRenamed={onRenamed}
+              onRenamed={onRenamed} onReread={onReread}
               onDeleted={() => {
                 onDeleted(record.chat.id);
                 // The row goes away; focus moves to New chat unless the viewer moved it out of the list meanwhile.

@@ -328,10 +328,25 @@ function BrainChatThreads({
     setListOpen(false);
     toggle.current?.focus();
   };
-  const edit = (id: string, value: CanonicalChatRecord | null) => {
+  const keep = (id: string, value: CanonicalChatRecord | null) => {
     const over = loaded.current.find((record) => record.chat.id === id);
     if (over) setEdits((previous) => withEdit(previous, id, value, over));
+  };
+  const edit = (id: string, value: CanonicalChatRecord | null) => {
+    keep(id, value);
     threads.reload();
+  };
+  // A rename failed (it may have been renamed elsewhere): its record is read again on whichever page has it and kept
+  // like a rename made here, so the row shows the server's title and a retry sends its title version.
+  const reread = async (record: CanonicalChatRecord): Promise<CanonicalChatRecord | null> => {
+    try {
+      const fresh = await threads.find(record.chat.id);
+      if (fresh !== null) keep(fresh.chat.id, fresh);
+      return fresh;
+    } catch (error: unknown) {
+      console.warn("[brain] chat read failed", error instanceof Error ? error.name : typeof error);
+      return null;
+    }
   };
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] @2xl:grid-cols-[15rem_minmax(0,1fr)] @2xl:grid-rows-1">
@@ -341,7 +356,7 @@ function BrainChatThreads({
           open(record);
           if (listOpen) closeList();
         }}
-        onRenamed={(renamed) => edit(renamed.chat.id, renamed)}
+        onRenamed={(renamed) => edit(renamed.chat.id, renamed)} onReread={reread}
         onDeleted={(id) => {
           edit(id, null);
           closeDeleted(id, () => listedNow.current.find((record) => record.chat.id !== id) ?? null);
