@@ -437,17 +437,23 @@ describe("Company Brain chat on Web", () => {
       fireEvent.click(await screen.findByRole("button", { name: "New chat" }));
       return screen.findByRole("textbox", { name: /message/i });
     };
+    const releaseNotesOpen = () => waitFor(() => {
+      expect(screen.getByRole("button", { name: /^Release notes/ })).toHaveAttribute("aria-current", "true");
+      expect(screen.getByText("Bot chats stay under AGENTS.")).toBeTruthy();
+    });
     await openRow();
     fireEvent.change(composer(), { target: { value: "What shipped in" } });
     fireEvent.change(await openDraft(), { target: { value: "Who owns" } });
-    // A revoke the owner recovers from: a new authority over the same composer identity.
+    // A revoke the owner recovers from: a new authority over the same composer identity. The brain chat reads its list
+    // again and opens as it does at first (the newest thread), and both kept questions are still there.
     authorize({ authorityKey: "owner/epoch1" });
-    await waitFor(() => expect(composer()).toHaveValue("Who owns"));
-    await openRow();
-    expect(composer()).toHaveValue("What shipped in");
-    // Another Clerk session or organization: the open view remounts, and no kept question comes back.
+    await waitFor(() => expect(composer()).toHaveValue("What shipped in"));
+    await releaseNotesOpen();
+    expect(await openDraft()).toHaveValue("Who owns");
+    // Another Clerk session or organization: the brain chat opens afresh, and no kept question comes back.
     authorize({ authorityKey: "next/epoch0", composerIdentity: {} });
-    await waitFor(() => expect(composer()).toHaveValue(""));
+    await releaseNotesOpen();
+    expect(composer()).toHaveValue("");
     expect(await openDraft()).toHaveValue("");
     await openRow();
     expect(composer()).toHaveValue("");

@@ -22,8 +22,9 @@ Web Canvas and Web Mobile. Its rules, client and screens are in `packages/ui/src
   project's draft (`newDraftScope`), come back when the viewer returns; a question sent before a switch leaves them once
   it is admitted. Like the Chat app, it follows the shell chat authority (`useCanonicalChatAuthority`): no slot while
   the chat state withholds the agent client, Bot reads over its guarded summary client, and the view keyed by
-  `authorityKey` and given `composerIdentity`, so a new owner never gets the previous owner's transcript or drafts; Open
-  in Chat, rename and delete are refused once the authority has moved on. Open in Chat switches the Chat app to the same
+  `authorityKey` and given `composerIdentity`, so a new owner never gets the previous owner's transcript or drafts,
+  while the owner's own drafts stay through a new authority (the brain chat then opens as it does at first); Open in
+  Chat, rename and delete are refused once the authority has moved on. Open in Chat switches the Chat app to the same
   Chat and focuses or opens its window through `lib/shell-window-focus.ts` (Web Canvas pans to it). Rows rename and
   delete over the shell chat client.
 - The built-in window `__brain__`: `lib/builtin-apps.ts`, `desktop/DesktopWindow.tsx` and `canvas/CanvasWindow.tsx`
