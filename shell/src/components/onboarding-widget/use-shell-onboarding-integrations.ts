@@ -50,10 +50,12 @@ function errorName(error: unknown): string {
 }
 
 /** Reads the app and connection lists, re-reading whichever failed after each delay. Returns a cancel function. */
-function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, onAvailable, onConnections, onServiceMissing }: {
+function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, connectionsRevision, onAvailable, onConnections, onServiceMissing }: {
   gatewayUrl: string;
   fetchFn: typeof fetch;
   retryDelays: readonly number[];
+  /** Changes whenever a connection list is applied, so a read that started earlier cannot overwrite a newer sync. */
+  connectionsRevision: () => number;
   onAvailable: (available: AvailableIntegration[]) => void;
   onConnections: (connections: ConnectedIntegration[]) => void;
   onServiceMissing: () => void;
@@ -62,6 +64,7 @@ function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, onAvailable, o
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   const skipped = Promise.resolve(null);
   const load = (attempt: number, needAvailable: boolean, needConnections: boolean) => {
+    const startedAt = connectionsRevision();
     void Promise.allSettled([
       needAvailable ? readJson(fetchFn, `${gatewayUrl}/api/integrations/available`) : skipped,
       needConnections ? readJson(fetchFn, `${gatewayUrl}/api/integrations`) : skipped,
@@ -72,8 +75,9 @@ function loadIntegrationLists({ gatewayUrl, fetchFn, retryDelays, onAvailable, o
         else console.warn("[onboarding-widget] apps unavailable:", errorName(availableResult.reason));
       }
       if (needConnections) {
-        if (connectionsResult.status === "fulfilled") onConnections(parseConnectedIntegrations(connectionsResult.value));
-        else console.warn("[onboarding-widget] connections unavailable:", errorName(connectionsResult.reason));
+        if (connectionsResult.status === "fulfilled") {
+          if (connectionsRevision() === startedAt) onConnections(parseConnectedIntegrations(connectionsResult.value));
+        } else console.warn("[onboarding-widget] connections unavailable:", errorName(connectionsResult.reason));
       }
       if (needAvailable && availableResult.status === "rejected" && isIntegrationServiceMissing(availableResult.reason)) {
         onServiceMissing();
@@ -104,6 +108,7 @@ export function useShellOnboardingIntegrations(
   const appsUnavailableRef = useRef(false);
   const optionsRef = useRef(options);
   const connectionsRef = useRef(connections);
+  const connectionsRevisionRef = useRef(0);
   const attemptRef = useRef(0);
   const cancelPollRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -116,6 +121,7 @@ export function useShellOnboardingIntegrations(
   }), []);
 
   const applyConnections = useCallback((next: ConnectedIntegration[]) => {
+    connectionsRevisionRef.current += 1;
     connectionsRef.current = next;
     setConnections(next);
   }, []);
@@ -131,6 +137,7 @@ export function useShellOnboardingIntegrations(
       gatewayUrl,
       fetchFn,
       retryDelays: optionsRef.current.listRetryDelays ?? LIST_RETRY_DELAYS_MS,
+      connectionsRevision: () => connectionsRevisionRef.current,
       onAvailable: setAvailable,
       onConnections: applyConnections,
       onServiceMissing: markAppsUnavailable,

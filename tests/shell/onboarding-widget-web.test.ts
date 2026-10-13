@@ -374,6 +374,32 @@ describe("web onboarding app connect", () => {
     expect(outageReads).toBe(3);
   });
 
+  it("keeps a newer synced connection when an older list read finishes after it", async () => {
+    popupStub();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let releaseStaleList: (response: Response) => void = () => undefined;
+    let listReads = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/api/integrations/available")) return json(services);
+      if (url.endsWith("/api/integrations")) {
+        listReads += 1;
+        if (listReads === 1) return json({ error: "busy" }, 503);
+        return new Promise<Response>((resolve) => { releaseStaleList = resolve; });
+      }
+      if (url.endsWith("/api/integrations/connect")) return json({ url: "https://consent.example.test/github" });
+      if (url.endsWith("/api/integrations/sync")) return json({ services: [{ id: "conn_1", service: "github", status: "active" }] });
+      throw new Error(`unexpected ${url}`);
+    });
+    const dispatch = vi.fn();
+    const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0], listRetryDelays: [0] }));
+    await waitFor(() => expect(listReads).toBe(2));
+
+    act(() => result.current.connectApp("github"));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" }));
+    await act(async () => { releaseStaleList(json([])); });
+    expect(result.current.connections.map((connection) => connection.id)).toEqual(["conn_1"]);
+  });
+
   it("gives up when the connection never lands", async () => {
     popupStub();
     const fetchFn = vi.fn(async (url: string) => (url.endsWith("/connect") ? json({ url: "https://consent.example.test/github" }) : json([])));
