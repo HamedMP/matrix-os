@@ -53,7 +53,8 @@ final human review.
   findings as blockers until fixed, acknowledged, or explicitly deferred.
 - Automatic creation reviews may be disabled; pushes do not guarantee a review.
   After publication, request once per new head with `@greptileai please review`.
-  Match the reviewed commit to the current head and follow `AGENTS.md`'s bounded
+  Match the reviewed commit to the current head, or confirm carry-over with
+  `node scripts/review/review-carryover.mjs check <pr>`, and follow `AGENTS.md`'s bounded
   retry rules; do not repeatedly ping while the same-head review is in flight.
 - Do not stage unrelated files. Run `git status --short --branch` before every
   staging operation.

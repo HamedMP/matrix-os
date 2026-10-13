@@ -1,19 +1,21 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 import {
   MAX_RECEIPTS,
   RECEIPT_MARKER,
+  addReceipt,
   decideCarryOver,
   forkPoint,
   gitRunner,
   parseGreptileSummary,
   prOwnDiffId,
+  pullFingerprints,
+  receiptFor,
   readReceipts,
   renderReceipts,
-  upsertReceipt,
 } from '../../scripts/review/review-carryover.mjs';
 
 const roots: string[] = [];
@@ -117,6 +119,31 @@ describe('PR own-diff fingerprint', () => {
     const joined = r.commit('app.ts', 'a\nX\nY\nb\nc\n', 'one hunk');
     expect(r.fingerprint(split, 'main')).not.toBe(r.fingerprint(joined, 'main'));
   });
+
+  it('changes when an identical edit moves to another place in the file', () => {
+    const r = repo();
+    const body = 'function guarded() {\n  if (!authorized) return;\n  audit();\n}\n\nfunction open() {\n  render();\n  done();\n}\n';
+    r.commit('api.ts', body, 'base');
+    r.run('checkout', '-q', '-b', 'pr');
+    const reviewed = r.commit('api.ts', body.replace('  audit();\n', '  audit();\n  deleteAll();\n'), 'guarded delete');
+    const moved = r.commit('api.ts', body.replace('  render();\n', '  render();\n  deleteAll();\n'), 'move the delete');
+    expect(r.fingerprint(moved, 'main')).not.toBe(r.fingerprint(reviewed, 'main'));
+  });
+
+  it('changes when the base edits the code right next to the PR change', () => {
+    const r = repo();
+    r.commit('api.ts', 'start\nif (!authorized) return;\naudit();\nend\n', 'base');
+    r.run('checkout', '-q', '-b', 'pr');
+    const reviewed = r.commit('api.ts', 'start\nif (!authorized) return;\naudit();\ndeleteAll();\nend\n', 'guarded delete');
+    r.run('checkout', '-q', 'main');
+    r.commit('api.ts', 'start\naudit();\nend\n', 'base drops the guard');
+    r.run('checkout', '-q', 'pr');
+    r.run('merge', '-q', '--no-commit', '-X', 'theirs', 'main');
+    writeFileSync(join(r.root, 'api.ts'), 'start\naudit();\ndeleteAll();\nend\n');
+    r.run('add', 'api.ts');
+    r.run('commit', '-q', '--no-edit');
+    expect(r.fingerprint(r.run('rev-parse', 'HEAD'), 'main')).not.toBe(r.fingerprint(reviewed, r.run('merge-base', 'main', reviewed)));
+  });
 });
 
 describe('fork point selection', () => {
@@ -132,6 +159,89 @@ describe('fork point selection', () => {
     const r = stack();
     expect(forkPoint(r.git, r.reviewed, [sha('e'), r.parent])).toBe(r.parent);
     expect(() => forkPoint(r.git, r.reviewed, [sha('e')])).toThrow('No usable base');
+  });
+
+  it('fails closed when candidates disagree without one containing the other', () => {
+    const r = repo();
+    r.commit('f.ts', 'root\n', 'root');
+    r.run('checkout', '-q', '-b', 'x');
+    const x1 = r.commit('x.ts', 'x1\n', 'x1');
+    r.run('checkout', '-q', '-b', 'y', 'main');
+    const y1 = r.commit('y.ts', 'y1\n', 'y1');
+    r.run('checkout', '-q', '-b', 'pr', x1);
+    r.run('merge', '-q', '--no-edit', y1);
+    const head = r.commit('pr.ts', 'pr\n', 'pr work');
+    r.run('checkout', '-q', 'x');
+    const x2 = r.commit('x.ts', 'x2\n', 'x2');
+    r.run('checkout', '-q', 'y');
+    const y2 = r.commit('y.ts', 'y2\n', 'y2');
+    expect(() => forkPoint(r.git, head, [x2, y2])).toThrow('Ambiguous base');
+  });
+
+  it('rejects a criss-cross history with several best bases', () => {
+    const r = repo();
+    r.commit('f.ts', 'root\n', 'root');
+    r.run('checkout', '-q', '-b', 'a');
+    const a1 = r.commit('a.ts', 'a\n', 'a1');
+    r.run('checkout', '-q', '-b', 'b', 'main');
+    const b1 = r.commit('b.ts', 'b\n', 'b1');
+    r.run('merge', '-q', '--no-edit', a1);
+    const b2 = r.run('rev-parse', 'HEAD');
+    r.run('checkout', '-q', 'a');
+    r.run('merge', '-q', '--no-edit', b1);
+    const a2 = r.run('rev-parse', 'HEAD');
+    expect(() => forkPoint(r.git, a2, [b2])).toThrow('No usable base');
+  });
+});
+
+// A bare "GitHub" remote that serves refs/pull/<n>/head and, like GitHub,
+// lets clients fetch force-pushed commits by SHA.
+function remoteStack() {
+  const r = stack();
+  const remote = mkdtempSync(join(tmpdir(), 'review-carryover-remote-'));
+  roots.push(remote);
+  r.git(['init', '-q', '--bare', remote]);
+  gitRunner(remote)(['config', 'uploadpack.allowAnySHA1InWant', 'true']);
+  r.run('remote', 'add', 'origin', remote);
+  const publish = (pr: number) => r.run('push', '-q', '--force', 'origin', 'main', 'parent', 'child', `child:refs/pull/${pr}/head`);
+  const checker = repo();
+  checker.run('remote', 'add', 'origin', remote);
+  const view = () => ({ headRefOid: r.run('rev-parse', 'child'), baseRefName: 'parent', baseRefOid: r.run('rev-parse', 'parent') });
+  return { ...r, publish, checker, view };
+}
+
+describe('recorded receipts against a remote', () => {
+  it('carries the review across a force-pushed restack of the whole stack', () => {
+    const r = remoteStack();
+    r.publish(2);
+    const receipt = receiptFor(r.checker.git, 2, r.view(), r.reviewed, new Date(0));
+    expect(receipt).toEqual({ reviewed: r.reviewed, base: r.parent, recordedAt: '1970-01-01T00:00:00.000Z' });
+    r.run('checkout', '-q', 'parent');
+    r.amend('p.ts', 'parent v2 after review fixes\n');
+    r.run('rebase', '-q', '--onto', 'parent', r.parent, 'child');
+    r.publish(2);
+    const fresh = repo();
+    fresh.run('remote', 'add', 'origin', r.git(['remote', 'get-url', 'origin']).trim());
+    const ids = pullFingerprints(fresh.git, 2, r.view(), receipt);
+    expect(ids.head).toBe(ids.reviewed);
+  });
+
+  it('detects new work pushed after the review', () => {
+    const r = remoteStack();
+    r.publish(3);
+    const receipt = receiptFor(r.checker.git, 3, r.view(), r.reviewed);
+    r.commit('app.ts', 'one\ntwo\nthree\nfour\nfive\nsix\nseven\n', 'new work');
+    r.publish(3);
+    const ids = pullFingerprints(r.checker.git, 3, r.view(), receipt);
+    expect(ids.head).not.toBe(ids.reviewed);
+  });
+
+  it('refuses a recorded base that is not behind the reviewed commit', () => {
+    const r = remoteStack();
+    r.commit('app.ts', 'later\n', 'later');
+    r.publish(4);
+    const forged = { reviewed: r.reviewed, base: r.run('rev-parse', 'child'), recordedAt: 'x' };
+    expect(() => pullFingerprints(r.checker.git, 4, r.view(), forged)).toThrow('not an ancestor');
   });
 });
 
@@ -161,7 +271,7 @@ describe('Greptile summary parsing', () => {
 });
 
 describe('fingerprint receipts', () => {
-  const receipt = (fill: string) => ({ reviewed: sha(fill), base: sha('0'), diffId: 'd'.repeat(64), recordedAt: '2026-10-13T00:00:00.000Z' });
+  const receipt = (fill: string) => ({ reviewed: sha(fill), base: sha('0'), recordedAt: '2026-10-13T00:00:00.000Z' });
 
   it('round-trips through the receipt comment', () => {
     const body = renderReceipts([receipt('a')]);
@@ -181,14 +291,14 @@ describe('fingerprint receipts', () => {
     expect(readReceipts([{ id: 5, user: { login: 'github-actions[bot]' }, body: broken }])).toEqual({ commentId: 5, receipts: [] });
   });
 
-  it('replaces a re-recorded review and stays bounded', () => {
+  it('keeps the first receipt for a reviewed commit and stays bounded', () => {
     const id = (i: number) => i.toString(16).padStart(40, '0');
     let receipts: ReturnType<typeof receipt>[] = [];
-    for (let i = 0; i < MAX_RECEIPTS + 5; i += 1) receipts = upsertReceipt(receipts, { ...receipt('a'), reviewed: id(i) });
+    for (let i = 0; i < MAX_RECEIPTS + 5; i += 1) receipts = addReceipt(receipts, { ...receipt('a'), reviewed: id(i) });
     expect(receipts).toHaveLength(MAX_RECEIPTS);
     expect(receipts.at(-1)?.reviewed).toBe(id(MAX_RECEIPTS + 4));
-    const again = upsertReceipt([receipt('a'), receipt('b')], { ...receipt('a'), diffId: 'e'.repeat(64) });
-    expect(again).toEqual([receipt('b'), { ...receipt('a'), diffId: 'e'.repeat(64) }]);
+    const again = addReceipt([receipt('a'), receipt('b')], { ...receipt('a'), base: sha('1') });
+    expect(again).toEqual([receipt('a'), receipt('b')]);
   });
 
   it('reads at most the newest receipts from an oversized comment', () => {
@@ -201,31 +311,41 @@ describe('fingerprint receipts', () => {
 });
 
 describe('carry-over decision', () => {
-  const receipts = [{ reviewed: sha('a'), base: sha('0'), diffId: 'd'.repeat(64), recordedAt: 'x' }];
+  const receipts = [{ reviewed: sha('a'), base: sha('0'), recordedAt: 'x' }];
+  const matching = () => ({ reviewed: 'd'.repeat(64), head: 'd'.repeat(64) });
 
-  it('accepts a 5/5 review of the current head without a receipt', () => {
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('a'), headDiffId: null, receipts: [] }))
+  it('accepts a 5/5 review of the current head without fingerprinting', () => {
+    const fingerprints = vi.fn(matching);
+    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('a'), receipts: [], fingerprints }))
       .toEqual({ ok: true, reason: 'review names the current head' });
+    expect(fingerprints).not.toHaveBeenCalled();
   });
 
-  it('carries a 5/5 review whose recorded fingerprint matches the head', () => {
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), headDiffId: 'd'.repeat(64), receipts }))
-      .toMatchObject({ ok: true });
+  it('carries a 5/5 review whose recomputed own diff matches the head', () => {
+    const fingerprints = vi.fn(matching);
+    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, fingerprints })).toMatchObject({ ok: true });
+    expect(fingerprints).toHaveBeenCalledWith(receipts[0]);
   });
 
   it('requires a fresh review when the PR diff changed', () => {
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), headDiffId: 'f'.repeat(64), receipts }))
+    const fingerprints = () => ({ reviewed: 'd'.repeat(64), head: 'f'.repeat(64) });
+    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('a') }, head: sha('b'), receipts, fingerprints }))
       .toEqual({ ok: false, reason: 'PR diff changed since the review' });
   });
 
-  it('fails closed without a receipt for the reviewed commit', () => {
-    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('c') }, head: sha('b'), headDiffId: 'd'.repeat(64), receipts }))
-      .toEqual({ ok: false, reason: 'no fingerprint recorded for the reviewed commit' });
+  it('fails closed without a receipt for the reviewed commit, before any git work', () => {
+    const fingerprints = vi.fn(matching);
+    expect(decideCarryOver({ summary: { score: 5, reviewed: sha('c') }, head: sha('b'), receipts, fingerprints }))
+      .toEqual({ ok: false, reason: 'no base recorded for the reviewed commit' });
+    expect(fingerprints).not.toHaveBeenCalled();
   });
 
-  it('never passes a review below 5/5 or a missing summary', () => {
-    expect(decideCarryOver({ summary: { score: 4, reviewed: sha('a') }, head: sha('a'), headDiffId: null, receipts })).toMatchObject({ ok: false });
-    expect(decideCarryOver({ summary: null, head: sha('a'), headDiffId: null, receipts })).toMatchObject({ ok: false });
+  it('never passes a review below 5/5 or a missing summary, before any git work', () => {
+    const fingerprints = vi.fn(matching);
+    expect(decideCarryOver({ summary: { score: 4, reviewed: sha('a') }, head: sha('b'), receipts, fingerprints })).toMatchObject({ ok: false });
+    expect(decideCarryOver({ summary: { score: 4, reviewed: sha('a') }, head: sha('a'), receipts, fingerprints })).toMatchObject({ ok: false });
+    expect(decideCarryOver({ summary: null, head: sha('a'), receipts, fingerprints })).toMatchObject({ ok: false });
+    expect(fingerprints).not.toHaveBeenCalled();
   });
 });
 
@@ -251,7 +371,7 @@ describe('review fingerprint workflow', () => {
     const checkout = job.steps.find(step => String(step.uses).startsWith('actions/checkout@'));
     expect(checkout?.uses).toBe('actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803');
     expect(checkout?.with).not.toHaveProperty('ref');
-    expect(checkout?.with).toMatchObject({ 'persist-credentials': false });
+    expect(checkout?.with).toMatchObject({ 'persist-credentials': false, filter: 'tree:0', 'fetch-depth': 0 });
     expect(source).toContain('node scripts/review/review-carryover.mjs record "$PR_NUMBER"');
     expect(source).not.toMatch(/\$\{\{\s*github\.event\.comment\.body/);
   });

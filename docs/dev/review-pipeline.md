@@ -255,28 +255,32 @@ node scripts/review/review-carryover.mjs check <pr>   # exit 0: the review cover
 How it decides:
 
 1. `.github/workflows/review-fingerprint.yml` runs whenever Greptile creates or
-   edits its summary comment. It hashes the reviewed commit's own diff against
-   the base it forked from and stores that receipt in a single
-   `github-actions[bot]` PR comment (the newest 30 receipts). The base must be
-   captured at review time: a restack force-pushes the parent, so the old fork
-   point is no longer on any branch afterwards.
-2. `check` reads the Greptile summary (score and `Last reviewed commit`), then
-   hashes the current head's own diff against its current base. The review
-   carries over only if Greptile's latest score is `5/5` and the hashes match.
+   edits its summary comment and records the base the reviewed commit forked
+   from in a single `github-actions[bot]` PR comment (newest 30 receipts; the
+   first receipt for a reviewed commit wins). The base must be captured at
+   review time: a restack force-pushes the parent, so the old fork point is no
+   longer on any branch afterwards.
+2. `check` reads the Greptile summary (score and `Last reviewed commit`) and
+   stops early unless it is `5/5` with a recorded base. It then recomputes the
+   reviewed commit's own diff against that base and the head's own diff
+   against its current base, and carries the review only when they match.
 
-The hash covers a zero-context diff with hunk positions and blob ids removed,
-so base commits that move or edit lines around the PR keep it, while new PR
-commits, conflict resolutions, and changes that regroup the PR's edits alter
-it. Git flags are fixed in the script so local config cannot change the result.
+Both diffs keep three context lines and drop line numbers and blob ids. Base
+commits that shift lines or edit code away from the PR's changes keep the
+match. New PR commits, conflict resolutions, an identical edit moved elsewhere,
+or a base edit within three lines of a PR change break it. Every diff setting
+is pinned in the script, and both diffs come from the same machine, so local
+git config cannot split them.
 
 Limits:
 
 - A child layer's review covers its own diff, not the parent it sits on. The
   parent has its own review, and CI covers how the layers interact.
-- Missing receipts, unreadable comments, or a base that cannot be resolved all
+- Missing receipts, unfetchable commits, ambiguous or criss-cross bases all
   fail closed: request a fresh review.
-- Receipts are trusted only from `github-actions[bot]`. Anyone can comment on
-  a public PR, but only workflows with a write token can post as that account.
+- A receipt only names two commits; it never vouches for content. Fork PRs
+  cannot post as `github-actions[bot]`. Repository writers can, but they can
+  already merge without Greptile, so the tool does not defend against them.
 
 ## For AI Agents
 

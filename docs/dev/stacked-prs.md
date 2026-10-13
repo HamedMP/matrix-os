@@ -98,8 +98,9 @@ is needed. Inspect the result rather than assuming a command succeeded.
    task changed one, stop and reconcile its work. Never use an unconditional
    force push. Publish with `gh stack submit`; refresh the remote head baseline.
 8. Request Greptile once for each new head with `@greptileai please review`.
-   Match the summary's **Last reviewed commit** to `headRefOid`; an old 5/5 is
-   stale. Follow the bounded retry rules in `AGENTS.md` rather than repeated pings.
+   Match the summary's **Last reviewed commit** to `headRefOid`. An old 5/5 is
+   stale unless `node scripts/review/review-carryover.mjs check <pr>` exits 0, which it does
+   after restacks, retargets, and base merges that keep the PR's own diff. Follow the bounded retry rules in `AGENTS.md` rather than repeated pings.
 9. Restore `ready-for-ci` proactively only after current-head 5/5 and zero
    unresolved review blockers. Verify all applicable CI jobs pass for that head.
 
