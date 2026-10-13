@@ -45,6 +45,10 @@ logs/
 # Local platform data
 packages/platform/data/
 
+# Generated local parity credentials, host bundles, and VM images
+/.amp/in/local-production-parity/
+/.local/production-parity/
+
 # Test artifacts
 /output/chat-dock-badge/
 /output/chat-subagent-activity/

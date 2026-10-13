@@ -40,6 +40,15 @@ it("shows the official device URL/code in Settings and commits only native compl
   expect(f.complete).toHaveBeenCalledOnce(); expect(f.release).toHaveBeenCalledOnce();
   expect(await readFile(join(f.home, "existing-account"), "utf8")).toBe("connected-account");
 });
+it("preserves native credentials on readiness failure and logs the safe completion phase", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const f = await fixture("success");
+  f.complete.mockRejectedValue(new Error("private-token-readiness-details"));
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith({ state: "failed", safeFailure: "unavailable" }));
+  expect(await readFile(join(f.home, "existing-account"), "utf8")).toBe("connected-account");
+  expect(f.release).toHaveBeenCalledOnce();
+  expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private-token|ABCD-EFGHI/);
+});
 it("cancels through native account RPC without logging out or losing the existing account", async () => {
   const f = await fixture("pending");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith(expect.objectContaining({ deviceCode: "ABCD-EFGHI" })));

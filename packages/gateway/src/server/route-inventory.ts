@@ -7,6 +7,12 @@ export interface GatewayRouteGroup {
 
 export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
   {
+    id: "aoede",
+    label: "Authenticated Aoede session and recovery",
+    paths: ["/api/aoede"],
+    plannedModule: "aoede/routes.ts",
+  },
+  {
     id: "middleware",
     label: "Global middleware and metrics",
     paths: ["*", "/metrics"],

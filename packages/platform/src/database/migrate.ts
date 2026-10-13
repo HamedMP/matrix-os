@@ -1,4 +1,6 @@
 import { migrateAccountDeletion } from './migrations/account-deletion.js';
+import { migrateAoedeLive } from './migrations/aoede-live.js';
+import { migrateAoedeLiveTerminationV2 } from './migrations/aoede-live-termination-v2.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
@@ -32,6 +34,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
   { name: 'speech', run: migrateSpeech },
+  { name: 'aoede-live', run: migrateAoedeLive },
   { name: 'provisioning-jobs', run: migrateProvisioningJobs },
   { name: 'checkout', run: migrateCheckout },
   { name: 'onboarding', run: migrateOnboarding },
@@ -42,6 +45,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
   { name: 'preview-drive', run: migratePreviewDrive },
   { name: 'account-deletion', run: migrateAccountDeletion },
+  { name: 'aoede-live-termination-v2', run: migrateAoedeLiveTerminationV2 },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

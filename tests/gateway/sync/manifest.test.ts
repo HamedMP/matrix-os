@@ -117,6 +117,7 @@ describe("readManifest", () => {
     expect(result.etag).toBe('"etag2"');
   });
 
+
   it("does not promote an unaccepted manifest generation when R2 is ahead", async () => {
     const manifest = makeManifest({ "ahead.txt": { hash: HASH_A, size: 100 } });
     const body = { text: () => Promise.resolve(JSON.stringify({ ...manifest, manifestVersion: 7 })) };

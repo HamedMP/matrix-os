@@ -7,8 +7,11 @@ export async function fetchRuntimeProxy(
 ): Promise<Response> {
   // Sync commits include bounded staged-object validation/publication. Keep the
   // proxy alive beyond the gateway's four-minute budget, but below the CLI's six.
-  const operationTimeoutMs = init.method === "POST" && new URL(targetUrl).pathname === "/api/sync/commit"
-    ? 300_000 : timeoutMs;
+  const path = new URL(targetUrl).pathname;
+  const operationTimeoutMs = init.method === "POST" && path === "/api/sync/commit"
+    ? 300_000 : init.method === "GET" && path === "/api/ai/provider-settings"
+      // Settings may run inventory twice, then verify a fresh native principal.
+      ? 90_000 : timeoutMs;
   if (!releaseTimeoutAfterHeaders) {
     const deadline = AbortSignal.timeout(operationTimeoutMs);
     const upstreamSignal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline;

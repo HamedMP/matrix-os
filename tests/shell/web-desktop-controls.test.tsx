@@ -4,6 +4,8 @@ import { DesktopHelpMenu } from "@matrix-os/ui";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebDesktopControls } from "@/components/desktop/WebDesktopControls";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { useVocalStore } from "@/stores/vocal";
 vi.mock("@/components/UserButton", () => ({ UserButton: () => <button>Account</button> }));
 vi.mock("@/components/onboarding/GettingStartedPopover", () => ({ GettingStartedPopover: ({ helpMenu, onOpenSettings, onOpenFirstWork }: ComponentProps<typeof import("@/components/onboarding/GettingStartedPopover").GettingStartedPopover>) => <DesktopHelpMenu {...helpMenu} incomplete gettingStarted={<button onClick={() => { onOpenSettings("integrations"); onOpenFirstWork(); }}>Getting started</button>} /> }));
 const inventory = { items: [
@@ -11,8 +13,16 @@ const inventory = { items: [
  { handle: "neo", runtimeSlot: "review", label: "Preview Computer", availability: "available", kind: "preview", gatewayPath: "/vm/neo?runtime=review", capabilities: [] },
 ], hasMore: false, limit: 20, selectedSlot: "primary" };
 beforeEach(() => vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok: true, json: async () => url.includes("/api/auth/computers") ? inventory : url.includes("/api/system/info") ? { runtime: { runtimeSlot: "primary" } } : {} }))));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); useVocalStore.setState({ active: false }); vi.unstubAllGlobals(); });
 describe("shared Web Desktop top bar", () => {
+ it("shows Aoede in the active web desktop controls and starts it", async () => {
+  render(<TooltipProvider><WebDesktopControls showAoede onOpenSettings={vi.fn()} onOpenCommandPalette={vi.fn()} onOpenSupport={vi.fn()} onOpenFirstWork={vi.fn()} /></TooltipProvider>);
+  await screen.findByRole("button", { name: "Change computer, currently Main Computer" });
+  const aoede = screen.getByRole("button", { name: "Start Aoede" });
+  expect(aoede.getAttribute("data-testid")).toBe("dock-vocal");
+  fireEvent.click(aoede);
+  expect(screen.getByRole("button", { name: "Stop Aoede" }).getAttribute("aria-pressed")).toBe("true");
+ });
  it("uses the installed preview identity and ignores late responses from the old computer", async () => {
   let finishOld: (value: unknown) => void = () => {};
   const pending = new Promise(resolve => { finishOld = resolve; });

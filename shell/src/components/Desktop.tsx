@@ -31,13 +31,15 @@ import { useThemeStyle } from "./window/useThemeStyle";
 import { OsSessionHost } from "./os-session/OsSessionHost";
 import { CanvasToolbar } from "./canvas/CanvasToolbar";
 import { VocalPanel } from "./VocalPanel";
+import { AoedeOverlay } from "@/aoede/AoedeOverlay";
+import { executeAoedeApp, resolveAoedeApp } from "@/aoede/shell-actions";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
-import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
+import { AOEDE_LIVE_PREVIEW, VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
   showWebDesktop,
@@ -1184,7 +1186,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               ride on top of any mode, so it gets a distinct circular
               shape and a primary-glow halo instead of the square dock
               icons. The active state breathes to echo the vocal overlay. */}
-          {!VOICE_HIDDEN && (
+          {(!VOICE_HIDDEN || AOEDE_LIVE_PREVIEW) && (
             <>
               <div
                 className={isHorizontal
@@ -1228,7 +1230,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               <SettingsIcon className="size-4" />
             </button>
             <div className="h-6 w-px bg-border/40 mx-0.5 shrink-0" aria-hidden />
-            {!VOICE_HIDDEN && <AoedeDockButton size={36} variant="mobile" />}
+            {(!VOICE_HIDDEN || AOEDE_LIVE_PREVIEW) && <AoedeDockButton size={36} variant="mobile" />}
             <div className="shrink-0">
               <UserButton />
             </div>
@@ -1271,6 +1273,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               }}
               headerActions={(
                 <WebDesktopControls
+                  showAoede={!VOICE_HIDDEN || AOEDE_LIVE_PREVIEW}
                   onOpenCommandPalette={onOpenCommandPalette ?? (() => {})}
                   onOpenSupport={() => void openShellSupport()}
                   onOpenSettings={openWebSettings}
@@ -1320,7 +1323,10 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
           {desktopMode === "canvas" && <CanvasRenderer apps={apps} />}
 
           {vocalMounted && (
-            <VocalPanel
+            AOEDE_LIVE_PREVIEW ? <AoedeOverlay active={vocalActive} onUi={(frame) => frame.phase === "resolve"
+              ? resolveAoedeApp(installedApps, frame.target)
+              : executeAoedeApp(installedApps, frame.target, frame.action, openAppOrFocus, wmCloseWindow,
+                () => useWindowManager.getState().windows)} /> : <VocalPanel
               active={vocalActive}
               chat={chat}
               onOpenApp={openAppByName}

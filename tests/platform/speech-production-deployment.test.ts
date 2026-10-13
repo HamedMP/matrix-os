@@ -16,6 +16,9 @@ const enabledEnv = {
   PLATFORM_SPEECH_FUNDING_SOURCES: 'promotional', PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: 'true',
   PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: '1000000',
   PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '1000000',
+  PLATFORM_AOEDE_LIVE_ENABLED: 'true', PLATFORM_AOEDE_LIVE_MODEL: 'gpt-live-1',
+  PLATFORM_AOEDE_LIVE_VOICE: 'marin', PLATFORM_AOEDE_LIVE_POLICY_REVISION: 'aoede-live-2026-10-13-v1',
+  PLATFORM_AOEDE_LIVE_MICROUSD_PER_MINUTE: '50000', PLATFORM_AOEDE_LIVE_MAX_DURATION_MS: '600000',
 };
 
 function run(mode: string, env: Record<string, string>) {
@@ -58,14 +61,36 @@ describe('production speech deployment contract', () => {
     expect(workflow).toContain('scripts/ci/platform-speech-production-env.sh verify-revision');
   });
 
+  it('binds the explicit Aoede Live production policy', () => {
+    for (const name of [
+      'PLATFORM_AOEDE_LIVE_ENABLED',
+      'PLATFORM_AOEDE_LIVE_MODEL',
+      'PLATFORM_AOEDE_LIVE_VOICE',
+      'PLATFORM_AOEDE_LIVE_POLICY_REVISION',
+      'PLATFORM_AOEDE_LIVE_MICROUSD_PER_MINUTE',
+      'PLATFORM_AOEDE_LIVE_MAX_DURATION_MS',
+    ]) {
+      expect(workflow).toContain(`${name}: \${{ vars.${name}`);
+      expect(workflow).toContain(`|${name}=\${${name}}`);
+    }
+  });
+
   it('fails closed on invalid enabled production policy', () => {
     for (const override of [
       { PLATFORM_SPEECH_ENABLED: 'yes' },
       { PLATFORM_SPEECH_MICROUSD_PER_MINUTE: '0' },
       { PLATFORM_SPEECH_FUNDING_SOURCES: 'free' },
       { PLATFORM_SPEECH_MODEL: 'model|injected' },
+      { PLATFORM_AOEDE_LIVE_ENABLED: 'yes' },
+      { PLATFORM_AOEDE_LIVE_MODEL: 'gpt-live-preview' },
+      { PLATFORM_AOEDE_LIVE_VOICE: 'Marin' },
+      { PLATFORM_AOEDE_LIVE_POLICY_REVISION: 'policy|injected' },
+      { PLATFORM_AOEDE_LIVE_MICROUSD_PER_MINUTE: '0' },
+      { PLATFORM_AOEDE_LIVE_MAX_DURATION_MS: '29999' },
+      { PLATFORM_AOEDE_LIVE_MAX_DURATION_MS: '1800001' },
     ]) expect(() => run('validate', { ...enabledEnv, ...override })).toThrow();
     expect(() => run('validate', enabledEnv)).not.toThrow();
+    expect(() => run('validate', { ...enabledEnv, PLATFORM_SPEECH_ENABLED: 'false' })).toThrow();
     expect(() => run('validate', {
       ...enabledEnv,
       PLATFORM_SPEECH_FUNDING_SOURCES: 'addon',
@@ -81,6 +106,7 @@ describe('production speech deployment contract', () => {
     expect(() => run('validate', {
       ...enabledEnv,
       PLATFORM_SPEECH_ENABLED: 'false',
+      PLATFORM_AOEDE_LIVE_ENABLED: 'false',
       MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'true',
       MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'false',
     })).not.toThrow();
@@ -117,6 +143,12 @@ describe('production speech deployment contract', () => {
       PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: '',
       PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: '',
       PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: '',
+      PLATFORM_AOEDE_LIVE_ENABLED: 'false',
+      PLATFORM_AOEDE_LIVE_MODEL: '',
+      PLATFORM_AOEDE_LIVE_VOICE: '',
+      PLATFORM_AOEDE_LIVE_POLICY_REVISION: '',
+      PLATFORM_AOEDE_LIVE_MICROUSD_PER_MINUTE: '',
+      PLATFORM_AOEDE_LIVE_MAX_DURATION_MS: '',
     };
     const fixture = (staleSecret: boolean) => JSON.stringify({ spec: { containers: [{ env: [
       ...Object.entries(disabledEnv).filter(([name]) => name !== 'MATRIX_FUNDED_AI_RELAY_URL').map(([name, value]) => ({ name, value })),

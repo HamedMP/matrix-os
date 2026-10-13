@@ -140,6 +140,7 @@ cd matrix-os
 
 flox activate
 bun run dev             # source/HMR: gateway + proxy + shell
+bun run dev:full        # production host bundle in Ubuntu amd64 + real systemd units
 ```
 
 Without Flox, install Node.js 24+, pnpm 10, and bun, then run:
@@ -158,9 +159,10 @@ bun run dev:proxy      # Shared API proxy
 bun run dev:platform   # Multi-tenant platform
 ```
 
-The source command does not start PostgreSQL, MinIO, or platform.
-Use `bun run docker:full` for that complete topology, or
-`bun run docker:full:smoke` for a bounded full-stack health check with cleanup.
+The source command does not start PostgreSQL, MinIO, platform, or the production
+terminal runtime. Use `bun run dev:full` when a failure must reproduce the
+production VPS topology. `bun run docker:full` remains a non-parity convenience
+stack, and `bun run docker:full:smoke` is its bounded health check.
 See [Developer Onboarding](docs/dev/onboarding.md) for environment files,
 prerequisites, URLs, and health checks.
 

@@ -3,6 +3,7 @@
 // are injectable for tests. Known message types are validated with zod;
 // unknown types pass through to subscribers for forward compatibility.
 import { z } from "zod/v4";
+import { AoedeServerMessageSchema, type AoedeClientMessage } from "@matrix-os/contracts";
 
 export type KernelConnectionState = "connecting" | "connected" | "reconnecting" | "offline";
 
@@ -12,6 +13,7 @@ export interface KernelServerMessage {
 }
 
 export type KernelClientMessage =
+  | AoedeClientMessage
   | { type: "message"; text: string; sessionId?: string; requestId: string }
   | { type: "switch_session"; sessionId: string; replayCompleted?: boolean }
   | { type: "abort"; requestId: string }
@@ -46,6 +48,7 @@ const SEND_QUEUE_CAP = 32;
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_MAX_MS = 30_000;
 const OFFLINE_AFTER_FAILURES = 3;
+const HEARTBEAT_INTERVAL_MS = 20_000;
 const MAX_FRAME_CHARS = 1_000_000;
 
 const requestIdField = z.string().min(1).max(256).optional();
@@ -87,6 +90,7 @@ export const KnownKernelMessageSchema = z.discriminatedUnion("type", [
     timeout: z.number(),
   }),
   z.looseObject({ type: z.literal("pong") }),
+  ...AoedeServerMessageSchema.options,
 ]);
 
 export type KnownKernelMessage = z.infer<typeof KnownKernelMessageSchema>;
@@ -130,9 +134,11 @@ export class KernelSocket {
   private readonly stateHandlers = new Set<StateHandler>();
   private readonly sendQueue: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private consecutiveFailures = 0;
   private currentState: KernelConnectionState = "connecting";
+  private currentConnectionEpoch = 0;
   private disposed = false;
 
   constructor(options: KernelSocketOptions) {
@@ -151,6 +157,10 @@ export class KernelSocket {
 
   get state(): KernelConnectionState {
     return this.currentState;
+  }
+
+  get connectionEpoch(): number {
+    return this.currentConnectionEpoch;
   }
 
   connect(): void {
@@ -180,8 +190,10 @@ export class KernelSocket {
     socket.onopen = () => {
       this.attempt = 0;
       this.consecutiveFailures = 0;
+      this.currentConnectionEpoch++;
       this.setState("connected");
       this.drainQueue();
+      this.scheduleHeartbeat();
     };
 
     socket.onmessage = (event) => {
@@ -226,7 +238,29 @@ export class KernelSocket {
     };
   }
 
+  // Success means accepted by the open WebSocket, not acknowledged by the
+  // server. Live messages are never retained for a later connection.
+  sendConnected(msg: KernelClientMessage): boolean {
+    if (this.disposed || this.currentState !== "connected" || this.socket?.readyState !== WS_OPEN) {
+      return false;
+    }
+    try {
+      this.socket.send(JSON.stringify(msg));
+      return true;
+    } catch (err: unknown) {
+      console.warn(
+        "[kernel-socket] connected send failed, dropping:",
+        err instanceof Error ? err.message : err,
+      );
+      return false;
+    }
+  }
+
   send(msg: KernelClientMessage): void {
+    if (msg.type.startsWith("aoede:")) {
+      this.sendConnected(msg);
+      return;
+    }
     const data = JSON.stringify(msg);
     if (this.socket?.readyState === WS_OPEN) {
       try {
@@ -250,6 +284,7 @@ export class KernelSocket {
     if (this.disposed) return;
     this.disposed = true;
     this.clearReconnectTimer();
+    this.clearHeartbeatTimer();
     const socket = this.socket;
     this.socket = null;
     if (socket) {
@@ -301,6 +336,7 @@ export class KernelSocket {
 
   private handleConnectionLoss(): void {
     if (this.disposed) return;
+    this.clearHeartbeatTimer();
     this.consecutiveFailures++;
     this.setState(this.consecutiveFailures >= OFFLINE_AFTER_FAILURES ? "offline" : "reconnecting");
     const delay = this.backoffDelay(this.attempt);
@@ -345,6 +381,25 @@ export class KernelSocket {
           err instanceof Error ? err.message : err,
         );
       }
+    }
+  }
+
+  private scheduleHeartbeat(): void {
+    this.clearHeartbeatTimer();
+    if (this.disposed || this.currentState !== "connected") return;
+    // A pong keeps idle reverse proxies from dropping a live voice session.
+    // Heartbeats belong only to this connection and must never be queued.
+    this.heartbeatTimer = this.setTimeoutFn(() => {
+      this.heartbeatTimer = null;
+      this.sendConnected({ type: "ping" });
+      this.scheduleHeartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private clearHeartbeatTimer(): void {
+    if (this.heartbeatTimer !== null) {
+      this.clearTimeoutFn(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 

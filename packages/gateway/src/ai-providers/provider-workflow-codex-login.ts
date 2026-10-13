@@ -26,6 +26,7 @@ export function createCodexSettingsLogin(options: {
     }); } catch (error) { await releaseProfile(); throw error; }
     let buffer = "", bytes = 0, loginId: string | null = null;
     let cancelled = false, completed = false, closed = false, settled = false;
+    let phase = "initialize";
     let finishTask: Promise<boolean> | undefined, stopTask: Promise<void> | undefined;
     let signalClose!: () => void;
     const closePromise = new Promise<void>(resolve => { signalClose = resolve; });
@@ -46,13 +47,15 @@ export function createCodexSettingsLogin(options: {
       settled = true; clearTimeout(deadline); clearTimeout(startup);
       finishTask = (async () => {
         try {
+          if (success) phase = "cleanup";
           await reap(); await releaseProfile();
           if (cancelled) return true;
           if (!success) throw new ProviderWorkflowError("unavailable");
+          phase = "account_verification";
           await onSuccess(); publish({ state: "succeeded", safeFailure: null });
           return true;
         } catch (error) {
-          console.warn("[provider-workflow] Codex connection unavailable:", error instanceof Error ? error.name : "UnknownError");
+          console.warn("[provider-workflow] Codex connection unavailable:", { phase, errorType: error instanceof Error ? error.name : "UnknownError" });
           if (!cancelled) publish(closed ? { state: "failed", safeFailure: "unavailable" } : { safeFailure: "unavailable" });
           return false;
         }
@@ -113,9 +116,11 @@ export function createCodexSettingsLogin(options: {
           const parsed = DeviceResponse.safeParse(message.result);
           if (message.error || !parsed.success) { void finish(false); return; }
           loginId = parsed.data.loginId; clearTimeout(startup);
+          phase = "device_consent";
           if (!cancelled) publish({ authorizationUrl: parsed.data.verificationUrl, deviceCode: parsed.data.userCode });
         } else if (message.id === 3) acknowledge();
         else if (!cancelled && message.method === "account/login/completed" && loginId && message.params?.loginId === loginId) {
+          phase = "native_completion";
           completed = message.params.success === true; void finish(completed); return;
         }
       }

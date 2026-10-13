@@ -46,7 +46,8 @@ wait_for_auth_shell() {
 }
 
 if [ "${AUTH_SHELL_ENABLED:-true}" = "true" ]; then
-  HOSTNAME=127.0.0.1 \
+  CLERK_SECRET_KEY="${AUTH_SHELL_CLERK_SECRET_KEY:-${CLERK_SECRET_KEY:-}}" \
+    HOSTNAME=127.0.0.1 \
     node node_modules/next/dist/bin/next start shell -p "$auth_shell_port" -H 127.0.0.1 &
   auth_shell_pid="$!"
 
@@ -54,6 +55,13 @@ if [ "${AUTH_SHELL_ENABLED:-true}" = "true" ]; then
     shutdown
     exit 1
   fi
+fi
+
+# A local production-parity run can give the bundled auth shell the Clerk
+# server credential while keeping platform token verification networkless via
+# CLERK_JWT_KEY. Production continues to use the ordinary CLERK_SECRET_KEY.
+if [ -n "${AUTH_SHELL_CLERK_SECRET_KEY:-}" ]; then
+  unset CLERK_SECRET_KEY
 fi
 
 node --import=tsx packages/platform/dist/main.js &

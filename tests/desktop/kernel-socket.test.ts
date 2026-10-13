@@ -130,6 +130,31 @@ describe("buildKernelWsUrl", () => {
 });
 
 describe("KernelSocket: connection and routing", () => {
+  it("keeps idle connections alive without replaying heartbeats after reconnect or disposal", () => {
+    const h = createHarness();
+    h.socket.connect();
+    expect(h.timers.pending()).toHaveLength(0);
+    h.last().open();
+    const first = h.last();
+    expect(h.timers.pending()[0]!.delay).toBeLessThan(60_000);
+    h.timers.runNext();
+    h.timers.runNext();
+    expect(first.sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "ping" },
+      { type: "ping" },
+    ]);
+    first.fail();
+    expect(h.timers.pending()).toHaveLength(1);
+    h.timers.runNext();
+    expect(h.timers.pending()).toHaveLength(0);
+    h.last().open();
+    expect(h.last().sent).toEqual([]);
+    h.timers.runNext();
+    expect(h.last().sent.map((frame) => JSON.parse(frame))).toEqual([{ type: "ping" }]);
+    h.socket.dispose();
+    expect(h.timers.pending()).toHaveLength(0);
+  });
+
   it("does not invoke browser timers with the socket as their receiver", () => {
     const sockets: FakeWebSocket[] = [];
     const strictTimer = vi.fn(function (this: unknown, fn: () => void) {
@@ -372,6 +397,45 @@ describe("KernelSocket: reconnect backoff and state", () => {
     h.last().open();
     expect(states).toEqual([]);
   });
+});
+
+describe("KernelSocket: Aoede live transport", () => {
+  const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+  const ready = { type: "aoede:ready", sessionId } as const;
+
+  it("never queues connected-only or ordinary Aoede sends while unavailable", () => {
+    const h = createHarness();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.socket.connect();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.last().open();
+    expect(h.last().sent).toEqual([]);
+    for (const state of [2, 3]) {
+      h.last().readyState = state;
+      expect(h.socket.sendConnected(ready)).toBe(false);
+      h.socket.send(ready);
+    }
+    h.last().fail();
+    h.socket.dispose();
+    expect(h.socket.sendConnected(ready)).toBe(false);
+  });
+
+  it("returns false on send failure without replaying it on reconnect", () => {
+    const h = createHarness();
+    h.socket.connect();
+    h.last().open();
+    vi.spyOn(h.last(), "send").mockImplementation(() => { throw new Error("send failed"); });
+    expect(h.socket.sendConnected(ready)).toBe(false);
+    h.socket.send(ready);
+    h.socket.send({ type: "ping" });
+    h.last().fail();
+    h.timers.runNext();
+    h.last().open();
+    expect(h.last().sent.map((data) => JSON.parse(data))).toEqual([{ type: "ping" }]);
+  });
+
 });
 
 describe("KernelSocket: dispose", () => {

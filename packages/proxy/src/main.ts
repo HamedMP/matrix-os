@@ -325,7 +325,7 @@ for (const row of getMetricsSeed()) {
   }
 }
 
-const server = serve({ fetch: app.fetch, port: PORT }, () => {
+const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port: PORT }, () => {
   console.log(`Proxy listening on :${PORT} -> ${ANTHROPIC_API}`);
 });
 configureProxyServerTimeouts(server);

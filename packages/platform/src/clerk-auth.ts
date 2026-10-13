@@ -18,6 +18,31 @@ export interface ClerkAuthDeps {
   revokeSession?: (sessionId: string) => Promise<void>;
 }
 
+export type ClerkVerificationConfig = {
+  verifyTokenOptions: { secretKey: string } | { jwtKey: string };
+  sessionRevocationSecret: string | undefined;
+};
+
+export function resolveClerkVerificationConfig(
+  env: NodeJS.ProcessEnv,
+): ClerkVerificationConfig | null {
+  const secretKey = env.CLERK_SECRET_KEY?.trim();
+  if (secretKey) {
+    return {
+      verifyTokenOptions: { secretKey },
+      sessionRevocationSecret: secretKey,
+    };
+  }
+
+  const jwtKey = env.CLERK_JWT_KEY?.trim();
+  return jwtKey
+    ? {
+        verifyTokenOptions: { jwtKey },
+        sessionRevocationSecret: undefined,
+      }
+    : null;
+}
+
 export interface ClerkAuth {
   extractToken(
     authHeader: string | undefined,

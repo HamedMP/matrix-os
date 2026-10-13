@@ -11,9 +11,11 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
 import { GettingStartedPopover } from "../onboarding/GettingStartedPopover";
+import { AoedeDockButton } from "./AoedeDockButton";
 
 export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers" | "organization";
 interface WebDesktopControlsProps {
+  showAoede?: boolean;
   onOpenSettings: (section: WebDesktopSettingsSection) => void;
   onOpenCommandPalette: () => void;
   onOpenSupport: () => void;
@@ -27,13 +29,15 @@ async function loadActivity(): Promise<unknown> {
 }
 
 /** Shared action ordering and menus, with web-authenticated transports. */
-export function WebDesktopControls({ onOpenSettings, onOpenCommandPalette, onOpenSupport, onOpenFirstWork }: WebDesktopControlsProps) {
+export function WebDesktopControls({ showAoede = false, onOpenSettings, onOpenCommandPalette, onOpenSupport, onOpenFirstWork }: WebDesktopControlsProps) {
   const gateway = getGatewayUrl();
   return <DesktopTopBarActions onSearch={onOpenCommandPalette}
     inbox={<DesktopActivityInbox scope={gateway} load={loadActivity} />}
     help={<GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork}
       helpMenu={{ onSupport: onOpenSupport, discordIcon: <span aria-hidden="true" className="size-3.5 shrink-0 bg-current" style={{ mask: `url(${gateway}/system-app-icons/v3/discord.svg) center/contain no-repeat` }} /> }} />}
-    computer={<WebComputerMenu gateway={gateway} />} account={<UserButton variant="menubar" onOpenSettings={onOpenSettings} />} />;
+    computer={<WebComputerMenu gateway={gateway} />}
+    update={showAoede ? <AoedeDockButton size={28} variant="desktop" /> : undefined}
+    account={<UserButton variant="menubar" onOpenSettings={onOpenSettings} />} />;
 }
 
 const ComputerContextSchema = z.object({ runtime: z.object({ runtimeSlot: MatrixComputerRuntimeSlotSchema }).passthrough() }).passthrough();

@@ -537,7 +537,13 @@ export function createChatProviderCatalogService(options: {
       }
     }));
     const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.coding.length > 0
+        ? selection
+          ? options.codingProviders.listProviders(principal, {
+            providerIds: scope.coding.map(kind => kind === "claude_code" ? "claude" : kind),
+          })
+          : options.codingProviders.listProviders(principal)
+        : Promise.resolve([]),
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
       options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
