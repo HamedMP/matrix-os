@@ -16,6 +16,9 @@ concurrency:
   group: docker-test-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && github.run_id || 'shared' }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: Detect Docker-relevant changes
