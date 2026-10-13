@@ -3,9 +3,12 @@ import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 import { AgentsListScreen } from "@/components/agents/AgentsListScreen";
+import { InspirationSheet } from "@/components/agents/InspirationSheet";
 import { NewAgentScreen } from "@/components/agents/NewAgentScreen";
 import { TemplateSetupSheet } from "@/components/agents/TemplateSetupSheet";
-import { filterTemplates, type AgentTemplate } from "@/components/agents/agent-templates";
+import { ALL_CATEGORIES, buildAgentGallery, GALLERY_CATEGORIES } from "@/components/agents/agent-gallery";
+import type { AgentInspiration } from "@/components/agents/agent-inspirations.generated";
+import type { AgentTemplate } from "@/components/agents/agent-templates";
 import { TabBar } from "@/components/shell/TabBar";
 
 import { SAMPLE_AGENT_ROWS, SAMPLE_SETUP_TEMPLATE, SAMPLE_TEMPLATES, SAMPLE_WAITING_COUNT } from "./sample";
@@ -30,20 +33,30 @@ export function AgentsListFrame() {
   );
 }
 
+// The sample templates stand in for the computer's; the inspirations after
+// them are the ones the app ships with.
 function TemplatesFrame({ setup }: { setup: AgentTemplate | null }) {
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [template, setTemplate] = useState(setup);
+  const [inspiration, setInspiration] = useState<AgentInspiration | null>(null);
+  const gallery = buildAgentGallery(SAMPLE_TEMPLATES, { query, category });
 
   return (
     <>
       <NewAgentScreen
         state="ready"
-        templates={filterTemplates(SAMPLE_TEMPLATES, query)}
+        templates={gallery.templates}
+        inspirations={gallery.inspirations}
         query={query}
         onChangeQuery={setQuery}
+        categories={GALLERY_CATEGORIES}
+        category={category}
+        onChangeCategory={setCategory}
         onRetry={noop}
         onBack={noop}
         onSelectTemplate={setTemplate}
+        onSelectInspiration={setInspiration}
       />
       <TemplateSetupSheet
         template={template}
@@ -53,11 +66,16 @@ function TemplatesFrame({ setup }: { setup: AgentTemplate | null }) {
         onSetUpInChat={noop}
         onClose={() => setTemplate(null)}
       />
+      <InspirationSheet
+        inspiration={inspiration}
+        onBuildInChat={noop}
+        onClose={() => setInspiration(null)}
+      />
     </>
   );
 }
 
-/** Frame A5: the templates a new agent can start from. */
+/** Frame A5: the gallery a new agent can start from. */
 export function NewAgentFrame() {
   return <TemplatesFrame setup={null} />;
 }

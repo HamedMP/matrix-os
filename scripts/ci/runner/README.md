@@ -76,8 +76,12 @@ PR labels. Stack-parent base branches are supported while the controller remains
 
 Fresh challenges require authenticated renewal every 60 seconds and
 expire after 120 seconds. The initial after-lock grant expires after 30 seconds.
-API poll intervals above 60 seconds fail closed; authenticated conditional
-responses require valid cached proof, and API errors never permit stale renewal.
+Live branch identity is read from the exact branch endpoint, with matching
+name/SHA and the existing source and lease deadlines. The Git refs endpoint
+advertises a 300-second poll interval and is not used for these short checks.
+API poll intervals above 60 seconds still fail closed; authenticated conditional
+responses require the same authenticated URL and opaque entity tag (HTTP weak
+If-None-Match comparison), and API errors never permit stale renewal.
 Source/run drift detection is bounded at 60 seconds; final live API validation
 remains mandatory before publishing green. Shadow mode permits a successful
 completed requesting CI run; delegated mode requires it active until the receipt. Cancellation,

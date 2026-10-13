@@ -6,6 +6,7 @@ interface SentMessage {
   chatId: string | null;
   baseRevision: number;
   text: string;
+  attachments: { id: string }[];
   projectId: string | null;
   chatRequestId: string;
   turnRequestId: string;
@@ -194,5 +195,100 @@ describe("useProjectComposer", () => {
 
     expect(sent(1).projectId).toBe("proj_matrix");
     expect(sent(1).chatRequestId).not.toBe(sent(0).chatRequestId);
+  });
+  describe("attachments", () => {
+    const idOf = (name: string) => `att_${name.charCodeAt(0).toString(16).repeat(16)}`;
+    const photo = (name: string) => ({
+      id: idOf(name), uri: `file:///cache/${name}.jpg`, name: `${name}.jpg`,
+      mimeType: "image/jpeg", kind: "image" as const, sizeBytes: 2_048,
+    });
+
+    it("can be sent with no text, and go out with the message", () => {
+      const { result } = renderComposer();
+
+      act(() => result.current.addAttachments([photo("a"), photo("b")]));
+      expect(result.current.canSend).toBe(true);
+      act(() => result.current.send());
+
+      expect(sent()).toMatchObject({ text: "", attachments: [{ id: idOf("a") }, { id: idOf("b") }] });
+    });
+
+    it("are added once each and can be taken back out", () => {
+      const { result } = renderComposer();
+
+      act(() => result.current.addAttachments([photo("a")]));
+      act(() => result.current.addAttachments([photo("a"), photo("b")]));
+      expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["a.jpg", "b.jpg"]);
+
+      act(() => result.current.removeAttachment(idOf("a")));
+      expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["b.jpg"]);
+    });
+
+    it("stay in the box until the chat is started, then only what was sent is cleared", () => {
+      const { result } = renderComposer();
+      act(() => result.current.addAttachments([photo("a")]));
+      act(() => result.current.send());
+      expect(result.current.attachments).toHaveLength(1);
+
+      // Added while the server was answering.
+      act(() => result.current.addAttachments([photo("later")]));
+      act(() => sent().onChatCreated?.("chat_new"));
+
+      expect(result.current.attachments.map((attachment) => attachment.name)).toEqual(["later.jpg"]);
+    });
+
+    it("cannot be added while a message is on its way, as this screen is left for the new chat once it is in", () => {
+      const { result, rerender, initialProps } = renderComposer();
+      expect(result.current.canAddAttachments).toBe(true);
+
+      mockPending = true;
+      rerender({ ...initialProps });
+      expect(result.current.canAddAttachments).toBe(false);
+
+      // A send that failed leaves the person on this screen, where they can add again.
+      mockPending = false;
+      rerender({ ...initialProps });
+      expect(result.current.canAddAttachments).toBe(true);
+    });
+
+    it("hold the message back while the selected model does not read one of them", () => {
+      const { result, rerender, initialProps } = renderComposer({ attachmentKinds: ["file"] });
+      act(() => result.current.setDraft("Look at this"));
+      act(() => result.current.addAttachments([photo("a")]));
+
+      expect(result.current.unreadableAttachments.map((attachment) => attachment.name)).toEqual(["a.jpg"]);
+      expect(result.current.canSend).toBe(false);
+      act(() => result.current.send());
+      expect(mockMutate).not.toHaveBeenCalled();
+
+      rerender({ ...initialProps, attachmentKinds: ["image", "file"] });
+      expect(result.current.unreadableAttachments).toEqual([]);
+      expect(result.current.canSend).toBe(true);
+    });
+
+    it("say how many more there is room for", () => {
+      const { result } = renderComposer();
+      expect(result.current.attachmentRoom).toBe(8);
+
+      act(() => result.current.addAttachments([photo("a"), photo("b")]));
+      expect(result.current.attachmentRoom).toBe(6);
+    });
+
+    it("send again as the same message after a failure, and as a new one when they differ", () => {
+      const { result } = renderComposer();
+      act(() => result.current.setDraft("Look at this"));
+      act(() => result.current.addAttachments([photo("a")]));
+      act(() => result.current.send());
+      act(() => callbacks().onError());
+
+      act(() => result.current.send());
+      expect(sent(1)).toMatchObject({ chatRequestId: sent(0).chatRequestId, turnRequestId: sent(0).turnRequestId });
+      act(() => callbacks(1).onError());
+
+      act(() => result.current.addAttachments([photo("b")]));
+      act(() => result.current.send());
+      expect(sent(2).turnRequestId).not.toBe(sent(0).turnRequestId);
+      expect(sent(2).chatRequestId).not.toBe(sent(0).chatRequestId);
+    });
   });
 });

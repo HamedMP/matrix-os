@@ -555,7 +555,15 @@
 }
 
 .mxo-app__name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--mxo-ink); }
-.mxo-app-empty { padding: 8px 6px; }
+.mxo-app-empty,
+.mxo-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 6px;
+  text-align: center;
+}
 
 .mxo-connected {
   display: inline-flex;
@@ -685,12 +693,6 @@
 }
 
 .mxo-menu__row--compact > span:not(.mxo-toggle) { flex: 1; }
-
-.mxo-menu__row kbd {
-  font-family: inherit;
-  font-size: 10px;
-  color: var(--mxo-placeholder);
-}
 
 .mxo-menu__action { font-size: 12px; font-weight: 500; }
 

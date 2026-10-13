@@ -17,8 +17,9 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 jest.mock("@expo/ui", () => {
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
   return {
-    BottomSheet: (props: { children: ReactNode; isPresented: boolean }) => {
-      mockSheet = props;
+    BottomSheet: (props: { children: ReactNode; isPresented: boolean; testID?: string }) => {
+      // The setup sheet of a template; an inspiration's own sheet stays closed in these frames.
+      if (props.testID !== "inspiration-sheet") mockSheet = props;
       return props.isPresented ? <View testID="expo-bottom-sheet">{props.children}</View> : null;
     },
     RNHostView: ({ children }: { children: ReactNode }) => children,
@@ -85,22 +86,32 @@ describe("agents design frames", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 
-  it("A5 lists the frame's five templates and nothing the server lacks", () => {
+  it("A5 lists the frame's five templates first, and nothing the server lacks", () => {
     render(<NewAgentFrame />);
 
     expect(screen.getByRole("header", { name: "What should your agent do?" })).toBeTruthy();
-    expect(rows("template-row-").map(textsOf)).toEqual([
+    expect(rows("template-row-").slice(0, 5).map(textsOf)).toEqual([
       ["Inbox triage", "Sorts your inbox and drafts replies"],
       ["Daily planner", "Plans your day around meetings"],
       ["Account research", "Briefs you before every sales call"],
       ["Competitor watch", "Tells you when competitors change"],
       ["Meeting follow-up", "Turns notes into owners and next steps"],
     ]);
-    expect(rows("template-row-").map(mascotColor)).toEqual(["teal", "teal", "coral", "blue", "amber"]);
+    expect(rows("template-row-").slice(0, 5).map(mascotColor)).toEqual(["teal", "teal", "coral", "blue", "amber"]);
     expect(screen.queryByText("Start from scratch")).toBeNull();
-    expect(screen.queryByText("Personal")).toBeNull();
     expect(screen.queryByRole("tab")).toBeNull();
     expect(mockSheet.isPresented).toBe(false);
+  });
+
+  it("A5 goes on with the gallery the app ships with, under the frame's row of category chips", () => {
+    render(<NewAgentFrame />);
+
+    expect(textsOf(rows("template-row-")[5])[0]).toBe("Ad Spend Watch");
+    const chips = within(screen.getByTestId("template-categories")).getAllByRole("button");
+    expect(chips.map((chip) => chip.props.accessibilityLabel).slice(0, 4)).toEqual([
+      "All", "Sales", "Marketing", "Operations",
+    ]);
+    expect(chips[0].props.accessibilityState).toMatchObject({ selected: true });
   });
 
   it("A5 filters as its search field is typed in", () => {
@@ -110,6 +121,15 @@ describe("agents design frames", () => {
 
     expect(rows("template-row-")).toHaveLength(1);
     expect(screen.getByTestId("template-row-competitor-watch")).toBeTruthy();
+  });
+
+  it("A5 narrows to a category when its chip is pressed", () => {
+    render(<NewAgentFrame />);
+
+    fireEvent.press(screen.getByTestId("template-category-Engineering"));
+
+    expect(screen.queryByTestId("template-row-inbox-triage")).toBeNull();
+    expect(screen.getByTestId("template-row-tinkabot")).toBeTruthy();
   });
 
   it("A5b opens the setup sheet for Account research over the template list", () => {

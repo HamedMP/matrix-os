@@ -23,7 +23,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
   }, []);
 
   const connectApp = useCallback((serviceId: string) => {
-    if (!api) { dispatch({ type: "connect.failed" }); return; }
+    if (!api) { dispatch({ type: "connect.failed", service: serviceId }); return; }
     cancelPollRef.current?.();
     const attempt = ++attemptRef.current;
     const generation = captureRuntimeGeneration();
@@ -31,7 +31,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
     const fail = () => {
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.failed" });
+      dispatch({ type: "connect.failed", service: serviceId });
     };
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
@@ -54,7 +54,7 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
           cancelPollRef.current = null;
           if (!found) { fail(); return; }
           setConnectingService(null);
-          dispatch({ type: "connect.succeeded" });
+          dispatch({ type: "connect.succeeded", service: serviceId });
         },
       });
     })().catch((error: unknown) => {

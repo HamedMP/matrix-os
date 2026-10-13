@@ -53,7 +53,7 @@ export function onboardingApps(
   connections: readonly ConnectedIntegration[],
   connectingService: string | null,
 ): OnboardingWidgetApp[] {
-  const connected = new Set(connections.map((connection) => connection.service));
+  const connected = new Set(connections.filter((connection) => connection.status === "active").map((connection) => connection.service));
   return available.slice(0, ONBOARDING_MAX_APPS).map((app) => ({
     id: app.id,
     name: app.name,

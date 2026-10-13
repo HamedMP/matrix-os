@@ -13,7 +13,7 @@ import {
   type OnboardingWidgetState,
 } from "../../packages/contracts/src/index.js";
 import { OnboardingWidget } from "../../packages/ui/src/onboarding-widget/index.js";
-import type { OnboardingWidgetActions, OnboardingWidgetApp } from "../../packages/ui/src/onboarding-widget/index.js";
+import type { OnboardingWidgetActions, OnboardingWidgetApp, OnboardingWidgetRepo } from "../../packages/ui/src/onboarding-widget/index.js";
 
 const APPS: OnboardingWidgetApp[] = [
   { id: "google_calendar", name: "Google Calendar", category: "work", status: "available", logoUrl: "https://example.test/gcal.png" },
@@ -41,8 +41,11 @@ function makeActions(): OnboardingWidgetActions {
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
   activeAi = "matrix", matrixAvailable = true, connectedProviders = [],
+  apps = APPS, repos = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }],
 }: {
   actions: OnboardingWidgetActions;
+  apps?: OnboardingWidgetApp[];
+  repos?: OnboardingWidgetRepo[] | null;
   initial?: OnboardingWidgetState;
   runView?: OnboardingRunView | null;
   creditsExhausted?: boolean;
@@ -69,8 +72,8 @@ function Harness({
       state={state}
       actions={wired}
       userName="Sahar"
-      apps={APPS}
-      repos={[{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }]}
+      apps={apps}
+      repos={repos}
       runView={runView}
       activeAi={activeAi}
       matrixAvailable={matrixAvailable}
@@ -159,6 +162,89 @@ describe("OnboardingWidget", () => {
     fireEvent.submit(input.closest("form")!);
     expect(actions.dispatch).not.toHaveBeenCalledWith({ type: "freeform.submitted", text: "And tomorrow" });
     expect(input.value).toBe("And tomorrow");
+  });
+
+  it("closes the More and Change AI menus on a click outside them while the widget stays pinned", () => {
+    render(<Harness actions={makeActions()} />);
+    const input = screen.getByPlaceholderText("Or type what you need…");
+    const more = screen.getByRole("button", { name: "More" });
+
+    fireEvent.click(more);
+    fireEvent.pointerDown(within(screen.getByRole("menu", { name: "Matrix options" })).getByText("Show on every login"));
+    expect(screen.getByRole("menu", { name: "Matrix options" })).toBeInTheDocument();
+    fireEvent.pointerDown(input);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+
+    fireEvent.click(more);
+    fireEvent.pointerDown(more);
+    fireEvent.click(more);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+
+    const change = screen.getByRole("button", { name: "Change" });
+    fireEvent.click(change);
+    fireEvent.click(more);
+    expect(screen.getByRole("menu", { name: "Matrix options" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+
+    fireEvent.click(change);
+    fireEvent.pointerDown(change);
+    fireEvent.click(change);
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+  });
+
+  it("moves focus into the More and Change AI menus and back to their buttons on Escape", () => {
+    render(<Harness actions={makeActions()} />);
+    const more = screen.getByRole("button", { name: "More" });
+    more.focus();
+    fireEvent.click(more);
+    const options = screen.getByRole("menu", { name: "Matrix options" });
+    expect(within(options).getByRole("menuitemcheckbox", { name: /Keep in the corner/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(more).toHaveFocus();
+
+    const change = screen.getByRole("button", { name: "Change" });
+    change.focus();
+    fireEvent.click(change);
+    expect(within(screen.getByRole("menu", { name: "Change AI" })).getByRole("menuitemradio", { name: /Matrix AI/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+    expect(change).toHaveFocus();
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+  });
+
+  it("returns focus to the More button even when clicking it did not focus it", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "More" })).toHaveFocus();
+  });
+
+  it("leaves focus where the user clicked when a menu closes from an outside click", () => {
+    render(<Harness actions={makeActions()} />);
+    const input = screen.getByPlaceholderText("Or type what you need…");
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    input.focus();
+    fireEvent.pointerDown(input);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
+  it("opens full chat from the menu only, leaving Cmd/Ctrl+Shift+K to the host", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} />);
+    fireEvent.keyDown(window, { key: "K", shiftKey: true, metaKey: true });
+    fireEvent.keyDown(window, { key: "k", shiftKey: true, ctrlKey: true });
+    expect(actions.openFullChat).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const fullChat = within(screen.getByRole("menu", { name: "Matrix options" })).getByRole("menuitem", { name: "Open as full chat" });
+    expect(fullChat.querySelector("kbd")).toBeNull();
+    fireEvent.click(fullChat);
+    expect(actions.openFullChat).toHaveBeenCalledTimes(1);
   });
 
   it("shows which AI is in use on the task list and hides it mid-task", () => {
@@ -311,15 +397,52 @@ describe("OnboardingWidget", () => {
     expect(screen.getByText("Working…")).toBeInTheDocument();
   });
 
-  it("lists apps with Connected chips and confirms on Done", () => {
-    render(<Harness actions={makeActions()} />);
+  it("lists apps with Connected chips and confirms only apps connected on this visit", () => {
+    const actions = makeActions();
+    const { rerender } = render(<Harness actions={actions} />);
     fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
     expect(screen.getByText("Connect the apps you use.")).toBeInTheDocument();
     expect(screen.getByText("Connected")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "git" } });
     expect(screen.queryByText("Gmail")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByLabelText("Search apps"), { key: "Escape" });
+    const calendarConnected = APPS.map((app) => (app.id === "google_calendar" ? { ...app, status: "connected" as const } : app));
+    rerender(<Harness actions={actions} apps={calendarConnected} />);
+    fireEvent.click(screen.getByRole("button", { name: /Open Matrix/ }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.getByText("Gmail connected")).toBeInTheDocument();
+    expect(actions.dispatch).toHaveBeenLastCalledWith({ type: "apps.closed", connectedNames: ["Google Calendar"] });
+    expect(screen.getByText("Google Calendar connected")).toBeInTheDocument();
+  });
+
+  it("does not claim earlier connections when Done is pressed right away", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(actions.dispatch).toHaveBeenLastCalledWith({ type: "apps.closed", connectedNames: [] });
+    expect(screen.queryByText("Gmail connected")).not.toBeInTheDocument();
+  });
+
+  it("explains an empty repo list and asks for a repo link", () => {
+    const events: OnboardingWidgetEvent[] = [{ type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] }];
+    render(<Harness actions={makeActions()} events={events} repos={[]} />);
+    expect(screen.getByText("No repos found")).toBeInTheDocument();
+    expect(screen.getByText("Paste a repo link below to work on it.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Or paste a repo URL…")).toBeInTheDocument();
+  });
+
+  it("explains an empty app search and clears the search and filter", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dev" }));
+    fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "zzz" } });
+    expect(screen.getByText("No apps match")).toBeInTheDocument();
+    expect(screen.getByText("Try another name or filter.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByLabelText("Search apps")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Gmail")).toBeInTheDocument();
   });
 
   it("picks a repo from the list for Work on my code", () => {

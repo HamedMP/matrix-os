@@ -22,12 +22,15 @@ interface SearchFieldProps {
   placeholder?: string;
   value?: string;
   onChangeText?: (value: string) => void;
+  /** False where the text is matched against names the keyboard would rewrite. */
+  autoCorrect?: boolean;
 }
 
 export function SearchField({
   placeholder = "Search",
   value,
   onChangeText,
+  autoCorrect,
 }: SearchFieldProps) {
   const [uncontrolledValue, setUncontrolledValue] = useState("");
   const { theme } = useUnistyles();
@@ -46,6 +49,7 @@ export function SearchField({
         placeholderTextColor={theme.v2.colors.textTertiary}
         value={currentValue}
         onChangeText={updateValue}
+        autoCorrect={autoCorrect}
         style={styles.searchInput}
       />
       {currentValue ? (

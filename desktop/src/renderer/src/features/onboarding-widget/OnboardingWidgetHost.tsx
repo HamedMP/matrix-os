@@ -22,6 +22,7 @@ import { showOnboardingTab as showTab } from "./onboarding-widget-navigation";
 import { createDesktopOnboardingChatPort, createDesktopOnboardingRepoSource } from "./onboarding-widget-runner";
 import { useDesktopOnboardingAiPort } from "./use-onboarding-ai-connect";
 import { useOnboardingAppConnect } from "./use-onboarding-app-connect";
+import { useOnboardingOverlayLease } from "./use-onboarding-overlay-lease";
 import { useChatMaximized } from "./use-chat-maximized";
 import { useOnboardingSupportDock } from "./use-onboarding-support-dock";
 
@@ -72,6 +73,7 @@ function OnboardingWidgetSession({ api, prefsKey, initialPrefs }: { api: ApiClie
 
   const chatMaximized = useChatMaximized();
   useOnboardingSupportDock({ size: state.size, side: prefs.side, visible: !chatMaximized, dispatch, closeSupport: closeDesktopSupport });
+  useOnboardingOverlayLease(state.size !== "bubble" && !chatMaximized);
   if (chatMaximized) return null;
   return <OnboardingWidget {...widget} zIndex={DESKTOP_Z_INDEX.nativeDesktopTaskbar} />;
 }

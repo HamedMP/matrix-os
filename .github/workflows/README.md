@@ -36,13 +36,13 @@ Expensive jobs remain path-aware.
 
 ### Main CI queue and coverage frontier
 
-Main pushes enter GitHub's FIFO concurrency queue in `ci.yml` (up to the
-platform's 100-run `queue: max` limit). A non-doc push also starts
-`ci-supersede.yml`, whose only write permission is cancelling older active CI
-runs whose heads are ancestors of the new commit. Docs-only successors
-queue behind broader runs instead of cancelling them.
+Every main push runs CI to completion in its own concurrency group
+(`ci-refs/heads/main-<sha>`), so a newer merge never cancels or delays an
+older commit's run and each main commit keeps its own green or red result.
+Manual refresh dispatches on `main` still share one FIFO queue (up to the
+platform's 100-run `queue: max` limit).
 
-When a queued run is admitted, `scripts/ci/main-ci-coverage.mjs` finds the latest
+When a main run starts, `scripts/ci/main-ci-coverage.mjs` finds the latest
 successful `CI coverage-v1` ancestor and treats it as the coverage frontier. The
 run plans against the complete frontier-to-head diff, not only the newest commit.
 Consequently, a failed or cancelled predecessor is automatically absorbed into
@@ -74,7 +74,7 @@ hosted-workflow layer.
 
 `ci-pr-supersede.yml` cancels obsolete CI heads for an admitted PR. It runs only
 trusted base-branch code with no checkout, validates the current live PR head,
-and cannot cancel main or another PR. The main FIFO queue and coverage frontier
+and cannot cancel main or another PR. Main per-commit runs and the coverage frontier
 remain unchanged. A denied or failed cancellation does not remove validation.
 
 Core workflows stay GitHub-hosted. An isolated Linux benchmark bridge is planned
@@ -114,8 +114,8 @@ OTA payloads.
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
+| `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
 | `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
-| `ci-supersede.yml` | Safe main-CI supersession | Non-doc pushes to `main` | No; optimization only, queueing remains safe if it fails |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
@@ -155,12 +155,20 @@ contract.
 ## Docker Relevance Router
 
 Use `scripts/ci/docker-relevance.mjs` as the source of truth for whether a PR or
-`main` push needs the legacy/local Docker validation. It includes the dev image,
-Compose and startup configuration, Docker scenario harness, root workspace
-metadata, gateway/kernel/shell dependencies, home templates, and the shared
-sync-client protocol and package export manifest imported by the gateway.
+`main` push needs the legacy/local Docker validation. It has two scopes:
+
+- `--scope full` (pushes to `main`): the dev image, Compose and startup
+  configuration, Docker scenario harness, root workspace metadata,
+  gateway/kernel/shell dependencies, home templates, and the shared sync-client
+  protocol and package export manifest imported by the gateway.
+- `--scope pr` (pull requests): Docker build inputs only — Dockerfiles, root
+  workspace/lock manifests, Compose files, the Docker scenario harness and
+  observability config. App source (gateway, kernel, shell, home, ui, skills)
+  is covered on `main` and nightly instead, because production is VPS-native and
+  the dev image is local-only.
+
 Platform-only, proxy-only, installable CLI, desktop/mobile, docs/specs, and
-unrelated workflow changes do not spend a Docker runner.
+unrelated workflow changes do not spend a Docker runner in either scope.
 
 The PR and `main` paths are relevance-filtered for cost and signal. The merge
 queue, nightly, and manual runs remain comprehensive so an incomplete path rule

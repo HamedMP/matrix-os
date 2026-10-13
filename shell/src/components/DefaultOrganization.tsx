@@ -46,7 +46,7 @@ export function DefaultOrganization({ children }: { children?: ReactNode }) {
     : null;
   const activation = userId && defaultId ? `${userId}:${defaultId}` : null;
   const organizationState: OrganizationMembershipState = (() => {
-    if (organization?.id) return { status: "member", organizationId: organization.id };
+    if (organization?.id) return { status: "member", organizationId: organization.id, organizationName: organization.name };
     if (loadFailed) return { status: "unavailable", organizationId: null };
     if (!userId || !organizationLoaded || !isLoaded || !complete) {
       return { status: "loading", organizationId: null };

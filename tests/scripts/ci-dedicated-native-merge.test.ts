@@ -36,7 +36,7 @@ describe('protected native cumulative merge proof',()=>{
    const value=await original(args);
    if(++calls===4){
     if(field==='child')f.pull.merge_commit_sha=nativePins.head;if(field==='parent')f.parent.merge_commit_sha=nativePins.trunk;if(field==='membership')f.stack.pull_requests[1].head.ref='changed';if(field==='labels')f.pull.labels=[];
-    if(['trunk','parentref'].includes(field))f.github.rest.git.getRef.mockImplementation(async(a:any)=>({data:{object:{sha:(field==='trunk'&&a.ref==='heads/main')||(field==='parentref'&&a.ref!=='heads/main')?nativePins.head:a.ref==='heads/main'?nativePins.trunk:nativePins.base}}}));
+    if(['trunk','parentref'].includes(field))f.github.rest.repos.getBranch.mockImplementation(async(a:any)=>({data:{name:a.branch,commit:{sha:(field==='trunk'&&a.branch==='main')||(field==='parentref'&&a.branch!=='main')?nativePins.head:a.branch==='main'?nativePins.trunk:nativePins.base}}}));
    }
    return value;
   });

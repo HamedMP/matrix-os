@@ -7,6 +7,7 @@ import {
   onboardingActiveAi,
   onboardingLoginPresentation,
   onboardingPrefsKey,
+  onboardingSessionInit,
   readOnboardingPrefs,
   writeOnboardingPrefs,
 } from "@matrix-os/ui";
@@ -58,12 +59,32 @@ describe("onboarding widget prefs", () => {
     warn.mockRestore();
   });
 
-  it("auto-opens in the corner until the first task is done, then follows the menu choices", () => {
+  it("auto-opens in the corner until the first task is done, then Show on every login decides", () => {
     expect(onboardingLoginPresentation({ ...DEFAULT_ONBOARDING_PREFS, keepInCorner: false, showOnLogin: false })).toBe("corner");
     const done = { ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: true };
-    expect(onboardingLoginPresentation(done)).toBe("bubble");
-    expect(onboardingLoginPresentation({ ...done, keepInCorner: true })).toBe("corner");
-    expect(onboardingLoginPresentation({ ...done, showOnLogin: false })).toBe("hidden");
+    expect(onboardingLoginPresentation(done)).toBe("corner");
+    expect(onboardingLoginPresentation({ ...done, showOnLogin: false })).toBe("bubble");
+    expect(onboardingLoginPresentation({ ...done, showOnLogin: false, keepInCorner: true })).toBe("bubble");
+  });
+
+  const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+
+  it("keeps a pending run across restarts and still reads prefs saved before it existed", () => {
+    const storage = memoryStorage();
+    writeOnboardingPrefs("k", { ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1", pendingRun: { ...pendingRun, answer: "x".repeat(2_000) } }, storage);
+    expect(readOnboardingPrefs("k", storage)?.pendingRun).toMatchObject({ taskId: "research", runId: "run_1" });
+    const { pendingRun: _omitted, ...legacy } = DEFAULT_ONBOARDING_PREFS;
+    const old = memoryStorage({ k: JSON.stringify({ ...legacy, firstTaskCompleted: true }) });
+    expect(readOnboardingPrefs("k", old)).toEqual({ ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: true });
+    const bad = memoryStorage({ k: JSON.stringify({ ...DEFAULT_ONBOARDING_PREFS, pendingRun: { ...pendingRun, taskId: "rm -rf" } }) });
+    expect(readOnboardingPrefs("k", bad)).toBeNull();
+  });
+
+  it("starts the session from stored prefs, reopening a pending run", () => {
+    expect(onboardingSessionInit({ ...DEFAULT_ONBOARDING_PREFS, chatId: "chat_1", pendingRun })).toEqual({
+      size: "corner", firstTaskCompleted: false, aiChoice: "matrix", chatId: "chat_1", pendingRun,
+    });
+    expect(onboardingSessionInit({ ...DEFAULT_ONBOARDING_PREFS, firstTaskCompleted: true, showOnLogin: false }).size).toBe("bubble");
   });
 });
 
@@ -163,6 +184,15 @@ describe("onboarding apps and repos", () => {
     ]);
   });
 
+  it("offers Connect again for an expired connection", () => {
+    const apps = onboardingApps(
+      [{ id: "github", name: "GitHub" }, { id: "gmail", name: "Gmail" }] as never,
+      [{ id: "c1", service: "github", status: "expired" }, { id: "c2", service: "gmail", status: "active" }] as never,
+      null,
+    );
+    expect(apps.map((app) => app.status)).toEqual(["available", "connected"]);
+  });
+
   it("caps the app list", () => {
     const many = Array.from({ length: 80 }, (_, index) => ({ id: `s${index}`, name: `S${index}` }));
     expect(onboardingApps(many as never, [], null)).toHaveLength(50);
@@ -212,6 +242,7 @@ describe("onboarding apps and repos", () => {
 describe("onboarding turn admission", () => {
   const selection = { instanceId: "hermes_default", model: "default", options: [], interactionMode: "default", permissionMode: "default" };
   const admitted = (chatId: string) => ({ record: { chat: { id: chatId } }, run: { id: "run_1" } });
+  const requestIds = { create: "req_create_1", turn: "req_turn_1" };
 
   it("creates the Getting started chat on the first task", async () => {
     const client = {
@@ -219,10 +250,10 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn(),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: null, prompt: "Do it", selection })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
-    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: ONBOARDING_CHAT_TITLE }));
+    await expect(admitOnboardingTurn({ client: client as never, chatId: null, prompt: "Do it", selection, requestIds })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    expect(client.create).toHaveBeenCalledWith(expect.objectContaining({ title: ONBOARDING_CHAT_TITLE, clientRequestId: "req_create_1" }));
     expect(client.admitTurn).toHaveBeenCalledWith("chat_new", expect.objectContaining({
-      baseRevision: 3, parts: [{ type: "text", text: "Do it" }], selection: { instanceId: "hermes_default", model: "default" },
+      clientRequestId: "req_turn_1", baseRevision: 3, parts: [{ type: "text", text: "Do it" }], selection: { instanceId: "hermes_default", model: "default" },
     }), { chatScope: "global" });
   });
 
@@ -232,7 +263,7 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn().mockResolvedValue({ record: { chat: { revision: 9 } } }),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_old")),
     };
-    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Again", selection });
+    await admitOnboardingTurn({ client: client as never, chatId: "chat_old", prompt: "Again", selection, requestIds });
     expect(client.create).not.toHaveBeenCalled();
     expect(client.admitTurn).toHaveBeenCalledWith("chat_old", expect.objectContaining({ baseRevision: 9 }), { chatScope: "global" });
   });
@@ -243,9 +274,9 @@ describe("onboarding turn admission", () => {
       getDetail: vi.fn().mockRejectedValue(new AppError("notFound")),
       admitTurn: vi.fn().mockResolvedValue(admitted("chat_new")),
     };
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection, requestIds })).resolves.toEqual({ chatId: "chat_new", runId: "run_1" });
     client.getDetail.mockRejectedValue(new AppError("offline"));
-    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection })).rejects.toThrow(AppError);
+    await expect(admitOnboardingTurn({ client: client as never, chatId: "chat_gone", prompt: "x", selection, requestIds })).rejects.toThrow(AppError);
   });
 
   it("treats only offline and timeout as the computer still starting", () => {

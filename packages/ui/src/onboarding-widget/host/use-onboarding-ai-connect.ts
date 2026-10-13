@@ -30,6 +30,8 @@ export interface OnboardingAiConnect {
   startSignIn: (provider: OnboardingAiProvider) => void;
   reopenSignIn: () => void;
   cancelSignIn: () => void;
+  /** Stops a sign-in or key save whose panel was closed some other way, without touching the widget. */
+  abandonSignIn: () => void;
   submitKey: (provider: OnboardingAiProvider, key: string) => void;
   submitCode: (code: string) => void;
 }
@@ -46,6 +48,7 @@ export function useOnboardingAiConnect(
   dispatch: (event: OnboardingWidgetEvent) => void,
 ): OnboardingAiConnect {
   const active = useRef<ActiveSignIn | null>(null);
+  const keySave = useRef<object | null>(null);
   const [signInCode, setSignInCode] = useState<string | null>(null);
   const [signInNeedsCode, setSignInNeedsCode] = useState(false);
 
@@ -134,32 +137,50 @@ export function useOnboardingAiConnect(
     if (url && port) void port.openAuthorization(url);
   }, [port]);
 
-  const cancelSignIn = useCallback(() => {
+  const abandonSignIn = useCallback(() => {
+    keySave.current = null;
     const current = active.current;
-    clearSignIn();
-    dispatch({ type: "ai.cancelled" });
     if (!current) return;
+    clearSignIn();
     current.controller.abort();
     if (port && current.operationId) cancelOperation(port.client, current.operationId);
-  }, [clearSignIn, dispatch, port]);
+  }, [clearSignIn, port]);
+
+  const cancelSignIn = useCallback(() => {
+    abandonSignIn();
+    dispatch({ type: "ai.cancelled" });
+  }, [abandonSignIn, dispatch]);
 
   const submitKey = useCallback((provider: OnboardingAiProvider, key: string) => {
     if (!port) { dispatch({ type: "ai.failed" }); return; }
     const { client } = port;
+    const attempt = {};
+    keySave.current = attempt;
+    const isCurrent = () => keySave.current === attempt;
     const signal = AbortSignal.timeout(30_000);
     void (async () => {
       const target = pickProviderConnectionOption(await client.capabilities(signal), provider, "api_key");
       if (!target || !client.submitConnectionKey) {
+        if (!isCurrent()) return;
+        keySave.current = null;
         if (port.isIdentityCurrent()) dispatch({ type: "ai.needsSettings" });
         return;
       }
       await client.submitConnectionKey({ ...target, apiKey: key }, signal);
+      if (!isCurrent()) {
+        // The key is stored, but the user has moved on, so only the catalog learns about it.
+        if (port.isIdentityCurrent()) port.onConnected(target.harnessInstanceId);
+        return;
+      }
+      keySave.current = null;
       finish(provider, target.harnessInstanceId, true);
     })().catch((error: unknown) => {
       console.warn("[onboarding-widget] AI key save failed:", error instanceof Error ? error.name : typeof error);
+      if (!isCurrent()) return;
+      keySave.current = null;
       if (port.isIdentityCurrent()) dispatch({ type: "ai.failed" });
     });
   }, [dispatch, finish, port]);
 
-  return { signInCode, signInNeedsCode, startSignIn, reopenSignIn, cancelSignIn, submitKey, submitCode };
+  return { signInCode, signInNeedsCode, startSignIn, reopenSignIn, cancelSignIn, abandonSignIn, submitKey, submitCode };
 }
