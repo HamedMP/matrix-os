@@ -48,6 +48,9 @@ scope.
 - Sending shows the message at once. If the send fails, the text and the
   attachments return to the composer. Places are held for them until the send
   is settled, so nothing added meanwhile is pushed out when they come back.
+- On a project's screen nothing can be added while its message is on its way.
+  That screen is left for the new chat as soon as the message is in, so what
+  was chosen meanwhile would have no composer to appear in.
 - A message is not sent while an attachment waits that the selected model does
   not read, as after a change of model. The composer says which kind it is and
   that it can be removed or another model chosen.
@@ -67,6 +70,24 @@ No server change. The app uses what the web client uses:
 3. `DELETE /api/files/blob?path=…` for uploads that no turn will name.
 
 ## Security
+
+Auth matrix. No route is new or changed; the app is one more client of each.
+None is public: the computer's gateway answers a request with no verified
+bearer with 401 before any of these routes runs.
+
+| Route | The app uses it to | Authentication | Public |
+| --- | --- | --- | --- |
+| `PUT /api/files/blob?path=…` | Store one attachment | Bearer: the person's Clerk session token | No |
+| `POST /api/chats` | Create the chat for a first message | Bearer: the person's Clerk session token | No |
+| `POST /api/chats/:chatId/turns` | Admit the turn that names the uploads | Bearer: the person's Clerk session token | No |
+| `DELETE /api/files/blob?path=…` | Remove an upload no turn will name | Bearer: the person's Clerk session token | No |
+| `GET /files/<path>` | Show a sent photo from the computer's copy | Bearer: the person's Clerk session token | No |
+
+What the routes themselves check is unchanged: the upload has a body limit, a
+validated query and a path kept inside the home folder, and writes over
+nothing unless asked; the removal takes only a path directly in
+`temporary/desktop-chat/`; the chat and the turn are validated against the
+shared contract schemas.
 
 - Auth: every request carries the Clerk session token, as the app's other
   gateway requests do. The token is asked for again after the uploads, because
@@ -123,6 +144,9 @@ new build, not an over-the-air update.
   create a second chat or message, nor remove a file a sent message uses.
 - After a change to a model that does not read a waiting attachment, Send is
   off and the composer says why.
+- A photo the library names without an ending is still shown as a photo after
+  the app is started again.
+- On a project's screen the "+" is off while its message is on its way.
 
 ## Public documentation
 
