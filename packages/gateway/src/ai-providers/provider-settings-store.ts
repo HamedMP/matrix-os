@@ -589,7 +589,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       const revokesCodex = mutation.type === "set_harness_enabled" && !mutation.enabled
         && config.harnesses.some(row => row.id === mutation.harnessInstanceId && row.harness === "codex")
         || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex";
-      const releaseRevocation = revokesCodex ? await this.#prepareNativeCodexRevocation?.() : undefined;
+      let releaseRevocation: (() => Promise<void>) | undefined;
+      const prepareRevocation = async () => {
+        if (revokesCodex) releaseRevocation = await this.#prepareNativeCodexRevocation?.();
+      };
       try {
       this.#assertSupported(claudeNativeCompletion || codexNativeCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
       // Read and revalidate the current native principal inside mutation admission.
@@ -646,6 +649,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         }
       }
       if (handled) {
+        await prepareRevocation();
         runtimeMutation = {
           mutation: mutation as ProviderConfigurationMutation,
           idempotencyKey: mutation.idempotencyKey,
@@ -686,6 +690,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           const account = requireCoordinatorLifecycleAccount(
             this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata, claudeSignedOut, codexMetadata,
           );
+          if (revokesCodex && !this.#lifecycle!.supportedActions(account).includes("logout_account")) {
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          await prepareRevocation();
           await this.#coordinate(() => this.#lifecycle!.logout({
             account,
             idempotencyKey: mutation.idempotencyKey,
@@ -715,6 +723,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           const account = requireCoordinatorLifecycleAccount(
             this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata, claudeSignedOut, codexMetadata,
           );
+          if (revokesCodex && !this.#lifecycle!.supportedActions(account).includes("remove_account")) {
+            throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+          }
+          await prepareRevocation();
           await this.#coordinate(() => this.#lifecycle!.remove({
             account,
             idempotencyKey: mutation.idempotencyKey,
