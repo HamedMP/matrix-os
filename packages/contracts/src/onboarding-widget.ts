@@ -96,27 +96,53 @@ export type OnboardingWidgetEvent =
   | { type: "ai.keepMatrix" }
   | { type: "size.changed"; size: OnboardingWidgetSize };
 
+/** An admitted run that has not settled yet; hosts persist it so a restart can keep following the run. */
+export type OnboardingPendingRun = Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler" | "context" | "title"> & { runId: string };
+
 export interface OnboardingWidgetInit {
   size: OnboardingWidgetSize;
   firstTaskCompleted: boolean;
   aiChoice?: OnboardingAiChoice;
   chatId?: string | null;
+  pendingRun?: OnboardingPendingRun | null;
+}
+
+function restoredScreen(pendingRun: OnboardingPendingRun | null | undefined, chatId: string | null): OnboardingRunScreen | null {
+  if (!pendingRun || !chatId) return null;
+  if (pendingRun.taskId !== "custom" && !onboardingTask(pendingRun.taskId)) return null;
+  return { kind: "run", ...pendingRun, phase: "running", requestId: 0 };
 }
 
 export function initialOnboardingWidgetState(init: OnboardingWidgetInit): OnboardingWidgetState {
+  const chatId = init.chatId ?? null;
+  const restored = restoredScreen(init.pendingRun, chatId);
   return {
-    screen: { kind: "tasks" },
+    screen: restored ?? { kind: "tasks" },
     ai: null,
     aiChoice: init.aiChoice ?? "matrix",
     echo: null,
     notice: null,
     size: init.size,
     unread: 0,
-    chatId: init.chatId ?? null,
-    started: false,
+    chatId,
+    started: restored !== null,
     followUpUsed: false,
     firstTaskCompleted: init.firstTaskCompleted,
     nextRequestId: 1,
+  };
+}
+
+export function onboardingPendingRun(state: OnboardingWidgetState): OnboardingPendingRun | null {
+  const screen = state.screen;
+  if (screen.kind !== "run" || screen.phase !== "running" || !screen.runId) return null;
+  return {
+    taskId: screen.taskId,
+    answer: screen.answer,
+    appConnected: screen.appConnected,
+    simpler: screen.simpler,
+    ...(screen.context ? { context: screen.context } : {}),
+    ...(screen.title ? { title: screen.title } : {}),
+    runId: screen.runId,
   };
 }
 

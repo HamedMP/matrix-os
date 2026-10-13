@@ -7,6 +7,7 @@ import {
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
   onboardingAiLabel,
+  onboardingPendingRun,
   onboardingRunInFlight,
   onboardingRunTitle,
   parseOnboardingRepoUrl,
@@ -124,6 +125,35 @@ describe("reduceOnboardingWidget", () => {
     const done = run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" });
     expect(done.screen).toMatchObject({ phase: "done" });
     expect(done.firstTaskCompleted).toBe(true);
+  });
+
+  it("exposes only an admitted, unsettled run for restoring after a restart", () => {
+    const started = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "Trip ideas for Lisbon" });
+    expect(onboardingPendingRun(started)).toBeNull();
+    const admitted = run(started, { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" });
+    expect(onboardingPendingRun(admitted)).toEqual({ taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" });
+    expect(onboardingPendingRun(run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" }))).toBeNull();
+  });
+
+  it("restores a pending run after a restart and keeps following it", () => {
+    const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+    const restored = initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun });
+    expect(restored.screen).toMatchObject({ kind: "run", phase: "running", taskId: "research", runId: "run_1" });
+    expect(restored.started).toBe(true);
+    expect(onboardingRunInFlight(restored)).toBe(true);
+    const done = run(restored, { type: "run.settled", runId: "run_1", outcome: "completed" });
+    expect(done.screen).toMatchObject({ phase: "done" });
+    expect(done.firstTaskCompleted).toBe(true);
+    const failed = run(restored, { type: "run.settled", runId: "run_1", outcome: "failed" });
+    const retried = run(failed, { type: "run.retried", simpler: false });
+    expect(retried.screen).toMatchObject({ kind: "run", phase: "starting", answer: "Trip ideas for Lisbon" });
+  });
+
+  it("ignores a pending run without its chat or with an unknown task", () => {
+    const pendingRun = { taskId: "research", answer: "x", appConnected: true, simpler: false, runId: "run_1" } as const;
+    expect(initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, pendingRun }).screen).toEqual({ kind: "tasks" });
+    const unknown = { ...pendingRun, taskId: "not-a-task" } as unknown as typeof pendingRun;
+    expect(initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun: unknown }).screen).toEqual({ kind: "tasks" });
   });
 
   it("ignores admission results for a superseded request", () => {
