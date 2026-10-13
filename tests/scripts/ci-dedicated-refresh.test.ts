@@ -120,6 +120,15 @@ it.each([[['fast-ci','ready-for-ci'],true],[['ready-for-ci'],false],[[],false]])
  const startsWith=(text:string,prefix:string)=>text.startsWith(prefix);
  expect(Function('vars','github','startsWith','contains',`return (${jsCondition(w.jobs.benchmark.if)});`)({MATRIX_CI_DEDICATED_ENABLED:'true'},github,startsWith,contains)).toBe(expected);
 });
+it('admits the exact main snapshot once the coverage title renders on a later poll',async()=>{
+ const live={id:321,run_attempt:1,status:'queued',workflow_id:98,path:'.github/workflows/ci.yml',event:'push',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'fix(cli): keep telemetry off stderr',pull_requests:[]};
+ const rendered={...live,status:'in_progress',display_title:`CI coverage-v1 · ${main}`};
+ const getWorkflowRun=vi.fn().mockResolvedValueOnce({data:live}).mockResolvedValueOnce({data:live}).mockResolvedValue({data:rendered});const delay=vi.fn(async()=>{});
+ const github={rest:{actions:{getWorkflow:vi.fn(async()=>({data:{id:98,path:'.github/workflows/ci.yml'}})),getWorkflowRun},
+  repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:main}}})),getCommit:vi.fn(async()=>({data:{sha:main,parents:[{sha:base}],commit:{tree:{sha:'e'.repeat(40)}}}}))}}};
+ await expect(helpers.admitRefreshController(github,repo,{action:'requested',workflow_run:live},{delay})).resolves.toMatchObject({sourceKind:'main',prNumber:0,headSha:main,sourceSha:main,mergeParents:[base]});
+ expect(getWorkflowRun).toHaveBeenCalledTimes(3);expect(delay).toHaveBeenCalledTimes(2);
+});
 it('waits briefly for a main push title and stands down if it never renders',async()=>{
  const live={id:321,run_attempt:1,status:'queued',workflow_id:98,path:'.github/workflows/ci.yml',event:'push',head_sha:main,head_branch:'main',repository:{full_name:'HamedMP/matrix-os'},head_repository:{full_name:'HamedMP/matrix-os'},display_title:'fix(cli): keep telemetry off stderr',pull_requests:[]};
  const getWorkflowRun=vi.fn(async()=>({data:live}));const delay=vi.fn(async()=>{});
