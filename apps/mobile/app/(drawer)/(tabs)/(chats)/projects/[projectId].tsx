@@ -149,7 +149,7 @@ export default function ProjectRoute() {
             onRemove: composer.removeAttachment,
             draft: composer.draft,
             onChangeDraft: changeDraft,
-            enabled: true,
+            enabled: composer.canAddAttachments,
           }),
           modelControl: (
             <ModelPicker

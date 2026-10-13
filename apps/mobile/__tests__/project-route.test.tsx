@@ -313,6 +313,26 @@ describe("project route", () => {
       expect(input().props.value).toBe("");
     });
 
+    it("takes nothing more while the message is on its way, and again once it could not be sent", async () => {
+      const creating = pendingRequest<typeof created>();
+      requests.createChat.mockReturnValue(creating.promise);
+      await renderPortfolio();
+      const add = () => screen.getByRole("button", { name: "Add to message" });
+      expect(add().props.accessibilityState).toMatchObject({ disabled: false });
+
+      fireEvent.changeText(input(), "Draft the case study");
+      fireEvent.press(sendButton());
+
+      // This screen is left for the new chat once the message is in: what a
+      // library opened now handed back would have no composer to go to.
+      await waitFor(() => expect(requests.createChat).toHaveBeenCalledTimes(1));
+      expect(add().props.accessibilityState).toMatchObject({ disabled: true });
+
+      await act(async () => creating.reject(new Error("upstream said no")));
+
+      await waitFor(() => expect(add().props.accessibilityState).toMatchObject({ disabled: false }));
+    });
+
     it("keeps the message in the box and stays on the project when the chat could not be started", async () => {
       requests.createChat.mockRejectedValue(new Error("upstream said no"));
       await renderPortfolio();

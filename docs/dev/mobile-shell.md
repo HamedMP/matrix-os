@@ -839,6 +839,11 @@ Photos, Files, and the selected model's skills and commands. Spec:
   engine (`supportedAttachmentKinds`). Matrix AI's own route lists none today,
   so pick Claude Code or Codex to try a send. After a change to a model that
   does not read a waiting attachment, Send is off and the composer says why.
+- A project's "+" is off while its first message is on its way
+  (`canAddAttachments`). The project screen is left for the new chat once the
+  message is in, so what a library opened meanwhile handed back would have no
+  composer to go to. The Chats tab stays on screen through the same moment, so
+  there such attachments go to the chat the message creates.
 - Sending uploads each attachment with `PUT /api/files/blob` into
   `temporary/desktop-chat/` on the computer and names it in the turn with an
   `attachment_reference` part, the same contract the web composer uses. The

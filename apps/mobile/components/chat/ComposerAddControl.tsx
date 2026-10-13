@@ -18,7 +18,7 @@ export interface ComposerAddControlProps {
   room: number;
   /** The selected model's skills and commands. */
   skills: readonly ChatSlashEntry[];
-  /** There is nobody to send as: nothing can be added. */
+  /** Nothing can be added, as when there is nobody to send as. */
   disabled?: boolean;
   onAdd: (attachments: readonly ComposerAttachment[]) => void;
   /** A skill or command was chosen, as "/review". */

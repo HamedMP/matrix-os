@@ -23,7 +23,7 @@ export interface ComposerAddOptions {
   draft: string;
   /** Takes the draft with a chosen skill or command put first. */
   onChangeDraft: (text: string) => void;
-  /** False while there is nobody to send as. */
+  /** False while nothing can be added, as when there is nobody to send as. */
   enabled: boolean;
 }
 
