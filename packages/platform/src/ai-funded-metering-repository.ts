@@ -3,7 +3,7 @@ import { readUsageWaiverAudit } from "./ai-funded-usage-waiver-audit.js";
 import { cleanupExpiredCustomerCharges, inventoryExpiredCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
 import { isPostpaidAuthorization, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
 import { settlePostpaidUsage } from "./ai-funded-postpaid-settlement.js";
-import { replaySettledFundedUsage } from "./ai-funded-settlement-replay.js";
+import { provenanceColumns, replaySettledFundedUsage, storedProvenanceMatches, type StoredUpstreamProvenance } from "./ai-funded-settlement-replay.js";
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
@@ -76,7 +76,6 @@ const IdentitySchema = z.object({
   runtimeSlot: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/),
 }).strict();
 const MoneySchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const ManualJevReviewSchema = z.object({
   reservationId: ReferenceSchema,
   tokenId: ReferenceSchema,
   expectedRequestId: ReferenceSchema,
@@ -605,6 +604,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     actualCostMicrousd: number | null;
     customerCharge?: "waived";
     jevProvenance?: z.infer<typeof JevProvenanceSchema>;
+    upstreamProvenance?: StoredUpstreamProvenance;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string };
     notDispatched?: JevNoDispatchAttestation;
   }, finalizationMode: "exact" | "conservative"): Promise<{
@@ -654,6 +654,9 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         hasProviderProvenance: request.jevProvenance !== undefined,
       });
       if (reservation.model_id !== JEV_MODEL_ID && request.jevProvenance !== undefined) {
+        throw new AiFundedPolicyError("idempotency_conflict");
+      }
+      if (reservation.model_id === JEV_MODEL_ID && request.upstreamProvenance !== undefined) {
         throw new AiFundedPolicyError("idempotency_conflict");
       }
       if (reservation.model_id === JEV_MODEL_ID) {
@@ -707,7 +710,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.charge_waiver !== null) {
         const response = await settleWaivedUsage(trx.executor, reservation, actualCostMicrousd,
-          exactInteger(runtime.monthly_budget_microusd), checkedAt, request.jevProvenance, request.manualReview);
+          exactInteger(runtime.monthly_budget_microusd), checkedAt,
+          request.jevProvenance ?? request.upstreamProvenance, request.manualReview);
         return { response, finalizationMode: "exact" } as const;
       }
       if (reservation.status === "settled") {
@@ -742,8 +746,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("reservation_id", "=", reservation.reservation_id).executeTakeFirstOrThrow();
         if (latest.status === "settled" && exactInteger(latest.actual_microusd) === actualCostMicrousd
           && latest.settlement_response !== null
-          && latest.resolved_model === (request.jevProvenance?.resolvedModel ?? null)
-          && latest.pricing_version === (request.jevProvenance?.pricingVersion ?? null)
+          && storedProvenanceMatches(latest, request.jevProvenance ?? request.upstreamProvenance)
           && (!request.manualReview || (latest.manual_review_evidence_ref === request.manualReview.evidenceRef
             && latest.manual_review_actor === request.manualReview.reviewer))) {
           return {
@@ -802,8 +805,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "settled",
         actual_microusd: actualCostMicrousd,
-        resolved_model: request.jevProvenance?.resolvedModel ?? null,
-        pricing_version: request.jevProvenance?.pricingVersion ?? null,
+        ...provenanceColumns(request.jevProvenance ?? request.upstreamProvenance),
         settled_at: checkedAt,
         finalization_mode: finalizationMode,
         ...(request.manualReview ? {
@@ -861,6 +863,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       ...(request.mode === "exact" && request.customerCharge ? { customerCharge: request.customerCharge } : {}),
       ...(request.mode === "exact" && request.jevProvenance
         ? { jevProvenance: request.jevProvenance } : {}),
+      ...(request.mode === "exact" && request.upstreamProvenance
+        ? { upstreamProvenance: request.upstreamProvenance } : {}),
     }, request.mode === "not_dispatched" ? "exact" : request.mode);
     return FundedAiFinalizationResponseSchema.parse({
       ...settlement.response,

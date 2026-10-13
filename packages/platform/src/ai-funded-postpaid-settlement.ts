@@ -5,6 +5,7 @@ import type { AiFundedUsageReservationsTable, PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { capturedAiAuthorization, readCustomerChargeRelease, releaseCustomerCharge } from "./ai-funded-customer-charge-release.js";
 import { advanceMonthWindow, exactInteger, fundingSummary, recordUsageFunding, utcMonthStart } from "./ai-funded-metering-helpers.js";
+import { provenanceColumns, replaySettledFundedUsage, type StoredUpstreamProvenance } from "./ai-funded-settlement-replay.js";
 import { debitPromotionalGrants, fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
 
 type Row = Selectable<AiFundedUsageReservationsTable>;
@@ -12,6 +13,7 @@ type Row = Selectable<AiFundedUsageReservationsTable>;
 export async function settlePostpaidUsage(executor: PlatformDB["executor"], row: Row,
   actual: number, monthlyBudget: number, checkedAt: string,
   input: { customerCharge?: "waived"; jevProvenance?: z.infer<typeof JevProvenanceSchema>;
+    upstreamProvenance?: StoredUpstreamProvenance;
     manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string } } = {}) {
   const captured = capturedAiAuthorization(row);
   const postpaid = captured.reservation.billingPolicy === "postpaid";
@@ -22,14 +24,10 @@ export async function settlePostpaidUsage(executor: PlatformDB["executor"], row:
   if (actual > (captured.reservation.maxCostMicrousd ?? captured.reservation.reservedMicrousd)) throw new AiFundedPolicyError("over_settlement");
   if (row.customer_charge_release !== null) readCustomerChargeRelease(row);
   if (row.status === "settled") {
-    if (exactInteger(row.actual_microusd) !== actual || row.resolved_model !== (input.jevProvenance?.resolvedModel ?? null)
-      || row.pricing_version !== (input.jevProvenance?.pricingVersion ?? null)
-      || (input.customerCharge === "waived" && row.customer_charge_release === null)
-      || (input.manualReview && (row.manual_review_evidence_ref !== input.manualReview.evidenceRef
-        || row.manual_review_actor !== input.manualReview.reviewer))) {
+    if (input.customerCharge === "waived" && row.customer_charge_release === null) {
       throw new AiFundedPolicyError("idempotency_conflict");
     }
-    return FundedAiSettlementResponseSchema.parse(JSON.parse(row.settlement_response!));
+    return replaySettledFundedUsage(row, { ...input, actualCostMicrousd: actual }).response;
   }
   if (row.status !== "in_flight" && !(row.status === "expired" && row.customer_charge_release !== null)) {
     throw new AiFundedPolicyError("reservation_closed");
@@ -65,8 +63,8 @@ export async function settlePostpaidUsage(executor: PlatformDB["executor"], row:
     releasedMicrousd: 0, remainingBalanceMicrousd: funding.remainingBalanceMicrousd,
     remainingBudgetMicrousd: funding.remainingBudgetMicrousd, funding, settledAt: checkedAt, status: "settled" });
   await executor.updateTable("ai_funded_usage_reservations").set({ status: "settled", actual_microusd: actual,
-    settled_at: checkedAt, finalization_mode: "exact", resolved_model: input.jevProvenance?.resolvedModel ?? null,
-    pricing_version: input.jevProvenance?.pricingVersion ?? null, settlement_response: JSON.stringify(response),
+    settled_at: checkedAt, finalization_mode: "exact", ...provenanceColumns(input.jevProvenance ?? input.upstreamProvenance),
+    settlement_response: JSON.stringify(response),
     ...(input.manualReview ? { manual_review_evidence_ref: input.manualReview.evidenceRef,
       manual_review_actor: input.manualReview.reviewer, manual_reviewed_at: checkedAt } : {}) })
     .where("reservation_id", "=", row.reservation_id).where("actual_microusd", "is", null)

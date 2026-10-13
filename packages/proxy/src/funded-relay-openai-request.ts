@@ -144,7 +144,12 @@ function serializeQwenPlusRequest(value: unknown) {
       ...(parsed.stream ? { stream_options: { include_usage: true } } : {}) }) };
 }
 
-export function serializeFundedOpenAiRequest(value: unknown) {
+export type FundedOpenAiRequest = z.infer<typeof RequestSchema> & { max_tokens: number };
+
+export function serializeFundedOpenAiRequest(
+  value: unknown,
+  allowedModelIds: ReadonlySet<string> = new Set(),
+): { request: FundedOpenAiRequest; body: string } {
   if (typeof value === "object" && value !== null && "model" in value) {
     if (value.model === GOOGLE_GEMINI_38_FLASH_MODEL_ID) return serializeGeminiRequest(value);
     if (value.model === ALIBABA_QWEN_37_PLUS_MODEL_ID) return serializeQwenPlusRequest(value);
@@ -152,21 +157,27 @@ export function serializeFundedOpenAiRequest(value: unknown) {
   }
   const parsed = RequestSchema.parse(value);
   const model = managedWorkersAiModel(parsed.model);
-  if (!model) throw new Error("Unsupported funded AI model");
-  if (parsed.reasoning_effort !== undefined && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
+  if (!model && !allowedModelIds.has(parsed.model)) throw new Error("Unsupported funded AI model");
+  if (model && parsed.reasoning_effort !== undefined
+    && !model.reasoningEfforts.includes(parsed.reasoning_effort)) {
     throw new Error("Unsupported reasoning effort");
   }
-  const reasoningEffort = parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined);
+  if (!model && parsed.reasoning_effort !== undefined
+    && !["low", "high", "max"].includes(parsed.reasoning_effort)) {
+    throw new Error("Unsupported reasoning effort");
+  }
+  const reasoningEffort = parsed.reasoning_effort
+    ?? (model ? (model.reasoningEfforts.includes("low") ? "low" : undefined) : "low");
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
   const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
   const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
-  const body = JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
+  const body = JSON.stringify({ ...rest, [model?.outputTokenField ?? "max_tokens"]: maxTokens,
     ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false });
   const hasImages = hasImageInput(parsed.messages);
   // The managed Bot validator accepts only local PNG/JPEG/WebP data URLs.
   // Match the funded Chat attachment cap before obtaining policy or credit.
-  if (hasImages && (!model.vision || !validateBotImageInferenceBody(
+  if (hasImages && (!model?.vision || !validateBotImageInferenceBody(
     body, BOT_INFERENCE_TEXT_MAX_BYTES, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES,
   ).valid)) throw new Error("Unsupported funded AI image input");
   return { request, body };
