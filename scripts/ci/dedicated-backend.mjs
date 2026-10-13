@@ -8,7 +8,25 @@ export async function requestingSnapshot(github,context,refresh){
  if(!pull)throw new Error('Unsupported dedicated requesting source');
  return {sourceSha:context.sha,headSha:pull.head.sha,headRef:pull.head.ref,baseSha:pull.base.sha,baseRef:pull.base.ref,prNumber:pull.number};
 }
+// Main is Linux-first: anything short of a verified Linux pass inside these bounds runs full hosted CI instead.
+export const MAIN_LINUX_ADMISSION_ATTEMPTS=10;
+const hostedFallback=error=>({provider:'hosted',infrastructureFallback:true,controllerRunId:0,fallbackReason:error.message});
+// Main can move before this step starts; a commit that is no longer main still gets full hosted CI.
+export async function decideRequestingBackend(github,context,refresh,requesting,options={}){
+ const main=!refresh&&context.eventName==='push'&&context.ref==='refs/heads/main';
+ let snapshot;
+ try{snapshot=await requestingSnapshot(github,context,refresh);}
+ catch(error){if(!main||!(error instanceof Error))throw error;return hostedFallback(error);}
+ return decideCiBackend(github,{...context.repo,...snapshot,...requesting},options);
+}
+export const MAIN_LINUX_BUDGET_MS=25*60_000;
 export async function decideCiBackend(github,expected,options={}){
- const result=await waitForDedicatedResult(github,expected,{...options,allowInfrastructureFallback:true});
+ const main=expected.sourceKind==='main';
+ let result;
+ try{result=await waitForDedicatedResult(github,expected,{...options,allowInfrastructureFallback:true,...(main?{admissionAttempts:MAIN_LINUX_ADMISSION_ATTEMPTS,maxMilliseconds:MAIN_LINUX_BUDGET_MS}:{})});}
+ catch(error){
+  if(!main||!(error instanceof Error))throw error;
+  return hostedFallback(error);
+ }
  return result.infrastructure?{provider:'hosted',infrastructureFallback:true,controllerRunId:result.runId}:{provider:'linux',infrastructureFallback:false,controllerRunId:result.runId};
 }
