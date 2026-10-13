@@ -56,17 +56,6 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const runInFlight = onboardingRunInFlight(state);
 
   useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key.toLowerCase() === "k" && event.shiftKey && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        actions.openFullChat();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [actions]);
-
-  useEffect(() => {
     if (isBubble || keepInCorner) return;
     const onPointer = (event: PointerEvent) => {
       if (rootRef.current && event.target instanceof Node && !rootRef.current.contains(event.target)) {

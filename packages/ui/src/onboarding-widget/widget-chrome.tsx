@@ -51,7 +51,7 @@ export function MoreMenu({ prefs, onPrefs, onFullChat, onShrink, onClose }: {
         <Icon icon={PinIcon} size={14} /><span>Keep in the corner</span><Toggle on={prefs.keepInCorner} />
       </button>
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={() => { onClose(); onFullChat(); }}>
-        <Icon icon={ArrowExpand01Icon} size={14} /><span>Open as full chat</span><kbd>⌘⇧K</kbd>
+        <Icon icon={ArrowExpand01Icon} size={14} /><span>Open as full chat</span>
       </button>
       <button type="button" role="menuitem" className="mxo-menu__row mxo-menu__row--compact" onClick={onShrink}>
         <Icon icon={ArrowShrink02Icon} size={14} /><span>Shrink to a bubble</span>

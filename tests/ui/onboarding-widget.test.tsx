@@ -182,6 +182,20 @@ describe("OnboardingWidget", () => {
     expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
   });
 
+  it("opens full chat from the menu only, leaving Cmd/Ctrl+Shift+K to the host", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} />);
+    fireEvent.keyDown(window, { key: "K", shiftKey: true, metaKey: true });
+    fireEvent.keyDown(window, { key: "k", shiftKey: true, ctrlKey: true });
+    expect(actions.openFullChat).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const fullChat = within(screen.getByRole("menu", { name: "Matrix options" })).getByRole("menuitem", { name: "Open as full chat" });
+    expect(fullChat.querySelector("kbd")).toBeNull();
+    fireEvent.click(fullChat);
+    expect(actions.openFullChat).toHaveBeenCalledTimes(1);
+  });
+
   it("shows which AI is in use on the task list and hides it mid-task", () => {
     render(<Harness actions={makeActions()} />);
     expect(screen.getByText(/Matrix AI ·/)).toBeInTheDocument();
