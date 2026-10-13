@@ -11,7 +11,7 @@ import {
   type OnboardingWidgetState,
 } from "../../packages/contracts/src/index.js";
 import { OnboardingWidget } from "../../packages/ui/src/onboarding-widget/index.js";
-import type { OnboardingWidgetActions, OnboardingWidgetApp } from "../../packages/ui/src/onboarding-widget/index.js";
+import type { OnboardingWidgetActions, OnboardingWidgetApp, OnboardingWidgetRepo } from "../../packages/ui/src/onboarding-widget/index.js";
 
 const APPS: OnboardingWidgetApp[] = [
   { id: "google_calendar", name: "Google Calendar", category: "work", status: "available", logoUrl: "https://example.test/gcal.png" },
@@ -36,8 +36,10 @@ function makeActions(): OnboardingWidgetActions {
   };
 }
 
-function Harness({ actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false }: {
+function Harness({ actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false, apps = APPS, repos = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }] }: {
   actions: OnboardingWidgetActions;
+  apps?: OnboardingWidgetApp[];
+  repos?: OnboardingWidgetRepo[] | null;
   initial?: OnboardingWidgetState;
   runView?: OnboardingRunView | null;
   creditsExhausted?: boolean;
@@ -61,8 +63,8 @@ function Harness({ actions, initial, runView = null, creditsExhausted = false, e
       state={state}
       actions={wired}
       userName="Sahar"
-      apps={APPS}
-      repos={[{ name: "portfolio", url: "https://github.com/sahar/portfolio", updatedLabel: "2h ago" }]}
+      apps={apps}
+      repos={repos}
       runView={runView}
       connectedProviders={[]}
       creditsExhausted={creditsExhausted}
@@ -347,15 +349,39 @@ describe("OnboardingWidget", () => {
     expect(screen.getByText("Working…")).toBeInTheDocument();
   });
 
-  it("lists apps with Connected chips and confirms on Done", () => {
-    render(<Harness actions={makeActions()} />);
+  it("lists apps with Connected chips and confirms only apps connected on this visit", () => {
+    const actions = makeActions();
+    const { rerender } = render(<Harness actions={actions} />);
     fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
     expect(screen.getByText("Connect the apps you use.")).toBeInTheDocument();
     expect(screen.getByText("Connected")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "git" } });
     expect(screen.queryByText("Gmail")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByLabelText("Search apps"), { key: "Escape" });
+    const calendarConnected = APPS.map((app) => (app.id === "google_calendar" ? { ...app, status: "connected" as const } : app));
+    rerender(<Harness actions={actions} apps={calendarConnected} />);
+    fireEvent.click(screen.getByRole("button", { name: /Open Matrix/ }));
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.getByText("Gmail connected")).toBeInTheDocument();
+    expect(actions.dispatch).toHaveBeenLastCalledWith({ type: "apps.closed", connectedNames: ["Google Calendar"] });
+    expect(screen.getByText("Google Calendar connected")).toBeInTheDocument();
+  });
+
+  it("does not claim earlier connections when Done is pressed right away", () => {
+    const actions = makeActions();
+    render(<Harness actions={actions} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(actions.dispatch).toHaveBeenLastCalledWith({ type: "apps.closed", connectedNames: [] });
+    expect(screen.queryByText("Gmail connected")).not.toBeInTheDocument();
+  });
+
+  it("explains an empty repo list and asks for a repo link", () => {
+    const events: OnboardingWidgetEvent[] = [{ type: "task.selected", taskId: "work-on-code", connectedServices: ["github"] }];
+    render(<Harness actions={makeActions()} events={events} repos={[]} />);
+    expect(screen.getByText("No repos found")).toBeInTheDocument();
+    expect(screen.getByText("Paste a repo link below to work on it.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Or paste a repo URL…")).toBeInTheDocument();
   });
 
   it("explains an empty app search and clears the search and filter", () => {

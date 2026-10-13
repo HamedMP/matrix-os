@@ -14,6 +14,7 @@ import { AiMenu } from "./ai-panel.js";
 import { providerWaitingLabel } from "./helpers.js";
 import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
+import { useAppsVisit } from "./use-apps-visit.js";
 import { useMenuFocus } from "./use-menu-focus.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
@@ -51,7 +52,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
   const focusBubbleRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [appQuery, setAppQuery] = useState("");
+  const isApps = state.screen.kind === "apps";
+  const appsVisit = useAppsVisit(isApps, props.apps);
   const isBubble = state.size === "bubble";
   const keepInCorner = prefs.keepInCorner;
   const runInFlight = onboardingRunInFlight(state);
@@ -106,7 +108,6 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     else minimize();
   };
 
-  const isApps = state.screen.kind === "apps";
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const text = draft.trim().slice(0, ONBOARDING_FREEFORM_MAX_CHARS);
@@ -134,15 +135,15 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
       <section className={`mxo-card mxo-widget${compact ? "" : " mxo-widget--tall"}`} aria-label="Matrix">
         <WidgetHeader status={headerStatus(state, runView)} prefs={prefs} actions={actions} moreOpen={moreOpen} onMoreOpen={setMoreOpen} onMinimize={minimize} />
 
-        <WidgetBody props={props} appQuery={appQuery} onAppQuery={setAppQuery} runInFlight={runInFlight} />
+        <WidgetBody props={props} apps={appsVisit} runInFlight={runInFlight} />
 
         <footer className="mxo-footer">
           {state.ai?.step === "menu" ? <AiMenu choice={state.aiChoice} connected={props.connectedProviders} actions={actions} /> : null}
           <form className="mxo-composer" onSubmit={submit}>
             <input
               ref={inputRef}
-              value={isApps ? appQuery : draft}
-              onChange={(event) => (isApps ? setAppQuery(event.target.value) : setDraft(event.target.value))}
+              value={isApps ? appsVisit.appQuery : draft}
+              onChange={(event) => (isApps ? appsVisit.onAppQuery(event.target.value) : setDraft(event.target.value))}
               placeholder={placeholderFor(state)}
               aria-label="Message Matrix"
               maxLength={ONBOARDING_FREEFORM_MAX_CHARS}
