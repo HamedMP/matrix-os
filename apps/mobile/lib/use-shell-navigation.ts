@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useNavigation } from "expo-router";
 import { DrawerActions, type NavigationProp, type ParamListBase } from "expo-router/react-navigation";
 
-import { TABS_ROUTE, chatScreenFromAnotherTabParams } from "@/lib/shell-routes";
+import { TABS_ROUTE, chatScreenFromAnotherTabParams, tabScreenParams } from "@/lib/shell-routes";
 
 /** Opens the side panel from a screen inside the tabs. */
 export function useOpenSidePanel(): () => void {
@@ -17,5 +17,13 @@ export function useShowChatScreen(): () => void {
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
   return useCallback(() => {
     navigation.navigate(TABS_ROUTE, chatScreenFromAnotherTabParams());
+  }, [navigation]);
+}
+
+/** Switches to the Terminal or Settings tab, from a screen in another tab. */
+export function useShowTab(): (tab: Parameters<typeof tabScreenParams>[0]) => void {
+  const navigation = useNavigation<NavigationProp<ParamListBase>>();
+  return useCallback((tab) => {
+    navigation.navigate(TABS_ROUTE, tabScreenParams(tab));
   }, [navigation]);
 }

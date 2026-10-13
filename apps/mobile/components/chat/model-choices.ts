@@ -2,12 +2,12 @@ import {
   canonicalProviderAvailabilityReasonLabel,
   canonicalProviderFundingState,
   canonicalProviderModelRouteLabel,
-  isLegacyMatrixSdkProvider,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
 
 import type { Provider } from "@/components/ui";
+import { catalogSelection, selectionBindingCurrent, startsChats } from "@/lib/canonical-chat-selection";
 
 type Catalog = CanonicalProviderCatalog | null;
 type Selection = CanonicalChatModelSelection | null;
@@ -69,9 +69,9 @@ function routeName(instance: ProviderInstance | undefined, modelLabel: string): 
   return route.startsWith(prefix) ? route.slice(prefix.length) : "";
 }
 
-/** Every engine entry of the catalog but the retired Matrix SDK route. */
+/** Every engine entry of the catalog a chat can be started on. */
 function offered(catalog: Catalog): ProviderInstance[] {
-  return catalog?.instances.filter((instance) => !isLegacyMatrixSdkProvider(instance)) ?? [];
+  return catalog?.instances.filter(startsChats) ?? [];
 }
 
 function canRun(instance: ProviderInstance, model: ProviderModel): boolean {
@@ -97,13 +97,18 @@ function engineIdOf(instance: ProviderInstance): string {
 function savedSelection(catalog: Catalog, selection: Selection) {
   const instance = selection ? catalog?.instances.find((candidate) => candidate.id === selection.instanceId) : undefined;
   const model = instance?.models.find((candidate) => candidate.id === selection?.model);
-  const listed = instance !== undefined && model !== undefined && !isLegacyMatrixSdkProvider(instance);
-  const available = listed && canRun(instance, model);
+  const listed = instance !== undefined && model !== undefined && startsChats(instance);
+  const runnable = listed && canRun(instance, model);
+  // A model that runs through the person's own account runs only for a
+  // selection that names the account the route runs through now.
+  const available = runnable && selection !== null && selectionBindingCurrent(instance, selection);
   return {
     key: selection ? modelKey(selection.instanceId, selection.model) : null,
     instance,
     model,
     available,
+    /** The model can run, but not as saved: choosing it again names the account it runs through now. */
+    rebind: runnable && !available,
     modelLabel: model?.displayName ?? selection?.model ?? "Models unavailable",
     // A saved model whose credit is held is listed as held instead.
     state: available || (listed && creditReserved(instance)) ? null : catalog ? "unavailable" : "checking",
@@ -202,6 +207,9 @@ export function modelNotices(catalog: Catalog, selection: Selection, catalogLoad
     : saved.instance && saved.model && saved.instance.availability !== "available"
       ? canonicalProviderAvailabilityReasonLabel(saved.instance)
       : "Saved model unavailable";
+  const remedy = saved.rebind
+    ? "Connection changed. Choose the model again or check Agents & providers."
+    : `${reason}. Choose another model or check Agents & providers.`;
 
   return {
     reserved: modelNotes(instances.filter(creditReserved), "Credit reserved", () => true),
@@ -210,13 +218,15 @@ export function modelNotices(catalog: Catalog, selection: Selection, catalogLoad
       "Model unavailable",
       (model) => model.availability !== "available",
     ),
-    recovery: selection && !saved.available && !catalogLoading
-      ? `${reason}. Choose another model or check Agents & providers.`
-      : null,
+    recovery: selection && !saved.available && !catalogLoading ? remedy : null,
   };
 }
 
-/** The selection a tap on a model makes, or null when that model cannot run. */
+/**
+ * The selection a tap on a model makes, or null when that model cannot run.
+ * It carries the values the engine names for its options, among them the
+ * account a model run through the person's own subscription is bound to.
+ */
 export function chosenSelection(catalog: Catalog, key: string): CanonicalChatModelSelection | null {
   const index = key.indexOf(MODEL_VALUE_SEPARATOR);
   if (index < 0) return null;
@@ -224,7 +234,7 @@ export function chosenSelection(catalog: Catalog, key: string): CanonicalChatMod
   const modelId = key.slice(index + MODEL_VALUE_SEPARATOR.length);
   const instance = offered(catalog).find((candidate) => candidate.id === instanceId);
   const model = instance?.models.find((candidate) => candidate.id === modelId);
-  return instance && model && canRun(instance, model) ? { instanceId: instance.id, model: model.id } : null;
+  return instance && model && canRun(instance, model) ? catalogSelection(instance, model.id) : null;
 }
 
 /** The catalog can run the saved selection as it stands. */

@@ -110,14 +110,19 @@ describe("agent chat screen", () => {
       expect(screen.getByPlaceholderText("Ask Account research…")).toBeTruthy();
     });
 
-    it("has no model control and no microphone: attach on the left, send on the right", () => {
-      renderScreen();
+    it("has no model control and no microphone: the control that adds to the message on the left, send on the right", () => {
+      renderScreen({
+        composer: {
+          draft: "", onChangeDraft: jest.fn(), canSend: false, onSend: jest.fn(),
+          addControl: <Text accessibilityRole="button">Add to message</Text>,
+        },
+      });
 
       expect(screen.UNSAFE_queryByType(ModelTrigger)).toBeNull();
       expect(screen.queryByRole("button", { name: "Model" })).toBeNull();
       expect(screen.UNSAFE_queryAllByType(Icon).some((icon) => icon.props.icon === MicIcon)).toBe(false);
       const leading = screen.getByTestId("composer-toolbar-leading");
-      expect(within(leading).getAllByRole("button").map((button) => button.props.accessibilityLabel)).toEqual(["Attach"]);
+      expect(within(leading).getAllByRole("button").map((button) => button.props.children)).toEqual(["Add to message"]);
       expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
     });
 

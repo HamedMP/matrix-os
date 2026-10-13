@@ -6,16 +6,25 @@ import {
   modelNotices,
   modelTrigger,
   openingEngineId,
+  selectionCanRun,
 } from "../components/chat/model-choices";
 
 import {
+  API_KEY,
   GLM,
   GPT,
+  PLAN,
+  REASONING,
   SONNET,
+  apiKeyBinding,
+  apiKeyInstance,
   catalogOf,
   codexInstance,
   engineInstance,
   matrixInstance,
+  planAgentInstance,
+  planBinding,
+  planInstance,
 } from "./model-test-catalog";
 
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
@@ -118,6 +127,19 @@ describe("the engines of the model sheet", () => {
     ), SONNET);
 
     expect(engines.flatMap((engine) => engine.models).map((model) => model.name)).toEqual(["Sonnet 5"]);
+  });
+
+  it("leaves out a route that only agents run on", () => {
+    const catalog = catalogOf(matrixInstance(), planAgentInstance(), planInstance());
+    const [matrix, ...others] = modelEngines(catalog, SONNET);
+
+    expect(others).toEqual([]);
+    expect(matrix!.models.map(({ name, detail }) => ({ name, detail }))).toEqual([
+      { name: "Sonnet 5", detail: "Matrix AI" },
+      { name: "GPT-5.6-Sol", detail: "Matrix AI · ChatGPT subscription" },
+    ]);
+    expect(modelEngines(catalogOf(planAgentInstance()), null)).toEqual([]);
+    expect(modelTrigger(catalogOf(planAgentInstance()), null, false).canChoose).toBe(false);
   });
 
   it("keeps a saved model the catalog no longer lists: first in its engine, checked, not available", () => {
@@ -233,6 +255,34 @@ describe("choosing a model", () => {
     expect(chosenSelection(catalog, modelKey(SONNET.instanceId, SONNET.model))).toEqual(SONNET);
   });
 
+  it("carries the value the engine names for each of its options, and none for an option without one", () => {
+    const { defaultValue: _default, ...unnamed } = REASONING;
+    const options = [REASONING, { ...unnamed, id: "tone", label: "Tone" }, { ...REASONING, id: "tier", label: "Tier", defaultValue: "low" }];
+    const named = [{ id: "effort", value: "medium" }, { id: "tier", value: "low" }];
+    const other = { ...GPT, model: "gpt-5.6-terra" };
+    const withDefault = catalogOf(codexInstance([[GPT.model, "GPT-5.6-Sol"], [other.model, "GPT-5.6-Terra"]], {
+      options,
+      defaultSelection: { ...GPT, options: [{ id: "effort", value: "high" }] },
+    }));
+
+    // The default selection's values are for its own model only.
+    expect(chosenSelection(withDefault, modelKey(GPT.instanceId, GPT.model)))
+      .toEqual({ ...GPT, options: [{ id: "effort", value: "high" }, { id: "tier", value: "low" }] });
+    expect(chosenSelection(withDefault, modelKey(other.instanceId, other.model))).toEqual({ ...other, options: named });
+  });
+
+  it("binds a model run through the person's own subscription to the account the catalog lists", () => {
+    const other = { ...PLAN, model: "gpt-5.6-terra" };
+    const plan = catalogOf(planInstance([[PLAN.model, "GPT-5.6-Sol"], [other.model, "GPT-5.6-Terra"]]));
+
+    expect(chosenSelection(plan, modelKey(PLAN.instanceId, PLAN.model))).toEqual({ ...PLAN, options: planBinding() });
+    expect(chosenSelection(plan, modelKey(other.instanceId, other.model))).toEqual({ ...other, options: planBinding() });
+  });
+
+  it("gives nothing for a route that only agents run on", () => {
+    expect(chosenSelection(catalogOf(planAgentInstance()), modelKey("matrix_chatgpt_plan", PLAN.model))).toBeNull();
+  });
+
   it("gives nothing for a model that cannot run, a retired route or an unknown key", () => {
     expect(chosenSelection(catalog, modelKey(GLM.instanceId, GLM.model))).toBeNull();
     expect(chosenSelection(catalog, modelKey(GPT.instanceId, GPT.model))).toBeNull();
@@ -240,5 +290,56 @@ describe("choosing a model", () => {
     expect(chosenSelection(catalog, modelKey("gone_default", "gone"))).toBeNull();
     expect(chosenSelection(catalog, "not-a-key")).toBeNull();
     expect(chosenSelection(null, modelKey(SONNET.instanceId, SONNET.model))).toBeNull();
+  });
+});
+
+describe("a saved model run through the person's own subscription", () => {
+  const catalog = catalogOf(planInstance());
+  const bound = { ...PLAN, options: planBinding() };
+  // As saved before the account was connected again, and as a build that left the account out saved it.
+  const outdated = [{ ...PLAN, options: planBinding("acct_first", "0") }, { ...PLAN, options: planBinding("acct_other") }, PLAN];
+
+  it("can run while it is bound to the account the catalog lists", () => {
+    expect(selectionCanRun(catalog, bound)).toBe(true);
+    expect(modelTrigger(catalog, bound, false).label).toBe("Matrix AI · ChatGPT subscription · GPT-5.6-Sol");
+    expect(modelNotices(catalog, bound, false).recovery).toBeNull();
+  });
+
+  it("cannot run once that account has been replaced, or when it was saved without one", () => {
+    for (const saved of outdated) {
+      expect(selectionCanRun(catalog, saved)).toBe(false);
+      expect(modelTrigger(catalog, saved, false).label).toBe("Matrix AI · ChatGPT subscription · GPT-5.6-Sol · unavailable");
+    }
+  });
+
+  it("stays in the list, checked, so that it can be chosen again, and says to do so", () => {
+    for (const saved of outdated) {
+      expect(modelEngines(catalog, saved)[0]!.models).toEqual([
+        expect.objectContaining({ key: modelKey(PLAN.instanceId, PLAN.model), selected: true, available: true }),
+      ]);
+      expect(modelNotices(catalog, saved, false).recovery)
+        .toBe("Connection changed. Choose the model again or check Agents & providers.");
+    }
+  });
+
+  it("is an unavailable saved model like any other once the account is disconnected", () => {
+    const disconnected = catalogOf(planInstance([], [], { availability: "unavailable" }));
+
+    expect(selectionCanRun(disconnected, bound)).toBe(false);
+    expect(modelNotices(disconnected, bound, false).recovery)
+      .toBe("Saved model unavailable. Choose another model or check Agents & providers.");
+  });
+
+  it("is bound the same way when the account is the person's own Anthropic API key", () => {
+    const keyed = catalogOf(apiKeyInstance());
+    const chosen = chosenSelection(keyed, modelKey(API_KEY.instanceId, API_KEY.model));
+
+    expect(chosen).toEqual({ ...API_KEY, options: apiKeyBinding() });
+    expect(selectionCanRun(keyed, chosen)).toBe(true);
+    // A key replaced since, and a selection saved without one.
+    expect(selectionCanRun(keyed, { ...API_KEY, options: apiKeyBinding("7c9e6679-7425-40de-944b-e07fc1f90ae7") })).toBe(false);
+    expect(selectionCanRun(keyed, API_KEY)).toBe(false);
+    expect(modelNotices(keyed, API_KEY, false).recovery)
+      .toBe("Connection changed. Choose the model again or check Agents & providers.");
   });
 });

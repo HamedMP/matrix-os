@@ -52,3 +52,11 @@ export function sharedScreenParams() {
 export function projectsScreenParams() {
   return { screen: CHATS_TAB_ROUTE, params: { screen: "projects/index" } };
 }
+
+/**
+ * Shows the Terminal or Settings tab from another tab. Each is a single
+ * screen, so naming the tab is enough.
+ */
+export function tabScreenParams(tab: "terminal" | "settings") {
+  return { screen: tab };
+}
