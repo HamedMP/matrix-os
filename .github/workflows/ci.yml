@@ -47,10 +47,12 @@ jobs:
       snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
-      trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
-      should_run: ${{ steps.changed.outputs.should_run }}
-      docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
-      os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
+      # A superseded PR head skips every heavy lane: queued runs for pushes that a newer push replaced
+      # would otherwise each spend a full CI on the saturated hosted runner pool.
+      trigger_requested: ${{ steps.superseded.outputs.stale == 'true' && 'true' || steps.changed.outputs.trigger_requested }}
+      should_run: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.should_run }}
+      docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}
+      os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
       dedicated_required: ${{ steps.route.outputs.required }}
     steps:
@@ -113,6 +115,24 @@ jobs:
             echo "Checkout fetch attempt $attempt failed; retrying in ${backoff_seconds}s"
             sleep "$backoff_seconds"
           done
+
+      - name: Skip superseded PR heads
+        id: superseded
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pull=context.payload.pull_request;
+            try{
+              const {data:live}=await github.rest.pulls.get({...context.repo,pull_number:pull.number,request:{timeout:10000}});
+              const stale=live.head.sha!==pull.head.sha;
+              core.setOutput('stale',String(stale));
+              if(stale)core.notice(`PR head ${pull.head.sha} was superseded by ${live.head.sha}; skipping CI lanes for the old head.`);
+            }catch(error){
+              // Never block CI on this optimization: run normally when the live head is unknown.
+              core.warning(`Superseded-head check unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+              core.setOutput('stale','false');
+            }
 
       - name: Detect source changes
         id: changed

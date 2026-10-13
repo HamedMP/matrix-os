@@ -36,7 +36,7 @@ describe("OS-view parity CI path planning", () => {
   });
 
   it("wires the path plan into a dedicated aggregate CI gate", () => {
-    expect(ciWorkflow).toContain("os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}");
+    expect(ciWorkflow).toContain("os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}");
     expect(ciWorkflow).toMatch(/^  os-view-parity:\n/mu);
     expect(ciWorkflow).toContain("OS View Parity");
     expect(ciWorkflow).toContain("OS_VIEW_PARITY_RESULT: ${{ needs.os-view-parity.result }}");
