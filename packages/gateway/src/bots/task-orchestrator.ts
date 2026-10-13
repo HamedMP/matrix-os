@@ -1,3 +1,4 @@
+import type { BotInputHistoryReader } from "./historical-input.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareBotInputs, type PreparedBotInputs } from "./admitted-input.js";
 import { isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
@@ -95,7 +96,7 @@ export class BotTurnError extends Error {
 }
 
 export function createBotTaskOrchestrator(deps: {
-  homePath?: string; expectedOwnerId?: string | null;
+  homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   assertSource?(binding: import("./runtime-registry.js").PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   bindings: Pick<BotBindingsRepository, "forChat">;
   /** Task writes and their `bot.task.updated` events commit together. */
@@ -239,7 +240,7 @@ export function createBotTaskOrchestrator(deps: {
       return settle(task, "blocked", "model_unavailable");
     }
     try {
-      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
+      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } });
     } catch (error: unknown) {
       if (!(error instanceof BotBrokerActionError)) console.warn("[bots] submitted input unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -271,6 +272,7 @@ export function createBotTaskOrchestrator(deps: {
 
     let runtime;
     try {
+      await run.inputs.revalidate();
       runtime = await deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
@@ -292,6 +294,7 @@ export function createBotTaskOrchestrator(deps: {
       // Cancelled while the runtime was being admitted: the run never starts.
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
       run.inputs.bind(binding);
+      await run.inputs.revalidate();
       await deps.assertSource?.(binding, input.signal);
       if (input.signal.aborted || run.stopping) return await settle(task, "cancelled");
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } });

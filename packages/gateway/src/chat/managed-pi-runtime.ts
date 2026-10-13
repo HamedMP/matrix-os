@@ -1,3 +1,4 @@
+import type { BotInputHistoryReader } from "../bots/historical-input.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareBotInputs, type PreparedBotInputs } from "../bots/admitted-input.js";
 import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec } from "@matrix-os/contracts";
@@ -44,7 +45,7 @@ interface Active {
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
-  homePath?: string; expectedOwnerId?: string | null;
+  homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   isolatedChat?: import("./isolated-chat-envelope.js").IsolatedChatAuthority;
@@ -87,8 +88,9 @@ export function createManagedPiRuntime(deps: {
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       if (run.isolated) resolved.route = { ...resolved.route, maxOutputTokens: 256 };
       stage = "input";
-      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
+      run.inputs = await prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } });
+      await run.inputs.revalidate();
       stage = "admission";
       run.binding = await deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved });
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
@@ -104,6 +106,7 @@ export function createManagedPiRuntime(deps: {
         turn: { kind: "prompt", text: run.inputs.prompt(input.prompt), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) } });
       run.queue.push({ kind: "state", state: { runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration } });
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
+      await run.inputs.revalidate();
       await deps.assertSource?.(run.binding, signal);
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       stage = "worker_dispatch";

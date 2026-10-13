@@ -92,7 +92,37 @@ limited to recognized user image blocks and their decoded aggregate size.
 Remote image URLs, unknown image shapes, nesting over24, more than32,768 nodes,
 and oversized nonimage text/whitespace are rejected. The newly supported large-image subscription transport requires the matching
 rebuilt native peer; older peers retain their existing request limits. Native
-image bytes must not survive in saved history; subsequent turns use bounded history placeholders.
+image bytes must not survive in saved history. Placeholders bound persisted sessions;
+they do not authorize or replace subsequent byte consumption. For later turns,
+a gateway-owned reader may re-resolve retained canonical upload references from
+the same active private Chat into fresh ephemeral native inputs under CURRENT
+owner, model, source/account/grant, run and cancellation authority.
+
+The registered reader uses owner-scoped canonical repository reads and requires
+the exact active run/latest attempt/turn plus its immutable history boundary.
+Only the newest40 candidate committed prior user ai_request upload references
+from the most recent40-message prefix are considered; model/session text, stale aliases, assistant/tool/imported data,
+referenced Chats, collaboration/shared views and post-boundary records grant no
+access. Recheck canonical identity after asynchronous reads/capture and before admission.
+Qualify the selected route before local owner-byte capture; once the binding is
+admitted, revalidate its current source before dispatch and before/after every
+existing chunk/tool read. No revoked grant may receive bytes or inference.
+
+Current submissions remain strict and take priority. Deduplicate retained upload
+IDs/owner references; append newest eligible history within the SAME combined
+count/per-item/aggregate limits, including funded image1MiB and the CURRENT
+model's explicit vision capability. Missing/expired/unsupported/overbudget history
+gets a bounded safe unavailable index and does not break unrelated text turns;
+invalid current attachments still fail safely. The base prompt and current uploads
+retain the existing65,536 UTF-16-unit prompt limit. Fit at most4,096 UTF-16 units of advisory history notices within remaining space;
+if required historical alias metadata cannot fit, drop only those ephemeral
+history mounts rather than reject an otherwise valid text turn. File access
+retains artifact.read authority. Fresh aliases and an authoritative attachment sequence/label index
+supersede stale prior aliases without exposing raw owner paths or mounting home.
+Labels and bytes remain untrusted data. Existing upload TTL/count cleanup still
+limits availability; older/out-of-window or removed uploads require reattachment.
+No new public endpoint, wire shape, filesystem mount or native peer protocol is
+introduced. Terminal/cancel disposal still clears temporary captured bytes.
 
 Command content uses the existing encryption key with separate AAD
 `matrix-tool-preview:v1:<toolCallId>`. `protectedPreview` is an internal sidecar;
@@ -131,7 +161,13 @@ Canonical structured progress and Worked duration remain the state source.
 ### 5. Good / base / bad cases
 Good: GPT subscription Chat receives actual image pixels; an explicitly submitted
 text file can be read by its randomized `submitted-inputs/<uuid>` alias. A second
-turn loads a saved history without embedded image base64. A path-bearing shell
+turn loads a saved history without embedded image base64. A subsequent text-only
+request and reopened Chat/Bot must consume retained owner storage again through
+fresh aliases/nativepixels without re-uploading; use new image details and a
+same-size changed synthetic file marker absent from old replies/session to reject
+memory-only false passes. Both managed and recipe routes exercise current
+source/grant revocation, owner/Chat/history-boundary rejection, stalealias denial,
+combined budgets, missing/unsafe history and cancellation. A path-bearing shell
 script survives execution, reload and exact copy in the owner's private Chat.
 Base: text-only sends, existing safe short commands and actionable Bot waits
 retain their current behavior. Bad: a filename-only prompt, a foreign upload,
@@ -161,7 +197,7 @@ site PR is outside the user's explicitly requested one-PR scope.
 Wrong: advertise images based on a Matrix AI label, insert only an attachment
 filename into the prompt, and increase every bridge/session limit.
 Correct: use observed model input, capture authorized immutable bytes, transport
-recognized images through the bounded Bot opt-in, and persist history placeholders.
+recognized images through the bounded Bot opt-in, and persist history placeholders and re-resolve authorized retained references for ephemeral later-turn inputs.
 Wrong: relax safe labels globally or decrypt owner commands before shared/export
 projection. Correct: use the dedicated preview contract and owner-authenticated
 projection; strip the protected sidecar at every external legacy/export boundary.
