@@ -217,3 +217,6 @@ grants and actual provider pixel/marker evidence remain distinct gates. An
 isolated inventory endpoint does not itself prove normal gateway routing. No
 Main runtime deployment, credential migration or unapproved source/grant is part
 of this recovery.
+
+## Approved Bot layout correction (2026-10-13)
+Bot and ordinary Chat must share responsive compact picker behavior so long Bot, connection and model labels do not displace attachment, microphone or folder controls at narrow widths. Phase/current-model Working status follows plain process-row styling while retaining spinner and lifecycle semantics. Final responses use the standard spacing below Worked for receipts; receipt expansion/collapse and Markdown paragraph/code spacing remain intact. Production-component offline browser coverage must include narrow/wide long labels, running/completed status and expanded/collapsed receipts, with no provider traffic. Existing real conversations supply screenshot verification.
