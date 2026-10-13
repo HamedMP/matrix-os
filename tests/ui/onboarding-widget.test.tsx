@@ -182,6 +182,44 @@ describe("OnboardingWidget", () => {
     expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
   });
 
+  it("moves focus into the More and Change AI menus and back to their buttons on Escape", () => {
+    render(<Harness actions={makeActions()} />);
+    const more = screen.getByRole("button", { name: "More" });
+    more.focus();
+    fireEvent.click(more);
+    const options = screen.getByRole("menu", { name: "Matrix options" });
+    expect(within(options).getByRole("menuitemcheckbox", { name: /Keep in the corner/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(more).toHaveFocus();
+
+    const change = screen.getByRole("button", { name: "Change" });
+    change.focus();
+    fireEvent.click(change);
+    expect(within(screen.getByRole("menu", { name: "Change AI" })).getByRole("menuitemradio", { name: /Matrix AI/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "Change AI" })).not.toBeInTheDocument();
+    expect(change).toHaveFocus();
+    expect(screen.getByRole("region", { name: "Matrix" })).toBeInTheDocument();
+  });
+
+  it("returns focus to the More button even when clicking it did not focus it", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "More" })).toHaveFocus();
+  });
+
+  it("leaves focus where the user clicked when a menu closes from an outside click", () => {
+    render(<Harness actions={makeActions()} />);
+    const input = screen.getByPlaceholderText("Or type what you need…");
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    input.focus();
+    fireEvent.pointerDown(input);
+    expect(screen.queryByRole("menu", { name: "Matrix options" })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
   it("opens full chat from the menu only, leaving Cmd/Ctrl+Shift+K to the host", () => {
     const actions = makeActions();
     render(<Harness actions={actions} />);
@@ -318,6 +356,19 @@ describe("OnboardingWidget", () => {
     expect(screen.queryByText("Gmail")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByText("Gmail connected")).toBeInTheDocument();
+  });
+
+  it("explains an empty app search and clears the search and filter", () => {
+    render(<Harness actions={makeActions()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect apps first" }));
+    fireEvent.click(screen.getByRole("button", { name: "Dev" }));
+    fireEvent.change(screen.getByLabelText("Search apps"), { target: { value: "zzz" } });
+    expect(screen.getByText("No apps match")).toBeInTheDocument();
+    expect(screen.getByText("Try another name or filter.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByLabelText("Search apps")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Gmail")).toBeInTheDocument();
   });
 
   it("picks a repo from the list for Work on my code", () => {

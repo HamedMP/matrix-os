@@ -114,7 +114,14 @@ export function AppsScreen({ apps, actions, query, onQuery }: Pick<OnboardingWid
               )}
             </li>
           ))}
-          {visible.length === 0 ? <li className="mxo-muted mxo-app-empty">No apps match.</li> : null}
+          {visible.length === 0 ? (
+            <li className="mxo-app-empty">
+              <span className="mxo-tile mxo-tile--neutral"><Icon icon={Search01Icon} size={16} /></span>
+              <span className="mxo-result__title">No apps match</span>
+              <span className="mxo-muted">Try another name or filter.</span>
+              <button type="button" className="mxo-link" onClick={() => { onQuery(""); setFilter("all"); }}>Clear search</button>
+            </li>
+          ) : null}
         </ul>
       </div>
       <ButtonRow>

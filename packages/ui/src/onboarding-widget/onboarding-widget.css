@@ -555,7 +555,14 @@
 }
 
 .mxo-app__name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--mxo-ink); }
-.mxo-app-empty { padding: 8px 6px; }
+.mxo-app-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 6px;
+  text-align: center;
+}
 
 .mxo-connected {
   display: inline-flex;

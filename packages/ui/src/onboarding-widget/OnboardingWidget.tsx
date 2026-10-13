@@ -14,6 +14,7 @@ import { AiMenu } from "./ai-panel.js";
 import { providerWaitingLabel } from "./helpers.js";
 import { Icon } from "./parts.js";
 import type { OnboardingWidgetProps } from "./types.js";
+import { useMenuFocus } from "./use-menu-focus.js";
 import { ModelLine, OnboardingBubble, WidgetBody, WidgetHeader } from "./widget-chrome.js";
 
 function headerStatus(state: OnboardingWidgetState, runView: OnboardingRunView | null): { tone: "working" | "attention"; label: string } | null {
@@ -78,6 +79,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
     document.addEventListener("pointerdown", onPointer);
     return () => document.removeEventListener("pointerdown", onPointer);
   }, [actions, aiMenuOpen, moreOpen]);
+  useMenuFocus(rootRef, "more", moreOpen);
+  useMenuFocus(rootRef, "ai", aiMenuOpen);
 
   useEffect(() => {
     if (!isBubble || !focusBubbleRef.current) return;
