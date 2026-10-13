@@ -13,5 +13,12 @@ export function composePhaseCatalog(base: ChatProviderCatalogService, canonical:
   }
   const enhanced = decorate(base);
   return { ...base, getCatalog: enhanced.getCatalog,
-    refresh: async (principal, readOptions) => { await base.refresh(principal, readOptions); return enhanced.getCatalog(principal); } };
+    refresh: async (principal, readOptions) => {
+      const refreshed = await base.refresh(principal, readOptions);
+      // Decorate this call's fresh receipt, rather than discard it and take a
+      // second funded observation. Account authorities still observe normally;
+      // no snapshot or admission authority survives beyond this refresh call.
+      const refreshedBase = { ...base, getCatalog: async () => refreshed };
+      return decorate(refreshedBase).getCatalog(principal, undefined, readOptions);
+    } };
 }
