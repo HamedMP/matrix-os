@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 
 // Observation lifetime only. Neither principal evidence nor verification functions
@@ -29,4 +30,10 @@ export async function verifyNativeAccountMetadata<T extends CodexNativeAccountMe
 export function sameBoundNativeAccountPrincipal(left: CodexNativeAccountMetadata, right: CodexNativeAccountMetadata): boolean {
   const principal = bindings.get(left)?.principal;
   return principal !== undefined && principal === bindings.get(right)?.principal;
+}
+
+/** Nonsecret generation reference. Fresh verification remains mandatory before use. */
+export function nativeAccountPrincipalFingerprint(value: CodexNativeAccountMetadata): string | null {
+  const principal = bindings.get(value)?.principal;
+  return principal ? createHash("sha256").update(principal).digest("hex") : null;
 }

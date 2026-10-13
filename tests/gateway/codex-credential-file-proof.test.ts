@@ -43,3 +43,11 @@ it.each(["missing", "malformed", "oversize", "api-key", "no-credential"])("fails
   else await writeFile(f.file, state === "malformed" ? "not-json" : state === "oversize" ? "x".repeat(256 * 1024 + 1) : state === "api-key" ? JSON.stringify({ OPENAI_API_KEY: "private-api-key" }) : "{}");
   expect(await f.read()).toBeNull();
 });
+it("reconstructs the same nonsecret generation after reader recreation", async () => {
+  const f = await fixture();
+  const original = await f.read();
+  expect(original).not.toBeNull();
+  expect(await createCodexCredentialFileProofReader({ homePath: f.home })()).toBe(original);
+  const other = await fixture();
+  expect(await other.read()).not.toBe(original);
+});
