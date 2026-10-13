@@ -112,6 +112,13 @@ coverage identity, exact source/lock/image/harness provenance, dynamic icons and
 independently counted trace events. Failed or incomplete evidence cannot qualify.
 The host adds verified `containerGone` to the compact authenticated receipt.
 
+GitHub may normalize an Actions source check's requested controller link to its
+own check URL. That exact same-repository check URL is an evidence index only:
+the verifier independently discovers the newest authenticated controller, then
+requires its completed successful job and immutable artifact to bind the exact
+controller ID/attempt, requester ID/attempt, source, lease and receipt digest.
+A source check or normalized URL alone never establishes qualification.
+
 Focused tests use real Git/process/Python fixtures and complete synthetic evidence
 without a host workload. A live ordinary PR and stack canary are still required
 before routing is enabled. PRs require `fast-ci` plus current-head `ready-for-ci`;

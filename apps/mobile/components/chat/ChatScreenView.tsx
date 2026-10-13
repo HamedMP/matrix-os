@@ -10,7 +10,8 @@ import { ChatHome } from "./ChatHome";
 import { Composer, type ComposerProps } from "./Composer";
 import { MessageList, type MessageListProps } from "./MessageList";
 
-export interface ChatScreenViewProps extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults"> {
+export interface ChatScreenViewProps
+  extends Pick<MessageListProps, "chatId" | "renderRequest" | "renderResults" | "renderComputerPhoto"> {
   /** "New chat", or the open chat's title. */
   title: string;
   onOpenSidePanel: () => void;
@@ -37,6 +38,7 @@ export function ChatScreenView({
   chatId,
   renderRequest,
   renderResults,
+  renderComputerPhoto,
   composer,
 }: ChatScreenViewProps) {
   const insets = useSafeAreaInsets();
@@ -71,6 +73,7 @@ export function ChatScreenView({
           chatId={chatId}
           renderRequest={renderRequest}
           renderResults={renderResults}
+          renderComputerPhoto={renderComputerPhoto}
         />
       )}
       <Composer {...composer} keyboardOpen={keyboardOpen} />

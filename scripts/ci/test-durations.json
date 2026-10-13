@@ -2028,7 +2028,6 @@
     "tests/scripts/self-host-installer.test.ts": 9,
     "tests/scripts/setup-posthog-alerts.test.ts": 53,
     "tests/scripts/start-platform-cloud-run.test.ts": 15,
-    "tests/scripts/supersede-main-ci.test.ts": 36,
     "tests/scripts/terminal-file-drop-ci-workflow.test.ts": 36,
     "tests/scripts/verify-pipedream-integration-expansion.test.ts": 5,
     "tests/shell/add-computer-onboarding-page.test.ts": 3,

@@ -4,12 +4,16 @@ import ArrowDown01Icon from "@hugeicons/core-free-icons/ArrowDown01Icon";
 import ArrowLeft01Icon from "@hugeicons/core-free-icons/ArrowLeft01Icon";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import ArrowUp02Icon from "@hugeicons/core-free-icons/ArrowUp02Icon";
+import BlocksIcon from "@hugeicons/core-free-icons/BlocksIcon";
 import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
+import CommandLineIcon from "@hugeicons/core-free-icons/CommandLineIcon";
 import ComputerTerminal01Icon from "@hugeicons/core-free-icons/ComputerTerminal01Icon";
+import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
 import Folder01Icon from "@hugeicons/core-free-icons/Folder01Icon";
 import GridViewIcon from "@hugeicons/core-free-icons/GridViewIcon";
+import Image01Icon from "@hugeicons/core-free-icons/Image01Icon";
 import InformationCircleIcon from "@hugeicons/core-free-icons/InformationCircleIcon";
 import Loading03Icon from "@hugeicons/core-free-icons/Loading03Icon";
 import Message01Icon from "@hugeicons/core-free-icons/Message01Icon";
@@ -43,6 +47,9 @@ describe("role icons", () => {
       MoreIcon: MoreHorizontalIcon,
       CloseIcon: Cancel01Icon,
       AddIcon: Add01Icon,
+      PhotoIcon: Image01Icon,
+      SkillIcon: CubeIcon,
+      CommandIcon: CommandLineIcon,
       MicIcon: Mic01Icon,
       SendIcon: ArrowUp02Icon,
       StopIcon,
@@ -53,6 +60,7 @@ describe("role icons", () => {
       LoadingIcon: Loading03Icon,
       ChatIcon: Message01Icon,
       FolderIcon: Folder01Icon,
+      ConnectAppsIcon: BlocksIcon,
       SharedIcon: UserMultiple02Icon,
       DocumentIcon: File01Icon,
       LockIcon: SquareLock02Icon,
@@ -63,8 +71,8 @@ describe("role icons", () => {
     });
   });
 
-  it("exports nothing but the 29 roles", () => {
-    expect(Object.keys(icons)).toHaveLength(29);
+  it("exports nothing but the 33 roles", () => {
+    expect(Object.keys(icons)).toHaveLength(33);
     for (const icon of Object.values(icons)) {
       expect(Array.isArray(icon)).toBe(true);
     }
