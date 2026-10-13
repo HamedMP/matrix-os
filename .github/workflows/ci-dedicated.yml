@@ -92,17 +92,21 @@ jobs:
             const raceLost=error=>error instanceof Error&&JSON.parse(process.env.RACE_LOST_ERRORS).includes(error.message);
             // A controller can wait on a hosted runner past its requesting CI run; nothing is left to qualify then.
             const requester=context.eventName==='workflow_run'?context.payload.workflow_run:null;
-            if(requester){
+            const requesterInactive=async()=>{
               const {data:live}=await github.rest.actions.getWorkflowRun({...context.repo,run_id:requester.id,request:{timeout:10000}});
-              if(live.status==='completed'||live.run_attempt!==requester.run_attempt){
-                core.notice(`Standing down: Requesting CI run ${requester.id} attempt ${requester.run_attempt} is no longer active`);core.setOutput('admitted','false');return;
-              }
-            }
+              return live.status==='completed'||live.run_attempt!==requester.run_attempt;
+            };
+            const standDownInactive=()=>{core.notice(`Standing down: Requesting CI run ${requester.id} attempt ${requester.run_attempt} is no longer active`);core.setOutput('admitted','false');};
+            if(requester&&await requesterInactive()){standDownInactive();return;}
             let admission;
             try{admission=await admitDedicatedSource(github,{
               repo:context.repo, controller:{sha:process.env.CONTROLLER_SHA,ref:context.ref,workflowRef:process.env.CONTROLLER_WORKFLOW_REF},
               eventName:context.eventName,payload:context.payload,inputSha:process.env.INPUT_SHA});}
-            catch(error){if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('admitted','false');return;}
+            catch(error){
+              // The requester can finish between the lookup above and the helper's own read; confirm before standing down.
+              if(requester&&error instanceof Error&&error.message==='Refresh requester is not currently admitted'&&await requesterInactive()){standDownInactive();return;}
+              if(!raceLost(error))throw error;core.notice(`Standing down: ${error.message}`);core.setOutput('admitted','false');return;
+            }
             if (!admission) { core.setOutput('admitted','false'); return; }
             const {sourceSha:sha,headSha,baseSha,baseRef,prNumber}=admission;
             const mode=process.env.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow';
