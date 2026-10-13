@@ -52,9 +52,8 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
           const nativeSource = isNativeAccountSource(kind, routeSource, routeAccount);
           const account = nativeSource ? routeAccount : undefined;
           const source = nativeSource ? routeSource : undefined;
-          const keyAccount = source?.fundingKind === "owner_api_key" || account?.authMethod === "api_key";
-          const connected = harness && nativeSource && keyAccount ? hasConfiguredConnection(harness, source) : false;
-          const retained = harness && nativeSource && keyAccount ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
+          const connected = harness && nativeSource ? hasConfiguredConnection(harness, source) : false;
+          const retained = harness && nativeSource ? hasConfiguredConnection({...harness, enabled: true, configuredEnabled: true}, source) : false;
           const status = harness ? resolvedWorkflowRowStatus(harness, source, workflowStatus[id]) : workflowStatus[id] ?? "Not connected";
           const continuing = ["Connecting", "Installing", "Uninstalling"].includes(status)
             || Boolean(operationIds[id] || capability?.activeOperationId);
@@ -76,7 +75,7 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
             <div className="matrix-ap-subscription-head"><strong>{nativeName}{rows.length > 1 ? ` · ${harness?.displayName ?? capability?.displayName}` : ""}</strong>
               <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{continuing ? status === "Not connected" ? "Connecting" : status : connected ? "Connected" : retained ? "Saved connection" : account ? "Saved account" : installState === "missing" ? "Not installed" : "Not connected"}</span>
             </div>
-            <p className="matrix-ap-help">Codex subscription connections are not currently supported on managed Computers.</p>
+            <p className="matrix-ap-help">Native Codex uses its own account on this Computer, independently of Matrix AI. Subscription usage does not use Matrix AI credit.</p>
             {canKey ? <p className="matrix-ap-help">Connect with an OpenAI API key, billed per request by OpenAI. Matrix AI credit is separate.</p> : null}
             {account || source ? <p className="matrix-ap-help">{account?.connectionDetails?.email ?? account?.displayName ?? source?.displayName}</p> : null}
             {connected || retained ? <p className="matrix-ap-help">{source?.fundingKind === "owner_api_key" ? "API key connected · billed by your provider" : usage?.primary ?? "Usage unavailable"}{usage?.secondary ? ` · ${usage.secondary}` : ""}</p> : null}
