@@ -492,14 +492,14 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
 - **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
-- **No PR merge until Greptile reports 5/5** -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue.
-- **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
+- **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only while the PR's own diff is unchanged: base merges, stack restacks, and retargets after a parent lands keep it; new PR work or a conflict resolution needs a fresh review. The Review Fingerprint workflow records each reviewed commit's diff when Greptile posts, so carry-over works across force-pushed restacks.
+- **Request Greptile explicitly for each published head with `@greptileai please review`.** Automatic creation reviews may be disabled, and pushes do not guarantee a new review. Check for an existing review in flight first; request once when no review names the new head and the carry-over check does not accept the earlier review, including initial PR creation. After a push an older score stays stale until the new head is reviewed.
 - **Read `Last reviewed commit` from the summary body, not the timestamp.** Greptile edits that comment in place, so `created_at` stays at the first review while `updated_at` moves, and neither says which commit was read. Compare the reviewed SHA to the PR's `headRefOid` and act on this table:
 
   | Reviewed SHA | What it means | Do this |
   | --- | --- | --- |
   | Names the current head | Answered, current | Use the score |
-  | Names an older head | **Answered**, about a superseded commit | **Request once for the new head, now** |
+  | Names an older head | **Answered**, about a superseded commit | Run `node scripts/review/review-carryover.mjs check <pr>`; if it does not exit 0, **request once for the new head, now** |
   | No review names the head, under 15 min | Probably still working | Wait |
   | No review names the head, over 15 min | Probably lost | Request once more |
   | Still nothing after that | Outage | Say so in the PR and escalate; do not keep asking |

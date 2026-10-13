@@ -34,6 +34,11 @@ final human review.
   existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
 - Do not add `ready-for-ci` before the latest trusted Greptile review for that
   PR is `5/5`. There is no command-level override for this gate.
+- In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
+  head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0). Restacks, retargets, and
+  base merges keep the PR's own diff, so they keep the review; do not request a
+  re-review for them. New PR work or conflict resolutions fail the check and
+  need a fresh review.
 - If the `ready-for-ci` label is missing from the repository, stop and report
   the blocker instead of creating a label silently.
 - Never force-push over remote work outside the requested native stack branches
@@ -183,7 +188,8 @@ final human review.
      `Greptile review not received for <pr> @ <sha>` as a blocker instead of
      polling indefinitely.
    - Trust a Greptile score only when its reviewed commit matches the PR's
-     current `headRefOid`; otherwise treat it as stale and keep waiting.
+     current `headRefOid`, or when `node scripts/review/review-carryover.mjs check <pr>`
+     exits 0 for it; otherwise treat it as stale and request a fresh review.
    - When the PR is not draft, the latest trusted Greptile result is `5/5`, and
      there are no unresolved human review threads, unresolved Codex review
      comments, or unresolved actionable issue comments, add the repository label

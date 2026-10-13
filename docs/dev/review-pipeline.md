@@ -238,6 +238,46 @@ PRs touching these areas must include adversarial tests, not just happy-path:
 | Container env | Verify secrets not forwarded to user containers |
 | Shutdown | Cleanup verification (no leaked watchers/connections) |
 
+## Greptile Review Carry-Over
+
+The merge gate is a Greptile `5/5` on the current head, or on an earlier head
+whose review still covers the current one. Updating a PR with its base under the
+strict up-to-date ruleset, restacking a stack after a parent changes, or
+retargeting a child to `main` after its parent lands all produce a new head
+without changing what the PR itself adds or removes. Re-reviewing those heads
+costs a paid review each and finds nothing new, which adds up quickly on long
+stacks.
+
+```bash
+node scripts/review/review-carryover.mjs check <pr>   # exit 0: the review covers the head
+```
+
+How it decides:
+
+1. `.github/workflows/review-fingerprint.yml` runs whenever Greptile creates or
+   edits its summary comment. It hashes the reviewed commit's own diff against
+   the base it forked from and stores that receipt in a single
+   `github-actions[bot]` PR comment (the newest 30 receipts). The base must be
+   captured at review time: a restack force-pushes the parent, so the old fork
+   point is no longer on any branch afterwards.
+2. `check` reads the Greptile summary (score and `Last reviewed commit`), then
+   hashes the current head's own diff against its current base. The review
+   carries over only if Greptile's latest score is `5/5` and the hashes match.
+
+The hash covers a zero-context diff with hunk positions and blob ids removed,
+so base commits that move or edit lines around the PR keep it, while new PR
+commits, conflict resolutions, and changes that regroup the PR's edits alter
+it. Git flags are fixed in the script so local config cannot change the result.
+
+Limits:
+
+- A child layer's review covers its own diff, not the parent it sits on. The
+  parent has its own review, and CI covers how the layers interact.
+- Missing receipts, unreadable comments, or a base that cannot be resolved all
+  fail closed: request a fresh review.
+- Receipts are trusted only from `github-actions[bot]`. Anyone can comment on
+  a public PR, but only workflows with a write token can post as that account.
+
 ## For AI Agents
 
 If you are an AI agent (Claude, Copilot, etc.) writing or reviewing code for Matrix OS:

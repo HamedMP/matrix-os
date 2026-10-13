@@ -123,6 +123,7 @@ OTA payloads.
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
 | `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), `main` when the mobile app changes (publish to `preview`), manual (promote to `production` or roll back) | Required for mobile OTA publishing; path-filtered, so not a required PR check |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
+| `review-fingerprint.yml` | Records the own-diff fingerprint of each Greptile-reviewed commit for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 
 The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
 head or label event reruns core CI while the label remains; each later head also reruns Docker
