@@ -1,4 +1,5 @@
 // Protected-controller public API proof; never import this module from a PR.
+import {readCurrentBranchSha} from './dedicated-branch.mjs';
 const hash=/^[a-f0-9]{40}$/;
 const id=value=>Number.isSafeInteger(value)&&value>0;
 const ref=value=>typeof value==='string'&&value.length>0&&value.length<=1024&&!/[\x00-\x20\x7f~^:?*\[\\]/.test(value)&&!value.includes('..')&&!value.includes('@{')&&!value.endsWith('/')&&!value.endsWith('.');
@@ -62,9 +63,9 @@ export async function resolveDedicatedMergeParents(github,repo,pull){
  if(commit(parentMerge,parents[0])[1]!==pull.base.sha)throw new Error('Native predecessor second parent differs');
  const tree=value=>hash.test(value?.commit?.tree?.sha||'')?value.commit.tree.sha:null;
  if(base?.sha!==pull.base.sha||head?.sha!==pull.head.sha||!tree(base)||!tree(head)||tree(parentMerge)!==tree(base)||tree(merge)!==tree(head))throw new Error('Native merge trees are not equivalent to current branch source');
- const getRef=branch=>call(github.rest.git.getRef,{...repo,ref:`heads/${branch}`});
- const [currentPull,currentParent,currentStack,trunk,parentRef]=await Promise.all([getPull(pull.number),getPull(parent.number),getStack(),getRef(membership.base.ref),getRef(pull.base.ref)]);
+ const getBranch=branch=>call(async args=>({data:await readCurrentBranchSha(github,repo,branch,args.request)}),{});
+ const [currentPull,currentParent,currentStack,trunk,parentRef]=await Promise.all([getPull(pull.number),getPull(parent.number),getStack(),getBranch(membership.base.ref),getBranch(pull.base.ref)]);
  stackRows(currentStack,membership,repositoryId);
- if(identity(currentPull,true)!==identity(pull,true)||identity(currentParent)!==identity(parent)||stackIdentity(currentStack)!==stackIdentity(stack)||trunk.object?.sha!==membership.base.sha||parentRef.object?.sha!==pull.base.sha)throw new Error('Native source, parent, membership or trunk is stale');
+ if(identity(currentPull,true)!==identity(pull,true)||identity(currentParent)!==identity(parent)||stackIdentity(currentStack)!==stackIdentity(stack)||trunk!==membership.base.sha||parentRef!==pull.base.sha)throw new Error('Native source, parent, membership or trunk is stale');
  return parents;
 }

@@ -6,6 +6,15 @@ import type {
   CanonicalChatRun,
 } from "@matrix-os/contracts";
 
+// By relative path: the repository's own tests load this module too, and
+// there "@/" is the web shell, not this app.
+import {
+  chatAttachmentUploadPath,
+  type ComposerAttachment,
+  type SentAttachmentUris,
+  type TranscriptAttachment,
+} from "./chat-attachments";
+
 export type TranscriptActivityState = CanonicalToolActivity["state"];
 export type TranscriptActivity = CanonicalToolActivity;
 
@@ -20,6 +29,8 @@ export interface TranscriptMessage {
   id: string;
   role: "user" | "assistant" | "tool" | "system";
   text: string;
+  /** The photos and files sent with the message. Left out when there are none. */
+  attachments?: TranscriptAttachment[];
   toolCalls: TranscriptToolCall[];
   /** Run activities (reasoning, plan, command, tool calls in progress, ...) for this message's run. */
   activities: TranscriptActivity[];
@@ -43,6 +54,20 @@ function messageText(message: CanonicalChatMessage): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function messageAttachments(message: CanonicalChatMessage): TranscriptAttachment[] {
+  const attachments: TranscriptAttachment[] = [];
+  for (const part of message.parts) {
+    if (part.type !== "attachment_reference") continue;
+    attachments.push({
+      id: part.attachmentId,
+      label: part.label,
+      kind: part.kind === "image" ? "image" : "file",
+      ...(part.ownerReference ? { path: part.ownerReference } : {}),
+    });
+  }
+  return attachments;
 }
 
 function messageToolCalls(message: CanonicalChatMessage): TranscriptToolCall[] {
@@ -91,10 +116,12 @@ export function buildTranscript(detail: CanonicalChatDetailResponse | null): Tra
     const run = message.runId ? runsById.get(message.runId) : undefined;
     const isRunsLastAssistantMessage = message.runId !== undefined
       && lastAssistantSeqByRun.get(message.runId) === message.seq;
+    const attachments = messageAttachments(message);
     return {
       id: message.id,
       role: message.role,
       text: messageText(message),
+      ...(attachments.length > 0 ? { attachments } : {}),
       toolCalls: messageToolCalls(message),
       activities: run && isRunsLastAssistantMessage ? canonicalChatToolActivities(run, detail.activities) : [],
       elapsedSeconds: message.role === "assistant" ? runElapsedSeconds(run) : undefined,
@@ -161,7 +188,10 @@ export interface OptimisticUserMessage {
   id: string;
   /** The chat it was sent in, or null while the draft's chat has not been created yet. */
   chatId: string | null;
+  /** Empty when the message is attachments alone. */
   text: string;
+  /** What was sent with it, still on the phone. */
+  attachments?: readonly ComposerAttachment[];
   /** The `clientRequestId` its turn is admitted with; the server echoes it on the turn. */
   turnRequestId: string;
   createdAt: number;
@@ -170,10 +200,21 @@ export interface OptimisticUserMessage {
 }
 
 export function optimisticTranscriptMessage(optimistic: OptimisticUserMessage): TranscriptMessage {
+  const attachments = (optimistic.attachments ?? []).map((attachment): TranscriptAttachment => {
+    const path = chatAttachmentUploadPath(attachment);
+    return {
+      id: attachment.id,
+      label: attachment.name,
+      kind: attachment.kind,
+      ...(path ? { path } : {}),
+      localUri: attachment.uri,
+    };
+  });
   return {
     id: optimistic.id,
     role: "user",
     text: optimistic.text,
+    ...(attachments.length > 0 ? { attachments } : {}),
     toolCalls: [],
     activities: [],
     isRunning: false,
@@ -198,4 +239,27 @@ export function isOptimisticMessageDelivered(
   const turn = detail.turns.find((candidate) => candidate.clientRequestId === optimistic.turnRequestId);
   const messageId = turn?.inputMessageId ?? optimistic.messageId;
   return messageId !== undefined && detail.messages.some((message) => message.id === messageId);
+}
+
+/**
+ * Shows each attachment that was sent from this phone from the phone's own
+ * copy, so a photo does not blink out while the computer's copy of its message
+ * loads. Returns `messages` itself when none of them has such an attachment.
+ */
+export function withLocalAttachments(messages: TranscriptMessage[], sent: SentAttachmentUris): TranscriptMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (!message.attachments?.some((attachment) => !attachment.localUri && attachment.path && sent[attachment.path])) {
+      return message;
+    }
+    changed = true;
+    return {
+      ...message,
+      attachments: message.attachments.map((attachment) => {
+        const localUri = attachment.localUri ?? (attachment.path ? sent[attachment.path] : undefined);
+        return localUri ? { ...attachment, localUri } : attachment;
+      }),
+    };
+  });
+  return changed ? next : messages;
 }

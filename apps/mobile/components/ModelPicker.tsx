@@ -3,7 +3,14 @@ import { useState } from "react";
 import { Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { chosenSelection, modelEngines, modelKey, modelNotices, modelTrigger } from "@/components/chat/model-choices";
+import {
+  chosenSelection,
+  modelEngines,
+  modelKey,
+  modelNotices,
+  modelTrigger,
+  selectionCanRun,
+} from "@/components/chat/model-choices";
 import { modelOptionGroups, selectionWithOption } from "@/components/chat/model-options";
 import { ModelSheet, type ModelSheetProps } from "@/components/chat/ModelSheet";
 import { MODEL_TRIGGER_ICON_SIZE, ModelTrigger } from "@/components/chat/ModelTrigger";
@@ -43,8 +50,11 @@ export function ModelPicker({
   function handleModel(key: string) {
     if (catalogLoading) return;
     // Choosing the current model again must not rebuild the selection, which
-    // would drop the options saved with it.
-    if (!selection || key !== modelKey(selection.instanceId, selection.model)) {
+    // would drop the options saved with it -- unless it cannot run as saved,
+    // as when the account it is bound to has since been replaced.
+    const kept = selection !== null && key === modelKey(selection.instanceId, selection.model)
+      && selectionCanRun(catalog, selection);
+    if (!kept) {
       const next = chosenSelection(catalog, key);
       if (!next) return;
       onSelectionChange(next);

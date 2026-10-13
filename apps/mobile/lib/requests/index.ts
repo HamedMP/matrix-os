@@ -44,6 +44,7 @@ export {
   type ChatPageOptions,
   type ChatSearchOptions,
 } from "./canonical-chat";
+export { removeChatAttachment, uploadChatAttachment } from "./chat-attachments";
 export {
   createFile,
   createFolder,

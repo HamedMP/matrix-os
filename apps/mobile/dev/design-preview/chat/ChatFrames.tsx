@@ -10,6 +10,7 @@ import { TabBar } from "@/components/shell/TabBar";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 
+import { useSampleComposerAdd } from "./sample-composer-add";
 import {
   SAMPLE_CHAT_IN_PROGRESS,
   SAMPLE_CHAT_TITLE,
@@ -77,6 +78,30 @@ function ChatFrame({
 }) {
   const [draft, setDraft] = useState(initialDraft);
   const keyboardVisible = useKeyboardVisible();
+  const { attachments, clearAttachments, composerAdd } = useSampleComposerAdd(draft, setDraft);
+  // What is sent from the frame is shown in it and goes nowhere else.
+  const [sent, setSent] = useState<TranscriptMessage[]>([]);
+  const canSend = !running && (draft.trim().length > 0 || attachments.length > 0);
+
+  const send = () => {
+    if (!canSend) return;
+    const message: TranscriptMessage = {
+      id: `sample-sent-${sent.length}`,
+      role: "user",
+      text: draft.trim(),
+      attachments: attachments.map((attachment) => ({
+        id: attachment.id, label: attachment.name, kind: attachment.kind, localUri: attachment.uri,
+      })),
+      toolCalls: [],
+      activities: [],
+      isRunning: false,
+      createdAt: 0,
+    };
+    // Newest first, as the message list takes them.
+    setSent((current) => [message, ...current]);
+    setDraft("");
+    clearAttachments();
+  };
 
   return (
     <View testID="chat-frame" style={styles.frame}>
@@ -84,10 +109,10 @@ function ChatFrame({
         title={title}
         onOpenSidePanel={noop}
         onNewChat={onNewChat}
-        showHome={showHome}
+        showHome={showHome && sent.length === 0}
         suggestions={CHAT_SUGGESTIONS}
         onSuggestionPress={setDraft}
-        messages={messages}
+        messages={sent.length > 0 ? [...sent, ...messages] : messages}
         chatId={showHome ? null : "sample-chat"}
         renderResults={renderSampleResult}
         composer={{
@@ -95,10 +120,11 @@ function ChatFrame({
           onChangeDraft: setDraft,
           placeholder,
           autoFocus,
-          canSend: !running && draft.trim().length > 0,
-          onSend: noop,
+          canSend,
+          onSend: send,
           running,
           onStop: running ? noop : undefined,
+          ...composerAdd,
           modelControl: <ModelTrigger {...SAMPLE_MODEL} onPress={onModelPress} />,
         }}
       />

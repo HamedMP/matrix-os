@@ -1,8 +1,10 @@
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 
 import {
+  buildTranscript,
   isOptimisticMessageDelivered,
   optimisticTranscriptMessage,
+  withLocalAttachments,
   type OptimisticUserMessage,
 } from "../lib/canonical-chat-transcript";
 
@@ -89,5 +91,73 @@ describe("optimistic user messages", () => {
   it("ignores another chat's detail", () => {
     const other = detailWith([userMessage("msg_3", 3, "Ship it")], [turn("req_mine", "msg_3")], "chat_other");
     expect(isOptimisticMessageDelivered(other, optimistic)).toBe(false);
+  });
+});
+
+describe("attachments in the transcript", () => {
+  const place = "temporary/desktop-chat/att_a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4-flowers.jpg";
+  const photoPart = {
+    type: "attachment_reference", attachmentId: "mobile_upload_att_a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4", kind: "image", label: "flowers.jpg",
+    mimeType: "image/jpeg", sizeBytes: 2_048, ownerReference: place,
+  };
+  const filePart = { type: "attachment_reference", attachmentId: "shell_upload_9f", kind: "file", label: "notes.txt" };
+
+  function sentWith(parts: unknown[]) {
+    return detailWith([{ ...userMessage("msg_1", 1, ""), parts } as unknown as ReturnType<typeof userMessage>]);
+  }
+
+  it("lists what a message was sent with, after its text", () => {
+    const [message] = buildTranscript(sentWith([{ type: "text", text: "What is this?" }, photoPart, filePart]));
+
+    expect(message).toMatchObject({
+      text: "What is this?",
+      attachments: [
+        { id: "mobile_upload_att_a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4", label: "flowers.jpg", kind: "image", path: place },
+        { id: "shell_upload_9f", label: "notes.txt", kind: "file" },
+      ],
+    });
+    // An attachment the message gives no place for has none to show it from.
+    expect(message!.attachments![1]).not.toHaveProperty("path");
+  });
+
+  it("keeps a message of attachments alone, with no text", () => {
+    expect(buildTranscript(sentWith([photoPart]))).toMatchObject([{ text: "", attachments: [{ label: "flowers.jpg" }] }]);
+  });
+
+  it("leaves attachments out of a message that has none", () => {
+    expect(buildTranscript(detailWith([userMessage("msg_1", 1, "Ship it")]))[0]).not.toHaveProperty("attachments");
+  });
+
+  it("shows a message being sent with the phone's own copies of its attachments", () => {
+    const message = optimisticTranscriptMessage({
+      ...optimistic,
+      text: "",
+      attachments: [{
+        id: "att_a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4", uri: "file:///cache/flowers.jpg", name: "flowers.jpg", mimeType: "image/jpeg", kind: "image", sizeBytes: 2_048,
+      }],
+    });
+
+    expect(message.attachments).toEqual([{
+      id: "att_a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4", label: "flowers.jpg", kind: "image", path: place, localUri: "file:///cache/flowers.jpg",
+    }]);
+  });
+
+  it("goes on showing a sent attachment from the phone once the computer's copy of the message takes over", () => {
+    const transcript = buildTranscript(sentWith([photoPart, filePart]));
+
+    const shown = withLocalAttachments(transcript, { [place]: "file:///cache/flowers.jpg" });
+
+    expect(shown[0]!.attachments).toMatchObject([
+      { label: "flowers.jpg", path: place, localUri: "file:///cache/flowers.jpg" },
+      { label: "notes.txt" },
+    ]);
+    expect(shown[0]!.attachments![1]).not.toHaveProperty("localUri");
+  });
+
+  it("returns the same messages when none was sent from this phone", () => {
+    const transcript = buildTranscript(sentWith([photoPart]));
+
+    expect(withLocalAttachments(transcript, {})).toBe(transcript);
+    expect(withLocalAttachments(transcript, { "temporary/desktop-chat/other.jpg": "file:///cache/other.jpg" })).toBe(transcript);
   });
 });

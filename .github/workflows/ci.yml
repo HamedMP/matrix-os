@@ -29,7 +29,7 @@ on:
     types: [labeled, ready_for_review, synchronize, reopened, edited]
 
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
+  group: ci-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared' }}
   queue: max
 
 permissions:
@@ -44,14 +44,20 @@ jobs:
     timeout-minutes: 3
     outputs:
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
+      # Exact-source refresh dispatches run on main but check out a PR merge. They may restore
+      # caches but must never save them, or PR code could poison caches shared with main.
+      cache_write: ${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') && 'false' || 'true' }}
       snapshot: ${{ steps.refresh.outputs.snapshot }}
       base_sha: ${{ steps.changed.outputs.base_sha }}
       bootstrap: ${{ steps.changed.outputs.bootstrap }}
-      trigger_requested: ${{ steps.changed.outputs.trigger_requested }}
-      should_run: ${{ steps.changed.outputs.should_run }}
-      docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}
-      os_view_parity_tests: ${{ steps.changed.outputs.os_view_parity_tests }}
+      # A superseded PR head skips every heavy lane: queued runs for pushes that a newer push replaced
+      # would otherwise each spend a full CI on the saturated hosted runner pool.
+      trigger_requested: ${{ steps.superseded.outputs.stale == 'true' && 'true' || steps.changed.outputs.trigger_requested }}
+      should_run: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.should_run }}
+      docs_contract_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests }}
+      os_view_parity_tests: ${{ steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.os_view_parity_tests }}
       dedicated_eligible: ${{ steps.route.outputs.eligible }}
+      dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ steps.route.outputs.required }}
     steps:
       - name: Checkout trusted main refresh helpers
@@ -114,6 +120,24 @@ jobs:
             sleep "$backoff_seconds"
           done
 
+      - name: Skip superseded PR heads
+        id: superseded
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pull=context.payload.pull_request;
+            try{
+              const {data:live}=await github.rest.pulls.get({...context.repo,pull_number:pull.number,request:{timeout:10000}});
+              const stale=live.head.sha!==pull.head.sha;
+              core.setOutput('stale',String(stale));
+              if(stale)core.notice(`PR head ${pull.head.sha} was superseded by ${live.head.sha}; skipping CI lanes for the old head.`);
+            }catch(error){
+              // Never block CI on this optimization: run normally when the live head is unknown.
+              core.warning(`Superseded-head check unavailable: ${error instanceof Error ? error.message : 'unknown error'}`);
+              core.setOutput('stale','false');
+            }
+
       - name: Detect source changes
         id: changed
         env:
@@ -128,6 +152,7 @@ jobs:
         id: route
         env:
           MATRIX_CI_DEDICATED_ENABLED: ${{ vars.MATRIX_CI_DEDICATED_ENABLED }}
+          MATRIX_CI_DEDICATED_MAIN: ${{ vars.MATRIX_CI_DEDICATED_MAIN }}
           MATRIX_CI_DEDICATED_SHADOW: ${{ vars.MATRIX_CI_DEDICATED_SHADOW }}
           SHOULD_RUN: ${{ steps.changed.outputs.should_run }}
           REFRESH_SNAPSHOT: ${{ steps.refresh.outputs.snapshot }}
@@ -137,14 +162,17 @@ jobs:
           const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
           const {selectDedicatedRoute}=await import('./scripts/ci/dedicated-admission.mjs');
           const refresh=process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null;
-          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&process.env.MATRIX_CI_DEDICATED_ENABLED==='true'}\nrequired=${!hosted}\n`);process.exit(0);}
+          const enabled=process.env.MATRIX_CI_DEDICATED_ENABLED==='true';
+          if(refresh){const hosted=refresh.executionMode==='hosted-only';appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${!hosted&&enabled}\nrequired=${!hosted}\nmode=${!hosted&&enabled?'delegated':'shadow'}\n`);process.exit(0);}
+          // Main pushes delegate behind their own flag, so PR routing can ship before main controllers do.
+          const scoped=enabled&&(process.env.GITHUB_EVENT_NAME!=='push'||process.env.MATRIX_CI_DEDICATED_MAIN==='true');
           const eligible=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
-            eventName:process.env.GITHUB_EVENT_NAME, enabled:process.env.MATRIX_CI_DEDICATED_ENABLED,
+            eventName:process.env.GITHUB_EVENT_NAME, enabled:scoped?'true':'false',
             shouldRun:process.env.SHOULD_RUN, ref:process.env.GITHUB_REF, pull:event.pull_request});
           const required=selectDedicatedRoute({repository:process.env.GITHUB_REPOSITORY,
             eventName:process.env.GITHUB_EVENT_NAME, enabled:(process.env.MATRIX_CI_DEDICATED_ENABLED==='true'||process.env.MATRIX_CI_DEDICATED_SHADOW==='true')?'true':'false',
             shouldRun:process.env.SHOULD_RUN,ref:process.env.GITHUB_REF,pull:event.pull_request});
-          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT,`eligible=${eligible}\nrequired=${required}\nmode=${scoped?'delegated':'shadow'}\n`);
           NODE
 
 
@@ -232,6 +260,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         if: needs.changes.outputs.should_run == 'true'
+        with:
+          bun-version: "1.4.3"
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
@@ -240,7 +270,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -267,6 +297,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         if: needs.changes.outputs.should_run == 'true'
+        with:
+          bun-version: "1.4.3"
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
@@ -275,13 +307,14 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
-      - name: Cache Next incremental compilation
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Next incremental compilation
+        id: next-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: shell/.next/cache
           key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -300,6 +333,13 @@ jobs:
           NEXT_PUBLIC_POSTHOG_HOST: https://eu.posthog.com
           NEXT_PUBLIC_POSTHOG_API_HOST: /relay
         run: bun run build:shell:production
+
+      - name: Save Next incremental compilation
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.next-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: shell/.next/cache
+          key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
 
   patterns:
     name: Pattern Scan
@@ -452,7 +492,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -493,7 +533,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -536,6 +576,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         if: needs.changes.outputs.should_run == 'true'
+        with:
+          bun-version: "1.4.3"
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
@@ -544,7 +586,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -581,7 +623,9 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16
+        # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
+        # and a service container cannot fall back; Google's Docker Hub mirror is not pull-limited.
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_USER: matrix_test
           POSTGRES_PASSWORD: matrix_test
@@ -601,11 +645,13 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.3"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -654,7 +700,7 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -686,7 +732,7 @@ jobs:
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -731,6 +777,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         if: needs.changes.outputs.should_run == 'true'
+        with:
+          bun-version: "1.4.3"
 
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
@@ -739,7 +787,7 @@ jobs:
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
-          cache: pnpm
+          cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -753,8 +801,9 @@ jobs:
       - name: Build test prerequisites once
         run: bun run test:prepare
 
-      - name: Cache Playwright browser revisions
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Restore Playwright browser revisions
+        id: playwright-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
@@ -766,6 +815,13 @@ jobs:
       - name: Install Chromium for shell-scoped Settings regressions
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter shell exec playwright install --with-deps chromium
+
+      - name: Save Playwright browser revisions
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Run E2E tests
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'general'
@@ -932,8 +988,12 @@ jobs:
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
     needs: changes
-    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true'
+    # Only delegated routing waits on Linux here. In shadow mode CI Results would otherwise wait up to
+    # 70 minutes for a non-blocking result; the controller check and source gates record shadow outcomes.
+    if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.dedicated_required == 'true' && needs.changes.outputs.dedicated_eligible != 'true' && needs.changes.outputs.dedicated_mode == 'delegated'
     runs-on: ubuntu-latest
+    # Shadow observes Linux qualification; checkout failures and timeouts must not fail the run either.
+    continue-on-error: ${{ needs.changes.outputs.dedicated_mode != 'delegated' }}
     timeout-minutes: 70
     permissions:
       actions: read
@@ -949,7 +1009,7 @@ jobs:
         env:
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
           REQUESTING_ATTEMPT: ${{ github.run_attempt }}
-          MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
+          MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           IMAGE_DIGEST: ${{ vars.MATRIX_CI_RUNNER_IMAGE_DIGEST }}
           HARNESS_DIGEST: ${{ vars.MATRIX_CI_RUNNER_HARNESS_DIGEST }}
         with:
@@ -958,13 +1018,20 @@ jobs:
             const {resolve}=require('node:path');
             const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
             const {requestingSnapshot}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
-            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
-            const result=await waitForDedicatedResult(github,{
-              ...context.repo,...snapshot,requestingRunId:context.runId,
-              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
-              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
-            },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
-            core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
+            // Shadow mode observes Linux qualification; only delegated routing may block CI on it.
+            try{
+              const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
+              const result=await waitForDedicatedResult(github,{
+                ...context.repo,...snapshot,requestingRunId:context.runId,
+                requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
+                imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
+              },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
+              core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
+            }catch(error){
+              if(process.env.MODE!=='shadow'||!(error instanceof Error))throw error;
+              core.warning(`Shadow Linux qualification not verified: ${error.message}`);
+              await core.summary.addRaw(`Shadow Linux qualification not verified (non-blocking): ${error.message}\n`).write();
+            }
 
   ci-results:
     # Metadata events must neither replace a real failed gate with skipped success
@@ -985,6 +1052,7 @@ jobs:
           CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
           INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
+          DEDICATED_MODE: ${{ needs.changes.outputs.dedicated_mode == 'delegated' && 'delegated' || 'shadow' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
@@ -1036,7 +1104,10 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$DEDICATED_LINUX_RESULT"; do
+          # Shadow Linux qualification is observed in the table above but never gates the aggregate.
+          LINUX_GATE_RESULT="$DEDICATED_LINUX_RESULT"
+          if [ "${DEDICATED_MODE:-delegated}" = "shadow" ]; then LINUX_GATE_RESULT=skipped; fi
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -1054,7 +1125,7 @@ jobs:
             failed=true
           fi
 
-          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ] && [ "${DEDICATED_MODE:-delegated}" = "delegated" ]; then
             failed=true
           fi
 

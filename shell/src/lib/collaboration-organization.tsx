@@ -35,13 +35,13 @@ export function OrganizationOnly({ children }: { children: ReactNode }) {
  * The subtree is keyed so organization-bound state cannot survive a switch.
  */
 export function CollaborationOrganization({ children }: {
-  children: (organizationId: string | null) => ReactNode;
+  children: (organizationId: string | null, organizationName: string | null) => ReactNode;
 }) {
-  const { status, organizationId } = useCollaborationOrganization();
+  const { status, organizationId, organizationName } = useCollaborationOrganization();
   if (status === "none") return null;
   return (
     <Fragment key={organizationId ?? status}>
-      {children(organizationId)}
+      {children(organizationId, organizationName ?? null)}
     </Fragment>
   );
 }

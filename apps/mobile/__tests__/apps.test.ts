@@ -1,4 +1,4 @@
-import { getAppIdentity, getAppSlug, encodeAppSlugPath, type MatrixAppEntry } from "../lib/apps";
+import { getAppIdentity, getAppInstallPath, getAppSlug, encodeAppSlugPath, type MatrixAppEntry } from "../lib/apps";
 
 const app = (overrides: Partial<MatrixAppEntry>): MatrixAppEntry => ({
   name: "Notes",
@@ -37,6 +37,16 @@ describe("mobile app helpers", () => {
       file: "../system/secrets/index.html",
       path: "/files/apps/../system/secrets/index.html",
     }))).toBe("internal-secrets");
+  });
+
+  it("reports where an app is installed, and nothing when the catalog entry does not say", () => {
+    expect(getAppInstallPath(app({ file: "games/chess/dist/index.html" }))).toBe("games/chess");
+    expect(getAppInstallPath(app({ file: "", path: "/files/apps/notes/index.html" }))).toBe("notes");
+    expect(getAppInstallPath(app({
+      name: "Internal Secrets",
+      file: "../system/secrets/index.html",
+      path: "/files/apps/../system/secrets/index.html",
+    }))).toBeNull();
   });
 
   it("encodes nested runtime slug path segments without escaping separators", () => {

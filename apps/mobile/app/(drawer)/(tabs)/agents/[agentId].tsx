@@ -88,6 +88,7 @@ export default function AgentChatRoute() {
         chatId={chat.chatId}
         renderRequest={thread.renderRequest}
         renderResults={thread.renderResults}
+        renderComputerPhoto={thread.renderComputerPhoto}
         footer={thread.footer}
         composer={thread.composer}
       />

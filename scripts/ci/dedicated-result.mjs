@@ -13,13 +13,24 @@ const request = {timeout: 10_000};
 const sameRepo = (value, expected) => typeof value === 'string' && value.toLowerCase() === `${expected.owner}/${expected.repo}`.toLowerCase();
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
 
-function parseEvidence(check, expected) {
+function parseEvidence(check, expected, latest) {
   if (!positiveId(check.id) || check.name !== 'Dedicated CI Results' || check.head_sha !== expected.headSha ||
       check.app?.slug !== 'github-actions' || !['queued','in_progress','completed'].includes(check.status)) return null;
-  const prefix = `${expected.serverUrl}/${expected.owner}/${expected.repo}/actions/runs/`;
-  if (typeof check.details_url !== 'string' || !check.details_url.startsWith(prefix)) return null;
-  const id = check.details_url.slice(prefix.length);
-  if (!/^[1-9][0-9]{0,15}$/.test(id) || !positiveId(Number(id))) return null;
+  const repositoryUrl = `${expected.serverUrl}/${expected.owner}/${expected.repo}`;
+  let runId;
+  if (check.details_url === `${repositoryUrl}/runs/${check.id}`) {
+    // GitHub normalizes manually created Actions checks to their own URL.
+    // This check is only an index: discovery already authenticated latest,
+    // and the immutable receipt must bind that exact controller/run attempt.
+    if (!positiveId(latest?.id)) return null;
+    runId = latest.id;
+  } else {
+    const prefix = `${repositoryUrl}/actions/runs/`;
+    if (typeof check.details_url !== 'string' || !check.details_url.startsWith(prefix)) return null;
+    const id = check.details_url.slice(prefix.length);
+    if (!/^[1-9][0-9]{0,15}$/.test(id) || !positiveId(Number(id))) return null;
+    runId = Number(id);
+  }
   const summary = check.output?.summary;
   if (typeof summary !== 'string' || summary.length > 4096) return null;
   let evidence;
@@ -34,7 +45,7 @@ function parseEvidence(check, expected) {
       evidence.requestingRunAttempt!==expected.requestingRunAttempt || evidence.imageDigest!==expected.imageDigest ||
       evidence.harnessDigest!==expected.harnessDigest || evidence.mode!==expected.mode ||
       (check.status==='completed'&&((evidence.receiptVerified!==true&&!validInfrastructureProof(evidence)) || !/^[a-f0-9]{64}$/.test(evidence.requestDigest||'') || !/^[a-f0-9]{32}$/.test(evidence.leaseId||'')))) return null;
-  return {...evidence, runId:Number(id)};
+  return {...evidence, runId};
 }
 
 const requestMarker = expected => `dedicated-ci-v2 pr=${expected.prNumber} head=${expected.headSha} base=${expected.baseSha} requested=true`;
@@ -60,7 +71,7 @@ async function newestController(github, repo, expected, workflow, latest) {
     const checks=data.check_runs ?? [];
     if(!Array.isArray(checks) || checks.length>100)throw new Error('Invalid bounded check list');
     for(const check of checks) {
-      const evidence=parseEvidence(check,expected);
+      const evidence=parseEvidence(check,expected,latest);
       if(evidence?.runId===latest.id && evidence.controllerAttempt===latest.run_attempt)candidates.push({check,evidence});
     }
     if(candidates.length||checks.length<100)break;
