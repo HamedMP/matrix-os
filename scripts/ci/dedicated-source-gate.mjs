@@ -138,7 +138,18 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(requester.status!=='completed'||requester.conclusion!=='success'){await write('failure','Current requesting CI is pending or failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
-   else {const result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}}
+   else {
+    let result;
+    try{result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});}
+    catch(error){
+     // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
+     if(config.mode!=='shadow'||!(error instanceof Error))throw error;
+     await verifyCurrentDedicatedSource(github,repo,snapshot);
+     await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
+     continue;
+    }
+    if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}
+   }
    const currentPull=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
    if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});

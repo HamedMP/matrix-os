@@ -968,13 +968,20 @@ jobs:
             const {resolve}=require('node:path');
             const {waitForDedicatedResult}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-result.mjs')).href);
             const {requestingSnapshot}=await import(pathToFileURL(resolve(process.env.GITHUB_WORKSPACE,'scripts/ci/dedicated-backend.mjs')).href);
-            const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
-            const result=await waitForDedicatedResult(github,{
-              ...context.repo,...snapshot,requestingRunId:context.runId,
-              requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
-              imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
-            },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
-            core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
+            // Shadow mode observes Linux qualification; only delegated routing may block CI on it.
+            try{
+              const snapshot=await requestingSnapshot(github,context,process.env.REFRESH_SNAPSHOT?JSON.parse(process.env.REFRESH_SNAPSHOT):null);
+              const result=await waitForDedicatedResult(github,{
+                ...context.repo,...snapshot,requestingRunId:context.runId,
+                requestingRunAttempt:Number(process.env.REQUESTING_ATTEMPT),mode:process.env.MODE,
+                imageDigest:process.env.IMAGE_DIGEST,harnessDigest:process.env.HARNESS_DIGEST,serverUrl:context.serverUrl
+              },{metrics:values=>core.info('Requester API polling: '+JSON.stringify(values))});
+              core.info(`Verified Linux qualification for ${result.sourceSha}; controller run ${result.runId}`);
+            }catch(error){
+              if(process.env.MODE!=='shadow'||!(error instanceof Error))throw error;
+              core.warning(`Shadow Linux qualification not verified: ${error.message}`);
+              await core.summary.addRaw(`Shadow Linux qualification not verified (non-blocking): ${error.message}\n`).write();
+            }
 
   ci-results:
     # Metadata events must neither replace a real failed gate with skipped success
@@ -995,6 +1002,7 @@ jobs:
           CI_BACKEND_PROVIDER: ${{ needs.ci-backend.outputs.provider }}
           INFRASTRUCTURE_FALLBACK: ${{ needs.ci-backend.outputs.infrastructure_fallback }}
           DEDICATED_LINUX_RESULT: ${{ needs.dedicated-linux.result }}
+          DEDICATED_MODE: ${{ vars.MATRIX_CI_DEDICATED_ENABLED == 'true' && 'delegated' || 'shadow' }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           SHELL_PRODUCTION_BUILD_RESULT: ${{ needs.shell-production-build.result }}
@@ -1046,7 +1054,10 @@ jobs:
           fi
 
           failed=false
-          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$DEDICATED_LINUX_RESULT"; do
+          # Shadow Linux qualification is observed in the table above but never gates the aggregate.
+          LINUX_GATE_RESULT="$DEDICATED_LINUX_RESULT"
+          if [ "${DEDICATED_MODE:-delegated}" = "shadow" ]; then LINUX_GATE_RESULT=skipped; fi
+          for result in "$CHANGES_RESULT" "$TYPECHECK_RESULT" "$SHELL_PRODUCTION_BUILD_RESULT" "$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT" "$E2E_RESULT" "$LINUX_GATE_RESULT"; do
             case "$result" in
               success|skipped)
                 ;;
@@ -1064,7 +1075,7 @@ jobs:
             failed=true
           fi
 
-          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ]; then
+          if [ "${SHOULD_RUN:-false}" = "true" ] && [ "$DEDICATED_REQUIRED" = "true" ] && [ "$DEDICATED_ELIGIBLE" != "true" ] && [ "$DEDICATED_LINUX_RESULT" != "success" ] && [ "${DEDICATED_MODE:-delegated}" = "delegated" ]; then
             failed=true
           fi
 

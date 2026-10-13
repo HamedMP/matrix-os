@@ -35,7 +35,15 @@ export async function reconcileMainSourceQualification(github,repo,controller,op
    await write('failure','Current exact-main requesting CI is pending or failed',requester?{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt}:{});return 1;
   }
   const decision=await verifyMainCiDecision(github,repo,requester,{prior,snapshot,controller,config,mode});
-  const result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};
+  let result;
+  try{result=decision.shouldRun?await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,mode,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true}):{docsOnly:true};}
+  catch(error){
+   // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block main.
+   if(mode!=='shadow'||!(error instanceof Error))throw error;
+   await verifyMainSource(github,repo,snapshot);
+   await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
+   return 1;
+  }
   if(result.docsOnly)Object.assign(evidence,{docsOnly:true,selectedHostedLaneCount:decision.selectedHostedLaneCount});
   if(result.infrastructure){
    const coverage=await verifyFullHostedCoverage(github,repo,requester);

@@ -36,7 +36,16 @@ function completeFixture(){
  pinArtifactFixture(github,check,controller);return{...f,github,ci,controller,check};
 }
 it('restores only the distinct gate after real-shaped fresh hosted and complete dedicated evidence',async()=>{const f=completeFixture();await reconcile(f);expect(f.gateGithub.rest.checks.create).toHaveBeenCalledWith(expect.objectContaining({name:'CI Source Qualification',conclusion:'success'}));expect(f.github.rest.actions.createWorkflowDispatch).not.toHaveBeenCalled();});
-it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();if(kind==='failed')f.ci.conclusion='failure';if(kind==='pending')f.ci.status='queued';if(kind==='attempt')f.ci.run_attempt=2;if(kind==='missing')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});if(kind==='stale')f.pull.merge_commit_sha=main;await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);});
+const degrade=(f:ReturnType<typeof completeFixture>,kind:string)=>{if(kind==='failed')f.ci.conclusion='failure';if(kind==='pending')f.ci.status='queued';if(kind==='attempt')f.ci.run_attempt=2;if(kind==='missing')f.github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[]}});if(kind==='stale')f.pull.merge_commit_sha=main;};
+it.each(['failed','pending','attempt','missing','stale'])('cannot restore freshness from %s coverage',async kind=>{const f=completeFixture();degrade(f,kind);await reconcile(f);
+ const written=f.gateGithub.rest.checks.create.mock.calls.map(([args]:any[])=>args);expect(written.length).toBeGreaterThan(0);expect(written.every(args=>args.conclusion!=='success')).toBe(true);
+ // Shadow observes: hosted success with missing Linux evidence is neutral; hosted failure or stale source still fails.
+ expect(written.every(args=>args.conclusion===(['attempt','missing'].includes(kind)?'neutral':'failure'))).toBe(true);});
+it.each(['failed','pending','attempt','missing','stale'])('blocks %s coverage in delegated mode',async kind=>{const f=completeFixture();
+ f.github.rest.actions.getRepoVariable.mockImplementation(async(args:{name:string})=>({data:{name:args.name,value:args.name==='MATRIX_CI_CONTROLLER_SHA'?main:args.name.includes('IMAGE')?'sha256:'+'e'.repeat(64):args.name.includes('HARNESS')?'f'.repeat(64):'true'}}));
+ degrade(f,kind);await reconcile(f);expect(f.gateGithub.rest.checks.create.mock.calls.every(([args]:any[])=>args.conclusion==='failure')).toBe(true);});
+it('marks shadow neutral results as unverified',async()=>{const f=completeFixture();degrade(f,'missing');await reconcile(f);
+ const args=f.gateGithub.rest.checks.create.mock.calls[0][0];expect(args.conclusion).toBe("neutral");expect(JSON.parse(args.output.summary).shadowUnverified).toBe(true);});
 it.each(['push','schedule'])('never edits a candidate-branch %s impersonation of the default source gate',async event=>{
  const f=fixture();const check={id:9,name:'CI Source Qualification',head_sha:head,app:{slug:'matrix-ci-gate',id:777},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/123',output:{summary:JSON.stringify({schemaVersion:1,prNumber:2454,controllerSha:main,controllerRef:'refs/heads/main',controllerAttempt:1})}};
  f.github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check]}});
