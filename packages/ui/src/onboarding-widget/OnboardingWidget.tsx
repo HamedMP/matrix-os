@@ -124,8 +124,8 @@ export function OnboardingWidget(props: OnboardingWidgetProps) {
 
   if (isBubble) {
     return (
-      <div ref={rootRef} className={rootClass} style={rootStyle} onClickCapture={drag.onClickCapture}>
-        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} dragHandle={drag.handle} onOpen={open} />
+      <div ref={rootRef} className={rootClass} style={rootStyle}>
+        <OnboardingBubble state={state} runView={runView} buttonRef={bubbleRef} dragHandle={drag.handle} onClickCapture={drag.onClickCapture} onOpen={open} />
       </div>
     );
   }

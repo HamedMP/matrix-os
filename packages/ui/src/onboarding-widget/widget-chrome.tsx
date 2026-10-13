@@ -4,7 +4,7 @@ import {
   type OnboardingWidgetState,
 } from "@matrix-os/contracts";
 import { ArrowExpand01Icon, ArrowShrink02Icon, MinusSignIcon, MoreHorizontalIcon, PinIcon } from "@hugeicons/core-free-icons";
-import type { Ref } from "react";
+import type { MouseEvent as ReactMouseEvent, Ref } from "react";
 import { AiFlow } from "./ai-panel.js";
 import { activeAiName } from "./helpers.js";
 import { DoneLine, Icon, RabbitAvatar, StatusDot, UserEcho } from "./parts.js";
@@ -18,11 +18,12 @@ function Toggle({ on }: { on: boolean }) {
   return <span className={`mxo-toggle${on ? " mxo-toggle--on" : ""}`} aria-hidden><span /></span>;
 }
 
-export function OnboardingBubble({ state, runView, buttonRef, dragHandle, onOpen }: {
+export function OnboardingBubble({ state, runView, buttonRef, dragHandle, onClickCapture, onOpen }: {
   state: OnboardingWidgetState;
   runView: OnboardingRunView | null;
   buttonRef: Ref<HTMLButtonElement>;
   dragHandle: WidgetDragHandle;
+  onClickCapture(event: ReactMouseEvent): void;
   onOpen(): void;
 }) {
   const bubble = deriveOnboardingBubble(state, runView);
@@ -31,6 +32,7 @@ export function OnboardingBubble({ state, runView, buttonRef, dragHandle, onOpen
       ref={buttonRef}
       type="button"
       className="mxo-bubble"
+      onClickCapture={onClickCapture}
       onClick={onOpen}
       {...dragHandle}
       aria-label={`Open Matrix. ${bubble.title}. ${bubble.subtitle}`}
