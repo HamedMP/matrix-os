@@ -31,6 +31,31 @@ describe("desktop browser address routing", () => {
     });
   });
 
+  it("classifies hostile dotted input in linear time", () => {
+    const hostile = `${"a.".repeat(5_000)} x`;
+    const started = performance.now();
+    expect(resolveBrowserAddress(hostile)).toEqual({
+      disposition: "public",
+      url: `https://www.google.com/search?${new URLSearchParams({ q: hostile.trim() }).toString()}`,
+    });
+    expect(performance.now() - started).toBeLessThan(250);
+  }, 2_000);
+
+  it("keeps dotted host shorthand and treats empty labels as search text", () => {
+    expect(resolveBrowserAddress("docs.matrix-os.com.")).toEqual({
+      disposition: "public",
+      url: "https://docs.matrix-os.com./",
+    });
+    expect(resolveBrowserAddress("docs.matrix-os.com/path?q=1#top")).toEqual({
+      disposition: "public",
+      url: "https://docs.matrix-os.com/path?q=1#top",
+    });
+    expect(resolveBrowserAddress("docs..matrix-os.com")).toEqual({
+      disposition: "public",
+      url: "https://www.google.com/search?q=docs..matrix-os.com",
+    });
+  });
+
   it("turns free text into an in-app web search", () => {
     expect(resolveBrowserAddress("Matrix OS docs")).toEqual({
       disposition: "public",

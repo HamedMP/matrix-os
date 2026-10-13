@@ -46,9 +46,13 @@ export function openBrowser(url: string, userCode?: string): void {
   }
   // execFile (not exec) so the URL is passed as argv -- no shell, no command
   // injection. The URL comes from the platform but treat it as untrusted.
+  // Windows must not use `cmd /c start`: cmd.exe re-parses its arguments, so
+  // `&` or `|` in a valid URL would run commands. url.dll hands the URL
+  // straight to the registered protocol handler.
+  const target = parsed.href;
   const os = platform();
-  const cmd = os === "darwin" ? "open" : os === "win32" ? "cmd" : "xdg-open";
-  const args = os === "win32" ? ["/c", "start", "", url] : [url];
+  const cmd = os === "darwin" ? "open" : os === "win32" ? "rundll32" : "xdg-open";
+  const args = os === "win32" ? ["url.dll,FileProtocolHandler", target] : [target];
 
   execFile(cmd, args, (err) => {
     if (err) {
