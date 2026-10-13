@@ -1,3 +1,4 @@
+import { markSessionStartClean, markSessionStopConfirmed } from "./coding-agents/session-start-cleanup-proof.js";
 import { stopLegacySession, type LegacySessionRuntime } from "./legacy-session-stop.js";
 import { deleteProjectSessionFiles } from "./project-session-deletion.js";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
@@ -31,6 +32,8 @@ import { agentTerminalCwd } from "./agent-terminal-cwd.js";
 import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 
 import type { BackgroundAgentRuntime, BackgroundAgentRef } from "./background-agent-runtime.js";
+import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environment.js";
+import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 
 export type SessionKind = "shell" | "agent";
@@ -333,6 +336,8 @@ export function createAgentSessionManager(options: {
   agentLauncher: AgentLauncher;
   terminalRuntime: TerminalRuntimeClient;
   backgroundRuntime?: BackgroundAgentRuntime;
+  beforeProjectSessionRemove?: (input: { ownerId: string; sessionId: string; proof: object }) => Promise<void>;
+  resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
   legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
@@ -439,9 +444,13 @@ export function createAgentSessionManager(options: {
       const startedAt = nowIso(options.now);
       let launch;
       try {
+        const nativeCodexSubscription = request.kind === "agent" && request.agent === "codex"
+          ? await options.resolveNativeCodexSubscription?.(request.ownerId, sessionId)
+          : undefined;
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
+            ...(nativeCodexSubscription ? { nativeCodexSubscription } : {}),
             cwd,
             prompt: launchPromptWithReferences(request.prompt, request.attachments),
             providerThreadId: request.providerThreadId,
@@ -460,7 +469,8 @@ export function createAgentSessionManager(options: {
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
-        return failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        const result = failure(400, "sandbox_unavailable", "Agent sandbox is unavailable");
+        return !await readSession(homePath, sessionId) ? markSessionStartClean(result, request.ownerId, sessionId) : result;
       }
 
       const session: WorkspaceSession = {
@@ -491,18 +501,16 @@ export function createAgentSessionManager(options: {
         if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
         if (!started.retainWorkspace && leaseAcquired) await releaseSessionLease(options.worktreeManager, session);
         scheduleStartupReconciliation();
-        return failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
+        const result = failure(503, started.retainWorkspace ? "runtime_ownership_retained" : "runtime_unavailable", "Session runtime is unavailable");
+        return started.retainWorkspace ? result : markSessionStartClean(result, request.ownerId, sessionId);
       }
       let terminalRef: TerminalRef | undefined;
+      let childAcquisitionAttempted = false;
       try {
         const terminalCwd = await agentTerminalCwd(homePath, launch.cwd);
         const workspace = await options.terminalRuntime.ensureWorkspace(projectId ? { projectId } : {});
-        const command = [
-          "env",
-          ...Object.entries(launch.env).map(([key, value]) => `${key}=${value}`),
-          launch.command,
-          ...launch.args,
-        ];
+        const command = agentLaunchTerminalCommand(launch);
+        childAcquisitionAttempted = true;
         const tab = await options.terminalRuntime.createTab(workspace.id, {
           name: request.agent ?? "shell",
           cwd: terminalCwd,
@@ -515,7 +523,9 @@ export function createAgentSessionManager(options: {
         if (leaseAcquired) {
           await releaseSessionLease(options.worktreeManager, { id: sessionId, projectSlug: request.projectSlug, worktreeId: request.worktreeId });
         }
-        return failure(503, "runtime_unavailable", "Session runtime is unavailable");
+        const result = failure(503, "runtime_unavailable", "Session runtime is unavailable");
+        return !childAcquisitionAttempted && !await readSession(homePath, sessionId)
+          ? markSessionStartClean(result, request.ownerId, sessionId) : result;
       }
 
       session.terminalRef = terminalRef;
@@ -611,6 +621,9 @@ export function createAgentSessionManager(options: {
           const stopped = await manager.killSession(session.id);
           if (!stopped.ok) return stopped;
         }
+        // Only confirmed stopped/exited records reach this hook, before their files disappear.
+        await options.beforeProjectSessionRemove?.({ ownerId: session.ownerId, sessionId: session.id,
+          proof: markSessionStopConfirmed({}, session.ownerId, session.id) });
       }
       await input.beforeRemove?.(sessions);
       for (const session of sessions) await deleteProjectSessionFiles(homePath, session);

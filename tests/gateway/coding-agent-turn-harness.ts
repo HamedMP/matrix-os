@@ -33,6 +33,7 @@ export async function createTurnHarness(options: {
   initialOutcome?: "completed" | "aborted";
   globalThread?: boolean;
   provider?: CodingAgentProviderAdapter;
+  providerAdmission?: import("../../packages/gateway/src/coding-agents/codex-harness-admission.js").CodingAgentProviderAdmission;
   maxTurnDispatches?: number;
   turnDispatchTimeoutMs?: number;
   projectionPublisher?: CodingAgentThreadProjectionPublisher;
@@ -67,6 +68,7 @@ export async function createTurnHarness(options: {
   const threads = createCodingAgentThreadStore({
     homePath,
     providers: [provider],
+    providerAdmission: options.providerAdmission,
     relationValidator: {
       validateCreate: async () => undefined,
       validateThread,
