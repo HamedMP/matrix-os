@@ -1,13 +1,21 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { resolveCodexNativeExecutable } from '../../packages/gateway/src/ai-providers/codex-native-terminal-command.js';
 import { AiProviderService } from '../../packages/gateway/src/ai-providers/service.js';
 import { ProviderSettingsStore } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
 import { createDefaultProviderCliAccountLifecycleCoordinator } from '../../packages/gateway/src/ai-providers/provider-cli-account-lifecycle.js';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
 import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
 import { bindNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/native-account-metadata-binding.js';
+// These lifecycle fixtures inject command execution and identity readers. Binary
+// discovery has its own tests; do not depend on a developer's installed Codex.
+vi.mock('../../packages/gateway/src/ai-providers/codex-native-terminal-command.js', () => ({
+  resolveCodexNativeExecutable: vi.fn(),
+}));
+beforeEach(() => { vi.mocked(resolveCodexNativeExecutable).mockReset().mockReturnValue('/fixture/bin/codex'); });
+
 it.each(['logout', 'drift'] as const)('guards native Codex %s while preserving independent Matrix AI state', async mode => {
   const root = await mkdtemp(join(tmpdir(), 'codex-lifecycle-fixture-'));
   const homePath = join(root, 'home'); await mkdir(homePath);
@@ -31,13 +39,14 @@ it.each(['logout', 'drift'] as const)('guards native Codex %s while preserving i
     guard.run = async (profile, admission, operation) => { if (mode === 'drift') principal = 'replacement@example.invalid'; return original(profile, admission, operation); };
     const mutation = { type: 'logout_account' as const, accountId: 'owner_codex', expectedRevision: snapshot.revision, idempotencyKey: 'codex-logout' };
     if (mode === 'drift') { await expect(store.mutate(mutation)).rejects.toMatchObject({ code: 'lifecycle_unavailable' }); expect(nativeRun).not.toHaveBeenCalled(); }
-    else { await store.mutate(mutation); await store.mutate(mutation); expect(nativeRun).toHaveBeenCalledOnce(); }
+    else { await store.mutate(mutation); await store.mutate(mutation); expect(nativeRun).toHaveBeenCalledOnce(); expect(nativeRun).toHaveBeenCalledWith('/fixture/bin/codex', ['logout'], expect.any(Object)); }
     expect(JSON.parse(await readFile(independent, 'utf8'))).toEqual({ source: 'matrix_ai', grant: 'synthetic-independent-grant', enabled: true });
   } finally { service.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-it.each(['signed-out', 'new-account', 'unknown', 'error'] as const)('removes signed-out native metadata only with authoritative absence: %s', async mode => {
+it.each(['signed-out', 'new-account', 'unknown', 'error', 'missing-executable'] as const)('removes signed-out native metadata only with authoritative absence: %s', async mode => {
   const homePath = await mkdtemp(join(tmpdir(), 'codex-remove-fixture-'));
+  if (mode === 'missing-executable') vi.mocked(resolveCodexNativeExecutable).mockImplementation(() => { throw new Error('Native Codex executable is unavailable'); });
   const run = vi.fn(async (_command: string, args: string[]) => {
     if (args.join(' ') !== 'login status') throw new Error('Unexpected mutating command');
     if (mode === 'new-account') return { stdout: 'Logged in using ChatGPT', stderr: '' };
@@ -52,7 +61,8 @@ it.each(['signed-out', 'new-account', 'unknown', 'error'] as const)('removes sig
       await coordinator.remove({ account, idempotencyKey: 'remove-signed-out' });
       expect(run).toHaveBeenCalledOnce();
     } else await expect(coordinator.remove({ account, idempotencyKey: 'remove-signed-out' })).rejects.toThrow();
-    expect(run).toHaveBeenCalledWith(expect.any(String), ['login', 'status'], expect.objectContaining({ cwd: homePath, timeoutMs: 10000, maxOutputBytes: 65536 }));
+    if (mode === 'missing-executable') expect(run).not.toHaveBeenCalled();
+    else expect(run).toHaveBeenCalledWith('/fixture/bin/codex', ['login', 'status'], expect.objectContaining({ cwd: homePath, timeoutMs: 10000, maxOutputBytes: 65536 }));
     expect(run.mock.calls.some(([, args]) => args.includes('logout'))).toBe(false);
   } finally { await rm(homePath, { recursive: true, force: true }); }
 });
@@ -74,6 +84,6 @@ it('checks real store dependencies before signed-out native removal and never lo
     active = 0;
     await store.mutate({ ...mutation, dependencyGuard: { ...mutation.dependencyGuard, activeChatCount: 0 } });
     expect(run).toHaveBeenCalledOnce();
-    expect(run).toHaveBeenCalledWith(expect.any(String), ['login', 'status'], expect.any(Object));
+    expect(run).toHaveBeenCalledWith('/fixture/bin/codex', ['login', 'status'], expect.any(Object));
   } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
 });
