@@ -1,9 +1,5 @@
 #!/usr/bin/python3 -I
-"""Operator-only repair. Bounded stdin JSON; no secrets in argv or receipts.
-
-No restart, network call, user-home write, grant, epoch rotation or installation.
-A coordinated writer/idle window is REQUIRED: this lock covers only this tool.
-"""
+"""Host-local operator repair; see funded-chat-config-repair.md."""
 import base64
 import fcntl
 import hashlib
@@ -20,6 +16,7 @@ LIMIT = 65536
 INPUT_LIMIT = 4096
 KEYS = {"MATRIX_FUNDED_AI_ENABLED", "MATRIX_FUNDED_AI_RELAY_URL",
         "MATRIX_FUNDED_AI_RUNTIME_TOKEN", "MATRIX_FUNDED_AI_PLATFORM_URL"}
+ROUTING_KEYS = {"MATRIX_FUNDED_AI_RELAY_URL", "MATRIX_FUNDED_AI_PLATFORM_URL"}
 IDENTITY = {"machineId": "MATRIX_MACHINE_ID", "ownerId": "MATRIX_CLERK_USER_ID",
             "handle": "MATRIX_HANDLE", "runtimeSlot": "MATRIX_RUNTIME_SLOT",
             "epoch": "MATRIX_RUNTIME_TOKEN_EPOCH"}
@@ -96,6 +93,7 @@ def parse(data):
 
 def service_url(value, origin=False):
     require(isinstance(value, str) and 1 <= len(value) <= 512)
+    require(all(not character.isspace() and 32 <= ord(character) < 127 for character in value))
     parsed = urlsplit(value)
     host = parsed.hostname or ""
     require(parsed.scheme == "https" and re.fullmatch(r"[a-z0-9.-]+", host)
@@ -116,7 +114,18 @@ def validate(request):
     require(isinstance(request, dict))
     action = request.get("action")
     fields = {"action", "rolloutId", "identity", "expectedFile", "quiescentWindow"}
-    require(action in ("apply", "rollback") and set(request) == fields | ({"config"} if action == "apply" else set()))
+    routing = action in ("align-routing", "rollback-routing")
+    applying = action in ("apply", "align-routing")
+    require(action in ("apply", "rollback", "align-routing", "rollback-routing")
+            and set(request) == fields | ({"config"} if applying else set())
+            | ({"expectedRelease"} if routing else set()))
+    if routing:
+        release = request["expectedRelease"]
+        require(isinstance(release, dict) and set(release) == {"version", "gitCommit"}
+                and isinstance(release["version"], str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", release["version"])
+                and isinstance(release["gitCommit"], str)
+                and re.fullmatch(r"[a-f0-9]{40}", release["gitCommit"]))
     require(request["quiescentWindow"] is True, "writer_window_required")
     require(isinstance(request["rolloutId"], str) and re.fullmatch(r"[a-z0-9-]{1,48}", request["rolloutId"]))
     identity = request["identity"]
@@ -129,9 +138,13 @@ def validate(request):
     require(isinstance(expected, dict) and set(expected) == {"sha256", "inode", "device"})
     require(isinstance(expected["sha256"], str) and re.fullmatch(r"[a-f0-9]{64}", expected["sha256"]))
     require(all(type(expected[key]) is int and expected[key] >= 0 for key in ("inode", "device")))
-    if action == "rollback":
+    if not applying:
         return {}
     config = request["config"]
+    if routing:
+        require(isinstance(config, dict) and set(config) == {"relayUrl", "platformUrl"})
+        return {"MATRIX_FUNDED_AI_RELAY_URL": service_url(config["relayUrl"], True),
+                "MATRIX_FUNDED_AI_PLATFORM_URL": service_url(config["platformUrl"], True)}
     require(isinstance(config, dict) and {"relayUrl", "runtimeToken"} <= set(config)
             and set(config) <= {"relayUrl", "runtimeToken", "platformUrl"})
     require(isinstance(config["runtimeToken"], str) and re.fullmatch(r"[a-f0-9]{64}", config["runtimeToken"]))
@@ -221,26 +234,29 @@ def backup_name(rollout_id):
     return "host.env.funded-" + rollout_id + ".json"
 
 
-def backup(directory, name, old, new, patch, identity, info, uid, private_gid):
+def backup(directory, name, old, new, patch, identity, info, uid, private_gid, release=None):
     count = total = 0
     with os.scandir(directory) as entries:
         for entry in entries:
             total += 1
             count += entry.name.startswith("host.env.funded-") and entry.name.endswith(".json")
             require(total <= 128 and count < 32, "backup_capacity")
-    journal = {"version": 1, "identity": identity, "original": base64.b64encode(old).decode(),
+    journal = {"version": 2 if release else 1, "identity": identity, "original": base64.b64encode(old).decode(),
                "beforeSha256": sha(old), "afterSha256": sha(new), "patch": patch,
                "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid}
+    if release:
+        journal["release"] = release
     create_file(directory, name, json.dumps(journal, separators=(",", ":")).encode(), uid, private_gid, 0o600)
     os.fsync(directory)
 
 
-def rollback_image(directory, name, data, values, identity, uid, private_gid, host_info):
+def rollback_image(directory, name, data, values, identity, uid, private_gid, host_info, release=None):
     raw, _ = read_file(directory, name, uid, private_gid, 0o600, 131072)
     journal = json.loads(raw, object_pairs_hook=unique_object)
     require(isinstance(journal, dict) and set(journal) == {
         "version", "identity", "original", "beforeSha256", "afterSha256", "patch", "mode", "uid", "gid"}
-        and journal["version"] == 1 and journal["identity"] == identity
+        | ({"release"} if release else set())
+        and journal["version"] == (2 if release else 1) and journal["identity"] == identity
         and journal["mode"] == stat.S_IMODE(host_info.st_mode)
         and journal["uid"] == host_info.st_uid and journal["gid"] == host_info.st_gid, "backup_conflict")
     old = base64.b64decode(journal["original"], validate=True)
@@ -248,12 +264,17 @@ def rollback_image(directory, name, data, values, identity, uid, private_gid, ho
     _, original_values, original_lines = parse(old)
     verify_identity(original_values, identity)
     patch = journal["patch"]
-    require(isinstance(patch, dict) and {"MATRIX_FUNDED_AI_ENABLED", "MATRIX_FUNDED_AI_RELAY_URL", "MATRIX_FUNDED_AI_RUNTIME_TOKEN"} <= set(patch) <= KEYS,
+    require(isinstance(patch, dict) and (set(patch) == ROUTING_KEYS if release else
+            {"MATRIX_FUNDED_AI_ENABLED", "MATRIX_FUNDED_AI_RELAY_URL", "MATRIX_FUNDED_AI_RUNTIME_TOKEN"} <= set(patch) <= KEYS),
             "backup_conflict")
-    require(patch["MATRIX_FUNDED_AI_ENABLED"] == "true"
+    if release:
+        require(journal["release"] == release and all(values.get(key) == original_values.get(key)
+                for key in KEYS - ROUTING_KEYS), "funding_conflict")
+    else:
+        require(patch["MATRIX_FUNDED_AI_ENABLED"] == "true"
             and isinstance(patch["MATRIX_FUNDED_AI_RUNTIME_TOKEN"], str)
-            and re.fullmatch(r"[a-f0-9]{64}", patch["MATRIX_FUNDED_AI_RUNTIME_TOKEN"]), "backup_conflict")
-    service_url(patch["MATRIX_FUNDED_AI_RELAY_URL"])
+                and re.fullmatch(r"[a-f0-9]{64}", patch["MATRIX_FUNDED_AI_RUNTIME_TOKEN"]), "backup_conflict")
+    service_url(patch["MATRIX_FUNDED_AI_RELAY_URL"], bool(release))
     if "MATRIX_FUNDED_AI_PLATFORM_URL" in patch:
         service_url(patch["MATRIX_FUNDED_AI_PLATFORM_URL"], True)
     post_image = rewrite(old, {key: key + "=" + value + "\n" for key, value in patch.items()})
@@ -268,8 +289,20 @@ def rollback_image(directory, name, data, values, identity, uid, private_gid, ho
     return rewrite(data, {key: original_lines.get(key) for key in patch})
 
 
+def verify_release(anchor, expected, uid, gid):
+    require(isinstance(anchor, Environment), "source_conflict")
+    anchor.verify()
+    release_gid = os.stat("release.json", dir_fd=anchor.fds[-2], follow_symlinks=False).st_gid
+    require(release_gid in (0, gid), "unsafe_file")
+    raw, _ = read_file(anchor.fds[-2], "release.json", uid, release_gid, 0o644)
+    release = json.loads(raw, object_pairs_hook=unique_object)
+    require(isinstance(release, dict) and all(release.get(key) == value
+            for key, value in expected.items()), "source_conflict")
+
+
 def _execute(request, root, uid, gid, activity):
     patch = validate(request)
+    release = request.get("expectedRelease")
     private_gid = 0 if uid == 0 else gid  # Root CLI artifacts remain root:root.
     anchor = root if isinstance(root, Environment) else None
     directory = os.dup(anchor.fds[-1]) if anchor else os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -291,8 +324,13 @@ def _execute(request, root, uid, gid, activity):
         verify_expected(data, info, request["expectedFile"])
         _, values, _ = parse(data)
         verify_identity(values, request["identity"])
+        if release:
+            verify_release(anchor, release, uid, gid)
+            require(values.get("MATRIX_FUNDED_AI_ENABLED") in ("true", "false", "1", "0")
+                    and re.fullmatch(r"[a-f0-9]{64}", values.get("MATRIX_FUNDED_AI_RUNTIME_TOKEN", "")), "funding_conflict")
+            require(ROUTING_KEYS <= values.keys(), "funding_conflict")
         name = backup_name(request["rolloutId"])
-        if request["action"] == "apply":
+        if request["action"] in ("apply", "align-routing"):
             service_url(patch.get("MATRIX_FUNDED_AI_PLATFORM_URL",
                         values.get("MATRIX_FUNDED_AI_PLATFORM_URL", values.get("PLATFORM_INTERNAL_URL"))), True)
             if all(values.get(key) == value for key, value in patch.items()):
@@ -300,13 +338,13 @@ def _execute(request, root, uid, gid, activity):
             else:
                 new = rewrite(data, {key: key + "=" + value + "\n" for key, value in patch.items()})
         else:
-            new = rollback_image(directory, name, data, values, request["identity"], uid, private_gid, info)
+            new = rollback_image(directory, name, data, values, request["identity"], uid, private_gid, info, release)
         require(len(new) <= LIMIT, "unsafe_file")
         changed = new != data
         if changed:
             verify_path()
-            if request["action"] == "apply":
-                backup(directory, name, data, new, patch, request["identity"], info, uid, private_gid)
+            if request["action"] in ("apply", "align-routing"):
+                backup(directory, name, data, new, patch, request["identity"], info, uid, private_gid, release)
             temporary = ".host.env.funded.tmp-" + secrets.token_hex(12)
             created = False
             try:
@@ -314,11 +352,15 @@ def _execute(request, root, uid, gid, activity):
                 created = True
                 activity()
                 verify_path()
+                if release:
+                    verify_release(anchor, release, uid, gid)
                 current, current_info = read_file(directory, "host.env", uid, gid)
                 require(current == data and fingerprint(current_info) == fingerprint(info), "file_conflict")
                 os.replace(temporary, "host.env", src_dir_fd=directory, dst_dir_fd=directory)
                 os.fsync(directory)
                 verify_path()  # Failure now is an unknown commit, confined to the pinned directory.
+                if release:
+                    verify_release(anchor, release, uid, gid)
             finally:
                 if created:
                     try:

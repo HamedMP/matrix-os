@@ -972,6 +972,7 @@ jobs:
       - name: Execute isolated root fixtures without skipped cases
         run: |
           set -euo pipefail
+          if [[ "$(uname -m)" != x86_64 ]]; then exit 1; fi
           container_name="funded-host-root-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           trap 'docker rm -f "$container_name" >/dev/null 2>&1 || true' EXIT
           image="public.ecr.aws/docker/library/node:24-bookworm"
@@ -984,6 +985,13 @@ jobs:
             --env MATRIX_DISPOSABLE_ROOT_TEST=true \
             --mount "type=bind,src=$PWD,dst=/work,readonly" \
             "$image" python3 -I /work/scripts/ci/run-funded-host-root-tests.py
+          # A fresh container is required: the generated-command fixture owns /opt/matrix.
+          timeout --kill-after=10s 180s docker run --rm --init \
+            --name "$container_name" --network none --cpus 2 --memory 2g --pids-limit 256 \
+            --env MATRIX_FUNDED_REPAIR_DISPOSABLE_TEST=1 \
+            --env MATRIX_FUNDED_REPAIR_EXPECT_ARCH=x64 \
+            --mount "type=bind,src=$PWD,dst=/work,readonly" \
+            "$image" node /work/tests/deploy/customer-vps/funded-config-linux.mjs
 
   dedicated-linux:
     name: Verified Dedicated Linux Qualification
