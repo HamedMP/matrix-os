@@ -47,7 +47,12 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/matrix-bot-personality.test.ts",
+      "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/platform/canonical-phase-catalog-readiness.test.ts",
+      "tests/platform/canonical-funding-expiry-projection.test.ts",
+      "tests/gateway/canonical-phase-discovery.test.ts",
+      "tests/platform/canonical-phase-postgres-cleanup.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);
@@ -59,7 +64,12 @@ describe("funded PostgreSQL CI coverage", () => {
     expect(result.status, result.diagnostics).toBe(0);
     expect(result.args).toEqual([
       "exec", "vitest", "run", "tests/gateway/bots/integration-grant-source-postgres.test.ts",
-      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/gateway/bots/instantiation.test.ts", "tests/gateway/bots/matrix-bot-personality.test.ts",
+      "tests/gateway/bots/funded-inference-timeout.test.ts",
+      "tests/platform/canonical-phase-catalog-readiness.test.ts",
+      "tests/platform/canonical-funding-expiry-projection.test.ts",
+      "tests/gateway/canonical-phase-discovery.test.ts",
+      "tests/platform/canonical-phase-postgres-cleanup.test.ts",
       "--maxWorkers=1", "--no-file-parallelism",
     ]);
     const absentUrl = executeSettlementStep(undefined, step);

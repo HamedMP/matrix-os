@@ -34,6 +34,8 @@ import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
 import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
 
+import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
+
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
 const HandleSchema = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -274,8 +276,14 @@ export function createAiFundedRuntimeRoutes(options: {
       // Verify live policy before allocating promotion credit. The grant itself
       // is owner/campaign idempotent, so refreshes and multiple runtimes cannot
       // mint it more than once.
-      let summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
-      if (options.promotionalGrant?.enabled
+      const readOnly = fundedReadinessPhase({ phase: isolatedChat?.target?.kind === "canonical_bot" ? isolatedChat : undefined, identity,
+        runtimeTokenEpoch: machine.runtimeTokenEpoch,
+        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle, machineId: machine.machineId,
+          runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        phaseHint: c.req.header("x-matrix-isolated-chat-phase"), configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
+      let summary = readOnly ? await options.repository.getCheckoutFundingSummary(identity,
+        Date.now() + 5000, { ...body.data, projectExpiredCredit: true }) : await options.repository.getRuntimeFundingSummary(identity, body.data);
+      if (!readOnly && options.promotionalGrant?.enabled
         && summary.policy.enabled
         && summary.policy.allowedModelIds.length > 0
         && options.promotionalGrant.expiresAt > now().toISOString()) {
@@ -331,26 +339,12 @@ export function createAiFundedRuntimeRoutes(options: {
         return beforeDeadline(pending, deadlineAtMs);
       };
       const phase = isolatedChat;
-      const cacheOnly = phase !== undefined && phase.ownerId === identity.ownerId
-        && phase.machineId === identity.machineId && phase.runtimeSlot === identity.runtimeSlot
-        && body.data.modelId !== JEV_MODEL_ID;
+      const cacheOnly = fundedReadinessPhase({ phase, identity, runtimeTokenEpoch: machine.runtimeTokenEpoch,
+        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle,
+          machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        modelId: body.data.modelId, phaseHint: c.req.header("x-matrix-isolated-chat-phase"),
+        configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
       mode = cacheOnly ? "cache_only" : "probe";
-      // Private runtime-authenticated binding hint is not suppression authority.
-      // A one-sided/mismatched deployment must never fall back to a paid probe.
-      const phaseHint = c.req.header("x-matrix-isolated-chat-phase");
-      if (phaseHint !== undefined && (!cacheOnly || phaseHint !== phase!.phaseId)) {
-        throw new Error("Isolated Chat readiness unavailable");
-      }
-      if (cacheOnly) {
-        const at = now().getTime();
-        const token = buildPlatformRuntimeVerificationToken({ handle: machine.handle,
-          machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch);
-        if (machine.runtimeTokenEpoch !== phase.runtimeTokenEpoch
-          || createHash("sha256").update(token).digest("hex") !== phase.runtimeCredentialSha256
-          || at < Date.parse(phase.startsAt) || at >= Date.parse(phase.expiresAt)) {
-          throw new Error("Isolated Chat readiness unavailable");
-        }
-      }
       stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();

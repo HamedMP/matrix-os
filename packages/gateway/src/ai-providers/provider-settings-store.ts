@@ -82,6 +82,7 @@ export interface ProviderSettingsStoreWriter {
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
+  observationScope?: () => "canonical_matrix" | undefined;
   claudeNativeAccountMetadataReader?: ClaudeNativeAccountMetadataReader;
   codexNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
   hermesNativeAccountMetadataReader?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -102,6 +103,7 @@ interface ProviderSettingsStoreOptions {
 export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly configurationPath: string;
   readonly secretsPath: string;
+  readonly #observationScope?: ProviderSettingsStoreOptions["observationScope"];
   readonly #reader: CanonicalProviderSnapshotReader;
   readonly #claudeAccountMetadata?: ClaudeNativeAccountMetadataReader;
   readonly #nativeAccountMetadata?: () => Promise<CodexNativeAccountMetadata | null>;
@@ -130,6 +132,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       throw new Error("Provider secret storage must be outside the synced owner home");
     }
     this.secretsPath = join(privateRoot, "ai-provider-secrets.json");
+    this.#observationScope = options.observationScope;
     this.#reader = options.providerSnapshotReader;
     this.#claudeAccountMetadata = options.claudeNativeAccountMetadataReader;
     this.#nativeAccountMetadata = options.codexNativeAccountMetadataReader;
@@ -289,11 +292,16 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         && (captured.absent ? saved === null : saved?.revision === captured.config.revision);
     });
     if (!accepted) throw new ProviderSettingsStoreError("projection_unavailable", 503);
+    if (options.admissionScope === "canonical_matrix" && this.#observationScope
+      && this.#observationScope() !== "canonical_matrix") {
+      throw new ProviderSettingsStoreError("projection_unavailable", 503);
+    }
     return snapshot;
   }
 
   async getSnapshot(options: ProviderSnapshotReadOptions = {}): Promise<ProviderSettingsSnapshot> {
-    if (options.admissionScope === "managed_matrix") return await this.#managedMatrixSnapshot(options);
+    if (this.#observationScope?.() === "canonical_matrix") options = { ...options, admissionScope: "canonical_matrix" };
+    if (options.admissionScope === "managed_matrix" || options.admissionScope === "canonical_matrix") return await this.#managedMatrixSnapshot(options);
     const refresh = options.refresh === true;
     const observationScope = { signal: options.signal, deadline: +this.#now() + 13000 };
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
