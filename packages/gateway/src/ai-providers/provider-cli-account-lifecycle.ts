@@ -224,8 +224,11 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           } else {
             const env = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);
             let signedOut = false;
+            let phase: "resolve_executable" | "login_status" = "resolve_executable";
             try {
-              await run(resolveCodexNativeExecutable(homePath, env), ["login", "status"], {
+              const executable = resolveCodexNativeExecutable(homePath, env);
+              phase = "login_status";
+              await run(executable, ["login", "status"], {
                 cwd: homePath, env, timeoutMs: COMMAND_TIMEOUT_MS, maxOutputBytes: MAX_OUTPUT_BYTES,
               });
             } catch (error: unknown) {
@@ -236,6 +239,12 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
                 && "stdout" in error && typeof error.stdout === "string"
                 && "stderr" in error && typeof error.stderr === "string") {
                 signedOut = `${error.stdout}${error.stderr}`.trim() === "Not logged in";
+              }
+              if (!signedOut) {
+                // Exception names, messages and command output may contain private data.
+                const code = error instanceof Error && "code" in error
+                  && (error.code === "ENOENT" || error.code === "ETIMEDOUT" || error.code === 1) ? error.code : "unknown";
+                console.warn("[provider-lifecycle] Native sign-out status unavailable:", { phase, code });
               }
             }
             if (!signedOut) throw new NativeProviderWriteNotStartedError();

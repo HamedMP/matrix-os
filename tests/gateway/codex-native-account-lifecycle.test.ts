@@ -44,13 +44,16 @@ it.each(['logout', 'drift'] as const)('guards native Codex %s while preserving i
   } finally { service.close(); await rm(root, { recursive: true, force: true }); }
 });
 
-it.each(['signed-out', 'new-account', 'unknown', 'error', 'missing-executable'] as const)('removes signed-out native metadata only with authoritative absence: %s', async mode => {
+it.each(['signed-out', 'new-account', 'unknown', 'error', 'missing-executable', 'timeout', 'non-error'] as const)('removes signed-out native metadata only with authoritative absence: %s', async mode => {
   const homePath = await mkdtemp(join(tmpdir(), 'codex-remove-fixture-'));
-  if (mode === 'missing-executable') vi.mocked(resolveCodexNativeExecutable).mockImplementation(() => { throw new Error('Native Codex executable is unavailable'); });
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  if (mode === 'missing-executable') vi.mocked(resolveCodexNativeExecutable).mockImplementation(() => { throw new Error('/private/synthetic-secret missing executable'); });
   const run = vi.fn(async (_command: string, args: string[]) => {
     if (args.join(' ') !== 'login status') throw new Error('Unexpected mutating command');
     if (mode === 'new-account') return { stdout: 'Logged in using ChatGPT', stderr: '' };
-    throw Object.assign(new Error('Synthetic status'), { code: mode === 'error' ? 'ENOENT' : 1, stdout: '', stderr: mode === 'signed-out' ? 'Not logged in\n' : 'Unavailable' });
+    if (mode === 'non-error') throw { message: 'synthetic-secret', stderr: '/private/synthetic-secret' };
+    if (mode === 'timeout') throw Object.assign(new Error('/private/synthetic-secret'), { name: 'synthetic-secret', code: 'ETIMEDOUT', stderr: 'synthetic-secret' });
+    throw Object.assign(new Error('/private/synthetic-secret'), { code: mode === 'error' ? 'ENOENT' : 1, stdout: '', stderr: mode === 'signed-out' ? 'Not logged in\n' : 'Unavailable' });
   });
   const guard = createNativeProviderProfileGuard({ homePath, registry: { listProfileSessions: async () => [], get: async () => { throw Object.assign(new Error('missing'), { code: 'session_not_found' }); }, observeAgentLiveness: async () => 'stopped' } });
   const coordinator = createDefaultProviderCliAccountLifecycleCoordinator({ homePath, enabledHarnesses: ['codex'], profileGuard: guard, run, readCodexAccountUnderLease: async () => null });
@@ -60,11 +63,17 @@ it.each(['signed-out', 'new-account', 'unknown', 'error', 'missing-executable'] 
       await coordinator.remove({ account, idempotencyKey: 'remove-signed-out' });
       await coordinator.remove({ account, idempotencyKey: 'remove-signed-out' });
       expect(run).toHaveBeenCalledOnce();
-    } else await expect(coordinator.remove({ account, idempotencyKey: 'remove-signed-out' })).rejects.toThrow();
+    } else await expect(coordinator.remove({ account, idempotencyKey: 'remove-signed-out' })).rejects.toThrow('unavailable');
     if (mode === 'missing-executable') expect(run).not.toHaveBeenCalled();
     else expect(run).toHaveBeenCalledWith('/fixture/bin/codex', ['login', 'status'], expect.objectContaining({ cwd: homePath, timeoutMs: 10000, maxOutputBytes: 65536 }));
     expect(run.mock.calls.some(([, args]) => args.includes('logout'))).toBe(false);
-  } finally { await rm(homePath, { recursive: true, force: true }); }
+    if (mode === 'signed-out' || mode === 'new-account') expect(warning).not.toHaveBeenCalled();
+    else expect(warning).toHaveBeenCalledWith('[provider-lifecycle] Native sign-out status unavailable:', {
+      phase: mode === 'missing-executable' ? 'resolve_executable' : 'login_status',
+      code: mode === 'timeout' ? 'ETIMEDOUT' : mode === 'error' ? 'ENOENT' : mode === 'unknown' ? 1 : 'unknown',
+    });
+    expect(JSON.stringify(warning.mock.calls)).not.toMatch(/synthetic-secret|\/private|Not logged in|Unavailable/);
+  } finally { warning.mockRestore(); await rm(homePath, { recursive: true, force: true }); }
 });
 
 it('checks real store dependencies before signed-out native removal and never logs out', async () => {
