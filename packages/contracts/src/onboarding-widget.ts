@@ -71,9 +71,9 @@ export type OnboardingWidgetEvent =
   | { type: "answer.submitted"; text: string; context?: string }
   | { type: "freeform.submitted"; text: string }
   | { type: "connect.started" }
-  | { type: "connect.succeeded" }
-  | { type: "connect.failed" }
-  | { type: "connect.unavailable" }
+  | { type: "connect.succeeded"; service: string }
+  | { type: "connect.failed"; service: string }
+  | { type: "connect.unavailable"; service: string }
   | { type: "connect.skipped" }
   | { type: "apps.opened" }
   | { type: "apps.closed"; connectedNames: readonly string[] }
@@ -84,6 +84,7 @@ export type OnboardingWidgetEvent =
   | { type: "run.failedToStart" }
   | { type: "run.settled"; runId: string; outcome: "completed" | "failed" }
   | { type: "run.retried"; simpler: boolean }
+  | { type: "chat.missing"; chatId: string }
   | { type: "followUp.chosen"; choice: string; prompt: string | null }
   | { type: "followUp.dismissed" }
   | { type: "ai.menuToggled" }
@@ -99,27 +100,53 @@ export type OnboardingWidgetEvent =
   | { type: "ai.keepMatrix" }
   | { type: "size.changed"; size: OnboardingWidgetSize };
 
+/** An admitted run that has not settled yet; hosts persist it so a restart can keep following the run. */
+export type OnboardingPendingRun = Pick<OnboardingRunScreen, "taskId" | "answer" | "appConnected" | "simpler" | "context" | "title"> & { runId: string };
+
 export interface OnboardingWidgetInit {
   size: OnboardingWidgetSize;
   firstTaskCompleted: boolean;
   aiChoice?: OnboardingAiChoice;
   chatId?: string | null;
+  pendingRun?: OnboardingPendingRun | null;
+}
+
+function restoredScreen(pendingRun: OnboardingPendingRun | null | undefined, chatId: string | null): OnboardingRunScreen | null {
+  if (!pendingRun || !chatId) return null;
+  if (pendingRun.taskId !== "custom" && !onboardingTask(pendingRun.taskId)) return null;
+  return { kind: "run", ...pendingRun, phase: "running", requestId: 0 };
 }
 
 export function initialOnboardingWidgetState(init: OnboardingWidgetInit): OnboardingWidgetState {
+  const chatId = init.chatId ?? null;
+  const restored = restoredScreen(init.pendingRun, chatId);
   return {
-    screen: { kind: "tasks" },
+    screen: restored ?? { kind: "tasks" },
     ai: null,
     aiChoice: init.aiChoice ?? "matrix",
     echo: null,
     notice: null,
     size: init.size,
     unread: 0,
-    chatId: init.chatId ?? null,
-    started: false,
+    chatId,
+    started: restored !== null,
     followUpUsed: false,
     firstTaskCompleted: init.firstTaskCompleted,
     nextRequestId: 1,
+  };
+}
+
+export function onboardingPendingRun(state: OnboardingWidgetState): OnboardingPendingRun | null {
+  const screen = state.screen;
+  if (screen.kind !== "run" || screen.phase !== "running" || !screen.runId) return null;
+  return {
+    taskId: screen.taskId,
+    answer: screen.answer,
+    appConnected: screen.appConnected,
+    simpler: screen.simpler,
+    ...(screen.context ? { context: screen.context } : {}),
+    ...(screen.title ? { title: screen.title } : {}),
+    runId: screen.runId,
   };
 }
 
@@ -141,6 +168,10 @@ function startRun(
     nextRequestId: state.nextRequestId + 1,
     screen: { kind: "run", ...run, phase: "starting", requestId: state.nextRequestId },
   };
+}
+
+function connectsService(taskId: OnboardingStarterTaskId, service: string): boolean {
+  return onboardingTask(taskId)?.needs?.service === service;
 }
 
 function afterConnect(state: OnboardingWidgetState, taskId: OnboardingStarterTaskId, connected: boolean): OnboardingWidgetState {
@@ -207,11 +238,13 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     case "connect.started":
       return screen.kind === "connect" && screen.status !== "unavailable" ? { ...state, screen: { ...screen, status: "connecting" } } : state;
     case "connect.failed":
-      return screen.kind === "connect" && screen.status !== "unavailable" ? { ...state, screen: { ...screen, status: "failed" } } : state;
+      return screen.kind === "connect" && screen.status !== "unavailable" && connectsService(screen.taskId, event.service)
+        ? { ...state, screen: { ...screen, status: "failed" } }
+        : state;
     case "connect.unavailable":
-      return screen.kind === "connect" ? { ...state, screen: { ...screen, status: "unavailable" } } : state;
+      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? { ...state, screen: { ...screen, status: "unavailable" } } : state;
     case "connect.succeeded":
-      return screen.kind === "connect" ? afterConnect(state, screen.taskId, true) : state;
+      return screen.kind === "connect" && connectsService(screen.taskId, event.service) ? afterConnect(state, screen.taskId, true) : state;
     case "connect.skipped":
       return screen.kind === "connect" ? afterConnect({ ...state, echo: "Skip" }, screen.taskId, false) : state;
     case "apps.opened":
@@ -252,6 +285,11 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
     case "run.retried":
       if (screen.kind !== "run" || screen.phase !== "failed") return state;
       return startRun(state, { taskId: screen.taskId, answer: screen.answer, appConnected: screen.appConnected, simpler: event.simpler, ...(screen.context ? { context: screen.context } : {}), ...(screen.title ? { title: screen.title } : {}) });
+    case "chat.missing": {
+      if (state.chatId !== event.chatId) return state;
+      const following = screen.kind === "run" && screen.phase === "running";
+      return following ? { ...state, chatId: null, echo: null, screen: { kind: "tasks" } } : { ...state, chatId: null };
+    }
     case "followUp.chosen": {
       const prompt = event.prompt ? boundedText(event.prompt) : "";
       if (!prompt) return { ...state, followUpUsed: true };

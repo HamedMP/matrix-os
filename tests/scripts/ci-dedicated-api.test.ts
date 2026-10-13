@@ -28,3 +28,13 @@ it('rejects a poll interval beyond the reviewed120second lease and aborts a pend
  const f=fixture();f.get.mockResolvedValueOnce(response(200,'"one"',{}, {'x-poll-interval':'61'}));await expect(f.github.rest.pulls.get({})).rejects.toThrow(/poll/);
  vi.useFakeTimers();try{const aborter=new AbortController(),g=fixture();const client=api.createConditionalGithub(g.source,{authenticationContext:'cancel',signal:aborter.signal});g.get.mockResolvedValueOnce(response(200,'"one"',{}, {'x-poll-interval':'60'}));await client.github.rest.pulls.get({});const pending=client.github.rest.pulls.get({});const rejected=expect(pending).rejects.toThrow(/cancel/i);aborter.abort();await vi.advanceTimersByTimeAsync(1);await rejected;expect(g.get).toHaveBeenCalledTimes(1);}finally{vi.useRealTimers();}
 });
+
+it.each([['W/"one"','"one"'],['"one"','W/"one"']])('accepts authenticated weak If-None-Match comparison from %s to %s',async (cached,returned)=>{
+ const f=fixture(),args={pull_number:2454};f.get.mockResolvedValueOnce(response(200,cached));await f.github.rest.pulls.get(args);
+ f.get.mockResolvedValueOnce(response(304,returned,undefined));await expect(f.github.rest.pulls.get(args)).resolves.toMatchObject({data:{head:{sha:'old'}}});
+ expect(f.metrics()).toMatchObject({conditionalHits:1});
+});
+it.each(['W/"two"','one','W/one','"one" extra'])('rejects changed or malformed entity tag %s after a weak cached tag',async tag=>{
+ const f=fixture(),args={pull_number:2454};f.get.mockResolvedValueOnce(response(200,'W/"one"'));await f.github.rest.pulls.get(args);
+ f.get.mockResolvedValueOnce(response(304,tag,undefined));await expect(f.github.rest.pulls.get(args)).rejects.toThrow(/304/);
+});

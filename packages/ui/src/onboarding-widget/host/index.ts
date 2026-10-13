@@ -11,13 +11,16 @@ export {
 export {
   admitOnboardingTurn,
   ONBOARDING_CHAT_TITLE,
+  onboardingAdmissionRequestIds,
   onboardingRequestId,
+  type OnboardingAdmissionRequestIds,
   type OnboardingChatPort,
 } from "./chat-port.js";
 export {
   DEFAULT_ONBOARDING_PREFS,
   onboardingLoginPresentation,
   onboardingPrefsKey,
+  onboardingSessionInit,
   readOnboardingPrefs,
   writeOnboardingPrefs,
   type OnboardingStoredPrefs,

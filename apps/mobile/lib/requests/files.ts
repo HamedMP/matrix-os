@@ -226,7 +226,8 @@ async function createFileEntry(
   });
 }
 
-function isImagePath(path: string): boolean {
+/** The file's name ends like an image the app can show. */
+export function isImagePath(path: string): boolean {
   const name = path.split("/").at(-1) ?? "";
   const extension = name.includes(".") ? name.split(".").at(-1)?.toLowerCase() : "";
   return extension ? IMAGE_EXTENSIONS.has(extension) : false;

@@ -71,7 +71,7 @@ async function verifyHostedReplacement(github,repo,run){
 }
 async function settings(github,repo){
  const values=await readReviewedConfiguration(github,repo);
- return{controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
+ return{controllerSha:values.MATRIX_CI_CONTROLLER_SHA,admitted:values.MATRIX_CI_DEDICATED_ENABLED==='true'||values.MATRIX_CI_DEDICATED_SHADOW==='true',mode:values.MATRIX_CI_DEDICATED_ENABLED==='true'?'delegated':'shadow',mainMode:values.MATRIX_CI_DEDICATED_ENABLED==='true'&&values.MATRIX_CI_DEDICATED_MAIN==='true'?'delegated':'shadow',imageDigest:values.MATRIX_CI_RUNNER_IMAGE_DIGEST,harnessDigest:values.MATRIX_CI_RUNNER_HARNESS_DIGEST};
 }
 export async function reconcileSourceQualification(github,repo,controller,options){
  assertDefaultController(repo,controller);
@@ -80,7 +80,13 @@ export async function reconcileSourceQualification(github,repo,controller,option
  const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
  if(!id(workflow.id)||workflow.path!==path)throw new Error('Unexpected source gate workflow');
  const config=await settings(github,repo);
- const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]:await boundedPages(page=>github.rest.pulls.list({...repo,state:'open',per_page:100,page,request}));
+ const children=options.childrenOf;
+ if(children!==undefined&&(!id(children?.number)||typeof children.headRef!=='string'||!children.headRef))throw new Error('Invalid source gate scope');
+ const listOpen=()=>boundedPages(page=>github.rest.pulls.list({...repo,state:'open',per_page:100,page,request}));
+ // A push only changes the pushed PR and the merge source of PRs stacked directly on its branch.
+ const pulls=options.prNumber?[ (await github.rest.pulls.get({...repo,pull_number:options.prNumber,request})).data ]
+  :children?(await listOpen()).filter(pull=>pull.number===children.number||pull.base?.ref===children.headRef)
+  :await listOpen();
  let examined=0,dispatched=0;
  for(const listed of pulls){
   if(!id(listed.number)||typeof listed.head?.repo?.full_name!=='string'||!same(listed.base?.repo?.full_name,repo)||!sha.test(listed.head.sha||''))continue;
@@ -104,7 +110,12 @@ export async function reconcileSourceQualification(github,repo,controller,option
    const {data:written}=prior?await options.gateGithub.rest.checks.update({...args,check_run_id:prior.check.id}):await options.gateGithub.rest.checks.create({...args,name,head_sha:pull.head.sha});
    if(written.app?.id!==options.gateAppId||written.app?.slug==='github-actions'||written.name!==name||written.head_sha!==pull.head.sha)throw new Error('Dedicated gate App issuer response mismatch');
   };
-  if(!admitted&&!recovery){await write('success','Dedicated source qualification: not admitted',{notApplicable:true});continue;}
+  if(!admitted&&!recovery){
+   // Unchanged N/A rewrites dominated the shared installation API budget.
+   const unchanged=prior?.check.status==='completed'&&prior.check.conclusion==='success'&&old?.notApplicable===true&&old.headSha===snapshot.headSha&&old.baseSha===snapshot.baseSha&&old.sourceSha===snapshot.sourceSha;
+   if(!unchanged)await write('success','Dedicated source qualification: not admitted',{notApplicable:true});
+   continue;
+  }
   if(admitted&&(!sha.test(config.controllerSha||'')||config.controllerSha!==controller.sha||!/^sha256:[a-f0-9]{64}$/.test(config.imageDigest||'')||!/^[a-f0-9]{64}$/.test(config.harnessDigest||''))){await write('failure','Reviewed execution configuration is incomplete');continue;}
   try{const current=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);snapshot.mergeParents=current.mergeParents;evidence.mergeParents=current.mergeParents;}
   catch(error){await write('failure','Current source candidate is not available');if(!(error instanceof Error))throw error;continue;}
@@ -127,7 +138,20 @@ export async function reconcileSourceQualification(github,repo,controller,option
   if(requester.status!=='completed'||requester.conclusion!=='success'){await write('failure','Current requesting CI is pending or failed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt});continue;}
   try{
    if(recovery)await verifyHostedReplacement(github,repo,requester);
-   else {const result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}}
+   else {
+    let result;
+    try{result=await waitForDedicatedResult(github,{...repo,...snapshot,requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...config,serverUrl:'https://github.com'},{maxAttempts:1,allowInfrastructureFallback:true});}
+    catch(error){
+     // Shadow mode observes Linux qualification; once hosted CI passed, missing evidence must not block the PR.
+     if(config.mode!=='shadow'||!(error instanceof Error))throw error;
+     await verifyCurrentDedicatedSource(github,repo,snapshot);
+     const latest=await currentRequester(github,repo,snapshot,{});
+     if(latest?.id!==requester.id||latest.run_attempt!==requester.run_attempt||latest.conclusion!=='success')throw new Error('New requesting attempt superseded coverage');
+     await write('neutral','Shadow Linux qualification not verified; hosted CI passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,shadowUnverified:true});
+     continue;
+    }
+    if(result.infrastructure){await verifyFullHostedCoverage(github,repo,requester);evidence.infrastructureFallback=true;evidence.infrastructure=result.infrastructure;}
+   }
    const currentPull=await(recovery?verifyCurrentHostedSource:verifyCurrentDedicatedSource)(github,repo,snapshot);
    if(recovery&&(await settings(github,repo)).admitted&&['fast-ci','ready-for-ci'].every(label=>currentPull.labels?.some(value=>value.name===label)))throw new Error('Admission changed during hosted recovery');
    const latest=await currentRequester(github,repo,snapshot,recovery?{afterId:evidence.recoveryAfterRunId,notBefore:evidence.recoveryStartedAt}:{});
@@ -136,6 +160,6 @@ export async function reconcileSourceQualification(github,repo,controller,option
    await write('success',recovery?'Current exact-source hosted replacement passed':evidence.infrastructureFallback?'Current exact-source full hosted infrastructure recovery passed':'Current exact-source hosted and Linux qualification passed',{requestingRunId:requester.id,requestingRunAttempt:requester.run_attempt,...(recovery?{hostedRecovery:true}:{})});
   }catch(error){await write('failure',recovery?'Fresh genuine hosted replacement evidence is missing or stale':'Fresh authenticated Linux evidence is missing or stale');if(!(error instanceof Error))throw error;}
  }
- if(!options.prNumber)examined+=await reconcileMainSourceQualification(github,repo,controller,options,config,workflow,{ownedGate,currentRequester});
+ if(!options.prNumber&&!children)examined+=await reconcileMainSourceQualification(github,repo,controller,options,{...config,mode:config.mainMode},workflow,{ownedGate,currentRequester});
  return{examined,dispatched};
 }

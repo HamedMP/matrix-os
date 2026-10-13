@@ -49,7 +49,7 @@ export function AiMenu({ choice, matrixAvailable, connected, actions }: {
     );
   };
   return (
-    <div className="mxo-popover mxo-ai-menu" role="menu" aria-label="Change AI">
+    <div className="mxo-popover mxo-ai-menu" role="menu" aria-label="Change AI" data-mxo-menu="ai">
       {row("matrix", "Matrix AI", matrixAvailable ? "Free to start" : "Not available on this computer")}
       {row("claude", PROVIDER_COPY.claude.menuName, PROVIDER_COPY.claude.menuLine)}
       {row("codex", PROVIDER_COPY.codex.menuName, PROVIDER_COPY.codex.menuLine)}

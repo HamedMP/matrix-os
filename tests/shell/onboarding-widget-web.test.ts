@@ -223,7 +223,7 @@ describe("web onboarding app connect", () => {
     expect(result.current.connectingService).toBe("github");
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.started" });
 
-    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded" }));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" }));
     expect(popup.opener).toBeNull();
     expect(popup.location.href).toBe("https://consent.example.test/github");
     expect(result.current.connectingService).toBeNull();
@@ -239,7 +239,7 @@ describe("web onboarding app connect", () => {
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
 
     act(() => result.current.connectApp("github"));
-    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
     expect(fetchFn).toHaveBeenCalledTimes(2);
     expect(result.current.connectingService).toBeNull();
   });
@@ -252,7 +252,7 @@ describe("web onboarding app connect", () => {
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
 
     act(() => result.current.connectApp("github"));
-    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" }));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" }));
     expect(popup.close).toHaveBeenCalled();
     expect(popup.location.href).toBe("about:blank");
   });
@@ -266,7 +266,7 @@ describe("web onboarding app connect", () => {
     await waitFor(() => expect(result.current.appsUnavailable).toBe(true));
 
     act(() => result.current.connectApp("github"));
-    expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable", service: "github" });
     expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.started" });
     expect(window.open).not.toHaveBeenCalled();
     expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -282,8 +282,8 @@ describe("web onboarding app connect", () => {
     expect(result.current.appsUnavailable).toBe(false);
 
     act(() => result.current.connectApp("github"));
-    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable" }));
-    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed" });
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable", service: "github" }));
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
     expect(popup.close).toHaveBeenCalled();
     expect(result.current.appsUnavailable).toBe(true);
     expect(result.current.connectingService).toBeNull();
@@ -297,7 +297,7 @@ describe("web onboarding app connect", () => {
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
 
     act(() => result.current.connectApp("github"));
-    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" }));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" }));
     expect(popup.close).toHaveBeenCalled();
     expect(result.current.appsUnavailable).toBe(false);
   });
@@ -309,7 +309,7 @@ describe("web onboarding app connect", () => {
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0, 0] }));
 
     act(() => result.current.connectApp("github"));
-    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed" }));
+    await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" }));
     expect(result.current.connectingService).toBeNull();
   });
 });

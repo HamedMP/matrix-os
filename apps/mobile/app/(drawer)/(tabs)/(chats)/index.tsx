@@ -8,11 +8,13 @@ import { consumeChatDraftRequest, useChatDraftRequest } from "@/components/agent
 import { ChatScreenView } from "@/components/chat/ChatScreenView";
 import { chatScreenTitle, composerPlaceholder } from "@/components/chat/chat-screen-state";
 import { CHAT_SUGGESTIONS } from "@/components/chat/chat-suggestions";
+import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelTrigger } from "@/components/chat/ModelTrigger";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
 import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-selection";
+import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useCanonicalChats } from "@/lib/queries/use-canonical-chats";
@@ -55,28 +57,35 @@ export default function ChatScreen() {
     ?? defaultCatalogSelection(catalog);
   const turnModes = directBot ? { interactionMode: "default", permissionMode: "default" } : defaultTurnModes(catalog, selection);
 
-  const { draft, setDraft, send, isSending, optimisticMessages } = useChatComposer({
+  const attachmentKinds = supportedAttachmentKinds(catalog, selection);
+
+  const {
+    draft, setDraft, attachments, addAttachments, removeAttachment, attachmentRoom, unreadableAttachments,
+    sentAttachments, send, isSending, optimisticMessages,
+  } = useChatComposer({
     scope: computer ? `${userId ?? ""}:${computer.handle}:${computer.runtimeSlot}` : null,
     activeChatId,
     detail,
     selection,
     turnModes,
     projectId: selectedProjectId,
+    attachmentKinds,
     // The selection is not final until the provider catalog has loaded.
     disabled: providerCatalogLoading,
   });
 
-  const { messages, running, onStop, renderRequest, renderResults } = useChatThread({
+  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,
     detail,
     gatewayUrl,
     refresh,
     optimisticMessages,
+    sentAttachments,
   });
   const busy = isSending || running;
   const isConnected = Boolean(isSignedIn);
-  const canSend = !providerCatalogLoading && draft.trim().length > 0 && isConnected
-    && Boolean(selection) && Boolean(turnModes) && !busy;
+  const canSend = !providerCatalogLoading && (draft.trim().length > 0 || attachments.length > 0) && isConnected
+    && unreadableAttachments.length === 0 && Boolean(selection) && Boolean(turnModes) && !busy;
 
   const inputRef = useRef<TextInput>(null);
   // The composer takes the cursor, and with it the keyboard, only when the
@@ -128,6 +137,7 @@ export default function ChatScreen() {
       chatId={activeChatId}
       renderRequest={renderRequest}
       renderResults={renderResults}
+      renderComputerPhoto={renderComputerPhoto}
       composer={{
         inputRef,
         draft,
@@ -139,6 +149,19 @@ export default function ChatScreen() {
         onSend: send,
         running: busy,
         onStop,
+        ...composerAddProps({
+          catalog,
+          selection,
+          kinds: attachmentKinds,
+          attachments,
+          room: attachmentRoom,
+          unreadable: unreadableAttachments,
+          onAdd: addAttachments,
+          onRemove: removeAttachment,
+          draft,
+          onChangeDraft: handleDraftChange,
+          enabled: isConnected,
+        }),
         modelControl: directBot ? <ModelTrigger label="Agent model" fixed /> : (
           <ModelPicker
             catalog={catalog}

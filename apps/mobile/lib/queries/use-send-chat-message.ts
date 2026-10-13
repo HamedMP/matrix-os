@@ -3,12 +3,15 @@ import { useAuth } from "@clerk/clerk-expo";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { attachmentsTitle, chatAttachmentPart, type ComposerAttachment } from "@/lib/chat-attachments";
 import {
   admitChatTurn,
   canonicalChatTitle,
   createChat,
   fetchActiveComputer,
   mobileQueryKeys,
+  removeChatAttachment,
+  uploadChatAttachment,
 } from "@/lib/requests";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 
@@ -16,7 +19,10 @@ interface SendChatMessageInput {
   chatId: string | null;
   /** The active chat's current revision; ignored when chatId is null (a fresh chat starts at revision 0). */
   baseRevision: number;
+  /** May be empty when the message is attachments alone. */
   text: string;
+  /** Photos and files still on the phone. They are uploaded to the computer before the turn is admitted. */
+  attachments?: readonly ComposerAttachment[];
   selection: CanonicalChatModelSelection;
   /** Must be modes the selected instance's `supports` actually declares -- see defaultTurnModes. */
   interactionMode: string;
@@ -40,6 +46,40 @@ interface SendChatMessageInput {
   onChatCreated?: (chatId: string) => void;
 }
 
+const NO_ATTACHMENTS: readonly ComposerAttachment[] = [];
+
+/**
+ * Uploads a message's attachments and resolves to the places of those this
+ * call put on the computer. An attachment found already in place came from an
+ * earlier try, whose turn the computer may have admitted, so it is not among
+ * them and is never removed. When an upload fails, the ones this call did put
+ * there are removed again: no message names them.
+ */
+async function uploadAttachments(
+  token: string,
+  gatewayUrl: string,
+  attachments: readonly ComposerAttachment[],
+): Promise<string[]> {
+  const uploads = await Promise.allSettled(
+    attachments.map((attachment) => uploadChatAttachment(token, gatewayUrl, attachment)),
+  );
+  const created = uploads.flatMap((upload) => (
+    upload.status === "fulfilled" && upload.value.created ? [upload.value.path] : []
+  ));
+  const failed = uploads.find((upload) => upload.status === "rejected");
+  if (!failed) return created;
+  await removeUploads(token, gatewayUrl, created);
+  throw failed.reason;
+}
+
+/** Best effort: an upload left behind is cleared by the computer in time. */
+async function removeUploads(token: string, gatewayUrl: string, paths: readonly string[]): Promise<void> {
+  const removals = await Promise.allSettled(paths.map((path) => removeChatAttachment(token, gatewayUrl, path)));
+  if (removals.some((removal) => removal.status === "rejected")) {
+    console.warn("[chat] an unused attachment upload could not be removed");
+  }
+}
+
 export function useSendChatMessage() {
   const queryClient = useQueryClient();
   const { getToken, userId } = useAuth();
@@ -50,6 +90,7 @@ export function useSendChatMessage() {
       chatId,
       baseRevision,
       text,
+      attachments = NO_ATTACHMENTS,
       selection,
       interactionMode,
       permissionMode,
@@ -64,15 +105,35 @@ export function useSendChatMessage() {
       if (!computer) throw new Error("Computer unavailable.");
       const gatewayUrl = `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`;
 
+      // Decided before anything is uploaded, so an attachment the computer
+      // could not be told about never leaves the phone.
+      const attachmentParts = attachments.map(chatAttachmentPart);
+      if (attachmentParts.some((part) => part === null)) throw new Error("Attachment cannot be sent.");
+      // Uploaded before the chat is created, so a failed upload leaves no
+      // empty chat behind.
+      const newUploads = await uploadAttachments(token, gatewayUrl, attachments);
+      // A session token lasts a minute and an upload can take most of one, so
+      // what follows an upload asks for the token again.
+      const sendToken = attachments.length > 0 ? await getToken() : token;
+      if (!sendToken) throw new Error("Not signed in.");
+
       let targetChatId = chatId;
       let revision = baseRevision;
       if (!targetChatId) {
-        const record = await createChat(token, gatewayUrl, {
-          clientRequestId: chatRequestId,
-          title: canonicalChatTitle(text),
-          currentSelection: selection,
-          ...(projectId ? { projectId } : {}),
-        });
+        let record;
+        try {
+          record = await createChat(sendToken, gatewayUrl, {
+            clientRequestId: chatRequestId,
+            title: text ? canonicalChatTitle(text) : attachmentsTitle(attachments),
+            currentSelection: selection,
+            ...(projectId ? { projectId } : {}),
+          });
+        } catch (error: unknown) {
+          // This send has asked for no turn yet, and no earlier one named
+          // what it has just put on the computer.
+          await removeUploads(sendToken, gatewayUrl, newUploads);
+          throw error;
+        }
         targetChatId = record.chat.id;
         revision = record.chat.revision;
         // Deliberately not bound yet: binding here would enable
@@ -82,10 +143,15 @@ export function useSendChatMessage() {
         // result. Bind only once the turn is actually admitted, below.
       }
 
-      const admission = await admitChatTurn(token, gatewayUrl, targetChatId, {
+      // Uploads stay if this fails: the answer may only have been lost, and
+      // the turn it admitted names them. Sending again finds them in place.
+      const admission = await admitChatTurn(sendToken, gatewayUrl, targetChatId, {
         clientRequestId: turnRequestId,
         baseRevision: revision,
-        parts: [{ type: "text", text }],
+        parts: [
+          ...(text ? [{ type: "text" as const, text }] : []),
+          ...attachmentParts.flatMap((part) => (part ? [part] : [])),
+        ],
         selection,
         interactionMode,
         permissionMode,

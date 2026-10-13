@@ -7,6 +7,7 @@ import {
   deriveOnboardingRunView,
   initialOnboardingWidgetState,
   onboardingAiLabel,
+  onboardingPendingRun,
   onboardingRunInFlight,
   onboardingRunTitle,
   parseOnboardingRepoUrl,
@@ -82,10 +83,10 @@ describe("reduceOnboardingWidget", () => {
       fresh(),
       { type: "task.selected", taskId: "plan-week", connectedServices: [] },
       { type: "connect.started" },
-      { type: "connect.failed" },
+      { type: "connect.failed", service: "google_calendar" },
     );
     expect(failed.screen).toEqual({ kind: "connect", taskId: "plan-week", status: "failed" });
-    const connected = run(failed, { type: "connect.started" }, { type: "connect.succeeded" });
+    const connected = run(failed, { type: "connect.started" }, { type: "connect.succeeded", service: "google_calendar" });
     expect(connected.notice).toBe("Google Calendar connected");
     expect(connected.screen).toMatchObject({ kind: "run", appConnected: true });
   });
@@ -102,11 +103,20 @@ describe("reduceOnboardingWidget", () => {
       fresh(),
       { type: "task.selected", taskId: "plan-week", connectedServices: [] },
       { type: "connect.started" },
-      { type: "connect.unavailable" },
+      { type: "connect.unavailable", service: "google_calendar" },
     );
     expect(discovered.screen).toEqual({ kind: "connect", taskId: "plan-week", status: "unavailable" });
-    expect(run(discovered, { type: "connect.failed" }).screen).toEqual(discovered.screen);
-    expect(run(fresh(), { type: "connect.unavailable" }).screen).toEqual({ kind: "tasks" });
+    expect(run(discovered, { type: "connect.failed", service: "google_calendar" }).screen).toEqual(discovered.screen);
+    expect(run(fresh(), { type: "connect.unavailable", service: "google_calendar" }).screen).toEqual({ kind: "tasks" });
+  });
+
+  it("ignores an unavailable result for an app the current task does not need", () => {
+    const connecting = run(
+      fresh(),
+      { type: "task.selected", taskId: "plan-week", connectedServices: [] },
+      { type: "connect.started" },
+    );
+    expect(run(connecting, { type: "connect.unavailable", service: "github" }).screen).toEqual(connecting.screen);
   });
 
   it("still goes straight to the work when the app is connected, even if new connections are unavailable", () => {
@@ -119,7 +129,7 @@ describe("reduceOnboardingWidget", () => {
       fresh(),
       { type: "task.selected", taskId: "work-on-code", connectedServices: [] },
       { type: "connect.started" },
-      { type: "connect.succeeded" },
+      { type: "connect.succeeded", service: "github" },
     );
     expect(picked.screen).toEqual({ kind: "repo" });
     expect(picked.notice).toBe("GitHub connected");
@@ -148,6 +158,63 @@ describe("reduceOnboardingWidget", () => {
     const done = run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" });
     expect(done.screen).toMatchObject({ phase: "done" });
     expect(done.firstTaskCompleted).toBe(true);
+  });
+
+  it("exposes only an admitted, unsettled run for restoring after a restart", () => {
+    const started = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "Trip ideas for Lisbon" });
+    expect(onboardingPendingRun(started)).toBeNull();
+    const admitted = run(started, { type: "run.admitted", requestId: 1, chatId: "chat_1", runId: "run_1" });
+    expect(onboardingPendingRun(admitted)).toEqual({ taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" });
+    expect(onboardingPendingRun(run(admitted, { type: "run.settled", runId: "run_1", outcome: "completed" }))).toBeNull();
+  });
+
+  it("restores a pending run after a restart and keeps following it", () => {
+    const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+    const restored = initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun });
+    expect(restored.screen).toMatchObject({ kind: "run", phase: "running", taskId: "research", runId: "run_1" });
+    expect(restored.started).toBe(true);
+    expect(onboardingRunInFlight(restored)).toBe(true);
+    const done = run(restored, { type: "run.settled", runId: "run_1", outcome: "completed" });
+    expect(done.screen).toMatchObject({ phase: "done" });
+    expect(done.firstTaskCompleted).toBe(true);
+    const failed = run(restored, { type: "run.settled", runId: "run_1", outcome: "failed" });
+    const retried = run(failed, { type: "run.retried", simpler: false });
+    expect(retried.screen).toMatchObject({ kind: "run", phase: "starting", answer: "Trip ideas for Lisbon" });
+  });
+
+  it("ignores a connection result for an app the current task does not need", () => {
+    const calendar = run(
+      fresh(),
+      { type: "task.selected", taskId: "work-on-code", connectedServices: [] },
+      { type: "connect.started" },
+      { type: "tasks.requested" },
+      { type: "task.selected", taskId: "plan-week", connectedServices: [] },
+    );
+    expect(run(calendar, { type: "connect.succeeded", service: "github" })).toBe(calendar);
+    expect(run(calendar, { type: "connect.failed", service: "github" })).toBe(calendar);
+    expect(run(calendar, { type: "connect.succeeded", service: "google_calendar" }).screen).toMatchObject({ kind: "run", taskId: "plan-week", appConnected: true });
+  });
+
+  it("forgets a chat that no longer exists and leaves a run it was following for the task list", () => {
+    const pendingRun = { taskId: "research", answer: "Trip ideas for Lisbon", appConnected: true, simpler: false, runId: "run_1" } as const;
+    const restored = initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun });
+    expect(run(restored, { type: "chat.missing", chatId: "chat_other" })).toBe(restored);
+    const gone = run(restored, { type: "chat.missing", chatId: "chat_1" });
+    expect(gone.chatId).toBeNull();
+    expect(gone.screen).toEqual({ kind: "tasks" });
+    expect(onboardingPendingRun(gone)).toBeNull();
+
+    const done = run(restored, { type: "run.settled", runId: "run_1", outcome: "completed" });
+    const doneGone = run(done, { type: "chat.missing", chatId: "chat_1" });
+    expect(doneGone.chatId).toBeNull();
+    expect(doneGone.screen).toBe(done.screen);
+  });
+
+  it("ignores a pending run without its chat or with an unknown task", () => {
+    const pendingRun = { taskId: "research", answer: "x", appConnected: true, simpler: false, runId: "run_1" } as const;
+    expect(initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, pendingRun }).screen).toEqual({ kind: "tasks" });
+    const unknown = { ...pendingRun, taskId: "not-a-task" } as unknown as typeof pendingRun;
+    expect(initialOnboardingWidgetState({ size: "corner", firstTaskCompleted: false, chatId: "chat_1", pendingRun: unknown }).screen).toEqual({ kind: "tasks" });
   });
 
   it("ignores admission results for a superseded request", () => {

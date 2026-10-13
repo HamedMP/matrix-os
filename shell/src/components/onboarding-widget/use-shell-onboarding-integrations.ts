@@ -108,7 +108,7 @@ export function useShellOnboardingIntegrations(
     const isCurrent = () => attemptRef.current === attempt;
     if (appsUnavailableRef.current) {
       setConnectingService(null);
-      dispatch({ type: "connect.unavailable" });
+      dispatch({ type: "connect.unavailable", service: serviceId });
       return;
     }
     // Opened synchronously inside the click so popup blockers allow it; the consent URL arrives later.
@@ -116,7 +116,7 @@ export function useShellOnboardingIntegrations(
     const fail = () => {
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.failed" });
+      dispatch({ type: "connect.failed", service: serviceId });
     };
     if (!popup) {
       console.warn("[onboarding-widget] consent window blocked");
@@ -150,7 +150,7 @@ export function useShellOnboardingIntegrations(
           cancelPollRef.current = null;
           if (!found) { fail(); return; }
           setConnectingService(null);
-          dispatch({ type: "connect.succeeded" });
+          dispatch({ type: "connect.succeeded", service: serviceId });
         },
       });
     })().catch((error: unknown) => {
@@ -160,7 +160,7 @@ export function useShellOnboardingIntegrations(
       markAppsUnavailable();
       if (!isCurrent()) return;
       setConnectingService(null);
-      dispatch({ type: "connect.unavailable" });
+      dispatch({ type: "connect.unavailable", service: serviceId });
     });
   }, [applyConnections, dispatch, markAppsUnavailable, transport]);
 
